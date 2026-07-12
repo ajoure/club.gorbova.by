@@ -23,7 +23,10 @@ import {
   createServiceClient,
   loadRRConfig,
 } from "../_shared/rr/rr-config.ts";
-import { verifyNotificationSignature } from "../_shared/rr/rr-adapter.ts";
+import {
+  verifyNotificationSignature,
+  rrGetOrderStatus,
+} from "../_shared/rr/rr-adapter.ts";
 import { promoteAuthorizedRRPayment } from "../_shared/rr/rr-promote-order.ts";
 
 const UUID_RE =
