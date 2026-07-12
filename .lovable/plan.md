@@ -2303,3 +2303,444 @@ PATCH-PAYMENTS-MANAGEMENT-V2 — PHASE A1R + B1:
                                    948f33b1…, e3412120…)
     - 5 admin_test с access_grant_ledger привязкой
 ```
+
+---
+
+## PATCH-PAYMENTS-MANAGEMENT-V2 — APPEND-ONLY CORRECTION C18..C22 (2026-07-12)
+
+Append-only исправление после ревью A1R + B1. Ничего из ранее написанного
+не переписывается; при расхождении с любыми более ранними цифрами/порядками
+приоритет имеют разделы C18..C22 ниже. Код и БД в этом коммите не меняются.
+
+### C18 Арифметически корректная финальная карта 117 / 327
+
+Категории взаимно исключающиеся: каждая строка попадает ровно в одну.
+
+**C18.1 admin_from_payment — 117 строк**
+
+```
+category                                   count   action_class
+------------------------------------------------------------------
+safe_backfill                                  4   A2a backfill → bepaid
+full_match_duplicate                          24   A2a archive (canonical bepaid уже есть, тот же order)
+canonical_order_correct_duplicate             14   A2a archive (canonical правильно привязан)
+duplicate_recovered (f60ed2f0…)                1   A2a archive (точный дубликат восстановлен)
+legacy_null_order                             10   A2a archive (order_id IS NULL, суммарно 0 денег)
+canonical_order_relink_candidate              52   A1R2 review → A2b (guarded relink | keep | ambiguous)
+both_wrong_review (897ea700…)                  1   HOLD — оставить в payments_v2 до отдельного решения
+z_other_financial_conflict                     2   HOLD — 00956264…, eda63b40…
+missing_source_ambiguous                       8   HOLD — 07f997a5…, 144441b1…, 4afe1a0c…, 4e349305…,
+                                                          66657c81…, 86546dfe…, 948f33b1…, e3412120…
+                                              ---
+sum                                          117
+```
+
+Контроль: 4 + 24 + 14 + 1 + 10 + 52 + 1 + 2 + 8 = **117**. ✓
+
+Ранее опубликованные промежуточные суммы (119, 116, 112, «112+1») в разделах
+Phase A1 / A1R **не используются** в execute — они заменены таблицей C18.1.
+
+**C18.2 Полная карта legacy 327 строк**
+
+```
+group             count   action_class
+-----------------------------------------
+admin_from_payment  117   см. C18.1
+admin_grant         201   A2a archive (non-financial, sum=0, granted_by)
+admin_test            8   A2a archive (ORD-TEST-*, fixtures; access — canonical V2)
+admin_deal_only       1   A2a archive (GIFT marker; GIFT order сохраняется)
+                    ---
+sum                 327
+```
+
+**C18.3 Сводная execute-карта (после B0)**
+
+```
+backfill                              4    admin_from_payment.safe_backfill
+archive/review candidates           323    323 = 24+14+1+10 + 201 + 8 + 1
+                                           (без 52 relink, 1 both_wrong, 2 z_other, 8 ambiguous)
+HOLD (в payments_v2, без изменений)  63    52 + 1 + 2 + 8
+                                     ---
+total                               327
+```
+
+- 52 relink переходит в execute отдельным этапом **A2b** только после A1R2
+  и точечной ручной authorization.
+- Provider CHECK (Phase A4) остаётся заблокированным, пока 11 HOLD-строк
+  (1 both_wrong + 2 z_other + 8 ambiguous) или 52 relink находятся в
+  payments_v2 без канонического provider ∈ {bepaid,stripe,rr,bank}.
+- 11 «жёстких» HOLD-строк не архивируются «по предположению». Для 8 ambiguous
+  продолжается расширенный read-only поиск (см. C21.4).
+
+### C19 Phase B2 — schema-only migration dry-run (без execute)
+
+**Разрешено только как SQL-текст. Миграция НЕ применяется в этом ответе.**
+Никаких DML, никакого архивирования данных, никакого удаления в payments_v2.
+
+**C19.1 payments_v2 — add-only soft-delete колонки**
+
+```sql
+-- DRY RUN. Не выполнять. Reviewer authorization required.
+ALTER TABLE public.payments_v2
+  ADD COLUMN IF NOT EXISTS is_deleted        boolean     NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS deleted_at        timestamptz NULL,
+  ADD COLUMN IF NOT EXISTS deleted_by        uuid        NULL
+      REFERENCES auth.users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS deleted_reason    text        NULL,
+  ADD COLUMN IF NOT EXISTS deletion_context  jsonb       NULL;
+
+-- Индексы намеренно НЕ добавляются в B2. Решение об индексе
+-- (частичный по (order_id) WHERE is_deleted=false и/или по deleted_at)
+-- принимается ТОЛЬКО после EXPLAIN на реальном плане запросов Phase F/G.
+```
+
+Инварианты после B2 (проверка read-only перед подтверждением):
+
+```
+SELECT count(*) FROM payments_v2 WHERE is_deleted IS DISTINCT FROM false;   -- ожидается 0
+SELECT count(*) FROM payments_v2 WHERE deleted_at IS NOT NULL;              -- ожидается 0
+SELECT count(*) FROM payments_v2 WHERE deleted_by IS NOT NULL;              -- ожидается 0
+```
+
+Все текущие RLS-политики payments_v2 остаются нетронутыми; новые роли и
+grants не добавляются. Читатели (RPC, edge, UI) не изменяются в B2 — их
+soft-delete awareness переносится в Phase F.
+
+**C19.2 payments_legacy_archive — новая таблица, только server-side**
+
+```sql
+-- DRY RUN. Не выполнять.
+CREATE TABLE IF NOT EXISTS public.payments_legacy_archive (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_payment_id  uuid NOT NULL UNIQUE,          -- идемпотентность архивирования
+  original_row       jsonb NOT NULL,                -- полная копия исходной строки
+  row_checksum       text  NOT NULL,                -- md5(original_row::text) fixture
+  legacy_category    text  NOT NULL,                -- 'admin_grant' | 'admin_test' | 'admin_deal_only'
+                                                    -- | 'admin_from_payment.full_match_duplicate'
+                                                    -- | 'admin_from_payment.canonical_order_correct_duplicate'
+                                                    -- | 'admin_from_payment.duplicate_recovered'
+                                                    -- | 'admin_from_payment.legacy_null_order'
+  archive_reason     text  NOT NULL,
+  archive_context    jsonb NULL,
+  archived_by        uuid  NULL REFERENCES auth.users(id) ON DELETE SET NULL,
+  archived_at        timestamptz NOT NULL DEFAULT now()
+);
+
+GRANT ALL ON public.payments_legacy_archive TO service_role;
+-- НЕ выдавать grants для anon и authenticated.
+
+ALTER TABLE public.payments_legacy_archive ENABLE ROW LEVEL SECURITY;
+
+-- Ни одной политики для anon/authenticated: доступ только через
+-- service_role из edge functions / миграций. Админский просмотр
+-- реализуется отдельным SECURITY DEFINER RPC в Phase F, не через RLS.
+```
+
+Инварианты после B2 (read-only):
+
+```
+SELECT count(*) FROM public.payments_legacy_archive;                       -- 0
+-- RLS/GRANTS расширены только для service_role
+```
+
+В B2 никакие строки в payments_v2 **не** помечаются is_deleted и **не**
+переносятся в payments_legacy_archive. Всё это — отдельный этап A2a.
+
+### C20 Phase C1 — точная schema-inventory статусов и денежных полей (read-only)
+
+Наблюдаемая инвентаризация (см. `psql \d`):
+
+**C20.1 payments_v2 статус/деньги**
+
+```
+column                type          nullable   notes
+--------------------------------------------------------------
+status                payment_status NO         enum: pending, processing, succeeded,
+                                                      failed, refunded, canceled
+amount                numeric        NO         основная сумма платежа
+currency              text           NO
+refunded_amount       numeric        YES        частичный/полный возврат
+refunded_at           timestamptz    YES
+refunds               jsonb          YES        provider refund log
+paid_at               timestamptz    YES        момент фактической оплаты
+provider              text           YES        (после A4 → NOT NULL + CHECK 4 значений)
+origin                text           YES        SoT способа создания записи
+transaction_type      text           YES
+payment_classification text          YES
+is_recurring          boolean        YES
+reference_payment_id  uuid           YES        parent (для refund/rebill)
+```
+
+Инвариант расчёта:
+
+```
+effective_amount_for_order(payment) =
+  CASE
+    WHEN status IN ('succeeded')                THEN amount - COALESCE(refunded_amount,0)
+    WHEN status IN ('refunded')                 THEN 0
+    WHEN status IN ('pending','processing',
+                    'failed','canceled')        THEN 0
+  END
+  -- при is_deleted=true строка полностью исключается из расчёта
+```
+
+Никакие другие статусы в расчёте не участвуют. `refunded_amount` не может
+превышать `amount` — это будет проверяться триггером в C1 execute-фазе, а
+не CHECK-constraint (правило времени/данных).
+
+**C20.2 orders_v2 статус/деньги**
+
+```
+column         type          nullable   notes
+-----------------------------------------------------------
+status         order_status   NO         enum: draft, pending, paid, partial,
+                                               failed, refunded, canceled,
+                                               needs_mapping, lead
+final_price    numeric        YES        итоговая цена (после discount)
+base_price     numeric        YES        до скидки
+discount_percent numeric      YES
+paid_amount    numeric        YES        SoT оплаченной части
+currency       text           NO
+```
+
+Целевая функция `recalc_order_totals(p_order_id uuid)` (создание — Phase C2,
+здесь только контракт read-only):
+
+```
+INPUT:  p_order_id
+COMPUTE:
+  paid_sum := SUM(effective_amount_for_order(p))
+              FROM payments_v2 p
+              WHERE p.order_id = p_order_id
+                AND COALESCE(p.is_deleted, false) = false;
+
+  new_status :=
+    CASE
+      WHEN paid_sum = 0                                              THEN keep status IN (draft,pending,lead,needs_mapping,failed,canceled)
+                                                                          иначе → pending
+      WHEN paid_sum >= final_price AND final_price IS NOT NULL       THEN 'paid'
+      WHEN paid_sum > 0 AND paid_sum < COALESCE(final_price, paid_sum) THEN 'partial'
+      WHEN SUM(refunded) = paid                                      THEN 'refunded'
+    END;
+
+UPDATE orders_v2 SET paid_amount = paid_sum, status = new_status
+WHERE id = p_order_id;
+```
+
+Contract requirements для C2:
+
+- Единственный писатель `orders_v2.paid_amount` и `orders_v2.status` в
+  contexts, где меняются платежи. Все прочие пути (webhook, admin, RR,
+  bank, refund) должны вызывать `recalc_order_totals`.
+- Idempotent: повторный вызов на неизменённом состоянии даёт тот же
+  результат и NO-OP UPDATE (или UPDATE с равными значениями).
+- Учитывает is_deleted=true как «строки нет».
+- Не трогает `draft/lead/needs_mapping/canceled/failed` при paid_sum=0.
+- Триггер AFTER INSERT/UPDATE/DELETE на payments_v2 (в C2) вызывает
+  `recalc_order_totals(NEW.order_id)` и, при UPDATE с изменением order_id,
+  ещё и для OLD.order_id.
+
+### C21 Phase A1R2 — read-only proof для 52 canonical_order_relink
+
+Read-only. Никаких UPDATE/INSERT/DELETE. Результатом является append-only
+отчёт (в этот же файл), классифицирующий 52 строки на:
+
+```
+relink_confirmed
+canonical_link_confirmed
+ambiguous_no_change
+```
+
+**C21.1 Обязательный набор полей на каждую пару (legacy ↔ canonical bepaid)**
+
+```
+- canonical.payment_id
+- legacy.payment_id
+- provider_payment_id
+- payment_reconcile_queue.matched_order_id
+- payment_reconcile_queue.id (queue row id, для трассировки)
+- legacy.order_id
+- canonical.order_id
+
+- canonical_order: profile_id, customer_email, customer_phone, product_id,
+                   tariff_id, offer_id, final_price, currency, deal_date,
+                   reconcile_source, meta.tracking_ref
+- legacy_order:    те же поля
+
+- provider tracking/order reference (из provider_response.bepaid.tracking_id,
+   order.tracking_id, transaction.tracking_id)
+- bepaid_statement_rows row (если есть) + description/tracking
+- payment_reconcile_queue.source (что именно matched_order_id: import,
+   statement, tracking, manual)
+- amount / currency / paid_at (canonical и legacy)
+
+- entitlement_sources где payment_id = canonical.payment_id ИЛИ legacy.payment_id
+- access_grant_ledger где source_order_id ∈ {canonical.order_id, legacy.order_id}
+- subscriptions_v2 привязанные к каждому order_id
+```
+
+**C21.2 Правило независимого подтверждения**
+
+`matched_order_id` из `payment_reconcile_queue` **не считается**
+независимым доказательством, если очередь была первоисточником создания
+legacy-строки. Для каждой пары фиксируется:
+
+```
+queue_row.created_at  vs  legacy.created_at
+queue_row.source
+queue_row.matched_by  (auto | manual | statement | tracking)
+```
+
+Считать «независимо подтверждённым» правильный order только если выполнено
+≥ 2 из:
+
+1. provider tracking/reference совпадает с order.meta.tracking или с
+   order_number ровно одного из двух orders_v2;
+2. bepaid_statement_rows.description/tracking однозначно указывает на один
+   order_number;
+3. profile_id совпадает у payment и одного order, и не совпадает у другого;
+4. product/tariff/offer совпадает с purchase_snapshot одного из orders;
+5. amount+currency+paid_at укладывается в 24h окно только у одного order
+   с равной или ближайшей суммой.
+
+**C21.3 Классификация**
+
+```
+relink_confirmed         : canonical привязан НЕ к тому order, legacy указывает на правильный,
+                           independent_evidence ≥ 2 → кандидат на A2b guarded relink
+canonical_link_confirmed : canonical привязан ПРАВИЛЬНО, legacy — дубль/ошибка,
+                           independent_evidence ≥ 2 → архивируется legacy (A2a)
+ambiguous_no_change      : independent_evidence < 2 → HOLD в payments_v2,
+                           provider CHECK остаётся заблокированным
+```
+
+Профиль-совпадение подтверждено только у 48 из 67 ранее собранных
+конфликтующих строк; после сужения до 52 relink-кандидатов повторный
+подсчёт profile-match — обязательный столбец отчёта A1R2.
+
+**C21.4 Dry-run последствий (только для relink_confirmed)**
+
+Для каждой пары рассчитать **без записи**:
+
+```
+donor_order    (canonical.order_id):
+  before: paid_amount, status
+  after : paid_amount - effective_amount_for_order(canonical), new_status via recalc_order_totals
+recipient_order (legacy.order_id):
+  before: paid_amount, status
+  after : paid_amount + effective_amount_for_order(canonical), new_status via recalc_order_totals
+
+access_grant_ledger:
+  donor_order    : существующие grants → keep-or-revoke? (по правилу C21.5)
+  recipient_order: нужен ли новый grant?
+
+subscriptions_v2:
+  donor_order    : привязка меняется? (обычно нет — subscription живёт на product+profile)
+  recipient_order: аналогично
+```
+
+**C21.5 Правило доступа (revoke НЕ автоматом)**
+
+- Если у profile уже есть валидный access к продукту через **другой**
+  источник (другая оплата, другая подписка, manual grant с открытой датой),
+  доступ **не отзывается**.
+- revoke выполняется только если после relink у profile не остаётся ни
+  одного не-отозванного источника, покрывающего этот продукт.
+- Точный контракт revoke реализуется в Phase E2 (см. B1.6). Без C21.5 ×
+  E2 автоматическое A2b запрещено.
+
+**C21.6 Расширенный поиск для 8 ambiguous missing_source**
+
+```
+07f997a5… 144441b1… 4afe1a0c… 4e349305… 66657c81… 86546dfe… 948f33b1… e3412120…
+```
+
+Read-only search по:
+
+```
+- profile_id ← email/phone/customer_email/customer_phone
+- tracking ← provider_response.*.tracking_id
+- bepaid_statement_rows.description ILIKE order_number/email/phone/tracking
+- orders_v2.meta / purchase_snapshot / order_number ILIKE tracking
+- invoice/order number точное совпадение
+- provider_events где payload содержит tracking/email
+- product/tariff совпадение с amount+currency+±48h окно
+```
+
+Если для строки не набирается ≥ 2 независимых сигнала — она остаётся в
+HOLD, provider CHECK по-прежнему заблокирован.
+
+### C22 Обновлённый обязательный порядок фаз
+
+Отменяет ранее опубликованные последовательности. Актуальный порядок:
+
+```
+B2   soft-delete колонки + payments_legacy_archive (schema only)
+C1   read-only inventory (этот раздел — уже сделан для payments_v2/orders_v2)
+C2   recalc_order_totals + триггер на payments_v2
+D1   admin-payment-create (использует C2)
+
+E2   exact access lineage/revoke contract (без payment_id в
+     access_grant_ledger — через entitlement_sources.payment_id,
+     source_order_id, source_payment_id, metadata lineage)
+E1   admin-payment-delete preview/execute
+E3   admin-order-delete preview/execute
+E4   bulk delete
+E5   resurrect guards в webhooks
+E6   useDealsBulkDelete → server edge
+
+B0   stop legacy writers (ContactDetailSheet, CreateDealFromPaymentDialog,
+     AdminContacts, test-payment-complete) → перевод на canonical endpoints
+B0V  runtime proof: 24h окно без новых provider ∈ {admin, admin_test}
+
+A1R2 read-only proof 52 relink (этот раздел)
+A2a  archive однозначных + 4 safe backfill (transactional, guarded, checksum,
+     archive-before-delete, rollback on mismatch)
+A2b  guarded relink только relink_confirmed
+     (в отдельной транзакции и отдельном отчёте, не смешивать с A2a)
+A3   verification (counts, sums, orders paid_amount, access)
+A4   provider NOT NULL + CHECK ∈ {bepaid,stripe,rr,bank}
+     (разрешён только если 11 «жёстких» HOLD пусты и A2a+A2b завершены)
+
+C3   перевод оставшихся writers (webhooks, RR, bank, refund) на recalc_order_totals
+F    admin_get_payments_stats_v1 + is_deleted awareness + 4 provider filters
+G    UI dialogs (CreatePaymentDialog / DeletePaymentDialog)
+H    fixture scenarios (8 сценариев)
+I    RR test cleanup + admin_test ORD-TEST-* cleanup через canonical V2
+```
+
+DoD Phase F для `admin_get_payments_stats_v1` (закрепляется здесь, чтобы
+не терялось до Phase F):
+
+```
+- фильтр providers ∈ {all, bepaid, stripe, rr, bank}
+- обязательный WHERE COALESCE(is_deleted, false) = false
+- корректная агрегация refunded_amount и currency
+- отдельный agent-friendly counter (all / by provider / by status)
+- ACL: доступно только authenticated с ролью admin через has_role
+```
+
+### C22.z Разрешения после C18..C22
+
+```
+A1R:      READ-ONLY ANALYSIS — ACCEPTED (execute map заменён на C18)
+B1:       VERIFIED — PASS
+B2:       AUTHORIZED — SCHEMA ONLY (см. C19); данные не мигрируются
+C1:       READ-ONLY INVENTORY — DONE (см. C20)
+C2:       CONTRACT DEFINED (см. C20.2); execute — следующий checkpoint
+A1R2:     AUTHORIZED — READ-ONLY ONLY (см. C21); отчёт — следующий checkpoint
+
+A2a / A2b / A3 / A4:  BLOCKED
+D / E:                BLOCKED UNTIL C2 + E2 CONTRACT
+B0 / B0V:             BLOCKED UNTIL D1/E1..E6 EXIST
+RR cleanup (Phase I): BLOCKED
+```
+
+Следующий инженерный чекпоинт по этому патчу должен содержать:
+
+1. B2 миграцию (только schema из C19) — отдельным supabase migration call.
+2. C2 миграцию `recalc_order_totals` + триггер (только после B2 approve).
+3. A1R2 read-only отчёт по 52 relink с классификацией C21.3 + dry-run C21.4.
+
+Никакие DML/DDL/edge/UI изменения в текущем ответе не производятся.
+
