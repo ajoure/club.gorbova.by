@@ -607,9 +607,7 @@ Deno.serve(async (req) => {
       // PATCH 12.2: do NOT skip — write audit and fall through to extend-flow.
       await supabase.from("audit_logs").insert({
         action: "grant-access-for-order.skip_blocked_stale_access",
-        actor_type: "system",
-        actor_user_id: null,
-        actor_label: "grant-access-for-order",
+        ...auditActor,
         target_user_id: userId,
         meta: {
           order_id: orderId,
@@ -669,9 +667,7 @@ Deno.serve(async (req) => {
 
       await supabase.from("audit_logs").insert({
         action: "grant-access-for-order.skip_already_fulfilled",
-        actor_type: "system",
-        actor_user_id: null,
-        actor_label: "grant-access-for-order",
+        ...auditActor,
         target_user_id: userId,
         meta: {
           order_id: orderId,
@@ -766,9 +762,7 @@ Deno.serve(async (req) => {
         // STOP. No new subv2. Audit + early return (HTTP 200, skipped).
         await supabase.from('audit_logs').insert({
           action: 'grant-access-for-order.manual_review_provider_linkage_conflict',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-order',
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -830,9 +824,7 @@ Deno.serve(async (req) => {
 
         await supabase.from('audit_logs').insert({
           action: 'grant-access-for-order.provider_linked_extend',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-order',
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -934,9 +926,7 @@ Deno.serve(async (req) => {
 
           await supabase.from("audit_logs").insert({
             action: `grant-access-for-order.${skipReason}`,
-            actor_type: "system",
-            actor_user_id: null,
-            actor_label: "grant-access-for-order",
+            ...auditActor,
             target_user_id: userId,
             meta: {
               order_id: orderId,
@@ -1179,8 +1169,7 @@ Deno.serve(async (req) => {
       // Audit the collision clearing
       await supabase.from("audit_logs").insert({
         action: "entitlement.order_id_collision_cleared",
-        actor_type: "system",
-        actor_label: "grant-access-for-order",
+        ...auditActor,
         target_user_id: userId,
         meta: {
           order_id: orderId,
@@ -1252,8 +1241,7 @@ Deno.serve(async (req) => {
       if (tariffId && (prevMeta as Record<string, unknown>)?.tariff_id !== tariffId) {
         await supabase.from("audit_logs").insert({
           action: "entitlement.tariff_id_persisted",
-          actor_type: "system",
-          actor_label: "grant-access-for-order",
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -1270,8 +1258,7 @@ Deno.serve(async (req) => {
       if (legacyBackfillNeeded) {
         await supabase.from("audit_logs").insert({
           action: "entitlement.legacy_product_id_backfilled",
-          actor_type: "system",
-          actor_label: "grant-access-for-order",
+          ...auditActor,
           target_user_id: userId,
           meta: {
             entitlement_id: existingEntitlement.id,
@@ -1398,8 +1385,7 @@ Deno.serve(async (req) => {
 
           await supabase.from("audit_logs").insert({
             action: "grant_access.idempotent_replay",
-            actor_type: "system",
-            actor_label: "grant-access-for-order",
+            ...auditActor,
             target_user_id: userId,
             meta: {
               entitlement_id: dupRow.id,
@@ -1420,8 +1406,7 @@ Deno.serve(async (req) => {
           if (tariffId && (dupPrevMeta as Record<string, unknown>)?.tariff_id !== tariffId) {
             await supabase.from("audit_logs").insert({
               action: "entitlement.tariff_id_persisted",
-              actor_type: "system",
-              actor_label: "grant-access-for-order",
+              ...auditActor,
               target_user_id: userId,
               meta: {
                 order_id: orderId,
@@ -1452,8 +1437,7 @@ Deno.serve(async (req) => {
         if (tariffId && newEntitlement?.id) {
           await supabase.from("audit_logs").insert({
             action: "entitlement.tariff_id_persisted",
-            actor_type: "system",
-            actor_label: "grant-access-for-order",
+            ...auditActor,
             target_user_id: userId,
             meta: {
               order_id: orderId,
@@ -1536,9 +1520,7 @@ Deno.serve(async (req) => {
       try {
         const { error: ncAuditError } = await supabase.from('audit_logs').insert({
           action: 'grant.skip_subscription_no_card_trial',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-order',
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -1561,9 +1543,7 @@ Deno.serve(async (req) => {
 
       await supabase.from('audit_logs').insert({
         action: 'grant-access-for-order.subscription_skipped',
-        actor_type: 'system',
-        actor_user_id: null,
-        actor_label: 'grant-access-for-order',
+        ...auditActor,
         target_user_id: userId,
         meta: {
           order_id: orderId,
@@ -1597,9 +1577,7 @@ Deno.serve(async (req) => {
         // best-effort audit (race-safe atomic append вынесен в backlog PATCH H2b).
         await supabase.from("audit_logs").insert({
           action: "grant-access-for-order.extend.duplicate_ignored",
-          actor_type: "system",
-          actor_user_id: null,
-          actor_label: "grant-access-for-order",
+          ...auditActor,
           target_user_id: userId,
           meta: {
             subscription_id: existingProductSub.id,
@@ -1649,9 +1627,7 @@ Deno.serve(async (req) => {
           if (resolved.decision === 'resolved_from_tariff') {
             await supabase.from('audit_logs').insert({
               action: 'subscription.recurring_snapshot_resolved_from_tariff',
-              actor_type: 'system',
-              actor_user_id: null,
-              actor_label: 'grant-access-for-order',
+              ...auditActor,
               target_user_id: userId,
               meta: {
                 subscription_id: existingProductSub.id,
@@ -1665,9 +1641,7 @@ Deno.serve(async (req) => {
           // Real data defect: recurring offer exists but snapshot is incomplete
           await supabase.from('audit_logs').insert({
             action: 'subscription.recurring_snapshot_fallback_used',
-            actor_type: 'system',
-            actor_user_id: null,
-            actor_label: 'grant-access-for-order',
+            ...auditActor,
             target_user_id: userId,
             meta: {
               subscription_id: existingProductSub.id,
@@ -1758,9 +1732,7 @@ Deno.serve(async (req) => {
         if (resolved.decision === 'resolved_from_tariff') {
           await supabase.from('audit_logs').insert({
             action: 'subscription.recurring_snapshot_resolved_from_tariff',
-            actor_type: 'system',
-            actor_user_id: null,
-            actor_label: 'grant-access-for-order',
+            ...auditActor,
             target_user_id: userId,
             meta: {
               order_id: orderId,
@@ -1774,9 +1746,7 @@ Deno.serve(async (req) => {
         console.warn(`[grant-access-for-order] recurring offer present but snapshot incomplete for order ${orderId}`);
         await supabase.from('audit_logs').insert({
           action: 'subscription.recurring_snapshot_fallback_used',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-order',
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -1800,9 +1770,7 @@ Deno.serve(async (req) => {
 
         await supabase.from('audit_logs').insert({
           action: 'subscription.stale_date_overridden',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-order',
+          ...auditActor,
           target_user_id: userId,
           meta: {
             order_id: orderId,
@@ -1840,9 +1808,7 @@ Deno.serve(async (req) => {
 
           await supabase.from('audit_logs').insert({
             action: 'grant-access-for-order.insert_blocked_active_overlap',
-            actor_type: 'system',
-            actor_user_id: null,
-            actor_label: 'grant-access-for-order',
+            ...auditActor,
             target_user_id: userId,
             meta: {
               order_id: orderId,
@@ -2232,8 +2198,7 @@ Deno.serve(async (req) => {
         if (failedCount > 0) {
           console.error(`[grant-access] product_access helper reported ${failedCount} failures for order ${orderId}`);
           await supabase.from('audit_logs').insert({
-            actor_type: 'system',
-            actor_label: 'grant-access-for-order',
+            ...auditActor,
             action: 'grant_access.product_access_helper_failures',
             target_user_id: userId,
             meta: {
