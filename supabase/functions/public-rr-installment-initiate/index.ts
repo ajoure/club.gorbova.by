@@ -322,6 +322,14 @@ Deno.serve(async (req: Request) => {
 
   const correlationId = crypto.randomUUID();
 
+  // Sprint C2 / Этап C: разделение владельца аккаунта и заявителя.
+  // - Владелец покупки и получатель доступа = auth user (user_id / profile).
+  // - Заявитель РР — данные из формы; могут отличаться (супруг/родственник).
+  // - Профиль владельца НЕ перезаписывается: applicant хранится только в meta.rr.applicant.
+  // `contact` оставлен для обратной совместимости с уже задеплоенным кодом чтения.
+  const applicantEmailNorm = email;
+  const applicantPhoneNorm = phoneNorm;
+
   const initialMeta = {
     flow: "rr_installment",
     grant_access_skip: true,
@@ -334,6 +342,18 @@ Deno.serve(async (req: Request) => {
       upstream_call_state: "not_started",
       correlation_id: correlationId,
       contact: { name: nameRaw, phone: phoneRaw, email, phone_norm: phoneNorm },
+      applicant: {
+        name: nameRaw,
+        email,
+        phone: phoneRaw,
+        email_norm: applicantEmailNorm,
+        phone_norm: applicantPhoneNorm,
+        account_user_id: userId,
+        // is_third_party проставит backend-flow post-create, сравнив с профилем владельца.
+        is_third_party: null,
+        source: "public-rr-installment-initiate",
+        captured_at: new Date().toISOString(),
+      },
       comment,
     },
   };
