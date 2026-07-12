@@ -226,7 +226,43 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const _body = await req.json();
+    const _body = await req.json().catch(() => ({}));
+
+    // ── PATCH-GRANT-ACCESS-AUTHZ-V1 / SEC-A ─────────────────────────────
+    // Caller authorization. MUST run before any orderId parsing, order
+    // lookup, audit write, three_ds_writer delegation, or service-role
+    // DML. Anonymous/invalid → 401. Ordinary user → 403. Branch policy:
+    //   standard / adminManualAccessEdit / legacy_body_alias: service_role OR admin
+    //   3ds_finalize / subscription_renewal:                   service_role only
+    const authResult = await resolveGrantAccessCaller(req, supabase);
+    if (!authResult.ok) {
+      return new Response(
+        JSON.stringify(authResult.body),
+        { status: authResult.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const caller = authResult.caller;
+    const branch = detectBranch(_body);
+    const policy = enforceBranchPolicy(branch, caller);
+    if (policy) {
+      return new Response(
+        JSON.stringify(policy.body),
+        { status: policy.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    // Audit actor derived from resolved caller. Body-provided source/context
+    // are recorded separately as `claimed_*` — never treated as identity.
+    const auditActor = {
+      actor_type: caller.actorType,
+      actor_user_id: caller.actorUserId,
+      actor_label: caller.actorLabel,
+    };
+    const claimedMeta = {
+      claimed_source: _body?.source ?? null,
+      claimed_context: _body?.context ?? null,
+      caller_type: caller.type,
+    };
+
     // PATCH A: accept legacy { order_id } alongside canonical { orderId }
     const orderId: string | undefined = _body.orderId ?? _body.order_id;
     const {
