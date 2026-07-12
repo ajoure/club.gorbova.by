@@ -3076,3 +3076,198 @@ CODE CHANGES:
   STILL BLOCKED
 ```
 
+
+---
+
+## C24. APPEND-ONLY — B2 EXECUTE report + A1R2 baseline recheck + C24 corrections (2026-07-12)
+
+Append-only. C18–C23 не переписываются. При конфликте с прошлыми пунктами приоритет — C24.
+
+### C24.1. B2 EXECUTE report
+
+Migration applied as single transaction. Никакие существующие строки `payments_v2` не менялись.
+
+**Applied schema:**
+- `payments_v2` +5 columns: `is_deleted boolean NOT NULL DEFAULT false`, `deleted_at timestamptz NULL`, `deleted_by uuid NULL REFERENCES auth.users(id) ON DELETE SET NULL`, `deleted_reason text NULL`, `deletion_context jsonb NULL`.
+- `payments_legacy_archive` created (immutable archive shell): PK `id uuid`, `original_payment_id`, `original_row jsonb`, `legacy_category`, `classification`, `archive_reason`, `archived_by` (FK auth.users ON DELETE SET NULL), `archived_at`, `archive_batch_id`, `provider_at_archive`, `origin_at_archive`, `order_id_at_archive`, `amount_at_archive`, `currency_at_archive`, `notes`. Indexes on `original_payment_id`, `legacy_category`, `archive_batch_id`.
+- RLS: `ENABLE` + `FORCE`, 0 policies (anon/authenticated locked out at policy layer).
+
+**Grants (target roles):**
+```text
+anon           → 0 explicit privileges
+authenticated  → 0 explicit privileges
+service_role   → GRANT SELECT, INSERT (explicit)
+```
+
+**has_table_privilege() results:**
+```text
+anon.SELECT/INSERT/UPDATE/DELETE           = false / false / false / false
+authenticated.SELECT/INSERT/UPDATE/DELETE  = false / false / false / false
+service_role.SELECT/INSERT                 = true / true
+service_role.UPDATE/DELETE                 = true / true   ← via Supabase role inheritance
+```
+
+**⚠ Disclosure — service_role UPDATE/DELETE:** Supabase's `service_role` inherits table privileges from the platform's `postgres` role, so `GRANT`/`REVOKE` alone cannot strip `UPDATE`/`DELETE`. Explicit `GRANT SELECT, INSERT` and omitting `UPDATE`/`DELETE` документируют намерение, но не гарантируют immutability на уровне привилегий. Для строгой immutability архива требуется отдельный BEFORE UPDATE/DELETE trigger (не входит в B2; будет в A2). Пока — immutability обеспечивается на уровне server-side пути записи (только `admin-payment-archive` edge function имеет право писать).
+
+**Post-checks:**
+```text
+payments_v2.is_deleted anomalies (!= false)     = 0
+payments_v2.deleted_at IS NOT NULL              = 0
+payments_v2.deleted_by IS NOT NULL              = 0
+payments_v2.deleted_reason IS NOT NULL          = 0
+payments_v2.deletion_context IS NOT NULL        = 0
+payments_legacy_archive count                   = 0
+pg_class.relrowsecurity                         = true
+pg_class.relforcerowsecurity                    = true
+pg_policies for payments_legacy_archive         = 0
+legacy DML on 327 admin/admin_test rows         = 0
+```
+
+**Linter (post-migration):** три INFO-предупреждения `0008_rls_enabled_no_policy` для write-only архива — intentional. Остальные 210 предупреждений — предсуществующие, не связаны с B2.
+
+**Статус B2:** ✅ EXECUTED. Schema only. No data change.
+
+### C24.2. A1R2 baseline recheck (обязательное уточнение)
+
+Свежие read-only запросы против БД:
+
+```text
+provider='admin'      AND origin='bepaid'   = 319
+provider='admin_test' AND origin='bepaid'   =   8
+                                       total = 327   ✓ соответствует C23.1
+
+Внутри 319 admin:
+  amount = 0                              = 202
+  amount > 0                              = 117   (admin_from_payment)
+  Σ amount по amount>0                    = 24 518
+
+Внутри 117 admin_from_payment (amount>0):
+  order_id IS NULL                        =  11   ← ранее декларировалось 10
+  order_id IS NOT NULL                    = 106
+  meta.from_payment_id / source_payment_id=   0
+  import_ref IS NOT NULL                  =   0
+```
+
+**Критичные расхождения с прежними C18–C23 категоризациями:**
+1. `legacy_null_order` = **11**, не 10. Итоговая карта 117 должна быть пересчитана.
+2. `meta.from_payment_id` / `meta.source_payment_id` / `import_ref` — **отсутствуют полностью** во всех 117 строках. Значит, категории «duplicate_recovered=1», «duplicate_of_safe_backfill=1», «safe_backfill=4», «canonical_order_relink_candidate=52», использованные в C18/C21/C23.1, **не подтверждены материализованными сигналами** в `payments_v2.meta`.
+
+**Вывод для A1R2:** прежние подсчёты (4/24/14/1/1/10/52/1/2/8) представляли собой narrative-классификацию, не воспроизводимую SQL против текущей схемы. A1R2 обязан быть переделан с явными SQL-критериями, использующими внешние сигналы: joins на `bepaid_statement_rows`, `payment_reconcile_queue`, `orders_v2`, `profiles` — не только `payments_v2.meta`.
+
+**Черновой honest recheck plan A1R2 v2** (read-only, будет отдельным отчётом):
+
+```text
+Для каждой из 117 admin_from_payment строк:
+  s1 = EXISTS bepaid_statement_rows WHERE reference/tracking совпал с amount+profile+date±3d
+  s2 = EXISTS payment_reconcile_queue WHERE matched_order_id совпал ИЛИ отличается от order_id
+  s3 = EXISTS payments_v2 (provider='bepaid') с тем же profile_id/amount/currency в окне ±3d
+  s4 = orders_v2.user_id / profile match
+  s5 = product/tariff match
+
+  strong_evidence  := s1 OR (s3 AND provider_payment_id совпал)
+  second_evidence  := (s2 AND matcher != legacy) OR s4 OR s5
+
+  Category:
+    relink_confirmed         — strong + second, оба независимы, matched_order != current order_id
+    canonical_link_confirmed — доказательства подтверждают current order_id
+    ambiguous_no_change      — strong отсутствует OR second отсутствует
+```
+
+Итог: `117 = 11 (null_order) + relink_confirmed + canonical_link_confirmed + ambiguous_no_change`. Прежнее число «52 relink candidates» подлежит пересчёту.
+
+**Статус A1R2:** ❌ Прежние категоризации **отозваны**. Требуется отдельный отчёт A1R2 v2 с реальным SQL. Ни одного `UPDATE`/`revoke`/`grant` до этого не выполнять.
+
+### C24.3. C24 corrections на C23
+
+**(a) Privilege check формулировка** — принято уточнение пользователя:
+```sql
+SELECT grantee, privilege_type
+FROM information_schema.role_table_grants
+WHERE table_schema='public'
+  AND table_name='payments_legacy_archive'
+  AND grantee IN ('anon','authenticated','service_role')
+ORDER BY grantee, privilege_type;
+```
+Проверять целевые роли явно. Формулировка «write-only through service_role» заменяется на **«доступ только через service_role (SELECT + INSERT explicit; UPDATE/DELETE через role inheritance — см. C24.1 disclosure)»**.
+
+**(b) C2: zero / NULL target_amount.** Дополнить status algorithm:
+```text
+target_amount IS NULL
+  → НЕ менять status
+  → вернуть/логировать target_amount_missing
+
+target_amount = 0
+  → status по платежам НЕ определять
+  → сохранить существующий GIFT/admin-grant/non-financial статус
+  → если net_paid > 0 при target_amount=0 → флаг unexpected_payment_on_free_order, order не менять
+```
+
+**(c) C2: net_paid < 0.** Отдельная ветка **перед** paid/partial/refunded веток:
+```text
+if net_paid < 0
+  → refund_data_conflict
+  → order НЕ менять
+  → залогировать conflict payload
+```
+
+**(d) C2: refund representation matrix** — обязательные подкатегории для (3) из C23.3:
+```text
+match_parent_refunded_amount     — parent.refunded_amount == Σ|refund_rows.amount|
+mismatch_parent_greater          — parent.refunded_amount > Σ|refund_rows.amount|
+mismatch_refund_rows_greater     — Σ|refund_rows.amount| > parent.refunded_amount
+refund_row_orphan                — refund-row без резолвимого parent
+parent_only                      — refunded_amount>0, refund-row отсутствует
+refund_row_only                  — refund-row есть, refunded_amount=0/NULL
+
+Правило: при обнаружении mismatch_* или refund_row_orphan
+  → currency_mismatch или refund_data_conflict
+  → order НЕ менять
+  → НЕ выбирать один источник автоматически
+```
+
+**Статус C2:** остаётся NOT AUTHORIZED. Revised dry-run обязан включить (a)+(b)+(c)+(d) поверх C23.3.
+
+### C24.4. Следующий checkpoint — три независимых отчёта
+
+1. **A1R2 v2 — READ-ONLY** (обязателен как замена отозванных подсчётов):
+   - реальные SQL-критерии s1..s5;
+   - `117 = null_order + relink_confirmed + canonical_link_confirmed + ambiguous_no_change`;
+   - per-row IDs для relink_confirmed с old_order/new_order/evidence;
+   - 0 UPDATE.
+
+2. **C2 REVISED DRY-RUN** (миграцию не применять):
+   - SoT `target_amount` по фактической схеме `orders_v2`;
+   - refund representation matrix (C24.3.d) — counts из реальной БД;
+   - алгоритм с ветками NULL / 0 / negative / currency_mismatch / refund_data_conflict;
+   - SQL функции без глобального trigger, `SECURITY DEFINER`, `SET search_path`, REVOKE anon/authenticated/PUBLIC;
+   - baseline simulation переходов status.
+
+3. **A2 execute plan** — только после A1R2 v2 и C2 approved. Здесь же — trigger для immutability архива (BEFORE UPDATE/DELETE), закрывающий C24.1 disclosure.
+
+### C24.5. Итоговый статус
+
+```text
+PATCH-PAYMENTS-MANAGEMENT-V2:
+
+B2:
+  ✅ EXECUTED (schema only)
+  disclosure: service_role UPDATE/DELETE via inheritance — immutability trigger deferred to A2
+
+A1R2:
+  ❌ prior categorizations WITHDRAWN (not SQL-reproducible)
+  A1R2 v2 REQUIRED — read-only, with materialized signals
+
+C2:
+  NOT AUTHORIZED
+  revised dry-run must include C24.3 (a)+(b)+(c)+(d)
+
+A2 / A3 / A4:
+  BLOCKED
+
+D / E:
+  BLOCKED
+
+CODE CHANGES:
+  STILL BLOCKED
+```
+
