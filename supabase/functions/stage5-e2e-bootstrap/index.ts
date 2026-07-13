@@ -19,7 +19,7 @@ const corsHeaders = {
 };
 
 const FIXTURE_USER_ID = "dcfb8ea4-bf4a-47a6-a2fb-c3f285031869";
-const FIXTURE_EMAIL = "stage4-playwright-admin@fixture.local";
+const FIXTURE_EMAIL = "stage5-playwright-admin@fixture.local";
 const ADMIN_ROLE_ID = "16c9cefc-60a3-4edd-a421-46d556e80257"; // roles.code='admin'
 
 const json = (status: number, body: unknown) =>
