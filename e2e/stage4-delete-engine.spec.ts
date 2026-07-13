@@ -31,8 +31,11 @@ const SUPABASE_URL =
 const SUPABASE_ANON_KEY =
   process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhkamdramNlb3dubW1ucnFxdHV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY2NTczNjMsImV4cCI6MjA4MjIzMzM2M30.bg4ALwTFZ57YYDLgB4IwLqIDrt0XcQGIlDEGllNBX0E";
-const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || "admin@test.local";
-const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || "TestAdmin123!";
+// The password is NEVER available to the test process. We obtain a fixture-user
+// JWT by calling the server-side login broker (admin-e2e-login edge function),
+// which reads E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD from its own env and returns
+// a session for the single hard-coded fixture email.
+const LOGIN_BROKER_URL = `${SUPABASE_URL}/functions/v1/admin-e2e-login`;
 
 const FIXTURES = {
   S1: "11111111-1111-4111-8111-000000000001",
@@ -70,17 +73,14 @@ async function loginAsAdmin(request: APIRequestContext): Promise<{
   refreshToken: string;
   user: any;
 }> {
-  const res = await request.post(
-    `${SUPABASE_URL}/auth/v1/token?grant_type=password`,
-    {
-      headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
-      data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
-    }
-  );
+  const res = await request.post(LOGIN_BROKER_URL, {
+    headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    data: {},
+  });
   const body = await res.json();
-  if (!res.ok() || !body.access_token) {
+  if (!res.ok() || !body.ok || !body.access_token) {
     throw new Error(
-      `Admin login failed: ${body.error_description || body.msg || res.status()}`
+      `Admin login broker failed [${res.status()}]: ${JSON.stringify(body)}`
     );
   }
   return {
