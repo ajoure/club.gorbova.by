@@ -222,6 +222,7 @@ export function CreateDealFromPaymentDialog({
     }
 
     // PATCH 13.5: Проверка статуса платежа — нельзя создавать сделки из failed платежей
+    // (сервер тоже проверяет, но клиентская проверка даёт быстрый UX-ответ)
     const failedStatuses = ['failed', 'declined', 'error', 'cancelled', 'expired', 'incomplete'];
     const paymentStatus = await getPaymentStatus();
     if (paymentStatus && failedStatuses.includes(paymentStatus.toLowerCase())) {
@@ -231,14 +232,11 @@ export function CreateDealFromPaymentDialog({
 
     const isGhostContact = !selectedContact.user_id;
     const isExpired = dateRange.to < new Date();
-    
-    // Ghost contacts cannot have access granted
+
     if (isGhostContact && grantAccess) {
       toast.error("Ghost-контактам нельзя выдать доступ. Снимите галочку 'Выдать доступ'");
       return;
     }
-
-    // Expired deals cannot have access granted
     if (isExpired && grantAccess) {
       toast.error("Срок доступа истёк. Нельзя выдать доступ по истёкшей сделке");
       return;
@@ -246,188 +244,52 @@ export function CreateDealFromPaymentDialog({
 
     setSaving(true);
     try {
-      const currentUser = (await supabase.auth.getUser()).data.user;
       const accessStart = dateRange.from;
       const accessEnd = dateRange.to;
-      const days = differenceInDays(accessEnd, accessStart) + 1;
-      const now = new Date();
-
-      // Get tariff and product data
-      const [{ data: tariff }, { data: product }] = await Promise.all([
-        supabase.from("tariffs").select("getcourse_offer_code, getcourse_offer_id, code, name").eq("id", tariffId).single(),
-        supabase.from("products_v2").select("telegram_club_id, code, name").eq("id", productId).single(),
-      ]);
-
-      // 1. Create order
-      const orderUserId = isGhostContact ? selectedContact.id : selectedContact.user_id;
-      const orderNumber = `PAY-${now.getFullYear().toString().slice(-2)}-${Date.now().toString(36).toUpperCase()}`;
-      
-      const { data: newOrder, error: orderError } = await supabase.from("orders_v2").insert({
-        order_number: orderNumber,
-        user_id: orderUserId,
-        profile_id: selectedContact.id,
-        product_id: productId,
-        tariff_id: tariffId,
-        customer_email: selectedContact.email,
-        base_price: finalAmount,
-        final_price: finalAmount,
-        paid_amount: finalAmount,
-        currency: finalCurrency,
-        status: "paid",
-        is_trial: false,
-        created_at: accessStart.toISOString(),
-        deal_date: accessStart.toISOString(),
-        meta: { 
-          source: "admin_from_payment", 
-          created_by: currentUser?.id,
-          payment_id: paymentId,
-          payment_source: rawSource,
-          is_ghost: isGhostContact,
-          deal_only: !grantAccess,
-        },
-      }).select().single();
-
-      if (orderError) throw orderError;
-
-      // 2. Link payment to the new order
-      if (rawSource === 'queue') {
-        await supabase.from("payment_reconcile_queue").update({
-          matched_order_id: newOrder.id,
-          matched_profile_id: selectedContact.id,
-        }).eq("id", paymentId);
-      } else {
-        await supabase.from("payments_v2").update({
-          order_id: newOrder.id,
-          profile_id: selectedContact.id,
-          user_id: orderUserId,
-        }).eq("id", paymentId);
-      }
-
-      // 3. Create payment record if needed (for queue payments)
-      if (rawSource === 'queue') {
-        await supabase.from("payments_v2").insert({
-          order_id: newOrder.id,
-          user_id: orderUserId,
-          amount: finalAmount,
-          currency: finalCurrency,
-          status: "succeeded",
-          provider: "admin",
-          paid_at: accessStart.toISOString(),
-          created_at: accessStart.toISOString(),
-          meta: { source: "admin_from_payment", queue_payment_id: paymentId },
-        });
-      }
-
-      // 4. Grant access via canonical fulfillment (grant-access-for-order)
-      // PATCH A/B/C: canonical orderId; Telegram выдаётся canonical path (через access_rules),
-      // никаких прямых telegram-grant-access в UI.
-      let subscriptionId: string | null = null;
-      let grantSuccess = false;
-      let grantErrorCode: string | null = null;
-      if (grantAccess && !isGhostContact && selectedContact.user_id) {
-        try {
-          const { data: grantResult, error: grantError } = await supabase.functions.invoke(
-            "grant-access-for-order",
-            {
-              body: {
-                orderId: newOrder.id,
-                source: "admin_from_payment",
-              },
-            }
-          );
-
-          if (grantError || grantResult?.error) {
-            grantErrorCode = (grantResult?.error as string) || (grantError as any)?.message || "unknown";
-            console.error("grant-access-for-order error:", grantError, grantResult);
-            toast.warning(
-              normalizeEdgeFunctionError(
-                grantError ?? grantResult,
-                "Сделка создана, но автоматическая выдача доступа не сработала. Используйте кнопку 'Выдать доступ' на сделке."
-              )
-            );
-          } else {
-            subscriptionId = grantResult?.subscription_id || null;
-            grantSuccess = true;
-          }
-        } catch (grantErr) {
-          grantErrorCode = (grantErr as any)?.message || "exception";
-          console.error("grant-access-for-order call failed:", grantErr);
-          toast.warning("Сделка создана, но выдача доступа требует ручного действия.");
-        }
-
-        // Telegram access идёт canonical path через grant-access-for-order → access_rules
-        // → telegram-grant-access. Прямой вызов из UI запрещён (mem://architecture/telegram/canonical-grant-write-path).
-
-        // GetCourse sync
-        const gcOfferId = tariff?.getcourse_offer_id || tariff?.getcourse_offer_code;
-        if (gcOfferId) {
-          await supabase.functions.invoke("test-getcourse-sync", {
-            body: {
-              orderId: newOrder.id,
-              email: selectedContact.email,
-              offerId: (() => {
-                if (typeof gcOfferId === 'number') return gcOfferId;
-                if (typeof gcOfferId === 'string') {
-                  const parsed = parseInt(gcOfferId, 10);
-                  return isNaN(parsed) ? gcOfferId : parsed;
-                }
-                return null;
-              })(),
-              tariffCode: tariff?.code || "admin_from_payment",
-            },
-          });
-        }
-      }
-
-      // 5. Audit log
       const dateStr = `${format(accessStart, "dd.MM.yy")} — ${format(accessEnd, "dd.MM.yy")}`;
-      await supabase.from("audit_logs").insert({
-        actor_user_id: currentUser?.id,
-        action: grantAccess ? "admin.create_deal_with_access_from_payment" : "admin.create_deal_from_payment",
-        target_user_id: isGhostContact ? null : selectedContact.user_id,
-        meta: { 
-          order_id: newOrder.id,
-          order_number: orderNumber,
-          payment_id: paymentId,
-          payment_source: rawSource,
-          product_name: product?.name,
-          tariff_name: tariff?.name,
-          amount: finalAmount,
-          currency: finalCurrency,
-          access_start: accessStart.toISOString(),
-          access_end: accessEnd.toISOString(),
-          is_ghost: isGhostContact,
-          subscription_id: subscriptionId,
-          grant_success: grantSuccess,
-          grant_error_code: grantErrorCode,
+      const orderUserId = isGhostContact ? selectedContact.id : selectedContact.user_id!;
+
+      // Reservation-first idempotency: клиентский ключ, стабильный для одного клика.
+      // При повторном submit того же клика сервер вернёт существующий заказ.
+      const idempotencyKey = `admin-create-deal:${paymentId}:${rawSource}:${accessStart.toISOString()}:${accessEnd.toISOString()}:${finalAmount}:${finalCurrency}`;
+
+      const { data, error } = await supabase.functions.invoke("admin-create-deal-from-payment", {
+        body: {
+          paymentId,
+          rawSource,
+          profileId: selectedContact.id,
+          contactUserId: orderUserId,
+          productId,
+          tariffId,
+          finalAmount,
+          finalCurrency,
+          accessStart: accessStart.toISOString(),
+          accessEnd: accessEnd.toISOString(),
+          customerEmail: selectedContact.email,
+          dealOnly: !grantAccess,
+          isGhost: isGhostContact,
+          grantAccess,
+          idempotencyKey,
         },
       });
 
-      // 6. Notify admins about new deal
-      try {
-        const contactName = selectedContact.full_name || selectedContact.email || 'Неизвестно';
-        const notifyMessage = 
-          `📝 <b>Новая сделка из платежа</b>\n\n` +
-          `👤 ${contactName}\n` +
-          `📧 ${selectedContact.email || 'N/A'}\n` +
-          `📦 ${product?.name || 'Продукт'}\n` +
-          `🏷️ ${tariff?.name || 'Тариф'}\n` +
-          `💵 ${finalAmount} ${finalCurrency}\n` +
-          `📅 ${dateStr}\n` +
-          `🆔 ${orderNumber}\n` +
-          (grantAccess ? '✅ Доступ выдан' : '📋 Только сделка') +
-          `\n👨‍💼 Создал: ${currentUser?.email || 'Неизвестно'}`;
-
-        await supabase.functions.invoke('telegram-notify-admins', {
-          body: { message: notifyMessage, parse_mode: 'HTML' },
-        });
-      } catch (notifyErr) {
-        console.error('Failed to notify admins:', notifyErr);
+      if (error || !data?.ok) {
+        const msg = normalizeEdgeFunctionError(error ?? data, "Не удалось создать сделку");
+        toast.error(msg);
+        return;
       }
 
-      toast.success(grantAccess 
-        ? `Сделка создана и доступ выдан (${dateStr})` 
-        : `Сделка создана (${dateStr})`);
+      if (data.idempotent_replay) {
+        toast.info(`Сделка уже была создана (${dateStr})`);
+      } else if (grantAccess && !data.grant_success) {
+        toast.warning(
+          `Сделка создана, но выдача доступа не сработала (${data.grant_error_code ?? "unknown"}). Используйте кнопку 'Выдать доступ' на сделке.`,
+        );
+      } else {
+        toast.success(grantAccess
+          ? `Сделка создана и доступ выдан (${dateStr})`
+          : `Сделка создана (${dateStr})`);
+      }
       onSuccess();
     } catch (e: any) {
       console.error("Create deal error:", e);
