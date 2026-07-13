@@ -1,5 +1,9 @@
 project_id = "hdjgkjceownmmnrqqtuz"
 
+[functions.stage5-e2e-bootstrap]
+verify_jwt = false
+
+
 [functions.invoice-checkout-issue]
 verify_jwt = true
 
