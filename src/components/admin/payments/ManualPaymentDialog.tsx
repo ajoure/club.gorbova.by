@@ -1,15 +1,16 @@
 /**
- * ManualPaymentDialog — Stage 3
+ * ManualPaymentDialog — Stage 3R
  *
- * Позволяет админу вручную зафиксировать успешный платёж (банковский перевод,
- * приход по RR-квитанции, оффлайн-приход). Создаёт каноническую строку в
- * `payment_reconcile_queue` через edge `admin-create-manual-payment`.
+ * Позволяет админу вручную зафиксировать успешный платёж напрямую в payments_v2
+ * (origin='manual_admin') через edge `admin-create-manual-payment` → RPC
+ * `admin_create_manual_payment_v1`. Никаких записей в payment_reconcile_queue.
  *
- * После успешного создания сразу открывает `CreateDealFromPaymentDialog`,
- * чтобы админ мог привязать платёж к сделке в той же сессии (использует
- * атомарный RPC admin_create_deal_from_payment).
+ * После успешного создания сразу открывает `CreateDealFromPaymentDialog`
+ * (rawSource='payments_v2') на созданном payment_id для привязки к сделке.
+ * Snapshot созданного платежа неизменяем: сумма/валюта/дата передаются в
+ * follow-up диалог именно те, что были на момент создания.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -45,12 +46,24 @@ const PROVIDERS: Array<{ value: Provider; label: string }> = [
   { value: "stripe", label: "Stripe (ручная фиксация)" },
 ];
 
-const CURRENCIES = ["BYN", "RUB", "USD", "EUR"];
+const CURRENCIES = ["BYN", "RUB", "USD", "EUR", "KZT", "UAH", "PLN"];
 
 interface ManualPaymentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+}
+
+interface CreatedPaymentSnapshot {
+  paymentId: string;
+  provider: Provider;
+  amount: number;
+  currency: string;
+  paidAtIso: string;
+}
+
+function newIdempotencyKey() {
+  return `manual-payment:v2:${crypto.randomUUID()}`;
 }
 
 export function ManualPaymentDialog({
@@ -67,19 +80,31 @@ export function ManualPaymentDialog({
     const d = new Date();
     return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   });
+  const [bankName, setBankName] = useState<string>("");
+  const [bankDocumentNo, setBankDocumentNo] = useState<string>("");
   const [externalId, setExternalId] = useState<string>("");
+  const [purpose, setPurpose] = useState<string>("");
   const [customerEmail, setCustomerEmail] = useState<string>("");
   const [note, setNote] = useState<string>("");
 
-  // После создания queue row — открываем дилог создания сделки.
-  const [createdQueueRowId, setCreatedQueueRowId] = useState<string | null>(null);
+  // Idempotency key рождается вместе с открытием формы; НЕ выводится из бизнес-полей.
+  const idempotencyKeyRef = useRef<string>(newIdempotencyKey());
+
+  useEffect(() => {
+    if (open) {
+      idempotencyKeyRef.current = newIdempotencyKey();
+    }
+  }, [open]);
+
+  // Immutable snapshot созданного платежа для follow-up диалога.
+  const [snapshot, setSnapshot] = useState<CreatedPaymentSnapshot | null>(null);
   const [followUpOpen, setFollowUpOpen] = useState(false);
 
   const numericAmount = useMemo(() => Number(amount), [amount]);
   const amountInvalid =
     amount.trim() === "" || !Number.isFinite(numericAmount) || numericAmount <= 0;
 
-  const buildPaidAtDate = (): Date | null => {
+  const buildPaidAt = (): Date | null => {
     if (!paidAtDate) return null;
     const d = new Date(paidAtDate);
     if (paidAtTime) {
@@ -100,9 +125,13 @@ export function ManualPaymentDialog({
     setPaidAtTime(
       `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
     );
+    setBankName("");
+    setBankDocumentNo("");
     setExternalId("");
+    setPurpose("");
     setCustomerEmail("");
     setNote("");
+    idempotencyKeyRef.current = newIdempotencyKey();
   };
 
   const handleSubmit = async () => {
@@ -110,18 +139,19 @@ export function ManualPaymentDialog({
       toast.error("Введите положительную сумму");
       return;
     }
-    const paidAtDateObj = buildPaidAtDate();
-    if (!paidAtDateObj) {
+    const paidAt = buildPaidAt();
+    if (!paidAt) {
       toast.error("Укажите дату платежа");
+      return;
+    }
+    if (provider === "bank" && !bankName.trim()) {
+      toast.error("Для банковского платежа укажите название банка");
       return;
     }
 
     setSaving(true);
     try {
-      const paidAtIso = paidAtDateObj.toISOString();
-      const idempotencyKey =
-        `admin-manual-payment:v1:${provider}:${numericAmount}:${currency}` +
-        `:${paidAtIso}:${externalId.trim() || "auto"}:${customerEmail.trim().toLowerCase()}`;
+      const paidAtIso = paidAt.toISOString();
 
       const { data, error } = await supabase.functions.invoke(
         "admin-create-manual-payment",
@@ -131,10 +161,13 @@ export function ManualPaymentDialog({
             amount: numericAmount,
             currency,
             paidAt: paidAtIso,
-            externalId: externalId.trim() || null,
-            note: note.trim() || null,
             customerEmail: customerEmail.trim() || null,
-            idempotencyKey,
+            bankName: bankName.trim() || null,
+            bankDocumentNo: bankDocumentNo.trim() || null,
+            externalId: externalId.trim() || null,
+            purpose: purpose.trim() || null,
+            note: note.trim() || null,
+            idempotencyKey: idempotencyKeyRef.current,
           },
         },
       );
@@ -154,11 +187,20 @@ export function ManualPaymentDialog({
         toast.success("Ручной платёж создан");
       }
 
-      setCreatedQueueRowId(data.queue_row_id as string);
+      // Immutable snapshot: то, что реально попало в payments_v2.
+      const paymentSnapshot: CreatedPaymentSnapshot = {
+        paymentId: String(data.payment_id),
+        provider,
+        amount: Number(data.amount) || numericAmount,
+        currency: String(data.currency || currency),
+        paidAtIso: String(data.paid_at || paidAtIso),
+      };
+      setSnapshot(paymentSnapshot);
+
       onOpenChange(false);
-      resetForm();
       onSuccess();
-      // Сразу предлагаем создать сделку по свежесозданному платежу.
+      // Форму НЕ сбрасываем сейчас — сброс произойдёт при закрытии обоих
+      // диалогов (см. handleFollowUpClose ниже). Это защищает follow-up.
       setFollowUpOpen(true);
     } catch (e: any) {
       console.error("Manual payment error:", e);
@@ -168,18 +210,28 @@ export function ManualPaymentDialog({
     }
   };
 
+  const handleFollowUpChange = (v: boolean) => {
+    setFollowUpOpen(v);
+    if (!v) {
+      // Follow-up закрыт (создали сделку или отменили) — теперь безопасно
+      // сбросить форму и снять snapshot.
+      setSnapshot(null);
+      resetForm();
+    }
+  };
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[520px]">
+        <DialogContent className="sm:max-w-[560px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Wallet className="h-5 w-5" />
               Добавить ручной платёж
             </DialogTitle>
             <DialogDescription>
-              Регистрирует успешный платёж в очереди сверки. После создания
-              можно сразу привязать его к сделке.
+              Создаёт канонический платёж в payments_v2 (origin=manual_admin).
+              После этого можно сразу привязать его к сделке.
             </DialogDescription>
           </DialogHeader>
 
@@ -243,23 +295,54 @@ export function ManualPaymentDialog({
               </div>
             </div>
 
+            {provider === "bank" && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Название банка</Label>
+                  <Input
+                    value={bankName}
+                    onChange={(e) => setBankName(e.target.value)}
+                    placeholder="Например: Приорбанк"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>№ банковского документа</Label>
+                  <Input
+                    value={bankDocumentNo}
+                    onChange={(e) => setBankDocumentNo(e.target.value)}
+                    placeholder="Платёжное поручение №"
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="space-y-1.5">
-              <Label>Внешний идентификатор (номер квитанции / чека)</Label>
+              <Label>Назначение платежа</Label>
               <Input
-                value={externalId}
-                onChange={(e) => setExternalId(e.target.value)}
-                placeholder="Например: BANK-2026-000123"
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value)}
+                placeholder="Оплата по договору №… / за услуги…"
               />
             </div>
 
-            <div className="space-y-1.5">
-              <Label>Email плательщика (необязательно)</Label>
-              <Input
-                type="email"
-                value={customerEmail}
-                onChange={(e) => setCustomerEmail(e.target.value)}
-                placeholder="client@example.com"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Внешний идентификатор</Label>
+                <Input
+                  value={externalId}
+                  onChange={(e) => setExternalId(e.target.value)}
+                  placeholder="Например: RR-2026-000123"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Email плательщика</Label>
+                <Input
+                  type="email"
+                  value={customerEmail}
+                  onChange={(e) => setCustomerEmail(e.target.value)}
+                  placeholder="client@example.com"
+                />
+              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -282,31 +365,30 @@ export function ManualPaymentDialog({
               Отмена
             </Button>
             <Button onClick={handleSubmit} disabled={saving || amountInvalid}>
-              {saving ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              ) : null}
+              {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               Создать платёж
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* После успешного создания — сразу предлагаем привязать к сделке. */}
-      {createdQueueRowId && (
+      {/*
+        Follow-up: привязка созданного канонического платежа к сделке. Snapshot
+        неизменяем и не зависит от resetForm() основной формы.
+      */}
+      {snapshot && (
         <CreateDealFromPaymentDialog
           open={followUpOpen}
-          onOpenChange={(v) => {
-            setFollowUpOpen(v);
-            if (!v) setCreatedQueueRowId(null);
-          }}
-          paymentId={createdQueueRowId}
-          rawSource="queue"
-          amount={numericAmount || 0}
-          currency={currency}
-          paidAt={buildPaidAtDate()?.toISOString()}
+          onOpenChange={handleFollowUpChange}
+          paymentId={snapshot.paymentId}
+          rawSource="payments_v2"
+          amount={snapshot.amount}
+          currency={snapshot.currency}
+          paidAt={snapshot.paidAtIso}
           onSuccess={() => {
             setFollowUpOpen(false);
-            setCreatedQueueRowId(null);
+            setSnapshot(null);
+            resetForm();
             onSuccess();
           }}
         />
