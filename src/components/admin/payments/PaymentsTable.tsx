@@ -890,7 +890,7 @@ export default function PaymentsTable({
               </TableHeader>
               <TableBody>
                 {payments.map((p) => (
-                  <TableRow key={p.id} className={p.has_conflict ? "bg-amber-50 dark:bg-amber-950/20" : ""}>
+                  <TableRow key={p.id} data-testid={`payment-row-${p.id}`} data-payment-id={p.id} data-payment-source={p.rawSource} className={p.has_conflict ? "bg-amber-50 dark:bg-amber-950/20" : ""}>
                     {sortedColumns.map(col => (
                       <TableCell 
                         key={col.key} 
