@@ -543,7 +543,7 @@ export function BroadcastsTabContent() {
           throw new Error("Подтверждение не получено — рассылка отменена");
         }
         body.allow_full_audience = true;
-        body.confirm_full_audience_text = typed;
+        body.confirm_full_audience_text = "SEND TO ALL";
       }
       const { data, error } = await supabase.functions.invoke("email-mass-broadcast", { body });
       if (error) throw error;
