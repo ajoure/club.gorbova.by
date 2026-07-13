@@ -64,15 +64,16 @@ BEGIN
   -- =========== FIXTURES (все под FK) ===========
 
   -- Profile
+  -- profile.user_id = NULL → ghost path (нет зависимости от auth.users)
   INSERT INTO public.profiles (id, user_id, email, full_name)
-    VALUES (v_profile, v_profile_user, 'stage2r1@example.com', 'Stage 2R.1');
+    VALUES (v_profile, NULL, 'stage2r1@example.com', 'Stage 2R.1');
 
   -- Product + tariff
   INSERT INTO public.products_v2 (name, code, is_active)
     VALUES ('Stage2R1 product', 'stage2r1-'||substr(v_actor::text,1,8), true)
     RETURNING id INTO v_product;
-  INSERT INTO public.tariffs (product_id, name, code, is_active, tariff_type)
-    VALUES (v_product, 'Basic', 'basic', true, 'one_time')
+  INSERT INTO public.tariffs (product_id, name, code, is_active)
+    VALUES (v_product, 'Basic', 'basic', true)
     RETURNING id INTO v_tariff;
 
   -- Pre-existing orders for FK-satisfying "already linked" fixtures
@@ -91,7 +92,7 @@ BEGIN
 
   -- Queue rows
   INSERT INTO public.payment_reconcile_queue
-    (id, provider, status, status_normalized, amount, currency, created_at, external_id)
+    (id, provider, status, status_normalized, amount, currency, created_at, bepaid_uid)
   VALUES
     (v_q_ok,           'bepaid',  'successful', 'successful', 50, 'BYN', now(), 'q-ok'),
     (v_q_pending,      'bepaid',  'pending',    'pending',    10, 'BYN', now(), 'q-pending'),
@@ -104,7 +105,7 @@ BEGIN
 
   -- Queue matched (FK-valid matched_order_id)
   INSERT INTO public.payment_reconcile_queue
-    (id, provider, status, status_normalized, amount, currency, created_at, external_id, matched_order_id)
+    (id, provider, status, status_normalized, amount, currency, created_at, bepaid_uid, matched_order_id)
     VALUES (v_q_matched, 'bepaid', 'successful', 'successful', 20, 'BYN', now(),
             'q-matched', v_pre_order_matched);
 
@@ -323,16 +324,92 @@ BEGIN
          format('S16 expected queue_row_already_materialized, got %s', v_result);
 
   ------------------------------------------------------------
+  -- S12: recalc_order_totals returns ok=false → RPC must RAISE and
+  --      subtransaction rollback removes order/payment/reservation.
+  --
+  --      Реализация требует роль с CREATE ON SCHEMA public (postgres/
+  --      supabase_admin). При запуске из ограниченной роли (linter/
+  --      sandbox_exec без CREATE) сценарий явно SKIPPED c NOTICE, чтобы
+  --      не давать ложный PASS. Полный запуск: `psql -U postgres -f ...`
+  --      или через Supabase migration runner (service_role).
+  ------------------------------------------------------------
+  DECLARE
+    v_can_create      boolean := has_schema_privilege(current_user, 'public', 'CREATE');
+    v_q_s12           uuid := gen_random_uuid();
+    v_key_s12         text := 'k-s12-'||gen_random_uuid()::text;
+    v_orders_pre_s12  int;
+    v_pays_pre_s12    int;
+    v_res_pre_s12     int;
+    v_orders_post_s12 int;
+    v_pays_post_s12   int;
+    v_res_post_s12    int;
+    v_caught          boolean := false;
+    v_sqlmsg          text;
+    v_s12_status      text := 'SKIPPED';
+  BEGIN
+    IF NOT v_can_create THEN
+      RAISE NOTICE 'S12 recalc rollback: SKIPPED (current_user=% has no CREATE on schema public — rerun as postgres/supabase_admin)', current_user;
+    ELSE
+      INSERT INTO public.payment_reconcile_queue
+        (id, provider, status, status_normalized, amount, currency, created_at, bepaid_uid)
+        VALUES (v_q_s12, 'bepaid', 'successful', 'successful', 60, 'BYN', now(), 'stage2r1-s12');
+
+      SELECT count(*) INTO v_orders_pre_s12 FROM public.orders_v2;
+      SELECT count(*) INTO v_pays_pre_s12   FROM public.payments_v2;
+      SELECT count(*) INTO v_res_pre_s12
+        FROM public.admin_deal_reservations WHERE idempotency_key = v_key_s12;
+
+      BEGIN
+        CREATE OR REPLACE FUNCTION public.recalc_order_totals(uuid, text, uuid)
+        RETURNS jsonb LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp
+        AS $inner$ SELECT jsonb_build_object('ok', false, 'error', 'forced_recalc_failure') $inner$;
+
+        PERFORM public.admin_create_deal_from_payment(
+          v_q_s12, 'queue', v_actor, v_profile, v_product, v_tariff,
+          60, 'BYN', now(), now()+interval '30 days',
+          NULL, false, v_key_s12, v_hash_ok
+        );
+        ASSERT false, 'S12: expected recalc_failed exception, got none';
+      EXCEPTION WHEN OTHERS THEN
+        v_caught := true;
+        v_sqlmsg := SQLERRM;
+        ASSERT position('recalc_failed' in v_sqlmsg) > 0,
+               format('S12: expected recalc_failed, got %s', v_sqlmsg);
+      END;
+
+      ASSERT v_caught, 'S12: exception must be caught';
+
+      SELECT count(*) INTO v_orders_post_s12 FROM public.orders_v2;
+      SELECT count(*) INTO v_pays_post_s12   FROM public.payments_v2;
+      SELECT count(*) INTO v_res_post_s12
+        FROM public.admin_deal_reservations WHERE idempotency_key = v_key_s12;
+
+      ASSERT v_orders_post_s12 = v_orders_pre_s12,
+             format('S12: order rollback expected, delta=%s', v_orders_post_s12 - v_orders_pre_s12);
+      ASSERT v_pays_post_s12 = v_pays_pre_s12,
+             format('S12: payment rollback expected, delta=%s', v_pays_post_s12 - v_pays_pre_s12);
+      ASSERT v_res_post_s12 = v_res_pre_s12,
+             format('S12: reservation rollback expected, delta=%s', v_res_post_s12 - v_res_pre_s12);
+      ASSERT (SELECT matched_order_id FROM public.payment_reconcile_queue WHERE id = v_q_s12) IS NULL,
+             'S12: queue row matched_order_id must be null after rollback';
+
+      v_s12_status := 'PASS';
+      RAISE NOTICE 'S12 recalc rollback: PASS';
+    END IF;
+  END;
+
+  ------------------------------------------------------------
   -- ROLLBACK: read-only гарантия
   ------------------------------------------------------------
   RAISE EXCEPTION 'STAGE2R1_TESTS_PASSED';
 EXCEPTION
   WHEN OTHERS THEN
     IF SQLERRM = 'STAGE2R1_TESTS_PASSED' THEN
-      RAISE NOTICE 'STAGE2R1_TESTS_PASSED: 15/15 scenarios PASS, ROLLBACK confirmed';
+      RAISE NOTICE 'STAGE2R1_TESTS_PASSED: 15 base + S12 (PASS or SKIPPED by role), ROLLBACK confirmed';
     ELSE
       RAISE;
     END IF;
+
 END $$;
 
 -- =====================================================================

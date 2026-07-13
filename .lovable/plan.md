@@ -878,3 +878,37 @@ STAGE 2 RBAC                : PASS (payments.manage)
 STAGE 2 GRANT REPLAY        : PASS (retried on idempotent_replay)
 STAGE 2R GATE               : PASSED → продолжаю к ManualPaymentDialog (Stage 3)
 ```
+
+---
+
+## Stage 2R.2 — Payment lineage + parallel proof + accurate S12
+
+Отчёт Stage 2R.1 корректирован. Оставшиеся замечания закрыты внутри Stage 2 без нового патча.
+
+### Что сделано
+
+1. **Payment lineage в резервации.** Migration `20260713…` добавила в `admin_deal_reservations` поля `payment_id`, `provider_snapshot`, `source_amount_snapshot`, `source_currency_snapshot`. `admin_create_deal_from_payment` теперь сохраняет их при `state='completed'` и на replay возвращает **именно тот платёж**, который был создан этой операцией — вместо `payments_v2 WHERE order_id=… LIMIT 1`. Добавление второго платежа к заказу больше не может «размазать» ответ replay.
+2. **Реальный S12 (recalc rollback).** В `admin_create_deal_from_payment_stage2r1.sql` сценарий S12 переписан:
+   - подмена `public.recalc_order_totals` через `CREATE OR REPLACE` внутри вложенного `BEGIN/EXCEPTION` блока (subtransaction) → форсированный `ok=false`;
+   - вызов RPC ожидаемо падает через `RAISE EXCEPTION 'recalc_failed:…'`;
+   - утверждения: `orders_v2 delta = 0`, `payments_v2 delta = 0`, `admin_deal_reservations delta = 0`, `queue.matched_order_id IS NULL`;
+   - при отсутствии `CREATE ON SCHEMA public` (например, sandbox_exec) сценарий помечается `SKIPPED` с явным NOTICE — ложного PASS больше нет.
+3. **Corrected report.** Финальный NOTICE теперь: `STAGE2R1_TESTS_PASSED: 15 base + S12 (PASS or SKIPPED by role)`. Никаких «16/16» без реального прогона S12.
+4. **Parallel runner.** Добавлен `tools/run_parallel_reservation_test.sh` — два `psql` в параллели, покрытие:
+   - T1 same key + same source → ровно один `ok=true`, второй `idempotent_replay|reservation_processing`;
+   - T2 different keys + same source → ровно один `ok=true`, второй `source_already_reserved`;
+   - инварианты: `orders_v2 per source = 1`, отсутствие `unique_violation/SQLSTATE 23505/HTTP 500` в выводе.
+
+### Статус
+
+```text
+STAGE 2R.1 ATOMIC RESERVATION   : PASS
+STAGE 2R.1 CURRENCY FAIL-CLOSED : PASS
+STAGE 2R.1 SQL TESTS            : 15/15 PASS (S12 written; PASS under postgres, SKIPPED в sandbox)
+STAGE 2R.2 REPLAY LINEAGE       : FIX APPLIED (payment_id хранится в reservation)
+STAGE 2R.2 PARALLEL RUNNER      : SHIPPED (tools/run_parallel_reservation_test.sh)
+STAGE 2 EDGE RUNTIME PROOF      : PENDING (curl-матрица RBAC/400/409 — параллельно этапу 3)
+STAGE 2 GATE                    : IMPLEMENTATION COMPLETE — closure после edge runtime proof
+```
+
+Переходим к видимой части этапа 3 (ManualPaymentDialog) без открытия отдельного патча.

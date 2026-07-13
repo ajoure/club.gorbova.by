@@ -1280,8 +1280,12 @@ export type Database = {
           error_code: string | null
           idempotency_key: string
           order_id: string | null
+          payment_id: string | null
+          provider_snapshot: string | null
           request_hash: string
           source: string
+          source_amount_snapshot: number | null
+          source_currency_snapshot: string | null
           source_row_id: string
           state: string
         }
@@ -1292,8 +1296,12 @@ export type Database = {
           error_code?: string | null
           idempotency_key: string
           order_id?: string | null
+          payment_id?: string | null
+          provider_snapshot?: string | null
           request_hash: string
           source: string
+          source_amount_snapshot?: number | null
+          source_currency_snapshot?: string | null
           source_row_id: string
           state: string
         }
@@ -1304,8 +1312,12 @@ export type Database = {
           error_code?: string | null
           idempotency_key?: string
           order_id?: string | null
+          payment_id?: string | null
+          provider_snapshot?: string | null
           request_hash?: string
           source?: string
+          source_amount_snapshot?: number | null
+          source_currency_snapshot?: string | null
           source_row_id?: string
           state?: string
         }
