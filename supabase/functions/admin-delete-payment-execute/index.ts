@@ -64,7 +64,16 @@ Deno.serve(async (req) => {
     p_version: body.version,
     p_reason: body.reason ?? null,
   });
-  if (rpcErr) return bad(500, "rpc_failed", { detail: rpcErr.message });
+  if (rpcErr) {
+    const msg = rpcErr.message || "";
+    if (msg.includes("recalc_failed")) {
+      return bad(409, "recalc_failed", { detail: msg });
+    }
+    if (msg.includes("tombstoned_payment_reactivation_blocked")) {
+      return bad(409, "tombstoned_payment_reactivation_blocked", { detail: msg });
+    }
+    return bad(500, "rpc_failed", { detail: msg });
+  }
   if (!rpcResult?.ok) {
     const err = String(rpcResult?.error || "rpc_error");
     const status =
