@@ -428,7 +428,7 @@ Deno.serve(async (req) => {
 
     // Rule 2: if new-schema shape is present at all, it must contain content.
     // (Empty include/exclude/club_ids arrays => caller intended targeting but forgot to fill it.)
-    if (hasNewSchemaShape && !newSchemaHasContent) {
+    if (hasNewSchemaShape && !newSchemaHasContent && !allowFullAudience) {
       console.error('[email-broadcast] GUARD: new-schema filters present but all empty');
       return new Response(
         JSON.stringify({
@@ -439,6 +439,7 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
 
     // Rule 3: validate include[]/exclude[] entries — every rule MUST contain a usable
     // product_id (non-empty string). This catches contract drift like {id:...} instead of {product_id:...}.
