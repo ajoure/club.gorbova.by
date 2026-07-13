@@ -70,11 +70,16 @@ Deno.serve(async (req) => {
       email_confirm: true,
     });
     if (upd.error || upd.data.user?.email !== FIXTURE_EMAIL) {
-      return new Response(JSON.stringify({ error: "update_failed" }), {
+      console.error("bootstrap update_failed", {
+        err: upd.error?.message,
+        gotEmail: upd.data?.user?.email,
+      });
+      return new Response(JSON.stringify({ error: "update_failed", detail: upd.error?.message ?? null, gotEmail: upd.data?.user?.email ?? null }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
     // 2. Insert admin role row (idempotent via unique(user_id, role_id)).
     const ins = await admin
       .from("user_roles_v2")
