@@ -163,9 +163,11 @@ export function PaymentsTabContent() {
   };
   
   // Fetch unified payment data
+  // Stage 5 A2: canonical /admin/payments feed НЕ включает payment_reconcile_queue.
   const effectiveDateFilter = useMemo(() => ({
     ...dateFilter,
     includeImport: true,
+    includeQueue: false,
   }), [dateFilter]);
   
   const { 
