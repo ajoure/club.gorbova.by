@@ -431,6 +431,25 @@ export function BroadcastsTabContent() {
   // Send Telegram broadcast
   const sendTelegramMutation = useMutation({
     mutationFn: async () => {
+      // Полная база (нет include/exclude/club_ids/bot_ids) → требуем явное подтверждение,
+      // иначе backend-guard блокирует запрос как broadcast_blocked_empty_audience_filters.
+      const isFullBase =
+        (filters.include?.length ?? 0) === 0 &&
+        (filters.exclude?.length ?? 0) === 0 &&
+        (filters.club_ids?.length ?? 0) === 0 &&
+        (filters.bot_ids?.length ?? 0) === 0;
+      let allowFullAudience = false;
+      if (isFullBase) {
+        const phrase = `ОТПРАВИТЬ ВСЕМ ${audience?.telegramCount ?? 0}`;
+        const typed = window.prompt(
+          `Вы запускаете Telegram-рассылку по ВСЕЙ базе (${audience?.telegramCount ?? 0} получателей).\n\nДля подтверждения введите фразу:\n${phrase}`,
+        );
+        if (typed !== phrase) {
+          throw new Error("Подтверждение не получено — рассылка отменена");
+        }
+        allowFullAudience = true;
+      }
+
       if (mediaFile) {
         const formData = new FormData();
         formData.append("message", message.trim().replace(/\[\[align:(left|center|right)\]\]/g, ""));
@@ -442,6 +461,11 @@ export function BroadcastsTabContent() {
         formData.append("filters", JSON.stringify(filters));
         formData.append("media_type", mediaFile.type || "");
         formData.append("media", mediaFile.file);
+        if (productContextId) formData.append("product_context_id", productContextId);
+        if (allowFullAudience) {
+          formData.append("allow_full_audience", "true");
+          formData.append("confirm_full_audience_text", "SEND TO ALL");
+        }
 
         const { data: { session } } = await supabase.auth.getSession();
         
@@ -464,16 +488,19 @@ export function BroadcastsTabContent() {
         return response.json();
       }
 
-      const { data, error } = await supabase.functions.invoke("telegram-mass-broadcast", {
-        body: {
-          message: message.trim().replace(/\[\[align:(left|center|right)\]\]/g, ""),
-          include_button: includeButton,
-          button_text: includeButton ? buttonText : undefined,
-          button_url: includeButton ? buttonUrl : undefined,
-          filters,
-          product_context_id: productContextId,
-        },
-      });
+      const body: Record<string, unknown> = {
+        message: message.trim().replace(/\[\[align:(left|center|right)\]\]/g, ""),
+        include_button: includeButton,
+        button_text: includeButton ? buttonText : undefined,
+        button_url: includeButton ? buttonUrl : undefined,
+        filters,
+        product_context_id: productContextId,
+      };
+      if (allowFullAudience) {
+        body.allow_full_audience = true;
+        body.confirm_full_audience_text = "SEND TO ALL";
+      }
+      const { data, error } = await supabase.functions.invoke("telegram-mass-broadcast", { body });
       if (error) throw error;
       return data;
     },
@@ -516,7 +543,7 @@ export function BroadcastsTabContent() {
           throw new Error("Подтверждение не получено — рассылка отменена");
         }
         body.allow_full_audience = true;
-        body.confirm_full_audience_text = typed;
+        body.confirm_full_audience_text = "SEND TO ALL";
       }
       const { data, error } = await supabase.functions.invoke("email-mass-broadcast", { body });
       if (error) throw error;
