@@ -549,23 +549,41 @@ test.describe("Stage 4 — payment delete engine", () => {
 
     await gotoPaymentsFilteredByFixture(page);
 
+    // Narrow the table to the two S4 fixture rows via search — search_index
+    // includes provider_payment_id (canonical) and bepaid_uid (queue), so
+    // both rows share the "stage4-s4" prefix.
+    const searchInput = page.getByPlaceholder(/Поиск по UID/);
+    await searchInput.fill("stage4-s4");
+    // Debounced (150ms) — wait for both rows to render.
+    await expect(
+      page.locator(`[data-testid="payment-row-${FIXTURES.S4_CANONICAL}"]`)
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(
+      page.locator(`[data-testid="payment-row-${FIXTURES.S4_QUEUE}"]`)
+    ).toBeVisible({ timeout: 10_000 });
+
     for (const id of [FIXTURES.S4_CANONICAL, FIXTURES.S4_QUEUE]) {
       const row = page.locator(`[data-testid="payment-row-${id}"]`);
-      await expect(row).toBeVisible();
       await row.locator('[role="checkbox"]').first().click();
     }
 
-    // Mixed-selection warning must appear.
-    await expect(page.getByTestId("mixed-selection-warning")).toBeVisible();
+    // Mixed-selection warning: 2 selected / 1 deletable / 1 non-canonical.
+    const warning = page.getByTestId("mixed-selection-warning");
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText(/Выбрано строк:\s*2/);
+    await expect(warning).toContainText(/Доступно для удаления:\s*1/);
+    await expect(warning).toContainText(/Не canonical.*:\s*1/);
 
     const previewReq = page.waitForResponse((r) =>
       r.url().includes("admin-delete-payment-preview")
     );
-    await page.getByRole("button", { name: /Удалить/ }).first().click();
+    await page.getByRole("button", { name: /Удалить \(1\)/ }).click();
     const previewBody = await (await previewReq).json();
     expect(previewBody.ok).toBe(true);
-    // Only the canonical row must be in the preview.
+    // Only the canonical row must be in the preview — queue row is dropped
+    // by the frontend before the RPC call (deletablePaymentIds filter).
     expect(previewBody.payment_ids).toEqual([FIXTURES.S4_CANONICAL]);
+
 
     const executeReq = page.waitForResponse((r) =>
       r.url().includes("admin-delete-payment-execute")
