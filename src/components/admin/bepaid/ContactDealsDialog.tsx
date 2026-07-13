@@ -84,6 +84,7 @@ export default function ContactDealsDialog({
           purchase_snapshot
         `)
         .eq("user_id", userId)
+        .eq("is_deleted", false) // Stage 4R.1
         .order("deal_date", { ascending: false });
 
       if (error) throw error;

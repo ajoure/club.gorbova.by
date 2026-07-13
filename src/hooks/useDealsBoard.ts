@@ -53,7 +53,9 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
           products_v2(name),
           tariffs(name),
           profiles:profile_id(full_name, email, avatar_url)
-        `);
+        `)
+        // Stage 4R.1: exclude soft-deleted orders from active kanban/board
+        .eq("is_deleted", false);
 
       // Default pipeline: show its own deals + unassigned (NULL) deals
       if (isDefaultPipeline) {

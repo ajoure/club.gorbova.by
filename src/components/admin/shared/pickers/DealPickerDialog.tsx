@@ -117,6 +117,7 @@ export function DealPickerDialog({
         let query = supabase
           .from("orders_v2")
           .select(baseSelect)
+          .eq("is_deleted", false) // Stage 4R.1: hide soft-deleted orders from picker
           .order("created_at", { ascending: false })
           .limit(50);
 
@@ -151,6 +152,7 @@ export function DealPickerDialog({
       let ordersQ = supabase
         .from("orders_v2")
         .select(baseSelect)
+        .eq("is_deleted", false) // Stage 4R.1
         .ilike("order_number", `%${searchTerm}%`)
         .order("created_at", { ascending: false })
         .limit(25);
@@ -176,6 +178,7 @@ export function DealPickerDialog({
         let cq = supabase
           .from("orders_v2")
           .select(baseSelect)
+          .eq("is_deleted", false) // Stage 4R.1
           .in("profile_id", profileIds)
           .order("created_at", { ascending: false })
           .limit(50);

@@ -282,6 +282,9 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
     setBatchResult(null);
   };
 
+  const nonCanonicalCount = selectedPayments.length - deletablePaymentIds.length;
+  const mixedSelection = nonCanonicalCount > 0 && deletablePaymentIds.length > 0;
+
   return (
     <div className="space-y-2 mb-4">
       <div className="flex items-center justify-between p-3 bg-primary/10 rounded-lg">
@@ -340,6 +343,28 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
           </Button>
         </div>
       </div>
+
+      {/* Stage 4R.1 — Mixed selection warning (N/M) */}
+      {nonCanonicalCount > 0 && (
+        <div
+          className="flex items-start gap-2 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100 text-sm"
+          role="alert"
+          data-testid="mixed-selection-warning"
+        >
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+          <div className="space-y-0.5">
+            <div>
+              Выбрано строк: <strong>{selectedPayments.length}</strong> · Доступно для удаления: <strong>{deletablePaymentIds.length}</strong> · Не canonical (queue-only): <strong>{nonCanonicalCount}</strong>
+            </div>
+            {mixedSelection && (
+              <div className="text-xs opacity-90">
+                При подтверждении будут удалены только {deletablePaymentIds.length} canonical-платежей. Остальные {nonCanonicalCount} строк не поддерживают удаление.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
 
       <DeletePaymentPreviewDialog
         open={deleteOpen}
