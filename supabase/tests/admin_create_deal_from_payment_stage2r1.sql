@@ -92,7 +92,7 @@ BEGIN
 
   -- Queue rows
   INSERT INTO public.payment_reconcile_queue
-    (id, provider, status, status_normalized, amount, currency, created_at, external_id)
+    (id, provider, status, status_normalized, amount, currency, created_at, bepaid_uid)
   VALUES
     (v_q_ok,           'bepaid',  'successful', 'successful', 50, 'BYN', now(), 'q-ok'),
     (v_q_pending,      'bepaid',  'pending',    'pending',    10, 'BYN', now(), 'q-pending'),
@@ -343,7 +343,7 @@ BEGIN
     v_sqlmsg          text;
   BEGIN
     INSERT INTO public.payment_reconcile_queue
-      (id, provider, status, status_normalized, amount, currency, created_at, external_id)
+      (id, provider, status, status_normalized, amount, currency, created_at, bepaid_uid)
       VALUES (v_q_s12, 'bepaid', 'successful', 'successful', 60, 'BYN', now(), 'stage2r1-s12');
 
     SELECT count(*) INTO v_orders_pre_s12 FROM public.orders_v2;
