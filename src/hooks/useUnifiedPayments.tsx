@@ -689,10 +689,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           document_url: docResolved.url,
           document_url_source: docResolved.source,
 
-          manual_receiving_bank_name:
-            (meta?.manual_details?.receiving_bank_name as string | null) ?? null,
-          manual_comment:
-            (meta?.manual_details?.comment as string | null) ?? null,
+          manual_receiving_bank_name: manualReceivingBankName,
+          manual_comment: manualComment,
 
           search_index,
         };
