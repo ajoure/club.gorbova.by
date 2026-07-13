@@ -1,13 +1,15 @@
-// admin-create-manual-payment (Stage 3)
-// Creates a canonical row in public.payment_reconcile_queue for a manually-recorded
-// payment (e.g. bank transfer or RR receipt). The queue row can then be linked to
-// an order via the existing admin-create-deal-from-payment flow.
+// admin-create-manual-payment (Stage 3R)
+//
+// Регистрирует ручной платёж непосредственно в public.payments_v2 через
+// SECURITY DEFINER RPC public.admin_create_manual_payment_v1 (origin='manual_admin').
+// Никаких записей в payment_reconcile_queue, никаких provider_events.
 //
 // - RBAC: has_admin_section_access(actor, 'payments','manage')
 // - Provider allowlist: bepaid | stripe | rr | bank
-// - Idempotent: uses (provider, external_id) uniqueness where present, plus optional
-//   idempotencyKey stored in meta.idempotency_key. Replay returns the existing row.
-// - Amount / currency validated server-side; status is fixed to 'successful'.
+// - Currency allowlist: BYN | RUB | USD | EUR | KZT | UAH | PLN
+// - Idempotent: atomic INSERT ... ON CONFLICT в RPC по meta.idempotency_key.
+//   Клиент передаёт случайный idempotencyKey (crypto.randomUUID()), сервер
+//   вычисляет request_hash (SHA-256 нормализованного payload).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
@@ -16,22 +18,34 @@ interface Body {
   provider: "bepaid" | "stripe" | "rr" | "bank";
   amount: number;
   currency: string;
-  paidAt: string;              // ISO
-  externalId?: string | null;  // e.g. bank receipt number
-  note?: string | null;
+  paidAt: string; // ISO
   profileId?: string | null;
+  relatedOrderId?: string | null;
   customerEmail?: string | null;
+  bankName?: string | null;
+  bankDocumentNo?: string | null;
+  externalId?: string | null;
+  purpose?: string | null;
+  note?: string | null;
   idempotencyKey: string;
 }
 
-const CURRENCIES = ["BYN","RUB","USD","EUR","KZT","UAH","PLN"];
-const PROVIDERS = ["bepaid","stripe","rr","bank"];
+const CURRENCIES = ["BYN", "RUB", "USD", "EUR", "KZT", "UAH", "PLN"];
+const PROVIDERS = ["bepaid", "stripe", "rr", "bank"];
 
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return new Response(JSON.stringify({ ok: false, error, ...extra }), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 Deno.serve(async (req) => {
@@ -64,96 +78,123 @@ Deno.serve(async (req) => {
   if (!hasAccess) return bad(403, "forbidden");
 
   let body: Body;
-  try { body = await req.json(); } catch { return bad(400, "invalid_json"); }
+  try {
+    body = await req.json();
+  } catch {
+    return bad(400, "invalid_json");
+  }
 
-  if (!PROVIDERS.includes(body.provider)) return bad(400, "invalid_provider");
+  const provider = String(body.provider || "").toLowerCase();
+  if (!PROVIDERS.includes(provider)) return bad(400, "invalid_provider");
+
   if (typeof body.amount !== "number" || !isFinite(body.amount) || body.amount <= 0) {
     return bad(400, "invalid_amount");
   }
   const currency = String(body.currency || "").toUpperCase();
   if (!CURRENCIES.includes(currency)) return bad(400, "invalid_currency");
+
   if (!body.paidAt || Number.isNaN(Date.parse(body.paidAt))) return bad(400, "invalid_paid_at");
+  const paidAtIso = new Date(body.paidAt).toISOString();
+
   if (!body.idempotencyKey || body.idempotencyKey.length < 8) {
     return bad(400, "missing_idempotency_key");
   }
 
-  // Idempotency lookup: same key stored in meta.idempotency_key ⇒ return existing row.
-  const { data: existing } = await admin
-    .from("payment_reconcile_queue")
-    .select("id, matched_order_id, amount, currency, provider, paid_at, external_id")
-    .eq("meta->>idempotency_key", body.idempotencyKey)
-    .maybeSingle();
+  const requestId = crypto.randomUUID();
 
-  if (existing) {
-    return new Response(JSON.stringify({
-      ok: true,
-      idempotent_replay: true,
-      queue_row_id: existing.id,
-      matched_order_id: existing.matched_order_id ?? null,
-      provider: existing.provider,
-      amount: existing.amount,
-      currency: existing.currency,
-    }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  }
-
-  const externalId = body.externalId?.trim() || `manual-${crypto.randomUUID()}`;
-
-  const insertRow: Record<string, unknown> = {
-    provider: body.provider,
-    status: "successful",
-    status_normalized: "successful",
+  // Стабильный нормализованный payload для request_hash.
+  const normalized = JSON.stringify({
+    v: 1,
+    provider,
     amount: body.amount,
     currency,
-    paid_at: body.paidAt,
-    created_at: new Date().toISOString(),
-    external_id: externalId,
-    customer_email: body.customerEmail?.trim() || null,
-    matched_profile_id: body.profileId ?? null,
-    meta: {
-      source: "admin_manual",
-      created_by: actorUserId,
-      idempotency_key: body.idempotencyKey,
-      note: body.note ?? null,
-    },
-  };
+    paidAt: paidAtIso,
+    profileId: body.profileId ?? null,
+    relatedOrderId: body.relatedOrderId ?? null,
+    customerEmail: (body.customerEmail || "").trim().toLowerCase() || null,
+    bankName: (body.bankName || "").trim() || null,
+    bankDocumentNo: (body.bankDocumentNo || "").trim() || null,
+    externalId: (body.externalId || "").trim() || null,
+    purpose: (body.purpose || "").trim() || null,
+    note: (body.note || "").trim() || null,
+  });
+  const requestHash = await sha256Hex(normalized);
 
-  const { data: inserted, error: insErr } = await admin
-    .from("payment_reconcile_queue")
-    .insert(insertRow)
-    .select("id, provider, amount, currency, paid_at, external_id")
-    .single();
+  const { data: rpcResult, error: rpcErr } = await admin.rpc("admin_create_manual_payment_v1", {
+    p_actor_user_id: actorUserId,
+    p_provider: provider,
+    p_amount: body.amount,
+    p_currency: currency,
+    p_paid_at: paidAtIso,
+    p_profile_id: body.profileId ?? null,
+    p_customer_email: body.customerEmail ?? null,
+    p_bank_name: body.bankName ?? null,
+    p_bank_document_no: body.bankDocumentNo ?? null,
+    p_external_id: body.externalId ?? null,
+    p_purpose: body.purpose ?? null,
+    p_note: body.note ?? null,
+    p_related_order_id: body.relatedOrderId ?? null,
+    p_idempotency_key: body.idempotencyKey,
+    p_request_hash: requestHash,
+  });
 
-  if (insErr) {
-    // Уникальный (provider, external_id) — если был передан пользователем и уже есть.
-    if ((insErr as any).code === "23505") {
-      return bad(409, "duplicate_external_id", { detail: insErr.message });
-    }
-    return bad(500, "insert_failed", { detail: insErr.message });
+  if (rpcErr) {
+    return bad(500, "rpc_failed", { detail: rpcErr.message, request_id: requestId });
+  }
+  if (!rpcResult || rpcResult.ok !== true) {
+    const err = String(rpcResult?.error || "rpc_error");
+    const status =
+      err === "idempotency_conflict"
+        ? 409
+        : err === "profile_not_found"
+        ? 404
+        : ["invalid_provider", "invalid_amount", "invalid_currency", "invalid_paid_at", "invalid_request_hash", "missing_idempotency_key"].includes(err)
+        ? 400
+        : 500;
+    return bad(status, err, { detail: rpcResult, request_id: requestId });
   }
 
-  // Audit
-  await admin.from("audit_logs").insert({
+  // Audit — правильное имя колонки `meta`.
+  const { error: auditErr } = await admin.from("audit_logs").insert({
     actor_user_id: actorUserId,
     action: "admin_manual_payment_created",
-    entity_type: "payment_reconcile_queue",
-    entity_id: inserted!.id,
-    metadata: {
-      provider: body.provider,
+    entity_type: "payments_v2",
+    entity_id: String(rpcResult.payment_id),
+    meta: {
+      request_id: requestId,
+      payment_id: rpcResult.payment_id,
+      provider,
+      origin: "manual_admin",
+      idempotency_key: body.idempotencyKey,
+      request_hash: requestHash,
       amount: body.amount,
       currency,
-      external_id: externalId,
-      idempotency_key: body.idempotencyKey,
+      paid_at: paidAtIso,
+      idempotent_replay: rpcResult.idempotent_replay === true,
+      external_id: (body.externalId || "").trim() || null,
+      bank_name: (body.bankName || "").trim() || null,
+      bank_document_no: (body.bankDocumentNo || "").trim() || null,
+      purpose: (body.purpose || "").trim() || null,
+      related_order_id: body.relatedOrderId ?? null,
     },
-  }).catch(() => { /* audit failure must not block */ });
+  });
+  if (auditErr) {
+    // Не блокируем платёж, но логируем.
+    console.error("[admin-create-manual-payment] audit insert failed", auditErr);
+  }
 
-  return new Response(JSON.stringify({
-    ok: true,
-    idempotent_replay: false,
-    queue_row_id: inserted!.id,
-    provider: inserted!.provider,
-    amount: inserted!.amount,
-    currency: inserted!.currency,
-    paid_at: inserted!.paid_at,
-    external_id: inserted!.external_id,
-  }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      request_id: requestId,
+      idempotent_replay: rpcResult.idempotent_replay === true,
+      payment_id: rpcResult.payment_id,
+      provider,
+      amount: rpcResult.amount,
+      currency: rpcResult.currency,
+      paid_at: rpcResult.paid_at,
+      origin: "manual_admin",
+    }),
+    { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
 });
