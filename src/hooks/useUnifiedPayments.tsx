@@ -184,13 +184,14 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
 
   const { data, isLoading, error, refetch } = useQuery({
     // Use primitives for stable queryKey (not object reference)
-    queryKey: ["unified-payments", dateFilter.from, dateFilter.to || null, dateFilter.includeImport ?? false],
+    queryKey: ["unified-payments", dateFilter.from, dateFilter.to || null, dateFilter.includeImport ?? false, dateFilter.includeQueue ?? false],
     queryFn: async () => {
       // Default to early date to show ALL historical data (no hidden payments)
       const fromDate = dateFilter.from || "2020-01-01";
       const toDate = dateFilter.to;
-      
-      console.log(`[Unified Payments] Loading data for period: ${fromDate} to ${toDate || 'now'}`);
+      const includeQueue = dateFilter.includeQueue === true;
+
+      console.log(`[Unified Payments] Loading data for period: ${fromDate} to ${toDate || 'now'} (includeQueue=${includeQueue})`);
       
       // Build queue query factory for pagination
       const buildQueueQuery = () => {
