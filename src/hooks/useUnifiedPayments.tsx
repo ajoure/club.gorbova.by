@@ -273,13 +273,14 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         .from("payment_status_overrides")
         .select("provider, uid, status_override");
       
-      // Fetch all data with pagination
+      // Stage 5 A2: queue исключена из canonical feed по умолчанию.
+      // Fetching происходит только при явном includeQueue=true (диагностика/очередь).
       const [queueData, paymentsData, overridesResult] = await Promise.all([
-        fetchAllPages<any>(buildQueueQuery),
+        includeQueue ? fetchAllPages<any>(buildQueueQuery) : Promise.resolve([] as any[]),
         fetchAllPages<any>(buildPaymentsQuery),
         overridesQuery,
       ]);
-      
+
       console.log(`[Unified Payments] Queue: ${queueData.length}, Payments: ${paymentsData.length}`);
       
       // Overrides are optional, don't throw on error
