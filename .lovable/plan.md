@@ -5955,3 +5955,81 @@ ORDER META DML:          0 / NOT PERFORMED
 ENFORCEMENT:             BLOCKED
 C2 FINANCIAL TRUTH:      PENDING
 ```
+
+---
+
+## Отчет о выполнении: ELIG-C1R (corrections applied)
+
+Дата: 2026-07-13
+Статус: IMPLEMENTED / DEPLOYED / TESTS PASS — observation window сброшен.
+
+### Изменения helper `_shared/grant-eligibility.ts`
+
+1. `isSucceededStatus` теперь принимает ТОЛЬКО `succeeded` (case-insensitive). Legacy `paid` и любые незнакомые значения перестали быть каноническим доказательством оплаты.
+2. Классификация test/sandbox платежей выполняется по всем alive non-refund строкам ДО фильтрации по canonical allowlist. Это гарантирует, что `admin`, `admin_test`, `rr meta.env=test`, `stripe livemode=false`, `bepaid_test` и подобные succeeded строки корректно попадают в `succeededTestPayments`.
+3. `testOrSandboxOnly` теперь означает: canonical succeeded = 0 И succeededTestPayments > 0. Live + test одновременно → live evidence не скрывается, verdict уходит по canonical пути.
+4. Добавлен вход `existingSubscription` и вход-флаги `paymentsLoadFailed`, `entitlementLoadFailed`, `subscriptionLoadFailed`.
+5. Новая причина `manual_review_evidence_load_failed` короткозамкнута приоритетом #0 — до любой бизнес-логики.
+6. Admin edit branch: `existingEntitlement || existingSubscription` → `allow_admin_edit_existing_candidate`. Отсутствие обоих → `manual_review_admin_edit_without_access`.
+7. `net_paid = null` всегда, когда есть refund evidence ИЛИ более одного canonical succeeded row. `gross_succeeded` сохранён отдельно как наблюдаемая сумма. C2 закроет строгую финансовую истину.
+8. Evidence обогащён полями `existing_subscription`, `evidence_load_failures[]`.
+
+### Изменения handler `grant-access-for-order/index.ts`
+
+1. `const requestId = crypto.randomUUID()` создаётся один раз в начале запроса.
+2. Извлечён shared runner `runGrantEligibilityShadow(...)`. Определение перенесено в конец файла (function-declaration hoisting), чтобы не влиять на handlerOrder invariant по позициям side-effects.
+3. Runner используется дважды:
+   - в 3ds_finalize ветке ПЕРЕД `handleThreeDsFinalize` (stage: `3ds_finalize_pre_writer`), с safe order-lookup через `.limit(1)`;
+   - в стандартном flow после общей загрузки заказа (stage: `standard`).
+4. Runner грузит `payments_v2`, `entitlements` и `subscriptions_v2` параллельно через `.limit(1)`; при каждой ошибке БД выставляет соответствующий load-failure флаг; конкретный текст ошибки НЕ логируется.
+5. Все shadow console-лог payloads и все `audit_logs` записи содержат `request_id`. 3DS-writer audit также получает `request_id` в meta.
+
+### Тесты
+
+Добавлены/обновлены в `src/test/grantAccessForOrder.eligibilityShadow.test.ts`:
+- payment status='paid' is NOT canonical succeeded;
+- payment status='SUCCEEDED' case-insensitive → allow;
+- admin, admin_test, rr env=test, stripe livemode=false → would_deny_test_payment;
+- live canonical + test payment together → live evidence wins;
+- payments/entitlement/subscription loader errors → manual_review_evidence_load_failed;
+- admin edit with existing subscription (no entitlement) → allow_admin_edit_existing_candidate;
+- refund evidence → net_paid=null;
+- multiple succeeded → net_paid=null;
+- single clean succeeded → net_paid==gross_succeeded.
+
+Handler invariant `grantAccessForOrder.eligibilityShadow.handlerInvariant.test.ts` переписан под shared runner:
+- ровно одно определение `runGrantEligibilityShadow`;
+- ровно один вызов `evaluateGrantEligibility` (внутри runner);
+- runner вызывается из стандартной shadow-области;
+- runner вызывается в 3ds_finalize ветке ПЕРЕД `handleThreeDsFinalize`;
+- `crypto.randomUUID()` создаёт `requestId`, который передаётся во все вызовы runner;
+- audit action = `grant-access-for-order.eligibility_shadow`;
+- runner использует и `entitlements`, и `subscriptions_v2`;
+- `maybeSingle()` в runner отсутствует, используется `.limit(1)`;
+- load-failure флаги присутствуют в runner.
+
+### Результаты verify
+
+- helper eligibility tests: PASS (39/39)
+- handler invariant tests: PASS (10/10)
+- authz tests (caller_auth): PASS (30/30)
+- handlerOrder invariant tests: PASS (10/10)
+- build: PASS
+- deploy: grant-access-for-order — deployed
+
+### DML classification (уточнено)
+
+- manual migration/fixture DML: 0
+- orders_v2 DML в рамках shadow: 0
+- runtime shadow audit_logs INSERT: ENABLED / AUTHORIZED (only would_deny_* / manual_review_* verdicts)
+
+### Observation window
+
+Отсчитывается заново от deployment 2026-07-13. Минимум 48 часов; при отсутствии естественного трафика — до 7 дней. Искусственные valid-order probes не выполняются.
+
+### Статус
+
+ELIG-C1-SHADOW: IMPLEMENTED / DEPLOYED — awaiting acceptance.
+ELIG-C1R: EXECUTED / TESTS PASS / DEPLOYED.
+ENFORCEMENT: BLOCKED.
+C2 FINANCIAL TRUTH: REQUIRED BEFORE ENFORCEMENT.

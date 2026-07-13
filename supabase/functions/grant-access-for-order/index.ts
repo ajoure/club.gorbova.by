@@ -20,7 +20,9 @@ import {
   detectBranch,
   enforceBranchPolicy,
 } from './caller_auth.ts';
-import { evaluateGrantEligibility } from '../_shared/grant-eligibility.ts';
+import { evaluateGrantEligibility, type Branch as EligibilityBranch, type CallerType as EligibilityCallerType } from '../_shared/grant-eligibility.ts';
+
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -229,6 +231,12 @@ Deno.serve(async (req) => {
 
     const _body = await req.json().catch(() => ({}));
 
+    // ELIG-C1R correction #6: server-generated request_id for correlation
+    // across console logs, shadow audit rows, and any per-request errors.
+    // Not a token, not a secret; safe to emit.
+    const requestId = crypto.randomUUID();
+
+
     // ── PATCH-GRANT-ACCESS-AUTHZ-V1 / SEC-A (CLOSURE-1) ────────────────
     // Caller authorization. MUST run before any orderId parsing, order
     // lookup, audit write, three_ds_writer delegation, or service-role
@@ -289,6 +297,34 @@ Deno.serve(async (req) => {
     // Backward-compat: only activated when caller passes `context: '3ds_finalize'`.
     // SEC-A: branch policy already enforced service_role-only above.
     if (_body.context === '3ds_finalize') {
+      // ── ELIG-C1R correction #3 ────────────────────────────────────
+      // Run the shadow BEFORE handleThreeDsFinalize so 3DS flow becomes
+      // observable in the eligibility audit. Read-only, non-blocking:
+      // any failure inside the shadow is swallowed and the 3DS writer
+      // proceeds unchanged.
+      try {
+        const { data: threeDsOrder } = await supabase
+          .from('orders_v2')
+          .select('*')
+          .eq('id', orderId)
+          .limit(1);
+        const threeDsOrderRow = Array.isArray(threeDsOrder) ? threeDsOrder[0] || null : threeDsOrder;
+        if (threeDsOrderRow) {
+          await runGrantEligibilityShadow({
+            supabase,
+            orderId,
+            order: threeDsOrderRow,
+            branch,
+            callerType: caller.type,
+            actorUserId: caller.actorUserId,
+            auditActor,
+            claimedMeta: { ...claimedMeta, request_id: requestId },
+            requestId,
+            stage: '3ds_finalize_pre_writer',
+          });
+        }
+      } catch (_) { /* shadow never blocks 3ds flow */ }
+
       const { handleThreeDsFinalize } = await import('./three_ds_writer.ts');
       const audit = async (action: string, meta: Record<string, unknown>) => {
         try {
@@ -296,16 +332,17 @@ Deno.serve(async (req) => {
             action,
             ...auditActor,
             actor_label: 'grant-access-for-order:3ds_finalize',
-            meta: { ...meta, ...claimedMeta },
+            meta: { ...meta, ...claimedMeta, request_id: requestId },
           });
         } catch (_) { /* non-fatal */ }
       };
       const outcome = await handleThreeDsFinalize(orderId, { supabase, audit });
       return new Response(
-        JSON.stringify({ context: '3ds_finalize', outcome }),
+        JSON.stringify({ context: '3ds_finalize', outcome, request_id: requestId }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
+
 
     // PATCH A: audit legacy body alias usage for observability
     if (_body.order_id && !_body.orderId) {
@@ -355,76 +392,25 @@ Deno.serve(async (req) => {
     // ── PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / ELIG-C1-SHADOW ─────────────
     // Non-blocking shadow eligibility evaluation. READ-ONLY.
     // MUST NOT influence downstream grant flow, MUST NOT write to
-    // orders_v2, MUST NOT return a blocking status. Verdict is emitted
-    // to console; only would_deny_* / manual_review_* results are also
-    // written to audit_logs (best-effort). Enforcement is deferred to
-    // C2 after financial-truth resolution.
-    try {
-      const shadowUserId = order.user_id || null;
-      const shadowProductId = order.product_id || null;
-      const [paymentsRes, entitlementRes] = await Promise.all([
-        supabase
-          .from('payments_v2')
-          .select('id, provider, provider_payment_id, transaction_type, status, amount, currency, refunded_amount, meta, deleted_at, order_id, parent_payment_id')
-          .eq('order_id', orderId),
-        (shadowUserId && shadowProductId)
-          ? supabase
-              .from('entitlements')
-              .select('id, product_id, user_id, expires_at, meta')
-              .eq('user_id', shadowUserId)
-              .eq('product_id', shadowProductId)
-              .maybeSingle()
-          : Promise.resolve({ data: null }),
-      ]);
-      const shadowPayments = (paymentsRes as any)?.data || [];
-      const shadowEntitlement = (entitlementRes as any)?.data || null;
-
-      const shadow = evaluateGrantEligibility({
-        branch,
-        callerType: caller.type,
-        order,
-        payments: shadowPayments,
-        existingEntitlement: shadowEntitlement,
-        claimedSource: _body?.source ?? null,
-        claimedContext: _body?.context ?? null,
-      });
-
-      console.log(JSON.stringify({
-        tag: 'grant-access-for-order.eligibility_shadow',
-        order_id: orderId,
-        branch,
-        caller_type: caller.type,
-        actor_user_id: caller.actorUserId,
-        would_allow: shadow.would_allow,
-        reason: shadow.reason,
-        evidence: shadow.evidence,
-      }));
-
-      if (shadow.reason.startsWith('would_deny_') || shadow.reason.startsWith('manual_review_')) {
-        try {
-          await supabase.from('audit_logs').insert({
-            action: 'grant-access-for-order.eligibility_shadow',
-            ...auditActor,
-            meta: {
-              order_id: orderId,
-              branch,
-              caller_type: caller.type,
-              actor_user_id: caller.actorUserId,
-              would_allow: shadow.would_allow,
-              reason: shadow.reason,
-              canonical_payment_ids: shadow.evidence.canonical_payment_ids,
-              provider_set: shadow.evidence.provider_set,
-              ...claimedMeta,
-              evidence: shadow.evidence,
-            },
-          });
-        } catch (_) { /* audit best-effort; MUST NOT affect grant flow */ }
-      }
-    } catch (_shadowErr) {
-      // Shadow evaluation must never break production flow.
-      console.warn('[eligibility_shadow] evaluation failed');
-    }
+    // orders_v2, MUST NOT return a blocking status. Delegates to the
+    // shared runGrantEligibilityShadow runner (also used from the
+    // 3ds_finalize branch above) which handles evidence loading,
+    // load-failure classification, subscription probe, request_id
+    // correlation and best-effort audit logging.
+    await runGrantEligibilityShadow({
+      supabase,
+      orderId,
+      order,
+      branch,
+      callerType: caller.type,
+      actorUserId: caller.actorUserId,
+      auditActor,
+      claimedMeta: { ...claimedMeta, request_id: requestId },
+      requestId,
+      stage: 'standard',
+    });
     // ── END ELIG-C1-SHADOW ─────────────────────────────────────────────
+
 
     // PATCH-NO-CARD-TRIAL-NO-SUBSCRIPTION-ROW
     // Demo trial activated by bepaid-create-token's no-card branch must NOT create
@@ -2538,3 +2524,129 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+
+// ── PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / ELIG-C1R ──────────────────────
+// Shared non-blocking shadow runner. Used from BOTH the standard flow
+// AND the early 3ds_finalize branch (ELIG-C1R correction #3). Loads
+// evidence with explicit error flags (correction #4), probes both
+// entitlement and subscription (correction #5), and emits structured
+// console + best-effort audit_logs payloads carrying a
+// server-generated request_id (correction #6).
+async function runGrantEligibilityShadow(params: {
+  supabase: any;
+  orderId: string;
+  order: any;
+  branch: EligibilityBranch;
+  callerType: EligibilityCallerType;
+  actorUserId: string | null;
+  auditActor: Record<string, unknown>;
+  claimedMeta: Record<string, unknown>;
+  requestId: string;
+  stage: 'standard' | '3ds_finalize_pre_writer';
+}): Promise<void> {
+  const { supabase, orderId, order, branch, callerType, actorUserId, auditActor, claimedMeta, requestId, stage } = params;
+  try {
+    const shadowUserId = order?.user_id || null;
+    const shadowProductId = order?.product_id || null;
+
+    const paymentsQ = supabase
+      .from('payments_v2')
+      .select('id, provider, provider_payment_id, transaction_type, status, amount, currency, refunded_amount, meta, deleted_at, order_id, parent_payment_id')
+      .eq('order_id', orderId);
+
+    const entitlementQ = (shadowUserId && shadowProductId)
+      ? supabase
+          .from('entitlements')
+          .select('id, product_id, user_id, expires_at, meta')
+          .eq('user_id', shadowUserId)
+          .eq('product_id', shadowProductId)
+          .limit(1)
+      : Promise.resolve({ data: [], error: null });
+
+    const subscriptionQ = (shadowUserId && shadowProductId)
+      ? supabase
+          .from('subscriptions_v2')
+          .select('id, status, access_end_at, product_id, user_id')
+          .eq('user_id', shadowUserId)
+          .eq('product_id', shadowProductId)
+          .limit(1)
+      : Promise.resolve({ data: [], error: null });
+
+    const [paymentsRes, entitlementRes, subscriptionRes] = await Promise.all([
+      paymentsQ,
+      entitlementQ,
+      subscriptionQ,
+    ]);
+
+    const paymentsLoadFailed = !!(paymentsRes as any)?.error;
+    const entitlementLoadFailed = !!(entitlementRes as any)?.error;
+    const subscriptionLoadFailed = !!(subscriptionRes as any)?.error;
+
+    const shadowPayments = paymentsLoadFailed ? [] : ((paymentsRes as any)?.data || []);
+    const entRows = entitlementLoadFailed ? [] : ((entitlementRes as any)?.data || []);
+    const subRows = subscriptionLoadFailed ? [] : ((subscriptionRes as any)?.data || []);
+    const shadowEntitlement = Array.isArray(entRows) ? entRows[0] || null : entRows;
+    const shadowSubscription = Array.isArray(subRows) ? subRows[0] || null : subRows;
+
+    const shadow = evaluateGrantEligibility({
+      branch,
+      callerType,
+      order,
+      payments: shadowPayments,
+      existingEntitlement: shadowEntitlement,
+      existingSubscription: shadowSubscription,
+      paymentsLoadFailed,
+      entitlementLoadFailed,
+      subscriptionLoadFailed,
+      claimedSource: (claimedMeta as any)?.claimed_source ?? null,
+      claimedContext: (claimedMeta as any)?.claimed_context ?? null,
+    });
+
+    console.log(JSON.stringify({
+      tag: 'grant-access-for-order.eligibility_shadow',
+      request_id: requestId,
+      stage,
+      order_id: orderId,
+      branch,
+      caller_type: callerType,
+      actor_user_id: actorUserId,
+      would_allow: shadow.would_allow,
+      reason: shadow.reason,
+      evidence: shadow.evidence,
+    }));
+
+    if (shadow.reason.startsWith('would_deny_') || shadow.reason.startsWith('manual_review_')) {
+      try {
+        await supabase.from('audit_logs').insert({
+          action: 'grant-access-for-order.eligibility_shadow',
+          ...auditActor,
+          meta: {
+            request_id: requestId,
+            stage,
+            order_id: orderId,
+            branch,
+            caller_type: callerType,
+            actor_user_id: actorUserId,
+            would_allow: shadow.would_allow,
+            reason: shadow.reason,
+            canonical_payment_ids: shadow.evidence.canonical_payment_ids,
+            provider_set: shadow.evidence.provider_set,
+            evidence_load_failures: shadow.evidence.evidence_load_failures,
+            ...claimedMeta,
+            evidence: shadow.evidence,
+          },
+        });
+      } catch (_) { /* audit best-effort; MUST NOT affect grant flow */ }
+    }
+  } catch (_shadowErr) {
+    // Shadow evaluation must never break production flow.
+    console.warn(JSON.stringify({
+      tag: 'grant-access-for-order.eligibility_shadow.error',
+      request_id: requestId,
+      stage,
+      order_id: orderId,
+    }));
+  }
+}
+// ── END ELIG-C1R shared runner ────────────────────────────────────────
