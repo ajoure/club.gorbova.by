@@ -196,6 +196,7 @@ export default function DeletePaymentPreviewDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={executing}>Отмена</Button>
           <Button
             variant="destructive"
+            data-testid="delete-confirm-btn"
             onClick={handleExecute}
             disabled={!preview || executing || loading}
           >
