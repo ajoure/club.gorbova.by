@@ -83,9 +83,29 @@ Deno.serve(async (req) => {
 
     // 2. Look up existing auth user by fixture ID.
     const existing = await admin.auth.admin.getUserById(FIXTURE_USER_ID);
+    const existingErrMsg = existing.error?.message ?? "";
+    const isNotFound =
+      !!existing.error &&
+      /not.?found|user_not_found|no rows/i.test(existingErrMsg);
     const existsById = !!existing.data?.user && !existing.error;
 
+    if (!existsById && existing.error && !isNotFound) {
+      // Any non-"not found" Auth API error → fail closed, do not proceed to create.
+      return json(500, { error: "get_user_failed", detail: existingErrMsg });
+    }
+
     let createdAuthUser = false;
+
+    // Rollback helper for created auth user on any downstream failure.
+    const rollbackCreated = async () => {
+      if (!createdAuthUser) return null;
+      const r = await admin.auth.admin.deleteUser(FIXTURE_USER_ID);
+      return r.error?.message ?? null;
+    };
+    const failAfterCreate = async (payload: Record<string, unknown>) => {
+      const rollbackErr = await rollbackCreated();
+      return json(500, rollbackErr ? { ...payload, rollback_error: rollbackErr } : payload);
+    };
 
     if (existsById) {
       // Path A: same ID exists → email must match, then just reset password.
@@ -104,20 +124,35 @@ Deno.serve(async (req) => {
         return json(500, { error: "update_failed", detail: upd.error.message });
       }
     } else {
-      // Path B: no auth user with FIXTURE_USER_ID → ensure email is not taken by another UUID.
-      // listUsers has no email filter server-side; use pagination-safe listUsers with email query param.
-      const byEmail = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
-      if (byEmail.error) {
-        return json(500, { error: "list_users_failed", detail: byEmail.error.message });
+      // Path B: no auth user with FIXTURE_USER_ID.
+      // Pagination-safe email collision scan (listUsers has no email filter).
+      const MAX_PAGES = 100;
+      const PAGE_SIZE = 200;
+      let collision: { id: string } | undefined;
+      let scannedComplete = false;
+      for (let page = 1; page <= MAX_PAGES; page++) {
+        const result = await admin.auth.admin.listUsers({ page, perPage: PAGE_SIZE });
+        if (result.error) {
+          return json(500, { error: "list_users_failed", detail: result.error.message });
+        }
+        const users = result.data.users;
+        collision = users.find(
+          (u) => (u.email ?? "").toLowerCase() === FIXTURE_EMAIL.toLowerCase(),
+        );
+        if (collision) break;
+        if (users.length < PAGE_SIZE) {
+          scannedComplete = true;
+          break;
+        }
       }
-      const collision = byEmail.data.users.find(
-        (u) => (u.email ?? "").toLowerCase() === FIXTURE_EMAIL.toLowerCase(),
-      );
       if (collision) {
         return json(409, {
           error: "fixture_email_taken",
           taken_by_user_id: collision.id,
         });
+      }
+      if (!scannedComplete) {
+        return json(500, { error: "auth_user_scan_incomplete" });
       }
 
       // Path B (cont): create fixture auth user with exact ID.
@@ -159,10 +194,10 @@ Deno.serve(async (req) => {
       .eq("user_id", FIXTURE_USER_ID)
       .eq("role_id", ADMIN_ROLE_ID);
     if (pre.error) {
-      return json(500, { error: "role_precheck_failed", detail: pre.error.message });
+      return failAfterCreate({ error: "role_precheck_failed", detail: pre.error.message });
     }
     if ((pre.data?.length ?? 0) !== 0) {
-      return json(409, {
+      return failAfterCreate({
         error: "role_already_present",
         existing_ids: (pre.data ?? []).map((r: any) => r.id),
       });
@@ -173,8 +208,9 @@ Deno.serve(async (req) => {
       .select("id")
       .single();
     if (ins.error || !ins.data?.id) {
-      return json(500, { error: "role_insert_failed", detail: ins.error?.message ?? null });
+      return failAfterCreate({ error: "role_insert_failed", detail: ins.error?.message ?? null });
     }
+
 
     return json(200, {
       ok: true,
