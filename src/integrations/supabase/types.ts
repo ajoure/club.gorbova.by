@@ -1272,6 +1272,45 @@ export type Database = {
         }
         Relationships: []
       }
+      admin_deal_reservations: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          created_by: string
+          error_code: string | null
+          idempotency_key: string
+          order_id: string | null
+          request_hash: string
+          source: string
+          source_row_id: string
+          state: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          created_by: string
+          error_code?: string | null
+          idempotency_key: string
+          order_id?: string | null
+          request_hash: string
+          source: string
+          source_row_id: string
+          state: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string
+          error_code?: string | null
+          idempotency_key?: string
+          order_id?: string | null
+          request_hash?: string
+          source?: string
+          source_row_id?: string
+          state?: string
+        }
+        Relationships: []
+      }
       admin_docs: {
         Row: {
           content_text: string
@@ -17844,17 +17883,16 @@ export type Database = {
           p_access_end: string
           p_access_start: string
           p_actor_user_id: string
-          p_contact_user_id: string
           p_customer_email: string
-          p_deal_only: boolean
           p_final_amount: number
           p_final_currency: string
+          p_grant_access: boolean
           p_idempotency_key: string
-          p_is_ghost: boolean
           p_payment_id: string
           p_product_id: string
           p_profile_id: string
           p_raw_source: string
+          p_request_hash: string
           p_tariff_id: string
         }
         Returns: Json
