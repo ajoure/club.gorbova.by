@@ -576,6 +576,9 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           null;
         
         // P0-guard: Build search index ONCE during transformation
+        // Stage 3R.2: include manual_admin bank name + comment so search
+        // ("Паритетбанк", etc.) hits manual bank payments.
+        const manualDetails = (meta?.manual_details as Record<string, unknown> | null) ?? null;
         const search_index = buildSearchIndex([
           pUid,
           profile?.email,
@@ -589,6 +592,9 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           tariff_name,
           purchaseSnapshot?.product_name,
           bepaid_description,
+          manualDetails?.receiving_bank_name as string | null | undefined,
+          manualDetails?.comment as string | null | undefined,
+          manualDetails?.contact_name_snapshot as string | null | undefined,
         ]);
         
         return {

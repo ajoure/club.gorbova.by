@@ -37,6 +37,10 @@ export interface DealPickerOptions {
   currency?: string;
   helperText?: string;
   title?: string;
+  /** Stage 3R.2: restrict search to a single contact's orders. */
+  profileId?: string | null;
+  /** Stage 3R.2: 'name_only' → text search matches contact full_name only. */
+  contactSearchMode?: "default" | "name_only";
 }
 
 interface Props {
@@ -64,7 +68,9 @@ export function DealPickerDialog({
   footerExtras,
   emptyStateExtras,
 }: Props) {
-  const { isRefund, amount, currency, helperText, title } = options ?? {};
+  const { isRefund, amount, currency, helperText, title, profileId, contactSearchMode } = options ?? {};
+  const scopedByContact = !!profileId;
+  const nameOnlyContacts = contactSearchMode === "name_only";
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<PickedDeal[]>([]);
   const [loading, setLoading] = useState(false);
@@ -119,6 +125,9 @@ export function DealPickerDialog({
           else query = query.ilike("order_number", `%${searchTerm}%`);
         }
 
+        // Stage 3R.2: scope by selected contact when provided.
+        if (profileId) query = query.eq("profile_id", profileId);
+
         if (isRefund) {
           query = query.eq("status", "paid");
           if (amount && !searchTerm) {
@@ -135,26 +144,33 @@ export function DealPickerDialog({
       }
 
       // Branch B: text search — combine order-number ilike + contact search
+      const profileOr = nameOnlyContacts
+        ? `full_name.ilike.%${searchTerm}%,first_name.ilike.%${searchTerm}%,last_name.ilike.%${searchTerm}%`
+        : `full_name.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%`;
+
+      let ordersQ = supabase
+        .from("orders_v2")
+        .select(baseSelect)
+        .ilike("order_number", `%${searchTerm}%`)
+        .order("created_at", { ascending: false })
+        .limit(25);
+      if (profileId) ordersQ = ordersQ.eq("profile_id", profileId);
+
       const [ordersRes, profilesRes] = await Promise.all([
-        supabase
-          .from("orders_v2")
-          .select(baseSelect)
-          .ilike("order_number", `%${searchTerm}%`)
-          .order("created_at", { ascending: false })
-          .limit(25),
+        ordersQ,
         supabase
           .from("profiles")
           .select("id")
-          .or(
-            `full_name.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%`,
-          )
+          .or(profileOr)
           .limit(50),
       ]);
 
       if (ordersRes.error) throw ordersRes.error;
       if (profilesRes.error) throw profilesRes.error;
 
-      const profileIds = (profilesRes.data ?? []).map((p: any) => p.id);
+      let profileIds = (profilesRes.data ?? []).map((p: any) => p.id);
+      if (profileId) profileIds = profileIds.filter((id: string) => id === profileId);
+
       let contactOrders: any[] = [];
       if (profileIds.length > 0) {
         let cq = supabase
@@ -180,14 +196,14 @@ export function DealPickerDialog({
     } finally {
       setLoading(false);
     }
-  }, [search, isRefund, amount, mapRow]);
+  }, [search, isRefund, amount, mapRow, profileId, nameOnlyContacts]);
 
   useEffect(() => {
     if (open && results.length === 0) handleSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Debounced auto-search on typing.
+  // Debounced auto-search on typing / when contact scope changes.
   useEffect(() => {
     if (!open) return;
     const id = setTimeout(() => {
@@ -195,7 +211,7 @@ export function DealPickerDialog({
     }, 350);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, open]);
+  }, [search, open, profileId]);
 
   useEffect(() => {
     if (!open) {
@@ -223,7 +239,13 @@ export function DealPickerDialog({
               <Label htmlFor="deal-picker-search" className="sr-only">Поиск</Label>
               <Input
                 id="deal-picker-search"
-                placeholder="ФИО / email / телефон / номер сделки…"
+                placeholder={
+                  scopedByContact
+                    ? "Номер сделки… (в рамках выбранного контакта)"
+                    : nameOnlyContacts
+                    ? "Имя контакта / номер сделки…"
+                    : "ФИО / email / телефон / номер сделки…"
+                }
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSearch()}

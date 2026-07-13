@@ -221,10 +221,26 @@ export function ManualPaymentDialog({
       );
 
       if (error || !data?.ok) {
-        const msg = normalizeEdgeFunctionError(
-          error ?? data,
-          "Не удалось создать ручной платёж",
-        );
+        // Stage 3R.2: явные тексты для новых серверных кодов.
+        const code = String((data as any)?.error ?? "");
+        const localized: Record<string, string> = {
+          order_currency_conflict:
+            `Валюта платежа (${currency}) не совпадает с валютой сделки${
+              (data as any)?.detail?.order_currency
+                ? ` (${(data as any).detail.order_currency})`
+                : ""
+            }.`,
+          order_profile_conflict:
+            "Выбранный контакт не совпадает с контактом сделки.",
+          missing_receiving_bank_name: "Укажите банк зачисления.",
+          receiving_bank_name_too_long:
+            "Название банка слишком длинное (максимум 120 символов).",
+          idempotency_conflict:
+            "Платёж с таким ключом уже создан с другими данными.",
+        };
+        const msg =
+          localized[code] ??
+          normalizeEdgeFunctionError(error ?? data, "Не удалось создать ручной платёж");
         toast.error(msg);
         return;
       }
@@ -411,7 +427,12 @@ export function ManualPaymentDialog({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    onClick={() => setContact(null)}
+                    onClick={() => {
+                      setContact(null);
+                      // Stage 3R.2: если контакт снимают, но сделка привязана к нему —
+                      // также снимаем сделку, чтобы не оставлять некорректное состояние.
+                      if (deal) setDeal(null);
+                    }}
                     aria-label="Убрать контакт"
                   >
                     <X className="h-4 w-4" />
@@ -515,7 +536,7 @@ export function ManualPaymentDialog({
         open={contactPickerOpen}
         onOpenChange={setContactPickerOpen}
         onPick={handleContactPicked}
-        options={{ title: "Выбрать контакт" }}
+        options={{ title: "Выбрать контакт", searchMode: "name_only" }}
       />
 
       <DealPickerDialog
@@ -526,7 +547,46 @@ export function ManualPaymentDialog({
           title: "Выбрать существующую сделку",
           amount: numericAmount > 0 ? numericAmount : undefined,
           currency,
+          profileId: contact?.id ?? null,
+          contactSearchMode: "name_only",
         }}
+        footerExtras={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="gap-2 text-muted-foreground"
+            onClick={() => {
+              setDeal(null);
+              setDealPickerOpen(false);
+              toast.info(
+                "После создания платежа откроется мастер создания новой сделки",
+              );
+            }}
+          >
+            + Создать сделку
+          </Button>
+        }
+        emptyStateExtras={
+          <div className="space-y-3">
+            <p>Нет сделок</p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="gap-2 text-muted-foreground"
+              onClick={() => {
+                setDeal(null);
+                setDealPickerOpen(false);
+                toast.info(
+                  "После создания платежа откроется мастер создания новой сделки",
+                );
+              }}
+            >
+              + Создать сделку
+            </Button>
+          </div>
+        }
       />
 
       {/*

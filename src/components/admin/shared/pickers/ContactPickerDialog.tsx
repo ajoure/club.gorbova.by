@@ -21,6 +21,11 @@ export interface ContactPickerOptions {
   title?: string;
   initialQuery?: string | null;
   helperText?: string;
+  /**
+   * 'name_only' — Stage 3R.2: search strictly by full/first/last name,
+   * hide email/phone in display. 'default' — legacy behaviour (ФИО/email/телефон).
+   */
+  searchMode?: "default" | "name_only";
 }
 
 interface Props {
@@ -39,7 +44,8 @@ export function ContactPickerDialog({
   options,
   footerExtras,
 }: Props) {
-  const { title, initialQuery, helperText } = options ?? {};
+  const { title, initialQuery, helperText, searchMode } = options ?? {};
+  const nameOnly = searchMode === "name_only";
   const [search, setSearch] = useState(initialQuery ?? "");
   const [results, setResults] = useState<PickedContact[]>([]);
   const [loading, setLoading] = useState(false);
@@ -67,24 +73,49 @@ export function ContactPickerDialog({
     setLoading(true);
     setSearchError(null);
     try {
-      const { data, error } = await supabase.functions.invoke("admin-search-profiles", {
-        body: { query: term, limit: 30 },
-      });
-      if (error) throw error;
-      if (!data?.success) {
-        if (data?.error?.includes("Forbidden")) {
-          setSearchError("Недостаточно прав для поиска контактов.");
+      if (nameOnly) {
+        // Stage 3R.2: direct profiles query by name fields only.
+        const pattern = `%${term}%`;
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("id, user_id, full_name, first_name, last_name, email, phone")
+          .or(
+            `full_name.ilike.${pattern},first_name.ilike.${pattern},last_name.ilike.${pattern}`,
+          )
+          .limit(30);
+        if (error) throw error;
+        const mapped: PickedContact[] = (data ?? []).map((p: any) => ({
+          id: p.id,
+          user_id: p.user_id ?? null,
+          full_name:
+            p.full_name ||
+            [p.first_name, p.last_name].filter(Boolean).join(" ").trim() ||
+            null,
+          email: p.email ?? null,
+          phone: p.phone ?? null,
+        }));
+        setResults(mapped);
+        setHasSearched(true);
+      } else {
+        const { data, error } = await supabase.functions.invoke("admin-search-profiles", {
+          body: { query: term, limit: 30 },
+        });
+        if (error) throw error;
+        if (!data?.success) {
+          if (data?.error?.includes("Forbidden")) {
+            setSearchError("Недостаточно прав для поиска контактов.");
+          }
+          throw new Error(data?.error || "Search failed");
         }
-        throw new Error(data?.error || "Search failed");
+        setResults(data.results || []);
+        setHasSearched(true);
       }
-      setResults(data.results || []);
-      setHasSearched(true);
     } catch (e: any) {
       if (!searchError) toast.error(`Ошибка поиска: ${e.message}`);
     } finally {
       setLoading(false);
     }
-  }, [search, searchError]);
+  }, [search, searchError, nameOnly]);
 
   // Debounced auto-search
   useEffect(() => {
@@ -115,7 +146,7 @@ export function ContactPickerDialog({
                 <Label htmlFor="contact-picker-search" className="sr-only">Поиск</Label>
                 <Input
                   id="contact-picker-search"
-                  placeholder="ФИО, email или телефон (мин. 2 символа)..."
+                  placeholder={nameOnly ? "Имя (мин. 2 символа)..." : "ФИО, email или телефон (мин. 2 символа)..."}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleSearch()}
@@ -164,16 +195,18 @@ export function ContactPickerDialog({
                   >
                     <div className="flex-1 min-w-0">
                       <div className="font-medium truncate">
-                        {profile.full_name || "Без имени"}
+                        {profile.full_name || (nameOnly ? "Контакт без имени" : "Без имени")}
                       </div>
-                      <div className="text-xs text-muted-foreground flex items-center gap-3 flex-wrap">
-                        {profile.email && (
-                          <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{profile.email}</span>
-                        )}
-                        {profile.phone && (
-                          <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{profile.phone}</span>
-                        )}
-                      </div>
+                      {!nameOnly && (
+                        <div className="text-xs text-muted-foreground flex items-center gap-3 flex-wrap">
+                          {profile.email && (
+                            <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{profile.email}</span>
+                          )}
+                          {profile.phone && (
+                            <span className="flex items-center gap-1"><Phone className="h-3 w-3" />{profile.phone}</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     {selected?.id === profile.id && (
                       <Check className="h-4 w-4 text-primary" />
