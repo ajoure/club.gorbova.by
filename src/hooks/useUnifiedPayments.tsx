@@ -4,10 +4,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { classifyPayment } from "@/lib/paymentClassification";
 import { buildSearchIndex } from "@/lib/multiTermSearch";
 import { extractStripeCardFromMeta } from "@/utils/extractStripeCardFromMeta";
+import { ACTIVE_PAYMENT_PROVIDERS } from "@/lib/payments/providers";
 export interface DateFilter {
   from: string;
   to?: string;
   includeImport?: boolean; // Toggle to include origin='import' records
+  // Stage 5 A2: canonical feed by default excludes payment_reconcile_queue.
+  // Set includeQueue=true ONLY for dedicated diagnostic/queue views.
+  includeQueue?: boolean;
 }
 
 // Source types for UI filtering
