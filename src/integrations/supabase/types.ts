@@ -17839,6 +17839,26 @@ export type Database = {
         }
         Returns: string
       }
+      admin_create_deal_from_payment: {
+        Args: {
+          p_access_end: string
+          p_access_start: string
+          p_actor_user_id: string
+          p_contact_user_id: string
+          p_customer_email: string
+          p_deal_only: boolean
+          p_final_amount: number
+          p_final_currency: string
+          p_idempotency_key: string
+          p_is_ghost: boolean
+          p_payment_id: string
+          p_product_id: string
+          p_profile_id: string
+          p_raw_source: string
+          p_tariff_id: string
+        }
+        Returns: Json
+      }
       admin_create_or_get_support_ticket_for_profile: {
         Args: {
           p_attachments?: Json

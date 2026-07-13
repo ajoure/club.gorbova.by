@@ -493,6 +493,21 @@ DoD: 14 fixtures в `src/test/orderFinancial.recalc.test.ts` → 14 PASS / 0 FAI
 - Provider принимается только из allowlist `bepaid | stripe | rr | bank`. Всё остальное → 400.
 - Аудит: `audit_logs.action = 'admin_create_deal_from_payment'`.
 
+**СТАТУС: ЭТАП 2 РЕАЛИЗОВАН**
+- Миграция: `admin_create_deal_from_payment` SECURITY DEFINER RPC (SET search_path=public, EXECUTE только service_role).
+- Reservation-first idempotency по `orders_v2.meta->>'idempotency_key'` (partial index).
+- Provider выводится сервером из queue.provider / payments_v2.provider, allowlist `bepaid|stripe|rr|bank`.
+- Failed/cancelled/expired/incomplete → 409 без изменений.
+- `FOR UPDATE` на исходной строке платежа; `payments_v2` строка отбрасывается если `is_deleted` или `deleted_at`.
+- Edge: `supabase/functions/admin-create-deal-from-payment/index.ts` — JWT (`getClaims`), RBAC (`admin/superadmin`), zod-подобная валидация обязательных полей, вызов RPC, идемпотентный `grant-access-for-order` после commit, audit_logs.
+- UI: `CreateDealFromPaymentDialog.tsx` — 0 клиентских insert в `orders_v2`/`payments_v2`, 0 `provider='admin'`, 0 update `payment_reconcile_queue`, единственный invoke `admin-create-deal-from-payment`, `idempotencyKey` в теле.
+- Тесты: `CreateDealFromPaymentDialog.stage2Invariants.test.ts` (10/10 PASS). Совокупно 51/51 связанных targeted тестов зелёные.
+
+**Известные ограничения (не блокируют этап 3):**
+- Concurrency proof (две параллельные сессии на одной queue-строке) пока опирается только на `FOR UPDATE` в коде без runtime replay-теста; требуется до этапа bulk/delete.
+- `payment_removed` remains not called anywhere from UI — вызывается только delete-RPC после soft-delete в этапе 4.
+
+
 ---
 
 ### Этап 3. Ручное добавление платежа в UI
