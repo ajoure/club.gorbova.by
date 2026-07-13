@@ -72,8 +72,8 @@ BEGIN
   INSERT INTO public.products_v2 (name, code, is_active)
     VALUES ('Stage2R1 product', 'stage2r1-'||substr(v_actor::text,1,8), true)
     RETURNING id INTO v_product;
-  INSERT INTO public.tariffs (product_id, name, code, is_active, tariff_type)
-    VALUES (v_product, 'Basic', 'basic', true, 'one_time')
+  INSERT INTO public.tariffs (product_id, name, code, is_active)
+    VALUES (v_product, 'Basic', 'basic', true)
     RETURNING id INTO v_tariff;
 
   -- Pre-existing orders for FK-satisfying "already linked" fixtures
