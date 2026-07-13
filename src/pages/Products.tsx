@@ -162,9 +162,9 @@ export default function Products() {
       title: "Курс «Ценный бухгалтер»",
       description: "25 модулей за 7 недель: от методологии до подготовки к проверкам",
       badge: "Курс",
-      link: "https://gorbova.by/cb",
+      link: "https://gorbova.by/cb20predzapis",
       isExternal: true,
-      price: "от 1650 BYN",
+      price: "",
       image: productCourseImage,
     },
     {
