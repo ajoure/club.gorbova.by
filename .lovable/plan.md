@@ -768,3 +768,63 @@ C2 SAFE RECALC       : FAIL — reason-aware transition model отсутству
 C2 DELETE READINESS  : FAIL — возможно paid/0 inconsistent state
 STAGE 1 GATE         : NOT PASSED  →  C2R REQUIRED
 ```
+
+---
+
+## C2R — Отчёт о выполнении
+
+### Миграция
+`ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'partial_refund'` применён. Enum теперь содержит:
+`draft, pending, paid, partial, partial_refund, failed, refunded, canceled, needs_mapping, lead`.
+
+### `compute_order_financial_state` — изменения
+- Refund-child scope ужесточён: `refund.order_id = parent.order_id`, `provider ∈ canonical`, `currency = parent.currency = order.currency`, `status = succeeded`, `is_deleted = false`, `deleted_at IS NULL`.
+- Добавлен guard `refund_exceeds_parent`: если хотя бы у одного parent'а `effective_refund > parent.amount` → `net_paid=null`, `guard_reason='refund_exceeds_parent'`, `recommended_status=null`. `GREATEST(...,0)` больше не маскирует over-refund.
+- Новая ветка status: `had_refunds AND net_paid < final_price` → `partial_refund`. Обычная недоплата без возвратов по-прежнему `partial`.
+- В JSON добавлено поле `refund_exceeds_parent: bool`.
+
+### `recalc_order_totals` — изменения
+- Reason-aware transition matrix. Возвращает независимо:
+  - `status_transition_allowed`, `transition_guard_reason`
+  - `amount_update_allowed`, `amount_guard_reason`
+- `affected_payment_id` валидируется и блокируется `FOR UPDATE`:
+  - обязателен для `payment_added | payment_removed | refund_changed`;
+  - должен принадлежать `p_order_id`;
+  - relevance-check: `payment_added` не принимает refund-row; `refund_changed` требует refund-row или parent с `refunded_amount > 0`;
+  - при несоответствии → `ok=false`, `error='affected_payment_mismatch'`, без записи в `orders_v2`.
+- `payment_added`: `paid → partial|pending` заблокирован (`transition_guard_reason='payment_added_no_demote'`), но amount пересчитывается.
+- `payment_removed`: разрешает `paid → partial`, `paid → pending`, `partial → pending`. При `no_activity AND net_paid=0` (удалён последний платёж) принудительно ставит `pending`.
+- `refund_changed`: применяет `partial_refund | refunded | partial` из recommendation.
+- `manual_repair`: единственный reason, где `affected_payment_id=NULL` допустим.
+- `currency_mixed`, `refund_exceeds_parent`, `historical_conflict` → no-op обеих колонок с явными guard-reasons.
+
+### Test evidence
+
+**SQL fixtures** (`supabase/tests/order_financial_recalc_fixtures.sql`) — полная transition-матрица, 36 сценариев:
+- A01–A16: arithmetic + refund scope + over-refund + partial_refund status.
+- B01–B20: payment_added no-demote, payment_removed last-to-pending / paid-to-partial, refund_changed, manual_repair, affected-payment mismatch, currency_mixed / refund_exceeds / historical no-op, invalid reason, same-status amount update.
+
+**Integration suite** (`supabase/tests/order_financial_recalc_integration.sql`) — 11 сценариев, проверяют фактическое состояние `orders_v2` после RPC (не JSON):
+- IT01 payment_added row state
+- IT02 payment_removed → pending / paid_amount=0
+- IT03 refund_changed → partial_refund
+- IT04 invalid affected payment: order не изменён + `ok=false`
+- IT05 mixed currency: order не изменён
+- IT06 historical conflict (canceled): order не изменён
+- IT07 replay idempotency: второй вызов даёт `status_changed=false, amount_changed=false`
+- IT08 over-refund: order не изменён
+- IT09 payment_removed на одном из нескольких → partial + правильный paid_amount
+
+### Результат
+
+```text
+SQL FIXTURES       : 36/36 PASS
+INTEGRATION SUITE  : 11/11 PASS
+C2 FUNCTIONS       : CREATED / DEPLOYED
+C2 BASIC ARITHMETIC: PASS
+C2 SAFE RECALC     : PASS (reason-aware matrix)
+C2 DELETE READINESS: PASS (payment_removed → pending / paid_amount=0)
+STAGE 1 GATE       : PASSED
+```
+
+Продолжаю к этапу 2 без нового согласования, как утверждено.
