@@ -119,3 +119,4 @@ canonical-document-generate-strict
 document-field-resolver-v2
 document-field-resolver-v2-snapshot
 
+admin-provision-e2e-fixture

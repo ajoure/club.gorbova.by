@@ -49,3 +49,8 @@ verify_jwt = true
 # In-code auth guard (SEC-A) remains as defense-in-depth.
 [functions.grant-access-for-order]
 verify_jwt = true
+
+# Stage 4 E2E — idempotent fixture admin provisioner. Public-callable but
+# hard-coded to a single fixture email; password comes from env, never body.
+[functions.admin-provision-e2e-fixture]
+verify_jwt = false
