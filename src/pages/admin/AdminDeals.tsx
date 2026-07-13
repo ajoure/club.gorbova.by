@@ -209,7 +209,10 @@ function buildDealsQuery(
     // Cap the embedded payments to the latest one only — table only needs
     // the payer name from the most recent payment (see getLatestPayerName).
     .order("paid_at", { referencedTable: "payments_v2", ascending: false, nullsFirst: false })
-    .limit(1, { referencedTable: "payments_v2" });
+    .limit(1, { referencedTable: "payments_v2" })
+    // Stage 4R.1: hide soft-deleted orders from the active admin deals list
+    .eq("is_deleted", false);
+
 
   // Server-side preset filters
   if (activePreset === "trial") {
@@ -360,6 +363,7 @@ export default function AdminDeals() {
       const { data, error } = await supabase
         .from("orders_v2")
         .select("pipeline_id")
+        .eq("is_deleted", false) // Stage 4R.1: active-pipeline counters exclude soft-deleted
         .not("pipeline_id", "is", null);
       if (error) throw error;
       const counts = new Map<string, number>();
