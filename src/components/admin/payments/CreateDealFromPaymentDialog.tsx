@@ -247,18 +247,20 @@ export function CreateDealFromPaymentDialog({
       const accessStart = dateRange.from;
       const accessEnd = dateRange.to;
       const dateStr = `${format(accessStart, "dd.MM.yy")} — ${format(accessEnd, "dd.MM.yy")}`;
-      const orderUserId = isGhostContact ? selectedContact.id : selectedContact.user_id!;
 
-      // Reservation-first idempotency: клиентский ключ, стабильный для одного клика.
-      // При повторном submit того же клика сервер вернёт существующий заказ.
-      const idempotencyKey = `admin-create-deal:${paymentId}:${rawSource}:${accessStart.toISOString()}:${accessEnd.toISOString()}:${finalAmount}:${finalCurrency}`;
+      // Reservation-first idempotency: ключ покрывает полный бизнес-контент запроса.
+      // Сервер дополнительно вычисляет request_hash из этого же набора полей и
+      // при том же ключе, но другом содержании возвращает 409 idempotency_conflict.
+      const idempotencyKey =
+        `admin-create-deal:v2:${paymentId}:${rawSource}:${selectedContact.id}` +
+        `:${productId}:${tariffId}:${finalAmount}:${finalCurrency}` +
+        `:${accessStart.toISOString()}:${accessEnd.toISOString()}:${grantAccess ? 1 : 0}`;
 
       const { data, error } = await supabase.functions.invoke("admin-create-deal-from-payment", {
         body: {
           paymentId,
           rawSource,
           profileId: selectedContact.id,
-          contactUserId: orderUserId,
           productId,
           tariffId,
           finalAmount,
@@ -266,8 +268,6 @@ export function CreateDealFromPaymentDialog({
           accessStart: accessStart.toISOString(),
           accessEnd: accessEnd.toISOString(),
           customerEmail: selectedContact.email,
-          dealOnly: !grantAccess,
-          isGhost: isGhostContact,
           grantAccess,
           idempotencyKey,
         },

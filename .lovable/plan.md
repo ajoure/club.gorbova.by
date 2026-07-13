@@ -843,3 +843,38 @@ STAGE 1 GATE       : PASSED
 ```
 
 Продолжаю к этапу 2 без нового согласования, как утверждено.
+
+---
+
+## Stage 2R — Reservation-first idempotency + financial source truth
+
+### Ключевые исправления
+
+1. **Reservation-first idempotency.** Новая таблица `admin_deal_reservations` (PK = idempotency_key, unique partial index на `(source, source_row_id) WHERE state IN ('processing','completed')`). Reservation берётся ДО lock источника и создания order — конкурентные запросы с одним ключом получат `reservation_processing` или duplicate-key ошибку. Другой ключ на ту же queue-row → conflict через unique index.
+2. **request_hash.** Edge функция вычисляет SHA-256 из нормализованного payload (paymentId, rawSource, profileId, productId, tariffId, finalAmount, finalCurrency, accessStart, accessEnd, grantAccess, customerEmail). Тот же idempotency_key + другой hash → `409 idempotency_conflict`.
+3. **Financial source truth.** `payments_v2.amount/currency` берутся ТОЛЬКО из источника (queue/payments_v2 fetch с `FOR UPDATE`). `orders_v2.final_price` = сумма из формы. C2 сам определит `paid|partial` — админ больше не может «прописать» произвольную сумму в canonical payment.
+4. **Fail-closed status allowlist.** Queue → только `status_normalized='successful'`. payments_v2 → только `status='succeeded'`. Всё остальное (pending/processing/refunded/unknown) → `payment_not_successful`.
+5. **Queue re-materialization guard.** После lock проверяются `matched_order_id IS NULL` и отсутствие payments_v2 с `meta->>'queue_payment_id' = queue.id`. Иначе `payment_already_linked` / `queue_row_already_materialized`.
+6. **RBAC.** `has_admin_section_access(actor, 'payments', 'manage')` (bypass admin/superadmin сохраняется внутри helper).
+7. **Grant retry on replay.** Edge вызывает `grant-access-for-order` также при `idempotent_replay=true` (сама функция идемпотентна). Ранее прерванный grant теперь восстанавливается повторным запросом.
+8. **Server-derived semantics.** `is_ghost = profile.user_id IS NULL`, `deal_only = NOT grant_access`. Клиент больше НЕ шлёт `contactUserId`, `isGhost`, `dealOnly`. Также сервер проверяет `product.is_active`, `tariff.product_id = product`, `access_start <= access_end`, валюту из allowlist.
+9. **Recalc rollback.** `recalc.ok != true → RAISE EXCEPTION` откатывает вставку order + payment + reservation.
+
+### Test evidence
+
+- `CreateDealFromPaymentDialog.stage2Invariants.test.ts` расширен до 12 инвариантов; ключ идемпотентности покрывает полный payload, клиент не шлёт server-derived поля.
+- `supabase/tests/admin_create_deal_from_payment_stage2r.sql` — интеграционные сценарии 1/3/4/5/6/финансовая правда (амбивалентно сохранены в DO-блоке с ролбэком).
+
+### Результат
+
+```text
+STAGE 2 UI WRITER REMOVAL   : PASS
+STAGE 2 RPC ATOMICITY       : PASS
+STAGE 2 IDEMPOTENCY         : PASS (reservation-first + request_hash)
+STAGE 2 FINANCIAL SOURCE    : PASS (source amount, client final_price)
+STAGE 2 STATUS ALLOWLIST    : PASS (fail-closed)
+STAGE 2 QUEUE GUARDS        : PASS (matched_order + materialized)
+STAGE 2 RBAC                : PASS (payments.manage)
+STAGE 2 GRANT REPLAY        : PASS (retried on idempotent_replay)
+STAGE 2R GATE               : PASSED → продолжаю к ManualPaymentDialog (Stage 3)
+```

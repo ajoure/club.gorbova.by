@@ -61,12 +61,37 @@ describe("Stage 2 · CreateDealFromPaymentDialog — payments-v2 firewall & atom
     expect(CODE).toMatch(/const\s+idempotencyKey\s*=/);
   });
 
+  it("Stage 2R · idempotencyKey covers full request payload (profileId/product/tariff/grantAccess)", () => {
+    // Ключ должен зависеть от контакта, продукта, тарифа и режима доступа —
+    // иначе изменение любого из этих полей вернёт чужую сделку через replay.
+    const keyBlockMatch = CODE.match(/const\s+idempotencyKey\s*=[\s\S]{0,600}?;/);
+    expect(keyBlockMatch).not.toBeNull();
+    const keyBlock = keyBlockMatch![0];
+    expect(keyBlock).toMatch(/paymentId/);
+    expect(keyBlock).toMatch(/rawSource/);
+    expect(keyBlock).toMatch(/selectedContact\.id|profileId/);
+    expect(keyBlock).toMatch(/productId/);
+    expect(keyBlock).toMatch(/tariffId/);
+    expect(keyBlock).toMatch(/finalAmount/);
+    expect(keyBlock).toMatch(/finalCurrency/);
+    expect(keyBlock).toMatch(/accessStart/);
+    expect(keyBlock).toMatch(/accessEnd/);
+    expect(keyBlock).toMatch(/grantAccess/);
+  });
+
+  it("Stage 2R · server derives contactUserId/isGhost/dealOnly — client must NOT send them", () => {
+    // Извлекаем тело invoke.
+    const invokeMatch = CODE.match(/supabase\.functions\.invoke\(\s*["']admin-create-deal-from-payment["'][\s\S]*?\}\s*\)/);
+    expect(invokeMatch).not.toBeNull();
+    const invokeBlock = invokeMatch![0];
+    expect(invokeBlock).not.toMatch(/contactUserId\s*:/);
+    expect(invokeBlock).not.toMatch(/isGhost\s*:/);
+    expect(invokeBlock).not.toMatch(/dealOnly\s*:/);
+  });
+
   it("passes rawSource + paymentId to the edge (provider derived server-side)", () => {
-    // In the body payload, rawSource и paymentId должны передаваться,
-    // а provider — НЕ должно передаваться клиентом.
     expect(CODE).toMatch(/rawSource\s*[:,]/);
     expect(CODE).toMatch(/paymentId\s*[:,]/);
-    // Клиент не выбирает канонический provider
     expect(CODE).not.toMatch(/provider:\s*["'](bepaid|stripe|rr|bank)["']/);
   });
 

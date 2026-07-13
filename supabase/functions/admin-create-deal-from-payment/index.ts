@@ -1,6 +1,8 @@
-// admin-create-deal-from-payment (Stage 2)
-// JWT-auth + RBAC (admin/superadmin) + вызов атомарного SECURITY DEFINER RPC.
-// Grant access — идемпотентно после commit, ошибка не откатывает платёж.
+// admin-create-deal-from-payment (Stage 2R)
+// - RBAC: has_admin_section_access(actor, 'payments','manage')
+// - Server-computed request_hash (SHA-256 over normalized payload)
+// - Atomic reservation-first RPC (see migration Stage 2R)
+// - Idempotent grant invoked ALSO on replay (grant-access-for-order is itself idempotent)
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
@@ -9,7 +11,6 @@ interface Body {
   paymentId: string;
   rawSource: "queue" | "payments_v2";
   profileId: string;
-  contactUserId: string;
   productId: string;
   tariffId: string;
   finalAmount: number;
@@ -17,17 +18,44 @@ interface Body {
   accessStart: string; // ISO
   accessEnd: string;   // ISO
   customerEmail: string | null;
-  dealOnly: boolean;
-  isGhost: boolean;
   grantAccess: boolean;
   idempotencyKey: string;
 }
+
+const REQUIRED = [
+  "paymentId","rawSource","profileId","productId","tariffId",
+  "finalAmount","finalCurrency","accessStart","accessEnd","idempotencyKey",
+] as const;
 
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return new Response(JSON.stringify({ ok: false, error, ...extra }), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function normalizeForHash(b: Body): string {
+  // Стабильная сериализация: только те поля, что влияют на бизнес-содержание запроса.
+  const rec = {
+    paymentId: b.paymentId,
+    rawSource: b.rawSource,
+    profileId: b.profileId,
+    productId: b.productId,
+    tariffId: b.tariffId,
+    finalAmount: Number(b.finalAmount).toFixed(2),
+    finalCurrency: String(b.finalCurrency || "").toUpperCase(),
+    accessStart: b.accessStart,
+    accessEnd: b.accessEnd,
+    grantAccess: !!b.grantAccess,
+    customerEmail: (b.customerEmail ?? "").toLowerCase().trim(),
+  };
+  const keys = Object.keys(rec).sort();
+  return keys.map(k => `${k}=${(rec as any)[k]}`).join("|");
 }
 
 Deno.serve(async (req) => {
@@ -52,67 +80,94 @@ Deno.serve(async (req) => {
   if (claimsErr || !claims?.claims?.sub) return bad(401, "invalid_jwt");
   const actorUserId = claims.claims.sub as string;
 
-  // 2. RBAC — только admin/superadmin
-  const { data: roles } = await admin
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", actorUserId);
-  const roleSet = new Set((roles ?? []).map((r: any) => r.role));
-  const isAdmin = roleSet.has("admin") || roleSet.has("superadmin");
-  if (!isAdmin) return bad(403, "forbidden");
+  // 2. RBAC — section 'payments' level 'manage'
+  const { data: hasAccess, error: rbacErr } = await admin.rpc("has_admin_section_access", {
+    _user_id: actorUserId,
+    _section_code: "payments",
+    _min_level: "manage",
+  });
+  if (rbacErr) return bad(500, "rbac_check_failed", { detail: rbacErr.message });
+  if (!hasAccess) return bad(403, "forbidden");
 
   // 3. Body validation
   let body: Body;
-  try {
-    body = await req.json();
-  } catch {
-    return bad(400, "invalid_json");
+  try { body = await req.json(); } catch { return bad(400, "invalid_json"); }
+  for (const k of REQUIRED) {
+    const v = (body as any)[k];
+    if (v === undefined || v === null || v === "") return bad(400, "missing_field", { field: k });
   }
-  const required = [
-    "paymentId", "rawSource", "profileId", "contactUserId",
-    "productId", "tariffId", "finalAmount", "finalCurrency",
-    "accessStart", "accessEnd", "idempotencyKey",
-  ];
-  for (const k of required) {
-    if ((body as any)[k] === undefined || (body as any)[k] === null || (body as any)[k] === "") {
-      return bad(400, "missing_field", { field: k });
-    }
+  if (!["queue","payments_v2"].includes(body.rawSource)) return bad(400, "invalid_raw_source");
+  if (typeof body.finalAmount !== "number" || !isFinite(body.finalAmount) || body.finalAmount < 0) {
+    return bad(400, "invalid_amount");
   }
-  if (!["queue", "payments_v2"].includes(body.rawSource)) return bad(400, "invalid_raw_source");
-  if (typeof body.finalAmount !== "number" || body.finalAmount < 0) return bad(400, "invalid_amount");
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  for (const k of ["paymentId","profileId","productId","tariffId"] as const) {
+    if (!uuidRe.test(String((body as any)[k]))) return bad(400, "invalid_uuid", { field: k });
+  }
+  if (new Date(body.accessStart).getTime() > new Date(body.accessEnd).getTime()) {
+    return bad(400, "invalid_access_range");
+  }
 
-  // 4. Атомарный RPC
+  // 4. Server-computed request_hash — покрывает всё содержание запроса
+  const requestHash = await sha256Hex(normalizeForHash(body));
+
+  // 5. Атомарный RPC
   const { data: rpc, error: rpcErr } = await admin.rpc("admin_create_deal_from_payment", {
-    p_payment_id: body.paymentId,
-    p_raw_source: body.rawSource,
-    p_actor_user_id: actorUserId,
-    p_profile_id: body.profileId,
-    p_contact_user_id: body.contactUserId,
-    p_product_id: body.productId,
-    p_tariff_id: body.tariffId,
-    p_final_amount: body.finalAmount,
-    p_final_currency: body.finalCurrency,
-    p_access_start: body.accessStart,
-    p_access_end: body.accessEnd,
-    p_customer_email: body.customerEmail,
-    p_deal_only: body.dealOnly,
+    p_payment_id:      body.paymentId,
+    p_raw_source:      body.rawSource,
+    p_actor_user_id:   actorUserId,
+    p_profile_id:      body.profileId,
+    p_product_id:      body.productId,
+    p_tariff_id:       body.tariffId,
+    p_final_amount:    body.finalAmount,
+    p_final_currency:  body.finalCurrency,
+    p_access_start:    body.accessStart,
+    p_access_end:      body.accessEnd,
+    p_customer_email:  body.customerEmail,
+    p_grant_access:    !!body.grantAccess,
     p_idempotency_key: body.idempotencyKey,
-    p_is_ghost: body.isGhost,
+    p_request_hash:    requestHash,
   });
 
-  if (rpcErr) return bad(500, "rpc_failed", { detail: rpcErr.message });
+  if (rpcErr) {
+    const msg = rpcErr.message || "";
+    if (msg.includes("recalc_failed")) return bad(500, "recalc_failed", { detail: msg });
+    return bad(500, "rpc_failed", { detail: msg });
+  }
   if (!rpc || (rpc as any).ok !== true) {
-    return bad(409, (rpc as any)?.error ?? "rpc_rejected", { rpc });
+    const err = (rpc as any)?.error ?? "rpc_rejected";
+    const status =
+      err === "idempotency_conflict"   ? 409 :
+      err === "reservation_processing" ? 409 :
+      err === "payment_already_linked" ? 409 :
+      err === "queue_row_already_materialized" ? 409 :
+      err === "payment_not_successful" ? 409 :
+      err === "non_canonical_provider" ? 422 :
+      err === "profile_not_found"      ? 404 :
+      err === "product_invalid"        ? 422 :
+      err === "tariff_invalid"         ? 422 :
+      err === "ghost_cannot_grant"     ? 422 :
+      err === "invalid_access_range"   ? 400 :
+      err === "invalid_currency"       ? 400 :
+      err === "invalid_amount"         ? 400 :
+      400;
+    return new Response(JSON.stringify({ ok: false, error: err, rpc }), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   const result = rpc as Record<string, unknown>;
   const orderId = result.order_id as string;
+  const isGhost = !!result.is_ghost;
+  const dealOnly = !!result.deal_only;
 
-  // 5. Идемпотентный grant после commit (ошибка НЕ откатывает платёж)
+  // 6. Идемпотентный grant — вызываем ТАКЖЕ на replay (grant-access-for-order сам идемпотентен)
   let grantSuccess = false;
   let grantErrorCode: string | null = null;
   let subscriptionId: string | null = null;
-  if (body.grantAccess && !body.isGhost && !result.idempotent_replay) {
+  const shouldGrant = body.grantAccess && !isGhost && !dealOnly;
+  if (shouldGrant) {
     try {
       const { data: grantResult, error: grantError } = await admin.functions.invoke(
         "grant-access-for-order",
@@ -129,29 +184,34 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 6. Audit
+  // 7. Audit
   try {
     await admin.from("audit_logs").insert({
       actor_user_id: actorUserId,
       action: body.grantAccess
         ? "admin.create_deal_with_access_from_payment"
         : "admin.create_deal_from_payment",
-      target_user_id: body.isGhost ? null : body.contactUserId,
+      target_user_id: isGhost ? null : null, // сервер не раскрывает user_id клиенту, пишем profile_id ниже
       meta: {
         order_id: orderId,
         order_number: result.order_number,
         payment_id: result.payment_id,
         payment_source: body.rawSource,
         provider: result.provider,
-        amount: body.finalAmount,
-        currency: body.finalCurrency,
+        profile_id: body.profileId,
+        source_amount: result.source_amount,
+        source_currency: result.source_currency,
+        order_final_price: body.finalAmount,
+        order_currency: body.finalCurrency,
         access_start: body.accessStart,
         access_end: body.accessEnd,
-        is_ghost: body.isGhost,
-        idempotent_replay: result.idempotent_replay ?? false,
-        subscription_id: subscriptionId,
+        is_ghost: isGhost,
+        deal_only: dealOnly,
+        idempotent_replay: !!result.idempotent_replay,
+        request_hash: requestHash,
         grant_success: grantSuccess,
         grant_error_code: grantErrorCode,
+        subscription_id: subscriptionId,
         recalc: result.recalc,
       },
     });
@@ -164,7 +224,11 @@ Deno.serve(async (req) => {
       order_number: result.order_number,
       payment_id: result.payment_id,
       provider: result.provider,
-      idempotent_replay: result.idempotent_replay ?? false,
+      is_ghost: isGhost,
+      deal_only: dealOnly,
+      idempotent_replay: !!result.idempotent_replay,
+      source_amount: result.source_amount,
+      source_currency: result.source_currency,
       recalc: result.recalc,
       grant_success: grantSuccess,
       grant_error_code: grantErrorCode,
