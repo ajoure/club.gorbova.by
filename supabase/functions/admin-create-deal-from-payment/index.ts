@@ -104,7 +104,12 @@ Deno.serve(async (req) => {
   for (const k of ["paymentId","profileId","productId","tariffId"] as const) {
     if (!uuidRe.test(String((body as any)[k]))) return bad(400, "invalid_uuid", { field: k });
   }
-  if (new Date(body.accessStart).getTime() > new Date(body.accessEnd).getTime()) {
+  const tStart = new Date(body.accessStart).getTime();
+  const tEnd = new Date(body.accessEnd).getTime();
+  if (!Number.isFinite(tStart) || !Number.isFinite(tEnd)) {
+    return bad(400, "invalid_iso_date");
+  }
+  if (tStart > tEnd) {
     return bad(400, "invalid_access_range");
   }
 
@@ -139,9 +144,13 @@ Deno.serve(async (req) => {
     const status =
       err === "idempotency_conflict"   ? 409 :
       err === "reservation_processing" ? 409 :
+      err === "source_already_reserved"? 409 :
       err === "payment_already_linked" ? 409 :
       err === "queue_row_already_materialized" ? 409 :
       err === "payment_not_successful" ? 409 :
+      err === "currency_conflict"      ? 409 :
+      err === "invalid_source_amount"  ? 422 :
+      err === "invalid_source_currency"? 422 :
       err === "non_canonical_provider" ? 422 :
       err === "profile_not_found"      ? 404 :
       err === "product_invalid"        ? 422 :
@@ -150,6 +159,7 @@ Deno.serve(async (req) => {
       err === "invalid_access_range"   ? 400 :
       err === "invalid_currency"       ? 400 :
       err === "invalid_amount"         ? 400 :
+      err === "invalid_request_hash"   ? 400 :
       400;
     return new Response(JSON.stringify({ ok: false, error: err, rpc }), {
       status,
@@ -161,6 +171,18 @@ Deno.serve(async (req) => {
   const orderId = result.order_id as string;
   const isGhost = !!result.is_ghost;
   const dealOnly = !!result.deal_only;
+
+  // Fetch order.user_id for audit target linkage (non-ghost only).
+  let orderUserId: string | null = null;
+  if (!isGhost && orderId) {
+    const { data: orderRow } = await admin
+      .from("orders_v2")
+      .select("user_id")
+      .eq("id", orderId)
+      .maybeSingle();
+    orderUserId = (orderRow?.user_id as string | undefined) ?? null;
+  }
+
 
   // 6. Идемпотентный grant — вызываем ТАКЖЕ на replay (grant-access-for-order сам идемпотентен)
   let grantSuccess = false;
@@ -191,7 +213,8 @@ Deno.serve(async (req) => {
       action: body.grantAccess
         ? "admin.create_deal_with_access_from_payment"
         : "admin.create_deal_from_payment",
-      target_user_id: isGhost ? null : null, // сервер не раскрывает user_id клиенту, пишем profile_id ниже
+      // Ghost profile → no auth user exists. Non-ghost → link to real user_id.
+      target_user_id: isGhost ? null : orderUserId,
       meta: {
         order_id: orderId,
         order_number: result.order_number,
