@@ -181,15 +181,16 @@ DECLARE o uuid; p uuid; BEGIN
     public.compute_order_financial_state(o));
 END $$;
 
--- ---------- Fixture 13: recalc_order_totals PAID → REFUNDED ----------
+-- ---------- Fixture 13: recalc_order_totals PAID(100) → REFUNDED(0), amount changes ----------
 DO $$
 DECLARE o uuid; p uuid; r jsonb; BEGIN
   o := pg_temp.mk_order(100, 'BYN', 'paid');
+  UPDATE public.orders_v2 SET paid_amount = 100 WHERE id = o;
   p := pg_temp.mk_pay(o, 100, 'succeeded', 'bepaid');
   PERFORM pg_temp.mk_pay(o, 100, 'succeeded', 'bepaid', 'refund', p);
   r := public.recalc_order_totals(o, 'refund_changed', p);
   PERFORM pg_temp.record('13_recalc_paid_to_refunded',
-    '{"ok":true,"before_status":"paid","after_status":"refunded","status_changed":true,"amount_changed":true}'::jsonb,
+    '{"ok":true,"before_status":"paid","after_status":"refunded","status_changed":true,"amount_changed":true,"before_paid_amount":100.00,"after_paid_amount":0.00}'::jsonb,
     r);
 END $$;
 
