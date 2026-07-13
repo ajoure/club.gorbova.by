@@ -153,6 +153,28 @@ Deno.serve(async (req) => {
       if (rErr && !String(rErr.message).includes("duplicate")) throw rErr;
     }
 
+    // 4. Also grant via v2 (RLS uses has_role_v2 → user_roles_v2).
+    const { data: adminRoleV2 } = await admin
+      .from("roles")
+      .select("id")
+      .eq("code", "admin")
+      .maybeSingle();
+    if (adminRoleV2?.id) {
+      const { data: rv2 } = await admin
+        .from("user_roles_v2")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("role_id", adminRoleV2.id)
+        .maybeSingle();
+      if (!rv2) {
+        const { error: rvErr } = await admin.from("user_roles_v2").insert({
+          user_id: userId,
+          role_id: adminRoleV2.id,
+        });
+        if (rvErr && !String(rvErr.message).includes("duplicate")) throw rvErr;
+      }
+    }
+
     // Never leak the password. Only report identity.
     return new Response(
       JSON.stringify({

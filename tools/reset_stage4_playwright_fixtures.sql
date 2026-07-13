@@ -11,7 +11,7 @@ BEGIN;
 --    delete operations, audit trail). No effect on non-fixture data.
 -- ------------------------------------------------------------------
 DELETE FROM public.payment_tombstones
- WHERE payment_id IN (
+ WHERE original_payment_id IN (
    '11111111-1111-4111-8111-000000000001',
    '22222222-2222-4222-8222-0000000000a1',
    '22222222-2222-4222-8222-0000000000a2',
