@@ -279,10 +279,10 @@ export function PaymentsTabContent() {
         if (filters.origin === "other" && (p.origin === "bepaid" || p.origin === "statement_sync")) return false;
       }
 
-      // Provider filter
+      // Provider filter — Stage 5 A3: без fallback на 'bepaid'. Reader уже
+      // гарантирует canonical provider через ACTIVE_PAYMENT_PROVIDERS.
       if (filters.provider !== "all") {
-        const prov = (p as { provider?: string | null }).provider ?? "bepaid";
-        if (filters.provider !== prov) return false;
+        if ((p.provider ?? null) !== filters.provider) return false;
       }
 
       return true;
