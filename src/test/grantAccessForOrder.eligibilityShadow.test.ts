@@ -53,23 +53,104 @@ describe("ELIG-C1 · four-provider canonical allowlist", () => {
     }
   });
 
-  it("rejects non-canonical provider (e.g. 'admin_test') as test/sandbox-only", () => {
+  it("rejects non-canonical provider 'admin_test' as test/sandbox-only (would_deny_test_payment)", () => {
     const res = evaluateGrantEligibility({
       branch: "standard",
       callerType: "service_role",
       order: baseOrder(),
       payments: [succeededPayment({ provider: "admin_test" })],
     });
-    // admin_test is canonical=false, so it's not counted as canonical
-    // and there is no succeeded canonical payment at all. Behavior: for
-    // a 'paid' order with no canonical succeeded payment we fall through
-    // to conflict path is not triggered (canonicalSucceeded.length==0),
-    // and unpaid/failed sets do not include 'paid'. Falls to ambiguous.
-    expect(["manual_review_ambiguous"]).toContain(res.reason);
+    // ELIG-C1R correction #2: admin_test succeeded row is classified as
+    // test/sandbox regardless of canonical allowlist. With no live
+    // canonical row present the verdict is would_deny_test_payment.
+    expect(res.reason).toBe("would_deny_test_payment");
+    expect(res.would_allow).toBe(false);
   });
 });
 
-describe("ELIG-C1 · exclusions", () => {
+describe("ELIG-C1R · status=='succeeded' is the only canonical proof-of-payment", () => {
+  it("payment status='paid' is NOT canonical succeeded", () => {
+    const res = evaluateGrantEligibility({
+      branch: "standard",
+      callerType: "service_role",
+      order: baseOrder(),
+      payments: [succeededPayment({ status: "paid" })],
+    });
+    // Should NOT be allow_paid_canonical_candidate — legacy `paid` string
+    // is not accepted as succeeded.
+    expect(res.reason).not.toBe("allow_paid_canonical_candidate");
+    expect(res.evidence.canonical_payment_count).toBe(0);
+  });
+
+  it("payment status='SUCCEEDED' (case-insensitive) counts as succeeded", () => {
+    const res = evaluateGrantEligibility({
+      branch: "standard",
+      callerType: "service_role",
+      order: baseOrder(),
+      payments: [succeededPayment({ status: "SUCCEEDED" })],
+    });
+    expect(res.reason).toBe("allow_paid_canonical_candidate");
+  });
+});
+
+describe("ELIG-C1R · test/sandbox classification across all providers", () => {
+  it("admin provider succeeded → would_deny_test_payment", () => {
+    const res = evaluateGrantEligibility({
+      branch: "standard",
+      callerType: "service_role",
+      order: baseOrder(),
+      payments: [succeededPayment({ provider: "admin" })],
+    });
+    expect(res.reason).toBe("would_deny_test_payment");
+  });
+
+  it("admin_test provider succeeded → would_deny_test_payment", () => {
+    const res = evaluateGrantEligibility({
+      branch: "standard",
+      callerType: "service_role",
+      order: baseOrder(),
+      payments: [succeededPayment({ provider: "admin_test" })],
+    });
+    expect(res.reason).toBe("would_deny_test_payment");
+  });
+
+  it("rr with meta.env='test' → would_deny_test_payment", () => {
+    const res = evaluateGrantEligibility({
+      branch: "standard",
+      callerType: "service_role",
+      order: baseOrder(),
+      payments: [succeededPayment({ provider: "rr", meta: { env: "test" } })],
+    });
+    expect(res.reason).toBe("would_deny_test_payment");
+  });
+
+  it("stripe with livemode=false → would_deny_test_payment", () => {
+    const res = evaluateGrantEligibility({
+      branch: "standard",
+      callerType: "service_role",
+      order: baseOrder(),
+      payments: [succeededPayment({ provider: "stripe", meta: { livemode: false } })],
+    });
+    expect(res.reason).toBe("would_deny_test_payment");
+  });
+
+  it("live canonical + test payment together → live evidence wins (not hidden)", () => {
+    const res = evaluateGrantEligibility({
+      branch: "standard",
+      callerType: "service_role",
+      order: baseOrder(),
+      payments: [
+        succeededPayment({ id: "live", provider: "bepaid" }),
+        succeededPayment({ id: "test", provider: "admin_test" }),
+      ],
+    });
+    expect(res.reason).toBe("allow_paid_canonical_candidate");
+    expect(res.evidence.test_or_sandbox_only).toBe(false);
+    expect(res.evidence.canonical_payment_count).toBe(1);
+  });
+});
+
+describe("ELIG-C1R · exclusions", () => {
   it("excludes deleted payments", () => {
     const res = evaluateGrantEligibility({
       branch: "standard",
@@ -80,38 +161,113 @@ describe("ELIG-C1 · exclusions", () => {
     expect(res.reason).toBe("manual_review_ambiguous");
     expect(res.evidence.canonical_payment_count).toBe(0);
   });
+});
 
-  it("excludes RR test payment (meta.env='test')", () => {
+describe("ELIG-C1R · evidence-load failure short-circuits to manual review", () => {
+  it("paymentsLoadFailed → manual_review_evidence_load_failed", () => {
     const res = evaluateGrantEligibility({
       branch: "standard",
       callerType: "service_role",
       order: baseOrder(),
-      payments: [succeededPayment({ provider: "rr", meta: { env: "test" } })],
+      payments: [],
+      paymentsLoadFailed: true,
     });
-    expect(res.reason).toBe("would_deny_test_payment");
-    expect(res.would_allow).toBe(false);
+    expect(res.reason).toBe("manual_review_evidence_load_failed");
+    expect(res.would_allow).toBeNull();
+    expect(res.evidence.evidence_load_failures).toContain("payments_load_failed");
   });
 
-  it("excludes Stripe sandbox (meta.livemode=false)", () => {
+  it("entitlementLoadFailed on admin edit → manual_review_evidence_load_failed", () => {
     const res = evaluateGrantEligibility({
-      branch: "standard",
-      callerType: "service_role",
+      branch: "adminManualAccessEdit",
+      callerType: "admin",
       order: baseOrder(),
-      payments: [succeededPayment({ provider: "stripe", meta: { livemode: false } })],
+      payments: [],
+      entitlementLoadFailed: true,
     });
-    expect(res.reason).toBe("would_deny_test_payment");
+    expect(res.reason).toBe("manual_review_evidence_load_failed");
+    expect(res.evidence.evidence_load_failures).toContain("entitlement_load_failed");
   });
 
-  it("classifies admin/admin_test provider as non-canonical (no false allow)", () => {
+  it("subscriptionLoadFailed → manual_review_evidence_load_failed", () => {
     const res = evaluateGrantEligibility({
-      branch: "standard",
-      callerType: "service_role",
+      branch: "adminManualAccessEdit",
+      callerType: "admin",
       order: baseOrder(),
-      payments: [succeededPayment({ provider: "admin" })],
+      payments: [],
+      subscriptionLoadFailed: true,
     });
-    expect(res.reason).not.toBe("allow_paid_canonical_candidate");
+    expect(res.reason).toBe("manual_review_evidence_load_failed");
+    expect(res.evidence.evidence_load_failures).toContain("subscription_load_failed");
   });
 });
+
+describe("ELIG-C1R · admin edit accepts subscription as existing access", () => {
+  it("admin edit with existing subscription (no entitlement) → allow_admin_edit_existing_candidate", () => {
+    const res = evaluateGrantEligibility({
+      branch: "adminManualAccessEdit",
+      callerType: "admin",
+      order: baseOrder(),
+      payments: [],
+      existingEntitlement: null,
+      existingSubscription: { id: "sub_1", status: "active" },
+    });
+    expect(res.reason).toBe("allow_admin_edit_existing_candidate");
+    expect(res.evidence.existing_subscription).toBe(true);
+    expect(res.evidence.existing_entitlement).toBe(false);
+  });
+});
+
+describe("ELIG-C1R · net_paid is null until C2 lands financial truth", () => {
+  it("refund evidence present → net_paid=null (gross_succeeded still reported)", () => {
+    const res = evaluateGrantEligibility({
+      branch: "standard",
+      callerType: "service_role",
+      order: baseOrder(),
+      payments: [
+        succeededPayment({ id: "parent" }),
+        {
+          id: "refund",
+          provider: "bepaid",
+          transaction_type: "refund",
+          status: "refunded",
+          amount: -50,
+          currency: "BYN",
+          meta: { type: "refund" },
+          deleted_at: null,
+        },
+      ],
+    });
+    expect(res.evidence.net_paid).toBeNull();
+    expect(res.evidence.gross_succeeded).toBe(100);
+  });
+
+  it("multiple succeeded canonical payments → net_paid=null", () => {
+    const res = evaluateGrantEligibility({
+      branch: "standard",
+      callerType: "service_role",
+      order: baseOrder(),
+      payments: [
+        succeededPayment({ id: "a" }),
+        succeededPayment({ id: "b", provider_payment_id: "bp_2" }),
+      ],
+    });
+    expect(res.evidence.net_paid).toBeNull();
+    expect(res.evidence.gross_succeeded).toBe(200);
+  });
+
+  it("single clean succeeded payment → net_paid equals gross_succeeded", () => {
+    const res = evaluateGrantEligibility({
+      branch: "standard",
+      callerType: "service_role",
+      order: baseOrder(),
+      payments: [succeededPayment()],
+    });
+    expect(res.evidence.net_paid).toBe(100);
+    expect(res.evidence.gross_succeeded).toBe(100);
+  });
+});
+
 
 describe("ELIG-C1 · amount and currency", () => {
   it("currency conflict → manual review", () => {

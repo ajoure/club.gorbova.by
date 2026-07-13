@@ -1,32 +1,31 @@
 /**
- * PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / ELIG-C1-SHADOW
+ * PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / ELIG-C1R
  *
  * Pure helper. NO Supabase / IO / DML. Given an order, its linked
- * payments_v2 rows and (optional) existing entitlement, compute a
- * shadow eligibility verdict for grant-access-for-order.
+ * payments_v2 rows and (optional) existing entitlement/subscription
+ * evidence, compute a shadow eligibility verdict for
+ * grant-access-for-order.
  *
- * Contract:
- *   would_allow = true | false | null
- *     - true  → strong allow-candidate (still shadow only until C2 lands
- *               financial-truth and enforcement is authorized)
- *     - false → strong deny-candidate
- *     - null  → manual review required (ambiguous / unverified)
- *   reason      → machine-readable label; see EligibilityReason
- *   evidence    → non-sensitive attributes used to reach the verdict
+ * Contract (ELIG-C1R corrections):
+ *   1. ONLY status === "succeeded" counts as canonical proof-of-payment.
+ *      Legacy "paid" or unknown values are NOT treated as succeeded.
+ *   2. Test/sandbox classification is computed across ALL alive
+ *      non-refund payment rows — NOT filtered by canonical allowlist
+ *      first. This ensures admin/admin_test/etc. succeeded rows trigger
+ *      would_deny_test_payment.
+ *   3. Evidence-load failures collapse to a dedicated verdict
+ *      manual_review_evidence_load_failed, never to a business decision.
+ *   4. Existing entitlement AND/OR active subscription both count as
+ *      admin-edit access evidence.
+ *   5. net_paid = null whenever refund evidence is present OR more than
+ *      one canonical succeeded row exists. gross_succeeded is retained
+ *      as observed sum only. Financial truth is deferred to C2.
  *
  * NEVER records tokens. NEVER decides identity. Caller/branch is passed
  * in from the already-resolved caller_auth.ts result.
  *
- * Canonical payment providers (all model, per ELIG-C1 correction):
+ * Canonical payment providers:
  *   bepaid | stripe | rr | bank
- *
- * Excluded from evidence (not treated as canonical proof-of-payment):
- *   - deleted_at IS NOT NULL
- *   - test / sandbox payments (provider ∈ admin/admin_test/test/sandbox
- *     OR meta.test === true OR meta.sandbox === true
- *     OR meta.livemode === false)
- *   - standalone manual payment without order_id (caller does not
- *     supply such rows since we filter by order_id upstream)
  */
 
 export type CallerType = "service_role" | "admin" | "ordinary_user";
@@ -66,7 +65,13 @@ export type EligibilityReason =
   | "manual_review_trial_contract_unverified"
   | "manual_review_legacy_backfill"
   | "manual_review_legacy_deal_only_semantics"
+  | "manual_review_evidence_load_failed"
   | "manual_review_ambiguous";
+
+export type EvidenceLoadFailure =
+  | "payments_load_failed"
+  | "entitlement_load_failed"
+  | "subscription_load_failed";
 
 export interface EligibilityEvidence {
   branch: Branch;
@@ -90,6 +95,8 @@ export interface EligibilityEvidence {
   parent_refunded_amount_present: boolean;
   test_or_sandbox_only: boolean;
   existing_entitlement: boolean;
+  existing_subscription: boolean;
+  evidence_load_failures: EvidenceLoadFailure[];
   exception_type: string | null;
 }
 
@@ -98,7 +105,11 @@ export interface EligibilityInput {
   callerType: CallerType;
   order: any;
   payments: any[];
-  existingEntitlement?: any | null;
+  existingEntitlement?: any | boolean | null;
+  existingSubscription?: any | boolean | null;
+  paymentsLoadFailed?: boolean;
+  entitlementLoadFailed?: boolean;
+  subscriptionLoadFailed?: boolean;
   claimedSource?: string | null;
   claimedContext?: string | null;
 }
@@ -141,15 +152,21 @@ function isCanonicalProvider(p: any): boolean {
   return (CANONICAL_PROVIDERS as readonly string[]).includes(prov);
 }
 
+/** ELIG-C1R: ONLY `succeeded` is canonical. `paid` / legacy strings do NOT count. */
 function isSucceededStatus(s: any): boolean {
-  const v = String(s || "").toLowerCase();
-  return v === "paid" || v === "succeeded";
+  return String(s || "").toLowerCase() === "succeeded";
 }
 
 export function evaluateGrantEligibility(input: EligibilityInput): EligibilityResult {
   const { branch, callerType, order } = input;
   const payments = Array.isArray(input.payments) ? input.payments : [];
-  const existingEntitlement = input.existingEntitlement || null;
+  const existingEntitlement = !!input.existingEntitlement;
+  const existingSubscription = !!input.existingSubscription;
+
+  const loadFailures: EvidenceLoadFailure[] = [];
+  if (input.paymentsLoadFailed) loadFailures.push("payments_load_failed");
+  if (input.entitlementLoadFailed) loadFailures.push("entitlement_load_failed");
+  if (input.subscriptionLoadFailed) loadFailures.push("subscription_load_failed");
 
   const meta = (order?.meta || {}) as Record<string, any>;
   const metaSource: string | null =
@@ -162,17 +179,23 @@ export function evaluateGrantEligibility(input: EligibilityInput): EligibilityRe
   const currency = order?.currency || null;
   const isTrial = order?.is_trial === true;
 
-  // Partition payments.
+  // Partition payments across ALL alive rows first — do NOT prefilter by
+  // canonical provider, otherwise test/sandbox rows would slip through
+  // classification (ELIG-C1R correction #2).
   const alive = payments.filter((p) => !p?.deleted_at);
   const refundRows = alive.filter(isRefundRow);
   const nonRefund = alive.filter((p) => !isRefundRow(p));
 
+  // Test/sandbox succeeded rows across ALL providers (admin, admin_test,
+  // rr env=test, stripe livemode=false, bepaid_test, etc.).
+  const succeededTestPayments = nonRefund.filter(
+    (p) => isSucceededStatus(p.status) && isTestPayment(p),
+  );
+
+  // Canonical succeeded = canonical provider AND succeeded AND NOT test.
   const canonicalNonRefund = nonRefund.filter(isCanonicalProvider);
   const canonicalSucceeded = canonicalNonRefund.filter(
     (p) => isSucceededStatus(p.status) && !isTestPayment(p),
-  );
-  const canonicalSucceededTestOnly = canonicalNonRefund.filter(
-    (p) => isSucceededStatus(p.status) && isTestPayment(p),
   );
 
   const grossSucceeded = canonicalSucceeded.reduce(
@@ -181,10 +204,6 @@ export function evaluateGrantEligibility(input: EligibilityInput): EligibilityRe
   );
   const parentRefundedTotal = canonicalNonRefund.reduce(
     (acc, p) => acc + toNumber(p.refunded_amount),
-    0,
-  );
-  const legacyRefundTotal = refundRows.reduce(
-    (acc, p) => acc + Math.abs(toNumber(p.amount)),
     0,
   );
   const refundRowPresent = refundRows.length > 0;
@@ -217,13 +236,31 @@ export function evaluateGrantEligibility(input: EligibilityInput): EligibilityRe
   const providerSet = Array.from(
     new Set(canonicalSucceeded.map((p) => String(p.provider || "").toLowerCase())),
   );
+
+  // test/sandbox-only: succeeded test rows exist but NO live canonical.
   const testOrSandboxOnly =
-    canonicalSucceeded.length === 0 && canonicalSucceededTestOnly.length > 0;
+    canonicalSucceeded.length === 0 && succeededTestPayments.length > 0;
 
   const isNoCardZero =
     finalPrice === 0 &&
     paidAmount === 0 &&
     canonicalSucceeded.length === 0;
+
+  // net_paid: null whenever refund evidence exists OR more than one
+  // succeeded canonical row exists (ELIG-C1R correction #7). C2 lands
+  // the strict computation.
+  let netPaid: number | null;
+  if (canonicalSucceeded.length === 0) {
+    netPaid = null;
+  } else if (
+    refundRowPresent ||
+    parentRefundedPresent ||
+    canonicalSucceeded.length > 1
+  ) {
+    netPaid = null;
+  } else {
+    netPaid = grossSucceeded;
+  }
 
   const baseEvidence: EligibilityEvidence = {
     branch,
@@ -236,9 +273,7 @@ export function evaluateGrantEligibility(input: EligibilityInput): EligibilityRe
     meta_deal_only: metaDealOnly,
     is_no_card_zero: isNoCardZero,
     gross_succeeded: canonicalSucceeded.length > 0 ? grossSucceeded : null,
-    net_paid: canonicalSucceeded.length > 0
-      ? grossSucceeded - parentRefundedTotal - legacyRefundTotal
-      : null,
+    net_paid: netPaid,
     currency_conflict: currencyConflict,
     amount_insufficient: amountInsufficient,
     canonical_payment_ids: canonicalPaymentIds,
@@ -248,23 +283,38 @@ export function evaluateGrantEligibility(input: EligibilityInput): EligibilityRe
     refund_row_present: refundRowPresent,
     parent_refunded_amount_present: parentRefundedPresent,
     test_or_sandbox_only: testOrSandboxOnly,
-    existing_entitlement: !!existingEntitlement,
+    existing_entitlement: existingEntitlement,
+    existing_subscription: existingSubscription,
+    evidence_load_failures: loadFailures,
     exception_type: null,
   };
 
-  const R = (reason: EligibilityReason, would_allow: boolean | null, exception_type: string | null = null): EligibilityResult => ({
+  const R = (
+    reason: EligibilityReason,
+    would_allow: boolean | null,
+    exception_type: string | null = null,
+  ): EligibilityResult => ({
     would_allow,
     reason,
     evidence: { ...baseEvidence, exception_type },
   });
 
   // ─────────────────────────────────────────────────────────
-  // Priority per spec.
+  // Priority.
   // ─────────────────────────────────────────────────────────
 
-  // 3DS / renewal candidate branches. Log the branch-specific evidence
-  // and DO NOT deny; C2 will land the strict contract. Still applies
-  // deny for exact admin_deal_only / refunded.
+  // 0) Evidence-load failure — collapse to manual review before any
+  //    business decision (ELIG-C1R correction #4).
+  if (loadFailures.length > 0) {
+    return R(
+      "manual_review_evidence_load_failed",
+      null,
+      loadFailures.join(","),
+    );
+  }
+
+  // 3DS / renewal candidate branches. Log evidence and DO NOT deny;
+  // C2 lands strict contract. Still applies deny for refunded.
   if (branch === "3ds_finalize") {
     if (orderStatus === "refunded") return R("would_deny_refunded", false);
     return R("allow_3ds_finalize_candidate", true, "three_ds_finalize");
@@ -274,9 +324,10 @@ export function evaluateGrantEligibility(input: EligibilityInput): EligibilityRe
     return R("allow_subscription_renewal_candidate", true, "subscription_renewal");
   }
 
-  // 1) adminManualAccessEdit: existing access resolves eligibility.
+  // 1) adminManualAccessEdit: existing access (entitlement OR active
+  //    subscription) resolves eligibility.
   if (branch === "adminManualAccessEdit") {
-    if (existingEntitlement) {
+    if (existingEntitlement || existingSubscription) {
       return R("allow_admin_edit_existing_candidate", true, "admin_edit");
     }
     return R("manual_review_admin_edit_without_access", null, "admin_edit");
@@ -287,7 +338,7 @@ export function evaluateGrantEligibility(input: EligibilityInput): EligibilityRe
     return R("would_deny_deal_only", false, "admin_deal_only");
   }
 
-  // 3) test/sandbox-only evidence (no non-test succeeded canonical row).
+  // 3) test/sandbox evidence with NO live canonical succeeded row.
   if (testOrSandboxOnly) {
     return R("would_deny_test_payment", false, "test_payment_only");
   }
@@ -318,7 +369,6 @@ export function evaluateGrantEligibility(input: EligibilityInput): EligibilityRe
   ) {
     return R("allow_admin_gift", true, "admin_grant_zero_price");
   }
-  // Admin bulk/manual grant candidates (not strict admin_grant contract).
   if (
     callerType === "admin" &&
     branch === "standard" &&
@@ -329,7 +379,7 @@ export function evaluateGrantEligibility(input: EligibilityInput): EligibilityRe
   if (
     callerType === "admin" &&
     branch === "standard" &&
-    existingEntitlement &&
+    (existingEntitlement || existingSubscription) &&
     (metaSource === "admin_extend" || metaSource === "admin_manual_extend")
   ) {
     return R("allow_admin_extend_existing_candidate", true, "admin_extend");
@@ -357,7 +407,7 @@ export function evaluateGrantEligibility(input: EligibilityInput): EligibilityRe
     return R("would_deny_failed", false, "failed");
   }
 
-  // 10) failed/pending/partial WITH succeeded payment → status/payment conflict.
+  // 10) status/payment conflict.
   if (
     canonicalSucceeded.length > 0 &&
     orderStatus !== "paid" &&
@@ -366,12 +416,12 @@ export function evaluateGrantEligibility(input: EligibilityInput): EligibilityRe
     return R("manual_review_status_payment_conflict", null, "status_payment_conflict");
   }
 
-  // 11) trial contract unverified (kept before legacy so trial doesn't fall through).
+  // 11) trial contract unverified.
   if (isTrial) {
     return R("manual_review_trial_contract_unverified", null, "trial");
   }
 
-  // Legacy deal_only flag (not the exact admin_deal_only source).
+  // Legacy deal_only flag.
   if (metaDealOnly) {
     return R("manual_review_legacy_deal_only_semantics", null, "legacy_deal_only");
   }

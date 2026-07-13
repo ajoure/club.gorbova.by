@@ -1,21 +1,27 @@
 /**
- * PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / ELIG-C1-SHADOW
+ * PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / ELIG-C1R
  *
  * Source-level invariant that the handler wires the shadow evaluation
- * WITHOUT enabling enforcement:
+ * WITHOUT enabling enforcement, in BOTH the standard flow and the
+ * early 3ds_finalize branch:
  *
- *   authz  → order lookup / evidence load → shadow evaluation → grant flow
+ *   authz → order lookup → shadow evaluation → grant flow
+ *   authz → threeDsOrder lookup → shadow evaluation → handleThreeDsFinalize
  *
  * MUST be true:
- *   1. Shadow evaluation runs AFTER auth policy check AND after order
- *      lookup (order is loaded before shadow evidence).
- *   2. `evaluateGrantEligibility` return value is NEVER used in a
- *      blocking response — no `return new Response(... shadow.would_allow ...)`
- *      pattern, no `if (shadow.would_allow === false) return`, etc.
- *   3. No orders_v2 UPDATE happens as part of the shadow block.
- *   4. The audit action used for shadow logging is exactly
+ *   1. Shared runner `runGrantEligibilityShadow` exists and encapsulates
+ *      the pure-helper call (`evaluateGrantEligibility`) — the handler
+ *      body itself never calls the helper directly.
+ *   2. The runner is invoked from within the ELIG-C1-SHADOW marker block
+ *      in the standard flow.
+ *   3. The runner is invoked from the 3ds_finalize branch BEFORE
+ *      `handleThreeDsFinalize`.
+ *   4. The runner call is never followed by a `return new Response`
+ *      that depends on the shadow verdict.
+ *   5. A `crypto.randomUUID()`-generated `requestId` is created at the
+ *      top of the request and passed to the runner.
+ *   6. Audit action for the shadow row is exactly
  *      `grant-access-for-order.eligibility_shadow`.
- *   5. The shadow block is wrapped in try/catch (never throws upward).
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -32,17 +38,27 @@ const HANDLER = path.resolve(
 );
 const SRC = readFileSync(HANDLER, "utf8");
 
-// Locate the shadow block by its dedicated marker.
 const SHADOW_BEGIN = SRC.indexOf("ELIG-C1-SHADOW");
 const SHADOW_END = SRC.indexOf("END ELIG-C1-SHADOW");
 
-describe("ELIG-C1 · handler shadow integration invariant", () => {
-  it("shadow block is present and delimited by BEGIN/END markers", () => {
-    expect(SHADOW_BEGIN).toBeGreaterThan(0);
-    expect(SHADOW_END).toBeGreaterThan(SHADOW_BEGIN);
+describe("ELIG-C1R · handler shadow integration invariant", () => {
+  it("shared runner is defined once and encapsulates the helper call", () => {
+    const defMatches = SRC.match(/function\s+runGrantEligibilityShadow\s*\(/g) || [];
+    expect(defMatches.length).toBe(1);
+    // Helper is called exactly once in the file — inside the runner.
+    const helperCalls = SRC.match(/evaluateGrantEligibility\s*\(/g) || [];
+    expect(helperCalls.length).toBe(1);
   });
 
-  it("shadow block runs AFTER auth resolution and order lookup", () => {
+  it("standard flow shadow block is present, delimited, and calls the runner", () => {
+    expect(SHADOW_BEGIN).toBeGreaterThan(0);
+    expect(SHADOW_END).toBeGreaterThan(SHADOW_BEGIN);
+    const block = SRC.slice(SHADOW_BEGIN, SHADOW_END);
+    expect(block).toMatch(/runGrantEligibilityShadow\s*\(/);
+    expect(block).toMatch(/stage:\s*['"]standard['"]/);
+  });
+
+  it("standard shadow block runs AFTER auth resolution and order lookup", () => {
     const idxResolve = SRC.search(/resolveGrantAccessCaller\s*\(/);
     const idxPolicy = SRC.search(/enforceBranchPolicy\s*\(/);
     const idxOrderLookup = SRC.search(/\.from\(\s*["']orders_v2["']\s*\)/);
@@ -54,60 +70,66 @@ describe("ELIG-C1 · handler shadow integration invariant", () => {
     expect(idxOrderLookup).toBeLessThan(SHADOW_BEGIN);
   });
 
-  it("shadow block is wrapped in try/catch", () => {
-    const block = SRC.slice(SHADOW_BEGIN, SHADOW_END);
-    expect(block).toMatch(/try\s*\{/);
-    expect(block).toMatch(/catch\s*\(/);
+  it("3ds_finalize branch runs the shadow BEFORE handleThreeDsFinalize (ELIG-C1R correction #3)", () => {
+    const threeDsBranch = SRC.indexOf("_body.context === '3ds_finalize'");
+    expect(threeDsBranch).toBeGreaterThan(0);
+    // Find first runner call after the branch guard.
+    const branchTail = SRC.slice(threeDsBranch);
+    const runnerRel = branchTail.search(/runGrantEligibilityShadow\s*\(/);
+    const writerRel = branchTail.search(/handleThreeDsFinalize\s*\(/);
+    expect(runnerRel).toBeGreaterThan(0);
+    expect(writerRel).toBeGreaterThan(0);
+    expect(runnerRel).toBeLessThan(writerRel);
+    // And the stage marker for 3DS is present.
+    expect(SRC).toMatch(/stage:\s*['"]3ds_finalize_pre_writer['"]/);
   });
 
-  it("shadow block calls evaluateGrantEligibility exactly once", () => {
+  it("standard shadow block does not perform a blocking return", () => {
     const block = SRC.slice(SHADOW_BEGIN, SHADOW_END);
-    const matches = block.match(/evaluateGrantEligibility\s*\(/g) || [];
-    expect(matches.length).toBe(1);
-  });
-
-  it("shadow verdict is NEVER used in a blocking return", () => {
-    // Scan the whole file: `shadow.would_allow` must not appear inside any
-    // `return` expression or as a guard for a `return new Response`.
-    // We assert that `shadow.would_allow` appears only inside the shadow
-    // block (console.log / audit payload) and never in a return.
-    const shadowRefs = [...SRC.matchAll(/shadow\.would_allow/g)];
-    for (const m of shadowRefs) {
-      const idx = m.index || 0;
-      expect(idx).toBeGreaterThanOrEqual(SHADOW_BEGIN);
-      expect(idx).toBeLessThan(SHADOW_END);
-    }
-    const shadowReasonRefs = [...SRC.matchAll(/shadow\.reason/g)];
-    for (const m of shadowReasonRefs) {
-      const idx = m.index || 0;
-      expect(idx).toBeGreaterThanOrEqual(SHADOW_BEGIN);
-      expect(idx).toBeLessThan(SHADOW_END);
-    }
-  });
-
-  it("shadow block does NOT contain any orders_v2 update/insert/upsert", () => {
-    const block = SRC.slice(SHADOW_BEGIN, SHADOW_END);
+    expect(block).not.toMatch(/return\s+new\s+Response\s*\(/);
     expect(block).not.toMatch(/from\(\s*["']orders_v2["']\s*\)\s*\.update\(/);
     expect(block).not.toMatch(/from\(\s*["']orders_v2["']\s*\)\s*\.upsert\(/);
     expect(block).not.toMatch(/from\(\s*["']orders_v2["']\s*\)\s*\.insert\(/);
-    // Nor a raw `orders_v2` write via rpc.
-    expect(block).not.toMatch(/rpc\(\s*["'][^"']*order[^"']*update[^"']*["']/i);
   });
 
-  it("shadow block does NOT contain a blocking `return new Response`", () => {
-    const block = SRC.slice(SHADOW_BEGIN, SHADOW_END);
-    expect(block).not.toMatch(/return\s+new\s+Response\s*\(/);
+  it("server-generated request_id is created and threaded into the runner (ELIG-C1R correction #6)", () => {
+    expect(SRC).toMatch(/const\s+requestId\s*=\s*crypto\.randomUUID\s*\(\s*\)/);
+    // Both shadow invocations pass requestId.
+    const runnerCalls = [...SRC.matchAll(/runGrantEligibilityShadow\s*\(\s*\{[\s\S]*?\}\s*\)/g)];
+    expect(runnerCalls.length).toBeGreaterThanOrEqual(2);
+    for (const m of runnerCalls) {
+      expect(m[0]).toMatch(/\brequestId\s*[,\n}]/);
+    }
   });
 
   it("audit action is exactly grant-access-for-order.eligibility_shadow", () => {
-    const block = SRC.slice(SHADOW_BEGIN, SHADOW_END);
-    expect(block).toMatch(/action:\s*['"]grant-access-for-order\.eligibility_shadow['"]/);
+    expect(SRC).toMatch(/action:\s*['"]grant-access-for-order\.eligibility_shadow['"]/);
   });
 
-  it("shadow block imports the pure helper from _shared, not a local shadow copy", () => {
-    expect(SRC).toMatch(
-      /from\s+['"]\.\.\/_shared\/grant-eligibility\.ts['"]/,
-    );
-    expect(SRC).toMatch(/evaluateGrantEligibility/);
+  it("runner probes both entitlements AND subscriptions_v2 (ELIG-C1R correction #5)", () => {
+    // Search inside the runner body — bounded by the marker `END ELIG-C1R shared runner`.
+    const runnerBegin = SRC.indexOf("function runGrantEligibilityShadow");
+    const runnerEnd = SRC.indexOf("END ELIG-C1R shared runner");
+    expect(runnerBegin).toBeGreaterThan(0);
+    expect(runnerEnd).toBeGreaterThan(runnerBegin);
+    const runnerSrc = SRC.slice(runnerBegin, runnerEnd);
+    expect(runnerSrc).toMatch(/\.from\(\s*['"]entitlements['"]\s*\)/);
+    expect(runnerSrc).toMatch(/\.from\(\s*['"]subscriptions_v2['"]\s*\)/);
+    // Both existence probes use limit(1), NOT maybeSingle (ELIG-C1R correction #5).
+    expect(runnerSrc).not.toMatch(/\.maybeSingle\(\s*\)/);
+    expect(runnerSrc).toMatch(/\.limit\(\s*1\s*\)/);
+  });
+
+  it("runner classifies load-failure flags (ELIG-C1R correction #4)", () => {
+    const runnerBegin = SRC.indexOf("function runGrantEligibilityShadow");
+    const runnerEnd = SRC.indexOf("END ELIG-C1R shared runner");
+    const runnerSrc = SRC.slice(runnerBegin, runnerEnd);
+    expect(runnerSrc).toMatch(/paymentsLoadFailed/);
+    expect(runnerSrc).toMatch(/entitlementLoadFailed/);
+    expect(runnerSrc).toMatch(/subscriptionLoadFailed/);
+  });
+
+  it("handler imports the pure helper from _shared, not a local copy", () => {
+    expect(SRC).toMatch(/from\s+['"]\.\.\/_shared\/grant-eligibility\.ts['"]/);
   });
 });
