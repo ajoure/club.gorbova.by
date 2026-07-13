@@ -168,6 +168,9 @@ describe("ELIG-C1R · handler shadow integration invariant", () => {
     // Sanity: nowhere in the runner is `shadowPayments` truncated.
     expect(runnerSrc).not.toMatch(/shadowPayments\s*\[\s*0\s*\]/);
     expect(runnerSrc).not.toMatch(/shadowPayments\.slice\(/);
+  });
+
+
 
   it("handler imports the pure helper from _shared, not a local copy", () => {
     expect(SRC).toMatch(/from\s+['"]\.\.\/_shared\/grant-eligibility\.ts['"]/);
