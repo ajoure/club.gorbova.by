@@ -536,9 +536,10 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         // Extract offer name from snapshot
         const offer_name = purchaseSnapshot?.offer_name || null;
         
-        // Extract UID - MUST be provider_payment_id for proper dedup
+        // Stage 5 A3: server .in(ACTIVE_PAYMENT_PROVIDERS) уже гарантирует непустой canonical provider.
+        // Не маскируем строки без provider как 'bepaid'.
         const pUid = p.provider_payment_id;
-        const provider = p.provider || 'bepaid';
+        const provider = p.provider as string;
         
         // Only add to dedup set if we have a real UID
         if (pUid) {
