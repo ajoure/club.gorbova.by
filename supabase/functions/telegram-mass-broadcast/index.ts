@@ -361,7 +361,8 @@ Deno.serve(async (req) => {
     }
 
     // Rule 2: new-schema shape present but all empty => caller forgot to fill targeting.
-    if (hasNewSchemaShape && !newSchemaHasContent) {
+    // Exception: explicit full-audience broadcast (allowFullAudience=true) intentionally targets the whole base.
+    if (hasNewSchemaShape && !newSchemaHasContent && !allowFullAudience) {
       console.error('[telegram-broadcast] GUARD: new-schema filters present but all empty');
       return new Response(
         JSON.stringify({
