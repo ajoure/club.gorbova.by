@@ -67,10 +67,10 @@ const products: Product[] = [
     description: "25 модулей за 7 недель: от методологии до подготовки к проверкам",
     badge: "Новинка",
     badgeVariant: "secondary",
-    price: "от 1650 BYN",
+    price: "",
     image: productCourseImage,
     isPurchased: false,
-    purchaseLink: "https://gorbova.by/cb",
+    purchaseLink: "https://gorbova.by/cb20predzapis",
     courseSlug: "accountant-course",
     lessonCount: 25,
     duration: "7 недель",
@@ -263,7 +263,7 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
         {/* Footer with price and buttons */}
         <div className="space-y-3">
           {/* Price row */}
-          {variant === "store" && (
+          {variant === "store" && product.price && (
             <div className="flex items-center gap-2">
               <span className="text-base font-semibold text-foreground">{product.price}</span>
             </div>
