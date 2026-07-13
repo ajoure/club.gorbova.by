@@ -104,7 +104,7 @@ export default function DeletePaymentPreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+      <DialogContent data-testid="delete-preview-dialog" data-operation-id={preview?.operation_id ?? ""} data-preview-count={preview?.before_state.length ?? 0} className="max-w-3xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Trash2 className="h-5 w-5 text-destructive" />
@@ -196,6 +196,7 @@ export default function DeletePaymentPreviewDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={executing}>Отмена</Button>
           <Button
             variant="destructive"
+            data-testid="delete-confirm-btn"
             onClick={handleExecute}
             disabled={!preview || executing || loading}
           >

@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Stage 4 Playwright — never commit admin JWTs or storage state
+playwright-auth-state*
+/tmp/browser/
+test-results/
+playwright-report/
