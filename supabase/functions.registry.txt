@@ -120,5 +120,5 @@ document-field-resolver-v2
 document-field-resolver-v2-snapshot
 
 admin-provision-e2e-fixture
-admin-e2e-login
 admin-e2e-reset-fixtures
+
