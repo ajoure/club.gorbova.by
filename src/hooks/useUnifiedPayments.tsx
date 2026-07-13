@@ -241,9 +241,12 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           // ниже OR уже включает 'bepaid' и origin IS NULL.
           // PATCH-RR-PAYMENTS-VISIBILITY-V1: added rr (provider='rr', origin='rr_installment').
           // Stage 3R: added bank (provider='bank', origin='manual_admin') для ручных платежей.
-          .in("provider", ["bepaid", "stripe", "rr", "bank"])
-          // Stage 4: скрываем soft-deleted платежи из reader.
-          .or("is_deleted.eq.false,is_deleted.is.null");
+          // Stage 5 A1/A7: жёсткий active allowlist без fallback на 'bepaid'.
+          .in("provider", ACTIVE_PAYMENT_PROVIDERS as unknown as string[])
+          // Stage 5 A5: fail-closed active-delete predicate.
+          // is_deleted=false AND deleted_at IS NULL. NULL is_deleted не считаем активным.
+          .eq("is_deleted", false)
+          .is("deleted_at", null);
         
         // PATCH-C1: Removed .not("paid_at", "is", null) to show processing/pending transactions
         // PATCH-C1: Removed strict origin filter - show all origins including manual_adjustment
