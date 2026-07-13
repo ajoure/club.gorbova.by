@@ -260,13 +260,22 @@ test.describe("Stage 4 — payment delete engine", () => {
   let authToken: string;
 
   test.beforeAll(async ({ request }) => {
+    // Idempotent reset before every run: rebuilds the exact fixture inventory.
+    const rst = await request.post(
+      `${SUPABASE_URL}/functions/v1/admin-e2e-reset-fixtures`,
+      { headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" }, data: {} }
+    );
+    const rstBody = await rst.json();
+    if (!rst.ok() || !rstBody.ok) {
+      throw new Error(`Fixture reset failed: ${JSON.stringify(rstBody)}`);
+    }
     const login = await loginAsAdmin(request);
     authToken = login.accessToken;
     const sb = adminSupabase(authToken);
     await assertFixtureInventory(sb);
     await captureBaseline(sb);
     console.log(
-      `[Stage4 E2E] Fixture inventory OK. Baseline payments=${baseline?.paymentsTotal} orders=${baseline?.ordersTotal} queue=${baseline?.queueTotal}`
+      `[Stage4 E2E] Fixture reset+inventory OK. Baseline payments=${baseline?.paymentsTotal} orders=${baseline?.ordersTotal} queue=${baseline?.queueTotal}`
     );
   });
 
