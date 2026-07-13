@@ -591,6 +591,22 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         // Stage 3R.2: include manual_admin bank name + comment so search
         // ("Паритетбанк", etc.) hits manual bank payments.
         const manualDetails = (meta?.manual_details as Record<string, unknown> | null) ?? null;
+        const stringOrNull = (v: unknown): string | null => {
+          if (typeof v !== 'string') return null;
+          const t = v.trim();
+          return t.length > 0 ? t : null;
+        };
+        // Stage 5 bank normalization: honour legacy manual_details keys
+        // (bank_name / purpose) as fallback to new ones (receiving_bank_name /
+        // comment) so legacy bank rows render + search correctly.
+        const manualReceivingBankName =
+          stringOrNull(manualDetails?.receiving_bank_name) ??
+          stringOrNull(manualDetails?.bank_name);
+        const manualComment =
+          stringOrNull(manualDetails?.comment) ??
+          stringOrNull(manualDetails?.purpose);
+        const manualBankDocumentNo =
+          stringOrNull(manualDetails?.bank_document_no);
         const search_index = buildSearchIndex([
           pUid,
           profile?.email,
@@ -604,8 +620,9 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           tariff_name,
           purchaseSnapshot?.product_name,
           bepaid_description,
-          manualDetails?.receiving_bank_name as string | null | undefined,
-          manualDetails?.comment as string | null | undefined,
+          manualReceivingBankName,
+          manualComment,
+          manualBankDocumentNo,
           manualDetails?.contact_name_snapshot as string | null | undefined,
         ]);
         
@@ -672,10 +689,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           document_url: docResolved.url,
           document_url_source: docResolved.source,
 
-          manual_receiving_bank_name:
-            (meta?.manual_details?.receiving_bank_name as string | null) ?? null,
-          manual_comment:
-            (meta?.manual_details?.comment as string | null) ?? null,
+          manual_receiving_bank_name: manualReceivingBankName,
+          manual_comment: manualComment,
 
           search_index,
         };
