@@ -17922,17 +17922,15 @@ export type Database = {
         Args: {
           p_actor_user_id: string
           p_amount: number
-          p_bank_document_no: string
-          p_bank_name: string
+          p_comment: string
+          p_contact_name_snapshot: string
           p_currency: string
-          p_customer_email: string
-          p_external_id: string
           p_idempotency_key: string
-          p_note: string
+          p_order_number_snapshot: string
           p_paid_at: string
           p_profile_id: string
           p_provider: string
-          p_purpose: string
+          p_receiving_bank_name: string
           p_related_order_id: string
           p_request_hash: string
         }

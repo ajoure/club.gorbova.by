@@ -487,8 +487,23 @@ export default function PaymentsTable({
         );
       }
         
-      case 'payer':
-        // E1-E4: Use PaymentMethodBadge component
+      case 'payer': {
+        // Stage 3R.1: для ручного банковского платежа показываем банк
+        // зачисления (наш банк-получатель) вместо метода карты.
+        const isManualBank =
+          payment.origin === 'manual_admin' &&
+          String(payment.provider || '').toLowerCase() === 'bank';
+        if (isManualBank) {
+          const bankLabel = payment.manual_receiving_bank_name || 'Банковский перевод';
+          return (
+            <div className="flex flex-col gap-0.5 text-xs">
+              <div className="inline-flex items-center gap-1.5 h-6 px-2 rounded-md bg-muted/50 border border-border/50 max-w-[180px]">
+                <Landmark className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                <span className="text-xs truncate leading-none">{bankLabel}</span>
+              </div>
+            </div>
+          );
+        }
         return (
           <div className="flex flex-col gap-0.5 text-xs">
             {/* Stage 2E: prefer derived payer_* fields (Stripe-aware + refund→parent). */}
@@ -513,6 +528,7 @@ export default function PaymentsTable({
             ) : null}
           </div>
         );
+      }
         
       case 'contact':
         if (payment.profile_id) {
