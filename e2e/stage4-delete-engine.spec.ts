@@ -591,14 +591,27 @@ test.describe("Stage 4 — payment delete engine", () => {
     await page.getByTestId("delete-confirm-btn").click();
     const executeBody = await (await executeReq).json();
     expect(executeBody.deleted_payment_ids).toEqual([FIXTURES.S4_CANONICAL]);
+    expect(executeBody.deleted_payment_ids?.length).toBe(1);
 
-    // Queue row is untouched.
+    // Reload — canonical row is gone from the active view, queue row remains.
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await searchInput.fill("stage4-s4");
+    await expect(
+      page.locator(`[data-testid="payment-row-${FIXTURES.S4_CANONICAL}"]`)
+    ).toHaveCount(0, { timeout: 10_000 });
+    await expect(
+      page.locator(`[data-testid="payment-row-${FIXTURES.S4_QUEUE}"]`)
+    ).toBeVisible();
+
+    // DB proof: queue row is untouched.
     const { data: queue } = await sb
       .from("payment_reconcile_queue")
       .select("id, status")
       .eq("id", FIXTURES.S4_QUEUE)
       .single();
     expect(queue?.id).toBe(FIXTURES.S4_QUEUE);
+
 
     console.log(
       `[S4] operation_id=${previewBody.operation_id} canonical_deleted=1 queue_untouched=1`
