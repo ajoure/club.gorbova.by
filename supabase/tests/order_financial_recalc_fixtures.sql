@@ -17,12 +17,13 @@ CREATE TEMP TABLE _fx_results (
 ) ON COMMIT DROP;
 
 CREATE OR REPLACE FUNCTION pg_temp.mk_order(
-  p_final numeric, p_currency text DEFAULT 'BYN', p_status order_status DEFAULT 'pending'
+  p_final numeric, p_currency text DEFAULT 'BYN', p_status order_status DEFAULT 'pending',
+  p_paid numeric DEFAULT 0
 ) RETURNS uuid LANGUAGE plpgsql AS $$
 DECLARE v_id uuid := gen_random_uuid();
 BEGIN
   INSERT INTO public.orders_v2(id, order_number, base_price, final_price, currency, status, paid_amount)
-  VALUES (v_id, 'FX-'||substr(v_id::text,1,8), p_final, p_final, p_currency, p_status, 0);
+  VALUES (v_id, 'FX-'||substr(v_id::text,1,8), p_final, p_final, p_currency, p_status, p_paid);
   RETURN v_id;
 END $$;
 
