@@ -82,12 +82,17 @@ VALUES
    25.00, 'BYN', 'succeeded', 'stripe', 'stage4-s2-stripe-b',  'manual_admin', now(),
    jsonb_build_object('env','test','fixture','stage4_playwright','scenario','S2','label','E2E-STAGE4-S2-B'));
 
-INSERT INTO public.payment_reconcile_queue (id, amount, currency, provider, status, source, raw_payload)
+INSERT INTO public.payment_reconcile_queue (
+  id, amount, currency, provider, bepaid_uid, source, status, status_normalized,
+  transaction_type, is_fee, paid_at, raw_payload
+)
 VALUES (
   '44444444-4444-4444-8444-0000000000f0',
-  7.00, 'BYN', 'manual', 'pending', 'stage4_playwright_fixture',
+  7.00, 'BYN', 'bepaid', 'stage4-s4-queue', 'webhook', 'pending', 'successful',
+  'payment', false, now(),
   jsonb_build_object('env','test','fixture','stage4_playwright','scenario','S4-queue','label','E2E-STAGE4-S4-QUEUE')
 );
+
 
 COMMIT;
 

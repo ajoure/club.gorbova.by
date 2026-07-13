@@ -50,15 +50,13 @@ verify_jwt = true
 [functions.grant-access-for-order]
 verify_jwt = true
 
-# Stage 4 E2E — idempotent fixture admin provisioner. Public-callable but
-# hard-coded to a single fixture email; password comes from env, never body.
+# Stage 4 E2E — idempotent fixture admin provisioner. verify_jwt=false because
+# the runner has no session yet; access is gated by X-E2E-Runner-Secret header
+# (constant-time compare against E2E_RUNNER_SECRET server env).
 [functions.admin-provision-e2e-fixture]
 verify_jwt = false
 
-# Stage 4 E2E — login broker for the fixture admin. Password stays server-side.
-[functions.admin-e2e-login]
-verify_jwt = false
-
-# Stage 4 E2E — idempotent fixture reset. Scoped to hard-coded UUIDs.
+# Stage 4 E2E — idempotent fixture reset. Same auth model: X-E2E-Runner-Secret.
 [functions.admin-e2e-reset-fixtures]
 verify_jwt = false
+

@@ -10,9 +10,10 @@
  *     admin role has read access to payments_v2 / orders_v2 / payment_tombstones
  *     / audit_logs). Service-role keys are NEVER passed to the browser.
  *
- * Env:
+ * Env (runner side, never shipped to the browser bundle):
  *   VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY  (already in .env)
  *   E2E_ADMIN_EMAIL, E2E_ADMIN_PASSWORD               (admin fixture credentials)
+ *   E2E_RUNNER_SECRET                                 (gate for reset/provision fns)
  *
  * Isolation contract:
  *   Every mutating action is guarded by a fixture ID whitelist. Any drift on
@@ -31,11 +32,9 @@ const SUPABASE_URL =
 const SUPABASE_ANON_KEY =
   process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhkamdramNlb3dubW1ucnFxdHV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY2NTczNjMsImV4cCI6MjA4MjIzMzM2M30.bg4ALwTFZ57YYDLgB4IwLqIDrt0XcQGIlDEGllNBX0E";
-// The password is NEVER available to the test process. We obtain a fixture-user
-// JWT by calling the server-side login broker (admin-e2e-login edge function),
-// which reads E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD from its own env and returns
-// a session for the single hard-coded fixture email.
-const LOGIN_BROKER_URL = `${SUPABASE_URL}/functions/v1/admin-e2e-login`;
+const E2E_ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || "";
+const E2E_ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || "";
+const E2E_RUNNER_SECRET = process.env.E2E_RUNNER_SECRET || "";
 
 const FIXTURES = {
   S1: "11111111-1111-4111-8111-000000000001",
@@ -68,25 +67,35 @@ let baseline: {
 // ---------------------------------------------------------------------------
 // Auth helpers
 // ---------------------------------------------------------------------------
-async function loginAsAdmin(request: APIRequestContext): Promise<{
+/**
+ * Log in the fixture admin using standard Supabase Auth password grant.
+ * Runner-only credentials — never shipped to browser bundle. No custom
+ * server-side login broker: this is the same auth path any admin uses.
+ */
+async function loginAsAdmin(_request?: APIRequestContext): Promise<{
   accessToken: string;
   refreshToken: string;
   user: any;
 }> {
-  const res = await request.post(LOGIN_BROKER_URL, {
-    headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
-    data: {},
-  });
-  const body = await res.json();
-  if (!res.ok() || !body.ok || !body.access_token) {
+  if (!E2E_ADMIN_EMAIL || !E2E_ADMIN_PASSWORD) {
     throw new Error(
-      `Admin login broker failed [${res.status()}]: ${JSON.stringify(body)}`
+      "E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD must be set in the runner env"
     );
   }
+  const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await sb.auth.signInWithPassword({
+    email: E2E_ADMIN_EMAIL,
+    password: E2E_ADMIN_PASSWORD,
+  });
+  if (error || !data.session) {
+    throw new Error(`Admin signInWithPassword failed: ${error?.message ?? "no session"}`);
+  }
   return {
-    accessToken: body.access_token,
-    refreshToken: body.refresh_token,
-    user: body.user,
+    accessToken: data.session.access_token,
+    refreshToken: data.session.refresh_token,
+    user: data.user,
   };
 }
 
@@ -96,6 +105,7 @@ function adminSupabase(accessToken: string): SupabaseClient {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
+
 
 /**
  * Restore Supabase session into localStorage BEFORE navigating to protected routes.
@@ -260,10 +270,20 @@ test.describe("Stage 4 — payment delete engine", () => {
   let authToken: string;
 
   test.beforeAll(async ({ request }) => {
+    if (!E2E_RUNNER_SECRET) {
+      throw new Error("E2E_RUNNER_SECRET must be set in the runner env");
+    }
     // Idempotent reset before every run: rebuilds the exact fixture inventory.
     const rst = await request.post(
       `${SUPABASE_URL}/functions/v1/admin-e2e-reset-fixtures`,
-      { headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" }, data: {} }
+      {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          "Content-Type": "application/json",
+          "x-e2e-runner-secret": E2E_RUNNER_SECRET,
+        },
+        data: {},
+      }
     );
     const rstBody = await rst.json();
     if (!rst.ok() || !rstBody.ok) {
@@ -278,6 +298,7 @@ test.describe("Stage 4 — payment delete engine", () => {
       `[Stage4 E2E] Fixture reset+inventory OK. Baseline payments=${baseline?.paymentsTotal} orders=${baseline?.ordersTotal} queue=${baseline?.queueTotal}`
     );
   });
+
 
   test.afterAll(async () => {
     if (!authToken) return;
@@ -528,23 +549,41 @@ test.describe("Stage 4 — payment delete engine", () => {
 
     await gotoPaymentsFilteredByFixture(page);
 
+    // Narrow the table to the two S4 fixture rows via search — search_index
+    // includes provider_payment_id (canonical) and bepaid_uid (queue), so
+    // both rows share the "stage4-s4" prefix.
+    const searchInput = page.getByPlaceholder(/Поиск по UID/);
+    await searchInput.fill("stage4-s4");
+    // Debounced (150ms) — wait for both rows to render.
+    await expect(
+      page.locator(`[data-testid="payment-row-${FIXTURES.S4_CANONICAL}"]`)
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(
+      page.locator(`[data-testid="payment-row-${FIXTURES.S4_QUEUE}"]`)
+    ).toBeVisible({ timeout: 10_000 });
+
     for (const id of [FIXTURES.S4_CANONICAL, FIXTURES.S4_QUEUE]) {
       const row = page.locator(`[data-testid="payment-row-${id}"]`);
-      await expect(row).toBeVisible();
       await row.locator('[role="checkbox"]').first().click();
     }
 
-    // Mixed-selection warning must appear.
-    await expect(page.getByTestId("mixed-selection-warning")).toBeVisible();
+    // Mixed-selection warning: 2 selected / 1 deletable / 1 non-canonical.
+    const warning = page.getByTestId("mixed-selection-warning");
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText(/Выбрано строк:\s*2/);
+    await expect(warning).toContainText(/Доступно для удаления:\s*1/);
+    await expect(warning).toContainText(/Не canonical.*:\s*1/);
 
     const previewReq = page.waitForResponse((r) =>
       r.url().includes("admin-delete-payment-preview")
     );
-    await page.getByRole("button", { name: /Удалить/ }).first().click();
+    await page.getByRole("button", { name: /Удалить \(1\)/ }).click();
     const previewBody = await (await previewReq).json();
     expect(previewBody.ok).toBe(true);
-    // Only the canonical row must be in the preview.
+    // Only the canonical row must be in the preview — queue row is dropped
+    // by the frontend before the RPC call (deletablePaymentIds filter).
     expect(previewBody.payment_ids).toEqual([FIXTURES.S4_CANONICAL]);
+
 
     const executeReq = page.waitForResponse((r) =>
       r.url().includes("admin-delete-payment-execute")
@@ -552,14 +591,27 @@ test.describe("Stage 4 — payment delete engine", () => {
     await page.getByTestId("delete-confirm-btn").click();
     const executeBody = await (await executeReq).json();
     expect(executeBody.deleted_payment_ids).toEqual([FIXTURES.S4_CANONICAL]);
+    expect(executeBody.deleted_payment_ids?.length).toBe(1);
 
-    // Queue row is untouched.
+    // Reload — canonical row is gone from the active view, queue row remains.
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await searchInput.fill("stage4-s4");
+    await expect(
+      page.locator(`[data-testid="payment-row-${FIXTURES.S4_CANONICAL}"]`)
+    ).toHaveCount(0, { timeout: 10_000 });
+    await expect(
+      page.locator(`[data-testid="payment-row-${FIXTURES.S4_QUEUE}"]`)
+    ).toBeVisible();
+
+    // DB proof: queue row is untouched.
     const { data: queue } = await sb
       .from("payment_reconcile_queue")
       .select("id, status")
       .eq("id", FIXTURES.S4_QUEUE)
       .single();
     expect(queue?.id).toBe(FIXTURES.S4_QUEUE);
+
 
     console.log(
       `[S4] operation_id=${previewBody.operation_id} canonical_deleted=1 queue_untouched=1`
