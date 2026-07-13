@@ -23,6 +23,7 @@ export default function PaymentsFilters({ filters, setFilters }: PaymentsFilters
             <SelectItem value="bepaid">bePaid</SelectItem>
             <SelectItem value="stripe">Stripe</SelectItem>
             <SelectItem value="rr">Ресурс Развития</SelectItem>
+            <SelectItem value="bank">Банк</SelectItem>
           </SelectContent>
         </Select>
       </div>
