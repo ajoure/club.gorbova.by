@@ -205,10 +205,11 @@ export function ManualPaymentDialog({
               </div>
               <div className="space-y-1.5">
                 <Label>Дата платежа</Label>
-                <Input
-                  type="datetime-local"
-                  value={paidAt}
-                  onChange={(e) => setPaidAt(e.target.value)}
+                <DateTimePicker
+                  date={paidAtDate}
+                  time={paidAtTime}
+                  onDateChange={setPaidAtDate}
+                  onTimeChange={setPaidAtTime}
                 />
               </div>
             </div>
