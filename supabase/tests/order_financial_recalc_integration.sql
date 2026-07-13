@@ -159,8 +159,7 @@ END $$;
 DO $$ DECLARE o uuid; p1 uuid; p2 uuid; BEGIN
   o := pg_temp.mk_order(300, 'BYN', 'paid', 300);
   p1 := pg_temp.mk_pay(o, 200, 'succeeded', 'bepaid');
-  p2 := pg_temp.mk_pay(o, 100, 'succeeded', 'bank');
-  UPDATE public.payments_v2 SET is_deleted = true, deleted_at = now() WHERE id = p2;
+  p2 := pg_temp.mk_pay(o, 100, 'succeeded', 'bank', 'payment', NULL, 0, 'BYN', true);
   PERFORM public.recalc_order_totals(o, 'payment_removed', p2);
   PERFORM pg_temp.assert_order('IT09_removed_one_of_many_partial', o, 'partial', 200.00);
 END $$;
