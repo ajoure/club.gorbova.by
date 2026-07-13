@@ -18166,6 +18166,7 @@ export type Database = {
         Args: { _event_id: string; _user_id: string }
         Returns: boolean
       }
+      canonical_payment_providers: { Args: never; Returns: string[] }
       cascade_order_cancellation: {
         Args: { p_order_id: string; p_reason?: string }
         Returns: Json
@@ -18306,6 +18307,10 @@ export type Database = {
       compute_next_broadcast_run: {
         Args: { from_ts: string; rule: Json }
         Returns: string
+      }
+      compute_order_financial_state: {
+        Args: { p_order_id: string }
+        Returns: Json
       }
       contact_feed_list: {
         Args: {
@@ -19294,6 +19299,14 @@ export type Database = {
           msg_id: number
           read_ct: number
         }[]
+      }
+      recalc_order_totals: {
+        Args: {
+          p_affected_payment_id?: string
+          p_order_id: string
+          p_reason: string
+        }
+        Returns: Json
       }
       recalculate_entitlement_aggregate: {
         Args: { p_product_id: string; p_user_id: string }
