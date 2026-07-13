@@ -221,10 +221,26 @@ export function ManualPaymentDialog({
       );
 
       if (error || !data?.ok) {
-        const msg = normalizeEdgeFunctionError(
-          error ?? data,
-          "Не удалось создать ручной платёж",
-        );
+        // Stage 3R.2: явные тексты для новых серверных кодов.
+        const code = String((data as any)?.error ?? "");
+        const localized: Record<string, string> = {
+          order_currency_conflict:
+            `Валюта платежа (${currency}) не совпадает с валютой сделки${
+              (data as any)?.detail?.order_currency
+                ? ` (${(data as any).detail.order_currency})`
+                : ""
+            }.`,
+          order_profile_conflict:
+            "Выбранный контакт не совпадает с контактом сделки.",
+          missing_receiving_bank_name: "Укажите банк зачисления.",
+          receiving_bank_name_too_long:
+            "Название банка слишком длинное (максимум 120 символов).",
+          idempotency_conflict:
+            "Платёж с таким ключом уже создан с другими данными.",
+        };
+        const msg =
+          localized[code] ??
+          normalizeEdgeFunctionError(error ?? data, "Не удалось создать ручной платёж");
         toast.error(msg);
         return;
       }
