@@ -58,16 +58,29 @@ import {
   type PickedDeal,
 } from "@/components/admin/shared/pickers/DealPickerDialog";
 
-import type { ActivePaymentProvider } from "@/lib/payments/providers";
+import {
+  ACTIVE_PAYMENT_PROVIDERS,
+  PAYMENT_PROVIDER_LABELS,
+  type ActivePaymentProvider,
+} from "@/lib/payments/providers";
 
 type Provider = ActivePaymentProvider;
 
-const PROVIDERS: Array<{ value: Provider; label: string; icon: React.ReactNode }> = [
-  { value: "bepaid", label: "bePaid", icon: <CreditCard className="h-3.5 w-3.5 opacity-70" /> },
-  { value: "stripe", label: "Stripe", icon: <CreditCard className="h-3.5 w-3.5 opacity-70" /> },
-  { value: "rr", label: "Ресурс Развития", icon: <Wallet className="h-3.5 w-3.5 opacity-70" /> },
-  { value: "bank", label: "Банк", icon: <Landmark className="h-3.5 w-3.5 opacity-70" /> },
-];
+// Stage 5: единый источник — allowlist + labels из @/lib/payments/providers.
+// Локально задаются только иконки, специфичные для UI-компонента.
+const PROVIDER_ICONS: Record<Provider, React.ReactNode> = {
+  bepaid: <CreditCard className="h-3.5 w-3.5 opacity-70" />,
+  stripe: <CreditCard className="h-3.5 w-3.5 opacity-70" />,
+  rr: <Wallet className="h-3.5 w-3.5 opacity-70" />,
+  bank: <Landmark className="h-3.5 w-3.5 opacity-70" />,
+};
+
+const PROVIDERS: Array<{ value: Provider; label: string; icon: React.ReactNode }> =
+  ACTIVE_PAYMENT_PROVIDERS.map((value) => ({
+    value,
+    label: PAYMENT_PROVIDER_LABELS[value],
+    icon: PROVIDER_ICONS[value],
+  }));
 
 const CURRENCIES = ["BYN", "RUB", "USD", "EUR", "KZT", "UAH", "PLN"];
 

@@ -314,13 +314,14 @@ export function PaymentsTabContent() {
   }, [scopePayments, statsFilter]);
 
 
-  // P0-guard: Aggregate sums via useMemo (no recalc on every render)
+  // Stage 5: scopeSum считается по scopePayments (период + sidebar/search/provider),
+  // matchedSum — по filteredPayments (scope + активная stats-card).
   const { scopeSum, matchedSum } = useMemo(() => {
     return {
-      scopeSum: formatCurrencySums(sumByCurrency(payments)),
+      scopeSum: formatCurrencySums(sumByCurrency(scopePayments)),
       matchedSum: formatCurrencySums(sumByCurrency(filteredPayments)),
     };
-  }, [payments, filteredPayments]);
+  }, [scopePayments, filteredPayments]);
 
   // Open sync dialog
   const handleBepaidSync = () => {
