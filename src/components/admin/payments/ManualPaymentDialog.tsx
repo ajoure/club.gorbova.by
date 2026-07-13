@@ -34,6 +34,7 @@ import { toast } from "sonner";
 import { Landmark, Loader2, Wallet } from "lucide-react";
 import { CreateDealFromPaymentDialog } from "./CreateDealFromPaymentDialog";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { DateTimePicker } from "@/components/ui/datetime-picker";
 
 type Provider = "bank" | "rr" | "bepaid" | "stripe";
 
