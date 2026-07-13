@@ -100,28 +100,28 @@ Deno.serve(async (req) => {
       created = true;
     }
 
-    // 2. Ensure profile row exists and is tagged.
+    // 2. Ensure profile row exists (lookup by user_id since some deployments
+    //    use user_id as the FK and id as a separate PK).
     const { data: existingProfile } = await admin
       .from("profiles")
-      .select("id, is_archived, meta")
-      .eq("id", userId)
+      .select("id, user_id, is_archived, meta")
+      .eq("user_id", userId)
       .maybeSingle();
 
     if (!existingProfile) {
       const { error: pErr } = await admin.from("profiles").insert({
-        id: userId,
         user_id: userId,
         email: REQUIRED_EMAIL,
         first_name: "Stage4",
         last_name: "PlaywrightAdmin",
-        is_archived: true, // hide from normal contact lists
+        is_archived: true,
         meta: {
           fixture: "stage4_playwright",
           env: "test",
           purpose: "e2e_admin",
         },
       });
-      if (pErr) throw pErr;
+      if (pErr && !String(pErr.message).includes("duplicate")) throw pErr;
     } else {
       const { error: pErr } = await admin
         .from("profiles")
@@ -134,7 +134,7 @@ Deno.serve(async (req) => {
             purpose: "e2e_admin",
           },
         })
-        .eq("id", userId);
+        .eq("user_id", userId);
       if (pErr) throw pErr;
     }
 
