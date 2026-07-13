@@ -1277,9 +1277,12 @@ export type Database = {
           completed_at: string | null
           created_at: string
           created_by: string
+          deal_only_snapshot: boolean | null
           error_code: string | null
           idempotency_key: string
+          is_ghost_snapshot: boolean | null
           order_id: string | null
+          order_number_snapshot: string | null
           payment_id: string | null
           provider_snapshot: string | null
           request_hash: string
@@ -1293,9 +1296,12 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           created_by: string
+          deal_only_snapshot?: boolean | null
           error_code?: string | null
           idempotency_key: string
+          is_ghost_snapshot?: boolean | null
           order_id?: string | null
+          order_number_snapshot?: string | null
           payment_id?: string | null
           provider_snapshot?: string | null
           request_hash: string
@@ -1309,9 +1315,12 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           created_by?: string
+          deal_only_snapshot?: boolean | null
           error_code?: string | null
           idempotency_key?: string
+          is_ghost_snapshot?: boolean | null
           order_id?: string | null
+          order_number_snapshot?: string | null
           payment_id?: string | null
           provider_snapshot?: string | null
           request_hash?: string

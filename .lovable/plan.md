@@ -912,3 +912,63 @@ STAGE 2 GATE                    : IMPLEMENTATION COMPLETE — closure после
 ```
 
 Переходим к видимой части этапа 3 (ManualPaymentDialog) без открытия отдельного патча.
+
+---
+
+## Stage 2R.3 — Replay business semantics + failed-retry guard + runner correction
+
+### Замечания принятого отчёта Stage 2R.2 закрыты
+
+1. **Replay business semantics.** Migration `20260713_Stage2R3` расширила `admin_deal_reservations` полями `is_ghost_snapshot`, `deal_only_snapshot`, `order_number_snapshot` (заполняются при `state='completed'`). Функция `admin_create_deal_from_payment` при `idempotent_replay=true` теперь возвращает эти значения напрямую из резервации. Edge функция читает те же имена, что и на первичном создании (`result.is_ghost`, `result.deal_only`, `result.order_number`) — audit больше не может «потерять» ghost/deal-only на повторе.
+2. **Failed-reservation retry guard.** До перевода `state='failed' → 'processing'` теперь выполняется явная проверка активной резервации (`processing|completed`) с другим `idempotency_key` на тот же `(source, source_row_id)`. Если такая есть — возвращается контролируемое `source_already_reserved`, `UPDATE state='processing'` не выполняется, партиал-уникальный индекс никогда не выдаёт сырой `23505`.
+3. **Parallel runner correction.** `tools/run_parallel_reservation_test.sh` переписан:
+   - создаёт собственный fixture (profile / product / tariff / 2 queue rows) и удаляет его в `trap EXIT`;
+   - `grep -c` больше не запускается на нескольких файлах напрямую — используется `cat … | grep -cE …`, поэтому счётчики всегда числовые;
+   - T1 проверяет **и** `ok >= 1`, **и** `replay|processing >= 1`, а также `orders=1, payments=1`;
+   - T2 требует `ok = exactly 1` и `source_already_reserved|reservation_processing >= 1`, а также `orders=1, payments=1`;
+   - HTTP 500 больше не упоминается — edge не вызывается; проверяется отсутствие `SQLSTATE 23505` в raw-выводе psql.
+
+### Статус
+
+```text
+STAGE 2R.3 REPLAY LINEAGE       : PASS (is_ghost/deal_only/order_number из snapshot)
+STAGE 2R.3 FAILED RETRY GUARD   : PASS (competing active reservation → source_already_reserved)
+STAGE 2R.3 PARALLEL RUNNER      : CORRECTED (fixture + numeric counts + orders/payments invariants)
+STAGE 2 EDGE RUNTIME PROOF      : PENDING (отдельный proof, не блокирует Stage 3)
+STAGE 2 FULL CLOSURE            : ждёт edge HTTP-матрицу, но реализация PASS
+```
+
+---
+
+## Stage 3 — Ручное добавление платежа (UI + backend)
+
+### Что сделано
+
+1. **UI кнопка на /admin/payments.** В `PaymentsTabContent` добавлена основная кнопка «Ручной платёж» (`Plus` icon) рядом с Sync-меню. Кнопка видима и на mobile, и на desktop.
+2. **`ManualPaymentDialog.tsx`.** Форма:
+   - Источник: `bank | rr | bepaid | stripe` (только canonical providers).
+   - Сумма > 0, валюта из allowlist (BYN/RUB/USD/EUR).
+   - Дата платежа (`datetime-local`, значение по умолчанию — сейчас).
+   - Внешний идентификатор (номер квитанции), email плательщика, комментарий.
+   - Клиент вычисляет `idempotencyKey`, покрывающий все бизнес-поля запроса.
+   - После успешного создания дилог сразу открывает `CreateDealFromPaymentDialog` с `rawSource='queue'`, `paymentId = queue_row_id` — админ в одной сессии фиксирует платёж и привязывает его к сделке.
+3. **Edge `admin-create-manual-payment`.** Атомарный сервер-сайд флоу:
+   - RBAC: `has_admin_section_access(actor,'payments','manage')`.
+   - Provider allowlist (bank/rr/bepaid/stripe), currency allowlist, `amount > 0`, `paidAt` валидируется как ISO.
+   - Idempotency: перед `INSERT` ищется существующая строка `payment_reconcile_queue.meta->>'idempotency_key' = key` → replay возвращает тот же `queue_row_id`.
+   - `external_id` при дубликате → `409 duplicate_external_id` (partial unique).
+   - Строка пишется как `status='successful' / status_normalized='successful'` — сразу пригодна для admin_create_deal_from_payment.
+   - Audit log пишется post-insert и не блокирует ответ при сбое.
+4. **Регистрация.** Функция добавлена в `supabase/functions.registry.txt` (auto-deploy pipeline).
+
+### Инварианты этапа 3 (текущие)
+
+```text
+STAGE 3 VISIBLE BUTTON          : PASS  (Plus «Ручной платёж» в toolbar)
+STAGE 3 DIALOG FORM             : PASS  (provider/amount/currency/date/external_id/email/note)
+STAGE 3 BACKEND ATOMIC          : PASS  (edge с RBAC + validation + idempotency + audit)
+STAGE 3 REUSES ATOMIC RPC       : PASS  (follow-up CreateDealFromPaymentDialog → admin_create_deal_from_payment)
+STAGE 3 NO CLIENT WRITER        : PASS  (client → edge only, никаких прямых INSERT в queue/payments_v2)
+STAGE 3 IDEMPOTENCY             : PASS  (idempotencyKey → meta.idempotency_key → replay возвращает тот же row)
+STAGE 3 RUNTIME PROOF           : PENDING (browser проверка + curl edge)
+```
