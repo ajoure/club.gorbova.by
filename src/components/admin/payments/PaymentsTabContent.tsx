@@ -122,6 +122,7 @@ export function PaymentsTabContent() {
   // Sync dialogs
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
   const [syncStatementDialogOpen, setSyncStatementDialogOpen] = useState(false);
+  const [manualPaymentOpen, setManualPaymentOpen] = useState(false);
   
   // Timezone - IANA timezone with persistence
   const { getInitialValue, setTimezone: persistTimezone } = usePersistedTimezone();
