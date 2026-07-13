@@ -105,7 +105,7 @@ BEGIN
 
   -- Queue matched (FK-valid matched_order_id)
   INSERT INTO public.payment_reconcile_queue
-    (id, provider, status, status_normalized, amount, currency, created_at, external_id, matched_order_id)
+    (id, provider, status, status_normalized, amount, currency, created_at, bepaid_uid, matched_order_id)
     VALUES (v_q_matched, 'bepaid', 'successful', 'successful', 20, 'BYN', now(),
             'q-matched', v_pre_order_matched);
 
