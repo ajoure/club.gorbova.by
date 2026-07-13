@@ -303,7 +303,7 @@ export function ManualPaymentDialog({
           rawSource="queue"
           amount={numericAmount || 0}
           currency={currency}
-          paidAt={paidAt ? new Date(paidAt).toISOString() : undefined}
+          paidAt={buildPaidAtDate()?.toISOString()}
           onSuccess={() => {
             setFollowUpOpen(false);
             setCreatedQueueRowId(null);
