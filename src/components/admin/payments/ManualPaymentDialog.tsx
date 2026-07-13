@@ -110,14 +110,15 @@ export function ManualPaymentDialog({
       toast.error("Введите положительную сумму");
       return;
     }
-    if (!paidAt) {
+    const paidAtDateObj = buildPaidAtDate();
+    if (!paidAtDateObj) {
       toast.error("Укажите дату платежа");
       return;
     }
 
     setSaving(true);
     try {
-      const paidAtIso = new Date(paidAt).toISOString();
+      const paidAtIso = paidAtDateObj.toISOString();
       const idempotencyKey =
         `admin-manual-payment:v1:${provider}:${numericAmount}:${currency}` +
         `:${paidAtIso}:${externalId.trim() || "auto"}:${customerEmail.trim().toLowerCase()}`;
