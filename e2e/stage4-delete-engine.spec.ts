@@ -273,8 +273,9 @@ test.describe("Stage 4 — payment delete engine", () => {
   test.afterAll(async () => {
     if (!authToken) return;
     const sb = adminSupabase(authToken);
-    // Full drift check across all scenarios.
-    await assertNoNonFixtureDrift(sb, FIXTURE_PAYMENT_IDS, FIXTURE_ORDER_IDS);
+    // Only check that non-fixture rows were not touched. The exact set of
+    // fixture rows deleted depends on which scenarios ran (filter with `-g`).
+    await assertNoNonFixtureDrift(sb, [], []);
     console.log(
       "[Stage4 E2E] No non-fixture drift detected. Reset via tools/reset_stage4_playwright_fixtures.sql to re-run."
     );
