@@ -120,6 +120,33 @@ describe("ELIG-C1R · handler shadow integration invariant", () => {
     expect(runnerSrc).toMatch(/\.limit\(\s*1\s*\)/);
   });
 
+  it("payments_v2 loader MUST NOT use .limit(1) (ELIG-C1R.1 — see all related payments)", () => {
+    // Isolate the payments_v2 query inside the runner.
+    const runnerBegin = SRC.indexOf("function runGrantEligibilityShadow");
+    const runnerEnd = SRC.indexOf("END ELIG-C1R shared runner");
+    const runnerSrc = SRC.slice(runnerBegin, runnerEnd);
+
+    // Locate the payments_v2 query builder chain.
+    const paymentsIdx = runnerSrc.indexOf(".from('payments_v2')");
+    const paymentsIdxAlt = runnerSrc.indexOf('.from("payments_v2")');
+    const start = paymentsIdx >= 0 ? paymentsIdx : paymentsIdxAlt;
+    expect(start).toBeGreaterThanOrEqual(0);
+
+    // The payments_v2 chain terminates at the first blank line or `;` at
+    // statement boundary. Bound it to the next `const ` / `;` after start.
+    const tail = runnerSrc.slice(start);
+    const chainEnd = tail.search(/;\s*\n/);
+    const paymentsChain = chainEnd > 0 ? tail.slice(0, chainEnd) : tail.slice(0, 400);
+
+    // Guard: must filter by order_id.
+    expect(paymentsChain).toMatch(/\.eq\(\s*['"]order_id['"]\s*,/);
+    // Blocker under ELIG-C1R.1: no `.limit(...)` on the payments_v2 chain.
+    expect(paymentsChain).not.toMatch(/\.limit\(/);
+    // And no `.maybeSingle()` / `.single()` truncation either.
+    expect(paymentsChain).not.toMatch(/\.maybeSingle\(\s*\)/);
+    expect(paymentsChain).not.toMatch(/\.single\(\s*\)/);
+  });
+
   it("runner classifies load-failure flags (ELIG-C1R correction #4)", () => {
     const runnerBegin = SRC.indexOf("function runGrantEligibilityShadow");
     const runnerEnd = SRC.indexOf("END ELIG-C1R shared runner");
