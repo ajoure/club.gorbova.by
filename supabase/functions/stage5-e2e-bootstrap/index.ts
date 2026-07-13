@@ -243,11 +243,18 @@ Deno.serve(async (req) => {
       .select("id", { count: "exact", head: true })
       .eq("user_id", FIXTURE_USER_ID)
       .eq("role_id", ADMIN_ROLE_ID);
+    if (remain.error) {
+      return json(500, { error: "teardown_verify_failed", detail: remain.error.message });
+    }
+    if (remain.count === null) {
+      return json(500, { error: "teardown_verify_failed", detail: "null_count" });
+    }
     return json(200, {
       ok: true,
       deleted: del.data?.map((r) => r.id) ?? [],
-      remaining_admin_rows: remain.count ?? null,
+      remaining_admin_rows: remain.count,
     });
+
   }
 
   return json(400, { error: "unknown_action" });
