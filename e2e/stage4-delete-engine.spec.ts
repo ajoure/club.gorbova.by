@@ -222,8 +222,8 @@ async function assertNoNonFixtureDrift(
 async function tombstonesFor(sb: SupabaseClient, ids: string[]) {
   const { data, error } = await sb
     .from("payment_tombstones")
-    .select("payment_id, provider, provider_payment_id")
-    .in("payment_id", ids);
+    .select("original_payment_id, provider, external_id, operation_id")
+    .in("original_payment_id", ids);
   if (error) throw error;
   return data ?? [];
 }
