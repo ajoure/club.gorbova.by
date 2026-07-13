@@ -58,7 +58,9 @@ import {
   type PickedDeal,
 } from "@/components/admin/shared/pickers/DealPickerDialog";
 
-type Provider = "bank" | "rr" | "bepaid" | "stripe";
+import type { ActivePaymentProvider } from "@/lib/payments/providers";
+
+type Provider = ActivePaymentProvider;
 
 const PROVIDERS: Array<{ value: Provider; label: string; icon: React.ReactNode }> = [
   { value: "bepaid", label: "bePaid", icon: <CreditCard className="h-3.5 w-3.5 opacity-70" /> },

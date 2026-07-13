@@ -163,9 +163,11 @@ export function PaymentsTabContent() {
   };
   
   // Fetch unified payment data
+  // Stage 5 A2: canonical /admin/payments feed НЕ включает payment_reconcile_queue.
   const effectiveDateFilter = useMemo(() => ({
     ...dateFilter,
     includeImport: true,
+    includeQueue: false,
   }), [dateFilter]);
   
   const { 
@@ -277,10 +279,10 @@ export function PaymentsTabContent() {
         if (filters.origin === "other" && (p.origin === "bepaid" || p.origin === "statement_sync")) return false;
       }
 
-      // Provider filter
+      // Provider filter — Stage 5 A3: без fallback на 'bepaid'. Reader уже
+      // гарантирует canonical provider через ACTIVE_PAYMENT_PROVIDERS.
       if (filters.provider !== "all") {
-        const prov = (p as { provider?: string | null }).provider ?? "bepaid";
-        if (filters.provider !== prov) return false;
+        if ((p.provider ?? null) !== filters.provider) return false;
       }
 
       return true;
@@ -328,9 +330,10 @@ export function PaymentsTabContent() {
   // Export to CSV
   const handleExport = () => {
     const csv = [
-      ["UID", "Дата", "Тип", "Статус", "Сумма", "Валюта", "Email", "Телефон", "Карта", "Владелец", "Заказ", "Продукт", "Контакт", "Источник", "Чек", "Возвраты"].join(";"),
+      ["UID", "Провайдер", "Дата", "Тип", "Статус", "Сумма", "Валюта", "Email", "Телефон", "Карта", "Владелец", "Заказ", "Продукт", "Контакт", "Источник", "Банк получателя", "Комментарий", "Чек", "Возвраты"].join(";"),
       ...filteredPayments.map(p => [
         p.uid,
+        p.provider || "",
         p.paid_at ? format(new Date(p.paid_at), "dd.MM.yyyy HH:mm") : "",
         p.transaction_type || "",
         p.status_normalized || "",
@@ -344,6 +347,8 @@ export function PaymentsTabContent() {
         p.product_name || "",
         p.profile_name || "",
         p.source,
+        (p.manual_receiving_bank_name || "").replace(/[;\n\r]/g, " "),
+        (p.manual_comment || "").replace(/[;\n\r]/g, " "),
         p.receipt_url ? "Да" : "Нет",
         p.refunds_count || 0,
       ].join(";"))

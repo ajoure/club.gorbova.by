@@ -4,10 +4,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { classifyPayment } from "@/lib/paymentClassification";
 import { buildSearchIndex } from "@/lib/multiTermSearch";
 import { extractStripeCardFromMeta } from "@/utils/extractStripeCardFromMeta";
+import { ACTIVE_PAYMENT_PROVIDERS } from "@/lib/payments/providers";
 export interface DateFilter {
   from: string;
   to?: string;
   includeImport?: boolean; // Toggle to include origin='import' records
+  // Stage 5 A2: canonical feed by default excludes payment_reconcile_queue.
+  // Set includeQueue=true ONLY for dedicated diagnostic/queue views.
+  includeQueue?: boolean;
 }
 
 // Source types for UI filtering
@@ -180,13 +184,14 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
 
   const { data, isLoading, error, refetch } = useQuery({
     // Use primitives for stable queryKey (not object reference)
-    queryKey: ["unified-payments", dateFilter.from, dateFilter.to || null, dateFilter.includeImport ?? false],
+    queryKey: ["unified-payments", dateFilter.from, dateFilter.to || null, dateFilter.includeImport ?? false, dateFilter.includeQueue ?? false],
     queryFn: async () => {
       // Default to early date to show ALL historical data (no hidden payments)
       const fromDate = dateFilter.from || "2020-01-01";
       const toDate = dateFilter.to;
-      
-      console.log(`[Unified Payments] Loading data for period: ${fromDate} to ${toDate || 'now'}`);
+      const includeQueue = dateFilter.includeQueue === true;
+
+      console.log(`[Unified Payments] Loading data for period: ${fromDate} to ${toDate || 'now'} (includeQueue=${includeQueue})`);
       
       // Build queue query factory for pagination
       const buildQueueQuery = () => {
@@ -236,9 +241,12 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           // ниже OR уже включает 'bepaid' и origin IS NULL.
           // PATCH-RR-PAYMENTS-VISIBILITY-V1: added rr (provider='rr', origin='rr_installment').
           // Stage 3R: added bank (provider='bank', origin='manual_admin') для ручных платежей.
-          .in("provider", ["bepaid", "stripe", "rr", "bank"])
-          // Stage 4: скрываем soft-deleted платежи из reader.
-          .or("is_deleted.eq.false,is_deleted.is.null");
+          // Stage 5 A1/A7: жёсткий active allowlist без fallback на 'bepaid'.
+          .in("provider", ACTIVE_PAYMENT_PROVIDERS as unknown as string[])
+          // Stage 5 A5: fail-closed active-delete predicate.
+          // is_deleted=false AND deleted_at IS NULL. NULL is_deleted не считаем активным.
+          .eq("is_deleted", false)
+          .is("deleted_at", null);
         
         // PATCH-C1: Removed .not("paid_at", "is", null) to show processing/pending transactions
         // PATCH-C1: Removed strict origin filter - show all origins including manual_adjustment
@@ -265,13 +273,14 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         .from("payment_status_overrides")
         .select("provider, uid, status_override");
       
-      // Fetch all data with pagination
+      // Stage 5 A2: queue исключена из canonical feed по умолчанию.
+      // Fetching происходит только при явном includeQueue=true (диагностика/очередь).
       const [queueData, paymentsData, overridesResult] = await Promise.all([
-        fetchAllPages<any>(buildQueueQuery),
+        includeQueue ? fetchAllPages<any>(buildQueueQuery) : Promise.resolve([] as any[]),
         fetchAllPages<any>(buildPaymentsQuery),
         overridesQuery,
       ]);
-      
+
       console.log(`[Unified Payments] Queue: ${queueData.length}, Payments: ${paymentsData.length}`);
       
       // Overrides are optional, don't throw on error
@@ -527,9 +536,10 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         // Extract offer name from snapshot
         const offer_name = purchaseSnapshot?.offer_name || null;
         
-        // Extract UID - MUST be provider_payment_id for proper dedup
+        // Stage 5 A3: server .in(ACTIVE_PAYMENT_PROVIDERS) уже гарантирует непустой canonical provider.
+        // Не маскируем строки без provider как 'bepaid'.
         const pUid = p.provider_payment_id;
-        const provider = p.provider || 'bepaid';
+        const provider = p.provider as string;
         
         // Only add to dedup set if we have a real UID
         if (pUid) {
