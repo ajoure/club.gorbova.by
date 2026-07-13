@@ -140,11 +140,15 @@ Deno.serve(async (req) => {
     const status =
       err === "idempotency_conflict"
         ? 409
-        : err === "order_profile_conflict"
+        : err === "order_profile_conflict" || err === "order_currency_conflict"
         ? 409
         : err === "profile_not_found" || err === "order_not_found"
         ? 404
-        : ["invalid_provider","invalid_amount","invalid_currency","invalid_paid_at","invalid_request_hash","missing_idempotency_key"].includes(err)
+        : [
+            "invalid_provider","invalid_amount","invalid_currency","invalid_paid_at",
+            "invalid_request_hash","missing_idempotency_key",
+            "missing_receiving_bank_name","receiving_bank_name_too_long",
+          ].includes(err)
         ? 400
         : 500;
     return bad(status, err, { detail: rpcResult, request_id: requestId });

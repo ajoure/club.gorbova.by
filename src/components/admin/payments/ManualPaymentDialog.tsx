@@ -411,7 +411,12 @@ export function ManualPaymentDialog({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    onClick={() => setContact(null)}
+                    onClick={() => {
+                      setContact(null);
+                      // Stage 3R.2: если контакт снимают, но сделка привязана к нему —
+                      // также снимаем сделку, чтобы не оставлять некорректное состояние.
+                      if (deal) setDeal(null);
+                    }}
                     aria-label="Убрать контакт"
                   >
                     <X className="h-4 w-4" />
@@ -515,7 +520,7 @@ export function ManualPaymentDialog({
         open={contactPickerOpen}
         onOpenChange={setContactPickerOpen}
         onPick={handleContactPicked}
-        options={{ title: "Выбрать контакт" }}
+        options={{ title: "Выбрать контакт", searchMode: "name_only" }}
       />
 
       <DealPickerDialog
@@ -526,7 +531,46 @@ export function ManualPaymentDialog({
           title: "Выбрать существующую сделку",
           amount: numericAmount > 0 ? numericAmount : undefined,
           currency,
+          profileId: contact?.id ?? null,
+          contactSearchMode: "name_only",
         }}
+        footerExtras={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="gap-2 text-muted-foreground"
+            onClick={() => {
+              setDeal(null);
+              setDealPickerOpen(false);
+              toast.info(
+                "После создания платежа откроется мастер создания новой сделки",
+              );
+            }}
+          >
+            + Создать сделку
+          </Button>
+        }
+        emptyStateExtras={
+          <div className="space-y-3">
+            <p>Нет сделок</p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="gap-2 text-muted-foreground"
+              onClick={() => {
+                setDeal(null);
+                setDealPickerOpen(false);
+                toast.info(
+                  "После создания платежа откроется мастер создания новой сделки",
+                );
+              }}
+            >
+              + Создать сделку
+            </Button>
+          </div>
+        }
       />
 
       {/*
