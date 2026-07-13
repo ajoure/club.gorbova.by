@@ -263,7 +263,7 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
         {/* Footer with price and buttons */}
         <div className="space-y-3">
           {/* Price row */}
-          {variant === "store" && (
+          {variant === "store" && product.price && (
             <div className="flex items-center gap-2">
               <span className="text-base font-semibold text-foreground">{product.price}</span>
             </div>
