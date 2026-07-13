@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake, UserMinus, Unlink, FileText } from "lucide-react";
+import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake, UserMinus, Unlink, FileText, Landmark } from "lucide-react";
 import { PaymentDocumentsDrawer } from "./PaymentDocumentsDrawer";
 import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
 import { toast } from "sonner";
