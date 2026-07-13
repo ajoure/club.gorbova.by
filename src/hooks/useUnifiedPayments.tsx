@@ -114,6 +114,9 @@ export interface UnifiedPayment {
   // | 'refund_receipt' | 'parent_charge_receipt' | 'parent_invoice_hosted' | null
   document_url_source: string | null;
 
+  // Stage 3R.1 — Ручной платёж (origin='manual_admin').
+  manual_receiving_bank_name: string | null;
+  manual_comment: string | null;
 
   // P0-guard: Pre-built search index (computed once during transformation)
   search_index: string;
@@ -651,6 +654,10 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           document_url: docResolved.url,
           document_url_source: docResolved.source,
 
+          manual_receiving_bank_name:
+            (meta?.manual_details?.receiving_bank_name as string | null) ?? null,
+          manual_comment:
+            (meta?.manual_details?.comment as string | null) ?? null,
 
           search_index,
         };
@@ -772,6 +779,9 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             stripe_invoice_pdf: null,
             document_url: q.receipt_url ?? null,
             document_url_source: q.receipt_url ? 'receipt_url' : null,
+
+            manual_receiving_bank_name: null,
+            manual_comment: null,
 
             // P0-guard: Build search index ONCE during transformation
             search_index: buildSearchIndex([

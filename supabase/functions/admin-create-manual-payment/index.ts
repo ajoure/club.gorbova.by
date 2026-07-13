@@ -1,15 +1,9 @@
-// admin-create-manual-payment (Stage 3R)
+// admin-create-manual-payment (Stage 3R.1)
 //
-// Регистрирует ручной платёж непосредственно в public.payments_v2 через
+// Canonical manual payment writer. Пишет напрямую в public.payments_v2 через
 // SECURITY DEFINER RPC public.admin_create_manual_payment_v1 (origin='manual_admin').
-// Никаких записей в payment_reconcile_queue, никаких provider_events.
-//
-// - RBAC: has_admin_section_access(actor, 'payments','manage')
-// - Provider allowlist: bepaid | stripe | rr | bank
-// - Currency allowlist: BYN | RUB | USD | EUR | KZT | UAH | PLN
-// - Idempotent: atomic INSERT ... ON CONFLICT в RPC по meta.idempotency_key.
-//   Клиент передаёт случайный idempotencyKey (crypto.randomUUID()), сервер
-//   вычисляет request_hash (SHA-256 нормализованного payload).
+// Поддерживает 3 режима: (A) без контакта/сделки, (B) только контакт,
+// (C) контакт + существующая сделка (атомарный lock + recalc).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
@@ -20,13 +14,11 @@ interface Body {
   currency: string;
   paidAt: string; // ISO
   profileId?: string | null;
-  relatedOrderId?: string | null;
-  customerEmail?: string | null;
-  bankName?: string | null;
-  bankDocumentNo?: string | null;
-  externalId?: string | null;
-  purpose?: string | null;
-  note?: string | null;
+  orderId?: string | null;
+  receivingBankName?: string | null;
+  comment?: string | null;
+  contactNameSnapshot?: string | null;
+  orderNumberSnapshot?: string | null;
   idempotencyKey: string;
 }
 
@@ -100,23 +92,27 @@ Deno.serve(async (req) => {
     return bad(400, "missing_idempotency_key");
   }
 
+  const receivingBankName =
+    provider === "bank" ? ((body.receivingBankName || "").trim() || null) : null;
+  const comment = (body.comment || "").trim() || null;
+  const contactNameSnapshot = (body.contactNameSnapshot || "").trim() || null;
+  const orderNumberSnapshot = (body.orderNumberSnapshot || "").trim() || null;
+  const profileId = body.profileId || null;
+  const orderId = body.orderId || null;
+
   const requestId = crypto.randomUUID();
 
   // Стабильный нормализованный payload для request_hash.
   const normalized = JSON.stringify({
-    v: 1,
+    v: 2,
     provider,
     amount: body.amount,
     currency,
     paidAt: paidAtIso,
-    profileId: body.profileId ?? null,
-    relatedOrderId: body.relatedOrderId ?? null,
-    customerEmail: (body.customerEmail || "").trim().toLowerCase() || null,
-    bankName: (body.bankName || "").trim() || null,
-    bankDocumentNo: (body.bankDocumentNo || "").trim() || null,
-    externalId: (body.externalId || "").trim() || null,
-    purpose: (body.purpose || "").trim() || null,
-    note: (body.note || "").trim() || null,
+    profileId,
+    orderId,
+    receivingBankName,
+    comment,
   });
   const requestHash = await sha256Hex(normalized);
 
@@ -126,14 +122,12 @@ Deno.serve(async (req) => {
     p_amount: body.amount,
     p_currency: currency,
     p_paid_at: paidAtIso,
-    p_profile_id: body.profileId ?? null,
-    p_customer_email: body.customerEmail ?? null,
-    p_bank_name: body.bankName ?? null,
-    p_bank_document_no: body.bankDocumentNo ?? null,
-    p_external_id: body.externalId ?? null,
-    p_purpose: body.purpose ?? null,
-    p_note: body.note ?? null,
-    p_related_order_id: body.relatedOrderId ?? null,
+    p_profile_id: profileId,
+    p_related_order_id: orderId,
+    p_receiving_bank_name: receivingBankName,
+    p_comment: comment,
+    p_contact_name_snapshot: contactNameSnapshot,
+    p_order_number_snapshot: orderNumberSnapshot,
     p_idempotency_key: body.idempotencyKey,
     p_request_hash: requestHash,
   });
@@ -146,15 +140,17 @@ Deno.serve(async (req) => {
     const status =
       err === "idempotency_conflict"
         ? 409
-        : err === "profile_not_found"
+        : err === "order_profile_conflict"
+        ? 409
+        : err === "profile_not_found" || err === "order_not_found"
         ? 404
-        : ["invalid_provider", "invalid_amount", "invalid_currency", "invalid_paid_at", "invalid_request_hash", "missing_idempotency_key"].includes(err)
+        : ["invalid_provider","invalid_amount","invalid_currency","invalid_paid_at","invalid_request_hash","missing_idempotency_key"].includes(err)
         ? 400
         : 500;
     return bad(status, err, { detail: rpcResult, request_id: requestId });
   }
 
-  // Audit — правильное имя колонки `meta`.
+  // Audit
   const { error: auditErr } = await admin.from("audit_logs").insert({
     actor_user_id: actorUserId,
     action: "admin_manual_payment_created",
@@ -170,16 +166,15 @@ Deno.serve(async (req) => {
       amount: body.amount,
       currency,
       paid_at: paidAtIso,
+      profile_id: rpcResult.profile_id ?? profileId,
+      order_id: rpcResult.order_id ?? orderId,
+      receiving_bank_name: receivingBankName,
+      comment,
       idempotent_replay: rpcResult.idempotent_replay === true,
-      external_id: (body.externalId || "").trim() || null,
-      bank_name: (body.bankName || "").trim() || null,
-      bank_document_no: (body.bankDocumentNo || "").trim() || null,
-      purpose: (body.purpose || "").trim() || null,
-      related_order_id: body.relatedOrderId ?? null,
+      recalc: rpcResult.recalc ?? null,
     },
   });
   if (auditErr) {
-    // Не блокируем платёж, но логируем.
     console.error("[admin-create-manual-payment] audit insert failed", auditErr);
   }
 
@@ -193,6 +188,8 @@ Deno.serve(async (req) => {
       amount: rpcResult.amount,
       currency: rpcResult.currency,
       paid_at: rpcResult.paid_at,
+      order_id: rpcResult.order_id ?? orderId,
+      profile_id: rpcResult.profile_id ?? profileId,
       origin: "manual_admin",
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },

@@ -1,14 +1,17 @@
 /**
- * ManualPaymentDialog — Stage 3R
+ * ManualPaymentDialog — Stage 3R.1
  *
- * Позволяет админу вручную зафиксировать успешный платёж напрямую в payments_v2
- * (origin='manual_admin') через edge `admin-create-manual-payment` → RPC
- * `admin_create_manual_payment_v1`. Никаких записей в payment_reconcile_queue.
+ * Ручной платёж напрямую в payments_v2 (origin='manual_admin') через RPC
+ * `admin_create_manual_payment_v1`. Дизайн повторяет AdminPaymentLinkDialog:
+ * иконка+заголовок, секции с Label + мягкой рамкой, DateTimePicker, DialogFooter.
  *
- * После успешного создания сразу открывает `CreateDealFromPaymentDialog`
- * (rawSource='payments_v2') на созданном payment_id для привязки к сделке.
- * Snapshot созданного платежа неизменяем: сумма/валюта/дата передаются в
- * follow-up диалог именно те, что были на момент создания.
+ * Режимы:
+ *   A. без контакта и без сделки       → standalone
+ *   B. только контакт                   → profile_id заполняется, order_id NULL
+ *   C. контакт + существующая сделка   → атомарно на сервере (lock + recalc)
+ *
+ * Follow-up «создать сделку» открывается только в режимах A/B (когда
+ * существующая сделка не выбрана).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -23,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -32,18 +36,35 @@ import {
 } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Landmark, Loader2, Wallet } from "lucide-react";
+import {
+  Landmark,
+  Loader2,
+  Wallet,
+  User as UserIcon,
+  Layers,
+  X,
+  CreditCard,
+  Building2,
+} from "lucide-react";
 import { CreateDealFromPaymentDialog } from "./CreateDealFromPaymentDialog";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
+import {
+  ContactPickerDialog,
+  type PickedContact,
+} from "@/components/admin/shared/pickers/ContactPickerDialog";
+import {
+  DealPickerDialog,
+  type PickedDeal,
+} from "@/components/admin/shared/pickers/DealPickerDialog";
 
 type Provider = "bank" | "rr" | "bepaid" | "stripe";
 
-const PROVIDERS: Array<{ value: Provider; label: string }> = [
-  { value: "bank", label: "Банк (ручной перевод)" },
-  { value: "rr", label: "RR (квитанция)" },
-  { value: "bepaid", label: "bePaid (ручная фиксация)" },
-  { value: "stripe", label: "Stripe (ручная фиксация)" },
+const PROVIDERS: Array<{ value: Provider; label: string; icon: React.ReactNode }> = [
+  { value: "bepaid", label: "bePaid", icon: <CreditCard className="h-3.5 w-3.5 opacity-70" /> },
+  { value: "stripe", label: "Stripe", icon: <CreditCard className="h-3.5 w-3.5 opacity-70" /> },
+  { value: "rr", label: "Ресурс Развития", icon: <Wallet className="h-3.5 w-3.5 opacity-70" /> },
+  { value: "bank", label: "Банк", icon: <Landmark className="h-3.5 w-3.5 opacity-70" /> },
 ];
 
 const CURRENCIES = ["BYN", "RUB", "USD", "EUR", "KZT", "UAH", "PLN"];
@@ -60,10 +81,12 @@ interface CreatedPaymentSnapshot {
   amount: number;
   currency: string;
   paidAtIso: string;
+  profileId: string | null;
+  hadOrder: boolean;
 }
 
 function newIdempotencyKey() {
-  return `manual-payment:v2:${crypto.randomUUID()}`;
+  return `manual-payment:v3:${crypto.randomUUID()}`;
 }
 
 export function ManualPaymentDialog({
@@ -80,14 +103,16 @@ export function ManualPaymentDialog({
     const d = new Date();
     return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   });
-  const [bankName, setBankName] = useState<string>("");
-  const [bankDocumentNo, setBankDocumentNo] = useState<string>("");
-  const [externalId, setExternalId] = useState<string>("");
-  const [purpose, setPurpose] = useState<string>("");
-  const [customerEmail, setCustomerEmail] = useState<string>("");
-  const [note, setNote] = useState<string>("");
+  const [receivingBank, setReceivingBank] = useState<string>("");
+  const [comment, setComment] = useState<string>("");
 
-  // Idempotency key рождается вместе с открытием формы; НЕ выводится из бизнес-полей.
+  // Optional links
+  const [contact, setContact] = useState<PickedContact | null>(null);
+  const [deal, setDeal] = useState<PickedDeal | null>(null);
+
+  const [contactPickerOpen, setContactPickerOpen] = useState(false);
+  const [dealPickerOpen, setDealPickerOpen] = useState(false);
+
   const idempotencyKeyRef = useRef<string>(newIdempotencyKey());
 
   useEffect(() => {
@@ -96,7 +121,6 @@ export function ManualPaymentDialog({
     }
   }, [open]);
 
-  // Immutable snapshot созданного платежа для follow-up диалога.
   const [snapshot, setSnapshot] = useState<CreatedPaymentSnapshot | null>(null);
   const [followUpOpen, setFollowUpOpen] = useState(false);
 
@@ -125,13 +149,37 @@ export function ManualPaymentDialog({
     setPaidAtTime(
       `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
     );
-    setBankName("");
-    setBankDocumentNo("");
-    setExternalId("");
-    setPurpose("");
-    setCustomerEmail("");
-    setNote("");
+    setReceivingBank("");
+    setComment("");
+    setContact(null);
+    setDeal(null);
     idempotencyKeyRef.current = newIdempotencyKey();
+  };
+
+  // Deal selected → auto-adopt its contact + currency
+  const handleDealPicked = (picked: PickedDeal) => {
+    setDeal(picked);
+    setDealPickerOpen(false);
+    if (picked.currency) setCurrency(picked.currency);
+    if (picked.profile_id && (!contact || contact.id !== picked.profile_id)) {
+      setContact({
+        id: picked.profile_id,
+        user_id: picked.user_id,
+        full_name: picked.contact_name ?? null,
+        email: picked.contact_email ?? null,
+        phone: picked.contact_phone ?? null,
+      });
+    }
+  };
+
+  const handleContactPicked = (picked: PickedContact) => {
+    // Guard: если уже выбрана сделка с другим контактом — блокируем.
+    if (deal && deal.profile_id && deal.profile_id !== picked.id) {
+      toast.error("Выбранный контакт не совпадает с контактом сделки");
+      return;
+    }
+    setContact(picked);
+    setContactPickerOpen(false);
   };
 
   const handleSubmit = async () => {
@@ -144,8 +192,8 @@ export function ManualPaymentDialog({
       toast.error("Укажите дату платежа");
       return;
     }
-    if (provider === "bank" && !bankName.trim()) {
-      toast.error("Для банковского платежа укажите название банка");
+    if (provider === "bank" && !receivingBank.trim()) {
+      toast.error("Укажите банк зачисления");
       return;
     }
 
@@ -161,12 +209,12 @@ export function ManualPaymentDialog({
             amount: numericAmount,
             currency,
             paidAt: paidAtIso,
-            customerEmail: customerEmail.trim() || null,
-            bankName: bankName.trim() || null,
-            bankDocumentNo: bankDocumentNo.trim() || null,
-            externalId: externalId.trim() || null,
-            purpose: purpose.trim() || null,
-            note: note.trim() || null,
+            profileId: contact?.id ?? null,
+            orderId: deal?.id ?? null,
+            receivingBankName: provider === "bank" ? receivingBank.trim() : null,
+            comment: comment.trim() || null,
+            contactNameSnapshot: contact?.full_name || contact?.email || null,
+            orderNumberSnapshot: deal?.order_number || null,
             idempotencyKey: idempotencyKeyRef.current,
           },
         },
@@ -187,21 +235,28 @@ export function ManualPaymentDialog({
         toast.success("Ручной платёж создан");
       }
 
-      // Immutable snapshot: то, что реально попало в payments_v2.
       const paymentSnapshot: CreatedPaymentSnapshot = {
         paymentId: String(data.payment_id),
         provider,
         amount: Number(data.amount) || numericAmount,
         currency: String(data.currency || currency),
         paidAtIso: String(data.paid_at || paidAtIso),
+        profileId: (data.profile_id as string | null) ?? contact?.id ?? null,
+        hadOrder: !!deal?.id,
       };
       setSnapshot(paymentSnapshot);
 
       onOpenChange(false);
       onSuccess();
-      // Форму НЕ сбрасываем сейчас — сброс произойдёт при закрытии обоих
-      // диалогов (см. handleFollowUpClose ниже). Это защищает follow-up.
-      setFollowUpOpen(true);
+
+      // Follow-up «создать сделку» — только если сделка не была выбрана.
+      if (!deal?.id) {
+        setFollowUpOpen(true);
+      } else {
+        // Уже привязан к существующей сделке — сразу сброс.
+        setSnapshot(null);
+        resetForm();
+      }
     } catch (e: any) {
       console.error("Manual payment error:", e);
       toast.error(`Ошибка: ${e.message}`);
@@ -213,12 +268,13 @@ export function ManualPaymentDialog({
   const handleFollowUpChange = (v: boolean) => {
     setFollowUpOpen(v);
     if (!v) {
-      // Follow-up закрыт (создали сделку или отменили) — теперь безопасно
-      // сбросить форму и снять snapshot.
       setSnapshot(null);
       resetForm();
     }
   };
+
+  const contactDisplayName =
+    contact?.full_name || contact?.email || contact?.phone || "";
 
   return (
     <>
@@ -226,20 +282,24 @@ export function ManualPaymentDialog({
         <DialogContent className="sm:max-w-[560px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Wallet className="h-5 w-5" />
+              <Wallet className="h-5 w-5 text-primary" />
               Добавить ручной платёж
             </DialogTitle>
             <DialogDescription>
-              Создаёт канонический платёж в payments_v2 (origin=manual_admin).
-              После этого можно сразу привязать его к сделке.
+              Платёж будет создан напрямую в реестре платежей. Контакт и сделку
+              можно привязать сразу или позже.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
+            {/* Provider + Date */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Источник</Label>
-                <Select value={provider} onValueChange={(v) => setProvider(v as Provider)}>
+                <Label>Провайдер</Label>
+                <Select
+                  value={provider}
+                  onValueChange={(v) => setProvider(v as Provider)}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -247,7 +307,7 @@ export function ManualPaymentDialog({
                     {PROVIDERS.map((p) => (
                       <SelectItem key={p.value} value={p.value}>
                         <span className="flex items-center gap-2">
-                          <Landmark className="h-3.5 w-3.5 opacity-70" />
+                          {p.icon}
                           {p.label}
                         </span>
                       </SelectItem>
@@ -266,6 +326,7 @@ export function ManualPaymentDialog({
               </div>
             </div>
 
+            {/* Amount + Currency */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Сумма</Label>
@@ -295,62 +356,140 @@ export function ManualPaymentDialog({
               </div>
             </div>
 
+            {/* Bank of receipt — only for provider=bank */}
             {provider === "bank" && (
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Название банка</Label>
-                  <Input
-                    value={bankName}
-                    onChange={(e) => setBankName(e.target.value)}
-                    placeholder="Например: Приорбанк"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>№ банковского документа</Label>
-                  <Input
-                    value={bankDocumentNo}
-                    onChange={(e) => setBankDocumentNo(e.target.value)}
-                    placeholder="Платёжное поручение №"
-                  />
-                </div>
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1.5">
+                  <Building2 className="h-3.5 w-3.5 opacity-70" />
+                  Банк зачисления
+                </Label>
+                <Input
+                  value={receivingBank}
+                  onChange={(e) => setReceivingBank(e.target.value)}
+                  placeholder="Например: Паритетбанк"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Наш банк-получатель средств. Отобразится в поле «Плательщик».
+                </p>
               </div>
             )}
 
+            {/* Contact picker */}
             <div className="space-y-1.5">
-              <Label>Назначение платежа</Label>
-              <Input
-                value={purpose}
-                onChange={(e) => setPurpose(e.target.value)}
-                placeholder="Оплата по договору №… / за услуги…"
-              />
+              <Label className="flex items-center gap-1.5">
+                <UserIcon className="h-3.5 w-3.5 opacity-70" />
+                Контакт
+                <span className="text-[11px] text-muted-foreground">
+                  (необязательно)
+                </span>
+              </Label>
+              {contact ? (
+                <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-2">
+                  <UserIcon className="h-4 w-4 text-green-500" />
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-sm font-medium">
+                      {contactDisplayName || "Контакт выбран"}
+                    </div>
+                    {contact.email ? (
+                      <div className="truncate text-xs text-muted-foreground">
+                        {contact.email}
+                      </div>
+                    ) : null}
+                  </div>
+                  {contact.user_id ? null : (
+                    <Badge variant="outline" className="text-[10px]">Ghost</Badge>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setContactPickerOpen(true)}
+                  >
+                    Изменить
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setContact(null)}
+                    aria-label="Убрать контакт"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={() => setContactPickerOpen(true)}
+                >
+                  <UserIcon className="mr-2 h-4 w-4" />
+                  Найти контакт по имени
+                </Button>
+              )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Внешний идентификатор</Label>
-                <Input
-                  value={externalId}
-                  onChange={(e) => setExternalId(e.target.value)}
-                  placeholder="Например: RR-2026-000123"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Email плательщика</Label>
-                <Input
-                  type="email"
-                  value={customerEmail}
-                  onChange={(e) => setCustomerEmail(e.target.value)}
-                  placeholder="client@example.com"
-                />
-              </div>
+            {/* Deal picker */}
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5">
+                <Layers className="h-3.5 w-3.5 opacity-70" />
+                Сделка
+                <span className="text-[11px] text-muted-foreground">
+                  (необязательно)
+                </span>
+              </Label>
+              {deal ? (
+                <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-2">
+                  <Layers className="h-4 w-4 text-indigo-500" />
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-sm font-medium">
+                      {deal.contact_name || "Без контакта"}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {(deal.product_name ?? "—") + " · "}
+                      {deal.order_number || deal.id.slice(0, 8)} ·{" "}
+                      {deal.final_price} {deal.currency}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDealPickerOpen(true)}
+                  >
+                    Изменить
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setDeal(null)}
+                    aria-label="Убрать сделку"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={() => setDealPickerOpen(true)}
+                >
+                  <Layers className="mr-2 h-4 w-4" />
+                  Найти существующую сделку
+                </Button>
+              )}
             </div>
 
+            {/* Comment */}
             <div className="space-y-1.5">
               <Label>Комментарий</Label>
               <Textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Основание платежа, реквизиты, комментарий бухгалтера…"
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                placeholder="Основание, реквизиты, комментарий бухгалтера…"
                 rows={2}
               />
             </div>
@@ -372,11 +511,29 @@ export function ManualPaymentDialog({
         </DialogContent>
       </Dialog>
 
+      <ContactPickerDialog
+        open={contactPickerOpen}
+        onOpenChange={setContactPickerOpen}
+        onPick={handleContactPicked}
+        options={{ title: "Выбрать контакт" }}
+      />
+
+      <DealPickerDialog
+        open={dealPickerOpen}
+        onOpenChange={setDealPickerOpen}
+        onPick={handleDealPicked}
+        options={{
+          title: "Выбрать существующую сделку",
+          amount: numericAmount > 0 ? numericAmount : undefined,
+          currency,
+        }}
+      />
+
       {/*
-        Follow-up: привязка созданного канонического платежа к сделке. Snapshot
-        неизменяем и не зависит от resetForm() основной формы.
+        Follow-up: привязка standalone/contact-only платежа к новой сделке.
+        Открывается только если существующая сделка не была выбрана.
       */}
-      {snapshot && (
+      {snapshot && !snapshot.hadOrder && (
         <CreateDealFromPaymentDialog
           open={followUpOpen}
           onOpenChange={handleFollowUpChange}
