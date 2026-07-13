@@ -13,8 +13,9 @@ import {
   DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
 import { 
-  Download, Search, Filter, X, RefreshCw, ChevronDown, FileSpreadsheet, Settings
+  Download, Search, Filter, X, RefreshCw, ChevronDown, FileSpreadsheet, Settings, Plus
 } from "lucide-react";
+import { ManualPaymentDialog } from "@/components/admin/payments/ManualPaymentDialog";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth } from "date-fns";
