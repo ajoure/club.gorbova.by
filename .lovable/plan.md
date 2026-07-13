@@ -623,3 +623,148 @@ ALTER TABLE payments_v2
 
 - Рабочий пользовательский UI (этапы 1–5): 2–3 рабочих дня.
 - Полное закрытие с legacy cleanup, CHECK и RR E2E (этапы 1–7): 4–6 рабочих дней.
+---
+
+## C2R — Обязательное доусиление этапа 1 (STAGE 1 GATE: NOT PASSED)
+
+Этап 1 не принимается как GATE PASS. Инфраструктура создана, арифметика верна, но `recalc_order_totals` пока небезопасен для будущих этапов добавления и удаления платежей. До перехода к production-вызову из этапа 2 нужен C2R в той же миграционной линии.
+
+### Что не так
+
+**1. `p_reason` проверяется, но не управляет переходами.**
+Сейчас reason валидируется по allowlist, после чего `recommended_status` применяется независимо от причины. Это ломает утверждённую reason-aware модель (`payment_added` / `payment_removed` / `refund_changed` / `manual_repair`). Например, `payment_added` не должен переводить `paid` в `partial`/`pending`.
+
+Требуются независимые результаты в JSON:
+
+```text
+status_transition_allowed : bool
+amount_update_allowed     : bool
+transition_guard_reason   : text | null
+amount_guard_reason       : text | null
+```
+
+и раздельная логика: сначала считаем recommendation, затем reason-aware matrix решает, какие из двух колонок (`status`, `paid_amount`) реально обновлять.
+
+**2. Удаление единственного платежа оставит некорректный заказ.**
+Сценарий: `order.status=paid`, `paid_amount=100`, единственный succeeded payment soft-deleted, `recalc(reason='payment_removed')`. `compute_order_financial_state` вернёт `no_activity` / `recommended_status=null` / `net_paid=0`. Текущий recalc оставит `status=paid`, `paid_amount=0` — критический дефект для будущей кнопки удаления.
+
+Для `payment_removed` функция обязана использовать:
+- заблокированный `affected_payment_id`;
+- его принадлежность заказу (`payment.order_id = p_order_id`);
+- удалённое before-state / evidence;
+- разрешённый переход `paid → pending` либо `paid → partial`.
+
+**3. `affected_payment_id` фактически не используется.**
+Сейчас параметр только возвращается в JSON. Обязательно:
+
+```text
+payment exists
+payment.order_id = p_order_id
+payment is relevant to reason
+payment row locked FOR UPDATE
+```
+
+При несоответствии: `ok=false`, `guard_reason='affected_payment_mismatch'`. Для `manual_repair` допустим NULL; для остальных reason — строгий контракт.
+
+**4. Текущие 14 fixtures не являются утверждённой transition-матрицей.**
+В наборе преимущественно read-only arithmetic. Для `recalc_order_totals` покрыт только один переход `paid → refunded` и отклонение неправильного reason. Обязательные отсутствующие случаи:
+
+```text
+payment_added:
+  paid → partial       PROHIBITED
+  paid → pending       PROHIBITED
+  pending → paid       ALLOWED
+
+payment_removed:
+  paid → partial       ALLOWED
+  paid → pending       ALLOWED
+  partial → pending    ALLOWED
+
+refund_changed:
+  paid → partial_refund / refunded
+  partial_refund → partial_refund (amount update)
+  refunded → refunded (amount update)
+
+manual_repair:
+  explicit controlled transition
+
+same-status:
+  paid → paid           amount update
+  partial → partial     amount update
+
+historical conflict:
+  status no-op
+  amount no-op unless independently allowed
+```
+
+Нужен новый полный SQL fixture-набор с явным `expected → actual` per case, а не сохранение числа 14.
+
+**5. `partial` и `partial_refund` нельзя смешивать.**
+Fixture 12 сейчас ожидает `частичный возврат → partial`. Утверждённый контракт разделяет обычную недоплату и частичный возврат.
+
+Проверить enum `order_status`. Если `partial_refund` существует:
+
+```text
+net_paid < final_price AND had_refunds=true
+→ recommended_status = 'partial_refund'
+```
+
+Если enum отсутствует — доказать это отдельным блоком в плане (dump enum values) до продолжения; отсутствие значения фиксируется как отдельный CHANGE-REQUEST на миграцию enum, а не молча маппится в `partial`.
+
+**6. Refund-child scope ужесточить.**
+Child refund учитывается только при выполнении всех условий:
+
+```text
+refund.order_id = parent.order_id
+refund.provider ∈ canonical_payment_providers()
+refund.currency = parent.currency AND = order.currency
+refund.status = 'succeeded'
+refund.deleted_at IS NULL   (is_deleted = false)
+```
+
+Запрет молчаливой нормализации over-refund через `GREATEST(..., 0)`:
+
+```text
+effective_refund > parent.amount
+→ net_paid = null
+→ guard_reason = 'refund_exceeds_parent'
+→ recommended_status = null
+```
+
+Иначе повреждённая refund-lineage будет выглядеть как корректный полный возврат.
+
+**7. Не выполнен второй обязательный gate.**
+Требовались одновременно SQL fixtures PASS и targeted integration tests PASS. В отчёте есть только SQL fixture-файл и один smoke-тест; отдельного integration suite, вызывающего RPC и проверяющего фактическое состояние `orders_v2` после транзакции, нет.
+
+Добавить targeted integration tests как минимум для:
+
+- payment added;
+- payment removed;
+- refund changed;
+- invalid `affected_payment_id`;
+- mixed currency no-op;
+- historical conflict no-op;
+- concurrent lock / replay (двойной вызов одной причины не удваивает эффект).
+
+### DoD C2R
+
+1. `recalc_order_totals` расширен reason-aware transition matrix, возвращает `status_transition_allowed`, `amount_update_allowed`, `transition_guard_reason`, `amount_guard_reason`. `status` и `paid_amount` обновляются независимо.
+2. `affected_payment_id` валидируется и блокируется `FOR UPDATE` для всех reason кроме `manual_repair`; несоответствие → `ok=false`, `guard_reason='affected_payment_mismatch'`, без записи.
+3. `payment_removed` при единственном soft-deleted payment корректно переводит `paid → pending` (либо `paid → partial` при остатке), `paid_amount` пересчитывается. Никогда не оставляет пары `status=paid, paid_amount=0`.
+4. `compute_order_financial_state` использует enum `partial_refund` (если существует) для случая `net_paid < final_price AND had_refunds=true`. Fixture 12 переписан. Если enum отсутствует — блок «Enum inventory» в плане с dump'ом значений и отдельный CHANGE-REQUEST на миграцию enum до продолжения.
+5. Refund-child scope проверяет `order_id`, `provider`, `currency`, `status`, `deleted_at`. Over-refund → `net_paid=null`, `guard_reason='refund_exceeds_parent'`, без `GREATEST(...,0)`.
+6. SQL fixtures переписаны как полная transition-матрица (см. п.4 выше) — минимум ~30 сценариев, каждый с явным `expected → actual`.
+7. Добавлен `supabase/tests/order_financial_recalc_integration.ts` (или SQL-эквивалент через pgtap/pytest+psycopg): payment_added, payment_removed, refund_changed, invalid affected payment, mixed currency, historical conflict, concurrent replay. Все PASS.
+8. Оба gate одновременно зелёные: **SQL fixtures PASS** и **targeted integration tests PASS**.
+
+### Порядок работ
+
+C2R выполняется в той же миграционной линии, что и текущий этап 1. После C2R PASS этап 2 продолжается **без нового согласования**. Добавление `bank` в `PaymentsFilters` подтверждено, но само по себе этап 5 не закрывает.
+
+```text
+C2 FUNCTIONS         : CREATED / DEPLOYED
+C2 BASIC ARITHMETIC  : PASS
+C2 SAFE RECALC       : FAIL — reason-aware transition model отсутствует
+C2 DELETE READINESS  : FAIL — возможно paid/0 inconsistent state
+STAGE 1 GATE         : NOT PASSED  →  C2R REQUIRED
+```
