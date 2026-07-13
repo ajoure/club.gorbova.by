@@ -14,14 +14,33 @@ const REQUIRED_EMAIL = "stage4-playwright-admin@fixture.local";
 const corsHeaders: HeadersInit = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-e2e-runner-secret",
   "Content-Type": "application/json",
 };
+
+function constantTimeEq(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    // Auth gate: only callers holding the shared runner secret may provision
+    // the fixture admin. Hard-coded email + server-side password remain a
+    // defense-in-depth layer, but the secret is the real access control.
+    const expected = Deno.env.get("E2E_RUNNER_SECRET") ?? "";
+    const provided = req.headers.get("x-e2e-runner-secret") ?? "";
+    if (!expected || expected.length < 16 || !constantTimeEq(expected, provided)) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "unauthorized" }),
+        { status: 401, headers: corsHeaders }
+      );
+    }
+
     if (FIXTURE_EMAIL_ENV !== REQUIRED_EMAIL) {
       return new Response(
         JSON.stringify({
