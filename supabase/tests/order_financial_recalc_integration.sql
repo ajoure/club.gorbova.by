@@ -73,9 +73,8 @@ END $$;
 -- =========================================================
 DO $$ DECLARE o uuid; p uuid; BEGIN
   o := pg_temp.mk_order(100, 'BYN', 'paid', 100);
-  p := pg_temp.mk_pay(o, 100, 'succeeded', 'bepaid');
-  -- Simulate delete: soft-delete the parent, then recalc.
-  UPDATE public.payments_v2 SET is_deleted = true, deleted_at = now() WHERE id = p;
+  -- Insert already soft-deleted (post-delete state, then recalc runs).
+  p := pg_temp.mk_pay(o, 100, 'succeeded', 'bepaid', 'payment', NULL, 0, 'BYN', true);
   PERFORM public.recalc_order_totals(o, 'payment_removed', p);
   PERFORM pg_temp.assert_order('IT02_payment_removed_row_state', o, 'pending', 0.00);
 END $$;
