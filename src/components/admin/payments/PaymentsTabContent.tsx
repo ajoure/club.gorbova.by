@@ -688,6 +688,13 @@ export function PaymentsTabContent() {
         defaultFromDate={dateFilter.from}
         defaultToDate={dateFilter.to}
       />
+
+      {/* Stage 3 — ручной платёж */}
+      <ManualPaymentDialog
+        open={manualPaymentOpen}
+        onOpenChange={setManualPaymentOpen}
+        onSuccess={refetch}
+      />
     </div>
   );
 }
