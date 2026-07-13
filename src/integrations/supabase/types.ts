@@ -10663,6 +10663,10 @@ export type Database = {
           customer_ip: string | null
           customer_phone: string | null
           deal_date: string | null
+          deleted_at: string | null
+          deleted_by: string | null
+          deleted_reason: string | null
+          deletion_context: Json | null
           discount_percent: number | null
           final_price: number
           flow_id: string | null
@@ -10670,6 +10674,7 @@ export type Database = {
           id: string
           invoice_email: string | null
           invoice_sent_at: string | null
+          is_deleted: boolean
           is_trial: boolean
           meta: Json | null
           offer_id: string | null
@@ -10701,6 +10706,10 @@ export type Database = {
           customer_ip?: string | null
           customer_phone?: string | null
           deal_date?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
+          deleted_reason?: string | null
+          deletion_context?: Json | null
           discount_percent?: number | null
           final_price: number
           flow_id?: string | null
@@ -10708,6 +10717,7 @@ export type Database = {
           id?: string
           invoice_email?: string | null
           invoice_sent_at?: string | null
+          is_deleted?: boolean
           is_trial?: boolean
           meta?: Json | null
           offer_id?: string | null
@@ -10739,6 +10749,10 @@ export type Database = {
           customer_ip?: string | null
           customer_phone?: string | null
           deal_date?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
+          deleted_reason?: string | null
+          deletion_context?: Json | null
           discount_percent?: number | null
           final_price?: number
           flow_id?: string | null
@@ -10746,6 +10760,7 @@ export type Database = {
           id?: string
           invoice_email?: string | null
           invoice_sent_at?: string | null
+          is_deleted?: boolean
           is_trial?: boolean
           meta?: Json | null
           offer_id?: string | null
@@ -10837,54 +10852,66 @@ export type Database = {
       payment_delete_operations: {
         Row: {
           access_decisions: Json
+          access_ledger_ids: string[]
           actor_user_id: string
           before_state: Json
           checksum: string
           consumed_at: string | null
           created_at: string
           expires_at: string
+          graph_checksum: string | null
           id: string
           manual_review_required: boolean
           operation_type: string
           order_id: string | null
+          order_ids: string[]
           payment_ids: string[]
           predicted_after: Json
+          predicted_after_full: Json
           status: string
           updated_at: string
           version: number
         }
         Insert: {
           access_decisions: Json
+          access_ledger_ids?: string[]
           actor_user_id: string
           before_state: Json
           checksum: string
           consumed_at?: string | null
           created_at?: string
           expires_at?: string
+          graph_checksum?: string | null
           id?: string
           manual_review_required?: boolean
           operation_type: string
           order_id?: string | null
+          order_ids?: string[]
           payment_ids: string[]
           predicted_after: Json
+          predicted_after_full?: Json
           status?: string
           updated_at?: string
           version?: number
         }
         Update: {
           access_decisions?: Json
+          access_ledger_ids?: string[]
           actor_user_id?: string
           before_state?: Json
           checksum?: string
           consumed_at?: string | null
           created_at?: string
           expires_at?: string
+          graph_checksum?: string | null
           id?: string
           manual_review_required?: boolean
           operation_type?: string
           order_id?: string | null
+          order_ids?: string[]
           payment_ids?: string[]
           predicted_after?: Json
+          predicted_after_full?: Json
           status?: string
           updated_at?: string
           version?: number
@@ -17985,6 +18012,10 @@ export type Database = {
       _crm_tasks_assert_staff: { Args: never; Returns: undefined }
       _payment_delete_checksum: {
         Args: { p_order_id: string; p_payment_ids: string[]; p_version: number }
+        Returns: string
+      }
+      _payment_delete_graph_checksum: {
+        Args: { p_order_ids: string[]; p_selected_payment_ids: string[] }
         Returns: string
       }
       admin_create_contact: {
