@@ -270,10 +270,20 @@ test.describe("Stage 4 — payment delete engine", () => {
   let authToken: string;
 
   test.beforeAll(async ({ request }) => {
+    if (!E2E_RUNNER_SECRET) {
+      throw new Error("E2E_RUNNER_SECRET must be set in the runner env");
+    }
     // Idempotent reset before every run: rebuilds the exact fixture inventory.
     const rst = await request.post(
       `${SUPABASE_URL}/functions/v1/admin-e2e-reset-fixtures`,
-      { headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" }, data: {} }
+      {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          "Content-Type": "application/json",
+          "x-e2e-runner-secret": E2E_RUNNER_SECRET,
+        },
+        data: {},
+      }
     );
     const rstBody = await rst.json();
     if (!rst.ok() || !rstBody.ok) {
@@ -288,6 +298,7 @@ test.describe("Stage 4 — payment delete engine", () => {
       `[Stage4 E2E] Fixture reset+inventory OK. Baseline payments=${baseline?.paymentsTotal} orders=${baseline?.ordersTotal} queue=${baseline?.queueTotal}`
     );
   });
+
 
   test.afterAll(async () => {
     if (!authToken) return;
