@@ -62,9 +62,11 @@ export function ManualPaymentDialog({
   const [provider, setProvider] = useState<Provider>("bank");
   const [amount, setAmount] = useState<string>("");
   const [currency, setCurrency] = useState<string>("BYN");
-  const [paidAt, setPaidAt] = useState<string>(() =>
-    new Date().toISOString().slice(0, 16),
-  );
+  const [paidAtDate, setPaidAtDate] = useState<Date | undefined>(() => new Date());
+  const [paidAtTime, setPaidAtTime] = useState<string>(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  });
   const [externalId, setExternalId] = useState<string>("");
   const [customerEmail, setCustomerEmail] = useState<string>("");
   const [note, setNote] = useState<string>("");
@@ -77,11 +79,27 @@ export function ManualPaymentDialog({
   const amountInvalid =
     amount.trim() === "" || !Number.isFinite(numericAmount) || numericAmount <= 0;
 
+  const buildPaidAtDate = (): Date | null => {
+    if (!paidAtDate) return null;
+    const d = new Date(paidAtDate);
+    if (paidAtTime) {
+      const [hh, mm] = paidAtTime.split(":").map(Number);
+      d.setHours(hh || 0, mm || 0, 0, 0);
+    } else {
+      d.setHours(0, 0, 0, 0);
+    }
+    return d;
+  };
+
   const resetForm = () => {
     setProvider("bank");
     setAmount("");
     setCurrency("BYN");
-    setPaidAt(new Date().toISOString().slice(0, 16));
+    const now = new Date();
+    setPaidAtDate(now);
+    setPaidAtTime(
+      `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+    );
     setExternalId("");
     setCustomerEmail("");
     setNote("");
