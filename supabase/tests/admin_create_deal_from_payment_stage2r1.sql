@@ -64,8 +64,9 @@ BEGIN
   -- =========== FIXTURES (все под FK) ===========
 
   -- Profile
+  -- profile.user_id = NULL → ghost path (нет зависимости от auth.users)
   INSERT INTO public.profiles (id, user_id, email, full_name)
-    VALUES (v_profile, v_profile_user, 'stage2r1@example.com', 'Stage 2R.1');
+    VALUES (v_profile, NULL, 'stage2r1@example.com', 'Stage 2R.1');
 
   -- Product + tariff
   INSERT INTO public.products_v2 (name, code, is_active)
