@@ -1,6 +1,7 @@
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PaymentFilters } from "@/pages/admin/AdminPayments";
+import { ACTIVE_PAYMENT_PROVIDERS, PAYMENT_PROVIDER_LABELS } from "@/lib/payments/providers";
 
 interface PaymentsFiltersProps {
   filters: PaymentFilters;
@@ -20,13 +21,13 @@ export default function PaymentsFilters({ filters, setFilters }: PaymentsFilters
           <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все</SelectItem>
-            <SelectItem value="bepaid">bePaid</SelectItem>
-            <SelectItem value="stripe">Stripe</SelectItem>
-            <SelectItem value="rr">Ресурс Развития</SelectItem>
-            <SelectItem value="bank">Банк</SelectItem>
+            {ACTIVE_PAYMENT_PROVIDERS.map((p) => (
+              <SelectItem key={p} value={p}>{PAYMENT_PROVIDER_LABELS[p]}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
+
 
       <div className="space-y-1">
         <Label className="text-xs">Статус</Label>
