@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake, UserMinus, Unlink, FileText, Landmark } from "lucide-react";
+import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake, UserMinus, Unlink, FileText, Landmark, Trash2 } from "lucide-react";
 import { PaymentDocumentsDrawer } from "./PaymentDocumentsDrawer";
+import DeletePaymentPreviewDialog from "./DeletePaymentPreviewDialog";
 import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -184,6 +185,11 @@ export default function PaymentsTable({
   // Add-only: existing receipt column / ReceiptStatusBadge remain unchanged.
   const [documentsDrawerOpen, setDocumentsDrawerOpen] = useState(false);
   const [documentsPaymentId, setDocumentsPaymentId] = useState<string | null>(null);
+  // Stage 4: delete engine
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteMode, setDeleteMode] = useState<"payment_only" | "order_with_all_linked_payments">("payment_only");
+  const [deletePaymentIds, setDeletePaymentIds] = useState<string[]>([]);
+  const [deleteOrderId, setDeleteOrderId] = useState<string | null>(null);
   const openDocumentsDrawer = (payment: UnifiedPayment) => {
     // Документы резолвятся только по записям из payments_v2.
     // Очередь bePaid (rawSource='queue') ещё не имеет canonical payment_id,
@@ -784,6 +790,37 @@ export default function PaymentsTable({
                 <ExternalLink className="h-3 w-3 mr-2" />
                 Открыть в bePaid
               </DropdownMenuItem>
+              {payment.rawSource === 'payments_v2' && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => {
+                      setDeleteMode("payment_only");
+                      setDeletePaymentIds([payment.id]);
+                      setDeleteOrderId(null);
+                      setDeleteOpen(true);
+                    }}
+                  >
+                    <Trash2 className="h-3 w-3 mr-2" />
+                    Удалить платёж
+                  </DropdownMenuItem>
+                  {payment.order_id && (
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => {
+                        setDeleteMode("order_with_all_linked_payments");
+                        setDeletePaymentIds([]);
+                        setDeleteOrderId(payment.order_id!);
+                        setDeleteOpen(true);
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3 mr-2" />
+                      Удалить сделку и все связанные платежи
+                    </DropdownMenuItem>
+                  )}
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         );
@@ -953,6 +990,15 @@ export default function PaymentsTable({
             setDocumentsDrawerOpen(o);
             if (!o) setDocumentsPaymentId(null);
           }}
+        />
+
+        <DeletePaymentPreviewDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          mode={deleteMode}
+          paymentIds={deletePaymentIds}
+          orderId={deleteOrderId}
+          onSuccess={() => { onRefetch(); }}
         />
       </div>
     </TooltipProvider>

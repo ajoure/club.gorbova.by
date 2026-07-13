@@ -10834,6 +10834,63 @@ export type Database = {
           },
         ]
       }
+      payment_delete_operations: {
+        Row: {
+          access_decisions: Json
+          actor_user_id: string
+          before_state: Json
+          checksum: string
+          consumed_at: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          manual_review_required: boolean
+          operation_type: string
+          order_id: string | null
+          payment_ids: string[]
+          predicted_after: Json
+          status: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          access_decisions: Json
+          actor_user_id: string
+          before_state: Json
+          checksum: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          manual_review_required?: boolean
+          operation_type: string
+          order_id?: string | null
+          payment_ids: string[]
+          predicted_after: Json
+          status?: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          access_decisions?: Json
+          actor_user_id?: string
+          before_state?: Json
+          checksum?: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          manual_review_required?: boolean
+          operation_type?: string
+          order_id?: string | null
+          payment_ids?: string[]
+          predicted_after?: Json
+          status?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: []
+      }
       payment_links: {
         Row: {
           account_code: string | null
@@ -11709,6 +11766,62 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      payment_tombstones: {
+        Row: {
+          amount: number | null
+          checksum: string
+          currency: string | null
+          deleted_at: string
+          deleted_by: string | null
+          deleted_reason: string | null
+          external_id: string | null
+          id: string
+          operation_id: string | null
+          order_id: string | null
+          original_payment_id: string
+          payload_snapshot: Json
+          provider: string
+        }
+        Insert: {
+          amount?: number | null
+          checksum: string
+          currency?: string | null
+          deleted_at?: string
+          deleted_by?: string | null
+          deleted_reason?: string | null
+          external_id?: string | null
+          id?: string
+          operation_id?: string | null
+          order_id?: string | null
+          original_payment_id: string
+          payload_snapshot: Json
+          provider: string
+        }
+        Update: {
+          amount?: number | null
+          checksum?: string
+          currency?: string | null
+          deleted_at?: string
+          deleted_by?: string | null
+          deleted_reason?: string | null
+          external_id?: string | null
+          id?: string
+          operation_id?: string | null
+          order_id?: string | null
+          original_payment_id?: string
+          payload_snapshot?: Json
+          provider?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_tombstones_operation_id_fkey"
+            columns: ["operation_id"]
+            isOneToOne: false
+            referencedRelation: "payment_delete_operations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       payments_legacy_archive: {
         Row: {
@@ -17870,6 +17983,10 @@ export type Database = {
     }
     Functions: {
       _crm_tasks_assert_staff: { Args: never; Returns: undefined }
+      _payment_delete_checksum: {
+        Args: { p_order_id: string; p_payment_ids: string[]; p_version: number }
+        Returns: string
+      }
       admin_create_contact: {
         Args: {
           p_city?: string
@@ -18087,6 +18204,25 @@ export type Database = {
       admin_override_document_number: {
         Args: { p_document_id: string; p_new_number: string; p_reason: string }
         Returns: undefined
+      }
+      admin_payment_delete_execute_v1: {
+        Args: {
+          p_actor_user_id: string
+          p_checksum: string
+          p_operation_id: string
+          p_reason?: string
+          p_version: number
+        }
+        Returns: Json
+      }
+      admin_payment_delete_preview_v1: {
+        Args: {
+          p_actor_user_id: string
+          p_mode: string
+          p_order_id?: string
+          p_payment_ids: string[]
+        }
+        Returns: Json
       }
       admin_reconcile_bepaid_legacy_subscriptions: {
         Args: {
@@ -19281,6 +19417,10 @@ export type Database = {
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
       is_live_event_presenter: {
         Args: { _live_event_id: string; _user_id: string }
+        Returns: boolean
+      }
+      is_payment_tombstoned: {
+        Args: { p_external_id: string; p_provider: string }
         Returns: boolean
       }
       is_room_staff: { Args: { _user_id: string }; Returns: boolean }

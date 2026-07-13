@@ -31,6 +31,9 @@ admin-create-payment-link
 admin-create-public-link
 admin-payments-diagnostics
 admin-create-deal-from-payment
+admin-create-manual-payment
+admin-delete-payment-preview
+admin-delete-payment-execute
 # PATCH-STRIPE-DOCUMENTS-DRAWER-V2 — registry-only entry (deploy reserved for Approve D)
 admin-payment-documents-resolve
 auth-actions
@@ -116,4 +119,3 @@ canonical-document-generate-strict
 document-field-resolver-v2
 document-field-resolver-v2-snapshot
 
-admin-create-manual-payment

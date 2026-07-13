@@ -1,11 +1,12 @@
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { FileText, X, Loader2, AlertTriangle, Link2, Plus } from "lucide-react";
+import { FileText, X, Loader2, AlertTriangle, Link2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { UnifiedPayment } from "@/hooks/useUnifiedPayments";
 import { BulkCreateDealsDialog } from "./BulkCreateDealsDialog";
+import DeletePaymentPreviewDialog from "./DeletePaymentPreviewDialog";
 
 interface PaymentsBatchActionsProps {
   selectedPayments: UnifiedPayment[];
@@ -27,6 +28,13 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
   const [isAutoLinking, setIsAutoLinking] = useState(false);
   const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
   const [createDealsDialogOpen, setCreateDealsDialogOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  // Только canonical payments_v2 можно удалять
+  const deletablePaymentIds = useMemo(
+    () => selectedPayments.filter(p => p.rawSource === 'payments_v2').map(p => p.id),
+    [selectedPayments]
+  );
 
   // P0-guard: Calculate selected sum with useMemo (PATCH P0.8)
   const selectedSum = useMemo(() => {
@@ -320,8 +328,30 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
             )}
             Получить чеки
           </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setDeleteOpen(true)}
+            disabled={isFetchingReceipts || isAutoLinking || deletablePaymentIds.length === 0}
+            title={deletablePaymentIds.length === 0 ? "Удалять можно только canonical платежи (payments_v2)" : undefined}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Удалить {deletablePaymentIds.length > 0 ? `(${deletablePaymentIds.length})` : ""}
+          </Button>
         </div>
       </div>
+
+      <DeletePaymentPreviewDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        mode="payment_only"
+        paymentIds={deletablePaymentIds}
+        onSuccess={() => {
+          setDeleteOpen(false);
+          onClearSelection();
+          onSuccess();
+        }}
+      />
 
       {/* Bulk Create Deals Dialog */}
       <BulkCreateDealsDialog
