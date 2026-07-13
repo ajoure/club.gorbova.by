@@ -34,6 +34,7 @@ import { toast } from "sonner";
 import { Landmark, Loader2, Wallet } from "lucide-react";
 import { CreateDealFromPaymentDialog } from "./CreateDealFromPaymentDialog";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { DateTimePicker } from "@/components/ui/datetime-picker";
 
 type Provider = "bank" | "rr" | "bepaid" | "stripe";
 
@@ -61,9 +62,11 @@ export function ManualPaymentDialog({
   const [provider, setProvider] = useState<Provider>("bank");
   const [amount, setAmount] = useState<string>("");
   const [currency, setCurrency] = useState<string>("BYN");
-  const [paidAt, setPaidAt] = useState<string>(() =>
-    new Date().toISOString().slice(0, 16),
-  );
+  const [paidAtDate, setPaidAtDate] = useState<Date | undefined>(() => new Date());
+  const [paidAtTime, setPaidAtTime] = useState<string>(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  });
   const [externalId, setExternalId] = useState<string>("");
   const [customerEmail, setCustomerEmail] = useState<string>("");
   const [note, setNote] = useState<string>("");
@@ -76,11 +79,27 @@ export function ManualPaymentDialog({
   const amountInvalid =
     amount.trim() === "" || !Number.isFinite(numericAmount) || numericAmount <= 0;
 
+  const buildPaidAtDate = (): Date | null => {
+    if (!paidAtDate) return null;
+    const d = new Date(paidAtDate);
+    if (paidAtTime) {
+      const [hh, mm] = paidAtTime.split(":").map(Number);
+      d.setHours(hh || 0, mm || 0, 0, 0);
+    } else {
+      d.setHours(0, 0, 0, 0);
+    }
+    return d;
+  };
+
   const resetForm = () => {
     setProvider("bank");
     setAmount("");
     setCurrency("BYN");
-    setPaidAt(new Date().toISOString().slice(0, 16));
+    const now = new Date();
+    setPaidAtDate(now);
+    setPaidAtTime(
+      `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+    );
     setExternalId("");
     setCustomerEmail("");
     setNote("");
@@ -91,14 +110,15 @@ export function ManualPaymentDialog({
       toast.error("Введите положительную сумму");
       return;
     }
-    if (!paidAt) {
+    const paidAtDateObj = buildPaidAtDate();
+    if (!paidAtDateObj) {
       toast.error("Укажите дату платежа");
       return;
     }
 
     setSaving(true);
     try {
-      const paidAtIso = new Date(paidAt).toISOString();
+      const paidAtIso = paidAtDateObj.toISOString();
       const idempotencyKey =
         `admin-manual-payment:v1:${provider}:${numericAmount}:${currency}` +
         `:${paidAtIso}:${externalId.trim() || "auto"}:${customerEmail.trim().toLowerCase()}`;
@@ -185,10 +205,11 @@ export function ManualPaymentDialog({
               </div>
               <div className="space-y-1.5">
                 <Label>Дата платежа</Label>
-                <Input
-                  type="datetime-local"
-                  value={paidAt}
-                  onChange={(e) => setPaidAt(e.target.value)}
+                <DateTimePicker
+                  date={paidAtDate}
+                  time={paidAtTime}
+                  onDateChange={setPaidAtDate}
+                  onTimeChange={setPaidAtTime}
                 />
               </div>
             </div>
@@ -282,7 +303,7 @@ export function ManualPaymentDialog({
           rawSource="queue"
           amount={numericAmount || 0}
           currency={currency}
-          paidAt={paidAt ? new Date(paidAt).toISOString() : undefined}
+          paidAt={buildPaidAtDate()?.toISOString()}
           onSuccess={() => {
             setFollowUpOpen(false);
             setCreatedQueueRowId(null);
