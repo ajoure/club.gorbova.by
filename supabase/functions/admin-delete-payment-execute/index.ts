@@ -72,7 +72,9 @@ Deno.serve(async (req) => {
       err === "operation_actor_mismatch" ? 403 :
       err === "operation_not_pending" || err === "already_deleted" ? 409 :
       err === "operation_expired" ? 410 :
-      err === "version_mismatch" || err === "checksum_mismatch" ? 409 :
+      err === "version_mismatch" || err === "checksum_mismatch" ||
+        err === "graph_checksum_mismatch" || err === "graph_changed" ? 409 :
+      err.startsWith?.("recalc_failed") ? 409 :
       500;
     return bad(status, err, { detail: rpcResult });
   }
