@@ -474,6 +474,17 @@ export function PaymentsTabContent() {
           onValueChange={handleTimezoneChange} 
         />
         
+        {/* Stage 3 — Ручное добавление платежа */}
+        <Button
+          variant="default"
+          size="sm"
+          className="h-8 gap-1.5 px-3 text-xs font-medium"
+          onClick={() => setManualPaymentOpen(true)}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Ручной платёж</span>
+        </Button>
+
         {/* Sync dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
