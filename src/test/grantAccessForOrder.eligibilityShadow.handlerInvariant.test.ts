@@ -156,6 +156,19 @@ describe("ELIG-C1R · handler shadow integration invariant", () => {
     expect(runnerSrc).toMatch(/subscriptionLoadFailed/);
   });
 
+  it("payments rows flow to the helper unfiltered (ELIG-C1R.1 — no [0]/slice/filter truncation)", () => {
+    const runnerBegin = SRC.indexOf("function runGrantEligibilityShadow");
+    const runnerEnd = SRC.indexOf("END ELIG-C1R shared runner");
+    const runnerSrc = SRC.slice(runnerBegin, runnerEnd);
+
+    // Payment rows are captured into shadowPayments = ...data || []
+    expect(runnerSrc).toMatch(/shadowPayments\s*=\s*[^;]*data[^;]*\|\|\s*\[\s*\]/);
+    // shadowPayments is passed as `payments:` to the helper without indexing/slicing.
+    expect(runnerSrc).toMatch(/payments:\s*shadowPayments\b/);
+    // Sanity: nowhere in the runner is `shadowPayments` truncated.
+    expect(runnerSrc).not.toMatch(/shadowPayments\s*\[\s*0\s*\]/);
+    expect(runnerSrc).not.toMatch(/shadowPayments\.slice\(/);
+
   it("handler imports the pure helper from _shared, not a local copy", () => {
     expect(SRC).toMatch(/from\s+['"]\.\.\/_shared\/grant-eligibility\.ts['"]/);
   });
