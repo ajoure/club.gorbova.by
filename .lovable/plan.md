@@ -1,401 +1,207 @@
-да, согласен, с учетом правок:
-
-## Авторизация
-
-```text
-STAGE 6.1 DISCOVERY: AUTHORIZED READ-ONLY
-STAGE 6.2–6.7:      NOT YET AUTHORIZED
-ANY DML/MIGRATION:  FORBIDDEN DURING 6.1
-
-```
-
-## Обязательные правки к 6.1
-
-### 1. Сверить новый baseline с ранее зафиксированным
-
-Ранее для Stage 6 были зафиксированы ориентиры:
-
-```text
-safe backfill: 4
-archive:       260
-relink review: 52
-HOLD:          11
-
-```
-
-Новый pre-flight предлагает другую модель:
-
-```text
-admin:          315
-admin_test:       8
-bank_transfer:    2
-total legacy:   325
-
-```
-
-В deliverable нужна отдельная reconciliation-таблица:
-
-
-| Ранее зафиксированная группа | Новый фактический состав | Count  | Причина изменения |
-| ---------------------------- | ------------------------ | ------ | ----------------- |
-| safe backfill                | &nbsp;                   | &nbsp; | &nbsp;            |
-| archive                      | &nbsp;                   | &nbsp; | &nbsp;            |
-| relink review                | &nbsp;                   | &nbsp; | &nbsp;            |
-| HOLD                         | &nbsp;                   | &nbsp; | &nbsp;            |
-
-
-Без объяснения расхождения нельзя переходить к DML.
-
-### 2. Не считать `origin='bepaid'` доказательством провайдера
-
-Для `admin` и `admin_test` отдельно показать:
-
-```text
-provider_payment_id
-bepaid_uid
-tracking_id
-statement row match
-provider event match
-order linkage
-amount/currency/date match
-
-```
-
-`origin='bepaid'` — только признак происхождения записи, но не достаточное основание для `provider='bepaid'`.
-
-### 3. Proof-match должен быть формализован
-
-Для будущего relink определить exact правила:
-
-```text
-MATCH_STRONG
-  exact provider external ID
-  + currency
-  + amount
-  + transaction identity
-
-MATCH_COMPOSITE
-  amount
-  + currency
-  + bounded timestamp window
-  + order/contact evidence
-  + unique candidate
-
-COLLISION
-  more than one candidate
-
-NO_MATCH
-  zero candidates
-
-```
-
-Никаких relink по одному amount/date или одному `origin`.
-
-### 4. Writers разделить на активные и исторические
-
-Inventory writers должен иметь формат:
-
-
-| Writer | Файл/функция | Записывает provider | Есть runtime caller | Последнее использование | Решение |
-| ------ | ------------ | ------------------- | ------------------- | ----------------------- | ------- |
-
-
-Разделить:
-
-- активный production writer;
-- test/admin endpoint;
-- deprecated edge function без caller;
-- migration/backfill SQL;
-- тестовый fixture;
-- только reader/reference.
-
-Упоминание строки в старой миграции не означает активный writer.
-
-### 5. Отдельно исследовать известные подозрительные источники
-
-Обязательно найти происхождение:
-
-```text
-admin_grant
-admin_from_payment
-admin_deal_only
-admin_test
-bank_transfer
-
-```
-
-И отдельно проверить `test-payment-complete`, поскольку ранее установлено, что endpoint способен:
-
-- принять обычный order;
-- отметить его оплаченным;
-- вставить `provider='admin_test'`;
-- выдать доступ.
-
-Для каждого — callers, auth/RBAC, production reachability и последнее фактическое создание строки.
-
-### 6. Inventory должен включать exact IDs
-
-`stage6_inventory.csv` должен содержать минимум:
-
-```text
-id
-provider
-origin
-classification
-status
-transaction_type
-amount
-currency
-paid_at
-created_at
-order_id
-profile_id/user_id
-provider_payment_id
-bepaid_uid
-tracking_id
-external_id
-statement_match_count
-statement_match_ids
-provider_event_match_count
-has_tombstone
-is_deleted
-deleted_at
-meta.stage6_hold_reason
-recommended_action
-action_reason
-confidence
-
-```
-
-Не включать в CSV секреты, токены, полный raw webhook payload или платёжные реквизиты.
-
-Артефакт сохранить в доступном рабочем каталоге, например:
-
-```text
-/mnt/data/stage6_inventory.csv
-
-```
-
-а не только в `/mnt/documents`, если этот путь не выдаётся пользователю.
-
-### 7. Проверить active-delete состояние
-
-Все counts дать в двух разрезах:
-
-```text
-all rows
-active rows:
-  is_deleted = false
-  AND deleted_at IS NULL
-
-```
-
-Нельзя смешивать уже архивированные строки с активными invalid providers.
-
-### 8. HOLD пока не проектировать как окончательное состояние
-
-Фраза:
-
-```text
-provider='admin' остаётся временно
-
-```
-
-допустима только как диагностическая рекомендация.
-
-До отдельного approve нельзя:
-
-- ставить `meta.stage6_hold_reason`;
-- создавать backup/archive table;
-- soft-delete;
-- менять provider;
-- добавлять trigger.
-
-### 9. Guard пока только дизайн
-
-На 6.1 подготовить варианты guard:
-
-1. `BEFORE INSERT OR UPDATE OF provider` trigger, запрещающий новые non-canonical значения;
-2. исключение только для уже существующих exact HOLD IDs;
-3. отсутствие зависимости от `created_at > now()`, поскольку такой предикат ненадёжен при retry/import/backfill.
-
-Предпочтительный дизайн:
-
-```text
-new provider must be canonical
-OR row.id belongs to exact immutable HOLD registry
-
-```
-
-Но реализация только после отдельного approve.
-
-## Deliverables Stage 6.1
-
-1. `stage6_inventory.csv` — 325 legacy rows с exact IDs.
-2. Writer inventory.
-3. Reconciliation со старым baseline `4 / 260 / 52 / 11`.
-4. Match-quality summary:
-
-
-| Provider      | Strong match | Composite unique | Collision | No match | Already deleted |
-| ------------- | ------------ | ---------------- | --------- | -------- | --------------- |
-| admin         | &nbsp;       | &nbsp;           | &nbsp;    | &nbsp;   | &nbsp;          |
-| admin_test    | &nbsp;       | &nbsp;           | &nbsp;    | &nbsp;   | &nbsp;          |
-| bank_transfer | &nbsp;       | &nbsp;           | &nbsp;    | &nbsp;   | &nbsp;          |
-
-
-5. Proposed action matrix без выполнения:
-
-
-| Group             | Count  | Proposed action     | Confidence | Blocking issue |
-| ----------------- | ------ | ------------------- | ---------- | -------------- |
-| bank_transfer     | &nbsp; | bank                | &nbsp;     | &nbsp;         |
-| admin_test        | &nbsp; | relink/archive/HOLD | &nbsp;     | &nbsp;         |
-| admin regular     | &nbsp; | &nbsp;              | &nbsp;     | &nbsp;         |
-| admin null        | &nbsp; | &nbsp;              | &nbsp;     | &nbsp;         |
-| card verification | &nbsp; | &nbsp;              | &nbsp;     | &nbsp;         |
-| orphan technical  | &nbsp; | &nbsp;              | &nbsp;     | &nbsp;         |
-
-
-6. Checksums до любых будущих изменений:
-
-```text
-count by provider/status/currency
-sum(amount) by provider/status/currency
-hash of exact legacy IDs
-hash of financial identity:
-  id, amount, currency, paid_at, order_id, provider
-
-```
-
-## Gate
-
-```text
-STAGE 6.1 READ-ONLY DISCOVERY: EXECUTE AUTHORIZED
-CSV INVENTORY:             REQUIRED
-WRITER SWEEP:              REQUIRED
-OLD/NEW BASELINE RECONCILIATION: REQUIRED
-STAGE 6.2 DML:             BLOCKED UNTIL 6.1 REVIEW
-
-```
+# да, согласен, с учетом правок:
+
+1. **6.A — источник actor**
+  - `meta.processed_by` брать из `auth.uid()` или существующего серверного audit-контекста.
+  - Не принимать actor из клиентского параметра RPC.
+  - Чтение queue, проверка provider и INSERT должны выполняться атомарно в существующей транзакции с сохранением текущей идемпотентности.
+2. **6.B — устранить противоречие по публикации**
+  - Нужно выбрать один вариант:
+    - функция полностью удалена из registry/deploy и не публикуется;
+    - либо временно опубликован 410-stub.
+  - Нельзя одновременно требовать `410 Gone` и «функция не публикуется».
+  - Discovery должен проверять не только frontend/e2e, но и edge functions, SQL/RPC, cron, scripts, CI и registry.
+3. **6.C — fixture определяется не суммой**
+  - Amount/currency могут быть дополнительными признаками, но не доказательством fixture.
+  - Нужны детерминированные признаки: `source`, `origin`, metadata, test execution ID, E2E marker или lineage от `test-payment-complete`.
+  - До DML проверить, что `payments_v2.is_deleted` реально существует и его учитывают все основные consumers.
+4. **6.D.1 — защита от drift между preview и DML**
+  - Зафиксировать `preview_generated_at`, approved row count и checksum исходного набора.
+  - Перед UPDATE повторно выполнить все exact-match проверки.
+  - DML должен иметь guard:
+    - текущий `provider='admin'`;
+    - текущий `source/origin='admin_from_payment'`;
+    - тот же `meta.queue_payment_id`;
+    - совпадение financial truth;
+    - row count равен утвержденному количеству.
+  - При любом drift — rollback всего DML, без частичного обновления.
+5. **6.D.1 — checksum**
+  - На preview формируются:
+    - checksum текущего состояния;
+    - checksum candidate-набора;
+    - ожидаемый checksum после миграции.
+  - Фактический post-DML checksum формируется только после отдельного approve и выполнения UPDATE.
+6. **6.D.2 — убрать скрытый DML**
+  - Формулировка «пометить `meta.stage6_hold_reason`» является UPDATE.
+  - В текущем шаге только сформировать `stage6_d2_hold.csv`.
+  - Запись hold-признака в БД — только отдельным DML после отдельного approve.
+7. **6.E — runtime map нельзя ограничивать** `rg`  
+Проверить также:
+  - SQL-функции и процедуры;
+  - views/materialized views;
+  - triggers;
+  - RLS policies;
+  - cron/background jobs;
+  - edge functions;
+  - отчётные RPC и прямые запросы.
+  Отсутствие чтения в frontend-коде не доказывает отсутствие зависимости.
+8. **6.E — не создавать** `access_grant_ledger` **без duplication audit**
+  - Сначала проверить существующие `entitlements`, audit/event/ledger-таблицы и механизмы ручной выдачи доступа.
+  - Новая таблица допустима только если существующая каноническая модель действительно не подходит.
+9. **6.F — исключение должно быть семантическим**
+  - Исключать именно `source/origin='admin_grant'`, а не все строки `provider='admin'`.
+  - Нулевая сумма является дополнительным guard, но не идентификатором типа записи.
+  - Исторические `admin_from_payment` до выполнения 6.D не должны исчезнуть из общей финансовой выручки.
+10. **6.G — trigger должен закрывать INSERT и изменение provider**
+  - Не только `BEFORE INSERT`, но и изменение `provider` через UPDATE.
+  - Trigger должен отклонять:
+    - новый INSERT с non-canonical provider;
+    - UPDATE, при котором `provider` реально изменяется на non-canonical значение.
+  - Обновления других полей legacy-строк с `provider='admin'` блокироваться не должны.
+11. **Порядок gates**
+  - 6.G выполнять после завершения **6.A и 6.B**, а также после финального поиска всех writer’ов.
+  - Иначе активный `admin_test` writer начнёт аварийно падать до его штатного отключения.
+12. **DoD 6.A**
+  - Вместо ожидания «следующей» production-сделки использовать контролируемый runtime-сценарий.
+  - Proof должен показать одновременно:
+    - queue provider;
+    - созданный `payments_v2.provider`;
+    - `origin/source`;
+    - queue lineage;
+    - отсутствие второй записи при повторном вызове.
+
+После внесения этих уточнений можно начинать с **6.A**. Правило отдельного approve перед историческим DML сохранено корректно.
 
 &nbsp;
 
-&nbsp;
+План Stage 6 (revised): исправление writer'ов и разбор legacy `provider='admin'`
 
-Stage 6 — legacy provider cleanup. Цель: привести `payments_v2.provider` к canonical allowlist `{bepaid, stripe, rr, bank}` без потери финансовых данных. UI, канонический allowlist (`ACTIVE_PAYMENT_PROVIDERS`) и Stage 5 gate уже закрыты — эта работа только на серверной стороне (данные + writers).
+## Контекст и решение
 
-## Текущий факт (read-only pre-flight выполнен)
+Массовая миграция 315 строк `provider='admin'` отменяется. Диагностика Stage 6.1R показала, что это три разных класса записей, и их нельзя обрабатывать одинаково. Ручные писатели (`bank`/`rr`/`bepaid`/`stripe` + `origin=manual_admin`) работают правильно и не трогаются.
 
+Реальная проблема — старый RPC `admin_create_deal_from_payment` пишет `provider='admin'`, хотя `admin` не является платёжным провайдером. Это единственный оставшийся источник «загрязнения» поля `provider`. Стратегия: сначала остановить приток, затем аккуратно разобрать исторические записи по классам.
 
-| provider      | count | origin       | classification breakdown                        | temporal range    |
-| ------------- | ----- | ------------ | ----------------------------------------------- | ----------------- |
-| bepaid        | 5966  | bepaid       | canonical                                       | canonical         |
-| admin         | 315   | bepaid       | 288 null / 24 regular / 2 card_verif / 1 orphan | 2023-05 → 2026-07 |
-| rr            | 21    | —            | canonical                                       | canonical         |
-| admin_test    | 8     | bepaid       | 7 null / 1 orphan_technical                     | 2026-01 → 2026-06 |
-| stripe        | 6     | —            | canonical                                       | canonical         |
-| bank          | 3     | manual_admin | null                                            | canonical         |
-| bank_transfer | 2     | manual_admin | null                                            | 2026-07-13        |
+Инвариант поля `provider` (целевое состояние): только `bepaid | stripe | rr | bank`. Способ обработки платежа хранится в `origin` / `source` / `meta`.
 
+## Шаги
 
-`payment_reconcile_queue` — provider только `bepaid` (2199). `orders_v2.reconcile_source` legacy-меток не содержит.
+### 6.A — Fix writer `admin_create_deal_from_payment` (STOP THE BLEED)
 
-Итого 4 legacy-провайдера: `admin`, `admin_test`, `bank_transfer`; плюс подтверждение, что `bank` уже canonical и оставляется. Всего 325 строк payments требуют решения.
+Изменить RPC так, чтобы при создании канонической записи из queue провайдер брался из исходной queue-строки, а не хардкодился как `admin`:
 
-## Стратегия классификации
+```text
+new payments_v2 row:
+  provider              = <queue.provider>          -- обычно bepaid
+  origin                = 'admin_from_payment'
+  source                = 'admin_from_payment'
+  meta.queue_payment_id = <queue.id>
+  meta.processed_by     = <admin actor>
+```
 
-Стадия 6 разбита на дискретные шаги; каждый — с diagnose → dry-run → execute → verify. Ни одна строка не удаляется физически — только relink/reprovider/archive/HOLD.
+Fail-closed: если `queue.provider` пустой или не входит в canonical allowlist (`bepaid|stripe|rr|bank`) — RPC возвращает ошибку `invalid_source_provider`, ничего не пишет. Никаких fallback на `admin`.
 
-### Шаг 6.1 — Discovery + writer sweep (read-only)
+Покрытие: расширить `supabase/tests/admin_create_deal_from_payment_stage2r.sql` сценарием «provider наследуется из queue» и «не-canonical queue.provider → error». Существующие сценарии (idempotency, financial truth, already_linked) остаются зелёными.
 
-1. `rg` по репозиторию: где записываются provider-значения `admin`, `admin_test`, `bank_transfer` в `payments_v2` (edge functions, migrations, RPC, UI). Ожидается: admin-manual-payment писатели, старый bank-transfer flow.
-2. Собрать список writers → таблица: writer → provider → активен/deprecated → нужно ли переводить на canonical.
-3. Для каждой legacy-строки собрать proof-CSV: `id, provider, amount, currency, origin, classification, paid_at, order_id, user_id, has_tombstone, has_bank_proof, meta`.
+DoD 6.A:
 
-DoD: полный inventory writers + CSV inventory 325 строк в `/mnt/documents/stage6_inventory.csv`.
+- миграция RPC применена;
+- новые интеграционные тесты проходят;
+- ручная проверка: следующая admin-linked сделка создаёт `provider='bepaid'`, а не `admin`.
 
-### Шаг 6.2 — `bank_transfer` → `bank` (2 строки)
+### 6.B — Отключить `test-payment-complete` (единственный оставшийся writer `admin_test`)
 
-Обе от 2026-07-13, origin=`manual_admin`, BYN. `bank_transfer` — синоним `bank` (canonical). План:
+Убрать edge function `test-payment-complete/index.ts` из активных путей:
 
-- dry-run: `SELECT id ... WHERE provider='bank_transfer'`, snapshot до/после.
-- execute (migration): `UPDATE payments_v2 SET provider='bank' WHERE provider='bank_transfer'`.
-- verify: `provider='bank_transfer' = 0`, count `bank` = 3+2=5, checksum по (amount,currency,paid_at,order_id) не изменился.
-- writer sweep: если есть writer, пишущий `bank_transfer`, — переводится на `bank` в этой же миграции/PR.
+- либо полное удаление файла + вычистка из `supabase/functions.registry.txt`;
+- либо no-op stub, возвращающий 410 Gone.
 
-### Шаг 6.3 — `admin_test` (8 строк)
+Выбор — на этапе Discovery-6.B: сначала `rg` по фронтенду и e2e, убедиться, что endpoint не дергается из production-путей.
 
-Все — `origin=bepaid`, но `provider=admin_test`. Это тестовые admin-ручные вводы (2026-01…2026-06). Решение:
+DoD 6.B: нет живых вызовов, функция не публикуется, новые строки `provider='admin_test'` не появляются.
 
-- если у строки есть валидный bepaid `provider_payment_id` и совпадает с bepaid_statement_rows → relink to `bepaid`;
-- иначе — archive (soft-delete через `is_deleted=true, deletion_context='stage6_legacy_admin_test'`) с полным snapshot в `_stage6_legacy_archive_2026_07_backup`.
+### 6.C — 8 исторических `admin_test` строк
 
-DoD: `provider='admin_test'` = 0, все 8 строк либо в bepaid (с bank proof match), либо в archive-таблице + is_deleted=true.
+Только read-only preview:
 
-### Шаг 6.4 — `admin` (315 строк, самый большой блок)
+- собрать CSV (id, amount, currency, created_at, order_id, meta);
+- подтвердить, что все они действительно fixture (сумма/currency/e2e-маркеры);
+- предложить: soft-archive через `is_deleted=true` + `meta.stage6_archive_reason='admin_test_fixture'`, без физического удаления.
 
-Разбить по classification:
+DoD 6.C выносится в отдельный approve — DML не выполняется до явного «да».
 
-- **24 regular_purchase** + **288 null**: разбить по наличию bepaid provider_payment_id.
-  - match to bepaid_statement_rows → reprovider to `bepaid` (backfill из bank proof).
-  - без match → HOLD (пометить `meta.stage6_hold_reason='admin_no_bank_proof'`), провайдер оставляем `admin` временно, но исключаем из canonical allowlist reader — уже исключён.
-- **2 card_verification**: reprovider to `bepaid` если есть card verification job, иначе HOLD.
-- **1 orphan_technical**: archive (soft-delete как в 6.3).
+### 6.D — 113 `admin_from_payment`: точечный разбор
 
-DoD:
+Разбить на две подгруппы по факту наличия живой queue-связи:
 
-- `admin` без bepaid match = HOLD с явным meta-маркером;
-- `admin` с bepaid match = relinked;
-- orphan_technical = archived.
-- Никаких физических deletes; всё через UPDATE + backup-таблица.
+**6.D.1 — 104 строки с живой queue-записью.**
+Preview-миграция (read-only, генерирует artifact, DML не выполняет):
 
-### Шаг 6.5 — Writer disablement
+- для каждой строки JOIN на `payment_reconcile_queue` по `meta.queue_payment_id`;
+- проверить exact-match: `amount`, `currency`, `queue.status_normalized='successful'`, `queue.provider ∈ canonical allowlist`;
+- если всё совпадает — предложить UPDATE `provider = queue.provider`, `origin='admin_from_payment'`, `meta.stage6_relink=true`;
+- если хоть одно поле расходится — строка идёт в HOLD-бакет.
 
-Все writers, определённые в 6.1 как пишущие legacy provider, переводятся:
+Артефакт: `/mnt/documents/stage6/stage6_d1_preview.csv` + checksum до/после.
 
-- `admin_test` writers: удалить или переключить на `bepaid` (в зависимости от call-path).
-- `bank_transfer` writers: переключить на `bank`.
-- `admin` manual-payment writers: оставить, но только для HOLD-режима, если UI-фича сохранена; иначе deprecate.
+**6.D.2 — 9 строк без queue-связи.**
+Не угадывать. Не относить к финансовым фактам. Пометить `meta.stage6_hold_reason='no_queue_link'` и оставить как есть до отдельного product-решения.
 
-Каждый writer PR — отдельный commit, но одна миграция.
+DoD 6.D: preview утверждён отдельно. DML выполняется только после явного approve и только по 104 exact-match строкам. 9 HOLD-строк не мигрируются.
 
-### Шаг 6.6 — Provider CHECK constraint (только после всего выше)
+### 6.E — 201 `admin_grant`: не платежи
 
-После того, как invalid providers = 0 (все, что не в allowlist, либо relinked, либо HOLD с явным флагом):
+Read-only investigation:
 
-- добавить `CHECK (provider IN ('bepaid','stripe','rr','bank'))` НЕ раньше, чем HOLD-строки будут либо resolved, либо reclassified. Возможно, отдельный follow-up ticket — этот шаг требует нулевого HOLD.
+1. `rg` по коду: где читаются строки `provider='admin' AND source='admin_grant'` (`grant-eligibility`, `document-resolver`, RPC, отчёты);
+2. если строки участвуют в выдаче доступа/документов — НЕ трогать до отдельного product-решения о переносе в технический архив (отдельная таблица `access_grant_ledger` или флаг `is_financial=false`);
+3. если строки нигде не читаются — предложить soft-archive с `meta.stage6_archive_reason='admin_grant_nonfinancial'`.
 
-В рамках Stage 6 добавляется **только** partial-check или превентивный trigger, блокирующий будущие вставки non-canonical provider для новых строк (`created_at > now()`), но не ломающий legacy HOLD. Полный CHECK — Stage 7 gate.
+DoD 6.E: письменное подтверждение runtime-зависимостей + отдельный approve. В рамках текущего Stage 6 DML НЕ выполняется. Это pre-work для будущего Stage 6.E-DML.
 
-### Шаг 6.7 — Финальный checksum verify
+### 6.F — Финансовые отчёты и фильтры
 
-Preview + execute checksum-функций:
+После 6.A + 6.D (даже до полной очистки 6.E) обновить финансовые агрегаты так, чтобы:
 
-- row-count по (bepaid, stripe, rr, bank) до и после Stage 6 (bepaid должен вырасти на N relinked, stripe/rr не измениться, bank = old+2).
-- SUM(amount) по currency неизменен (relink НЕ меняет сумму; archive выводит строку из allowlist, но остаётся в БД под is_deleted).
-- CSV parity 5/5 на выборке ключевых экранов.
+- `admin_grant` (zero-amount, non-financial) явно исключался из sum/checksum по выручке;
+- provider-фильтр UI не показывал `admin` как выбираемого провайдера (уже гарантировано `ACTIVE_PAYMENT_PROVIDERS` в `src/lib/payments/providers.ts` — проверить, что SQL-стороны PaymentsStatsPanel/get_payments_stats соответствуют).
 
-## Gate
+Это UI/aggregation-only правка, без DML по строкам.
 
-- STAGE 6 INVENTORY:         REQUIRED
-- STAGE 6.2 (bank_transfer): REQUIRED
-- STAGE 6.3 (admin_test):    REQUIRED
-- STAGE 6.4 (admin):         REQUIRED (частично может быть HOLD)
-- STAGE 6.5 (writers):       REQUIRED
-- STAGE 6.6 (guard):         PARTIAL (только new-rows trigger; полный CHECK — Stage 7)
-- STAGE 6.7 (checksum):      REQUIRED
+### 6.G — Partial CHECK constraint на новые строки
 
-## Что НЕ входит в Stage 6
+Только после 6.A (bleed остановлен) добавить trigger BEFORE INSERT на `payments_v2`, отклоняющий `provider NOT IN ('bepaid','stripe','rr','bank')`. Полный table-level CHECK откладывается до Stage 7 (после закрытия 6.D/6.E).
 
-- Физическое удаление legacy строк (только soft-delete + archive-таблица).
-- Полный CHECK constraint на `provider` (Stage 7).
-- Изменения UI (Stage 5 закрыт, ничего не трогаем).
-- Изменение `payment_reconcile_queue` (там только bepaid).
-- Изменения в `payments_legacy_archive` (историческая таблица, не трогаем).
+## Порядок исполнения и gates
 
-## Первый видимый deliverable
+```text
+6.A  writer fix              → own migration + tests    [approve]
+6.B  disable test-writer     → code change + registry   [approve]
+6.C  admin_test preview      → CSV report               [approve, DML deferred]
+6.D  admin_from_payment      → preview CSV              [approve, DML deferred]
+6.E  admin_grant runtime map → rg-report                [approve, DML deferred]
+6.F  reports/filters         → UI/SQL sync              [approve]
+6.G  BEFORE INSERT trigger   → migration                [approve, after 6.A]
+```
 
-Шаг 6.1 discovery + inventory CSV — без единого write. После вашего approve этого артефакта переходим к 6.2 (`bank_transfer` → `bank`) как самому маленькому изолированному куску, чтобы верифицировать процесс.
+Каждый шаг — отдельный approve. Никаких массовых DML в одном заходе. Никаких физических DELETE.
 
-STAGE 6 EXECUTION: NOT YET AUTHORIZED — жду approve на 6.1 discovery.
+## Что НЕ делается
+
+- не преобразуются `admin_grant` в `bank` / `bepaid`;
+- не хардкодятся UUID конкретных платежей;
+- не используется сумма как fixture-маркер (см. backlog `stripe_test_fixture_marker_v1.md`);
+- не трогаются вчерашние ручные `bank`/`rr`/`stripe`/`bepaid` записи;
+- не удаляется исторический profile / auth-user;
+- `payment_reconcile_queue` не изменяется.
+
+## Артефакты
+
+- `/mnt/documents/stage6/stage6_a_writer_fix_report.md`
+- `/mnt/documents/stage6/stage6_c_admin_test_preview.csv`
+- `/mnt/documents/stage6/stage6_d1_preview.csv` + checksum
+- `/mnt/documents/stage6/stage6_d2_hold.csv`
+- `/mnt/documents/stage6/stage6_e_admin_grant_runtime_map.md`
+
+## Следующий шаг после approve
+
+Начать с **6.A** — миграция RPC + расширение `stage2r.sql`. Это единственный шаг, который меняет данные (только новые строки), и он не касается 315 исторических записей.

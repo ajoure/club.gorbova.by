@@ -3,6 +3,8 @@
 -- Проверяет: sequential replay, idempotency_conflict, financial source truth,
 --            fail-closed status allowlist, queue re-materialization guard,
 --            payments_v2 already linked guard, recalc rollback.
+-- Stage 6.A — provider inheritance from queue (canonical allowlist),
+--             non-canonical queue.provider rejection.
 -- Запуск: read-only, все изменения оборачиваются в SAVEPOINT/ROLLBACK.
 -- =====================================================================
 DO $$
@@ -15,12 +17,15 @@ DECLARE
   v_queue_ok        uuid := gen_random_uuid();
   v_queue_pending   uuid := gen_random_uuid();
   v_queue_matched   uuid := gen_random_uuid();
+  v_queue_noncanon  uuid := gen_random_uuid();
   v_pv2_linked      uuid := gen_random_uuid();
   v_pv2_ok          uuid := gen_random_uuid();
   v_key1            text := 'test-key-'||gen_random_uuid()::text;
   v_key2            text := 'test-key-'||gen_random_uuid()::text;
   v_key3            text := 'test-key-'||gen_random_uuid()::text;
   v_key4            text := 'test-key-'||gen_random_uuid()::text;
+  v_key5            text := 'test-key-'||gen_random_uuid()::text;
+  v_payment_provider text;
   v_result          jsonb;
   v_result2         jsonb;
   v_order_id        uuid;
@@ -53,6 +58,11 @@ BEGIN
     (id, provider, status, status_normalized, amount, currency, created_at, external_id, matched_order_id)
     VALUES (v_queue_matched, 'bepaid', 'successful', 'successful', 20, 'BYN', now(), 'stage2r-ext-3', gen_random_uuid());
 
+  -- Fixture: queue with non-canonical provider (legacy 'admin')
+  INSERT INTO public.payment_reconcile_queue
+    (id, provider, status, status_normalized, amount, currency, created_at, external_id)
+    VALUES (v_queue_noncanon, 'admin', 'successful', 'successful', 40, 'BYN', now(), 'stage2r-ext-4');
+
   -- Fixture: payments_v2 succeeded but already linked
   INSERT INTO public.payments_v2 (id, provider, status, amount, currency, order_id, created_at)
     VALUES (v_pv2_linked, 'stripe', 'succeeded', 30, 'USD', gen_random_uuid(), now());
@@ -84,6 +94,20 @@ BEGIN
   -- Только один payments_v2 создан
   ASSERT (SELECT count(*) FROM public.payments_v2 WHERE order_id = v_order_id) = 1,
          'S1: only one canonical payment created';
+
+  ----------------------------------------------------------------
+  -- Scenario 1b (Stage 6.A): provider inherited from queue, NOT 'admin'
+  ----------------------------------------------------------------
+  SELECT provider INTO v_payment_provider
+    FROM public.payments_v2 WHERE order_id = v_order_id LIMIT 1;
+  ASSERT v_payment_provider = 'bepaid',
+         format('S1b: canonical payment.provider must inherit queue.provider (bepaid), got %s', v_payment_provider);
+  ASSERT (v_result->>'provider') = 'bepaid',
+         format('S1b: RPC result.provider must equal bepaid, got %s', v_result->>'provider');
+  ASSERT (SELECT meta->>'source' FROM public.payments_v2 WHERE order_id = v_order_id LIMIT 1) = 'admin_from_payment',
+         'S1b: meta.source must remain admin_from_payment';
+  ASSERT (SELECT meta->>'derived_provider' FROM public.payments_v2 WHERE order_id = v_order_id LIMIT 1) = 'bepaid',
+         'S1b: meta.derived_provider must record queue provider lineage';
 
   ----------------------------------------------------------------
   -- Scenario 2 (financial truth): payment.amount = source (50), order.final_price = client (100)
@@ -138,6 +162,24 @@ BEGIN
   );
   ASSERT (v_result->>'error') = 'payment_already_linked',
          format('S6: expected payment_already_linked, got %s', v_result->>'error');
+
+  ----------------------------------------------------------------
+  -- Scenario 7 (Stage 6.A): queue.provider='admin' (non-canonical, legacy)
+  --   → non_canonical_provider, никакого fallback, никаких новых admin-строк
+  ----------------------------------------------------------------
+  v_result := public.admin_create_deal_from_payment(
+    v_queue_noncanon, 'queue', v_actor, v_profile, v_product, v_tariff,
+    40, 'BYN', now(), now()+interval '30 days',
+    'stage2r@example.com', false, v_key5, 'hash-5'
+  );
+  ASSERT (v_result->>'ok')::boolean = false, 'S7: must fail';
+  ASSERT (v_result->>'error') = 'non_canonical_provider',
+         format('S7: expected non_canonical_provider, got %s', v_result->>'error');
+  ASSERT (v_result->>'provider') = 'admin',
+         'S7: error payload must echo offending provider';
+  ASSERT (SELECT count(*) FROM public.payments_v2
+           WHERE meta->>'queue_payment_id' = v_queue_noncanon::text) = 0,
+         'S7: no canonical payment created for non-canonical queue provider';
 
   ----------------------------------------------------------------
   -- Cleanup: rollback всё через RAISE — тест read-only
