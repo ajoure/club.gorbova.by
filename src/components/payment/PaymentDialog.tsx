@@ -1442,28 +1442,8 @@ export function PaymentDialog({
               Защищённая оплата на стороне bePaid.
             </p>
 
-            {/* Admin test payment button - SECURITY: only super_admin */}
-            {isSuperAdmin() && (
-              <div className="border-t pt-4 mt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleTestPayment}
-                  disabled={isLoading || isTestPaymentLoading}
-                  className="w-full border-dashed border-amber-500 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/20"
-                >
-                  {isTestPaymentLoading ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <ShieldCheck className="mr-2 h-4 w-4" />
-                  )}
-                  Тест: Симулировать оплату (только для админов)
-                </Button>
-                <p className="text-xs text-muted-foreground text-center mt-2">
-                  Создаёт заказ и симулирует успешный webhook от bePaid
-                </p>
-              </div>
-            )}
+            {/* Stage 6.B (2026-07-14): кнопка «Тест: Симулировать оплату» удалена.
+                Функция test-payment-complete отключена (410 Gone). */}
           </div>
         );
 
