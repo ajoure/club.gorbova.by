@@ -96,6 +96,20 @@ BEGIN
          'S1: only one canonical payment created';
 
   ----------------------------------------------------------------
+  -- Scenario 1b (Stage 6.A): provider inherited from queue, NOT 'admin'
+  ----------------------------------------------------------------
+  SELECT provider INTO v_payment_provider
+    FROM public.payments_v2 WHERE order_id = v_order_id LIMIT 1;
+  ASSERT v_payment_provider = 'bepaid',
+         format('S1b: canonical payment.provider must inherit queue.provider (bepaid), got %s', v_payment_provider);
+  ASSERT (v_result->>'provider') = 'bepaid',
+         format('S1b: RPC result.provider must equal bepaid, got %s', v_result->>'provider');
+  ASSERT (SELECT meta->>'source' FROM public.payments_v2 WHERE order_id = v_order_id LIMIT 1) = 'admin_from_payment',
+         'S1b: meta.source must remain admin_from_payment';
+  ASSERT (SELECT meta->>'derived_provider' FROM public.payments_v2 WHERE order_id = v_order_id LIMIT 1) = 'bepaid',
+         'S1b: meta.derived_provider must record queue provider lineage';
+
+  ----------------------------------------------------------------
   -- Scenario 2 (financial truth): payment.amount = source (50), order.final_price = client (100)
   ----------------------------------------------------------------
   SELECT amount INTO v_payment_amount
