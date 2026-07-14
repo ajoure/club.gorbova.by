@@ -164,6 +164,24 @@ BEGIN
          format('S6: expected payment_already_linked, got %s', v_result->>'error');
 
   ----------------------------------------------------------------
+  -- Scenario 7 (Stage 6.A): queue.provider='admin' (non-canonical, legacy)
+  --   → non_canonical_provider, никакого fallback, никаких новых admin-строк
+  ----------------------------------------------------------------
+  v_result := public.admin_create_deal_from_payment(
+    v_queue_noncanon, 'queue', v_actor, v_profile, v_product, v_tariff,
+    40, 'BYN', now(), now()+interval '30 days',
+    'stage2r@example.com', false, v_key5, 'hash-5'
+  );
+  ASSERT (v_result->>'ok')::boolean = false, 'S7: must fail';
+  ASSERT (v_result->>'error') = 'non_canonical_provider',
+         format('S7: expected non_canonical_provider, got %s', v_result->>'error');
+  ASSERT (v_result->>'provider') = 'admin',
+         'S7: error payload must echo offending provider';
+  ASSERT (SELECT count(*) FROM public.payments_v2
+           WHERE meta->>'queue_payment_id' = v_queue_noncanon::text) = 0,
+         'S7: no canonical payment created for non-canonical queue provider';
+
+  ----------------------------------------------------------------
   -- Cleanup: rollback всё через RAISE — тест read-only
   ----------------------------------------------------------------
   RAISE EXCEPTION 'STAGE2R_TESTS_PASSED';
