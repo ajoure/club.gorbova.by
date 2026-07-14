@@ -3,6 +3,8 @@
 -- Проверяет: sequential replay, idempotency_conflict, financial source truth,
 --            fail-closed status allowlist, queue re-materialization guard,
 --            payments_v2 already linked guard, recalc rollback.
+-- Stage 6.A — provider inheritance from queue (canonical allowlist),
+--             non-canonical queue.provider rejection.
 -- Запуск: read-only, все изменения оборачиваются в SAVEPOINT/ROLLBACK.
 -- =====================================================================
 DO $$
