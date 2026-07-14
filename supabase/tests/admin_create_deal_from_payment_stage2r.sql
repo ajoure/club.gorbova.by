@@ -58,6 +58,11 @@ BEGIN
     (id, provider, status, status_normalized, amount, currency, created_at, external_id, matched_order_id)
     VALUES (v_queue_matched, 'bepaid', 'successful', 'successful', 20, 'BYN', now(), 'stage2r-ext-3', gen_random_uuid());
 
+  -- Fixture: queue with non-canonical provider (legacy 'admin')
+  INSERT INTO public.payment_reconcile_queue
+    (id, provider, status, status_normalized, amount, currency, created_at, external_id)
+    VALUES (v_queue_noncanon, 'admin', 'successful', 'successful', 40, 'BYN', now(), 'stage2r-ext-4');
+
   -- Fixture: payments_v2 succeeded but already linked
   INSERT INTO public.payments_v2 (id, provider, status, amount, currency, order_id, created_at)
     VALUES (v_pv2_linked, 'stripe', 'succeeded', 30, 'USD', gen_random_uuid(), now());
