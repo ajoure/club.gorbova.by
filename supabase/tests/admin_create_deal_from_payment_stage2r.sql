@@ -17,12 +17,15 @@ DECLARE
   v_queue_ok        uuid := gen_random_uuid();
   v_queue_pending   uuid := gen_random_uuid();
   v_queue_matched   uuid := gen_random_uuid();
+  v_queue_noncanon  uuid := gen_random_uuid();
   v_pv2_linked      uuid := gen_random_uuid();
   v_pv2_ok          uuid := gen_random_uuid();
   v_key1            text := 'test-key-'||gen_random_uuid()::text;
   v_key2            text := 'test-key-'||gen_random_uuid()::text;
   v_key3            text := 'test-key-'||gen_random_uuid()::text;
   v_key4            text := 'test-key-'||gen_random_uuid()::text;
+  v_key5            text := 'test-key-'||gen_random_uuid()::text;
+  v_payment_provider text;
   v_result          jsonb;
   v_result2         jsonb;
   v_order_id        uuid;
