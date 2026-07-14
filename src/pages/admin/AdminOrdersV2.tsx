@@ -83,32 +83,9 @@ export default function AdminOrdersV2() {
   const { isSuperAdmin } = usePermissions();
   const queryClient = useQueryClient();
 
-  // Mutation for test payment completion
-  const testPaymentMutation = useMutation({
-    mutationFn: async (orderId: string) => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('Not authenticated');
-
-      const { data, error } = await supabase.functions.invoke('test-payment-complete', {
-        body: { orderId },
-      });
-
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: (data) => {
-      toast.success('Оплата успешно подтверждена (тест)', {
-        description: `GetCourse: ${data.results?.getcourse_sync || 'N/A'}, Telegram: ${data.results?.telegram_access_granted || 0} клубов`,
-      });
-      queryClient.invalidateQueries({ queryKey: ['orders-v2'] });
-      refetch();
-    },
-    onError: (error: any) => {
-      toast.error('Ошибка подтверждения оплаты', {
-        description: error.message,
-      });
-    },
-  });
+  // Stage 6.B (2026-07-14): «Оплата получена (тест)» удалена вместе с
+  // отключением edge-функции test-payment-complete. Не восстанавливать —
+  // она писала provider='admin_test' и триггерила production-интеграции.
 
   // Mutation for GC retry
   const gcRetryMutation = useMutation({
@@ -696,19 +673,7 @@ export default function AdminOrdersV2() {
                                   </DropdownMenuItem>
                                 );
                               })()}
-                              {isSuperAdmin() && order.status !== 'paid' && order.status !== 'refunded' && (
-                                <>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem 
-                                    onClick={() => testPaymentMutation.mutate(order.id)}
-                                    disabled={testPaymentMutation.isPending}
-                                    className="text-green-600"
-                                  >
-                                    <CheckCircle className="h-4 w-4 mr-2" />
-                                    {testPaymentMutation.isPending ? 'Обработка...' : 'Оплата получена (тест)'}
-                                  </DropdownMenuItem>
-                                </>
-                              )}
+                              {/* Stage 6.B (2026-07-14): «Оплата получена (тест)» удалена. */}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>

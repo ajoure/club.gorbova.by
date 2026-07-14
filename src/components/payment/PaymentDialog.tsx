@@ -863,110 +863,12 @@ export function PaymentDialog({
     }
   };
 
-  // Admin test payment - SECURITY: only super_admin can use this
-  const handleTestPayment = async () => {
-    if (!isSuperAdmin()) {
-      toast.error("Только super admin может использовать эту функцию");
-      return;
-    }
+  // Stage 6.B (2026-07-14): handleTestPayment удалён вместе с кнопкой
+  // «Симулировать оплату». Функция test-payment-complete отключена (410 Gone).
+  // Не восстанавливать — она создавала реальный заказ через bepaid-create-token
+  // и триггерила production GetCourse / Telegram / document hook.
 
-    setIsTestPaymentLoading(true);
-    try {
-      const { data: createData, error: createError } = await supabase.functions.invoke("bepaid-create-token", {
-        body: {
-          productId,
-          customerEmail: formData.email,
-          customerPhone: formData.phone,
-          customerFirstName: formData.firstName,
-          customerLastName: formData.lastName,
-          existingUserId,
-          description: paymentDescription,
-          tariffCode,
-          offerId,
-          isTrial,
-          trialDays,
-          skipRedirect: true,
-        },
-      });
 
-      // Note: Supabase functions.invoke returns the response body in `data` even for non-2xx status codes
-      // The `error` only indicates that a non-2xx status was returned
-      if (createError || !createData?.success) {
-        // Handle already used trial case gracefully
-        if (createData?.alreadyUsedTrial) {
-          setShowTrialUsedModal(true);
-          return;
-        }
-
-        throw new Error(
-          createData?.error ||
-            createError?.message ||
-            "Ошибка создания заказа"
-        );
-      }
-
-      const orderId = createData.orderId;
-      if (!orderId) {
-        throw new Error("Не удалось получить ID заказа");
-      }
-
-      const { data, error } = await supabase.functions.invoke("test-payment-complete", {
-        body: { orderId },
-      });
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      if (!data.success) {
-        throw new Error(data.error || "Ошибка симуляции оплаты");
-      }
-
-      const results = data.results || {};
-      const successDetails: string[] = [];
-      
-      if (results.order_updated) successDetails.push("✓ Заказ обновлён");
-      if (results.entitlement_created) successDetails.push("✓ Доступ предоставлен");
-      if (results.subscription_updated) successDetails.push("✓ Подписка активирована");
-      if (results.telegram_access_granted > 0) {
-        successDetails.push(`✓ Telegram: доступ к ${results.telegram_access_granted} клуб(ам)`);
-      }
-      if (results.getcourse_sync === "success") {
-        successDetails.push(`✓ GetCourse: сделка #${results.getcourse_deal_id || 'создана'}`);
-      } else if (results.getcourse_sync === "skipped") {
-        successDetails.push("⏭ GetCourse: пропущено");
-      } else if (results.getcourse_sync === "failed") {
-        successDetails.push("⚠ GetCourse: ошибка синхронизации");
-      }
-
-      toast.success(
-        <div className="space-y-2">
-          <div className="font-semibold">Тестовая оплата выполнена!</div>
-          <div className="text-sm space-y-1">
-            {successDetails.map((detail, i) => (
-              <div key={i}>{detail}</div>
-            ))}
-          </div>
-        </div>,
-        { duration: 8000 }
-      );
-      
-      onOpenChange(false);
-      // Redirect to purchases with payment success params so GlobalPaymentHandler shows the success modal
-      window.location.href = `/purchases?payment=success&order=${orderId}`;
-    } catch (error) {
-      console.error("Test payment error:", error);
-      toast.error(
-        <div className="space-y-1">
-          <div className="font-semibold">Ошибка тестовой оплаты</div>
-          <div className="text-sm">{error instanceof Error ? error.message : "Неизвестная ошибка"}</div>
-        </div>,
-        { duration: 6000 }
-      );
-    } finally {
-      setIsTestPaymentLoading(false);
-    }
-  };
 
 
   const handleChangeEmail = () => {
