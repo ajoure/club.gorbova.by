@@ -108,6 +108,8 @@ BEGIN
          'S1b: meta.source must remain admin_from_payment';
   ASSERT (SELECT meta->>'derived_provider' FROM public.payments_v2 WHERE order_id = v_order_id LIMIT 1) = 'bepaid',
          'S1b: meta.derived_provider must record queue provider lineage';
+  ASSERT (SELECT meta->>'queue_payment_id' FROM public.payments_v2 WHERE order_id = v_order_id LIMIT 1) = v_queue_ok::text,
+         format('S1b: meta.queue_payment_id must equal source queue UUID %s', v_queue_ok);
 
   ----------------------------------------------------------------
   -- Scenario 2 (financial truth): payment.amount = source (50), order.final_price = client (100)
