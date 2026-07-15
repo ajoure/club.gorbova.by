@@ -672,7 +672,7 @@ export default function AdminOrdersV2() {
                                   </DropdownMenuItem>
                                 );
                               })()}
-                              {/* Stage 6.B (2026-07-14): «Оплата получена (тест)» удалена. */}
+                              
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>
