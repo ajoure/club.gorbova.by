@@ -1019,13 +1019,16 @@ export function HtmlIframePreview({
   const postSlotManifest = () => {
     const iframe = iframeRef.current;
     if (!iframe?.contentWindow || !slotManifest) return;
+    // page_id and block_id are strict provenance — never post the manifest
+    // without them (iframe bridge v8 rejects the message otherwise).
+    if (!pageId || !blockId) return;
     try {
       iframe.contentWindow.postMessage(
         {
           type: "lovable-slot-manifest",
           manifest: slotManifest,
-          page_id: pageId || undefined,
-          block_id: blockId || undefined,
+          page_id: pageId,
+          block_id: blockId,
         },
         "*",
       );
