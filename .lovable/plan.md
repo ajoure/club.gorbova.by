@@ -1,239 +1,241 @@
 # да, согласен, с учетом правок:
 
-1. **Исправить семантические выборки C и E.** Исторические строки имеют:
-  ```sql
-  provider = 'admin'
-  AND meta->>'source' = 'admin_from_payment'
+План правильно фиксирует главный инвариант: сохраняется существующая секция `/cb`, а динамическими становятся только кнопки и их действия. Стандартный `PricingSection` действительно нельзя использовать, поскольку он рендерит собственную секцию, карточки и layout. План в целом готов к выполнению.
 
-  ```
-  либо:
-  ```sql
-  provider = 'admin'
-  AND meta->>'source' = 'admin_grant'
-
-  ```
-  Не искать `provider='admin_from_payment'` или `provider='admin_grant'`.
-2. **Для C запретить доказательство duplicate только по** `amount/currency/paid_at ±1 сутки`**.** Canonical bePaid-платёж должен иметь детерминированную связь:
-  - тот же `meta.queue_payment_id`;
-  - либо точное совпадение provider external ID / tracking ID / bePaid UID через queue;
-  - плюс amount, currency и successful status.
-  Если точной идентичности нет — строка автоматически уходит в HOLD, даже если сумма и дата совпадают.
-3. **PREVIEW должен сформировать неизменяемый manifest**, который затем встраивается в миграцию через `VALUES`/временную таблицу:
+1. **Добавить безопасный порядок деплоя:**
+  - сначала задеплоить общий слой `DynamicTariffActions` / canonical offer actions;
+  - убедиться, что код backward-compatible с текущей привязкой `/cb`;
+  - только затем выполнять миграцию `site_pages.product_id`;
+  - после миграции — runtime/visual/E2E proof.
+  Нельзя сначала перепривязать страницу, а потом выкатывать код.
+2. **Исправить противоречие с checksum блока.**  
+Сейчас одновременно заявлено:
+  - статические кнопки заменяются динамическим слотом;
+  - checksum блока до/после должен быть идентичен.
+  Возможны два корректных варианта:
+  - если карточки находятся в React-компоненте — `site_pages.blocks` не меняется, checksum JSON действительно остаётся прежним, меняется только hash кода;
+  - если меняется custom HTML/block JSON — checksum обязан измениться. Тогда фиксировать approved before/after checksum и отдельно structural checksum, исключающий только разрешённые action-slot поля.
+3. **Перед сменой** `site_pages.product_id` **провести blast-radius audit.**  
+Найти все блоки `/cb`, которые получают page-level `product`/`tariffs`. Подтвердить, что после привязки PRD-000039:
+  - hero и остальные блоки не начнут брать тексты из нового продукта;
+  - `landing_config`, title/subtitle, badges, prices и layout не изменят страницу;
+  - новый продуктовый контекст потребляет только динамический слот действий.
+4. **Общий слой payment-flow внедрять без изменения поведения существующих страниц.**  
+Вынесение логики из `UniversalPricingSection` должно сопровождаться regression-тестами:
+  - текущий `UniversalPricingSection` работает как раньше;
+  - `PaymentDialog`, `LeadRequestDialog`, `PreregistrationDialog` получают те же параметры;
+  - существующие продуктовые страницы не меняют DOM и поведение.
+  Сейчас canonical branching находится непосредственно в `UniversalPricingSection`.
+5. **Динамические offers сортировать стабильно:**
   ```text
-  legacy_payment_id
-  expected_provider
-  expected_source
-  expected_queue_id
-  canonical_payment_id
-  expected_amount
-  expected_currency
-  expected_is_deleted
-  cleanup_class
+  sort_order ASC, id ASC
 
   ```
-  Конструкции `$A_payments`, `$canonical_id` в обычной SQL-миграции использовать нельзя.
-4. **Для каждого набора зафиксировать три checksum:**
-  - checksum текущего состояния;
-  - checksum approved candidate manifest;
-  - ожидаемый checksum после миграции.
-  Фактический post-checksum рассчитывается после UPDATE и должен совпасть с ожидаемым.
-5. **Непосредственно внутри транзакции повторить discovery с блокировкой строк:**
-  ```sql
-  SELECT ... FROM public.payments_v2
-  WHERE id IN (...)
-  FOR UPDATE;
+  Чтобы две кнопки с одинаковым `sort_order` не менялись местами между рендерами.
+6. **Live-config proof должен учитывать кэширование.**  
+Перед реализацией определить фактический cache/stale-time публичного product query:
+  - изменение в админке должно появляться после документированного refresh/TTL;
+  - при необходимости добавить invalidation/revalidation;
+  - в отчёте зафиксировать максимальное фактическое время обновления.
+  Не обещать «мгновенно», пока это не подтверждено runtime-тестом.
+7. **Live-config тест выполнять с гарантированным восстановлением данных:**
+  - сохранить UUID offer и полный before-snapshot: `is_active`, `button_label`, `sort_order`, `meta`;
+  - выполнить toggle/rename;
+  - восстановить точные исходные значения;
+  - повторно сравнить snapshot;
+  - при ошибке теста восстановление всё равно выполняется в `finally`.
+8. **Для архивации** `cb20` **добавить preflight:**
+  - `draft` является допустимым статусом;
+  - новый архивный slug уникален;
+  - нет конфликтов domain/path resolution;
+  - исходные `id`, slug, status и product_id сохраняются в audit-отчёте.
+  Физический DELETE не выполнять.
+9. **Visual diff маскировать только в разрешённых областях кнопок.**  
+Всё вне action-контейнеров должно совпасть без допусков:
+  - размеры карточек;
+  - координаты;
+  - фон;
+  - тексты преимуществ;
+  - цены;
+  - блоки сертификатов;
+  - «Для кого?».
+  Внутри контейнера кнопок допустимы только изменения текста, количества и вертикального перераспределения кнопок.
+10. **Добавить rollback:**
+  - вернуть `/cb.product_id` на старый UUID;
+  - вернуть `cb20` прежний slug/status/product_id;
+  - код динамических actions оставить backward-compatible;
+  - metadata offers откатить к before-snapshot.
 
-  ```
-  Затем сверить provider/source/queue/amount/currency/is_deleted/count/checksum. Любой drift — полный rollback.
-6. Все merge операций с metadata выполнять только так:
-  ```sql
-  meta = coalesce(meta, '{}'::jsonb) || jsonb_build_object(...)
-
-  ```
-7. **Не менять subscriptions на несуществующий или новый статус** `archived`**.** Поскольку связанные записи уже `canceled`/`superseded`, оставить статус без изменений и добавить только metadata-маркер cleanup. Изменение статуса допустимо лишь после подтверждения, что `archived` входит в действующий enum/check constraint и поддерживается всеми readers.
-8. **Перед soft-archive** `orders_v2` **подтвердить:**
-  - колонка `orders_v2.is_deleted` существует;
-  - все основные readers исключают такие заказы;
-  - soft-delete заказа не ломает документы, связи и финансовые RPC.
-  Если это не доказано — заказ не архивировать, добавить только `meta.stage6_cleanup='admin_test_fixture'`.
-9. **Документы СА-26-00025 и СА-26-00026:**
-  - сначала установить точную таблицу и допустимые статусы;
-  - `status='void'` применять только если такой статус уже канонически поддерживается;
-  - иначе сохранить текущий статус и добавить `void_reason`/cleanup-marker в metadata;
-  - sequence и номер документа не изменять.
-10. **E — admin_grant:**
-  - включать только строки `provider='admin'`, `source/origin='admin_grant'`, `amount=0`;
-  - доказать отсутствие активных readers не только в frontend, но и в SQL-функциях, views, triggers, cron и edge-functions;
-  - если хотя бы один runtime consumer зависит от строки — весь E исключается из миграции и остаётся backlog, без блокировки A/B/C.
-11. **HOLD D:** запись в `audit_logs` является DML, но в этом плане она заявлена явно и разрешена. В payload сохранить UUID, checksum manifest и точную причину. Сам `payments_v2` не менять.
-12. Пост-инварианты не должны использовать заранее предполагаемые `~104` и `9`. Использовать только точные approved counts из PREVIEW:
-  ```text
-  archived_C = approved_C_count
-  hold_D     = approved_D_count
-
-  ```
-  Если фактическая классификация отличается — migration не стартует.
-13. `Δ выручки = 0` проверить:
-  - глобально;
-  - по затронутым order_id;
-  - до и после `compute_order_financial_state`;
-  - отдельно по валютам.
-  Простого сравнения одной общей суммы недостаточно.
-14. **Физическое удаление edge-функции выполнять только после успешного COMMIT и VERIFY.** Если удаление не удалось, SQL-cleanup не откатывать, но финальный статус функции указать `DEFERRED`, а не `REMOVED`. Проверять отсутствие функции через deploy inventory/API; HTTP может вернуть `401`, а не `404`, из-за платформенного JWT-wall.
-15. **Финальный backlog не фиксировать заранее как “ровно HOLD-9”.** Он должен содержать фактический остаток:
-  - HOLD без точного canonical lineage;
-  - E, если безопасность admin_grant не доказана;
-  - документы/orders/subscriptions, если их schema/consumer-проверки не позволяют безопасную архивацию.
-16. Разрешение даётся **одним approve сразу на PREVIEW и conditional EXECUTE**:
-  - подтверждённые A/B/C/E выполняются одной транзакцией;
-  - неподтверждённые классы автоматически исключаются и уходят в итоговый backlog;
-  - никаких дополнительных согласований не требуется, если manifest, counts и checksums полностью совпали;
-  - при drift или неоднозначности — fail-closed без частичного DML.
-
-После этих уточнений можно выполнять единый cleanup-патч и окончательно закрывать все доказанные legacy-наборы за один проход.
+После этих уточнений план можно выполнять без дополнительного архитектурного согласования.
 
 &nbsp;
 
-План: единый cleanup-патч legacy payments_v2 (Stage 6 closeout, консолидированный)
+План: привязать /cb к PRD-000039 с сохранением текущего дизайна секции тарифов
 
-Один approve, одна транзакционная миграция, один отчёт. Никакого физического DELETE финансовых/audit-данных — только soft-archive через `is_deleted=true` + `meta.stage6_cleanup_*`. Сомнительные строки уходят в HOLD, а не угадываются.
+## Главный инвариант
 
-## Порядок (жёсткий)
+На публичной странице **gorbova.by/cb** нельзя заменять существующий тарифный блок на стандартный `PricingSection` / `UniversalPricingSection`. Текущая секция имеет собственный дизайн карточек, цветов, внутренних блоков, отступов и четыре типа кнопок. **Меняются только данные и действия кнопок**, всё визуальное оформление остаётся пиксель-в-пиксель.
 
-`Diagnose → Plan (этот документ) → Dry run (PREVIEW) → Execute (guarded) → Verify → Close`.
+Ранее сформулированное «код в `src/` менять не требуется» — **отменяется**. Стандартный `PricingSection` всегда рендерит `UniversalPricingSection`, а тот — собственные `TariffCard` и раскладку из `product.landing_config`; это полностью заменит внешний вид текущей секции, что недопустимо.
 
-## Шаг 1. PREVIEW (read-only, без DML)
+## Discovery (до любых DML)
 
-Формирует фиксированный набор ID и checksums, сохраняется в `.lovable/discovery/stage6_cleanup_preview.md` + CSV в `/mnt/documents/stage6_cleanup/`.
+Прежде чем менять `product_id`, необходимо определить и зафиксировать в `.lovable/discovery/bind_cb_to_prd000039.md`:
 
-Наборы:
+1. Фактический тип блока страницы `/cb`, содержащего показанные карточки:
+  - HTML/custom block,
+  - отдельный legacy/custom React-блок,
+  - другой Site Builder block.
+2. `site_pages.id`, `block.id`, `block.type`, checksum текущего `content` (md5 JSON).
+3. Ссылки на старый `product_id` (owner страницы `/cb`) и новый `product_id` = `3e43fb28-8322-41bc-bfee-714731bdc630`.
+4. Полный дамп текущей разметки карточек: заголовки, описания, бонусные блоки, цены и подписи, цвета, границы, высота карточек, расположение кнопок, блок «Для кого?», desktop/mobile-layout.
+5. Дамп страницы `cb20`: id, наличие `site_domain_bindings`, история версий.
 
-1. **A. admin_test fixtures** — ровно 8 строк `payments_v2 provider='admin_test'`, детерминированные признаки: `origin='bepaid'`, `meta.test_payment=true`, пустой `provider_payment_id`. Связанные: до 7 `orders_v2 order_number LIKE 'ORD-TEST-%'`, до 4 `subscriptions_v2`, документы `СА-26-00025` и `СА-26-00026`, до 5 `access_grant_ledger`.
-2. **B. bank_transfer Stage 4 R1 fixtures** — ровно 2 строки на order `s4r1_dedupe_3ce8d9a9`, `status='canceled'`, `profile=NULL`.
-3. **C. admin_from_payment DUPLICATE** — подмножество из 113 строк, для которых доказано:
-  - `meta->>'queue_payment_id'` заполнен и указывает на существующую запись в `payment_reconcile_queue` (или архиве);
-  - для этой queue-записи существует canonical `payments_v2 provider='bepaid'` с совпадающими `amount`, `currency`, `paid_at (±1 сут)`, `status='succeeded'`;
-  - lineage подтверждён через `meta.source='queue'` / `derived_provider='bepaid'`.
-   Ожидаемое количество: ~104. Точное число фиксируется в PREVIEW.
-4. **D. admin_from_payment HOLD** — оставшиеся ~9 строк без queue-lineage. НЕ трогаются, только фиксируются в отчёт с `reason='no_queue_link'`.
-5. **E. admin_grant** — 201 строка `provider='admin_grant'`, `amount=0`. Перед включением в патч PREVIEW доказывает, что ни один активный reader выдачи доступа (entitlements/subscriptions/access_grant_ledger/edge-functions) не читает эти строки как источник — они лишь audit-marker. Иначе E исключается из этого патча и уходит в отдельный backlog-пункт.
+**До завершения discovery миграция `product_id` не выполняется.**
 
-Выход PREVIEW: явные списки UUID, суммы, sha256 CSV, ожидаемые counts до/после. Без совпадения counts миграция не запускается.
+## Что сохраняется без изменений
 
-## Шаг 2. EXECUTE — одна миграция, один BEGIN
+Существующая HTML/React-разметка карточек `/cb` не редактируется:
 
-Структура миграции (SECURITY INVOKER, `search_path=public,pg_temp`):
+- заголовки и подзаголовки,
+- описания и списки,
+- бонусные блоки и блок «Для кого?»,
+- цены и валютные подписи,
+- цвета, градиенты, границы,
+- высота карточек и вертикальные ритмы,
+- расположение и порядок кнопок,
+- desktop- и mobile-раскладка.
 
-```
-BEGIN;
+## Точечная динамизация: слот действий внутри существующих карточек
 
--- 0. Фиксация ожидаемых count'ов в temp table, fail-closed сверка.
---    ЛЮБОЕ несовпадение → RAISE EXCEPTION → ROLLBACK.
+В каждой из трёх существующих карточек создаётся **только динамический слот действий**, привязанный к тарифу нового продукта строго по UUID или `code` (T-000076 → первая, T-000077 → вторая, T-000078 → третья). Сопоставление по названию тарифа запрещено. Точная карта фиксируется в discovery.
 
--- 1. Soft-archive A (admin_test + ORD-TEST-*):
---    UPDATE payments_v2  SET is_deleted=true, meta = meta || jsonb_build_object(
---        'stage6_cleanup','admin_test_fixture',
---        'stage6_cleanup_at', now())
---    WHERE id = ANY($A_payments);
---    UPDATE orders_v2    SET is_deleted=true, meta || {...'admin_test_fixture'} WHERE id = ANY($A_orders);
---    UPDATE subscriptions_v2 SET status='archived', meta || {...'admin_test_fixture'}
---       WHERE id = ANY($A_subs) AND status IN ('canceled','superseded','expired');
---    access_grant_ledger — НЕ трогаем (audit trail).
---    ai_generated_documents для СА-26-00025 / СА-26-00026:
---        UPDATE ... SET status='void', meta || {'stage6_cleanup':'test_document_void',
---                                                'void_reason':'admin_test_fixture'}.
---    Номера НЕ переиспользуются, sequence не откатывается.
+Статические кнопки внутри карточек заменяются динамическим рендером активных `tariff_offers` данного тарифа, но с использованием **существующих CSS-классов и визуальных вариантов** страницы `/cb`. Стандартную разметку кнопок из `TariffCard` использовать нельзя — она рендерит собственные generic-кнопки и собственную карточку.
 
--- 2. Soft-archive B (bank_transfer S4R1 fixtures): аналогично A с меткой
---    'stage4_r1_dedupe_fixture'.
+Требуемая динамика:
 
--- 3. Soft-archive C (admin_from_payment DUPLICATE):
---    Для каждой строки перед UPDATE — inline assert:
---       queue_id совпадает с queue-записью,
---       canonical bepaid payment существует, amount/currency/status совпадают.
---    UPDATE payments_v2 SET is_deleted=true,
---       meta || {'stage6_cleanup':'admin_from_payment_duplicate',
---                'canonical_bepaid_payment_id': $canonical_id,
---                'queue_payment_id_verified': $queue_id }.
---    Исходная queue-строка и canonical bepaid — не трогаем.
+- `is_active=true` — кнопка присутствует;
+- `is_active=false` — кнопка полностью отсутствует, без пустого места;
+- изменение `button_label` в админке — мгновенное изменение надписи;
+- новая активная кнопка появляется без релиза кода;
+- сортировка соответствует `sort_order`;
+- удалённый или отключённый offer исчезает;
+- клик передаёт точные `product_id`, `tariff_id`, `tariff.code`, `offer.id`.
 
--- 4. Soft-archive E (admin_grant, если PREVIEW доказал безопасность):
---    UPDATE payments_v2 SET is_deleted=true,
---       meta || {'stage6_cleanup':'admin_grant_archive'}
---    WHERE id = ANY($E_payments) AND amount = 0 AND provider='admin_grant';
---    entitlements / subscriptions / access_grant_ledger — не трогаем.
+## Детерминированное сопоставление визуального варианта offer → стиль кнопки
 
--- 5. HOLD D: только запись в audit_logs с payload = список 9 UUID и
---    reason='no_queue_link_stage6_hold'. Никаких изменений в самих payments_v2.
+Стиль каждой кнопки определяется **детерминированным маппингом от offer**, никогда не по тексту:
 
--- 6. Пост-инварианты (fail-closed):
---    active_admin_test        = 0
---    active_bank_transfer     = 0
---    active_admin_from_payment_with_queue = 0
---    active_admin_grant       = 0 (если E включён)
---    active_admin_from_payment_no_queue = 9 (HOLD)
---    Δ канонической выручки (compute_order_financial_state) = 0
---    Δ активных entitlements = 0
---    Δ активных subscriptions (не архивных fixture) = 0
---    Stage 6.G триггер по-прежнему активен, whitelist не тронут.
+- обычная оплата → существующая розовая заливка,
+- банковская рассрочка / заявка → существующая белая кнопка с розовой рамкой,
+- внутренняя рассрочка на два платежа → существующая тёмная кнопка,
+- оплата от юридического лица / по счёту → существующая розовая кнопка соответствующего оттенка.
 
-COMMIT;
+Если текущих полей `offer_type` и `payment_method` недостаточно для точного маппинга, в `tariff_offers.meta` добавляется нейтральное поле, например:
+
+```json
+{ "site_button_variant": "primary|outline|installment|legal_entity" }
 ```
 
-Физически удаляется только edge-функция `test-payment-complete` (отдельный вызов, вне SQL-транзакции, после успешного COMMIT). audit-комментарии в UI (`isTestPaymentLoading` и т.п.) — удаляются в том же патче в `src/`.
+Это делается data-миграцией только для offers PRD-000039; схема таблицы не меняется. Маппинг «offer → variant» реализуется чистой функцией и покрывается unit-тестами.
 
-## Шаг 3. VERIFY
+## Обработчики клика — только канонический flow
 
-Скрипт `.lovable/discovery/stage6_cleanup_verify.sql` (read-only) сверяет:
+Обработчики переиспользуют каноническую логику без дублирования:
 
-- counts по каждому набору до/после;
-- суммы выручки не изменились;
-- ни один активный reader выдачи доступа не потерял источник;
-- `payment_reconcile_queue`, `access_grant_ledger`, `entitlements` — без изменений;
-- документы СА-26-00025 / СА-26-00026 существуют, `status='void'`, номера в `document_number_sequences` не сдвинуты;
-- edge-функция `test-payment-complete` возвращает 404 (physically removed).
+- `pay_now` / `trial` → `PaymentDialog`,
+- `lead` / `bank_installment` → `LeadRequestDialog`,
+- `preregistration` → `PreregistrationDialog`,
+- `internal_installment` и оплата юрлица → действующий canonical-flow соответствующего offer.
 
-## Шаг 4. CLOSE
+В `UniversalPricingSection` уже есть корректное разветвление по `offer_type` — оно выносится в общий hook/component и переиспользуется без рендера стандартных карточек:
 
-Единый отчёт `.lovable/discovery/stage6_cleanup_final.md`:
+- `useTariffOfferActions(product, tariff, offer)` → `{ onClick, dialogState, DialogNode }`;
+- `DynamicTariffActions({ product, tariff, offers, renderButton })` — принимает `renderButton({ offer, variant, onClick, label })`, чтобы страница `/cb` сама решала, как визуально рисовать кнопку в своих классах.
 
-```
-STAGE 6 CLEANUP PATCH : PASS
-  A admin_test soft-archive       : 8 payments, N orders, K subs, 2 docs void
-  B bank_transfer S4R1 archive    : 2 payments
-  C admin_from_payment duplicate  : ~104 payments soft-archived
-  D admin_from_payment HOLD       : 9 payments (no_queue_link)
-  E admin_grant archive           : 201 payments (или DEFERRED, если PREVIEW не доказал)
-  test-payment-complete           : REMOVED
-  UI audit comments               : REMOVED
-SPRINT                            : FULLY CLOSED (кроме HOLD-9)
-```
+Payment-логика **не дублируется** внутри страницы `/cb`.
 
-Backlog после патча: только 9 строк `admin_from_payment` в HOLD, до появления внешнего источника (bePaid statement / bank recon). Никаких других открытых пунктов.
+## Изменение существующего блока страницы /cb
 
-## Явные запреты в этом патче
+По итогам discovery в найденный блок (custom HTML или legacy React) точечно встраивается `DynamicTariffActions`:
 
-- никакого физического DELETE в `payments_v2`, `orders_v2`, `subscriptions_v2`, `access_grant_ledger`, `entitlements`, `ai_generated_documents`;
-- никакого сдвига `document_number_sequences` / переиспользования СА-26-00025/00026;
-- никаких изменений canonical bePaid платежей и queue-записей;
-- никаких изменений Stage 6.G триггера и whitelist;
-- никакого автоматического удаления HOLD-9;
-- никаких изменений RLS/GRANT в этом патче.
+- если это custom HTML-блок Site Builder, добавляется новый тип «tariff-actions slot» в схему рендера, привязанный к `tariff_id`/`tariff.code` нового продукта;
+- если это legacy React-компонент, статические `<Button>` внутри трёх карточек заменяются на `<DynamicTariffActions tariff={T-000076|077|078} .../>` с тем же родительским контейнером и классами.
 
-## Технические детали (для разработчика)
+Порядок блоков страницы, `landing_config` нового продукта, `tariffs_layout`, `show_badges`, `tariffs_title` и прочие настройки нового продукта **не переносятся** и **не влияют** на внешний вид `/cb`.
 
-- Миграция: `supabase/migrations/<ts>_stage6_cleanup_consolidated.sql`, обёрнута в `DO $$ ... $$` с явными `RAISE EXCEPTION` при любом рассогласовании count/lineage.
-- Все UPDATE используют `WHERE id = ANY($list) AND <детерминированный признак>` — двойная защита от промаха.
-- `meta` мержится через `||`, старые ключи сохраняются, добавляются `stage6_cleanup*`.
-- Edge-функция `test-payment-complete` удаляется через `supabase--delete_edge_functions` после COMMIT.
-- UI-чистка: точечные правки в `src/components/payment/PaymentDialog.tsx`, `src/pages/admin/AdminOrdersV2.tsx` (удалить оставшиеся audit-комментарии и `isTestPaymentLoading`). Логика не меняется.
-- Все отчёты и коммиты — на русском.
+## Явно запрещено
 
-## Definition of Done
+- Добавлять на `/cb` блок `PricingSection` / `UniversalPricingSection`.
+- Заменять существующий тарифный блок целиком.
+- Менять порядок блоков `site_pages.blocks`.
+- Позволять `product.landing_config` нового продукта влиять на внешний вид `/cb`.
+- Определять стиль кнопки по её тексту.
+- Сопоставлять карточки с тарифами по названию.
+- Дублировать payment/lead/installment-логику внутри страницы.
 
-1. PREVIEW сохранён, CSV + sha256 зафиксированы.
-2. Миграция прошла с COMMIT, все пост-инварианты выполнены.
-3. `test-payment-complete` физически удалён, GET/POST → 404.
-4. UI-остатки удалены, typecheck/build зелёный.
-5. Финальный отчёт создан, backlog содержит ровно один пункт: HOLD-9.
-6. Δ выручки = 0, Δ активных доступов = 0, Δ документов (кроме 2 void) = 0.
+## Миграция данных (одна транзакция, `search_path=public,pg_temp`)
+
+Выполняется только после утверждения discovery.
+
+1. **Preflight (fail-closed)**:
+  - Одна `site_pages` со `slug='cb'`, `product_id = <OLD>`.
+  - Одна `site_pages` со `slug='cb20'`, `product_id = <NEW>`.
+  - Checksum блока с карточками совпадает с зафиксированным в discovery.
+  - Тарифы T-000076/077/078 существуют и активны у `<NEW>`.
+2. **Освободить `/cb**`: `UPDATE site_pages SET product_id = NULL WHERE slug='cb'`.
+3. **Архивация `cb20**` (предпочтительный вариант, без физического DELETE):
+  ```sql
+   UPDATE site_pages
+      SET product_id = NULL,
+          status = 'draft',
+          slug = 'cb20-archive-' || to_char(now(),'YYYYMMDDHH24MISS')
+    WHERE slug = 'cb20' AND product_id = <NEW>;
+  ```
+   Физическое удаление допустимо только при доказанном отсутствии `site_domain_bindings`, ссылок из других страниц/блоков и истории редактирования — фиксируется в discovery.
+4. **Привязать `/cb` к новому продукту**: `UPDATE site_pages SET product_id = <NEW> WHERE slug='cb' AND product_id IS NULL`.
+5. **(Опционально) `tariff_offers.meta.site_button_variant**` — точечно для offers PRD-000039, только если маппинг по существующим полям неоднозначен.
+6. **Post-invariants**: ровно одна страница с `product_id=<NEW>` и `slug='cb'`; ноль страниц с `product_id=<OLD>`; `<OLD>` продукт остаётся `is_active=true`; checksum блока `/cb` до/после миграции идентичен (данные тарифов подставляются рендером, а не переписываются в JSON блока); slug `cb20` больше не резолвится.
+
+## Verify
+
+### Visual regression proof (обязательно)
+
+- Screenshot `/cb` **до** изменений (desktop и mobile viewport).
+- Screenshot `/cb` **после** (тот же viewport, тот же зум, тот же user-agent).
+- Автосравнение: количество и позиции карточек совпадают, внешний вид секции не изменился; допускается разница только в текстах кнопок и их количестве.
+- Артефакты сохраняются в `/mnt/documents/bind_cb/`.
+
+### Функциональный E2E для каждого тарифа
+
+Для T-000076, T-000077, T-000078:
+
+- сравнить множество активных offers в БД с множеством видимых кнопок в DOM;
+- проверить точные `button_label`;
+- нажать каждую кнопку;
+- подтвердить, что открывается корректный dialog/redirect;
+- подтвердить, что передаются правильные `product_id`, `tariff_id`, `offer_id`;
+- подтвердить отсутствие в DOM отключённых offers.
+
+### Live-config proof без релиза
+
+- Выключить одну тестовую кнопку в админке (`is_active=false`) → она исчезает на `/cb` без релиза.
+- Включить обратно → появляется на прежнем месте.
+- Изменить `button_label` → текст меняется на `/cb`.
+- Вернуть исходные значения.
+- Во всех трёх состояниях дизайн карточки не меняется (snapshot-сравнение).
+
+## DoD (обновлённое)
+
+- `gorbova.by/cb` сохраняет текущий дизайн пиксель-в-пиксель.
+- Карточки, тексты, цены, блоки преимуществ, блок «Для кого?» и расположение элементов **не заменены** стандартным `UniversalPricingSection`.
+- Внутри каждой существующей карточки показываются только активные offers соответствующего тарифа PRD-000039.
+- Названия, доступность, порядок и действия кнопок управляются из админки продукта и обновляются без релиза сайта.
+- Все кнопки ведут в канонический payment/lead/installment flow с правильными `product_id`, `tariff_id`, `offer_id`.
+- Старый продукт остаётся `is_active=true` без публичной страницы; исторические заказы/подписки/entitlements не затронуты.
+- В админке карточка PRD-000039 показывает страницу `cb` со статусом «Продающая страница готова»; слаг `cb20` из UI пропадает.
+- Отчёт `.lovable/discovery/bind_cb_to_prd000039.md` содержит before/after, checksum блока, visual-diff, E2E-логи и live-config-proof.
+
+## Итог
+
+Простой перенос `site_pages.product_id` **недостаточен**: он подключает данные нового продукта, но не гарантирует сохранение показанного дизайна. Реализуется гибридный вариант: **существующая разметка `/cb` без изменений + динамические offer-кнопки нового продукта через тонкий переиспользуемый слой** (`useTariffOfferActions` / `DynamicTariffActions`), + перепривязка `site_pages.product_id` на `<NEW>` и мягкая архивация `cb20`.
