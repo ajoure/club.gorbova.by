@@ -1440,8 +1440,7 @@ export function PaymentDialog({
               Защищённая оплата на стороне bePaid.
             </p>
 
-            {/* Stage 6.B (2026-07-14): кнопка «Тест: Симулировать оплату» удалена.
-                Функция test-payment-complete отключена (410 Gone). */}
+
           </div>
         );
 
