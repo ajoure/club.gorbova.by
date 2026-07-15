@@ -928,11 +928,15 @@ interface HtmlIframePreviewProps {
   minHeight?: number;
   /**
    * Optional dynamic-slot manifest. When present, posted to the iframe on load
-   * and whenever the reference changes; the bridge (v7) rewrites labels /
+   * and whenever the reference changes; the bridge (v8) rewrites labels /
    * visibility on elements with `data-lovable-slot`. Backward-compatible: HTML
    * without slot markers is unaffected.
    */
   slotManifest?: import("@/lib/siteSlotManifest").SiteSlotManifest | null;
+  /** Owning site_page.id — echoed to iframe as manifest provenance. */
+  pageId?: string | null;
+  /** Owning block id (site_block.id) — echoed for click validation. */
+  blockId?: string | null;
 }
 
 
@@ -969,6 +973,8 @@ export function HtmlIframePreview({
   emptyText = "Вставьте HTML-код",
   minHeight = 100,
   slotManifest,
+  pageId = null,
+  blockId = null,
 }: HtmlIframePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(minHeight);
@@ -978,7 +984,12 @@ export function HtmlIframePreview({
     if (!iframe?.contentWindow || !slotManifest) return;
     try {
       iframe.contentWindow.postMessage(
-        { type: "lovable-slot-manifest", manifest: slotManifest },
+        {
+          type: "lovable-slot-manifest",
+          manifest: slotManifest,
+          page_id: pageId || undefined,
+          block_id: blockId || undefined,
+        },
         "*",
       );
     } catch {}
