@@ -1339,7 +1339,7 @@ export function PaymentDialog({
                   value={selectedMethod}
                   onValueChange={setSelectedMethod}
                   className="space-y-1.5"
-                  disabled={isLoading || isTestPaymentLoading}
+                  disabled={isLoading}
                 >
                   {savedCards.map((c) => (
                     <label
@@ -1407,7 +1407,7 @@ export function PaymentDialog({
                     handleChangeEmail();
                   }
                 }}
-                disabled={isLoading || isTestPaymentLoading}
+                disabled={isLoading}
                 className="w-full sm:flex-1 sm:min-w-0"
               >
                 <span className="truncate">{user && session ? "Отмена" : "Назад"}</span>
@@ -1416,7 +1416,7 @@ export function PaymentDialog({
                 onClick={handlePayment}
                 disabled={
                   isLoading ||
-                  isTestPaymentLoading ||
+
                   isLoadingCard ||
                   // F1: блокируем оплату только при конфликте по ТОМУ ЖЕ продукту в subscription-flow.
                   (!!conflictData && conflictData.product_id === productId && !!isSubscription && !isTrial)
