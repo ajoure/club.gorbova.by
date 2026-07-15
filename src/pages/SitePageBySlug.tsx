@@ -105,6 +105,47 @@ function pickOfferForFlow(offers: readonly any[], flow: Flow) {
 }
 
 
+/**
+ * Enumerate active lead offers on `product`, cross-checked against the current
+ * slot manifest. Sort stable: tariff.sort_order ASC (NULLS LAST) → tariff name
+ * (ru locale) → offer_id. Used both on click and on live re-sync while the
+ * picker is open.
+ */
+function collectLeadOptions(
+  product: any,
+  manifest: { tariffs?: Array<{ tariff_id: string; offers: Array<{ offer_id: string }> }> } | null | undefined,
+): LeadPickerOption[] {
+  const out: Array<LeadPickerOption & { _sortOrder: number; _sortHasOrder: number }> = [];
+  for (const t of product?.tariffs || []) {
+    for (const o of t.offers || []) {
+      if (o.offer_type !== "lead") continue;
+      if (o.is_active === false) continue;
+      const inManifest = !!manifest?.tariffs?.some(
+        (mt) => mt.tariff_id === t.id && mt.offers.some((mo) => mo.offer_id === o.id),
+      );
+      if (!inManifest) continue;
+      const so = typeof t.sort_order === "number" && Number.isFinite(t.sort_order) ? t.sort_order : null;
+      out.push({
+        tariff_id: t.id,
+        tariff_name: t.name || t.code || "",
+        offer_id: o.id,
+        button_label: o.button_label || "",
+        _sortOrder: so ?? Number.MAX_SAFE_INTEGER,
+        _sortHasOrder: so === null ? 1 : 0,
+      });
+    }
+  }
+  out.sort(
+    (a, b) =>
+      a._sortHasOrder - b._sortHasOrder ||
+      a._sortOrder - b._sortOrder ||
+      a.tariff_name.localeCompare(b.tariff_name, "ru") ||
+      a.offer_id.localeCompare(b.offer_id),
+  );
+  return out.map(({ _sortOrder, _sortHasOrder, ...rest }) => rest);
+}
+
+
 export default function SitePageBySlug() {
   const { slug } = useParams<{ slug: string }>();
   const hashScrolled = useRef(false);
