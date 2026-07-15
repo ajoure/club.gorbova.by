@@ -308,7 +308,12 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       a.getAttribute('data-lovable-slot') ||
       a.hasAttribute('data-lovable-offer-id') ||
       a.hasAttribute('data-lovable-offer-wrapper') ||
-      (a.closest && (a.closest('[data-lovable-slot]') || a.closest('[data-lovable-offer-wrapper]')))
+      a.hasAttribute('data-lovable-product-lead-cta') ||
+      (a.closest && (
+        a.closest('[data-lovable-slot]') ||
+        a.closest('[data-lovable-offer-wrapper]') ||
+        a.closest('[data-lovable-product-lead-cta]')
+      ))
     )) return;
 
     var rawHref = a.getAttribute('href');
