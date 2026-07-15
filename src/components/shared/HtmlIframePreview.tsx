@@ -522,7 +522,7 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     for (var k = 0; k < offers.length; k++) {
       if (used[k]) continue;
       var of = offers[k];
-      fpParts.push(of.offer_id + ':' + of.button_label + ':' + of.variant + ':' + tariffId);
+      fpParts.push(of.offer_id + ':' + of.slot_role + ':' + of.button_label + ':' + of.variant + ':' + tariffId);
     }
     var fp = fpParts.join('|');
     if (extra.getAttribute('data-lovable-clones-fp') === fp) return;
