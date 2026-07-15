@@ -145,6 +145,23 @@ export default function SitePageBySlug() {
   const slotManifestRef = useRef(slotManifest);
   useEffect(() => { slotManifestRef.current = slotManifest; }, [slotManifest]);
 
+  // Ids of HTML blocks that actually contain dynamic-slot markers. open-slot
+  // clicks whose block_id is not in this set are rejected (strict provenance).
+  const dynamicSlotBlockIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const ids = new Set<string>();
+    for (const b of blocks || []) {
+      if (b?.type !== "html") continue;
+      const code = (b.content as Record<string, unknown> | undefined)?.code;
+      if (typeof code === "string" && code.includes("data-lovable-slot")) {
+        ids.add(b.id);
+      }
+    }
+    dynamicSlotBlockIdsRef.current = ids;
+  }, [blocks]);
+  const pageIdRef = useRef<string | null>(page?.id ?? null);
+  useEffect(() => { pageIdRef.current = page?.id ?? null; }, [page?.id]);
+
   useEffect(() => {
     function onSiteAction(e: Event) {
       const ce = e as CustomEvent<{ action: string; payload: Record<string, string> }>;
