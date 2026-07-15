@@ -610,7 +610,15 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       var ctas = document.querySelectorAll('[data-lovable-product-lead-cta]');
       for (var ci = 0; ci < ctas.length; ci++) {
         var cta = ctas[ci];
+        // Release the pre-manifest fail-closed lock (visibility/pointer-events).
+        // orig-display was captured BEFORE the lock was applied so display is
+        // untouched and free of any 'none' contamination.
         ensureOrigDisplay(cta);
+        if (cta.getAttribute('data-lovable-cta-locked') === '1') {
+          cta.style.visibility = '';
+          cta.style.pointerEvents = '';
+          cta.removeAttribute('data-lovable-cta-locked');
+        }
         if (hasActiveLead) {
           setDisplay(cta, cta.getAttribute('data-lovable-slot-orig-display') || '');
           cta.removeAttribute('aria-hidden');
