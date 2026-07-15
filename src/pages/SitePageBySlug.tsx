@@ -126,12 +126,22 @@ export default function SitePageBySlug() {
   const [preregOfferId, setPreregOfferId] = useState<string | null>(null);
   const { data: pendingData } = usePublicProduct(pending ? { productId: pending.productId } : null);
 
+  const hasDynamicSlots = useMemo(() => pageHasDynamicSlots(blocks), [blocks]);
   const linkedProductId = page?.product_id || null;
   const { data: linkedProductData } = usePublicProduct(
     linkedProductId ? { productId: linkedProductId } : null,
+    null,
+    { poll: hasDynamicSlots },
   );
   const linkedProductDataRef = useRef(linkedProductData);
   useEffect(() => { linkedProductDataRef.current = linkedProductData; }, [linkedProductData]);
+
+  // Dynamic-slot manifest — only computed when page has slot markers and
+  // linkedProductData resolved. Stable ref while offers array is identity-stable.
+  const slotManifest = useMemo(
+    () => (hasDynamicSlots ? buildSlotManifest(linkedProductData) : null),
+    [hasDynamicSlots, linkedProductData],
+  );
 
   useEffect(() => {
     function onSiteAction(e: Event) {
@@ -147,6 +157,24 @@ export default function SitePageBySlug() {
           return;
         }
         setPending({ productId, offerId });
+        setPaymentOpen(true);
+        return;
+      }
+
+      // Dynamic-slot canonical path (Phase B). UUID-only; never falls back to
+      // the legacy TARIFF_KEY_NAME_MATCH regex resolver.
+      if (detail.action === "open-slot") {
+        const offerId = String(detail.payload?.offer_id || "");
+        if (!UUID_RE.test(offerId)) {
+          console.warn("[site-action] open-slot: invalid offer_id", detail.payload);
+          return;
+        }
+        const product = linkedProductDataRef.current;
+        if (!product?.product?.id) {
+          console.warn("[site-action] open-slot: no linked product resolved yet");
+          return;
+        }
+        setPending({ productId: product.product.id, offerId });
         setPaymentOpen(true);
         return;
       }
@@ -192,6 +220,7 @@ export default function SitePageBySlug() {
     window.addEventListener("lovable:site-action", onSiteAction as EventListener);
     return () => window.removeEventListener("lovable:site-action", onSiteAction as EventListener);
   }, []);
+
 
   // Resolve offer + tariff once product data arrives.
   const resolved = (() => {
