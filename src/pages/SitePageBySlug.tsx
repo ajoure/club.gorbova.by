@@ -275,6 +275,7 @@ export default function SitePageBySlug() {
 
 
   return (
+    <SiteSlotManifestContext.Provider value={slotManifest}>
     <div className="site-public-layout">
       <SitePageRenderer
         blocks={blocks}
@@ -282,6 +283,7 @@ export default function SitePageBySlug() {
         pricingData={pricingData}
         pageId={page.id}
       />
+
       {resolved && (() => {
         if (resolved.offer.offer_type === "lead" || resolved.offer.offer_type === "bank_installment") {
           const bank = resolved.offer.offer_type === "bank_installment"
