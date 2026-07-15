@@ -804,9 +804,28 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     } finally {
       applyingManifest = false;
       if (slotMo) { try { slotMo.takeRecords(); slotMo.observe(document.body, { childList: true, subtree: true }); } catch (e) {} }
+      // Grow artboards to fit any freshly inserted overflow clones.
+      scheduleArtboardResize();
       post();
     }
   }
+
+  // Re-run artboard sizing when late-loading fonts change wrapped-line height.
+  if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+    document.fonts.ready.then(function() { scheduleArtboardResize(); }).catch(function(){});
+  }
+
+  // Debounced viewport-resize handler. New bucket → baselines are captured on
+  // demand inside getArtboardBaseline, so switching 1440↔960↔375 picks up the
+  // authored height for that bucket.
+  var _artResizeTimer = null;
+  window.addEventListener('resize', function() {
+    if (_artResizeTimer) clearTimeout(_artResizeTimer);
+    _artResizeTimer = setTimeout(function() {
+      _artResizeTimer = null;
+      scheduleArtboardResize();
+    }, 120);
+  });
 
 
   function validateIncomingManifest(data, source) {
