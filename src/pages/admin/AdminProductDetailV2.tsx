@@ -598,9 +598,9 @@ export default function AdminProductDetailV2() {
       toast.error(`site_button_variant должен быть одним из: ${SLOT_VARIANTS.join(", ")}`);
       return;
     }
-    if (offerForm.is_active && (rawSlotRole || rawVariant)) {
+    if (offerForm.is_active) {
       if (!rawSlotRole || !rawVariant) {
-        toast.error("Активный оффер: slot_role и site_button_variant должны быть заданы вместе");
+        toast.error("Активный оффер: slot_role и site_button_variant обязательны для динамических слотов");
         return;
       }
     }
