@@ -160,8 +160,22 @@ function buildLookupParams(lookup: ProductLookup): { key: string; param: string;
   return null;
 }
 
-export function usePublicProduct(lookup: ProductLookup, userId?: string | null) {
+export interface UsePublicProductOptions {
+  /**
+   * When true, poll every 30s and refetch on window focus. Used by dynamic-slot
+   * public pages (`data-lovable-slot` markers) so admin edits propagate without
+   * a redeploy. Off by default — regular usage keeps staleTime=5min.
+   */
+  poll?: boolean;
+}
+
+export function usePublicProduct(
+  lookup: ProductLookup,
+  userId?: string | null,
+  options?: UsePublicProductOptions,
+) {
   const resolved = buildLookupParams(lookup);
+  const poll = options?.poll === true;
 
   return useQuery({
     queryKey: ["public-product", resolved?.param, resolved?.key, userId],
@@ -197,10 +211,14 @@ export function usePublicProduct(lookup: ProductLookup, userId?: string | null) 
       return response.json();
     },
     enabled: !!resolved,
-    staleTime: 1000 * 60 * 5,
+    staleTime: poll ? 0 : 1000 * 60 * 5,
     retry: 2,
+    refetchInterval: poll ? 30_000 : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: poll ? true : undefined,
   });
 }
+
 
 // Extended product type for slug-based lookup (includes primary_domain for banner)
 export interface PublicProductBySlug extends PublicProduct {
