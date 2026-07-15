@@ -737,12 +737,25 @@ export default function AdminProductDetailV2() {
     };
     
     let savedOfferId: string | null = null;
-    if (offerDialog.editing) {
-      const updated = await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
-      savedOfferId = (updated as any)?.id ?? offerDialog.editing.id;
-    } else {
-      const created = await createOffer.mutateAsync(data);
-      savedOfferId = (created as any)?.id ?? null;
+    try {
+      if (offerDialog.editing) {
+        const updated = await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
+        savedOfferId = (updated as any)?.id ?? offerDialog.editing.id;
+      } else {
+        const created = await createOffer.mutateAsync(data);
+        savedOfferId = (created as any)?.id ?? null;
+      }
+    } catch (err: any) {
+      const msg = String(err?.message || err || "");
+      if (/tariff_offers_slot_role|slot_role|site_button_variant/i.test(msg)) {
+        if (/unique|duplicate/i.test(msg)) {
+          toast.error(`slot_role "${rawSlotRole}" уже используется в этом тарифе. Роль должна быть уникальной.`);
+        } else {
+          toast.error(`Проверка слота отклонена: ${msg}`);
+        }
+        return;
+      }
+      throw err;
     }
 
     // Phase 6-G.2 — auto-provision Stripe recurring Price on save (idempotent).
