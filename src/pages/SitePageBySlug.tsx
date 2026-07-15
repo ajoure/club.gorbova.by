@@ -291,38 +291,21 @@ export default function SitePageBySlug() {
           console.warn("[site-action] open-product-lead: product_id mismatch", { got: productIdIn, expected: product.product.id });
           return;
         }
-        // Collect active lead offers across all tariffs. Cross-check against the
-        // last posted manifest so we never open a dialog for an offer the iframe
-        // does not currently show as available.
-        const manifest = slotManifestRef.current;
-        const leadOptions: LeadPickerOption[] = [];
-        for (const t of product.tariffs || []) {
-          for (const o of t.offers || []) {
-            if (o.offer_type !== "lead") continue;
-            if (o.is_active === false) continue;
-            const inManifest = !!manifest?.tariffs?.some(
-              (mt) => mt.tariff_id === t.id && mt.offers.some((mo) => mo.offer_id === o.id),
-            );
-            if (!inManifest) continue;
-            leadOptions.push({
-              tariff_id: t.id,
-              tariff_name: t.name || t.code || "",
-              offer_id: o.id,
-              button_label: o.button_label || "",
-            });
-          }
-        }
+        const leadOptions = collectLeadOptions(product, slotManifestRef.current);
         if (leadOptions.length === 0) {
           console.warn("[site-action] open-product-lead: no active lead offers in manifest");
+          setLeadPickerOpen(false);
+          setLeadPickerOptions([]);
           return;
         }
         if (leadOptions.length === 1) {
+          // Close any stale picker before opening the direct flow.
+          setLeadPickerOpen(false);
+          setLeadPickerOptions([]);
           setPending({ productId: product.product.id, offerId: leadOptions[0].offer_id });
           setPaymentOpen(true);
           return;
         }
-        // Sort by tariff sort_order fallback, then name. Stable.
-        leadOptions.sort((a, b) => a.tariff_name.localeCompare(b.tariff_name, "ru"));
         setLeadPickerOptions(leadOptions);
         setLeadPickerOpen(true);
         return;
