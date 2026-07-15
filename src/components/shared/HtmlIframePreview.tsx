@@ -596,12 +596,38 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
           else deactivateWrapper(el);
         }
       }
+
+      // Product-level lead CTA visibility. Any [data-lovable-product-lead-cta]
+      // element is shown iff manifest has ≥1 active lead offer (any tariff).
+      // Manifest already contains only active offers (see buildSlotManifest).
+      var hasActiveLead = false;
+      for (var lt = 0; lt < manifest.tariffs.length && !hasActiveLead; lt++) {
+        var lo = manifest.tariffs[lt].offers || [];
+        for (var lj = 0; lj < lo.length; lj++) {
+          if (lo[lj].offer_type === 'lead') { hasActiveLead = true; break; }
+        }
+      }
+      var ctas = document.querySelectorAll('[data-lovable-product-lead-cta]');
+      for (var ci = 0; ci < ctas.length; ci++) {
+        var cta = ctas[ci];
+        ensureOrigDisplay(cta);
+        if (hasActiveLead) {
+          setDisplay(cta, cta.getAttribute('data-lovable-slot-orig-display') || '');
+          cta.removeAttribute('aria-hidden');
+          cta.removeAttribute('data-lovable-cta-inactive');
+        } else {
+          setDisplay(cta, 'none');
+          cta.setAttribute('aria-hidden', 'true');
+          cta.setAttribute('data-lovable-cta-inactive', '1');
+        }
+      }
     } finally {
       applyingManifest = false;
       if (slotMo) { try { slotMo.takeRecords(); slotMo.observe(document.body, { childList: true, subtree: true }); } catch (e) {} }
       post();
     }
   }
+
 
   function validateIncomingManifest(data, source) {
     // Structural + provenance checks. Reject if anything is off.
