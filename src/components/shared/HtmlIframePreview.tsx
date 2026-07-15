@@ -1144,6 +1144,12 @@ export function HtmlIframePreview({
       }
 
 
+      if (data.type === 'lovable-bridge-ready') {
+        // Handshake — reply with the manifest (if we have one).
+        postSlotManifest();
+        return;
+      }
+
       if (data.type === 'site-action') {
         // Forward to host via CustomEvent. Host validates action/payload before acting.
         const action = typeof data.action === 'string' ? data.action : '';
