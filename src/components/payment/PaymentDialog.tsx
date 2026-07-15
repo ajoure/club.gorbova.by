@@ -150,7 +150,7 @@ export function PaymentDialog({
   const [step, setStep] = useState<Step>("email");
   // PAY-K UX: granular processing stage for clearer feedback during saved-card flow.
   const [processingStage, setProcessingStage] = useState<'preparing' | 'creating_order' | 'charging_card' | 'redirecting_3ds'>('preparing');
-  const [isTestPaymentLoading, setIsTestPaymentLoading] = useState(false);
+  
   const [formData, setFormData] = useState<UserFormData>({
     email: "",
     firstName: "",
@@ -863,10 +863,8 @@ export function PaymentDialog({
     }
   };
 
-  // Stage 6.B (2026-07-14): handleTestPayment удалён вместе с кнопкой
-  // «Симулировать оплату». Функция test-payment-complete отключена (410 Gone).
-  // Не восстанавливать — она создавала реальный заказ через bepaid-create-token
-  // и триггерила production GetCourse / Telegram / document hook.
+
+
 
 
 
@@ -1341,7 +1339,7 @@ export function PaymentDialog({
                   value={selectedMethod}
                   onValueChange={setSelectedMethod}
                   className="space-y-1.5"
-                  disabled={isLoading || isTestPaymentLoading}
+                  disabled={isLoading}
                 >
                   {savedCards.map((c) => (
                     <label
@@ -1409,7 +1407,7 @@ export function PaymentDialog({
                     handleChangeEmail();
                   }
                 }}
-                disabled={isLoading || isTestPaymentLoading}
+                disabled={isLoading}
                 className="w-full sm:flex-1 sm:min-w-0"
               >
                 <span className="truncate">{user && session ? "Отмена" : "Назад"}</span>
@@ -1418,7 +1416,7 @@ export function PaymentDialog({
                 onClick={handlePayment}
                 disabled={
                   isLoading ||
-                  isTestPaymentLoading ||
+
                   isLoadingCard ||
                   // F1: блокируем оплату только при конфликте по ТОМУ ЖЕ продукту в subscription-flow.
                   (!!conflictData && conflictData.product_id === productId && !!isSubscription && !isTrial)
@@ -1442,8 +1440,7 @@ export function PaymentDialog({
               Защищённая оплата на стороне bePaid.
             </p>
 
-            {/* Stage 6.B (2026-07-14): кнопка «Тест: Симулировать оплату» удалена.
-                Функция test-payment-complete отключена (410 Gone). */}
+
           </div>
         );
 
