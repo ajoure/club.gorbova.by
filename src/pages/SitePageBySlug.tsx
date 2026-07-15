@@ -20,6 +20,7 @@ import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
+import { LeadTariffPickerDialog, type LeadPickerOption } from "@/components/lead/LeadTariffPickerDialog";
 import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import { buildSlotManifest, pageHasDynamicSlots } from "@/lib/siteSlotManifest";
@@ -32,6 +33,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const ALLOWED_ACTIONS = new Set([
   "open-offer",
   "open-slot",
+  "open-product-lead",
   "open-preregistration",
   "open-payment",
   "open-invoice",
