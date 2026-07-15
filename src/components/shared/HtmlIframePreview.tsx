@@ -522,6 +522,18 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     // Extra-container for overflow offers (variant has no free fixed position).
     var extra = group.querySelector('[data-lovable-slot-extra]');
     if (!extra) return;
+    // Fail-closed: if we cannot resolve a Tilda artboard ancestor for this
+    // group, overflow clones would end up mis-positioned or overlap adjacent
+    // blocks. Hide the extra bucket and skip clone creation entirely.
+    var abForGroup = findSlotArtboard(group);
+    if (!abForGroup) {
+      var staleFc = extra.querySelectorAll('[data-lovable-slot-clone="1"]');
+      for (var sf = 0; sf < staleFc.length; sf++) staleFc[sf].parentNode.removeChild(staleFc[sf]);
+      extra.setAttribute('data-lovable-clones-fp', '__failclosed__');
+      extra.style.display = 'none';
+      return;
+    }
+    if (extra.style.display === 'none') extra.style.display = '';
     // Fingerprint prevents rebuild-on-every-mutation → MutationObserver loop.
     var fpParts = [];
     for (var k = 0; k < offers.length; k++) {
@@ -549,6 +561,166 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       extra.appendChild(clone);
     }
     extra.setAttribute('data-lovable-clones-fp', fp);
+  }
+
+  // ---- resizeSlotArtboard() ------------------------------------------------
+  // Tilda t396 blocks lay out children absolutely inside a fixed-height
+  // .t396__artboard. When overflow clones (data-lovable-slot-clone="1") are
+  // appended into a normal-flow [data-lovable-slot-extra] bucket, they can
+  // grow past the artboard's authored height and be clipped or overlap the
+  // next block. This helper measures actual content bottom inside each
+  // affected artboard and grows it (and its enclosing .t396 record wrapper)
+  // to match, per-viewport-bucket, so subsequent blocks are shifted down by
+  // normal document flow. It never SHRINKS below the authored baseline, so
+  // 0-extra layouts render identically to the original.
+  //
+  // Guards against observer/resize loops:
+  //   • baselines are captured ONCE per (artboard, viewport-bucket) before
+  //     any resize is applied;
+  //   • height writes bypass the slot MutationObserver (slotMo is already
+  //     paused for the duration of applySlotManifest, and standalone runs
+  //     use a re-entrancy guard);
+  //   • rAF-coalesced scheduler collapses bursts into a single pass.
+  var artboardBaselines = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+  var artboardResizeInFlight = false;
+  var artboardResizePending = false;
+
+  function currentViewportBucket() {
+    var w = document.documentElement.clientWidth || window.innerWidth || 1440;
+    if (w <= 480) return 'mobile';
+    if (w <= 980) return 'tablet';
+    return 'desktop';
+  }
+
+  function findSlotArtboard(el) {
+    var node = el;
+    while (node && node !== document.body && node !== document.documentElement) {
+      if (node.classList && node.classList.contains('t396__artboard')) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  function findArtboardRecord(artboard) {
+    // The outer .t396 record wraps the artboard and typically owns the
+    // authored height (Tilda writes it as inline style). Grow both.
+    var node = artboard.parentNode;
+    while (node && node !== document.body) {
+      if (node.classList && (
+        node.classList.contains('t396') ||
+        (node.className && /(^|\s)t\d+(\s|$)/.test(String(node.className)))
+      )) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  function getArtboardBaseline(ab) {
+    if (!artboardBaselines) return null;
+    var store = artboardBaselines.get(ab);
+    if (!store) { store = {}; artboardBaselines.set(ab, store); }
+    var bucket = currentViewportBucket();
+    if (store[bucket]) return store[bucket];
+    // Capture BEFORE we mutate. offsetHeight reflects Tilda's authored value.
+    var h = ab.offsetHeight;
+    var rec = findArtboardRecord(ab);
+    var recH = rec ? rec.offsetHeight : 0;
+    store[bucket] = { height: h, recordHeight: recH };
+    return store[bucket];
+  }
+
+  function measureContentBottom(ab) {
+    var abRect = ab.getBoundingClientRect();
+    var maxBottom = 0;
+    // Consider slot-owned nodes that could push past the artboard.
+    var nodes = ab.querySelectorAll(
+      '[data-lovable-slot-group],[data-lovable-slot-extra],' +
+      '[data-lovable-slot-clone="1"],[data-lovable-offer-wrapper]'
+    );
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (n.getAttribute && n.getAttribute('data-lovable-slot-template')) continue;
+      var cs = window.getComputedStyle(n);
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      var r = n.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      var bottom = r.bottom - abRect.top;
+      if (bottom > maxBottom) maxBottom = bottom;
+    }
+    return maxBottom;
+  }
+
+  function resizeSlotArtboard() {
+    if (artboardResizeInFlight) return;
+    artboardResizeInFlight = true;
+    // Pause slotMo so our style writes don't retrigger applySlotManifest.
+    var reattach = false;
+    if (slotMo && !applyingManifest) {
+      try { slotMo.takeRecords(); slotMo.disconnect(); reattach = true; } catch (e) {}
+    }
+    try {
+      var groups = document.querySelectorAll('[data-lovable-slot-group]');
+      if (!groups.length) return;
+      var artboards = [];
+      var seen = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+      var seenArr = [];
+      for (var i = 0; i < groups.length; i++) {
+        var ab = findSlotArtboard(groups[i]);
+        if (!ab) continue;
+        if (seen) { if (seen.has(ab)) continue; seen.add(ab); }
+        else { var dup = false; for (var d = 0; d < seenArr.length; d++) { if (seenArr[d] === ab) { dup = true; break; } } if (dup) continue; seenArr.push(ab); }
+        artboards.push(ab);
+      }
+      // Reset each artboard (and its record) to baseline before measuring, so
+      // repeated calls converge to a stable value regardless of prior growth.
+      for (var a = 0; a < artboards.length; a++) {
+        var base = getArtboardBaseline(artboards[a]);
+        if (!base) continue;
+        artboards[a].style.setProperty('height', base.height + 'px', 'important');
+        artboards[a].style.setProperty('min-height', base.height + 'px', 'important');
+        var rec0 = findArtboardRecord(artboards[a]);
+        if (rec0 && base.recordHeight) {
+          rec0.style.setProperty('height', base.recordHeight + 'px', 'important');
+          rec0.style.setProperty('min-height', base.recordHeight + 'px', 'important');
+        }
+      }
+      // Force reflow so measureContentBottom sees the reset heights.
+      // eslint-disable-next-line no-unused-expressions
+      void document.body.offsetHeight;
+      for (var b = 0; b < artboards.length; b++) {
+        var ab2 = artboards[b];
+        var basedata = getArtboardBaseline(ab2);
+        if (!basedata) continue;
+        var needed = Math.ceil(measureContentBottom(ab2));
+        if (needed <= basedata.height) continue; // 0-extra path: no change.
+        var delta = needed - basedata.height;
+        ab2.style.setProperty('height', needed + 'px', 'important');
+        ab2.style.setProperty('min-height', needed + 'px', 'important');
+        var rec = findArtboardRecord(ab2);
+        if (rec && basedata.recordHeight) {
+          var target = basedata.recordHeight + delta;
+          rec.style.setProperty('height', target + 'px', 'important');
+          rec.style.setProperty('min-height', target + 'px', 'important');
+        }
+      }
+    } finally {
+      artboardResizeInFlight = false;
+      if (reattach && slotMo) {
+        try { slotMo.takeRecords(); slotMo.observe(document.body, { childList: true, subtree: true }); } catch (e) {}
+      }
+      post();
+    }
+  }
+
+  function scheduleArtboardResize() {
+    if (artboardResizePending) return;
+    artboardResizePending = true;
+    var run = function() {
+      artboardResizePending = false;
+      try { resizeSlotArtboard(); } catch (e) {}
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+    else setTimeout(run, 0);
   }
 
   var slotMo = null;
@@ -632,9 +804,28 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     } finally {
       applyingManifest = false;
       if (slotMo) { try { slotMo.takeRecords(); slotMo.observe(document.body, { childList: true, subtree: true }); } catch (e) {} }
+      // Grow artboards to fit any freshly inserted overflow clones.
+      scheduleArtboardResize();
       post();
     }
   }
+
+  // Re-run artboard sizing when late-loading fonts change wrapped-line height.
+  if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+    document.fonts.ready.then(function() { scheduleArtboardResize(); }).catch(function(){});
+  }
+
+  // Debounced viewport-resize handler. New bucket → baselines are captured on
+  // demand inside getArtboardBaseline, so switching 1440↔960↔375 picks up the
+  // authored height for that bucket.
+  var _artResizeTimer = null;
+  window.addEventListener('resize', function() {
+    if (_artResizeTimer) clearTimeout(_artResizeTimer);
+    _artResizeTimer = setTimeout(function() {
+      _artResizeTimer = null;
+      scheduleArtboardResize();
+    }, 120);
+  });
 
 
   function validateIncomingManifest(data, source) {
