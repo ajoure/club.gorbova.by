@@ -581,6 +581,39 @@ export default function AdminProductDetailV2() {
       toast.error(crmError);
       return;
     }
+
+    // Phase B — dynamic-slot validation (UI mirrors DB CHECK + trigger).
+    // slot_role: [a-z][a-z0-9_]{1,63}; site_button_variant: allowlist.
+    // Both required together for active offers on dynamic-slot products; DB trigger
+    // still enforces the invariant on the write path. Warn on stable-role rename.
+    const SLOT_VARIANTS = ["primary", "outline", "installment", "legal_entity", "lead"] as const;
+    const SLOT_ROLE_RE = /^[a-z][a-z0-9_]{1,63}$/;
+    const rawSlotRole = ((offerForm.meta as any)?.slot_role as string | undefined) || "";
+    const rawVariant = ((offerForm.meta as any)?.site_button_variant as string | undefined) || "";
+    if (rawSlotRole && !SLOT_ROLE_RE.test(rawSlotRole)) {
+      toast.error("slot_role: только a-z, 0-9 и «_», 2–64 символа, начинается с буквы");
+      return;
+    }
+    if (rawVariant && !(SLOT_VARIANTS as readonly string[]).includes(rawVariant)) {
+      toast.error(`site_button_variant должен быть одним из: ${SLOT_VARIANTS.join(", ")}`);
+      return;
+    }
+    if (offerForm.is_active && (rawSlotRole || rawVariant)) {
+      if (!rawSlotRole || !rawVariant) {
+        toast.error("Активный оффер: slot_role и site_button_variant должны быть заданы вместе");
+        return;
+      }
+    }
+    if (offerDialog.editing) {
+      const prevRole = ((offerDialog.editing as any).meta?.slot_role as string | undefined) || "";
+      if (prevRole && rawSlotRole && prevRole !== rawSlotRole) {
+        const ok = window.confirm(
+          `Роль слота меняется: "${prevRole}" → "${rawSlotRole}". Все HTML-кнопки с data-lovable-slot=…|offer:${prevRole} перестанут находить этот оффер. Продолжить?`,
+        );
+        if (!ok) return;
+      }
+    }
+
     const isInstallment = offerForm.payment_method === "internal_installment";
     const isPreregistration = offerForm.offer_type === "preregistration";
 
@@ -704,12 +737,25 @@ export default function AdminProductDetailV2() {
     };
     
     let savedOfferId: string | null = null;
-    if (offerDialog.editing) {
-      const updated = await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
-      savedOfferId = (updated as any)?.id ?? offerDialog.editing.id;
-    } else {
-      const created = await createOffer.mutateAsync(data);
-      savedOfferId = (created as any)?.id ?? null;
+    try {
+      if (offerDialog.editing) {
+        const updated = await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
+        savedOfferId = (updated as any)?.id ?? offerDialog.editing.id;
+      } else {
+        const created = await createOffer.mutateAsync(data);
+        savedOfferId = (created as any)?.id ?? null;
+      }
+    } catch (err: any) {
+      const msg = String(err?.message || err || "");
+      if (/tariff_offers_slot_role|slot_role|site_button_variant/i.test(msg)) {
+        if (/unique|duplicate/i.test(msg)) {
+          toast.error(`slot_role "${rawSlotRole}" уже используется в этом тарифе. Роль должна быть уникальной.`);
+        } else {
+          toast.error(`Проверка слота отклонена: ${msg}`);
+        }
+        return;
+      }
+      throw err;
     }
 
     // Phase 6-G.2 — auto-provision Stripe recurring Price on save (idempotent).
