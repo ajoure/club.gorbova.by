@@ -150,16 +150,21 @@ export default function SitePageBySlug() {
   // Ids of HTML blocks that actually contain dynamic-slot markers. open-slot
   // clicks whose block_id is not in this set are rejected (strict provenance).
   const dynamicSlotBlockIdsRef = useRef<Set<string>>(new Set());
+  // Ids of HTML blocks that carry product-level lead CTA markers.
+  // open-product-lead clicks are only accepted from these blocks.
+  const productLeadBlockIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const ids = new Set<string>();
+    const slotIds = new Set<string>();
+    const leadIds = new Set<string>();
     for (const b of blocks || []) {
       if (b?.type !== "html") continue;
       const code = (b.content as Record<string, unknown> | undefined)?.code;
-      if (typeof code === "string" && code.includes("data-lovable-slot")) {
-        ids.add(b.id);
-      }
+      if (typeof code !== "string") continue;
+      if (code.includes("data-lovable-slot")) slotIds.add(b.id);
+      if (code.includes("data-lovable-product-lead-cta")) leadIds.add(b.id);
     }
-    dynamicSlotBlockIdsRef.current = ids;
+    dynamicSlotBlockIdsRef.current = slotIds;
+    productLeadBlockIdsRef.current = leadIds;
   }, [blocks]);
   const pageIdRef = useRef<string | null>(page?.id ?? null);
   useEffect(() => { pageIdRef.current = page?.id ?? null; }, [page?.id]);
