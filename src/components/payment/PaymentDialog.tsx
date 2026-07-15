@@ -863,10 +863,8 @@ export function PaymentDialog({
     }
   };
 
-  // Stage 6.B (2026-07-14): handleTestPayment удалён вместе с кнопкой
-  // «Симулировать оплату». Функция test-payment-complete отключена (410 Gone).
-  // Не восстанавливать — она создавала реальный заказ через bepaid-create-token
-  // и триггерила production GetCourse / Telegram / document hook.
+
+
 
 
 
