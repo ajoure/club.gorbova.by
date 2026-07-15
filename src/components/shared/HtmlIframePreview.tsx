@@ -452,10 +452,10 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     el.style.display = value;
   }
 
-  function assignOfferToWrapper(wrapper, offer) {
+  function assignOfferToWrapper(wrapper, offer, tariffId) {
     if (!wrapper) return;
     wrapper.setAttribute('data-lovable-offer-id', String(offer.offer_id));
-    wrapper.setAttribute('data-lovable-offer-tariff-id', String(offer.tariff_id || ''));
+    wrapper.setAttribute('data-lovable-offer-tariff-id', String(tariffId || ''));
     wrapper.setAttribute('data-lovable-offer-slot-role', String(offer.slot_role));
     wrapper.setAttribute('data-lovable-offer-variant', String(offer.variant || ''));
     wrapper.removeAttribute('data-lovable-slot-inactive');
@@ -479,34 +479,58 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   }
 
   function applyGroup(group, tariffEntry) {
-    // Fixed wrappers in position order.
+    // Fixed wrappers in position order. Each position MAY declare
+    // data-lovable-position-variant — when present, only offers of that variant
+    // may occupy the slot (preserves Tilda-authored styling regardless of
+    // sort_order). Positions without a declared variant accept any offer.
     var wrappers = group.querySelectorAll('[data-lovable-offer-wrapper]');
     var positioned = [];
     for (var i = 0; i < wrappers.length; i++) {
       var w = wrappers[i];
-      // Skip clones placed inside extra-container.
       if (w.hasAttribute('data-lovable-slot-clone')) continue;
       var pos = parseInt(w.getAttribute('data-lovable-slot-position') || '', 10);
-      positioned.push({ el: w, pos: Number.isFinite(pos) ? pos : 999 });
+      var pv = w.getAttribute('data-lovable-position-variant') || '';
+      positioned.push({ el: w, pos: Number.isFinite(pos) ? pos : 999, variant: pv, assigned: false });
       ensureOrigDisplay(w);
     }
     positioned.sort(function(a, b) { return a.pos - b.pos; });
 
     var offers = (tariffEntry && tariffEntry.offers) ? tariffEntry.offers.slice() : [];
-    var used = Math.min(positioned.length, offers.length);
-    for (var j = 0; j < positioned.length; j++) {
-      if (j < offers.length) assignOfferToWrapper(positioned[j].el, offers[j]);
-      else deactivateWrapper(positioned[j].el);
+    var tariffId = tariffEntry ? tariffEntry.tariff_id : '';
+    var used = new Array(offers.length);
+    for (var oi = 0; oi < offers.length; oi++) {
+      var off = offers[oi];
+      for (var pj = 0; pj < positioned.length; pj++) {
+        var pw = positioned[pj];
+        if (pw.assigned) continue;
+        if (pw.variant && pw.variant !== off.variant) continue;
+        pw.assigned = true;
+        used[oi] = true;
+        assignOfferToWrapper(pw.el, off, tariffId);
+        break;
+      }
+    }
+    for (var q = 0; q < positioned.length; q++) {
+      if (!positioned[q].assigned) deactivateWrapper(positioned[q].el);
     }
 
-    // Extra-container for overflow offers.
+    // Extra-container for overflow offers (variant has no free fixed position).
     var extra = group.querySelector('[data-lovable-slot-extra]');
     if (!extra) return;
-    // Clear stale clones (only ours).
+    // Fingerprint prevents rebuild-on-every-mutation → MutationObserver loop.
+    var fpParts = [];
+    for (var k = 0; k < offers.length; k++) {
+      if (used[k]) continue;
+      var of = offers[k];
+      fpParts.push(of.offer_id + ':' + of.button_label + ':' + of.variant + ':' + tariffId);
+    }
+    var fp = fpParts.join('|');
+    if (extra.getAttribute('data-lovable-clones-fp') === fp) return;
     var stale = extra.querySelectorAll('[data-lovable-slot-clone="1"]');
     for (var s = 0; s < stale.length; s++) stale[s].parentNode.removeChild(stale[s]);
-    for (var k = used; k < offers.length; k++) {
-      var offer = offers[k];
+    for (var k2 = 0; k2 < offers.length; k2++) {
+      if (used[k2]) continue;
+      var offer = offers[k2];
       var tpl = group.querySelector('[data-lovable-slot-template="' + offer.variant + '"]');
       if (!tpl) continue;
       var clone = tpl.cloneNode(true);
@@ -515,9 +539,10 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       clone.setAttribute('data-lovable-offer-wrapper', '');
       clone.style.display = '';
       ensureOrigDisplay(clone);
-      assignOfferToWrapper(clone, offer);
+      assignOfferToWrapper(clone, offer, tariffId);
       extra.appendChild(clone);
     }
+    extra.setAttribute('data-lovable-clones-fp', fp);
   }
 
   function applySlotManifest(manifest) {
