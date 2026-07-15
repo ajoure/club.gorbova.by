@@ -126,6 +126,8 @@ export default function SitePageBySlug() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [preregOpen, setPreregOpen] = useState(false);
   const [preregOfferId, setPreregOfferId] = useState<string | null>(null);
+  const [leadPickerOpen, setLeadPickerOpen] = useState(false);
+  const [leadPickerOptions, setLeadPickerOptions] = useState<LeadPickerOption[]>([]);
   const { data: pendingData } = usePublicProduct(pending ? { productId: pending.productId } : null);
 
   const hasDynamicSlots = useMemo(() => pageHasDynamicSlots(blocks), [blocks]);
