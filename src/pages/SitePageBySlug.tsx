@@ -20,6 +20,7 @@ import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
+import { LeadTariffPickerDialog, type LeadPickerOption } from "@/components/lead/LeadTariffPickerDialog";
 import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import { buildSlotManifest, pageHasDynamicSlots } from "@/lib/siteSlotManifest";
@@ -32,6 +33,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const ALLOWED_ACTIONS = new Set([
   "open-offer",
   "open-slot",
+  "open-product-lead",
   "open-preregistration",
   "open-payment",
   "open-invoice",
@@ -124,6 +126,8 @@ export default function SitePageBySlug() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [preregOpen, setPreregOpen] = useState(false);
   const [preregOfferId, setPreregOfferId] = useState<string | null>(null);
+  const [leadPickerOpen, setLeadPickerOpen] = useState(false);
+  const [leadPickerOptions, setLeadPickerOptions] = useState<LeadPickerOption[]>([]);
   const { data: pendingData } = usePublicProduct(pending ? { productId: pending.productId } : null);
 
   const hasDynamicSlots = useMemo(() => pageHasDynamicSlots(blocks), [blocks]);
@@ -148,16 +152,21 @@ export default function SitePageBySlug() {
   // Ids of HTML blocks that actually contain dynamic-slot markers. open-slot
   // clicks whose block_id is not in this set are rejected (strict provenance).
   const dynamicSlotBlockIdsRef = useRef<Set<string>>(new Set());
+  // Ids of HTML blocks that carry product-level lead CTA markers.
+  // open-product-lead clicks are only accepted from these blocks.
+  const productLeadBlockIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const ids = new Set<string>();
+    const slotIds = new Set<string>();
+    const leadIds = new Set<string>();
     for (const b of blocks || []) {
       if (b?.type !== "html") continue;
       const code = (b.content as Record<string, unknown> | undefined)?.code;
-      if (typeof code === "string" && code.includes("data-lovable-slot")) {
-        ids.add(b.id);
-      }
+      if (typeof code !== "string") continue;
+      if (code.includes("data-lovable-slot")) slotIds.add(b.id);
+      if (code.includes("data-lovable-product-lead-cta")) leadIds.add(b.id);
     }
-    dynamicSlotBlockIdsRef.current = ids;
+    dynamicSlotBlockIdsRef.current = slotIds;
+    productLeadBlockIdsRef.current = leadIds;
   }, [blocks]);
   const pageIdRef = useRef<string | null>(page?.id ?? null);
   useEffect(() => { pageIdRef.current = page?.id ?? null; }, [page?.id]);
@@ -250,6 +259,75 @@ export default function SitePageBySlug() {
         setPaymentOpen(true);
         return;
       }
+
+      // Product-level lead CTA. Payload contains ONLY {product_id, page_id,
+      // block_id}. Parent enumerates active lead offers from linkedProductData
+      // and either opens LeadRequestDialog (1 lead) or LeadTariffPickerDialog
+      // (≥2 leads). No mapping between CTA element and tariff — the user picks.
+      if (detail.action === "open-product-lead") {
+        const p = detail.payload || {};
+        const productIdIn = String(p.product_id || "");
+        const pageIdIn = String(p.page_id || "");
+        const blockIdIn = String(p.block_id || "");
+        if (!UUID_RE.test(productIdIn)) {
+          console.warn("[site-action] open-product-lead: invalid product_id", p);
+          return;
+        }
+        const currentPageId = pageIdRef.current;
+        if (!pageIdIn || !currentPageId || pageIdIn !== currentPageId) {
+          console.warn("[site-action] open-product-lead: page_id mismatch", { got: pageIdIn, expected: currentPageId });
+          return;
+        }
+        if (!blockIdIn || !productLeadBlockIdsRef.current.has(blockIdIn)) {
+          console.warn("[site-action] open-product-lead: block_id is not a product-lead-cta block", { blockIdIn });
+          return;
+        }
+        const product = linkedProductDataRef.current;
+        if (!product?.product?.id) {
+          console.warn("[site-action] open-product-lead: no linked product resolved yet");
+          return;
+        }
+        if (productIdIn !== product.product.id) {
+          console.warn("[site-action] open-product-lead: product_id mismatch", { got: productIdIn, expected: product.product.id });
+          return;
+        }
+        // Collect active lead offers across all tariffs. Cross-check against the
+        // last posted manifest so we never open a dialog for an offer the iframe
+        // does not currently show as available.
+        const manifest = slotManifestRef.current;
+        const leadOptions: LeadPickerOption[] = [];
+        for (const t of product.tariffs || []) {
+          for (const o of t.offers || []) {
+            if (o.offer_type !== "lead") continue;
+            if (o.is_active === false) continue;
+            const inManifest = !!manifest?.tariffs?.some(
+              (mt) => mt.tariff_id === t.id && mt.offers.some((mo) => mo.offer_id === o.id),
+            );
+            if (!inManifest) continue;
+            leadOptions.push({
+              tariff_id: t.id,
+              tariff_name: t.name || t.code || "",
+              offer_id: o.id,
+              button_label: o.button_label || "",
+            });
+          }
+        }
+        if (leadOptions.length === 0) {
+          console.warn("[site-action] open-product-lead: no active lead offers in manifest");
+          return;
+        }
+        if (leadOptions.length === 1) {
+          setPending({ productId: product.product.id, offerId: leadOptions[0].offer_id });
+          setPaymentOpen(true);
+          return;
+        }
+        // Sort by tariff sort_order fallback, then name. Stable.
+        leadOptions.sort((a, b) => a.tariff_name.localeCompare(b.tariff_name, "ru"));
+        setLeadPickerOptions(leadOptions);
+        setLeadPickerOpen(true);
+        return;
+      }
+
 
       if (detail.action in ACTION_TO_FLOW) {
         // Dynamic binding: resolve tariff_key against the page-linked product's tariffs,
@@ -432,6 +510,37 @@ export default function SitePageBySlug() {
           offerId={preregOfferId}
         />
       )}
+      <LeadTariffPickerDialog
+        open={leadPickerOpen}
+        onOpenChange={setLeadPickerOpen}
+        options={leadPickerOptions}
+        productName={linkedProductData?.product?.public_title || linkedProductData?.product?.name}
+        onSelect={(opt) => {
+          // Re-validate the picked pair against latest product data. This
+          // guards against the admin disabling an offer between the picker
+          // opening and the user selecting.
+          const product = linkedProductDataRef.current;
+          const tariff = product?.tariffs?.find((t) => t.id === opt.tariff_id);
+          const offer = tariff?.offers?.find((o) => o.id === opt.offer_id);
+          if (!tariff || !offer || offer.is_active === false || offer.offer_type !== "lead") {
+            console.warn("[site-action] open-product-lead: picked offer no longer valid", opt);
+            setLeadPickerOpen(false);
+            return;
+          }
+          const manifest = slotManifestRef.current;
+          const stillInManifest = !!manifest?.tariffs?.some(
+            (mt) => mt.tariff_id === opt.tariff_id && mt.offers.some((mo) => mo.offer_id === opt.offer_id),
+          );
+          if (!stillInManifest) {
+            console.warn("[site-action] open-product-lead: picked offer left manifest", opt);
+            setLeadPickerOpen(false);
+            return;
+          }
+          setLeadPickerOpen(false);
+          setPending({ productId: product!.product.id, offerId: opt.offer_id });
+          setPaymentOpen(true);
+        }}
+      />
     </div>
     </SiteSlotManifestContext.Provider>
   );
