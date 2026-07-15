@@ -610,7 +610,15 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       var ctas = document.querySelectorAll('[data-lovable-product-lead-cta]');
       for (var ci = 0; ci < ctas.length; ci++) {
         var cta = ctas[ci];
+        // Release the pre-manifest fail-closed lock (visibility/pointer-events).
+        // orig-display was captured BEFORE the lock was applied so display is
+        // untouched and free of any 'none' contamination.
         ensureOrigDisplay(cta);
+        if (cta.getAttribute('data-lovable-cta-locked') === '1') {
+          cta.style.visibility = '';
+          cta.style.pointerEvents = '';
+          cta.removeAttribute('data-lovable-cta-locked');
+        }
         if (hasActiveLead) {
           setDisplay(cta, cta.getAttribute('data-lovable-slot-orig-display') || '');
           cta.removeAttribute('aria-hidden');
@@ -677,6 +685,22 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     slotMo.observe(document.body, { childList: true, subtree: true });
     window.addEventListener('beforeunload', function() { slotMo.disconnect(); });
   }
+
+  // Fail-closed: lock all product-level lead CTAs BEFORE the first valid
+  // manifest arrives. Uses visibility/pointer-events (not display) so
+  // ensureOrigDisplay later captures the untouched display value. The lock is
+  // released inside applySlotManifest once we know whether any lead offer is
+  // actually active.
+  try {
+    var _lockCtas = document.querySelectorAll('[data-lovable-product-lead-cta]');
+    for (var _li = 0; _li < _lockCtas.length; _li++) {
+      var _lc = _lockCtas[_li];
+      _lc.style.visibility = 'hidden';
+      _lc.style.pointerEvents = 'none';
+      _lc.setAttribute('aria-hidden', 'true');
+      _lc.setAttribute('data-lovable-cta-locked', '1');
+    }
+  } catch (e) {}
 
   // Announce readiness so parent can send the manifest.
   try {
@@ -749,6 +773,11 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     if (!el) return;
     // Hidden CTA (no active lead offers) — silently refuse; never open dialog.
     if (el.getAttribute('data-lovable-cta-inactive') === '1') {
+      ev.preventDefault(); ev.stopPropagation();
+      return;
+    }
+    // Locked CTA (pre-manifest fail-closed). Refuse until first manifest lands.
+    if (el.getAttribute('data-lovable-cta-locked') === '1') {
       ev.preventDefault(); ev.stopPropagation();
       return;
     }

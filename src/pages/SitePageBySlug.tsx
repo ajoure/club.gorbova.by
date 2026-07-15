@@ -105,6 +105,47 @@ function pickOfferForFlow(offers: readonly any[], flow: Flow) {
 }
 
 
+/**
+ * Enumerate active lead offers on `product`, cross-checked against the current
+ * slot manifest. Sort stable: tariff.sort_order ASC (NULLS LAST) → tariff name
+ * (ru locale) → offer_id. Used both on click and on live re-sync while the
+ * picker is open.
+ */
+function collectLeadOptions(
+  product: any,
+  manifest: { tariffs?: Array<{ tariff_id: string; offers: Array<{ offer_id: string }> }> } | null | undefined,
+): LeadPickerOption[] {
+  const out: Array<LeadPickerOption & { _sortOrder: number; _sortHasOrder: number }> = [];
+  for (const t of product?.tariffs || []) {
+    for (const o of t.offers || []) {
+      if (o.offer_type !== "lead") continue;
+      if (o.is_active === false) continue;
+      const inManifest = !!manifest?.tariffs?.some(
+        (mt) => mt.tariff_id === t.id && mt.offers.some((mo) => mo.offer_id === o.id),
+      );
+      if (!inManifest) continue;
+      const so = typeof t.sort_order === "number" && Number.isFinite(t.sort_order) ? t.sort_order : null;
+      out.push({
+        tariff_id: t.id,
+        tariff_name: t.name || t.code || "",
+        offer_id: o.id,
+        button_label: o.button_label || "",
+        _sortOrder: so ?? Number.MAX_SAFE_INTEGER,
+        _sortHasOrder: so === null ? 1 : 0,
+      });
+    }
+  }
+  out.sort(
+    (a, b) =>
+      a._sortHasOrder - b._sortHasOrder ||
+      a._sortOrder - b._sortOrder ||
+      a.tariff_name.localeCompare(b.tariff_name, "ru") ||
+      a.offer_id.localeCompare(b.offer_id),
+  );
+  return out.map(({ _sortOrder, _sortHasOrder, ...rest }) => rest);
+}
+
+
 export default function SitePageBySlug() {
   const { slug } = useParams<{ slug: string }>();
   const hashScrolled = useRef(false);
@@ -170,6 +211,37 @@ export default function SitePageBySlug() {
   }, [blocks]);
   const pageIdRef = useRef<string | null>(page?.id ?? null);
   useEffect(() => { pageIdRef.current = page?.id ?? null; }, [page?.id]);
+
+  // Sync an already-open picker with live product data / manifest changes.
+  // Admin toggling lead offers while the picker is up must be reflected within
+  // one polling tick — the user must never click a stale row.
+  //   0 offers → close picker, clear options.
+  //   1 offer  → close picker; next CTA click goes straight to the flow.
+  //   2+ offers → refresh options in-place without closing.
+  useEffect(() => {
+    if (!leadPickerOpen) return;
+    const product = linkedProductData;
+    if (!product?.product?.id) {
+      setLeadPickerOpen(false);
+      setLeadPickerOptions([]);
+      return;
+    }
+    const next = collectLeadOptions(product, slotManifest);
+    if (next.length < 2) {
+      setLeadPickerOpen(false);
+      setLeadPickerOptions([]);
+      return;
+    }
+    setLeadPickerOptions((prev) => {
+      if (
+        prev.length === next.length &&
+        prev.every((p, i) => p.offer_id === next[i].offer_id && p.button_label === next[i].button_label)
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, [leadPickerOpen, linkedProductData, slotManifest]);
 
   useEffect(() => {
     function onSiteAction(e: Event) {
@@ -291,38 +363,21 @@ export default function SitePageBySlug() {
           console.warn("[site-action] open-product-lead: product_id mismatch", { got: productIdIn, expected: product.product.id });
           return;
         }
-        // Collect active lead offers across all tariffs. Cross-check against the
-        // last posted manifest so we never open a dialog for an offer the iframe
-        // does not currently show as available.
-        const manifest = slotManifestRef.current;
-        const leadOptions: LeadPickerOption[] = [];
-        for (const t of product.tariffs || []) {
-          for (const o of t.offers || []) {
-            if (o.offer_type !== "lead") continue;
-            if (o.is_active === false) continue;
-            const inManifest = !!manifest?.tariffs?.some(
-              (mt) => mt.tariff_id === t.id && mt.offers.some((mo) => mo.offer_id === o.id),
-            );
-            if (!inManifest) continue;
-            leadOptions.push({
-              tariff_id: t.id,
-              tariff_name: t.name || t.code || "",
-              offer_id: o.id,
-              button_label: o.button_label || "",
-            });
-          }
-        }
+        const leadOptions = collectLeadOptions(product, slotManifestRef.current);
         if (leadOptions.length === 0) {
           console.warn("[site-action] open-product-lead: no active lead offers in manifest");
+          setLeadPickerOpen(false);
+          setLeadPickerOptions([]);
           return;
         }
         if (leadOptions.length === 1) {
+          // Close any stale picker before opening the direct flow.
+          setLeadPickerOpen(false);
+          setLeadPickerOptions([]);
           setPending({ productId: product.product.id, offerId: leadOptions[0].offer_id });
           setPaymentOpen(true);
           return;
         }
-        // Sort by tariff sort_order fallback, then name. Stable.
-        leadOptions.sort((a, b) => a.tariff_name.localeCompare(b.tariff_name, "ru"));
         setLeadPickerOptions(leadOptions);
         setLeadPickerOpen(true);
         return;
