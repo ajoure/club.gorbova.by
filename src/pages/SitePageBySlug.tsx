@@ -361,5 +361,7 @@ export default function SitePageBySlug() {
         />
       )}
     </div>
+    </SiteSlotManifestContext.Provider>
   );
 }
+
