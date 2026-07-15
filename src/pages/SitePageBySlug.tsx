@@ -212,6 +212,37 @@ export default function SitePageBySlug() {
   const pageIdRef = useRef<string | null>(page?.id ?? null);
   useEffect(() => { pageIdRef.current = page?.id ?? null; }, [page?.id]);
 
+  // Sync an already-open picker with live product data / manifest changes.
+  // Admin toggling lead offers while the picker is up must be reflected within
+  // one polling tick — the user must never click a stale row.
+  //   0 offers → close picker, clear options.
+  //   1 offer  → close picker; next CTA click goes straight to the flow.
+  //   2+ offers → refresh options in-place without closing.
+  useEffect(() => {
+    if (!leadPickerOpen) return;
+    const product = linkedProductData;
+    if (!product?.product?.id) {
+      setLeadPickerOpen(false);
+      setLeadPickerOptions([]);
+      return;
+    }
+    const next = collectLeadOptions(product, slotManifest);
+    if (next.length < 2) {
+      setLeadPickerOpen(false);
+      setLeadPickerOptions([]);
+      return;
+    }
+    setLeadPickerOptions((prev) => {
+      if (
+        prev.length === next.length &&
+        prev.every((p, i) => p.offer_id === next[i].offer_id && p.button_label === next[i].button_label)
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, [leadPickerOpen, linkedProductData, slotManifest]);
+
   useEffect(() => {
     function onSiteAction(e: Event) {
       const ce = e as CustomEvent<{ action: string; payload: Record<string, string> }>;
