@@ -399,84 +399,228 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   }, true);
 
 
-  // ---- Dynamic slot bridge (v7) ----
-  // Parent posts { type: 'lovable-slot-manifest', manifest } describing active
-  // offers per tariff. We rewrite label / data-lovable-offer-id / visibility on
-  // each element carrying data-lovable-slot="tariff:<code>|offer:<slot_role>".
-  // Click on such an element posts site-action 'open-slot' with UUIDs only.
+  // ---- Dynamic slot bridge (v8) ----
+  // Handshake:
+  //   iframe → parent: { type:'lovable-bridge-ready', version:BRIDGE_VERSION }
+  //   parent → iframe: { type:'lovable-slot-manifest', manifest, page_id, block_id }
+  // The bridge validates ev.source === parent, echoes back page_id/block_id in
+  // click payloads, and refuses payloads with mismatched product/page/block.
+  //
+  // DOM contract (Phase B HTML cutover):
+  //   [data-lovable-slot-group="tariff:<code>"]  container per tariff
+  //     [data-lovable-offer-wrapper][data-lovable-slot-position="N"]
+  //       [data-lovable-offer-label]   ← the ONLY node whose textContent we touch
+  //     [data-lovable-slot-extra="tariff:<code>"]   normal-flow overflow bucket
+  //     [data-lovable-slot-template="<variant>"]    hidden clone templates
+  //
+  // Backward compat: legacy [data-lovable-slot="tariff:<code>|offer:<role>"]
+  // wrappers WITHOUT [data-lovable-offer-label] children are still supported;
+  // the label falls back to the wrapper (or its .tn-atom) as in v7 — used only
+  // by preview until the HTML cutover ships.
   var currentSlotManifest = null;
+  var bridgePageId = null;
+  var bridgeBlockId = null;
+  var applyingManifest = false;
+
   function parseSlotAttr(value) {
     if (!value) return null;
-    var m = /^tariff:([^|]+)\|offer:(.+)$/.exec(String(value).trim());
+    var m = /^tariff:([^|]+)(\|offer:(.+))?$/.exec(String(value).trim());
     if (!m) return null;
-    return { tariff_code: m[1], slot_role: m[2] };
+    return { tariff_code: m[1], slot_role: m[3] || null };
   }
+
+  function findLabelHost(wrapper) {
+    if (!wrapper) return null;
+    var explicit = wrapper.querySelector('[data-lovable-offer-label]');
+    if (explicit) return explicit;
+    // Legacy fallback: prefer .tn-atom to avoid nuking Tilda's __button-content.
+    // If the wrapper itself is .tn-atom, still use it (its children get lost —
+    // caller has explicitly opted into legacy layout by not tagging a label).
+    return wrapper.querySelector('.tn-atom') || wrapper;
+  }
+
+  function setLabelText(host, text) {
+    if (!host || typeof text !== 'string' || !text.length) return;
+    if (host.textContent === text) return;
+    host.textContent = text;
+  }
+
+  function setDisplay(el, value) {
+    if (!el) return;
+    var current = el.style.display || '';
+    if (current === value) return;
+    el.style.display = value;
+  }
+
+  function assignOfferToWrapper(wrapper, offer) {
+    if (!wrapper) return;
+    wrapper.setAttribute('data-lovable-offer-id', String(offer.offer_id));
+    wrapper.setAttribute('data-lovable-offer-tariff-id', String(offer.tariff_id || ''));
+    wrapper.setAttribute('data-lovable-offer-slot-role', String(offer.slot_role));
+    wrapper.setAttribute('data-lovable-offer-variant', String(offer.variant || ''));
+    wrapper.removeAttribute('data-lovable-slot-inactive');
+    setDisplay(wrapper, wrapper.getAttribute('data-lovable-slot-orig-display') || '');
+    setLabelText(findLabelHost(wrapper), offer.button_label);
+  }
+
+  function deactivateWrapper(wrapper) {
+    if (!wrapper) return;
+    wrapper.setAttribute('data-lovable-slot-inactive', '1');
+    wrapper.removeAttribute('data-lovable-offer-id');
+    wrapper.removeAttribute('data-lovable-offer-tariff-id');
+    wrapper.removeAttribute('data-lovable-offer-slot-role');
+    setDisplay(wrapper, 'none');
+  }
+
+  function ensureOrigDisplay(el) {
+    if (!el.hasAttribute('data-lovable-slot-orig-display')) {
+      el.setAttribute('data-lovable-slot-orig-display', el.style.display || '');
+    }
+  }
+
+  function applyGroup(group, tariffEntry) {
+    // Fixed wrappers in position order.
+    var wrappers = group.querySelectorAll('[data-lovable-offer-wrapper]');
+    var positioned = [];
+    for (var i = 0; i < wrappers.length; i++) {
+      var w = wrappers[i];
+      // Skip clones placed inside extra-container.
+      if (w.hasAttribute('data-lovable-slot-clone')) continue;
+      var pos = parseInt(w.getAttribute('data-lovable-slot-position') || '', 10);
+      positioned.push({ el: w, pos: Number.isFinite(pos) ? pos : 999 });
+      ensureOrigDisplay(w);
+    }
+    positioned.sort(function(a, b) { return a.pos - b.pos; });
+
+    var offers = (tariffEntry && tariffEntry.offers) ? tariffEntry.offers.slice() : [];
+    var used = Math.min(positioned.length, offers.length);
+    for (var j = 0; j < positioned.length; j++) {
+      if (j < offers.length) assignOfferToWrapper(positioned[j].el, offers[j]);
+      else deactivateWrapper(positioned[j].el);
+    }
+
+    // Extra-container for overflow offers.
+    var extra = group.querySelector('[data-lovable-slot-extra]');
+    if (!extra) return;
+    // Clear stale clones (only ours).
+    var stale = extra.querySelectorAll('[data-lovable-slot-clone="1"]');
+    for (var s = 0; s < stale.length; s++) stale[s].parentNode.removeChild(stale[s]);
+    for (var k = used; k < offers.length; k++) {
+      var offer = offers[k];
+      var tpl = group.querySelector('[data-lovable-slot-template="' + offer.variant + '"]');
+      if (!tpl) continue;
+      var clone = tpl.cloneNode(true);
+      clone.removeAttribute('data-lovable-slot-template');
+      clone.setAttribute('data-lovable-slot-clone', '1');
+      clone.setAttribute('data-lovable-offer-wrapper', '');
+      clone.style.display = '';
+      ensureOrigDisplay(clone);
+      assignOfferToWrapper(clone, offer);
+      extra.appendChild(clone);
+    }
+  }
+
   function applySlotManifest(manifest) {
-    if (!manifest || !manifest.tariffs) return;
-    var byCode = {};
-    for (var i = 0; i < manifest.tariffs.length; i++) {
-      var t = manifest.tariffs[i];
-      if (!t || !t.tariff_code) continue;
-      var roles = {};
-      for (var j = 0; j < (t.offers || []).length; j++) {
-        var o = t.offers[j];
-        if (o && o.slot_role) roles[o.slot_role] = o;
+    if (!manifest || !manifest.tariffs || applyingManifest) return;
+    applyingManifest = true;
+    try {
+      var byCode = {};
+      for (var i = 0; i < manifest.tariffs.length; i++) {
+        var t = manifest.tariffs[i];
+        if (!t || !t.tariff_code) continue;
+        byCode[t.tariff_code] = t;
       }
-      byCode[t.tariff_code] = { tariff: t, roles: roles };
-    }
-    var slotEls = document.querySelectorAll('[data-lovable-slot]');
-    for (var k = 0; k < slotEls.length; k++) {
-      var el = slotEls[k];
-      var parsed = parseSlotAttr(el.getAttribute('data-lovable-slot'));
-      if (!parsed) continue;
-      // Preserve original display value once for reversible hide/show.
-      if (!el.hasAttribute('data-lovable-slot-orig-display')) {
-        el.setAttribute('data-lovable-slot-orig-display', el.style.display || '');
+
+      // Preferred path: grouped containers.
+      var groups = document.querySelectorAll('[data-lovable-slot-group]');
+      var handledGroups = groups.length > 0;
+      for (var g = 0; g < groups.length; g++) {
+        var gp = groups[g];
+        var parsed = parseSlotAttr(gp.getAttribute('data-lovable-slot-group'));
+        if (!parsed) continue;
+        applyGroup(gp, byCode[parsed.tariff_code]);
       }
-      var origDisplay = el.getAttribute('data-lovable-slot-orig-display') || '';
-      var group = byCode[parsed.tariff_code];
-      var offer = group ? group.roles[parsed.slot_role] : null;
-      if (offer) {
-        el.setAttribute('data-lovable-offer-id', String(offer.offer_id));
-        el.removeAttribute('data-lovable-slot-inactive');
-        el.style.display = origDisplay;
-        // Update visible label. If the anchor has a child .tn-atom (Tilda),
-        // rewrite it; else rewrite the element itself. Preserve HTML entities
-        // by using textContent — labels are plain strings from DB.
-        var labelHost = el.querySelector('.tn-atom') || el;
-        if (typeof offer.button_label === 'string' && offer.button_label.length) {
-          labelHost.textContent = offer.button_label;
+
+      // Legacy path: individual [data-lovable-slot] anchors (preview only).
+      if (!handledGroups) {
+        var slotEls = document.querySelectorAll('[data-lovable-slot]');
+        for (var k = 0; k < slotEls.length; k++) {
+          var el = slotEls[k];
+          var parsedEl = parseSlotAttr(el.getAttribute('data-lovable-slot'));
+          if (!parsedEl || !parsedEl.slot_role) continue;
+          ensureOrigDisplay(el);
+          var group = byCode[parsedEl.tariff_code];
+          var offer = null;
+          if (group) {
+            for (var oi = 0; oi < (group.offers || []).length; oi++) {
+              if (group.offers[oi].slot_role === parsedEl.slot_role) { offer = group.offers[oi]; break; }
+            }
+          }
+          if (offer) assignOfferToWrapper(el, offer);
+          else deactivateWrapper(el);
         }
-      } else {
-        el.setAttribute('data-lovable-slot-inactive', '1');
-        el.removeAttribute('data-lovable-offer-id');
-        el.style.display = 'none';
       }
+    } finally {
+      applyingManifest = false;
+      post();
     }
-    post();
   }
+
+  function validateIncomingManifest(data, source) {
+    // Structural + provenance checks. Reject if anything is off.
+    if (source !== parent) return null;
+    if (!data || typeof data !== 'object') return null;
+    if (data.type !== 'lovable-slot-manifest') return null;
+    var m = data.manifest;
+    if (!m || typeof m !== 'object' || m.version !== 1) return null;
+    if (typeof m.product_id !== 'string' || !m.product_id) return null;
+    if (!Array.isArray(m.tariffs)) return null;
+    // page_id / block_id are best-effort — parent may not know block_id yet.
+    if (typeof data.page_id === 'string') bridgePageId = data.page_id;
+    if (typeof data.block_id === 'string') bridgeBlockId = data.block_id;
+    return m;
+  }
+
   window.addEventListener('message', function(ev) {
-    var data = ev.data;
-    if (!data || typeof data !== 'object' || data.type !== 'lovable-slot-manifest') return;
-    if (!data.manifest || typeof data.manifest !== 'object') return;
-    currentSlotManifest = data.manifest;
+    var m = validateIncomingManifest(ev.data, ev.source);
+    if (!m) return;
+    currentSlotManifest = m;
     try { applySlotManifest(currentSlotManifest); } catch (e) {}
   });
-  // If manifest arrives before DOM is complete, re-apply after mutations.
+
+  // Re-apply on DOM changes (throttled by applyingManifest flag inside applySlotManifest).
   if (typeof MutationObserver !== 'undefined' && document.body) {
-    var slotMo = new MutationObserver(function() {
-      if (currentSlotManifest) {
-        try { applySlotManifest(currentSlotManifest); } catch (e) {}
+    var slotMo = new MutationObserver(function(muts) {
+      if (!currentSlotManifest || applyingManifest) return;
+      // Ignore mutations we caused ourselves (label textContent flips).
+      var trivial = true;
+      for (var i = 0; i < muts.length && trivial; i++) {
+        if (muts[i].type === 'childList' && muts[i].addedNodes && muts[i].addedNodes.length > 0) {
+          for (var j = 0; j < muts[i].addedNodes.length; j++) {
+            var n = muts[i].addedNodes[j];
+            if (n.nodeType === 1) { trivial = false; break; }
+          }
+        }
       }
+      if (trivial) return;
+      try { applySlotManifest(currentSlotManifest); } catch (e) {}
     });
-    // Debounced by mutation frequency; only observe childList to keep cheap.
     slotMo.observe(document.body, { childList: true, subtree: true });
     window.addEventListener('beforeunload', function() { slotMo.disconnect(); });
   }
+
+  // Announce readiness so parent can send the manifest.
+  try {
+    parent.postMessage({ type: 'lovable-bridge-ready', version: ${BRIDGE_VERSION} }, '*');
+  } catch (e) {}
+
   // Click delegation for slot buttons — UUID-driven, no regex on labels.
   function findSlotEl(node) {
     while (node && node !== document) {
-      if (node.getAttribute && node.getAttribute('data-lovable-slot')) return node;
+      if (node.getAttribute) {
+        if (node.hasAttribute('data-lovable-offer-wrapper')) return node;
+        if (node.getAttribute('data-lovable-slot')) return node;
+      }
       node = node.parentNode;
     }
     return null;
@@ -490,10 +634,15 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       ev.preventDefault(); ev.stopPropagation();
       return;
     }
-    var parsed = parseSlotAttr(el.getAttribute('data-lovable-slot'));
-    if (!parsed) return;
     var offerId = el.getAttribute('data-lovable-offer-id') || '';
     if (!offerId) return;
+    var tariffId = el.getAttribute('data-lovable-offer-tariff-id') || '';
+    var slotRole = el.getAttribute('data-lovable-offer-slot-role') || '';
+    // Fallback to parsing legacy attr if needed.
+    if (!slotRole) {
+      var parsed = parseSlotAttr(el.getAttribute('data-lovable-slot'));
+      if (parsed && parsed.slot_role) slotRole = parsed.slot_role;
+    }
     ev.preventDefault();
     ev.stopPropagation();
     try {
@@ -501,9 +650,12 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
         type: 'site-action',
         action: 'open-slot',
         payload: {
-          tariff_code: parsed.tariff_code,
-          slot_role: parsed.slot_role,
           offer_id: offerId,
+          tariff_id: tariffId,
+          slot_role: slotRole,
+          product_id: (currentSlotManifest && currentSlotManifest.product_id) || '',
+          page_id: bridgePageId || '',
+          block_id: bridgeBlockId || '',
         },
       }, '*');
     } catch (e) {}
