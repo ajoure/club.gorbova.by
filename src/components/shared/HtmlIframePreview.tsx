@@ -300,9 +300,16 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     var a = findAnchor(ev.target);
     if (!a) return;
 
-    // Anchors carrying a site-action are handled by the site-action bridge below.
-    // Skip anchor intercept so we do not stopPropagation the site-action listener.
-    if (a.getAttribute && a.getAttribute('data-lovable-action')) return;
+    // Anchors carrying a site-action / dynamic-slot marker are handled by the
+    // dedicated bridges below. Skip anchor intercept so we don't preventDefault
+    // before those listeners run (and lose the click via defaultPrevented).
+    if (a.getAttribute && (
+      a.getAttribute('data-lovable-action') ||
+      a.getAttribute('data-lovable-slot') ||
+      a.hasAttribute('data-lovable-offer-id') ||
+      a.hasAttribute('data-lovable-offer-wrapper') ||
+      (a.closest && (a.closest('[data-lovable-slot]') || a.closest('[data-lovable-offer-wrapper]')))
+    )) return;
 
     var rawHref = a.getAttribute('href');
     if (rawHref === null) return;
