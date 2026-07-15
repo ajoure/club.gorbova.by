@@ -194,8 +194,19 @@ export default function SitePageBySlug() {
         const tariffId = String(p.tariff_id || "");
         const slotRole = String(p.slot_role || "");
         const productIdIn = String(p.product_id || "");
-        if (!UUID_RE.test(offerId) || !UUID_RE.test(tariffId)) {
+        const pageIdIn = String(p.page_id || "");
+        const blockIdIn = String(p.block_id || "");
+        if (!UUID_RE.test(offerId) || !UUID_RE.test(tariffId) || !UUID_RE.test(productIdIn)) {
           console.warn("[site-action] open-slot: invalid UUID payload", p);
+          return;
+        }
+        const currentPageId = pageIdRef.current;
+        if (!pageIdIn || !currentPageId || pageIdIn !== currentPageId) {
+          console.warn("[site-action] open-slot: page_id mismatch", { got: pageIdIn, expected: currentPageId });
+          return;
+        }
+        if (!blockIdIn || !dynamicSlotBlockIdsRef.current.has(blockIdIn)) {
+          console.warn("[site-action] open-slot: block_id is not a dynamic-slot HTML block", { blockIdIn });
           return;
         }
         const product = linkedProductDataRef.current;
@@ -203,7 +214,7 @@ export default function SitePageBySlug() {
           console.warn("[site-action] open-slot: no linked product resolved yet");
           return;
         }
-        if (productIdIn && productIdIn !== product.product.id) {
+        if (productIdIn !== product.product.id) {
           console.warn("[site-action] open-slot: product_id mismatch", { got: productIdIn, expected: product.product.id });
           return;
         }
