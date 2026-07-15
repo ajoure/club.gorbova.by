@@ -686,6 +686,22 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     window.addEventListener('beforeunload', function() { slotMo.disconnect(); });
   }
 
+  // Fail-closed: lock all product-level lead CTAs BEFORE the first valid
+  // manifest arrives. Uses visibility/pointer-events (not display) so
+  // ensureOrigDisplay later captures the untouched display value. The lock is
+  // released inside applySlotManifest once we know whether any lead offer is
+  // actually active.
+  try {
+    var _lockCtas = document.querySelectorAll('[data-lovable-product-lead-cta]');
+    for (var _li = 0; _li < _lockCtas.length; _li++) {
+      var _lc = _lockCtas[_li];
+      _lc.style.visibility = 'hidden';
+      _lc.style.pointerEvents = 'none';
+      _lc.setAttribute('aria-hidden', 'true');
+      _lc.setAttribute('data-lovable-cta-locked', '1');
+    }
+  } catch (e) {}
+
   // Announce readiness so parent can send the manifest.
   try {
     parent.postMessage({ type: 'lovable-bridge-ready', version: ${BRIDGE_VERSION} }, '*');
