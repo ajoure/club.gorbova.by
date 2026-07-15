@@ -598,9 +598,22 @@ export default function AdminProductDetailV2() {
       toast.error(`site_button_variant должен быть одним из: ${SLOT_VARIANTS.join(", ")}`);
       return;
     }
-    if (offerForm.is_active) {
+    // Product is opted into dynamic slots when ANY other offer on the product
+    // already carries meta.slot_role — mirrors the DB trigger's product-scope
+    // detection. On such products, active offers MUST declare both fields.
+    const productUsesSlots = (offers || []).some((o: any) => {
+      if (offerDialog.editing && o.id === offerDialog.editing.id) return false;
+      const r = ((o.meta as any)?.slot_role as string | undefined) || "";
+      return !!r;
+    });
+    if (offerForm.is_active && productUsesSlots) {
       if (!rawSlotRole || !rawVariant) {
-        toast.error("Активный оффер: slot_role и site_button_variant обязательны для динамических слотов");
+        toast.error("Активный оффер: slot_role и site_button_variant обязательны для этого продукта (динамические слоты)");
+        return;
+      }
+    } else if (offerForm.is_active && (rawSlotRole || rawVariant)) {
+      if (!rawSlotRole || !rawVariant) {
+        toast.error("Активный оффер: slot_role и site_button_variant должны быть заданы вместе");
         return;
       }
     }
