@@ -730,6 +730,46 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     } catch (e) {}
   }, true);
 
+  // ---- Product-level lead CTA bridge ----
+  // Any element carrying [data-lovable-product-lead-cta] emits a single canonical
+  // action 'open-product-lead' with { product_id, page_id, block_id }. Parent
+  // resolves which lead offer(s) exist and decides whether to open the picker or
+  // go straight to LeadRequestDialog. No tariff/offer_id in the click payload.
+  function findLeadCtaEl(node) {
+    while (node && node !== document) {
+      if (node.getAttribute && node.hasAttribute('data-lovable-product-lead-cta')) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+  document.addEventListener('click', function(ev) {
+    if (ev.defaultPrevented) return;
+    if (ev.button !== 0) return;
+    var el = findLeadCtaEl(ev.target);
+    if (!el) return;
+    // Hidden CTA (no active lead offers) — silently refuse; never open dialog.
+    if (el.getAttribute('data-lovable-cta-inactive') === '1') {
+      ev.preventDefault(); ev.stopPropagation();
+      return;
+    }
+    ev.preventDefault();
+    ev.stopPropagation();
+    try {
+      parent.postMessage({
+        type: 'site-action',
+        action: 'open-product-lead',
+        payload: {
+          product_id: (currentSlotManifest && currentSlotManifest.product_id) || '',
+          page_id: bridgePageId || '',
+          block_id: bridgeBlockId || '',
+        },
+      }, '*');
+    } catch (e) {}
+  }, true);
+
+
+
+
 
 
 
