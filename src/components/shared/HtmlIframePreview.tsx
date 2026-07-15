@@ -1182,7 +1182,8 @@ export function HtmlIframePreview({
 
 
       if (data.type === 'lovable-bridge-ready') {
-        // Handshake — reply with the manifest (if we have one).
+        // Handshake — only reply to the exact bridge version we produced.
+        if (data.version !== 8) return;
         postSlotManifest();
         return;
       }
