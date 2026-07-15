@@ -510,6 +510,37 @@ export default function SitePageBySlug() {
           offerId={preregOfferId}
         />
       )}
+      <LeadTariffPickerDialog
+        open={leadPickerOpen}
+        onOpenChange={setLeadPickerOpen}
+        options={leadPickerOptions}
+        productName={linkedProductData?.product?.public_title || linkedProductData?.product?.name}
+        onSelect={(opt) => {
+          // Re-validate the picked pair against latest product data. This
+          // guards against the admin disabling an offer between the picker
+          // opening and the user selecting.
+          const product = linkedProductDataRef.current;
+          const tariff = product?.tariffs?.find((t) => t.id === opt.tariff_id);
+          const offer = tariff?.offers?.find((o) => o.id === opt.offer_id);
+          if (!tariff || !offer || offer.is_active === false || offer.offer_type !== "lead") {
+            console.warn("[site-action] open-product-lead: picked offer no longer valid", opt);
+            setLeadPickerOpen(false);
+            return;
+          }
+          const manifest = slotManifestRef.current;
+          const stillInManifest = !!manifest?.tariffs?.some(
+            (mt) => mt.tariff_id === opt.tariff_id && mt.offers.some((mo) => mo.offer_id === opt.offer_id),
+          );
+          if (!stillInManifest) {
+            console.warn("[site-action] open-product-lead: picked offer left manifest", opt);
+            setLeadPickerOpen(false);
+            return;
+          }
+          setLeadPickerOpen(false);
+          setPending({ productId: product!.product.id, offerId: opt.offer_id });
+          setPaymentOpen(true);
+        }}
+      />
     </div>
     </SiteSlotManifestContext.Provider>
   );
