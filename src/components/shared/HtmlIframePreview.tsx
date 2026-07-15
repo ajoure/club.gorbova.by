@@ -1165,7 +1165,7 @@ export function HtmlIframePreview({
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [minHeight]);
+  }, [minHeight, slotManifest, pageId, blockId]);
 
   useEffect(() => {
     postParentViewport();
