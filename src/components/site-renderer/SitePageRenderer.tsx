@@ -211,7 +211,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
       case "button": return <ButtonSection content={block.content} blockId={block.id} />;
       case "columns": return <ColumnsSection content={block.content} />;
       case "timer": return <TimerSection content={block.content} />;
-      case "html": return <HtmlSection content={block.content} />;
+      case "html": return <HtmlSection content={block.content} pageId={pageId} blockId={block.id} />;
       case "gallery": return <GallerySection content={block.content} />;
       case "testimonials": return <TestimonialsSection content={block.content} />;
       case "pricing": {
