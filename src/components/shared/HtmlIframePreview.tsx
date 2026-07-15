@@ -35,7 +35,7 @@ const SANDBOX_POLICY =
 const MAX_IFRAME_HEIGHT = 100000;
 
 /** Unique marker to prevent double injection of bridge script (versioned). */
-const BRIDGE_MARKER = "data-lovable-resize-v6";
+const BRIDGE_MARKER = "data-lovable-resize-v7";
 
 /**
  * Single injected bridge script: resize + anchor intercept + scrollIntoView intercept
@@ -391,6 +391,120 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   }, true);
 
 
+  // ---- Dynamic slot bridge (v7) ----
+  // Parent posts { type: 'lovable-slot-manifest', manifest } describing active
+  // offers per tariff. We rewrite label / data-lovable-offer-id / visibility on
+  // each element carrying data-lovable-slot="tariff:<code>|offer:<slot_role>".
+  // Click on such an element posts site-action 'open-slot' with UUIDs only.
+  var currentSlotManifest = null;
+  function parseSlotAttr(value) {
+    if (!value) return null;
+    var m = /^tariff:([^|]+)\|offer:(.+)$/.exec(String(value).trim());
+    if (!m) return null;
+    return { tariff_code: m[1], slot_role: m[2] };
+  }
+  function applySlotManifest(manifest) {
+    if (!manifest || !manifest.tariffs) return;
+    var byCode = {};
+    for (var i = 0; i < manifest.tariffs.length; i++) {
+      var t = manifest.tariffs[i];
+      if (!t || !t.tariff_code) continue;
+      var roles = {};
+      for (var j = 0; j < (t.offers || []).length; j++) {
+        var o = t.offers[j];
+        if (o && o.slot_role) roles[o.slot_role] = o;
+      }
+      byCode[t.tariff_code] = { tariff: t, roles: roles };
+    }
+    var slotEls = document.querySelectorAll('[data-lovable-slot]');
+    for (var k = 0; k < slotEls.length; k++) {
+      var el = slotEls[k];
+      var parsed = parseSlotAttr(el.getAttribute('data-lovable-slot'));
+      if (!parsed) continue;
+      // Preserve original display value once for reversible hide/show.
+      if (!el.hasAttribute('data-lovable-slot-orig-display')) {
+        el.setAttribute('data-lovable-slot-orig-display', el.style.display || '');
+      }
+      var origDisplay = el.getAttribute('data-lovable-slot-orig-display') || '';
+      var group = byCode[parsed.tariff_code];
+      var offer = group ? group.roles[parsed.slot_role] : null;
+      if (offer) {
+        el.setAttribute('data-lovable-offer-id', String(offer.offer_id));
+        el.removeAttribute('data-lovable-slot-inactive');
+        el.style.display = origDisplay;
+        // Update visible label. If the anchor has a child .tn-atom (Tilda),
+        // rewrite it; else rewrite the element itself. Preserve HTML entities
+        // by using textContent — labels are plain strings from DB.
+        var labelHost = el.querySelector('.tn-atom') || el;
+        if (typeof offer.button_label === 'string' && offer.button_label.length) {
+          labelHost.textContent = offer.button_label;
+        }
+      } else {
+        el.setAttribute('data-lovable-slot-inactive', '1');
+        el.removeAttribute('data-lovable-offer-id');
+        el.style.display = 'none';
+      }
+    }
+    post();
+  }
+  window.addEventListener('message', function(ev) {
+    var data = ev.data;
+    if (!data || typeof data !== 'object' || data.type !== 'lovable-slot-manifest') return;
+    if (!data.manifest || typeof data.manifest !== 'object') return;
+    currentSlotManifest = data.manifest;
+    try { applySlotManifest(currentSlotManifest); } catch (e) {}
+  });
+  // If manifest arrives before DOM is complete, re-apply after mutations.
+  if (typeof MutationObserver !== 'undefined' && document.body) {
+    var slotMo = new MutationObserver(function() {
+      if (currentSlotManifest) {
+        try { applySlotManifest(currentSlotManifest); } catch (e) {}
+      }
+    });
+    // Debounced by mutation frequency; only observe childList to keep cheap.
+    slotMo.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener('beforeunload', function() { slotMo.disconnect(); });
+  }
+  // Click delegation for slot buttons — UUID-driven, no regex on labels.
+  function findSlotEl(node) {
+    while (node && node !== document) {
+      if (node.getAttribute && node.getAttribute('data-lovable-slot')) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+  document.addEventListener('click', function(ev) {
+    if (ev.defaultPrevented) return;
+    if (ev.button !== 0) return;
+    var el = findSlotEl(ev.target);
+    if (!el) return;
+    if (el.getAttribute('data-lovable-slot-inactive') === '1') {
+      ev.preventDefault(); ev.stopPropagation();
+      return;
+    }
+    var parsed = parseSlotAttr(el.getAttribute('data-lovable-slot'));
+    if (!parsed) return;
+    var offerId = el.getAttribute('data-lovable-offer-id') || '';
+    if (!offerId) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    try {
+      parent.postMessage({
+        type: 'site-action',
+        action: 'open-slot',
+        payload: {
+          tariff_code: parsed.tariff_code,
+          slot_role: parsed.slot_role,
+          offer_id: offerId,
+        },
+      }, '*');
+    } catch (e) {}
+  }, true);
+
+
+
+
+
   // ---- Tilda slider fallback ----
   // Some exported Tilda sliders mark themselves initialized inside a sandboxed
   // iframe but lose their click/touch handlers. Keep the native Tilda path first;
@@ -652,7 +766,15 @@ interface HtmlIframePreviewProps {
   emptyText?: string;
   /** Minimum iframe height in px */
   minHeight?: number;
+  /**
+   * Optional dynamic-slot manifest. When present, posted to the iframe on load
+   * and whenever the reference changes; the bridge (v7) rewrites labels /
+   * visibility on elements with `data-lovable-slot`. Backward-compatible: HTML
+   * without slot markers is unaffected.
+   */
+  slotManifest?: import("@/lib/siteSlotManifest").SiteSlotManifest | null;
 }
+
 
 /** Resolve parent page header offset for accurate anchor scroll. */
 function resolveHeaderOffset(): number {
@@ -686,9 +808,22 @@ export function HtmlIframePreview({
   html,
   emptyText = "Вставьте HTML-код",
   minHeight = 100,
+  slotManifest,
 }: HtmlIframePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(minHeight);
+
+  const postSlotManifest = () => {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentWindow || !slotManifest) return;
+    try {
+      iframe.contentWindow.postMessage(
+        { type: "lovable-slot-manifest", manifest: slotManifest },
+        "*",
+      );
+    } catch {}
+  };
+
 
   const postParentViewport = () => {
     const iframe = iframeRef.current;
@@ -873,6 +1008,12 @@ export function HtmlIframePreview({
     };
   }, [height, html]);
 
+  // Post slot manifest whenever it changes (and once after iframe load via onLoad).
+  useEffect(() => {
+    if (!slotManifest) return;
+    postSlotManifest();
+  }, [slotManifest]);
+
   if (!html.trim()) {
     return (
       <div className="flex items-center justify-center py-12 text-muted-foreground">
@@ -888,9 +1029,10 @@ export function HtmlIframePreview({
       srcDoc={buildSrcdoc(html)}
       sandbox={SANDBOX_POLICY}
       scrolling="no"
-      onLoad={postParentViewport}
+      onLoad={() => { postParentViewport(); postSlotManifest(); }}
       style={{ width: "100%", height: `${height}px`, border: "none", overflow: "hidden" }}
       title="HTML Preview"
     />
   );
+
 }

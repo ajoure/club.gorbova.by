@@ -2028,7 +2028,66 @@ export default function AdminProductDetailV2() {
               </CardContent>
             </Card>
 
+            {/* Slot on public site (Phase B dynamic slots) */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">
+                  Слот на публичной странице
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Стабильная роль кнопки внутри тарифа и её визуальный вариант
+                  на сайте. Обязательно для активных офферов продуктов,
+                  подключённых к динамическим слотам (PRD-000039 и др.).
+                  Уникально в пределах тарифа.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>slot_role</Label>
+                    <Input
+                      placeholder="payment_card / payment_invoice / installment_2 / installment_3 / installment_bank / lead"
+                      value={((offerForm.meta as any)?.slot_role as string) || ""}
+                      onChange={(e) =>
+                        setOfferForm({
+                          ...offerForm,
+                          meta: {
+                            ...offerForm.meta,
+                            slot_role: e.target.value.trim() || undefined,
+                          } as any,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>site_button_variant</Label>
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                      value={((offerForm.meta as any)?.site_button_variant as string) || ""}
+                      onChange={(e) =>
+                        setOfferForm({
+                          ...offerForm,
+                          meta: {
+                            ...offerForm.meta,
+                            site_button_variant: e.target.value || undefined,
+                          } as any,
+                        })
+                      }
+                    >
+                      <option value="">— не задан —</option>
+                      <option value="primary">primary</option>
+                      <option value="outline">outline</option>
+                      <option value="installment">installment</option>
+                      <option value="legal_entity">legal_entity</option>
+                      <option value="lead">lead</option>
+                    </select>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             {/* Повторное вступление */}
+
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm text-muted-foreground">Цена для повторного вступления</CardTitle>

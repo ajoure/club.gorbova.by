@@ -7,7 +7,7 @@
  * strict validation, allow-list of actions.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
@@ -22,6 +22,8 @@ import { PreregistrationDialog } from "@/components/course/PreregistrationDialog
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
 import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
+import { buildSlotManifest, pageHasDynamicSlots } from "@/lib/siteSlotManifest";
+import { SiteSlotManifestContext } from "@/contexts/SiteSlotManifestContext";
 import type { SiteBlock } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
 
@@ -29,6 +31,7 @@ import NotFound from "./NotFound";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALLOWED_ACTIONS = new Set([
   "open-offer",
+  "open-slot",
   "open-preregistration",
   "open-payment",
   "open-invoice",
@@ -46,6 +49,7 @@ const ACTION_TO_FLOW = {
   "open-bank-installment": "bank_installment",
 } as const;
 type Flow = (typeof ACTION_TO_FLOW)[keyof typeof ACTION_TO_FLOW];
+
 
 interface PendingOffer {
   productId: string;
@@ -122,12 +126,22 @@ export default function SitePageBySlug() {
   const [preregOfferId, setPreregOfferId] = useState<string | null>(null);
   const { data: pendingData } = usePublicProduct(pending ? { productId: pending.productId } : null);
 
+  const hasDynamicSlots = useMemo(() => pageHasDynamicSlots(blocks), [blocks]);
   const linkedProductId = page?.product_id || null;
   const { data: linkedProductData } = usePublicProduct(
     linkedProductId ? { productId: linkedProductId } : null,
+    null,
+    { poll: hasDynamicSlots },
   );
   const linkedProductDataRef = useRef(linkedProductData);
   useEffect(() => { linkedProductDataRef.current = linkedProductData; }, [linkedProductData]);
+
+  // Dynamic-slot manifest — only computed when page has slot markers and
+  // linkedProductData resolved. Stable ref while offers array is identity-stable.
+  const slotManifest = useMemo(
+    () => (hasDynamicSlots ? buildSlotManifest(linkedProductData) : null),
+    [hasDynamicSlots, linkedProductData],
+  );
 
   useEffect(() => {
     function onSiteAction(e: Event) {
@@ -143,6 +157,24 @@ export default function SitePageBySlug() {
           return;
         }
         setPending({ productId, offerId });
+        setPaymentOpen(true);
+        return;
+      }
+
+      // Dynamic-slot canonical path (Phase B). UUID-only; never falls back to
+      // the legacy TARIFF_KEY_NAME_MATCH regex resolver.
+      if (detail.action === "open-slot") {
+        const offerId = String(detail.payload?.offer_id || "");
+        if (!UUID_RE.test(offerId)) {
+          console.warn("[site-action] open-slot: invalid offer_id", detail.payload);
+          return;
+        }
+        const product = linkedProductDataRef.current;
+        if (!product?.product?.id) {
+          console.warn("[site-action] open-slot: no linked product resolved yet");
+          return;
+        }
+        setPending({ productId: product.product.id, offerId });
         setPaymentOpen(true);
         return;
       }
@@ -188,6 +220,7 @@ export default function SitePageBySlug() {
     window.addEventListener("lovable:site-action", onSiteAction as EventListener);
     return () => window.removeEventListener("lovable:site-action", onSiteAction as EventListener);
   }, []);
+
 
   // Resolve offer + tariff once product data arrives.
   const resolved = (() => {
@@ -242,6 +275,7 @@ export default function SitePageBySlug() {
 
 
   return (
+    <SiteSlotManifestContext.Provider value={slotManifest}>
     <div className="site-public-layout">
       <SitePageRenderer
         blocks={blocks}
@@ -249,6 +283,7 @@ export default function SitePageBySlug() {
         pricingData={pricingData}
         pageId={page.id}
       />
+
       {resolved && (() => {
         if (resolved.offer.offer_type === "lead" || resolved.offer.offer_type === "bank_installment") {
           const bank = resolved.offer.offer_type === "bank_installment"
@@ -326,5 +361,7 @@ export default function SitePageBySlug() {
         />
       )}
     </div>
+    </SiteSlotManifestContext.Provider>
   );
 }
+
