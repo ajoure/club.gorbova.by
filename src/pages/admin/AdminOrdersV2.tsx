@@ -83,9 +83,8 @@ export default function AdminOrdersV2() {
   const { isSuperAdmin } = usePermissions();
   const queryClient = useQueryClient();
 
-  // Stage 6.B (2026-07-14): «Оплата получена (тест)» удалена вместе с
-  // отключением edge-функции test-payment-complete. Не восстанавливать —
-  // она писала provider='admin_test' и триггерила production-интеграции.
+
+
 
   // Mutation for GC retry
   const gcRetryMutation = useMutation({
