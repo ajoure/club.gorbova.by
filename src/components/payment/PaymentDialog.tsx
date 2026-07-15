@@ -150,7 +150,7 @@ export function PaymentDialog({
   const [step, setStep] = useState<Step>("email");
   // PAY-K UX: granular processing stage for clearer feedback during saved-card flow.
   const [processingStage, setProcessingStage] = useState<'preparing' | 'creating_order' | 'charging_card' | 'redirecting_3ds'>('preparing');
-  const [isTestPaymentLoading, setIsTestPaymentLoading] = useState(false);
+  
   const [formData, setFormData] = useState<UserFormData>({
     email: "",
     firstName: "",
