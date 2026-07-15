@@ -1,207 +1,206 @@
-# да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **6.A — источник actor**
-  - `meta.processed_by` брать из `auth.uid()` или существующего серверного audit-контекста.
-  - Не принимать actor из клиентского параметра RPC.
-  - Чтение queue, проверка provider и INSERT должны выполняться атомарно в существующей транзакции с сохранением текущей идемпотентности.
-2. **6.B — устранить противоречие по публикации**
-  - Нужно выбрать один вариант:
-    - функция полностью удалена из registry/deploy и не публикуется;
-    - либо временно опубликован 410-stub.
-  - Нельзя одновременно требовать `410 Gone` и «функция не публикуется».
-  - Discovery должен проверять не только frontend/e2e, но и edge functions, SQL/RPC, cron, scripts, CI и registry.
-3. **6.C — fixture определяется не суммой**
-  - Amount/currency могут быть дополнительными признаками, но не доказательством fixture.
-  - Нужны детерминированные признаки: `source`, `origin`, metadata, test execution ID, E2E marker или lineage от `test-payment-complete`.
-  - До DML проверить, что `payments_v2.is_deleted` реально существует и его учитывают все основные consumers.
-4. **6.D.1 — защита от drift между preview и DML**
-  - Зафиксировать `preview_generated_at`, approved row count и checksum исходного набора.
-  - Перед UPDATE повторно выполнить все exact-match проверки.
-  - DML должен иметь guard:
-    - текущий `provider='admin'`;
-    - текущий `source/origin='admin_from_payment'`;
-    - тот же `meta.queue_payment_id`;
-    - совпадение financial truth;
-    - row count равен утвержденному количеству.
-  - При любом drift — rollback всего DML, без частичного обновления.
-5. **6.D.1 — checksum**
-  - На preview формируются:
-    - checksum текущего состояния;
-    - checksum candidate-набора;
-    - ожидаемый checksum после миграции.
-  - Фактический post-DML checksum формируется только после отдельного approve и выполнения UPDATE.
-6. **6.D.2 — убрать скрытый DML**
-  - Формулировка «пометить `meta.stage6_hold_reason`» является UPDATE.
-  - В текущем шаге только сформировать `stage6_d2_hold.csv`.
-  - Запись hold-признака в БД — только отдельным DML после отдельного approve.
-7. **6.E — runtime map нельзя ограничивать** `rg`  
-Проверить также:
-  - SQL-функции и процедуры;
-  - views/materialized views;
-  - triggers;
-  - RLS policies;
-  - cron/background jobs;
-  - edge functions;
-  - отчётные RPC и прямые запросы.
-  Отсутствие чтения в frontend-коде не доказывает отсутствие зависимости.
-8. **6.E — не создавать** `access_grant_ledger` **без duplication audit**
-  - Сначала проверить существующие `entitlements`, audit/event/ledger-таблицы и механизмы ручной выдачи доступа.
-  - Новая таблица допустима только если существующая каноническая модель действительно не подходит.
-9. **6.F — исключение должно быть семантическим**
-  - Исключать именно `source/origin='admin_grant'`, а не все строки `provider='admin'`.
-  - Нулевая сумма является дополнительным guard, но не идентификатором типа записи.
-  - Исторические `admin_from_payment` до выполнения 6.D не должны исчезнуть из общей финансовой выручки.
-10. **6.G — trigger должен закрывать INSERT и изменение provider**
-  - Не только `BEFORE INSERT`, но и изменение `provider` через UPDATE.
-  - Trigger должен отклонять:
-    - новый INSERT с non-canonical provider;
-    - UPDATE, при котором `provider` реально изменяется на non-canonical значение.
-  - Обновления других полей legacy-строк с `provider='admin'` блокироваться не должны.
-11. **Порядок gates**
-  - 6.G выполнять после завершения **6.A и 6.B**, а также после финального поиска всех writer’ов.
-  - Иначе активный `admin_test` writer начнёт аварийно падать до его штатного отключения.
-12. **DoD 6.A**
-  - Вместо ожидания «следующей» production-сделки использовать контролируемый runtime-сценарий.
-  - Proof должен показать одновременно:
-    - queue provider;
-    - созданный `payments_v2.provider`;
-    - `origin/source`;
-    - queue lineage;
-    - отсутствие второй записи при повторном вызове.
+1. В Stage 6.B исправить запрос по тестовым заказам:
+  ```sql
+  SELECT count(*), max(created_at)
+  FROM public.orders_v2
+  WHERE order_number LIKE 'ORD-TEST-%';
 
-После внесения этих уточнений можно начинать с **6.A**. Правило отдельного approve перед историческим DML сохранено корректно.
+  ```
+  `orders_v2.id` — UUID, поэтому `id LIKE 'ORD-TEST-%'` некорректен.
+2. Для runtime-proof зафиксировать не только общие счётчики, но и отсутствие изменений у переданного dummy/существующего order:
+  - `status`;
+  - `paid_amount`;
+  - `updated_at`;
+  - `meta`;
+  - количество связанных `payments_v2`.
+  Вызов tombstone не должен менять конкретный заказ, даже если параллельно происходят другие операции.
+3. В Stage 6.F нельзя автоматически ставить `PASS`, если найдено расхождение:
+  - если все три инварианта подтверждены — `PASS`;
+  - если найден дефект, но исправление отложено — `DEFERRED` с точным описанием риска;
+  - `SPRINT: CLOSED` допустим только как осознанное закрытие с deferred backlog, без ложного `PASS`.
+4. Проверка выручки должна быть семантической:
+  - исключать `admin_grant` по `source/origin/meta.source`;
+  - не использовать общий фильтр `provider <> 'admin'`, поскольку он одновременно исключит исторические `admin_from_payment`;
+  - отдельно показать суммы и количество строк для обеих групп.
+5. Перед применением Stage 6.G выполнить финальный preflight:
+  - получить все текущие distinct `provider`;
+  - проверить активные INSERT/UPDATE writer’ы;
+  - подтвердить, что новые легитимные записи используют только `bepaid|stripe|rr|bank`.
+  Исторические значения не блокируют миграцию, но активный неизвестный writer блокирует её применение.
+6. Исправить UPDATE-ветку trigger-функции. Текущий код пропустит изменение provider на `NULL`, потому что SQL-выражение `NOT (NULL = ANY(...))` возвращает `NULL`:
+  ```sql
+  IF NEW.provider IS DISTINCT FROM OLD.provider THEN
+    IF NEW.provider IS NULL OR NOT (NEW.provider = ANY(v_allowed)) THEN
+      RAISE EXCEPTION 'stage6g_provider_update_not_allowed: %→%',
+        OLD.provider, NEW.provider
+        USING ERRCODE = 'check_violation';
+    END IF;
+  END IF;
 
-&nbsp;
+  ```
+7. Добавить тест:
+  ```text
+  T9: UPDATE provider с bepaid/admin_test → NULL → EXCEPTION
 
-План Stage 6 (revised): исправление writer'ов и разбор legacy `provider='admin'`
+  ```
+8. В тесте T5 использовать гарантированно существующее поле, например:
+  ```sql
+  UPDATE payments_v2
+  SET meta = coalesce(meta, '{}'::jsonb) || '{"stage6g_test":true}'::jsonb
 
-## Контекст и решение
+  ```
+  Не использовать `notes`, пока наличие этой колонки не подтверждено.
+9. Тестовые INSERT должны использовать полный валидный fixture с учётом фактических `NOT NULL`, FK и trigger-инвариантов `payments_v2`, а не минимальный набор предполагаемых колонок.
+10. Усилить функцию trigger:
+  ```sql
+  CREATE OR REPLACE FUNCTION public.tg_payments_v2_provider_whitelist()
+  RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = public, pg_temp
+  AS $$
 
-Массовая миграция 315 строк `provider='admin'` отменяется. Диагностика Stage 6.1R показала, что это три разных класса записей, и их нельзя обрабатывать одинаково. Ручные писатели (`bank`/`rr`/`bepaid`/`stripe` + `origin=manual_admin`) работают правильно и не трогаются.
+  ```
+  Все обращения к объектам оставлять schema-qualified.
+11. Финальный closeout должен отражать фактический результат:
+  ```text
+  STAGE 6.B RUNTIME : PASS
+  STAGE 6.C PREVIEW : PASS / DML DEFERRED
+  STAGE 6.F         : PASS либо DEFERRED
+  STAGE 6.G         : PASS
+  STAGE 6           : CLOSED
+  SPRINT            : CLOSED
 
-Реальная проблема — старый RPC `admin_create_deal_from_payment` пишет `provider='admin'`, хотя `admin` не является платёжным провайдером. Это единственный оставшийся источник «загрязнения» поля `provider`. Стратегия: сначала остановить приток, затем аккуратно разобрать исторические записи по классам.
+  ```
+  Исторический DML, документы, subscriptions, entitlements и ledger не выполнять.
+12. &nbsp;
+13. План: Финальное закрытие Stage 6 и спринта
 
-Инвариант поля `provider` (целевое состояние): только `bepaid | stripe | rr | bank`. Способ обработки платежа хранится в `origin` / `source` / `meta`.
+Все исторические DML отложены в backlog. Задача — доказательства (proofs) + один защитный триггер на будущее.
 
-## Шаги
+---
 
-### 6.A — Fix writer `admin_create_deal_from_payment` (STOP THE BLEED)
+### Шаг 1. Stage 6.B Runtime Proof (10 минут)
 
-Изменить RPC так, чтобы при создании канонической записи из queue провайдер брался из исходной queue-строки, а не хардкодился как `admin`:
+**Цель:** доказать, что опубликованный tombstone `test-payment-complete` возвращает 410 и не создаёт побочных эффектов.
 
-```text
-new payments_v2 row:
-  provider              = <queue.provider>          -- обычно bepaid
-  origin                = 'admin_from_payment'
-  source                = 'admin_from_payment'
-  meta.queue_payment_id = <queue.id>
-  meta.processed_by     = <admin actor>
+**Действия:**
+
+1. Снимок счётчиков до вызова:
+  - `SELECT count(*), max(created_at) FROM payments_v2 WHERE provider='admin_test'`
+  - `SELECT count(*) FROM orders_v2 WHERE id LIKE 'ORD-TEST-%'`
+2. Вызов `supabase--curl_edge_functions` → POST `/test-payment-complete` с dummy body и явным Authorization super_admin.
+3. Ожидаем HTTP 410, `body.reason='stage6_b_disabled'`.
+4. Повторный снимок тех же счётчиков — должен совпасть.
+5. Артефакт: `.lovable/discovery/stage6b_runtime_proof.md` с request/response и before/after снимками.
+
+**DoD:** статус 410, reason совпадает, дельта по `payments_v2`/`orders_v2` = 0.
+
+---
+
+### Шаг 2. Stage 6.F Proof без DML (15 минут)
+
+**Цель:** подтвердить, что текущий runtime уже корректно классифицирует legacy-строки, изменения не требуются.
+
+**Проверки (read-only через `supabase--read_query`):**
+
+1. **Финансовая выручка не включает admin_grant:**
+  - Найти канонические функции/вьюхи выручки (`rg -n "revenue|financial|gross" supabase/migrations` + inventory `pg_proc`).
+  - Прогон агрегата на боевых данных с разбивкой по provider — убедиться, что admin_grant (201 строка) исключён (либо через фильтр `provider NOT IN`, либо через `is_deleted`, либо через `meta.source`).
+2. **Исторические admin_from_payment учитываются:**
+  - Тот же агрегат: 113 строк с `origin='admin_from_payment'` и non-null `queue_payment_id` попадают в выручку (или явно относятся к соответствующему каналу).
+3. **UI-фильтр провайдеров:**
+  - `rg -n "provider" src/pages/admin src/components/payment` для селектов провайдеров в админ-фильтрах.
+  - Убедиться, что список опций = `bepaid|stripe|rr|bank` (без `admin`, `admin_test`, `admin_grant`, `admin_from_payment`).
+
+**Если расхождений нет:** артефакт `.lovable/discovery/stage6f_proof.md` со ссылками на код и SQL-выборки. Никакого кода не менять.
+
+**Если расхождение найдено:** зафиксировать в отчёте и вынести в backlog отдельным пунктом — в рамках этого спринта не чинить.
+
+**DoD:** три пункта задокументированы с доказательствами; изменений в коде нет.
+
+---
+
+### Шаг 3. Stage 6.G — Guard-триггер на `payments_v2.provider` (30 минут)
+
+**Цель:** запретить появление новых admin/admin_test/admin_grant/admin_from_payment строк, не ломая работу с историей.
+
+**Миграция** (schema-only, без DML):
+
+```sql
+-- BEFORE INSERT OR UPDATE OF provider ON public.payments_v2
+CREATE OR REPLACE FUNCTION public.tg_payments_v2_provider_whitelist()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  v_allowed constant text[] := ARRAY['bepaid','stripe','rr','bank'];
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.provider IS NULL OR NOT (NEW.provider = ANY(v_allowed)) THEN
+      RAISE EXCEPTION 'stage6g_provider_not_allowed: provider=% (allowed: %)',
+        NEW.provider, v_allowed
+        USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  -- UPDATE: разрешаем менять любые поля legacy-строк,
+  -- но provider можно менять ТОЛЬКО в whitelist.
+  IF NEW.provider IS DISTINCT FROM OLD.provider THEN
+    IF NOT (NEW.provider = ANY(v_allowed)) THEN
+      RAISE EXCEPTION 'stage6g_provider_update_not_allowed: %→%',
+        OLD.provider, NEW.provider
+        USING ERRCODE = 'check_violation';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_payments_v2_provider_whitelist ON public.payments_v2;
+CREATE TRIGGER trg_payments_v2_provider_whitelist
+  BEFORE INSERT OR UPDATE OF provider ON public.payments_v2
+  FOR EACH ROW EXECUTE FUNCTION public.tg_payments_v2_provider_whitelist();
 ```
 
-Fail-closed: если `queue.provider` пустой или не входит в canonical allowlist (`bepaid|stripe|rr|bank`) — RPC возвращает ошибку `invalid_source_provider`, ничего не пишет. Никаких fallback на `admin`.
+Триггер срабатывает на UPDATE **только когда меняется колонка `provider**` (WHEN OF provider) → UPDATE любых других полей legacy admin/admin_test строк остаётся разрешённым.
 
-Покрытие: расширить `supabase/tests/admin_create_deal_from_payment_stage2r.sql` сценарием «provider наследуется из queue» и «не-canonical queue.provider → error». Существующие сценарии (idempotency, financial truth, already_linked) остаются зелёными.
+**Тесты** (`supabase/tests/stage6g_provider_whitelist.sql`, ROLLBACK-обёртка):
 
-DoD 6.A:
+- T1: INSERT `provider='bepaid'` → OK.
+- T2: INSERT `provider='admin'` → EXCEPTION `stage6g_provider_not_allowed`.
+- T3: INSERT `provider='admin_test'` → EXCEPTION.
+- T4: INSERT `provider='admin_grant'` → EXCEPTION.
+- T5: UPDATE legacy строки `provider='admin_test'` — поле `meta` / `notes` — OK.
+- T6: UPDATE `provider` legacy строки с `admin_test` → `admin_test` (не меняется) — OK (WHEN OF срабатывает, но `IS DISTINCT FROM` = false).
+- T7: UPDATE `provider` legacy строки с `admin_test` → `bank` — OK (миграция валидных данных в будущем возможна).
+- T8: UPDATE `provider` с `bepaid` → `admin` → EXCEPTION.
 
-- миграция RPC применена;
-- новые интеграционные тесты проходят;
-- ручная проверка: следующая admin-linked сделка создаёт `provider='bepaid'`, а не `admin`.
+**DoD:** миграция применена, все 8 тестов проходят, никакой существующей строки не изменено.
 
-### 6.B — Отключить `test-payment-complete` (единственный оставшийся writer `admin_test`)
+---
 
-Убрать edge function `test-payment-complete/index.ts` из активных путей:
+### Шаг 4. Финальный отчёт
 
-- либо полное удаление файла + вычистка из `supabase/functions.registry.txt`;
-- либо no-op stub, возвращающий 410 Gone.
+Файл `.lovable/discovery/stage6_sprint_closeout.md` со сводкой:
 
-Выбор — на этапе Discovery-6.B: сначала `rg` по фронтенду и e2e, убедиться, что endpoint не дергается из production-путей.
-
-DoD 6.B: нет живых вызовов, функция не публикуется, новые строки `provider='admin_test'` не появляются.
-
-### 6.C — 8 исторических `admin_test` строк
-
-Только read-only preview:
-
-- собрать CSV (id, amount, currency, created_at, order_id, meta);
-- подтвердить, что все они действительно fixture (сумма/currency/e2e-маркеры);
-- предложить: soft-archive через `is_deleted=true` + `meta.stage6_archive_reason='admin_test_fixture'`, без физического удаления.
-
-DoD 6.C выносится в отдельный approve — DML не выполняется до явного «да».
-
-### 6.D — 113 `admin_from_payment`: точечный разбор
-
-Разбить на две подгруппы по факту наличия живой queue-связи:
-
-**6.D.1 — 104 строки с живой queue-записью.**
-Preview-миграция (read-only, генерирует artifact, DML не выполняет):
-
-- для каждой строки JOIN на `payment_reconcile_queue` по `meta.queue_payment_id`;
-- проверить exact-match: `amount`, `currency`, `queue.status_normalized='successful'`, `queue.provider ∈ canonical allowlist`;
-- если всё совпадает — предложить UPDATE `provider = queue.provider`, `origin='admin_from_payment'`, `meta.stage6_relink=true`;
-- если хоть одно поле расходится — строка идёт в HOLD-бакет.
-
-Артефакт: `/mnt/documents/stage6/stage6_d1_preview.csv` + checksum до/после.
-
-**6.D.2 — 9 строк без queue-связи.**
-Не угадывать. Не относить к финансовым фактам. Пометить `meta.stage6_hold_reason='no_queue_link'` и оставить как есть до отдельного product-решения.
-
-DoD 6.D: preview утверждён отдельно. DML выполняется только после явного approve и только по 104 exact-match строкам. 9 HOLD-строк не мигрируются.
-
-### 6.E — 201 `admin_grant`: не платежи
-
-Read-only investigation:
-
-1. `rg` по коду: где читаются строки `provider='admin' AND source='admin_grant'` (`grant-eligibility`, `document-resolver`, RPC, отчёты);
-2. если строки участвуют в выдаче доступа/документов — НЕ трогать до отдельного product-решения о переносе в технический архив (отдельная таблица `access_grant_ledger` или флаг `is_financial=false`);
-3. если строки нигде не читаются — предложить soft-archive с `meta.stage6_archive_reason='admin_grant_nonfinancial'`.
-
-DoD 6.E: письменное подтверждение runtime-зависимостей + отдельный approve. В рамках текущего Stage 6 DML НЕ выполняется. Это pre-work для будущего Stage 6.E-DML.
-
-### 6.F — Финансовые отчёты и фильтры
-
-После 6.A + 6.D (даже до полной очистки 6.E) обновить финансовые агрегаты так, чтобы:
-
-- `admin_grant` (zero-amount, non-financial) явно исключался из sum/checksum по выручке;
-- provider-фильтр UI не показывал `admin` как выбираемого провайдера (уже гарантировано `ACTIVE_PAYMENT_PROVIDERS` в `src/lib/payments/providers.ts` — проверить, что SQL-стороны PaymentsStatsPanel/get_payments_stats соответствуют).
-
-Это UI/aggregation-only правка, без DML по строкам.
-
-### 6.G — Partial CHECK constraint на новые строки
-
-Только после 6.A (bleed остановлен) добавить trigger BEFORE INSERT на `payments_v2`, отклоняющий `provider NOT IN ('bepaid','stripe','rr','bank')`. Полный table-level CHECK откладывается до Stage 7 (после закрытия 6.D/6.E).
-
-## Порядок исполнения и gates
-
-```text
-6.A  writer fix              → own migration + tests    [approve]
-6.B  disable test-writer     → code change + registry   [approve]
-6.C  admin_test preview      → CSV report               [approve, DML deferred]
-6.D  admin_from_payment      → preview CSV              [approve, DML deferred]
-6.E  admin_grant runtime map → rg-report                [approve, DML deferred]
-6.F  reports/filters         → UI/SQL sync              [approve]
-6.G  BEFORE INSERT trigger   → migration                [approve, after 6.A]
+```
+STAGE 6.B RUNTIME : PASS   (ссылка на stage6b_runtime_proof.md)
+STAGE 6.C PREVIEW : PASS / DEFERRED DML  (ссылка на stage6c_admin_test_preview.md)
+STAGE 6.F         : PASS   (ссылка на stage6f_proof.md)
+STAGE 6.G         : PASS   (миграция + тесты)
+STAGE 6           : CLOSED
+SPRINT            : CLOSED
 ```
 
-Каждый шаг — отдельный approve. Никаких массовых DML в одном заходе. Никаких физических DELETE.
+Плюс раздел **Backlog** с перечислением 6 отложенных пунктов из сообщения пользователя.
 
-## Что НЕ делается
+---
 
-- не преобразуются `admin_grant` в `bank` / `bepaid`;
-- не хардкодятся UUID конкретных платежей;
-- не используется сумма как fixture-маркер (см. backlog `stripe_test_fixture_marker_v1.md`);
-- не трогаются вчерашние ручные `bank`/`rr`/`stripe`/`bepaid` записи;
-- не удаляется исторический profile / auth-user;
-- `payment_reconcile_queue` не изменяется.
+### Явные не-действия (границы спринта)
 
-## Артефакты
+- Не трогаем 8 `admin_test`, 113 `admin_from_payment`, 201 `admin_grant`.
+- Не трогаем документы СА-26-00025 / СА-26-00026.
+- Не трогаем `subscriptions_v2`, `entitlements`, `access_grant_ledger`.
+- Не удаляем физически edge-функцию `test-payment-complete` (остаётся tombstone).
+- Не меняем UI, кроме уже сделанного в Stage 6.B.
 
-- `/mnt/documents/stage6/stage6_a_writer_fix_report.md`
-- `/mnt/documents/stage6/stage6_c_admin_test_preview.csv`
-- `/mnt/documents/stage6/stage6_d1_preview.csv` + checksum
-- `/mnt/documents/stage6/stage6_d2_hold.csv`
-- `/mnt/documents/stage6/stage6_e_admin_grant_runtime_map.md`
-
-## Следующий шаг после approve
-
-Начать с **6.A** — миграция RPC + расширение `stage2r.sql`. Это единственный шаг, который меняет данные (только новые строки), и он не касается 315 исторических записей.
+Все отчёты и коммуникация — на русском.
