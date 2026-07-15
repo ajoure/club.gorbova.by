@@ -1,356 +1,369 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-План правильно закрывает исходное требование: кнопки должны управляться offers нового продукта, а существующий дизайн Tilda — сохраняться. Текущий код действительно выбирает тариф через regex по имени, а для рассрочки берёт первый подходящий `internal_installment`, поэтому переход на точный `offer_id` необходим.
-
-1. **Унифицировать способ хранения** `slot_role`**.** Сейчас план одновременно говорит о `tariff_offers.meta.slot_role` и о «колонке/индексе». Использовать:
+1. `data-lovable-slot-group` **должен быть реальным контейнером, а не пустым sibling-div.**  
+Bridge вызывает `group.querySelectorAll(...)`, поэтому внутри группы должны находиться:
+  - 5 fixed wrappers соответствующего тарифа;
+  - `data-lovable-slot-extra`;
+  - 5 variant templates.
+  Допустимы два варианта:
+  - обернуть эти элементы контейнером `display:contents`;
+  - поставить `data-lovable-slot-group` на уже существующий общий DOM-контейнер карточки.
+  Пустой `<div>` перед кнопками не создаст scope, и группа получит ноль wrappers/templates.
+2. **Три lead-кнопки нельзя снова привязывать к** `tariff:buh`**.**  
+Старый `data-tariff-key="buh"` у всех трёх lead-кнопок — известный дефект legacy HTML. Сопоставить их по заголовку карточки:
   ```text
-  tariff_offers.meta.slot_role
-  tariff_offers.meta.site_button_variant
+  Бухгалтер          → buh
+  Главный бухгалтер  → gl_buh
+  Бизнес-леди        → biz-l
 
   ```
-  Отдельную колонку не добавлять. Уникальность обеспечить partial expression index:
-  ```sql
-  CREATE UNIQUE INDEX ...
-  ON public.tariff_offers (
-    tariff_id,
-    (meta->>'slot_role')
-  )
-  WHERE nullif(meta->>'slot_role', '') IS NOT NULL;
-
-  ```
-2. **Backfill выполнять только по замороженному manifest UUID → role/variant.** Определение по `button_label` допустимо только на этапе read-only discovery для подготовки manifest. В самой миграции запрещены fuzzy-сравнения текстов:
-  ```text
-  offer_id
-  tariff_id
-  expected_offer_type
-  expected_payment_method
-  expected_installment_count
-  expected_button_label
-  new_slot_role
-  new_site_button_variant
-
-  ```
-  Любой drift — rollback.
-3. **Не переименовывать коды тарифов.** Не менять существующие `tariffs.code` на `cb20_buh` и подобные значения: код может использоваться в заказах, аналитике и других интеграциях. В HTML и manifest использовать точный `tariff_id`:
+  В grouped-layout каждая lead-кнопка становится пятой fixed position своей группы:
   ```html
-  data-lovable-tariff-id="<uuid>"
+  data-lovable-offer-wrapper
+  data-lovable-slot-position="5"
+  data-lovable-position-variant="lead"
 
   ```
-  `tariff.code` можно передавать дополнительно для диагностики, но не использовать как единственный ключ.
-4. **Разделить идентичность и внешний вид кнопки:**
-  - `offer.id` — единственный runtime-идентификатор действия;
-  - `slot_role` — стабильная бизнес-роль;
-  - `site_button_variant` — выбор Tilda-шаблона оформления.
-  Допустимые варианты должны быть явными:
+  `data-lovable-slot="tariff:buh|offer:lead"` на этих wrappers не нужен.
+3. **Frozen map должен охватывать 15 fixed wrappers, а не делить их на 12 + 3 legacy slots.**  
+После cutover каждая карточка содержит пять позиций:
   ```text
   primary
-  outline
-  installment
   legal_entity
+  installment
+  installment
   lead
 
   ```
-  Стиль нельзя выводить из `button_label`.
-5. **Убрать fallback «клонировать первый слот группы».** Он может превратить оплату от юрлица или банковскую рассрочку в кнопку неправильного цвета. В каждой карточке должны существовать скрытые generic templates по визуальному варианту:
-  ```html
-  data-lovable-button-template="primary"
-  data-lovable-button-template="outline"
-  data-lovable-button-template="installment"
-  data-lovable-button-template="legal_entity"
-  data-lovable-button-template="lead"
-
-  ```
-  Новый offer с известным `site_button_variant` появляется без изменения HTML. Неизвестный variant — fail-closed, кнопка не рендерится и пишется диагностическая ошибка.
-6. **Исправить алгоритм сортировки с учётом Tilda.** `appendChild()` не гарантирует визуального изменения порядка, если кнопки находятся в абсолютно позиционированных Tilda-элементах. Discovery должен установить фактическую DOM/CSS-структуру каждой группы:
-  - если кнопки находятся в normal flow — переставлять целые wrapper-узлы;
-  - если используются absolute `top/left` — сортированные offers распределять по существующим визуальным позициям, а не менять DOM-порядок;
-  - если активных offers больше подготовленных позиций — использовать заранее созданный normal-flow action-container либо fail-closed.
-  Нельзя считать `sort_order` реализованным без визуального runtime-proof.
-7. **Манипулировать нужно wrapper-кнопкой, а не только** `<a class="tn-atom">`**.** Для каждой позиции отдельно отметить:
-  ```html
-  data-lovable-offer-wrapper
-  data-lovable-offer-label
-
-  ```
-  Скрытие, клонирование и перестановка применяются к wrapper. Текст меняется только внутри label-узла. Так сохраняются размеры, фон, SVG, hover и Tilda positioning.
-8. **Дополнить цепочку файлов.** `SitePageBySlug` не владеет iframe напрямую: он передаёт blocks в `SitePageRenderer`. Manifest должен пройти по цепочке:
+  Конкретное количество installment-позиций и их порядок фиксируется по текущей карточке. Со всех 15 wrappers удалить `data-lovable-action` и `data-tariff-key`.
+4. **Не выполнять замену только по тегу** `<a>`**.**  
+Frozen migration map должен содержать для каждой позиции:
   ```text
-  SitePageBySlug
-  → SitePageRenderer
-  → renderer HTML-блока
-  → HtmlIframePreview
+  tariff key
+  card heading
+  outer t396__elem id/class
+  old action
+  old tariff_key
+  expected current label
+  slot position
+  position variant
 
   ```
-  Добавить optional prop, например `siteActionManifest`, только для нужного HTML-блока `/cb`. Не рассылать manifest глобальным событием всем iframe страницы.
-9. **Ввести отдельный handshake.** Не использовать первый `iframe-resize` как признак готовности. Bridge должен отправить:
+  Патчить внешний `.t396__elem` wrapper и точный label-узел. Каждая запись должна совпасть ровно один раз.
+5. **Исправить ожидаемые after-счётчики.**  
+Templates также должны содержать `data-lovable-offer-label`, иначе clone не получит безопасный label-host. Поэтому в сохранённом HTML ожидается:
   ```text
-  { type: "lovable-bridge-ready", version: 7, blockId }
+  data-lovable-offer-wrapper        = 15
+  data-lovable-position-variant      = 15
+  data-lovable-slot-group            = 3
+  data-lovable-slot-extra            = 3
+  data-lovable-slot-template         = 15
+  data-lovable-offer-label           = 30
+                                        15 fixed + 15 templates
 
   ```
-  Parent после этого отправляет manifest. При каждом новом `srcDoc` handshake повторяется.
-10. **Защитить канал parent → iframe:**
-  - iframe принимает manifest только при `event.source === parent`;
-  - проверяет `version`, `page_id`, `block_id`, `product_id`;
-  - manifest проходит schema-validation;
-  - parent использует `targetOrigin='*'` только потому, что iframe имеет opaque origin без `allow-same-origin`.
-  Текущий bridge уже использует sandbox без `allow-same-origin`, поэтому проверка source является обязательной.
-11. **Исправить существующий anchor interceptor.** Сейчас он пропускает только anchors с `data-lovable-action`; новый `data-lovable-slot` с `href="#"` будет перехвачен и нейтрализован раньше slot-handler. Добавить:
+  Runtime clones в эти stored-HTML счётчики не входят.
+6. **Template не должен участвовать в поиске fixed wrappers.**  
+Корневой template-div:
+  ```html
+  <div hidden data-lovable-slot-template="primary">
+
+  ```
+  не должен иметь `data-lovable-offer-wrapper`, `data-lovable-slot-position` или вложенного узла с этими атрибутами. Bridge добавляет `data-lovable-offer-wrapper` только созданному clone.
+  До deploy добавить:
   ```js
-  if (
-    a.hasAttribute('data-lovable-action') ||
-    a.hasAttribute('data-lovable-slot') ||
-    a.hasAttribute('data-lovable-offer-id')
-  ) return;
+  clone.removeAttribute('hidden');
+  clone.style.display = '';
 
   ```
-12. **Manifest должен содержать только активные offers и иметь стабильный порядок:**
+  На исходном template не использовать дополнительный inline `display:none`; только `hidden`.
+7. **Проверить фактическую работу extra-container внутри Tilda artboard до SQL-write.**  
+Normal-flow элемент внутри фиксированного absolute Tilda-artboard может не увеличивать высоту страницы и перекрыть следующий блок. До cutover собрать временный локальный DOM-fixture и доказать:
   ```text
-  sort_order ASC NULLS LAST,
-  offer_id ASC
+  0 extra → высота не меняется
+  1 extra → карточка/artboard увеличивается
+  max extra → нет перекрытия «Для кого?» и следующей секции
 
   ```
-  Минимальный payload:
+  Если artboard не растёт, extra-container нужно размещать в реально участвующей в потоке области либо bridge должен увеличивать высоту artboard/card backgrounds. Одного `position:relative` недостаточно.
+8. `sort_order` **пока не является глобальным при variant-locked positions.**  
+Текущий алгоритм меняет порядок только среди offers, которым подходят одинаковые variants. Изменение порядка между `primary`, `legal_entity`, `installment` и `lead` визуально не переставит кнопки.
+  До завершения задачи нужно либо:
+  - заменить внутреннее оформление fixed wrapper из соответствующего variant-template, сохраняя только координаты позиции;
+  - либо явно зафиксировать, что `sort_order` действует только внутри одного variant, и согласовать это как ограничение.
+  Исходное требование предполагает глобальное изменение порядка, поэтому предпочтителен первый вариант.
+9. **Не фиксировать DoD как “12 active / 3 inactive”.**  
+Runtime-счётчики должны вычисляться из актуального frozen manifest:
+  ```text
+  active offers
+  inactive fixed positions
+  overflow offers
+  missing templates
+
+  ```
+  Один offer не должен теряться только потому, что для тарифа подготовлено пять fixed positions. Все активные offers обязаны быть представлены либо fixed wrapper, либо extra clone.
+10. **Smoke-тест должен определять диалог по данным offer, а не по visual variant.**  
+`site_button_variant` отвечает только за оформление. Ожидаемый dialog определяется через:
+  ```text
+  offer_type
+  payment_method
+  invoice-only metadata
+  bank-installment metadata
+
+  ```
+  Для каждого клика:
+  - закрыть предыдущий dialog;
+  - проверить точный `offer_id`;
+  - подтвердить правильный canonical dialog;
+  - подтвердить отсутствие legacy resolver.
+11. **Inactive wrapper не нужно физически кликать обычным Playwright click.**  
+Для него проверить:
+  ```text
+  data-lovable-slot-inactive="1"
+  display:none
+  offer_id отсутствует
+  pointer interaction невозможен
+  dialog state не изменился
+
+  ```
+  Обычный Playwright click по `display:none` завершится ошибкой и не докажет bridge refuse.
+12. **Visual baseline снять до HTML-write.**  
+После deploy bridge v8, но до SQL UPDATE сохранить screenshots:
+  ```text
+  1440
+  960
+  375
+
+  ```
+  Затем сравнить:
+  - текущую конфигурацию before/after;
+  - 0 extra;
+  - 1 extra;
+  - максимальное число extra offers.
+  Общий threshold 1% недостаточен сам по себе: вне action-групп diff должен быть практически нулевым; action-зоны проверяются отдельно.
+13. **Live-config proof дополнить первоначальным scope.**  
+Помимо rename и disable обязательно проверить:
+  ```text
+  sort_order
+  создание нового активного offer
+  появление extra clone
+  удаление временного offer
+  полное восстановление исходного snapshot
+
+  ```
+  Восстановление выполнять через `finally`, чтобы тестовые данные не остались при падении Playwright.
+14. **Production proof обязателен.**  
+`localhost:8080/cb` можно использовать для предварительного E2E, но перед HTML-write нужно подтвердить bridge v8 на опубликованной странице, а после cutover выполнить smoke на фактическом публичном `/cb`.
+15. **Усилить SQL preflight.**  
+Помимо checksum проверить:
+  ```sql
+  jsonb_array_length(blocks) = 1
+  blocks->0->>'type' = 'html'
+  blocks->0->>'id' = '<expected block id>'
+  page product_id = PRD-000039 UUID
+
+  ```
+  UPDATE обязан вернуть ровно одну строку. Rollback должен иметь guard по after-checksum, чтобы случайно не затереть последующие изменения.
+16. **Отчёт должен содержать не только 15 fixed wrappers, но и полный runtime manifest:**  
+для каждого активного offer:
   ```text
   tariff_id
   offer_id
   slot_role
-  button_label
-  site_button_variant
+  variant
   sort_order
+  rendered_as=fixed|extra
+  position
+  dialog type
+  click result
 
   ```
-  `offer_type`, `payment_method`, сумма и прочая платёжная логика остаются в parent и повторно проверяются по `linkedProductData`. Iframe не должен решать, какой dialog открывать.
-13. **Handler** `open-slot` **должен повторно валидировать данные в parent:**
-  - UUID существует в текущем `linkedProductData`;
-  - offer принадлежит переданному `tariff_id`;
-  - тариф принадлежит PRD-000039;
-  - `is_active !== false`;
-  - offer присутствует в последнем manifest.
-  Нельзя доверять `offer_id`, присланному из iframe, только потому что UUID синтаксически корректен.
-14. **Переиспользовать существующий** `pending → resolved → canonical dialog` **путь.** Текущий компонент уже после выбора ID повторно находит offer внутри product data. Новая ветка должна только установить точный `productId/offerId`; branching диалогов не дублировать.
-15. **Fail-closed не должен показывать мёртвые кнопки или вызывать layout flash:**
-  - до получения manifest action wrappers получают `visibility:hidden`, `pointer-events:none`, `aria-hidden=true`;
-  - после manifest активные показываются;
-  - неактивные получают `display:none`;
-  - после применения manifest обязательно вызвать resize-sync;
-  - при ошибке manifest кнопки остаются недоступными.
-16. **React Query invalidation из админки не обновит страницу другого посетителя.** Для обещания «изменяется без релиза и не позднее 30 секунд» нужно выбрать один механизм:
-  - `refetchInterval: 30_000` для linked product только на страницах с dynamic slots;
-  - либо Supabase Realtime на `tariff_offers`;
-  - либо честно определить обновление после refresh страницы.
-  Одной invalidation в другом браузере недостаточно.
-17. **Все активные offers трёх тарифов должны быть renderable.** Текущий DoD «NULL допустим у offers, для которых нет кнопки» противоречит требованию автоматического появления новых кнопок. После backfill каждый активный публичный offer должен иметь:
-  - уникальный `slot_role`;
-  - допустимый `site_button_variant`.
-  Offer без этих полей не включается в manifest и отображается в админке как ошибка конфигурации.
-18. **Admin UI должен иметь серверную и клиентскую валидацию:**
-  - `slot_role` обязателен для активного offer PRD-000039;
-  - только безопасный формат, например `^[a-z0-9_]{2,64}$`;
-  - уникальность внутри тарифа;
-  - variant только из allowlist;
-  - при конфликте БД возвращает понятную ошибку;
-  - изменение роли требует предупреждения, поскольку это стабильный публичный идентификатор.
-19. **HTML-патч выполнить по approved manifest замен, а не свободным regex по 3-МБ документу.**
-  - сохранить полный before HTML и checksum;
-  - зафиксировать точное ожидаемое количество замен для каждой карточки и кнопки;
-  - сформировать approved after HTML и checksum;
-  - UPDATE только при совпадении before checksum;
-  - после UPDATE сравнить after checksum;
-  - любое несовпадение — rollback.
-20. **Visual regression уточнить:**
-  - вне action-групп diff должен быть практически нулевым;
-  - action-группы сравниваются отдельно по ширине, цветам, шрифтам и координатам;
-  - изменение количества и текста кнопок является допустимой разницей;
-  - проверить desktop, mobile и состояние с минимальным/максимальным числом активных offers.
-21. **Live-config тест должен восстанавливать данные через** `finally`**:**
-  - snapshot offer до теста;
-  - disable → verify hidden;
-  - rename → verify label;
-  - reorder → verify visual position;
-  - создать временный offer → verify appearance;
-  - удалить временный offer;
-  - полностью восстановить snapshot и подтвердить checksum.
-22. **Порядок выполнения:**
-  ```text
-  Discovery + frozen manifests
-  → schema/index и backfill meta
-  → код bridge/parent с backward compatibility
-  → deploy кода
-  → HTML slot migration
-  → runtime E2E
-  → live-config proof
-  → closeout
 
-  ```
-  Нельзя сначала заменить HTML-атрибуты и только потом деплоить поддержку `open-slot`: между шагами кнопки перестанут работать.
-23. Старую ветку `TARIFF_KEY_NAME_MATCH` и `pickOfferForFlow` оставить только для legacy HTML. Сейчас именно она обрабатывает `open-payment/open-installment/...`. Для `/cb` после миграции должен быть proof, что ни один клик больше не попадает в legacy-ветку.
-24. **Одобрение распространяется сразу на discovery и conditional execution.** Дополнительные approve между schema, code и HTML не нужны, если:
-  - frozen manifests совпали;
-  - preflight прошёл;
-  - последовательность деплоя соблюдена;
-  - любой drift приводит к fail-closed остановке до HTML cutover.
-
-После этих правок Phase B можно выполнять одним проходом.
+После этих исправлений план можно выполнять без дополнительных промежуточных согласований.
 
 &nbsp;
 
-План: Phase B — динамические кнопки на /cb, привязка к точным offers PRD-000039
+Шаг 3 — HTML cutover /cb на dynamic slots
 
-## Diagnose
+Цель: заменить 12 существующих Tilda-кнопок PRD-000039 на разметку слотов, добавить extra-контейнеры и variant-шаблоны, доказать отсутствие визуальной регрессии и работоспособность bridge v8.
 
-Текущее поведение (после успешной привязки /cb → PRD-000039):
+### 0. Порядок деплоя (жёсткий)
 
-1. Кнопки в HTML-блоке `/cb` статичны — тексты, порядок и наличие управляются только Tilda-разметкой, не админкой.
-2. Iframe-bridge посылает `site-action { action, payload: { tariff_key } }` в parent; parent резолвит tariff по regex `TARIFF_KEY_NAME_MATCH` (сопоставление по имени — запрещено ТЗ) и offer через `pickOfferForFlow` (первый подходящий).
-3. У «Главный бухгалтер» два активных `pay_now/internal_installment` — `pickOfferForFlow` вернёт первый, что не гарантирует корректный выбор для конкретной кнопки («в два этапа» vs «на 3 месяца»).
-4. Отключённый offer оставляет кнопку в DOM: клик логирует warning, ничего не открывает.
-5. `button_label`, `sort_order`, `is_active` из админки не отражаются на сайте.
+1. Опубликовать текущий frontend (bridge v8 + parent-валидация + admin UI — уже в коде, не задеплоены).
+2. Только после успешного publish и smoke-проверки `lovable-bridge-ready v8` — писать HTML в БД.
 
-## Цель
+Никакого HTML-write до deploy: старый bridge не поймёт новую разметку, кнопки станут неоткликаемыми.
 
-Кнопки на `/cb` становятся полностью данными продукта PRD-000039: включение/отключение, переименование, порядок и добавление новых работают без релиза сайта и без правки HTML источника. Дизайн (Tilda-классы, цвета, отступы, popup-разметка) сохраняется пиксель-в-пиксель.
+### 1. Snapshot и checksum до правки
 
-## Архитектура: bridge sync + слоты + стабильные offer-роли
+- Прочитать `site_pages.blocks[0].content.code` для `id=d5a5c2e0-9e4c-4e6c-b9bc-1e4bd264d656` через `supabase--read_query`.
+- Сохранить в `/mnt/documents/cb_phase_b/cb_before.html`.
+- Посчитать `sha256` и `md5`, длину в байтах, число вхождений:
+  - `data-lovable-action` (ожидается 15),
+  - `data-tariff-key="buh"` / `"gl_buh"` / `"biz-l"`,
+  - `data-lovable-slot` (ожидается 0),
+  - `data-lovable-slot-group` (0),
+  - `data-lovable-slot-template` (0),
+  - `data-lovable-slot-extra` (0).
+- Записать снимок в `/mnt/documents/cb_phase_b/cb_before.manifest.json`.
 
-### 1. Стабильный ключ offer в БД (без имени)
+### 2. Frozen migration map
 
-Ввести `tariff_offers.meta.slot_role: text` — стабильный идентификатор роли кнопки внутри тарифа. Пример значений на /cb: `payment_card`, `payment_invoice`, `installment_2`, `installment_3`, `installment_bank`, `lead`. Роль задаётся админом продукта, уникальна в пределах `(tariff_id, slot_role)`.
+12 фиксированных замен `<a class="tn-atom" data-lovable-action=X data-tariff-key=Y>` → слот-разметка (см. §6 discovery). Каждая пара `(action, tariff_key)` встречается ровно один раз — считаем before/after и падаем при несовпадении.
 
-Backfill для PRD-000039 (одноразовый, идемпотентный) — по существующим `button_label` + `payment_method` + `installment_count`:
+Отдельно 3 `open-lead|buh` (все на inactive lead buh, скрыты manifest'ом) — помечаем `data-lovable-slot="tariff:buh|offer:lead"` без изменения tariff_key (bridge их скроет; parent валидирует, что offer не в manifest → отклонит клик безопасно). Финальный визуальный аудит трёх lead-кнопок остаётся отдельной задачей после cutover, миграцию не блокирует.
 
-- «Оплата картой / Оплатить обучение» без tokenization → `payment_card`
-- «Оплатить от ЮЛ» (invoice-only по `detectInvoiceOnlyOffer`) → `payment_invoice`
-- `internal_installment` с `installment_count=2` → `installment_2`
-- `internal_installment` с `installment_count=3` → `installment_3`
-- `bank_installment` → `installment_bank`
-- `lead` → `lead`
+### 3. Разметка на карточку тарифа
 
-Backfill выполняется как единичный `UPDATE ... WHERE meta->>'slot_role' IS NULL`. Ничего не удаляется, PRD-000003 не затрагивается. Admin UI получает поле «Роль на публичной странице» в форме offer (валидатор уникальности + подсказки допустимых значений).
+Для каждого из 3 тарифов (`buh`, `gl_buh`, `biz-l`) добавить:
 
-Это устраняет и главный дефект (два `internal_installment` без различения).
+- **обёртку группы** — новый нулевой invisible-div сразу перед первой кнопкой карточки:
+  ```html
+  <div data-lovable-slot-group="tariff:<key>" style="display:contents"></div>
+  ```
+  (span-нейтральный: `display:contents` не создаёт box, Tilda absolute-раскладка не сдвигается; bridge использует `querySelectorAll` от `document`, но группа даёт scope для template lookup — см. §5).
 
-### 2. Слоты в HTML `/cb` (одноразовая правка Tilda-экспорта)
+Замена 4 fixed-кнопок (payment_card / payment_invoice / installment_* / installment_bank) на каждой карточке:
 
-Существующие кнопки в HTML `/cb` уже несут `data-lovable-action` + `data-tariff-key`. Заменяем это на стабильный слот:
-
-```
-data-lovable-slot="tariff:<tariff_code>|offer:<slot_role>"
-```
-
-Пример:
-
-- `<a class="tn-atom" data-lovable-slot="tariff:cb20_buh|offer:payment_card">Оплата картой</a>`
-- `<a ... data-lovable-slot="tariff:cb20_gl_buh|offer:installment_3">Рассрочка на 3 месяца</a>`
-
-Контейнер, внутри которого живут кнопки одного тарифа, помечается:
-
-```
-data-lovable-slot-group="tariff:<tariff_code>"
-```
-
-Правка HTML — одноразовая, чисто разметочная (класс, цвет, layout не трогаем). Патч применяется к `site_pages.blocks[0].content.code` через один SQL `UPDATE` с pre/post md5 контролем. `landing_config`/`PricingSection` не подключаются.
-
-Tariff `code` берём из БД: у PRD-000039 они уже стабильны (`buh`, `gl_buh`, `biz-l` мигрируем к явным `cb20_buh` и т.д. — либо оставляем как есть; уточним на исполнении, requirement — использовать UUID **или** stable code, `code` подходит).
-
-### 3. Bridge sync: parent → iframe (offer manifest)
-
-Расширяем bridge в `HtmlIframePreview.tsx` и `SitePageBySlug.tsx`:
-
-Parent, зная `linkedProductData` (уже фетчит через `usePublicProduct(page.product_id)`), формирует manifest:
-
-```
-{
-  type: 'lovable-slot-manifest',
-  version: 1,
-  tariffs: [
-    { code: 'cb20_gl_buh', offers: [
-      { slot_role: 'payment_card', id: '<uuid>', label: 'Оплатить обучение', sort_order: 1 },
-      { slot_role: 'installment_3', id: '<uuid>', label: 'Рассрочка на 3 месяца', sort_order: 3 },
-      ...
-    ]},
-    ...
-  ]
-}
+```html
+<div class="t396__elem tn-elem …" data-lovable-offer-wrapper
+     data-lovable-slot-position="N"
+     data-lovable-position-variant="<variant>"
+     …absolute style…>
+  <a class="tn-atom" href="#">
+    <div class="tn-atom__button-content">
+      <span class="tn-atom__button-text" data-lovable-offer-label>…текущий label…</span>
+    </div>
+    <span class="tn-atom__button-border"></span>
+  </a>
+</div>
 ```
 
-Manifest постится в iframe через `iframe.contentWindow.postMessage(...)` при (a) готовности bridge (`iframe-resize` first message), (b) любом изменении `linkedProductData` (React Query invalidation).
+Правила:
 
-### 4. Bridge на стороне iframe: применение manifest
+- Атрибуты `data-lovable-action` и `data-tariff-key` **удаляются** у мигрированных кнопок.
+- `href="#"` (был `#`). Клик перехватывается bridge через wrapper (v8 anchor interceptor уже пропускает `data-lovable-offer-wrapper`).
+- Label-нода — единственный узел, куда bridge пишет `textContent`; Tilda `.tn-atom__button-border` не трогается.
+- `data-lovable-slot-position` — 1..4 в исходном визуальном порядке карточки.
+- `data-lovable-position-variant` — variant, под который позиция изначально стилизована.
 
-В `BRIDGE_SCRIPT` добавляем обработчик `lovable-slot-manifest`:
+### 4. Extra-контейнер
 
-Для каждого `[data-lovable-slot-group="tariff:<code>"]`:
+В конец каждой карточки, **внутри неё**, после последней absolute-кнопки добавить normal-flow контейнер:
 
-1. Соберём все прямые дочерние `[data-lovable-slot]` — это «слоты-исходники».
-2. Первый встреченный слот каждой роли (`data-lovable-slot="…|offer:<role>"`) сохраняется как **template** (клонируется, скрывается через `display:none` + `data-lovable-slot-template="1"`). Это гарантирует Tilda-дизайн: template повторяет layout соседних кнопок.
-3. Из manifest получаем упорядоченный (`sort_order`) список активных offers для этого тарифа.
-4. Для каждой offer:
-  - Если DOM-узел с этой ролью уже есть в группе — обновляем `textContent` на `offer.label`, ставим атрибут `data-lovable-offer-id="<uuid>"`, снимаем `hidden`.
-  - Если нет — клонируем template этой роли (если template есть; если нет — падаем на fallback: клон первого слота группы), заполняем label + id, вставляем в конец группы.
-5. Слоты, для которых нет активного offer в manifest, скрываются `hidden` + помечаются `data-lovable-slot-inactive="1"`. Физически не удаляются, чтобы восстановление было мгновенным.
-6. Порядок применяется через `container.appendChild(slot)` в порядке возрастания `sort_order` (внутри group).
-
-Точка обновления текста — только «конечная» текстовая нода кнопки (`.tn-atom`, `.tn-atom__text`, либо fallback `element` без потомков-элементов), чтобы не сломать Tilda-иконки/svg внутри.
-
-### 5. Клик через слот, не через flow-name
-
-Существующий click-handler в iframe остаётся, но теперь для элементов со `data-lovable-slot` вместо `action` кладёт `slot` в payload:
-
-```
-parent.postMessage({ type: 'site-action', action: 'open-slot',
-  payload: { tariff_code, slot_role, offer_id } }, '*')
+```html
+<div data-lovable-slot-extra="tariff:<key>"
+     class="lovable-cb-extra"
+     style="position:relative;display:flex;flex-direction:column;gap:12px;margin-top:24px;"></div>
 ```
 
-Parent в `SitePageBySlug`:
+Плюс CSS-блок (один раз в самое начало HTML, в `<style>`):
 
-- Валидирует `offer_id` — UUID_RE.
-- Резолвит `offer` через `linkedProductData` по `id === offer_id` (UUID-driven, без regex по имени).
-- Резолвит `tariff` как parent offer'а.
-- Открывает `PaymentDialog | InvoiceCheckoutDialog | LeadRequestDialog | PreregistrationDialog` по тому же селектору, что и раньше (`offer.offer_type`, `detectInvoiceOnlyOffer`, `bank_installment` meta) — канонический flow, никакой дупликации логики оплаты.
+```css
+.lovable-cb-extra:empty { display: none !important; }
+.lovable-cb-extra > [data-lovable-slot-clone] { position: relative; }
+```
 
-Старая ветка (`open-payment` / `open-installment` / …) сохраняется как back-compat для других HTML-блоков и остаётся deprecated (лог debug при попадании в неё для /cb). Не удаляем — вне scope.
+Пустой контейнер невидим и не сдвигает соседние absolute-элементы.
 
-Удаляем/заменяем `TARIFF_KEY_NAME_MATCH` для новой ветки — сопоставление по имени больше не используется.
+### 5. Скрытые variant templates (5 × 3 = 15)
 
-## Файлы для правки
+Внутри каждой группы (в конце карточки, после extra-контейнера) добавить 5 hidden templates по одному на variant:
 
-1. `supabase/migrations/<ts>_offer_slot_role.sql` — колонка/индекс + backfill для PRD-000039 (только PRD-000039).
-2. `src/components/shared/HtmlIframePreview.tsx` — обработчик `lovable-slot-manifest` в BRIDGE_SCRIPT + click-slot ветка; API для parent — proxy postMessage к `iframe.contentWindow`.
-3. `src/pages/SitePageBySlug.tsx` — построение manifest из `linkedProductData`; отправка при готовности bridge и при изменении данных; новый handler `open-slot` (UUID-driven), сохраняющий текущий выбор диалога.
-4. `src/pages/admin/...` (форма offer) — поле `slot_role` в admin UI PRD-000039 offers.
-5. Одноразовая SQL-миграция `<ts>_cb_html_slot_markup.sql` — правка `site_pages.blocks[0].content.code` (замена `data-lovable-action`/`data-tariff-key` на `data-lovable-slot` + групповые контейнеры). Pre/post md5 логируется, `landing_config` НЕ трогается, дизайн-классы сохраняются.
+```html
+<template data-lovable-slot-template="primary">…</template>
+<template data-lovable-slot-template="outline">…</template>
+<template data-lovable-slot-template="installment">…</template>
+<template data-lovable-slot-template="legal_entity">…</template>
+<template data-lovable-slot-template="lead">…</template>
+```
 
-## Инварианты
+Внутри `<template>` — normal-flow клон Tilda-кнопки соответствующего variant без absolute (использует базовые классы `.tn-atom`, `.tn-atom__button-*`). Bridge клонирует `.content` при overflow.
 
-- Дизайн `/cb` неизменен: скриншот-регрессия до/после (Playwright, viewport 1280×1800 desktop и 390×844 mobile) — pixel diff ≤ 0.5%.
-- Все Tilda-классы и структура popup'ов не тронуты.
-- UUID `offer_id` — единственный ключ выбора offer в parent; сопоставление по имени отсутствует.
-- `code` тарифа стабилен (не переименовывается свободным текстом); переименование name не рушит связь.
-- PRD-000003 не затронут ни SQL, ни HTML-правкой.
-- Fail-closed: при отсутствии `linkedProductData` или невалидном manifest все `data-lovable-slot` скрыты, клики no-op (лучше «пусто», чем «мёртвая кнопка»).
+**Проблема:** bridge использует `tpl.cloneNode(true)` и `extra.appendChild(clone)` — а `<template>.cloneNode(true)` возвращает сам template, не его content. Нужно либо:
 
-## Live-config proof (в отчёте)
+- переключить bridge на `tpl.content.firstElementChild.cloneNode(true)`, либо
+- использовать вместо `<template>` обычный `<div hidden data-lovable-slot-template=…>`, как это уже работает в текущем bridge.
 
-Записать сценарии в discovery + приложить видео/скриншоты:
+Выберу второй путь (без правки уже отревьюенного bridge v8): templates — это `<div hidden>`. Атрибут `hidden` убирается при клонировании (`clone.removeAttribute('hidden')` не нужен, т.к. bridge выставляет `clone.style.display = ''`, а `hidden` работает через display — надо `clone.removeAttribute('hidden')`).
 
-1. Отключить `is_active` у `installment_3` тарифа gl_buh → на `/cb` кнопка «Рассрочка на 3 месяца» исчезает в течение TTL React Query invalidation (≤ 30 сек, кнопка Refresh — мгновенно).
-2. Переименовать `button_label` «Оплатить обучение» → «Начать сейчас» → надпись меняется на сайте без релиза.
-3. Создать новый offer с `slot_role=payment_card_promo` и обновить template в HTML (если роли новой ещё нет — потребуется новый template в HTML, документируем как «новая роль → одноразовый minor edit HTML»). Для уже размеченных ролей — pure data.
-4. Изменить `sort_order` двух internal_installment → визуальный порядок меняется.
+→ Уточнение к bridge: добавить `clone.removeAttribute('hidden')` рядом с `clone.style.display = ''`. Это одна строка, полностью в рамках Шага 2.
 
-## DoD
+### 6. Атомарная запись HTML
 
-- SQL миграция `slot_role` применена, backfill 100% для PRD-000039, `NULL` только у offers, для которых нет соответствующей кнопки на /cb.
-- HTML `/cb` содержит `data-lovable-slot` на всех 3×N кнопках, `data-lovable-slot-group` на 3 карточках; `data-lovable-action`/`data-tariff-key` для этих кнопок удалены.
-- Скриншот-регрессия PASS.
-- E2E (Playwright): для каждой активной offer PRD-000039 клик → корректный диалог с корректным `offer_id` (проверка через сетевой запрос или dialog-title).
-- Live-config toggle proof: 4 сценария выше — PASS.
-- Отчёт `.lovable/discovery/cb_phase_b_report.md` с md5 HTML до/после, списком backfill, ссылками на E2E-артефакты.
+Одна SQL-миграция:
 
-## Rollback
+```sql
+UPDATE public.site_pages
+SET blocks = jsonb_set(blocks, '{0,content,code}', to_jsonb($NEW_HTML::text))
+WHERE id = 'd5a5c2e0-9e4c-4e6c-b9bc-1e4bd264d656'
+  AND md5(blocks->0->'content'->>'code') = 'bd5e0e3213b3e55dcf8d023231ffc7f5';
+```
 
-- HTML rollback: обратная миграция восстанавливает `data-lovable-action`/`data-tariff-key` (сохраняем оригинал в `.lovable/discovery/cb_html_before_phase_b.html`, храним md5 в миграции).
-- Slot_role rollback: колонку не дропаем, но обнуляем meta.slot_role для PRD-000039 (одна `UPDATE`).
-- Code rollback: удалить обработчик `open-slot` и sync manifest, ветка `open-payment/open-installment/...` уже сохранена — старая логика продолжает работать.
+Fail-closed: если before-checksum не совпал (HTML успели поправить между snapshot и миграцией) — 0 rows updated, вручную rebase.
 
-Ожидаю подтверждения. По одобрении: сначала discovery-запрос к БД (все offers PRD-000039, точные `slot_role` для backfill, snapshot HTML), затем миграции (schema → backfill → HTML) в отдельных approve-шагах, затем код и E2E.
+### 7. After-verification
+
+Сразу после успешного UPDATE прочитать код обратно и проверить:
+
+- `data-lovable-action` встречается 3 раза (только оставшиеся `open-lead|buh` слоты — они помечены slot'ом, но `data-lovable-action` мы у них сохраняем? Нет — тоже удаляем. Итого **0** мигрированных). Ожидается: 0 `data-lovable-action`, 0 `data-tariff-key`.
+- `data-lovable-slot-group` == 3.
+- `data-lovable-offer-wrapper` == 15 (12 fixed + 3 lead-buh).
+- `data-lovable-offer-label` == 15.
+- `data-lovable-position-variant` == 15.
+- `data-lovable-slot-extra` == 3.
+- `data-lovable-slot-template` == 15 (5 × 3).
+- Никакая мигрированная позиция не содержит одновременно `data-lovable-slot` и `data-lovable-action` (mutual exclusion).
+
+Любое отклонение → откат: `UPDATE … SET blocks = $BEFORE_JSONB`.
+
+### 8. Smoke-тест кликов (Playwright)
+
+Скрипт `/tmp/browser/cb_cutover/`:
+
+1. Открыть `http://localhost:8080/cb`, дождаться iframe и `lovable-bridge-ready` в console.
+2. Полное сканирование `data-lovable-offer-wrapper` внутри iframe: у каждого — непустой `data-lovable-offer-id` (UUID), `data-lovable-offer-tariff-id` (UUID), `data-lovable-offer-slot-role`, `data-lovable-offer-variant`.
+3. Скрытые wrapper'ы: у неактивных offer'ов установлен `data-lovable-slot-inactive="1"` и `display:none` (кейс `buh`/`installment_3` и трёх `lead-buh`).
+4. Клик по каждому активному wrapper → в parent DevTools console нет warning `[site-action] open-slot: …`; открывается ожидаемый диалог (PaymentDialog / InvoiceCheckoutDialog / LeadRequestDialog в зависимости от variant).
+5. Клик по inactive wrapper → диалог не открывается, warnings нет (bridge preventDefault + return).
+
+### 9. Visual regression
+
+- Screenshot до/после для трёх viewport: 1440, 960, 375.
+- Diff по каждому screenshot (Pillow, threshold 1% пикселей).
+- Ожидание: 0 % изменений на пустых extra-контейнерах и wrapper-обёртках (координаты, размер, borders сохранены).
+- Полученные PNG складывать в `/mnt/documents/cb_phase_b/screenshots/`.
+
+### 10. Live-config proof
+
+Использовать admin UI:
+
+1. Изменить `button_label` для `payment_card | biz-l` на «Новый текст TEST».
+2. Ждать ≤ 30 с → label в iframe должен обновиться без reload.
+3. Выключить `payment_invoice | gl_buh` (`is_active=false`) → wrapper скрывается.
+4. Вернуть исходные значения.
+
+Скриншоты каждого шага, приложить к отчёту.
+
+### 11. Отчёт
+
+`/mnt/documents/cb_phase_b/cutover_report.md`:
+
+- before/after checksums,
+- счётчики маркеров,
+- список 15 wrapper'ов с offer_id/tariff_id/role/variant,
+- ссылки на visual-diff screenshots,
+- лог smoke-теста,
+- лог live-config теста.
+
+### DoD
+
+- Bridge v8 задеплоен и подтверждён handshake'ом.
+- HTML переписан атомарно с before-checksum guard.
+- After-verification зелёная по всем 8 счётчикам.
+- Playwright smoke: 12 активных wrapper'ов → корректный диалог; 3 inactive → тихий refuse.
+- Visual diff ≤ 1 % на трёх viewport.
+- Live-config proof: rename ≤ 30 с, toggle скрывает wrapper.
+- Отчёт сохранён под `/mnt/documents/cb_phase_b/`.
+
+Готовность к rollback: SQL-UPDATE обратно на `$BEFORE_JSONB` — одна миграция, безопасно в любой момент до/после cutover.

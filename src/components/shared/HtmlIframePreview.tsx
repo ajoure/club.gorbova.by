@@ -535,6 +535,7 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       if (!tpl) continue;
       var clone = tpl.cloneNode(true);
       clone.removeAttribute('data-lovable-slot-template');
+      clone.removeAttribute('hidden');
       clone.setAttribute('data-lovable-slot-clone', '1');
       clone.setAttribute('data-lovable-offer-wrapper', '');
       clone.style.display = '';
