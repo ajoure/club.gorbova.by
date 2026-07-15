@@ -89,13 +89,19 @@ export function buildSlotManifest(
   return { version: SLOT_MANIFEST_VERSION, product_id: data.product.id, tariffs };
 }
 
-/** True when any block references a dynamic-slot marker in raw HTML. */
+/**
+ * True when any block references a dynamic marker in raw HTML.
+ * Includes both per-tariff slot markers and product-level lead CTA markers, so
+ * polling / manifest posting turns on for pages that only carry lead CTAs.
+ */
 export function pageHasDynamicSlots(blocks: SiteBlock[] | null | undefined): boolean {
   if (!blocks?.length) return false;
   for (const b of blocks) {
     if (b?.type !== "html") continue;
     const code = (b.content as Record<string, unknown> | undefined)?.code;
-    if (typeof code === "string" && code.includes("data-lovable-slot")) return true;
+    if (typeof code !== "string") continue;
+    if (code.includes("data-lovable-slot")) return true;
+    if (code.includes("data-lovable-product-lead-cta")) return true;
   }
   return false;
 }
