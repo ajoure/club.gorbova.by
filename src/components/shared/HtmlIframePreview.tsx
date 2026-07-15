@@ -545,9 +545,13 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     extra.setAttribute('data-lovable-clones-fp', fp);
   }
 
+  var slotMo = null;
+
   function applySlotManifest(manifest) {
     if (!manifest || !manifest.tariffs || applyingManifest) return;
     applyingManifest = true;
+    // Pause the DOM observer so our own writes never trigger a re-entry loop.
+    if (slotMo) { try { slotMo.takeRecords(); slotMo.disconnect(); } catch (e) {} }
     try {
       var byCode = {};
       for (var i = 0; i < manifest.tariffs.length; i++) {
@@ -576,17 +580,19 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
           ensureOrigDisplay(el);
           var group = byCode[parsedEl.tariff_code];
           var offer = null;
+          var groupTariffId = group ? group.tariff_id : '';
           if (group) {
             for (var oi = 0; oi < (group.offers || []).length; oi++) {
               if (group.offers[oi].slot_role === parsedEl.slot_role) { offer = group.offers[oi]; break; }
             }
           }
-          if (offer) assignOfferToWrapper(el, offer);
+          if (offer) assignOfferToWrapper(el, offer, groupTariffId);
           else deactivateWrapper(el);
         }
       }
     } finally {
       applyingManifest = false;
+      if (slotMo) { try { slotMo.takeRecords(); slotMo.observe(document.body, { childList: true, subtree: true }); } catch (e) {} }
       post();
     }
   }
@@ -600,9 +606,12 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     if (!m || typeof m !== 'object' || m.version !== 1) return null;
     if (typeof m.product_id !== 'string' || !m.product_id) return null;
     if (!Array.isArray(m.tariffs)) return null;
-    // page_id / block_id are best-effort — parent may not know block_id yet.
-    if (typeof data.page_id === 'string') bridgePageId = data.page_id;
-    if (typeof data.block_id === 'string') bridgeBlockId = data.block_id;
+    // page_id / block_id are strict — required non-empty strings for open-slot
+    // provenance. Parent must always send them.
+    if (typeof data.page_id !== 'string' || !data.page_id) return null;
+    if (typeof data.block_id !== 'string' || !data.block_id) return null;
+    bridgePageId = data.page_id;
+    bridgeBlockId = data.block_id;
     return m;
   }
 
@@ -613,17 +622,20 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     try { applySlotManifest(currentSlotManifest); } catch (e) {}
   });
 
-  // Re-apply on DOM changes (throttled by applyingManifest flag inside applySlotManifest).
+  // Re-apply on DOM changes. applySlotManifest disconnects/reconnects this
+  // observer around its own writes, so it can never trigger itself.
   if (typeof MutationObserver !== 'undefined' && document.body) {
-    var slotMo = new MutationObserver(function(muts) {
+    slotMo = new MutationObserver(function(muts) {
       if (!currentSlotManifest || applyingManifest) return;
-      // Ignore mutations we caused ourselves (label textContent flips).
+      // Ignore mutations that only add our own clones (defence in depth).
       var trivial = true;
       for (var i = 0; i < muts.length && trivial; i++) {
         if (muts[i].type === 'childList' && muts[i].addedNodes && muts[i].addedNodes.length > 0) {
           for (var j = 0; j < muts[i].addedNodes.length; j++) {
             var n = muts[i].addedNodes[j];
-            if (n.nodeType === 1) { trivial = false; break; }
+            if (n.nodeType !== 1) continue;
+            if (n.getAttribute && n.getAttribute('data-lovable-slot-clone') === '1') continue;
+            trivial = false; break;
           }
         }
       }
