@@ -35,7 +35,8 @@ const SANDBOX_POLICY =
 const MAX_IFRAME_HEIGHT = 100000;
 
 /** Unique marker to prevent double injection of bridge script (versioned). */
-const BRIDGE_MARKER = "data-lovable-resize-v7";
+const BRIDGE_MARKER = "data-lovable-resize-v8";
+const BRIDGE_VERSION = 8;
 
 /**
  * Single injected bridge script: resize + anchor intercept + scrollIntoView intercept
