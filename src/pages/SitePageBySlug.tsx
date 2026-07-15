@@ -142,6 +142,8 @@ export default function SitePageBySlug() {
     () => (hasDynamicSlots ? buildSlotManifest(linkedProductData) : null),
     [hasDynamicSlots, linkedProductData],
   );
+  const slotManifestRef = useRef(slotManifest);
+  useEffect(() => { slotManifestRef.current = slotManifest; }, [slotManifest]);
 
   useEffect(() => {
     function onSiteAction(e: Event) {
@@ -162,16 +164,58 @@ export default function SitePageBySlug() {
       }
 
       // Dynamic-slot canonical path (Phase B). UUID-only; never falls back to
-      // the legacy TARIFF_KEY_NAME_MATCH regex resolver.
+      // the legacy TARIFF_KEY_NAME_MATCH regex resolver. Full revalidation:
+      //   1) offer_id is a UUID present in linkedProductData
+      //   2) belongs to payload.tariff_id
+      //   3) tariff belongs to linked product
+      //   4) offer is active
+      //   5) offer.meta.slot_role matches payload.slot_role
+      //   6) offer_id is present in the last posted slot manifest
       if (detail.action === "open-slot") {
-        const offerId = String(detail.payload?.offer_id || "");
-        if (!UUID_RE.test(offerId)) {
-          console.warn("[site-action] open-slot: invalid offer_id", detail.payload);
+        const p = detail.payload || {};
+        const offerId = String(p.offer_id || "");
+        const tariffId = String(p.tariff_id || "");
+        const slotRole = String(p.slot_role || "");
+        const productIdIn = String(p.product_id || "");
+        if (!UUID_RE.test(offerId) || !UUID_RE.test(tariffId)) {
+          console.warn("[site-action] open-slot: invalid UUID payload", p);
           return;
         }
         const product = linkedProductDataRef.current;
         if (!product?.product?.id) {
           console.warn("[site-action] open-slot: no linked product resolved yet");
+          return;
+        }
+        if (productIdIn && productIdIn !== product.product.id) {
+          console.warn("[site-action] open-slot: product_id mismatch", { got: productIdIn, expected: product.product.id });
+          return;
+        }
+        const tariff = (product.tariffs || []).find((t) => t.id === tariffId);
+        if (!tariff) {
+          console.warn("[site-action] open-slot: tariff not on linked product", { tariffId });
+          return;
+        }
+        const offer = (tariff.offers || []).find((o) => o.id === offerId);
+        if (!offer) {
+          console.warn("[site-action] open-slot: offer not on tariff", { offerId, tariffId });
+          return;
+        }
+        if (offer.is_active === false) {
+          console.warn("[site-action] open-slot: offer inactive", { offerId });
+          return;
+        }
+        const offerRole = String((offer.meta as Record<string, unknown> | undefined)?.slot_role || "");
+        if (!offerRole || offerRole !== slotRole) {
+          console.warn("[site-action] open-slot: slot_role mismatch", { offerRole, slotRole });
+          return;
+        }
+        // Cross-check against last posted manifest.
+        const manifest = slotManifestRef.current;
+        const inManifest = !!manifest?.tariffs?.some((t) =>
+          t.tariff_id === tariffId && t.offers.some((o) => o.offer_id === offerId && o.slot_role === slotRole),
+        );
+        if (!inManifest) {
+          console.warn("[site-action] open-slot: offer not in current manifest", { offerId });
           return;
         }
         setPending({ productId: product.product.id, offerId });
