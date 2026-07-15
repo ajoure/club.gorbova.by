@@ -7,7 +7,7 @@
  * strict validation, allow-list of actions.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
@@ -22,6 +22,8 @@ import { PreregistrationDialog } from "@/components/course/PreregistrationDialog
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
 import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
+import { buildSlotManifest, pageHasDynamicSlots } from "@/lib/siteSlotManifest";
+import { SiteSlotManifestContext } from "@/contexts/SiteSlotManifestContext";
 import type { SiteBlock } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
 
@@ -29,6 +31,7 @@ import NotFound from "./NotFound";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALLOWED_ACTIONS = new Set([
   "open-offer",
+  "open-slot",
   "open-preregistration",
   "open-payment",
   "open-invoice",
@@ -46,6 +49,7 @@ const ACTION_TO_FLOW = {
   "open-bank-installment": "bank_installment",
 } as const;
 type Flow = (typeof ACTION_TO_FLOW)[keyof typeof ACTION_TO_FLOW];
+
 
 interface PendingOffer {
   productId: string;
