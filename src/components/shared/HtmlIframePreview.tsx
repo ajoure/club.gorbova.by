@@ -776,6 +776,11 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       ev.preventDefault(); ev.stopPropagation();
       return;
     }
+    // Locked CTA (pre-manifest fail-closed). Refuse until first manifest lands.
+    if (el.getAttribute('data-lovable-cta-locked') === '1') {
+      ev.preventDefault(); ev.stopPropagation();
+      return;
+    }
     ev.preventDefault();
     ev.stopPropagation();
     try {
