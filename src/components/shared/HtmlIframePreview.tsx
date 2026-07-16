@@ -746,8 +746,16 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       void document.body.offsetHeight;
 
       if (bucketSwitched) {
-        // Give Tilda two frames to settle new breakpoint metrics (font-load
-        // reflow inside media query, etc.) before capturing baseline.
+        // Commit the transition state BEFORE the deferred run, otherwise the
+        // next pass would still observe currentBucket !== bucket and loop.
+        // Invalidate the target bucket's cached baseline so it's re-sampled
+        // AFTER Tilda's media queries settle for the new breakpoint.
+        for (var bs = 0; bs < artboards.length; bs++) {
+          var stBs = getBaselineStore(artboards[bs]);
+          if (!stBs) continue;
+          stBs.currentBucket = bucket;
+          if (stBs.buckets && stBs.buckets[bucket]) delete stBs.buckets[bucket];
+        }
         artboardResizeInFlight = false;
         if (reattach && slotMo) {
           try { slotMo.takeRecords(); slotMo.observe(document.body, { childList: true, subtree: true }); } catch (e) {}
@@ -777,7 +785,9 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
         stC.currentBucket = bucket;
       }
 
-      // Apply overflow delta where needed. Otherwise leave orig styles intact.
+      // Apply overflow delta only when at least one visible overflow clone/
+      // extra actually exists. Without clones the artboard must remain at its
+      // authored baseline (DOM-identical to source HTML).
       for (var b = 0; b < artboards.length; b++) {
         var ab2 = artboards[b];
         var st2 = getBaselineStore(ab2);
@@ -786,8 +796,9 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
         if (!base) continue;
         var rec2 = findArtboardRecord(ab2);
         if (!rec2) continue; // fail-closed: overflow requires flow-owning wrapper.
+        if (!hasVisibleOverflowClones(ab2)) continue; // 0-extra: leave authored.
         var needed = Math.ceil(measureContentBottom(ab2) + ARTBOARD_BOTTOM_PAD);
-        if (needed <= base.height) continue; // 0-extra: DOM-identical to authored.
+        if (needed <= base.height) continue;
         var delta = needed - base.height;
         ab2.style.setProperty('height', needed + 'px', 'important');
         ab2.style.setProperty('min-height', needed + 'px', 'important');
