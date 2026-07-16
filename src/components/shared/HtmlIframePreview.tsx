@@ -655,9 +655,11 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   function measureContentBottom(ab) {
     var abRect = ab.getBoundingClientRect();
     var maxBottom = 0;
+    // Only overflow-owned nodes contribute to growth. Slot-group and
+    // offer-wrapper are part of the authored Tilda layout and must NOT
+    // trigger resize on their own.
     var nodes = ab.querySelectorAll(
-      '[data-lovable-slot-group],[data-lovable-slot-extra],' +
-      '[data-lovable-slot-clone="1"],[data-lovable-offer-wrapper]'
+      '[data-lovable-slot-extra],[data-lovable-slot-clone="1"]'
     );
     for (var i = 0; i < nodes.length; i++) {
       var n = nodes[i];
@@ -670,6 +672,22 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       if (bottom > maxBottom) maxBottom = bottom;
     }
     return maxBottom;
+  }
+
+  function hasVisibleOverflowClones(ab) {
+    var nodes = ab.querySelectorAll(
+      '[data-lovable-slot-extra],[data-lovable-slot-clone="1"]'
+    );
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (n.getAttribute && n.getAttribute('data-lovable-slot-template')) continue;
+      var cs = window.getComputedStyle(n);
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      var r = n.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      return true;
+    }
+    return false;
   }
 
   function collectSlotArtboards() {
