@@ -483,11 +483,53 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     }
   }
 
+  // ---- swapWrapperFromTemplate() -------------------------------------------
+  // Replaces a fixed wrapper's inner content with the visual template of a
+  // different variant, preserving the outer <div> — so absolute coordinates,
+  // width/height, and Tilda .tn-elem positioning stay pixel-identical.
+  // Original inner is snapshotted once per wrapper (WeakMap) so we can restore
+  // the authored variant later without re-parsing the source HTML.
+  var wrapperOriginalInner = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+
+  function snapshotWrapperInner(wrapper) {
+    if (!wrapperOriginalInner) return;
+    if (wrapperOriginalInner.has(wrapper)) return;
+    var frag = document.createDocumentFragment();
+    var kids = wrapper.childNodes;
+    for (var i = 0; i < kids.length; i++) frag.appendChild(kids[i].cloneNode(true));
+    wrapperOriginalInner.set(wrapper, frag);
+  }
+
+  function replaceWrapperInner(wrapper, sourceNode) {
+    while (wrapper.firstChild) wrapper.removeChild(wrapper.firstChild);
+    var kids = sourceNode.childNodes;
+    for (var i = 0; i < kids.length; i++) wrapper.appendChild(kids[i].cloneNode(true));
+  }
+
+  function swapWrapperFromTemplate(wrapper, group, targetVariant) {
+    if (!wrapper || !group || !targetVariant) return false;
+    var origVariant = wrapper.getAttribute('data-lovable-position-variant') || '';
+    var activeVariant = wrapper.getAttribute('data-lovable-active-variant') || origVariant;
+    if (activeVariant === targetVariant) return true;
+    // Always snapshot BEFORE the first mutation so we can restore later.
+    snapshotWrapperInner(wrapper);
+    if (targetVariant === origVariant && wrapperOriginalInner && wrapperOriginalInner.has(wrapper)) {
+      replaceWrapperInner(wrapper, wrapperOriginalInner.get(wrapper));
+      wrapper.setAttribute('data-lovable-active-variant', origVariant);
+      return true;
+    }
+    var tpl = group.querySelector('[data-lovable-slot-template="' + targetVariant + '"]');
+    if (!tpl) return false;
+    replaceWrapperInner(wrapper, tpl);
+    wrapper.setAttribute('data-lovable-active-variant', targetVariant);
+    return true;
+  }
+
   function applyGroup(group, tariffEntry) {
     // Fixed wrappers in position order. Each position MAY declare
-    // data-lovable-position-variant — when present, only offers of that variant
-    // may occupy the slot (preserves Tilda-authored styling regardless of
-    // sort_order). Positions without a declared variant accept any offer.
+    // data-lovable-position-variant — the authored variant of the fixed slot.
+    // Offers of a different variant can still occupy the slot via
+    // swapWrapperFromTemplate(), which replaces only the inner nodes.
     var wrappers = group.querySelectorAll('[data-lovable-offer-wrapper]');
     var positioned = [];
     for (var i = 0; i < wrappers.length; i++) {
@@ -503,21 +545,44 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     var offers = (tariffEntry && tariffEntry.offers) ? tariffEntry.offers.slice() : [];
     var tariffId = tariffEntry ? tariffEntry.tariff_id : '';
     var used = new Array(offers.length);
+
+    // Pass 1: exact-variant matches. Preserve authored slot ↔ variant pairing.
     for (var oi = 0; oi < offers.length; oi++) {
       var off = offers[oi];
       for (var pj = 0; pj < positioned.length; pj++) {
         var pw = positioned[pj];
         if (pw.assigned) continue;
-        if (pw.variant && pw.variant !== off.variant) continue;
+        if (!pw.variant || pw.variant !== off.variant) continue;
+        // Restore authored inner if this wrapper was previously swapped.
+        swapWrapperFromTemplate(pw.el, group, pw.variant);
         pw.assigned = true;
         used[oi] = true;
         assignOfferToWrapper(pw.el, off, tariffId);
         break;
       }
     }
+    // Pass 2: swap-fill remaining offers into remaining positions. A position
+    // with declared variant gets its inner template swapped; a blank-variant
+    // position accepts any offer as-is (legacy generic slot).
+    for (var oi2 = 0; oi2 < offers.length; oi2++) {
+      if (used[oi2]) continue;
+      var off2 = offers[oi2];
+      for (var pj2 = 0; pj2 < positioned.length; pj2++) {
+        var pw2 = positioned[pj2];
+        if (pw2.assigned) continue;
+        if (pw2.variant && pw2.variant !== off2.variant) {
+          if (!swapWrapperFromTemplate(pw2.el, group, off2.variant)) continue;
+        }
+        pw2.assigned = true;
+        used[oi2] = true;
+        assignOfferToWrapper(pw2.el, off2, tariffId);
+        break;
+      }
+    }
     for (var q = 0; q < positioned.length; q++) {
       if (!positioned[q].assigned) deactivateWrapper(positioned[q].el);
     }
+
 
     // Extra-container for overflow offers (variant has no free fixed position).
     var extra = group.querySelector('[data-lovable-slot-extra]');
