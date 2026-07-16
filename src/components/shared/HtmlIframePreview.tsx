@@ -684,16 +684,17 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   }
 
   function hasVisibleOverflowClones(ab) {
-    var nodes = ab.querySelectorAll(
-      '[data-lovable-slot-extra],[data-lovable-slot-clone="1"]'
-    );
+    // Gate MUST count only actual overflow clones — never the extra container
+    // itself. An empty extra with residual whitespace/margin can produce a
+    // measurable rect and falsely trigger resize.
+    var nodes = ab.querySelectorAll('[data-lovable-slot-clone="1"]');
     for (var i = 0; i < nodes.length; i++) {
       var n = nodes[i];
       if (n.getAttribute && n.getAttribute('data-lovable-slot-template')) continue;
       var cs = window.getComputedStyle(n);
       if (cs.display === 'none' || cs.visibility === 'hidden') continue;
       var r = n.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) continue;
+      if (r.width <= 0 || r.height <= 0) continue;
       return true;
     }
     return false;
