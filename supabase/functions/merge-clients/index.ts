@@ -51,6 +51,18 @@ serve(async (req) => {
     // Use service role for actual operations
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // Admin/super_admin role guard — fail-closed before any profile read or mutation
+    const callerId = claimsData.claims.sub as string;
+    const { data: isAdmin } = await supabase.rpc("has_role_v2", { _user_id: callerId, _role_code: "admin" });
+    const { data: isSuper } = await supabase.rpc("has_role_v2", { _user_id: callerId, _role_code: "super_admin" });
+    if (!isAdmin && !isSuper) {
+      return new Response(JSON.stringify({ error: "Forbidden: admin role required" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+
     const { caseId, masterId, mergedIds: rawMergedIds } = await req.json();
 
     if (!masterId || !rawMergedIds?.length) {
