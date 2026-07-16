@@ -205,6 +205,9 @@ const App = () => {
               <Route path="/auth/v1/verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
               <Route path="/auth-verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
               <Route path="/.lovable/oauth/consent" element={<LazyRoute><OAuthConsent /></LazyRoute>} />
+              {import.meta.env.DEV && SlotFixturePage && (
+                <Route path="/__slot-fixture" element={<LazyRoute><SlotFixturePage /></LazyRoute>} />
+              )}
               <Route path="/connect" element={<LazyRoute><ConnectAgent /></LazyRoute>} />
               <Route path="/pricing/tariff/:tariffPublicId" element={<LazyRoute><TariffPricing /></LazyRoute>} />
               <Route path="/pricing/:productSlug" element={<LazyRoute><ProductPricing /></LazyRoute>} />
