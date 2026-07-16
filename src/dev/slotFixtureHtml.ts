@@ -154,6 +154,13 @@ export const SCENARIOS = {
     off('o1', 'primary',      'Купить',       1),
     off('o3', 'legal_entity', 'От юрлица',    2),
   ]),
+  // Force swap: 3 primary offers → position 2 (installment) and position 3
+  // (legal_entity) both swapped to primary template. Proves Pass 2 swap path.
+  forceSwapAllPrimary: () => buildManifest([
+    off('op1', 'primary', 'Primary A', 0),
+    off('op2', 'primary', 'Primary B', 1),
+    off('op3', 'primary', 'Primary C', 2),
+  ]),
 } as const;
 
 export type ScenarioKey = keyof typeof SCENARIOS;
