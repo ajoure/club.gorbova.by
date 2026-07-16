@@ -522,15 +522,18 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     // Extra-container for overflow offers (variant has no free fixed position).
     var extra = group.querySelector('[data-lovable-slot-extra]');
     if (!extra) return;
-    // Fail-closed: if we cannot resolve a Tilda artboard ancestor for this
-    // group, overflow clones would end up mis-positioned or overlap adjacent
-    // blocks. Hide the extra bucket and skip clone creation entirely.
+    // Fail-closed: overflow clones require BOTH a Tilda .t396__artboard
+    // ancestor AND its enclosing flow-owning record wrapper. Without the
+    // record, growing the artboard would not shift the next page block
+    // down and clones would overlap adjacent content.
     var abForGroup = findSlotArtboard(group);
-    if (!abForGroup) {
+    var recForGroup = abForGroup ? findArtboardRecord(abForGroup) : null;
+    if (!abForGroup || !recForGroup) {
       var staleFc = extra.querySelectorAll('[data-lovable-slot-clone="1"]');
       for (var sf = 0; sf < staleFc.length; sf++) staleFc[sf].parentNode.removeChild(staleFc[sf]);
       extra.setAttribute('data-lovable-clones-fp', '__failclosed__');
       extra.style.display = 'none';
+      try { console.warn('[lovable-slots] fail-closed: missing', abForGroup ? 'record wrapper' : 'artboard'); } catch (e) {}
       return;
     }
     if (extra.style.display === 'none') extra.style.display = '';
@@ -584,6 +587,7 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   var artboardBaselines = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
   var artboardResizeInFlight = false;
   var artboardResizePending = false;
+  var ARTBOARD_BOTTOM_PAD = 24; // safety margin: border/shadow/gap.
 
   function currentViewportBucket() {
     var w = document.documentElement.clientWidth || window.innerWidth || 1440;
@@ -602,8 +606,6 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   }
 
   function findArtboardRecord(artboard) {
-    // The outer .t396 record wraps the artboard and typically owns the
-    // authored height (Tilda writes it as inline style). Grow both.
     var node = artboard.parentNode;
     while (node && node !== document.body) {
       if (node.classList && (
@@ -615,24 +617,44 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     return null;
   }
 
-  function getArtboardBaseline(ab) {
+  // Snapshot the exact inline height/min-height (values + priority) so we can
+  // restore them byte-for-byte, ensuring the 0-extra path is DOM-identical
+  // and viewport-bucket switches never inherit prior overrides.
+  function snapshotHeights(node) {
+    if (!node) return null;
+    return {
+      h:      node.style.getPropertyValue('height'),
+      hPrio:  node.style.getPropertyPriority('height'),
+      mh:     node.style.getPropertyValue('min-height'),
+      mhPrio: node.style.getPropertyPriority('min-height'),
+    };
+  }
+  function restoreHeights(node, snap) {
+    if (!node || !snap) return;
+    node.style.removeProperty('height');
+    if (snap.h) node.style.setProperty('height', snap.h, snap.hPrio || '');
+    node.style.removeProperty('min-height');
+    if (snap.mh) node.style.setProperty('min-height', snap.mh, snap.mhPrio || '');
+  }
+
+  function getBaselineStore(ab) {
     if (!artboardBaselines) return null;
     var store = artboardBaselines.get(ab);
-    if (!store) { store = {}; artboardBaselines.set(ab, store); }
-    var bucket = currentViewportBucket();
-    if (store[bucket]) return store[bucket];
-    // Capture BEFORE we mutate. offsetHeight reflects Tilda's authored value.
-    var h = ab.offsetHeight;
-    var rec = findArtboardRecord(ab);
-    var recH = rec ? rec.offsetHeight : 0;
-    store[bucket] = { height: h, recordHeight: recH };
-    return store[bucket];
+    if (!store) {
+      store = { origAb: snapshotHeights(ab), origRec: null, origRecCaptured: false, buckets: {}, currentBucket: null };
+      artboardBaselines.set(ab, store);
+    }
+    if (!store.origRecCaptured) {
+      var rec0 = findArtboardRecord(ab);
+      store.origRec = rec0 ? snapshotHeights(rec0) : null;
+      store.origRecCaptured = true;
+    }
+    return store;
   }
 
   function measureContentBottom(ab) {
     var abRect = ab.getBoundingClientRect();
     var maxBottom = 0;
-    // Consider slot-owned nodes that could push past the artboard.
     var nodes = ab.querySelectorAll(
       '[data-lovable-slot-group],[data-lovable-slot-extra],' +
       '[data-lovable-slot-clone="1"],[data-lovable-offer-wrapper]'
@@ -650,57 +672,111 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     return maxBottom;
   }
 
+  function collectSlotArtboards() {
+    var groups = document.querySelectorAll('[data-lovable-slot-group]');
+    var out = [];
+    if (!groups.length) return out;
+    var seen = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+    var seenArr = [];
+    for (var i = 0; i < groups.length; i++) {
+      var ab = findSlotArtboard(groups[i]);
+      if (!ab) continue;
+      if (seen) { if (seen.has(ab)) continue; seen.add(ab); }
+      else { var dup = false; for (var d = 0; d < seenArr.length; d++) { if (seenArr[d] === ab) { dup = true; break; } } if (dup) continue; seenArr.push(ab); }
+      out.push(ab);
+    }
+    return out;
+  }
+
   function resizeSlotArtboard() {
     if (artboardResizeInFlight) return;
     artboardResizeInFlight = true;
-    // Pause slotMo so our style writes don't retrigger applySlotManifest.
     var reattach = false;
     if (slotMo && !applyingManifest) {
       try { slotMo.takeRecords(); slotMo.disconnect(); reattach = true; } catch (e) {}
     }
     try {
-      var groups = document.querySelectorAll('[data-lovable-slot-group]');
-      if (!groups.length) return;
-      var artboards = [];
-      var seen = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
-      var seenArr = [];
-      for (var i = 0; i < groups.length; i++) {
-        var ab = findSlotArtboard(groups[i]);
-        if (!ab) continue;
-        if (seen) { if (seen.has(ab)) continue; seen.add(ab); }
-        else { var dup = false; for (var d = 0; d < seenArr.length; d++) { if (seenArr[d] === ab) { dup = true; break; } } if (dup) continue; seenArr.push(ab); }
-        artboards.push(ab);
+      var artboards = collectSlotArtboards();
+      if (!artboards.length) return;
+      var bucket = currentViewportBucket();
+
+      // Detect any bucket switch. On switch we must restore original inline
+      // styles first and let Tilda's media queries recompute authored heights
+      // BEFORE we sample a new baseline.
+      var bucketSwitched = false;
+      for (var s = 0; s < artboards.length; s++) {
+        var st = getBaselineStore(artboards[s]);
+        if (st && st.currentBucket && st.currentBucket !== bucket) { bucketSwitched = true; break; }
       }
-      // Reset each artboard (and its record) to baseline before measuring, so
-      // repeated calls converge to a stable value regardless of prior growth.
+
+      // Restore original inline styles on all artboards + records. This is
+      // the correct reset for both:
+      //   • bucket switch — remove stale overrides from previous breakpoint;
+      //   • same-bucket re-run — the 0-extra path must end DOM-identical to
+      //     the authored HTML, so we must not leave computed-px !important.
       for (var a = 0; a < artboards.length; a++) {
-        var base = getArtboardBaseline(artboards[a]);
-        if (!base) continue;
-        artboards[a].style.setProperty('height', base.height + 'px', 'important');
-        artboards[a].style.setProperty('min-height', base.height + 'px', 'important');
-        var rec0 = findArtboardRecord(artboards[a]);
-        if (rec0 && base.recordHeight) {
-          rec0.style.setProperty('height', base.recordHeight + 'px', 'important');
-          rec0.style.setProperty('min-height', base.recordHeight + 'px', 'important');
-        }
+        var ab = artboards[a];
+        var store = getBaselineStore(ab);
+        if (!store) continue;
+        restoreHeights(ab, store.origAb);
+        var rec0 = findArtboardRecord(ab);
+        if (rec0) restoreHeights(rec0, store.origRec);
       }
-      // Force reflow so measureContentBottom sees the reset heights.
+
+      // Force reflow so authored/media-query heights re-apply before sampling.
       // eslint-disable-next-line no-unused-expressions
       void document.body.offsetHeight;
+
+      if (bucketSwitched) {
+        // Give Tilda two frames to settle new breakpoint metrics (font-load
+        // reflow inside media query, etc.) before capturing baseline.
+        artboardResizeInFlight = false;
+        if (reattach && slotMo) {
+          try { slotMo.takeRecords(); slotMo.observe(document.body, { childList: true, subtree: true }); } catch (e) {}
+        }
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(function() {
+            requestAnimationFrame(function() { scheduleArtboardResize(); });
+          });
+        } else {
+          setTimeout(function() { scheduleArtboardResize(); }, 32);
+        }
+        return;
+      }
+
+      // Capture baseline for this bucket if we don't have one yet.
+      for (var c = 0; c < artboards.length; c++) {
+        var abC = artboards[c];
+        var stC = getBaselineStore(abC);
+        if (!stC) continue;
+        if (!stC.buckets[bucket]) {
+          var recC = findArtboardRecord(abC);
+          stC.buckets[bucket] = {
+            height: abC.offsetHeight,
+            recordHeight: recC ? recC.offsetHeight : 0,
+          };
+        }
+        stC.currentBucket = bucket;
+      }
+
+      // Apply overflow delta where needed. Otherwise leave orig styles intact.
       for (var b = 0; b < artboards.length; b++) {
         var ab2 = artboards[b];
-        var basedata = getArtboardBaseline(ab2);
-        if (!basedata) continue;
-        var needed = Math.ceil(measureContentBottom(ab2));
-        if (needed <= basedata.height) continue; // 0-extra path: no change.
-        var delta = needed - basedata.height;
+        var st2 = getBaselineStore(ab2);
+        if (!st2) continue;
+        var base = st2.buckets[bucket];
+        if (!base) continue;
+        var rec2 = findArtboardRecord(ab2);
+        if (!rec2) continue; // fail-closed: overflow requires flow-owning wrapper.
+        var needed = Math.ceil(measureContentBottom(ab2) + ARTBOARD_BOTTOM_PAD);
+        if (needed <= base.height) continue; // 0-extra: DOM-identical to authored.
+        var delta = needed - base.height;
         ab2.style.setProperty('height', needed + 'px', 'important');
         ab2.style.setProperty('min-height', needed + 'px', 'important');
-        var rec = findArtboardRecord(ab2);
-        if (rec && basedata.recordHeight) {
-          var target = basedata.recordHeight + delta;
-          rec.style.setProperty('height', target + 'px', 'important');
-          rec.style.setProperty('min-height', target + 'px', 'important');
+        if (base.recordHeight) {
+          var target = base.recordHeight + delta;
+          rec2.style.setProperty('height', target + 'px', 'important');
+          rec2.style.setProperty('min-height', target + 'px', 'important');
         }
       }
     } finally {
