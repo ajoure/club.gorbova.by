@@ -1035,6 +1035,83 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     try { applySlotManifest(currentSlotManifest); } catch (e) {}
   });
 
+  // ---- Diagnostic responder (fixture stand only) --------------------------
+  // Parent may request a structured snapshot of the current slot layout by
+  // posting { type:'lovable-slot-diag-request', reqId }. The bridge replies
+  // with { type:'lovable-slot-diag', reqId, ... } containing measurements
+  // needed for automated regression proof. Read-only; does not mutate state.
+  window.addEventListener('message', function(ev) {
+    if (ev.source !== parent) return;
+    var d = ev.data;
+    if (!d || d.type !== 'lovable-slot-diag-request') return;
+    var artboards = collectSlotArtboards();
+    var out = [];
+    for (var i = 0; i < artboards.length; i++) {
+      var ab = artboards[i];
+      var rec = findArtboardRecord(ab);
+      var clones = ab.querySelectorAll('[data-lovable-slot-clone="1"]');
+      var extras = ab.querySelectorAll('[data-lovable-slot-extra]');
+      var visibleClones = 0;
+      for (var c = 0; c < clones.length; c++) {
+        var ccs = window.getComputedStyle(clones[c]);
+        if (ccs.display === 'none' || ccs.visibility === 'hidden') continue;
+        var cr = clones[c].getBoundingClientRect();
+        if (cr.width <= 0 || cr.height <= 0) continue;
+        visibleClones++;
+      }
+      var wrappers = ab.querySelectorAll('[data-lovable-offer-wrapper]:not([data-lovable-slot-clone="1"])');
+      var wrapInfo = [];
+      for (var w = 0; w < wrappers.length; w++) {
+        var wr = wrappers[w];
+        wrapInfo.push({
+          pos: wr.getAttribute('data-lovable-slot-position') || null,
+          origVariant: wr.getAttribute('data-lovable-position-variant') || null,
+          activeVariant: wr.getAttribute('data-lovable-active-variant') || null,
+          offerId: wr.getAttribute('data-lovable-offer-id') || null,
+          inactive: wr.getAttribute('data-lovable-slot-inactive') === '1',
+          rect: (function(el) { var r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; })(wr),
+        });
+      }
+      // Find next sibling record (record wrapper's next .t396 or generic sibling).
+      var nextTop = null;
+      if (rec && rec.nextElementSibling) {
+        nextTop = rec.nextElementSibling.getBoundingClientRect().top + (window.pageYOffset || 0);
+      }
+      out.push({
+        artboard: {
+          height: ab.style.height || '',
+          heightPriority: ab.style.getPropertyPriority('height') || '',
+          minHeight: ab.style.minHeight || '',
+          minHeightPriority: ab.style.getPropertyPriority('min-height') || '',
+          offsetHeight: ab.offsetHeight,
+        },
+        record: rec ? {
+          height: rec.style.height || '',
+          heightPriority: rec.style.getPropertyPriority('height') || '',
+          minHeight: rec.style.minHeight || '',
+          minHeightPriority: rec.style.getPropertyPriority('min-height') || '',
+          offsetHeight: rec.offsetHeight,
+          present: true,
+        } : { present: false },
+        cloneCount: clones.length,
+        visibleCloneCount: visibleClones,
+        extraCount: extras.length,
+        wrappers: wrapInfo,
+        nextRecordTop: nextTop,
+      });
+    }
+    try {
+      parent.postMessage({
+        type: 'lovable-slot-diag',
+        reqId: d.reqId || null,
+        resizePassCount: artboardResizePassCount,
+        viewportBucket: currentViewportBucket(),
+        viewportWidth: window.innerWidth,
+        artboards: out,
+      }, '*');
+    } catch (e) {}
+  });
+
   // Re-apply on DOM changes. applySlotManifest disconnects/reconnects this
   // observer around its own writes, so it can never trigger itself.
   if (typeof MutationObserver !== 'undefined' && document.body) {
