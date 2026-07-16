@@ -127,6 +127,13 @@ export const SCENARIOS = {
     off('o2', 'installment',  'В рассрочку',  1),
     off('o3', 'legal_entity', 'От юрлица',    2),
   ]),
+  // 4 offers → 3 fixed + 1 overflow clone (1-extra scenario).
+  four: () => buildManifest([
+    off('o1', 'primary',      'Купить',       0),
+    off('o2', 'installment',  'В рассрочку',  1),
+    off('o3', 'legal_entity', 'От юрлица',    2),
+    off('o4', 'primary',      'Купить X',     3),
+  ]),
   // 5 offers → 3 fixed positions filled, 2 overflow clones.
   max: () => buildManifest([
     off('o1', 'primary',      'Купить',       0),
