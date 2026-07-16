@@ -83,7 +83,9 @@ export interface FixtureOffer {
   button_label: string;
   variant: SlotVariant;
   sort_order: number;
-  offer_type?: string;
+  offer_type: string;
+  payment_method: string | null;
+  amount: number;
 }
 
 export function buildManifest(offers: FixtureOffer[]) {
@@ -113,6 +115,9 @@ const off = (
   button_label: label,
   variant,
   sort_order,
+  offer_type: 'checkout',
+  payment_method: null,
+  amount: 0,
 });
 
 export const SCENARIOS = {
