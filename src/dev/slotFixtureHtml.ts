@@ -37,7 +37,6 @@ const wrapper = (pos: number, variant: string, top: number, label: string) => `
 
 const template = (variant: string, label: string) => `
 <div data-lovable-slot-template="${variant}"
-     data-lovable-offer-wrapper
      hidden
      style="display:none;">
   ${btn(variant, label)}
