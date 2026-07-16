@@ -15,6 +15,13 @@ Deno.serve(async (req) => {
     if (!path) throw new Error("path required");
     const admin = createClient(url, key);
 
+    if (req.method === "DELETE") {
+      const { error } = await admin.storage.from(bucket).remove([path]);
+      if (error) throw error;
+      return new Response(JSON.stringify({ ok: true, deleted: path }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (req.method === "POST") {
       const buf = new Uint8Array(await req.arrayBuffer());
       const ct = params.get("contentType") ?? "text/html; charset=utf-8";
