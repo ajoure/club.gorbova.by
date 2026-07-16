@@ -59,9 +59,12 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...CORS, "content-type": "application/json" } });
   }
 
-  // Загружаем целевой HTML из bundle.
-  const htmlPath = new URL("./cb.html", import.meta.url);
-  const newCode = await Deno.readTextFile(htmlPath);
+  // Загружаем целевой HTML из Storage.
+  const dl = await admin.storage.from("documents").download("cb-cutover/cb.rewritten.html");
+  if (dl.error || !dl.data) {
+    return new Response(JSON.stringify({ error: "html_download_failed", detail: dl.error?.message }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });
+  }
+  const newCode = await dl.data.text();
   const newSha = await sha256hex(newCode);
   if (newSha !== EXPECTED_AFTER_SHA) {
     return new Response(JSON.stringify({ error: "bundle_sha_mismatch", got: newSha }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });
