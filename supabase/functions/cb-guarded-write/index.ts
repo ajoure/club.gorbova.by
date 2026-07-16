@@ -50,15 +50,12 @@ Deno.serve(async (req) => {
   const uid = userRes.user.id;
 
   const admin = createClient(url, service);
-  const { data: roleRows, error: roleErr } = await admin
-    .from("user_roles_v2")
-    .select("role")
-    .eq("user_id", uid);
-  if (roleErr) {
-    return new Response(JSON.stringify({ error: "role_check_failed", detail: roleErr.message }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });
+  const { data: isAdmin, error: aErr } = await admin.rpc("has_role_v2", { _user_id: uid, _role_code: "admin" });
+  const { data: isSuper, error: sErr } = await admin.rpc("has_role_v2", { _user_id: uid, _role_code: "super_admin" });
+  if (aErr || sErr) {
+    return new Response(JSON.stringify({ error: "role_check_failed", detail: aErr?.message ?? sErr?.message }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });
   }
-  const roles = (roleRows ?? []).map((r) => r.role);
-  if (!roles.includes("admin") && !roles.includes("super_admin")) {
+  if (!isAdmin && !isSuper) {
     return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...CORS, "content-type": "application/json" } });
   }
 
