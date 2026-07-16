@@ -781,9 +781,11 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     return out;
   }
 
+  var artboardResizePassCount = 0;
   function resizeSlotArtboard() {
     if (artboardResizeInFlight) return;
     artboardResizeInFlight = true;
+    artboardResizePassCount++;
     var reattach = false;
     if (slotMo && !applyingManifest) {
       try { slotMo.takeRecords(); slotMo.disconnect(); reattach = true; } catch (e) {}
