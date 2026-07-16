@@ -37,7 +37,45 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+    // 1) Bearer JWT required (fail-closed before any profile lookup / PII disclosure)
+    const authHeader = req.headers.get("Authorization") || "";
+    if (!authHeader.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Unauthorized: missing bearer token" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const token = authHeader.slice("Bearer ".length).trim();
+
+    // 2) Verify JWT
+    const anonClient = createClient(supabaseUrl, anonKey);
+    const { data: claimsData, error: claimsErr } = await anonClient.auth.getClaims(token);
+    if (claimsErr || !claimsData?.claims?.sub) {
+      return new Response(JSON.stringify({ error: "Unauthorized: invalid token" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const callerId = claimsData.claims.sub as string;
+
+    // 3) Staff-role guard (admin or super_admin only) — PII must not leak to regular users
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const { data: isAdmin } = await supabase.rpc("has_role_v2", {
+      _user_id: callerId,
+      _role_code: "admin",
+    });
+    const { data: isSuper } = await supabase.rpc("has_role_v2", {
+      _user_id: callerId,
+      _role_code: "super_admin",
+    });
+    if (!isAdmin && !isSuper) {
+      return new Response(JSON.stringify({ error: "Forbidden: staff role required" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const { phone, email, profileId, cardMask, cardHolder } = await req.json() as DetectDuplicatesRequest;
 
