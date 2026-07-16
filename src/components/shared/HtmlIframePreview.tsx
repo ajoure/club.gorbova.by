@@ -535,6 +535,10 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     for (var i = 0; i < wrappers.length; i++) {
       var w = wrappers[i];
       if (w.hasAttribute('data-lovable-slot-clone')) continue;
+      // Defence in depth: templates should not carry data-lovable-offer-wrapper
+      // in authored HTML, but skip them here so a malformed template is never
+      // treated as a fixed position.
+      if (w.hasAttribute('data-lovable-slot-template')) continue;
       var pos = parseInt(w.getAttribute('data-lovable-slot-position') || '', 10);
       var pv = w.getAttribute('data-lovable-position-variant') || '';
       positioned.push({ el: w, pos: Number.isFinite(pos) ? pos : 999, variant: pv, assigned: false });
