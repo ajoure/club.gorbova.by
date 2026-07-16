@@ -46,7 +46,7 @@ export function buildSlotFixtureHtml(opts: { omitRecord?: boolean } = {}) {
   const inner = `
 <div class="t-rec" style="position:relative;">
   <div class="t396" style="position:relative;">
-    <div class="t396__artboard" style="position:relative;width:100%;height:280px;min-height:280px;background:#f5f5f5;">
+    <div class="t396__artboard" style="position:relative;width:100%;height:120px;min-height:120px;background:#f5f5f5;">
       <div data-lovable-slot-group="tariff:main" style="position:absolute;inset:0;">
         ${wrapper(1, 'primary',       24, 'Купить')}
         ${wrapper(2, 'installment',   96, 'В рассрочку')}
