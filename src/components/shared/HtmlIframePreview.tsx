@@ -536,7 +536,6 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       try { console.warn('[lovable-slots] fail-closed: missing', abForGroup ? 'record wrapper' : 'artboard'); } catch (e) {}
       return;
     }
-    if (extra.style.display === 'none') extra.style.display = '';
     // Fingerprint prevents rebuild-on-every-mutation → MutationObserver loop.
     var fpParts = [];
     for (var k = 0; k < offers.length; k++) {
@@ -544,6 +543,16 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       var of = offers[k];
       fpParts.push(of.offer_id + ':' + of.slot_role + ':' + of.button_label + ':' + of.variant + ':' + tariffId);
     }
+    // No overflow offers → strip stale clones AND hide the extra container so
+    // it cannot contribute a measurable rect to resize gate or layout.
+    if (fpParts.length === 0) {
+      var staleEmpty = extra.querySelectorAll('[data-lovable-slot-clone="1"]');
+      for (var se = 0; se < staleEmpty.length; se++) staleEmpty[se].parentNode.removeChild(staleEmpty[se]);
+      extra.style.display = 'none';
+      extra.setAttribute('data-lovable-clones-fp', '');
+      return;
+    }
+    if (extra.style.display === 'none') extra.style.display = '';
     var fp = fpParts.join('|');
     if (extra.getAttribute('data-lovable-clones-fp') === fp) return;
     var stale = extra.querySelectorAll('[data-lovable-slot-clone="1"]');
@@ -675,16 +684,17 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
   }
 
   function hasVisibleOverflowClones(ab) {
-    var nodes = ab.querySelectorAll(
-      '[data-lovable-slot-extra],[data-lovable-slot-clone="1"]'
-    );
+    // Gate MUST count only actual overflow clones — never the extra container
+    // itself. An empty extra with residual whitespace/margin can produce a
+    // measurable rect and falsely trigger resize.
+    var nodes = ab.querySelectorAll('[data-lovable-slot-clone="1"]');
     for (var i = 0; i < nodes.length; i++) {
       var n = nodes[i];
       if (n.getAttribute && n.getAttribute('data-lovable-slot-template')) continue;
       var cs = window.getComputedStyle(n);
       if (cs.display === 'none' || cs.visibility === 'hidden') continue;
       var r = n.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) continue;
+      if (r.width <= 0 || r.height <= 0) continue;
       return true;
     }
     return false;
