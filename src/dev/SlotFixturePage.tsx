@@ -148,6 +148,7 @@ const SlotFixturePage = () => {
             <option value="swapPrimaryInstallment">
               swap primary ↔ installment
             </option>
+            <option value="forceSwapAllPrimary">force swap: 3× primary</option>
           </select>
         </label>
         <label>
