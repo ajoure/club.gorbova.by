@@ -28,6 +28,12 @@ const OAuthConsent = lazy(() => import("./pages/OAuthConsent"));
 const ConnectAgent = lazy(() => import("./pages/ConnectAgent"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
+
+// DEV-only fixture stand for the slot bridge regression harness. Guarded by
+// import.meta.env.DEV; production bundles never register the route below.
+const SlotFixturePage = import.meta.env.DEV
+  ? lazy(() => import("./dev/SlotFixturePage"))
+  : null;
 const EmbedFormPage = lazy(() => import("./pages/embed/EmbedFormPage"));
 const DocumentDownloadPage = lazy(() => import("./pages/DocumentDownloadPage"));
 
