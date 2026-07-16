@@ -522,15 +522,18 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     // Extra-container for overflow offers (variant has no free fixed position).
     var extra = group.querySelector('[data-lovable-slot-extra]');
     if (!extra) return;
-    // Fail-closed: if we cannot resolve a Tilda artboard ancestor for this
-    // group, overflow clones would end up mis-positioned or overlap adjacent
-    // blocks. Hide the extra bucket and skip clone creation entirely.
+    // Fail-closed: overflow clones require BOTH a Tilda .t396__artboard
+    // ancestor AND its enclosing flow-owning record wrapper. Without the
+    // record, growing the artboard would not shift the next page block
+    // down and clones would overlap adjacent content.
     var abForGroup = findSlotArtboard(group);
-    if (!abForGroup) {
+    var recForGroup = abForGroup ? findArtboardRecord(abForGroup) : null;
+    if (!abForGroup || !recForGroup) {
       var staleFc = extra.querySelectorAll('[data-lovable-slot-clone="1"]');
       for (var sf = 0; sf < staleFc.length; sf++) staleFc[sf].parentNode.removeChild(staleFc[sf]);
       extra.setAttribute('data-lovable-clones-fp', '__failclosed__');
       extra.style.display = 'none';
+      try { console.warn('[lovable-slots] fail-closed: missing', abForGroup ? 'record wrapper' : 'artboard'); } catch (e) {}
       return;
     }
     if (extra.style.display === 'none') extra.style.display = '';
