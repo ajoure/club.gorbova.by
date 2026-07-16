@@ -6,6 +6,13 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+function unauthorized(msg: string, status: number) {
+  return new Response(JSON.stringify({ error: msg }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -14,7 +21,38 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+    // 1) Bearer JWT required
+    const authHeader = req.headers.get("Authorization") || "";
+    if (!authHeader.startsWith("Bearer ")) {
+      return unauthorized("Unauthorized: missing bearer token", 401);
+    }
+    const token = authHeader.slice("Bearer ".length).trim();
+    if (!token) return unauthorized("Unauthorized: empty bearer token", 401);
+
+    // 2) Verify JWT via anon client
+    const anonClient = createClient(supabaseUrl, anonKey);
+    const { data: claimsData, error: claimsErr } = await anonClient.auth.getClaims(token);
+    if (claimsErr || !claimsData?.claims?.sub) {
+      return unauthorized("Unauthorized: invalid token", 401);
+    }
+    const callerId = claimsData.claims.sub as string;
+
+    // 3) Admin or super_admin only — fail-closed before any profile read/mutation
     const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const { data: isAdmin } = await supabase.rpc("has_role_v2", {
+      _user_id: callerId,
+      _role_code: "admin",
+    });
+    const { data: isSuper } = await supabase.rpc("has_role_v2", {
+      _user_id: callerId,
+      _role_code: "super_admin",
+    });
+    if (!isAdmin && !isSuper) {
+      return unauthorized("Forbidden: admin role required", 403);
+    }
+
 
     const body = await req.json();
     const { profileId } = body;
