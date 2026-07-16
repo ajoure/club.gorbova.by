@@ -1,85 +1,104 @@
-План: Fix — кнопка «Смотреть видеоответ» неактивна у обычных пользователей
 
-Diagnose
+# План: восстановление доступа к урокам (RLS `training_lessons`)
 
-1. UI-условие в `src/pages/Knowledge.tsx` (строка 153):
-   `hasInternalLink = question.lesson?.slug && question.lesson?.module?.slug`.
-   Если `lesson` не подгрузилась — кнопка `disabled` и клик молча игнорируется. Именно это видит клиент («Test Asmanta», продукт «Gorbova Club — Идеология», 24 ч).
+## Diagnose (уже проведён)
 
-2. `useKbQuestions` в `src/hooks/useKbQuestions.ts` подтягивает slug урока и модуля отдельными SELECT'ами к `training_lessons` и `training_modules` под сессией самого пользователя.
+Клиенты получили «урок недоступен» после миграции **20260716095645** (сегодня, 09:56 UTC). Она заменила старую SELECT-политику `Authenticated users can view active lessons` на строгую:
 
-3. RLS `public.training_lessons`, политика **`Users can view lessons they are entitled to`**:
-   ```
-   is_active AND (admin OR super_admin
-     OR (product_id IS NOT NULL
-         AND EXISTS entitlements e
-              WHERE e.user_id = auth.uid()
-                AND e.product_id = training_lessons.product_id
-                AND e.status = 'active'))
-   ```
+```sql
+product_id IS NOT NULL
+AND EXISTS (SELECT 1 FROM entitlements e
+            WHERE e.user_id = auth.uid()
+              AND e.product_id = training_lessons.product_id
+              AND e.status='active' AND (e.expires_at IS NULL OR e.expires_at > now()))
+```
 
-4. Проверка в БД:
-   ```
-   SELECT tl.product_id, COUNT(kq.id)
-   FROM kb_questions kq JOIN training_lessons tl ON tl.id = kq.lesson_id
-   GROUP BY tl.product_id;
-   → product_id = NULL, 669 строк
-   ```
-   У всех уроков-носителей видеоответов `product_id IS NULL`. Из-за `product_id IS NOT NULL` в политике **любой не-админ** не видит ни одной строки `training_lessons` для KB-вопросов → `lesson = null` → кнопка disabled.
+Однако у **всех 406 строк** `training_lessons.product_id IS NULL` — связь с продуктом лежит на `training_modules.product_id` и/или в `access_rules` (grant_target_type = `training_content` / `product_access`). Условие политики никогда не проходит → все не-админы потеряли SELECT на уроки платформы (кроме 3 KB-lessons из моей вчерашней политики). Именно это и наблюдают клиенты.
 
-5. Это регресс доступа, а не «неправильный тариф»: сейчас так у всех клиентов Club, включая Идеологию. `training_modules` не блокирует (политика `is_active = true`).
+Дополнительно у части активных entitlement'ов продукт вообще не имеет своих training_modules (Идеология, standalone-потоки) — доступ им приходит через `access_rules.grant_target_type IN ('training_content','product_access')`, что старая политика также не учитывает.
 
-Scope (минимальный)
+## Что нужно сделать
 
-Раздел «База знаний → Вопросы» и только он. Никаких изменений в тарифной матрице, entitlements, странице урока, роутинге, страницах админа.
+Заменить SELECT-политику `Users can view lessons they are entitled to` на корректную, повторяющую фронтенд-resolver. Не трогать другие политики (`Admins can manage lessons`, `Authenticated can view lessons referenced by kb_questions`).
 
-План правки
+### 1. Helper (SECURITY DEFINER)
 
-1. Миграция SQL — добавить в `public.training_lessons` дополнительную SELECT-политику (существующие не трогаем):
-   ```sql
-   CREATE POLICY "Authenticated can view lessons referenced by kb_questions"
-     ON public.training_lessons
-     FOR SELECT
-     TO authenticated
-     USING (
-       is_active
-       AND EXISTS (SELECT 1 FROM public.kb_questions kq WHERE kq.lesson_id = training_lessons.id)
-     );
-   ```
-   Разрешает читать только строки уроков, на которые уже опубликован KB-вопрос, только авторизованным. `GRANT SELECT` для `authenticated` на `training_lessons` уже есть (иначе админ бы не читал).
+Создать `public.user_has_training_lesson_access(_user_id uuid, _lesson_id uuid) RETURNS boolean` со `search_path=public`, `stable`, `security definer`. Возвращает `true`, если урок активен и:
 
-2. Ничего в `training_modules` менять не нужно — существующая политика `is_active = true` уже пропускает.
+- админ / super_admin (по `has_role_v2`), **или**
+- есть активный entitlement (`status='active'`, `expires_at IS NULL OR > now()`) на продукт, чей `training_modules.product_id` = `lesson.module_id → module.product_id`, **или**
+- есть активный entitlement на продукт `P`, для которого существует активное правило `access_rules`:
+  - `grant_target_type='training_content'`, `product_id = P`, target module = `lesson.module_id` **или** module лежит в `conditions.allowed_module_ids`, **или**
+  - `grant_target_type='product_access'`, `product_id = P`, `target_ref = module.product_id` (кросс-продуктовый бонус) — эквивалент entitlement на целевой продукт.
 
-3. Клиентская логика остаётся как есть: кнопка ведёт на `/library/:module/:lesson`, а гейт доступа к плееру продолжает работать на странице урока — этот план его НЕ ослабляет. Наружу «утекает» только пара `id + slug + module_id + module.slug` для уроков, у которых и так есть публичная запись в KB (title/question) — новой чувствительной информации не добавляется.
+Функция чистая (только SELECT, без побочек), возвращает boolean, легко откатывается.
 
-Dry run / Verify (после apply в build-режиме)
+### 2. Политика
 
-- SQL sanity:
-  ```
-  SET ROLE authenticated;  -- через impersonation user_id = 291aaf0b… (Test Asmanta)
-  SELECT id, slug, module_id
-  FROM training_lessons
-  WHERE id IN (SELECT DISTINCT lesson_id FROM kb_questions LIMIT 5);
-  ```
-  Должно вернуть строки (до фикса — 0 строк).
+```text
+DROP POLICY "Users can view lessons they are entitled to" ON public.training_lessons;
+CREATE POLICY "Users can view lessons they are entitled to"
+  ON public.training_lessons FOR SELECT TO authenticated
+  USING (public.user_has_training_lesson_access(auth.uid(), id));
+```
 
-- Playwright под этим пользователем на `/knowledge`:
-  1. кнопка «Смотреть видеоответ» перестала быть `disabled`,
-  2. клик уводит на `/library/<module>/<lesson>` с `state.seekTo` и `autoplay`,
-  3. в консоли — лог `[goToVideoAnswer] Internal navigation`, а не тост «Видеоответ не привязан к уроку».
+Политика `Authenticated can view lessons referenced by kb_questions` остаётся как есть (нужна для KB-вопросов, где lesson.module может быть у продукта без entitlement, но публично разрешено).
 
-- Regression: под тем же non-admin проверить, что прямой список `training_lessons` без фильтра по kb_questions по-прежнему НЕ показывает уроки без entitlement (RLS других политик не расширилась).
+### 3. GRANT / RLS
 
-DoD
+Существующие GRANT'ы на `training_lessons` не меняем. На helper: `GRANT EXECUTE ... TO authenticated, service_role`.
 
-- Кнопка активна для всех авторизованных с валидным `lesson_id` в KB.
-- Не-админ по-прежнему не читает `training_lessons` без активного entitlement, кроме уроков, привязанных к `kb_questions`.
-- Security scan: без новых level=error findings.
-- Никаких мутаций entitlements/product_id и никаких правок UI-логики доступа.
+## Dry run (перед миграцией)
 
-Технический блок
+Через `psql` под `SET LOCAL role authenticated` + JWT sub для 4 профилей, зафиксировать AS-IS видимость и after-count:
 
-- Файлы:
-  - новый `supabase/migrations/<ts>_kb_lessons_public_slug_read.sql` — SQL из шага 1.
-  - `src/pages/Knowledge.tsx`, `src/hooks/useKbQuestions.ts`, `src/lib/goToVideoAnswer.ts` — без изменений.
-- Rollback: `DROP POLICY "Authenticated can view lessons referenced by kb_questions" ON public.training_lessons;`. Никаких данных не мигрируется.
+| Профиль | Ожидание |
+|---|---|
+| Test asmanta (Ideology 24h, `291aaf0b-...`) | до: 3 KB-lessons; после: те же 3 KB-lessons (Идеология без training_modules) |
+| User с активным «Ценный бухгалтер 1 ст. 2.0» (`df411c24-...`) | до: 0; после: 106 |
+| User только с cross-product bonus (пример из access_rules) | до: 0; после: N (>0) |
+| Anon / без entitlement | до: 0; после: 0 (только KB-lessons через отдельную политику) |
+| Super admin | до: 406; после: 406 |
+
+Если хоть один expected fail → миграция не применяется, готовим rollback.
+
+## Execute
+
+Одна миграция:
+
+1. `CREATE OR REPLACE FUNCTION public.user_has_training_lesson_access(...)`
+2. `GRANT EXECUTE`
+3. `DROP POLICY ... ; CREATE POLICY ...`
+
+## Verify (postflight)
+
+1. Тот же psql-скрипт под 5 профилями — числа совпали с ожиданием.
+2. Playwright под Test asmanta: страница `/knowledge` → кнопка «Смотреть видеоответ» активна, клик открывает урок; страница `/library` → карточки видны.
+3. `supabase--linter` — ошибок нет.
+
+## Rollback
+
+Заранее сохранить текущее определение политики и helper (если существовал). Rollback-миграция:
+
+```text
+DROP POLICY "Users can view lessons they are entitled to" ON public.training_lessons;
+CREATE POLICY "Users can view lessons they are entitled to" ON public.training_lessons ...
+  -- (точное тело исходной политики из 20260716095645)
+DROP FUNCTION IF EXISTS public.user_has_training_lesson_access(uuid, uuid);
+```
+
+## Что явно НЕ трогаем в этом спринте
+
+- `training_modules` policies (там уже `is_active` — ок).
+- `entitlements`, `access_rules` — данные не меняются.
+- Ранее добавленную политику `Authenticated can view lessons referenced by kb_questions` — оставляем.
+- Никаких массовых бэкфиллов `training_lessons.product_id` — колонка де-факто заменена связкой module+access_rules; выравнивание модели — отдельной задачей.
+
+## DoD
+
+- Не-админ с активным entitlement на продукт с training_modules видит ВСЕ активные уроки этого продукта.
+- Не-админ с активным entitlement и cross-product access_rule видит уроки целевого продукта.
+- Не-админ без активных entitlement / с истёкшим `expires_at` НЕ видит уроки (кроме KB-lessons).
+- Админ видит всё.
+- Не сломаны существующие тесты и `supabase--linter`.
+- Rollback-миграция подготовлена и проверена dry-run.
