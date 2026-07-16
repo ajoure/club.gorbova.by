@@ -20048,6 +20048,10 @@ export type Database = {
         Args: { _live_event_id: string; _user_id: string }
         Returns: boolean
       }
+      user_has_training_lesson_access: {
+        Args: { _lesson_id: string; _user_id: string }
+        Returns: boolean
+      }
       user_tenant_ids: { Args: { _user_id: string }; Returns: string[] }
       validate_club_product_linkage: {
         Args: {
