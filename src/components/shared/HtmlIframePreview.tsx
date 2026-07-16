@@ -1077,9 +1077,11 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
         });
       }
       // Find next sibling record (record wrapper's next .t396 or generic sibling).
+      // Next record wrapper is a sibling of the .t-rec ancestor, not of rec.
+      var trec = rec ? rec.closest('.t-rec') : null;
       var nextTop = null;
-      if (rec && rec.nextElementSibling) {
-        nextTop = rec.nextElementSibling.getBoundingClientRect().top + (window.pageYOffset || 0);
+      if (trec && trec.nextElementSibling) {
+        nextTop = trec.nextElementSibling.getBoundingClientRect().top + (window.pageYOffset || 0);
       }
       out.push({
         artboard: {
