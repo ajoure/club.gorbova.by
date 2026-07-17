@@ -431,12 +431,20 @@ Deno.serve(async (req) => {
           'Оплата по этой ссылке временно недоступна из-за настроек рассрочки. Обратитесь к менеджеру для получения новой ссылки.',
         installment_retry_policy_resolution_failed:
           'Оплата по этой ссылке временно недоступна из-за настроек рассрочки. Обратитесь к менеджеру для получения новой ссылки.',
+        bepaid_not_configured:
+          'Оплата временно недоступна. Обратитесь к менеджеру.',
+        invalid_installment_months:
+          'Оплата временно недоступна. Обратитесь к менеджеру.',
+        checkout_create_failed:
+          'Не удалось оформить оплату. Попробуйте позже или обратитесь к менеджеру.',
+        link_expired: 'Срок действия ссылки истёк. Обратитесь к менеджеру.',
+        link_exhausted: 'Ссылка уже была использована. Обратитесь к менеджеру.',
+        link_inactive: 'Ссылка недействительна. Обратитесь к менеджеру.',
       };
+      // PATCH P0.1 corrective — allowlist. НЕ echo сырого result.message.
       const publicMessage =
         PUBLIC_MESSAGES[internalCode] ||
-        (typeof (result as any).message === 'string' && !/provider|capability|native_zero/i.test((result as any).message)
-          ? (result as any).message
-          : 'Не удалось оформить оплату. Попробуйте позже или обратитесь к менеджеру.');
+        'Не удалось оформить оплату. Попробуйте позже или обратитесь к менеджеру.';
       return jsonResponse({
         success: false,
         error_code: internalCode,

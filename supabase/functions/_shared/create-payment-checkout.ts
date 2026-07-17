@@ -97,6 +97,7 @@ export interface SubscriptionConflict {
 export interface CreateCheckoutError {
   success: false;
   error: string;
+  message?: string;
   conflict?: SubscriptionConflict;
 }
 

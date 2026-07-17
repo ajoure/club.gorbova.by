@@ -170,23 +170,25 @@ Deno.serve(async (req) => {
     // Phase 5-C — snapshot acquiring из оффера для customer_choice ссылок.
     let offerAllowedProviders: ('bepaid' | 'stripe')[] = [];
     let offerStripeAccountCode: string | null = null;
+    let resolvedOffer: any = null;
     if (offer_id) {
-      const { data: offer } = await supabase
+      const { data: loadedOffer } = await supabase
         .from('tariff_offers')
         .select('id, tariff_id, is_active, offer_type, payment_method, installment_count, installment_interval_days, first_payment_delay_days, meta')
         .eq('id', offer_id).maybeSingle();
-      if (!offer) return errorResponse('Offer not found', 400);
-      if (offer.tariff_id !== tariff_id) return errorResponse('Offer does not belong to tariff', 400);
-      if (!offer.is_active) return errorResponse('Offer is not active', 400);
-      if ((offer as any).offer_type === 'invoice') return errorResponse('offer_type_invoice_not_chargeable', 400);
-      if (offer.offer_type !== 'pay_now') return errorResponse('Offer is not a pay_now offer', 400);
-      offerIsRecurring = !!(offer as any).meta?.recurring?.is_recurring;
-      offerPaymentMethod = (offer as any).payment_method ?? null;
-      offerInstallmentCountLegacy = Number((offer as any).installment_count ?? 0) || null;
-      const metaMax = Number((offer as any).meta?.installment?.max_months ?? 0);
+      if (!loadedOffer) return errorResponse('Offer not found', 400);
+      if (loadedOffer.tariff_id !== tariff_id) return errorResponse('Offer does not belong to tariff', 400);
+      if (!loadedOffer.is_active) return errorResponse('Offer is not active', 400);
+      if ((loadedOffer as any).offer_type === 'invoice') return errorResponse('offer_type_invoice_not_chargeable', 400);
+      if (loadedOffer.offer_type !== 'pay_now') return errorResponse('Offer is not a pay_now offer', 400);
+      resolvedOffer = loadedOffer;
+      offerIsRecurring = !!(resolvedOffer as any).meta?.recurring?.is_recurring;
+      offerPaymentMethod = (resolvedOffer as any).payment_method ?? null;
+      offerInstallmentCountLegacy = Number((resolvedOffer as any).installment_count ?? 0) || null;
+      const metaMax = Number((resolvedOffer as any).meta?.installment?.max_months ?? 0);
       offerInstallmentMaxMonths =
         metaMax >= 2 ? metaMax : (offerInstallmentCountLegacy && offerInstallmentCountLegacy >= 2 ? offerInstallmentCountLegacy : null);
-      const acq = (offer as any).meta?.acquiring;
+      const acq = (resolvedOffer as any).meta?.acquiring;
       if (Array.isArray(acq?.allowed_payment_providers)) {
         offerAllowedProviders = acq.allowed_payment_providers.filter(
           (p: any) => p === 'bepaid' || p === 'stripe'
@@ -276,6 +278,9 @@ Deno.serve(async (req) => {
     let installmentBlock: Record<string, unknown> | null = null;
     let installmentLinkAmountKopecks: number | null = null;
     if (installment_offer || offerPaymentMethod === 'internal_installment') {
+      if (!resolvedOffer) {
+        return errorResponse('installment_offer_id_required', 400);
+      }
       if (offerPaymentMethod !== 'internal_installment') {
         return errorResponse('Offer is not an installment offer', 400);
       }
@@ -296,12 +301,12 @@ Deno.serve(async (req) => {
       const totalInstallmentByn = perPaymentByn * sel;
 
       // PATCH INSTALLMENT-RETRY-POLICY: интервал и попытки берутся из оффера.
-      const rawInterval = (offer as any)?.installment_interval_days ?? 30;
+      const rawInterval = resolvedOffer.installment_interval_days ?? 30;
       const intervalDays = Number(rawInterval);
       if (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > 365) {
         return errorResponse('invalid_installment_interval_days', 400);
       }
-      const rawFirstDelay = (offer as any)?.first_payment_delay_days ?? 0;
+      const rawFirstDelay = resolvedOffer.first_payment_delay_days ?? 0;
       const firstDelayDays = Number(rawFirstDelay);
       if (!Number.isInteger(firstDelayDays) || firstDelayDays < 0 || firstDelayDays > 365) {
         return errorResponse('invalid_first_payment_delay_days', 400);
@@ -310,7 +315,7 @@ Deno.serve(async (req) => {
       let retryPolicy;
       try {
         retryPolicy = resolveInstallmentRetryPolicy(
-          (offer as any)?.meta?.installment?.max_charge_attempts,
+          resolvedOffer.meta?.installment?.max_charge_attempts,
         );
       } catch (_e) {
         return errorResponse('invalid_installment_max_charge_attempts', 400);
@@ -357,7 +362,7 @@ Deno.serve(async (req) => {
       // B2. Snapshot charge_notifications policy at link creation time
       // (installment path). Precedence: live offer meta → legacy → defaults.
       const chargeNotifPolicy = resolveChargeNotificationSnapshotForWriter({
-        offerMeta: (offer as any)?.meta,
+        offerMeta: resolvedOffer.meta,
       });
       const chargeNotifSnapshot = serializeChargeNotificationPolicy(chargeNotifPolicy);
 
