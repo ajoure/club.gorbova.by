@@ -373,7 +373,8 @@ export function buildNegativeSnapshot(args: {
   reason: string;
   offer_id?: string | null;
   tariff_id?: string | null;
-  resolved_via?: 'offer_id' | 'tariff_fallback' | 'none';
+  product_id?: string | null;
+  resolved_via?: ResolvedVia | 'none';
   candidates_count?: number;
 }): NegativeRoutingSnapshot {
   return {
@@ -382,6 +383,7 @@ export function buildNegativeSnapshot(args: {
     resolved_at: new Date().toISOString(),
     offer_id: args.offer_id ?? null,
     tariff_id: args.tariff_id ?? null,
+    product_id: args.product_id ?? null,
     resolved_via: args.resolved_via ?? 'none',
     candidates_count: args.candidates_count ?? 0,
   };
@@ -396,8 +398,9 @@ export async function auditNegativeSnapshot(
     order_id: string;
     offer_id: string | null;
     tariff_id: string | null;
+    product_id?: string | null;
     reason: string;
-    resolved_via: 'offer_id' | 'tariff_fallback' | 'none';
+    resolved_via: ResolvedVia | 'none';
     candidates_count: number;
   },
 ): Promise<void> {
@@ -405,8 +408,159 @@ export async function auditNegativeSnapshot(
     order_id: args.order_id,
     offer_id: args.offer_id,
     tariff_id: args.tariff_id,
+    product_id: args.product_id ?? null,
     reason: args.reason,
     resolved_via: args.resolved_via,
     candidates_count: args.candidates_count,
   });
+}
+
+// ============================================================================
+// Product-binding fallback + unified resolver (compatibility_layer)
+// ============================================================================
+
+/**
+ * COMPATIBILITY LAYER — remove once all offers carry explicit meta.crm_routing.
+ *
+ * Product-binding fallback: если у оффера не задан crm_routing и tariff fallback
+ * тоже не нашёл однозначного кандидата, используем `crm_pipeline_product_bindings`
+ * для получения воронки. Стадии выбираются СТРОГО (иначе negative snapshot):
+ *   pending  = единственная is_default=true среди stage_type='open'
+ *              (или единственная stage_type='open' если ровно одна такая)
+ *   success  = единственная stage_type='closed_won'
+ *   failed   = единственная stage_type='closed_lost'
+ * При любой неоднозначности → ok=false.
+ */
+export async function resolveRoutingByProductFallback(
+  supabase: SupabaseClient,
+  productId: string | null | undefined,
+): Promise<ResolvedRouting> {
+  if (!productId || !isUuid(productId)) {
+    return { ok: false, reason: 'no_product_id', resolved_via: 'product_binding_fallback', candidates_count: 0 };
+  }
+
+  const { data: bindings, error: bErr } = await supabase
+    .from('crm_pipeline_product_bindings')
+    .select('id, pipeline_id')
+    .eq('product_id', productId);
+
+  if (bErr) {
+    return { ok: false, reason: 'product_binding_lookup_error', resolved_via: 'product_binding_fallback', candidates_count: 0 };
+  }
+  const rows = bindings ?? [];
+  if (rows.length === 0) {
+    return { ok: false, reason: 'no_product_binding', resolved_via: 'product_binding_fallback', candidates_count: 0 };
+  }
+  if (rows.length > 1) {
+    return { ok: false, reason: 'ambiguous_product_bindings', resolved_via: 'product_binding_fallback', candidates_count: rows.length };
+  }
+
+  const binding = rows[0] as { id: string; pipeline_id: string };
+  const pipelineId = binding.pipeline_id;
+
+  const [{ data: pipeline }, { data: stages, error: sErr }] = await Promise.all([
+    supabase.from('crm_pipelines').select('id, name').eq('id', pipelineId).maybeSingle(),
+    supabase.from('crm_pipeline_stages')
+      .select('id, name, stage_type, is_default, order_index, pipeline_id')
+      .eq('pipeline_id', pipelineId),
+  ]);
+  if (!pipeline) {
+    return { ok: false, reason: 'binding_pipeline_not_found', resolved_via: 'product_binding_fallback', candidates_count: 1 };
+  }
+  if (sErr || !stages || stages.length === 0) {
+    return { ok: false, reason: 'binding_stages_empty', resolved_via: 'product_binding_fallback', candidates_count: 1 };
+  }
+
+  const opens = stages.filter((s: any) => s.stage_type === 'open');
+  const successes = stages.filter((s: any) => s.stage_type === 'closed_won');
+  const faileds = stages.filter((s: any) => s.stage_type === 'closed_lost');
+
+  if (successes.length !== 1) {
+    return { ok: false, reason: 'binding_success_stage_ambiguous', resolved_via: 'product_binding_fallback', candidates_count: 1 };
+  }
+  if (faileds.length !== 1) {
+    return { ok: false, reason: 'binding_failed_stage_ambiguous', resolved_via: 'product_binding_fallback', candidates_count: 1 };
+  }
+
+  let pending: any = null;
+  const defaults = opens.filter((s: any) => s.is_default === true);
+  if (defaults.length === 1) {
+    pending = defaults[0];
+  } else if (opens.length === 1) {
+    pending = opens[0];
+  } else {
+    return { ok: false, reason: 'binding_pending_stage_ambiguous', resolved_via: 'product_binding_fallback', candidates_count: 1 };
+  }
+
+  const success = successes[0];
+  const failed = faileds[0];
+
+  const snapshot: CrmRoutingSnapshot = {
+    enabled: true,
+    pipeline_id: pipelineId,
+    stage_on_pending: pending.id,
+    stage_on_success: success.id,
+    stage_on_failed: failed.id,
+    offer_id: null,
+    offer_updated_at: null,
+    pipeline_name: pipeline.name ?? null,
+    stage_names: {
+      pending: pending.name ?? null,
+      success: success.name ?? null,
+      failed: failed.name ?? null,
+    },
+    stage_types: {
+      pending: pending.stage_type,
+      success: success.stage_type,
+      failed: failed.stage_type,
+    },
+    offer_title: null,
+    resolved_via: 'product_binding_fallback',
+    resolved_at: new Date().toISOString(),
+    product_id: productId,
+    binding_id: binding.id,
+  };
+
+  return { ok: true, snapshot, resolved_via: 'product_binding_fallback', candidates_count: 1 };
+}
+
+/**
+ * Unified resolver — единственная точка входа для всех write-path (RR, bepaid, stripe).
+ * Порядок:
+ *   1. Явный crm_routing на offer_id (strict).
+ *   2. Tariff fallback (только если offer_id отсутствует).
+ *   3. Product-binding fallback (compatibility_layer).
+ *   4. Negative snapshot формируется вызывающей стороной.
+ *
+ * `resolved_via` фиксируется в snapshot для observability.
+ */
+export async function resolveOrderRouting(
+  supabase: SupabaseClient,
+  args: {
+    offer_id?: string | null;
+    tariff_id?: string | null;
+    product_id?: string | null;
+  },
+): Promise<ResolvedRouting> {
+  const { offer_id, tariff_id, product_id } = args;
+
+  // Layer 1 + 2 — existing offer/tariff resolver
+  const primary = await resolveOfferRoutingWithFallback(supabase, { offer_id, tariff_id });
+  if (primary.ok && primary.snapshot) {
+    return {
+      ...primary,
+      snapshot: {
+        ...primary.snapshot,
+        resolved_via: primary.resolved_via ?? 'offer_id',
+        resolved_at: primary.snapshot.resolved_at ?? new Date().toISOString(),
+      },
+    };
+  }
+
+  // Layer 3 — product-binding compatibility fallback
+  const secondary = await resolveRoutingByProductFallback(supabase, product_id);
+  if (secondary.ok) return secondary;
+
+  // Propagate primary reason for backwards-compatible audits.
+  return primary;
 }
