@@ -968,11 +968,24 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     // PATCH PAYMENTS-REVISION: pre-create subscriptions_v2 ДО bePaid /subscriptions,
     // чтобы tracking_id содержал реальный subscription_v2_id.
-    // B2. Resolve canonical charge_notifications policy from link snapshot
-    // (extraMeta пришёл из payment_links.meta.installment / .recurring). Offer
-    // fallback здесь не читаем — precedence link→offer уже применяется в writer'ах.
+    // B2 corrective. Resolve canonical charge_notifications policy with full
+    // precedence: link snapshot → live offer meta → legacy → defaults. Offer
+    // meta подгружаем ТОЛЬКО если link не дал canonical (иначе — лишний roundtrip).
+    let offerMetaForNotif: unknown = null;
+    {
+      const preLink = resolveChargeNotificationSnapshotForWriter({ linkMeta: extraMeta });
+      if (preLink.source === 'defaults' && offer_id) {
+        const { data: offerRowForNotif } = await supabase
+          .from('tariff_offers')
+          .select('meta')
+          .eq('id', offer_id)
+          .maybeSingle();
+        offerMetaForNotif = (offerRowForNotif as { meta?: unknown } | null)?.meta ?? null;
+      }
+    }
     const chargeNotifPolicy = resolveChargeNotificationSnapshotForWriter({
       linkMeta: extraMeta,
+      offerMeta: offerMetaForNotif,
     });
     const chargeNotifSnapshot = serializeChargeNotificationPolicy(chargeNotifPolicy);
 
