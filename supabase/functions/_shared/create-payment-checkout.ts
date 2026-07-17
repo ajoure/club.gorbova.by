@@ -978,11 +978,14 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       preSubMeta.billing_cycles = billingCycles;
       preSubMeta.installment_per_payment_amount_byn = Number(extraMeta.installment_per_payment_amount_byn ?? amountByn);
       preSubMeta.installment_total_amount_byn = Number(extraMeta.installment_total_amount_byn ?? (amountByn * (billingCycles || 1)));
-      preSubMeta.installment = installmentExtra;
+      preSubMeta.installment = {
+        ...installmentExtra,
+        retry_policy: retryPolicySnapshotPre,
+      };
       preSubMeta.model = 'bepaid_finite_subscription';
-      // PATCH A2 — единый effective retry snapshot.
+      // PATCH A2 — единый effective retry snapshot (канонический путь meta.installment.retry_policy).
+      // Дублируем на верхний уровень для legacy читателей — постепенно к удалению.
       preSubMeta.retry_policy = retryPolicySnapshotPre;
-      // Обратная совместимость (legacy читатели).
       preSubMeta.retry_policy_mode = retryPolicySnapshotPre?.mode ?? null;
       preSubMeta.max_charge_attempts_configured = installmentExtra.max_charge_attempts ?? null;
     }
