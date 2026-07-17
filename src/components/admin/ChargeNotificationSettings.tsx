@@ -82,7 +82,8 @@ export function ChargeNotificationSettings({ mode, meta, onChange }: Props) {
         <div>
           <Label className="text-sm font-normal">Напоминать о предстоящем списании</Label>
           <p className="text-xs text-muted-foreground">
-            Отправляем уведомление за N дней до автоматического платежа.
+            Отправляем уведомление за N дней до автоматического платежа. Чтобы полностью отключить
+            предварительные напоминания — выключите этот переключатель.
           </p>
         </div>
         <Switch checked={current.enabled} onCheckedChange={(v) => emit({ enabled: v })} />
