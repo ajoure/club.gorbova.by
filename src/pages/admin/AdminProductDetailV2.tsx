@@ -511,6 +511,7 @@ export default function AdminProductDetailV2() {
         installment_count: offer.installment_count || 3,
         installment_interval_days: offer.installment_interval_days || 30,
         first_payment_delay_days: offer.first_payment_delay_days || 0,
+        installment_max_charge_attempts: Number((meta as any)?.installment?.max_charge_attempts ?? 3),
         meta,
         // Preregistration fields from meta
         preregistration_first_charge_date: prereg.first_charge_date || "",
@@ -541,6 +542,7 @@ export default function AdminProductDetailV2() {
         installment_count: 3,
         installment_interval_days: 30,
         first_payment_delay_days: 0,
+        installment_max_charge_attempts: 3,
         meta: {},
         // Preregistration defaults
         preregistration_first_charge_date: "",
