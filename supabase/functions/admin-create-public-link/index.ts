@@ -401,10 +401,22 @@ Deno.serve(async (req) => {
       const chargeNotifSnapshot = serializeChargeNotificationPolicy(chargeNotifPolicy);
 
       // Manual override detection: изменил ли админ N или сумму относительно оффера.
+      // Resolve public cycles: installment_count > legacy meta.installment.max_months.
+      const _metaMaxResolved = Number((resolvedOffer as any).meta?.installment?.max_months ?? 0);
+      const sourceOfferPublicCycles: number | null =
+        (Number.isInteger(offerInstallmentCountLegacy) &&
+          (offerInstallmentCountLegacy as number) >= 2 &&
+          (offerInstallmentCountLegacy as number) <= 12)
+          ? (offerInstallmentCountLegacy as number)
+          : (Number.isInteger(_metaMaxResolved) && _metaMaxResolved >= 2 && _metaMaxResolved <= 12
+              ? _metaMaxResolved
+              : null);
       const offerAmountByn = Number((resolvedOffer as any).amount ?? 0);
       const offerAmountKopecks = Math.round(offerAmountByn * 100);
       const overriddenFields: string[] = [];
-      if (sel !== offerInstallmentCountLegacy) overriddenFields.push('billing_cycles');
+      if (sourceOfferPublicCycles === null || sel !== sourceOfferPublicCycles) {
+        overriddenFields.push('billing_cycles');
+      }
       if (Math.round(amount) !== offerAmountKopecks) overriddenFields.push('amount');
       const manualOverride = overriddenFields.length > 0;
 
@@ -432,7 +444,7 @@ Deno.serve(async (req) => {
         charge_notifications_source: chargeNotifPolicy.source,
         // Manual override snapshot (см. .lovable/plan.md §6).
         source_offer_id: resolvedOffer.id,
-        source_offer_public_cycles: offerInstallmentCountLegacy,
+        source_offer_public_cycles: sourceOfferPublicCycles,
         source_offer_amount_byn: offerAmountByn,
         manual_override: manualOverride,
         overridden_fields: overriddenFields,
@@ -444,7 +456,7 @@ Deno.serve(async (req) => {
       pendingInstallmentAudit = {
         contact_id: user_id ?? null,
         offer_id: resolvedOffer.id,
-        public_cycles: offerInstallmentCountLegacy,
+        public_cycles: sourceOfferPublicCycles,
         selected_cycles: sel,
         public_amount_byn: offerAmountByn,
         selected_amount_byn: totalByn,
@@ -771,7 +783,7 @@ Deno.serve(async (req) => {
 
     // Deferred installment audit — write only after payment_link exists.
     if (pendingInstallmentAudit) {
-      await supabase.from('audit_logs').insert({
+      const { error: installmentAuditError } = await supabase.from('audit_logs').insert({
         actor_type: 'user',
         actor_user_id: user.id,
         actor_label: 'admin-create-public-link',
@@ -782,6 +794,13 @@ Deno.serve(async (req) => {
           url_token: link.url_token,
         },
       });
+      if (installmentAuditError) {
+        console.error('[installment-admin-link] audit insert failed', {
+          payment_link_id: link.id,
+          offer_id,
+          error: installmentAuditError.message,
+        });
+      }
     }
 
 
