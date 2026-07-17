@@ -156,10 +156,42 @@ export function PaymentDialog({
   isSubscription,
   paymentMethod,
   installmentCount,
+  installmentMaxMonths,
+  installmentIntervalDays,
+  installmentTotalAmountKopecks,
   subscriptionMessage,
 }: PaymentDialogProps) {
   const displayCurrency = currency || "BYN";
   const paymentDescription = tariffName ? `${productName} — ${tariffName}` : productName;
+  // B8/B9. Публичный flow рассрочки: клиент явно выбирает N в диапазоне 2..max.
+  // installmentCount оставлен как legacy alias для fallback.
+  const installmentMaxMonthsResolved: number | null =
+    (typeof installmentMaxMonths === 'number' && installmentMaxMonths >= 2
+      ? installmentMaxMonths
+      : null) ??
+    (typeof installmentCount === 'number' && installmentCount >= 2
+      ? installmentCount
+      : null);
+  const installmentIntervalDaysResolved: number =
+    typeof installmentIntervalDays === 'number' && installmentIntervalDays > 0
+      ? installmentIntervalDays
+      : 30;
+  // Парсим сумму: пробуем props → парсим price ("1950" | "1950 BYN" | "1 950,50").
+  const installmentTotalKopecks: number | null = (() => {
+    if (
+      typeof installmentTotalAmountKopecks === 'number' &&
+      Number.isFinite(installmentTotalAmountKopecks) &&
+      installmentTotalAmountKopecks > 0
+    ) {
+      return Math.round(installmentTotalAmountKopecks);
+    }
+    if (typeof price === 'string') {
+      const cleaned = price.replace(/[^\d.,-]/g, '').replace(/\s/g, '').replace(',', '.');
+      const num = Number.parseFloat(cleaned);
+      if (Number.isFinite(num) && num > 0) return Math.round(num * 100);
+    }
+    return null;
+  })();
   const { user, session } = useAuth();
   const { isSuperAdmin, isAdmin } = usePermissions();
   const [step, setStep] = useState<Step>("email");
