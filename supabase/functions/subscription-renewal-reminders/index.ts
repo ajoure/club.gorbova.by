@@ -1552,6 +1552,24 @@ Deno.serve(async (req) => {
     // Email отправляется только из основного цикла. Email точки 7/3/1 в UI
     // строятся из email_logs.meta.subscription_id + meta.event_type.
 
+    // ============ B4: Branch 2 — Upcoming auto-charge reminders ============
+    // Provider-managed subscriptions (recurring + finite installments).
+    // TZ-aware calendar-day filter, atomic outbox idempotency, separate templates.
+    let chargeRemindersSummary: unknown = null;
+    try {
+      const { runChargeReminders } = await import('../_shared/run-charge-reminders.ts');
+      chargeRemindersSummary = await runChargeReminders({
+        supabase,
+        botToken,
+        dryRun: false,
+      });
+      console.log('[charge-reminders] summary:', JSON.stringify(chargeRemindersSummary));
+    } catch (chargeErr) {
+      console.error('[charge-reminders] run failed:', chargeErr);
+      chargeRemindersSummary = { error: chargeErr instanceof Error ? chargeErr.message : 'unknown' };
+    }
+
+
     // ============ Statistics ============
     const reminders7d = results.filter(r => r.days_until_expiry === 7 && r.reminder_type === 'expiry_reminder');
     const reminders3d = results.filter(r => r.days_until_expiry === 3 && r.reminder_type === 'expiry_reminder');
