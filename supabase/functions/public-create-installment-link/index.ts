@@ -154,10 +154,30 @@ Deno.serve(async (req) => {
       return errorResponse('invalid_installment_max_charge_attempts', 400);
     }
 
-    // ── Build canonical public_url ──
-    // ВСЕГДА https://gorbova.by — независимо от продукта.
-    const canonicalOrigin = CANONICAL_PUBLIC_HOST;
-    if (!/^https:\/\//.test(canonicalOrigin) || FORBIDDEN_HOST_RE.test(canonicalOrigin)) {
+    // P0.2 — Capability preflight ДО INSERT в payment_links.
+    if (retryPolicy.mode === 'unlimited_requested') {
+      const bepaidCreds = await getBepaidCredsStrict(supabase);
+      if (isBepaidCredsError(bepaidCreds)) {
+        return errorResponse('bepaid_not_configured', 500);
+      }
+      try {
+        resolveBepaidAttemptsValue({
+          retryPolicy,
+          capability: bepaidCreds.subscription_attempts_capability,
+        });
+      } catch (e) {
+        if (e instanceof ProviderUnlimitedAttemptsNotSupportedError) {
+          return jsonResponse({
+            success: false,
+            error_code: 'provider_unlimited_attempts_not_supported',
+            error:
+              'Рассрочка по этому тарифу временно недоступна. Обратитесь к менеджеру.',
+          }, 400);
+        }
+        throw e;
+      }
+    }
+
       console.error('[public-create-installment-link] invalid canonical origin:', canonicalOrigin);
       return errorResponse('internal_invalid_origin', 500);
     }
