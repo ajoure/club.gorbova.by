@@ -32,6 +32,7 @@ import { ProductDocumentsOverview } from "@/components/admin/product/ProductDocu
 import { ProductCompositionTab } from "@/components/products/ProductCompositionTab";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
+import { ChargeNotificationSettings } from "@/components/admin/ChargeNotificationSettings";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffCard } from "@/components/landing/TariffCard";
