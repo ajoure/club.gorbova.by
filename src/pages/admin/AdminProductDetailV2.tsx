@@ -2504,6 +2504,16 @@ export default function AdminProductDetailV2() {
                   </div>
 
 
+                  {/* B3. Уведомления об автосписаниях рассрочки — canonical meta.installment.charge_notifications */}
+                  <div className="pt-3 border-t space-y-3">
+                    <Label className="text-sm font-medium">Уведомления о платежах рассрочки</Label>
+                    <ChargeNotificationSettings
+                      mode="installment"
+                      meta={offerForm.meta as any}
+                      onChange={(nextMeta) => setOfferForm({ ...offerForm, meta: nextMeta as any })}
+                    />
+                  </div>
+
                   {offerForm.amount > 0 && offerForm.installment_count > 1 && (
                     <div className="pt-3 border-t">
                       <Label className="text-xs text-muted-foreground">
