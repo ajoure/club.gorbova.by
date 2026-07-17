@@ -2204,63 +2204,138 @@ export default function AdminProductDetailV2() {
               </CardContent>
             </Card>
 
-            {/* Slot on public site (Phase B dynamic slots) */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground">
-                  Слот на публичной странице
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  Стабильная роль кнопки внутри тарифа и её визуальный вариант
-                  на сайте. Обязательно для активных офферов продуктов,
-                  подключённых к динамическим слотам (PRD-000039 и др.).
-                  Уникально в пределах тарифа.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>slot_role</Label>
-                    <Input
-                      placeholder="payment_card / payment_invoice / installment_2 / installment_3 / installment_bank / lead"
-                      value={((offerForm.meta as any)?.slot_role as string) || ""}
-                      onChange={(e) =>
-                        setOfferForm({
-                          ...offerForm,
-                          meta: {
-                            ...offerForm.meta,
-                            slot_role: e.target.value.trim() || undefined,
-                          } as any,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>site_button_variant</Label>
-                    <select
-                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                      value={((offerForm.meta as any)?.site_button_variant as string) || ""}
-                      onChange={(e) =>
-                        setOfferForm({
-                          ...offerForm,
-                          meta: {
-                            ...offerForm.meta,
-                            site_button_variant: e.target.value || undefined,
-                          } as any,
-                        })
-                      }
-                    >
-                      <option value="">— не задан —</option>
-                      <option value="primary">primary</option>
-                      <option value="outline">outline</option>
-                      <option value="installment">installment</option>
-                      <option value="legal_entity">legal_entity</option>
-                      <option value="lead">lead</option>
-                    </select>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            {/* Размещение кнопки на публичной странице */}
+            {(() => {
+              const PURPOSE_OPTIONS: { value: string; label: string }[] = [
+                { value: "", label: "Не размещать автоматически" },
+                { value: "payment_card", label: "Оплата картой" },
+                { value: "payment_invoice", label: "Счёт для юридического лица" },
+                { value: "installment_2", label: "Рассрочка — вариант 1" },
+                { value: "installment_3", label: "Рассрочка — вариант 2" },
+                { value: "installment_bank", label: "Банковская рассрочка" },
+                { value: "lead", label: "Оставить заявку" },
+              ];
+              const VARIANT_OPTIONS: { value: string; label: string }[] = [
+                { value: "", label: "Не задан" },
+                { value: "primary", label: "Основная кнопка" },
+                { value: "outline", label: "Дополнительная, с контуром" },
+                { value: "installment", label: "Кнопка рассрочки" },
+                { value: "legal_entity", label: "Для юридического лица" },
+                { value: "lead", label: "Кнопка заявки" },
+              ];
+              const currentRole = (((offerForm.meta as any)?.slot_role as string) || "").trim();
+              const currentVariant = ((offerForm.meta as any)?.site_button_variant as string) || "";
+              const knownRoleValues = PURPOSE_OPTIONS.map((o) => o.value);
+              const isCustomRole = currentRole !== "" && !knownRoleValues.includes(currentRole);
+              const purposeSelectValue = isCustomRole ? "__custom__" : currentRole;
+              const setRole = (val: string | undefined) => {
+                setOfferForm({
+                  ...offerForm,
+                  meta: {
+                    ...offerForm.meta,
+                    slot_role: val && val.trim() ? val.trim() : undefined,
+                  } as any,
+                });
+              };
+              const setVariant = (val: string | undefined) => {
+                setOfferForm({
+                  ...offerForm,
+                  meta: {
+                    ...offerForm.meta,
+                    site_button_variant: val || undefined,
+                  } as any,
+                });
+              };
+              const purposeLabel =
+                purposeSelectValue === "__custom__"
+                  ? `Другое назначение (${currentRole})`
+                  : PURPOSE_OPTIONS.find((o) => o.value === currentRole)?.label;
+              const variantLabel = VARIANT_OPTIONS.find((o) => o.value === currentVariant)?.label;
+              return (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm text-muted-foreground">
+                      Размещение кнопки на публичной странице
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Назначение кнопки</Label>
+                        <select
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                          value={purposeSelectValue}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === "__custom__") {
+                              // keep existing custom value or start empty for the user to fill in
+                              if (!isCustomRole) setRole("");
+                            } else {
+                              setRole(v);
+                            }
+                          }}
+                        >
+                          {PURPOSE_OPTIONS.map((o) => (
+                            <option key={o.value || "empty"} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                          <option value="__custom__">Другое назначение</option>
+                        </select>
+                        {purposeSelectValue === "__custom__" && (
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">
+                              Технический код назначения
+                            </Label>
+                            <Input
+                              placeholder="например: payment_card_promo"
+                              value={currentRole}
+                              onChange={(e) => setRole(e.target.value)}
+                            />
+                          </div>
+                        )}
+                        <p className="text-xs text-muted-foreground">
+                          Назначение определяет, в каком месте карточки тарифа показывается кнопка.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Внешний вид кнопки</Label>
+                        <select
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                          value={currentVariant}
+                          onChange={(e) => setVariant(e.target.value)}
+                        >
+                          {VARIANT_OPTIONS.map((o) => (
+                            <option key={o.value || "empty"} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground">
+                          Внешний вид определяет оформление, но не способ оплаты.
+                        </p>
+                      </div>
+                    </div>
+                    {(purposeLabel || variantLabel) && (
+                      <div className="rounded-md bg-muted/40 p-3 text-xs space-y-1">
+                        {purposeLabel && (
+                          <div>
+                            <span className="text-muted-foreground">На странице: </span>
+                            <span className="font-medium">{purposeLabel}</span>
+                          </div>
+                        )}
+                        {variantLabel && (
+                          <div>
+                            <span className="text-muted-foreground">Оформление: </span>
+                            <span className="font-medium">{variantLabel}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })()}
 
             {/* Повторное вступление */}
 
