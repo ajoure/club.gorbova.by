@@ -1,170 +1,189 @@
-## да, согласен, с учетом правок:
+# План в целом корректный. Есть две правки, которые рекомендую внести до выполнения.
 
-1. Название типа подтверждаем: **«Сформировать счёт»**. Текущий пользовательский `button_label` не перезаписывать автоматически. Значение «Сформировать счёт» подставлять только для нового оффера либо когда label пустой/равен стандартному label предыдущего типа.
-2. Старые `pay_now` с корректными `document_scenarios` не мигрировать. Legacy-ветку `detectInvoiceOnlyOffer` сохранить. Data-fix ограничить тремя офферами продукта «Ценный бухгалтер».
-3. Для `offer_type='invoice'` вкладки «Оплата» и «Автопродление» скрыть полностью. Во вкладке «Документы» оставить только `bank_transfer`; остальные каналы недоступны, добавление сценария физлица скрыто.
-4. `invoice-checkout-issue` без необходимости не ограничивать новым списком `('invoice','pay_now')`: сейчас функция принимает любой активный оффер и уже работает. Добавить только явное принятие `invoice`, если существующая валидация фактически содержит ограничивающий allowlist. Не сужать текущую обратную совместимость.
-5. Вынести единый helper определения счёта:
-  - сначала `offer_type === 'invoice'`;
-  - затем legacy `pay_now + document_scenarios`;
-  - использовать его во всех frontend-точках, чтобы логика снова не разошлась между `/cb`, `TariffCard`, `UniversalPricingSection` и `TariffPricing`.
-6. Backend guard добавить во все пути **инициации списания**, включая `bepaid-auto-process`, если он получает текущий оффер перед списанием. В `bepaid-webhook` не блокировать обработку по текущему `offer_type`: webhook обязан завершать уже созданные исторические платежи и заказы, даже если оффер позднее переведён в `invoice`.
-7. Для data-fix не собирать `document_scenarios` вручную по сокращённым UUID. Скопировать массив JSONB **побайтно/структурно** из invoice-оффера тарифа «Бухгалтер» в два остальных оффера через `CASE` или CTE. До UPDATE сохранить полный snapshot трёх строк и подготовить обратный guarded UPDATE.
-8. Последовательность релиза:
-  - код и typecheck;
-  - deploy изменённых edge functions;
-  - publish frontend и подтверждение live commit;
-  - только затем guarded data-fix трёх офферов;
-  - postflight SQL;
-  - production E2E `/cb` и админки.
-  Нельзя менять `offer_type` в БД до появления нового frontend-кода в production.
-9. Guarded UPDATE должен проверять точные три UUID и исходные значения `offer_type/payment_method/meta`, вернуть ровно три строки. `0–2` либо более `3` строк — остановка без продолжения E2E.
-10. Verify дополнить:
+### 1. Не выполнять blind UPDATE по `offer_type='invoice'`
 
-- все три invoice-кнопки передают точный `offer_id`;
-- card/installment flow никогда не выбирает `offer_type='invoice'`;
-- прямые charge endpoints возвращают `400` и единый код `offer_type_invoice_not_chargeable`;
-- после неуспешного production proof три строки восстанавливаются из snapshot;
-- после успешного proof изменения остаются как целевой production state.
-- &nbsp;
-- План: новый тип кнопки «Сформировать счёт» + починка регрессии на /cb
+Вместо:
 
-### 1. Что происходит сейчас (Diagnose)
+```sql
+UPDATE public.tariff_offers
+SET payment_method='bank_transfer'
+WHERE offer_type='invoice'
+...
 
-**Регрессия.** Кнопка «Оплатить от юрлица» на `/cb` должна открывать визард выписки счёта (`InvoiceCheckoutDialog`), а открывает диалог оплаты картой (`PaymentDialog`). Причина:
+```
 
-`SitePageBySlug` выбирает диалог через `detectInvoiceOnlyOffer(offer)`, а тот считает оффер «invoice-only» ТОЛЬКО по `meta.document_scenarios`. Проверка данных `products_v2.id=3e43fb28-…` («Ценный бухгалтер»):
+лучше использовать guarded UPDATE по трём конкретным UUID и ожидаемому текущему состоянию:
 
+```sql
+WHERE id IN (...)
+  AND offer_type='invoice'
+  AND payment_method='full_payment'
 
-| Тариф             | `offer_type` | `document_scenarios`                                                          | Итог                                |
-| ----------------- | ------------ | ----------------------------------------------------------------------------- | ----------------------------------- |
-| Бухгалтер         | `pay_now`    | 2 enabled legal_entity+bank_transfer (шаблоны ЮЛ и ИП, executor `d0c7fe75-…`) | ✅ Работает                          |
-| Главный бухгалтер | `pay_now`    | **null**                                                                      | ❌ Открывается PaymentDialog (карта) |
-| Бизнес-леди       | `pay_now`    | **null**                                                                      | ❌ Открывается PaymentDialog (карта) |
+```
 
+и затем проверить, что обновлены **ровно 3 строки**. Если обновлено 0–2 или больше 3 — остановить релиз.
 
-У всех трёх есть корректные `meta.slot_role='payment_invoice'` и `meta.site_button_variant='legal_entity'` — но этого не достаточно текущему детектору.
+---
 
-**Архитектурная проблема.** Признак «эта кнопка = выписка счёта» размазан: он спрятан в двух JSONB-полях `meta.document_scenarios` и `meta.site_button_variant`, редактируется в двух вкладках («Основное» → «Слот» и «Документы» → «Банковский перевод»). Легко потерять при копировании оффера — что и произошло с двумя тарифами. Пользователь просит вынести это в **тип кнопки** (`offer_type`) наравне с «Оплата», «Trial», «Предзапись», «Рассрочка», «Заявка», «Рассрочка банка».
+### 2. Production E2E дополнить проверкой network
 
-### 2. Discovery (места, где читается `offer_type`)
+Помимо открытия `InvoiceCheckoutDialog`, проверить, что:
 
-Полный список найден `rg -n "offer_type"`:
+- запрос уходит именно в `invoice-checkout-issue`;
+- **не происходит** обращений к:
+  - `bepaid-create-token`;
+  - `payment-dialog-create-bridge-link`;
+  - `direct-charge`;
+  - другим card-flow endpoint'ам.
 
-**Frontend, поведенческие развилки:**
+Это подтвердит, что routing действительно переключился на invoice-flow, а не только изменился UI.
 
-- `src/pages/SitePageBySlug.tsx` — `pickOfferForFlow`, ветка выбора диалога (`InvoiceCheckoutDialog` / `PaymentDialog` / `LeadRequestDialog`), `open-invoice` action.
-- `src/lib/invoiceCheckout.ts` — `detectInvoiceOnlyOffer`.
-- `src/pages/admin/AdminProductDetailV2.tsx` — форма «Редактировать кнопку»: `<Select>` с типом кнопки, ветки defaults (`button_label`, `payment_method`, `is_primary`, `sort_order`), панели вкладок «Оплата»/«Документы»/«Автопродление».
-- `src/hooks/useTariffOffers.tsx`, `src/hooks/usePublicProduct.tsx` — union-типы для `offer_type`.
-- `src/components/landing/TariffCard.tsx`, `UniversalPricingSection.tsx`, `pages/TariffPricing.tsx` — рендер карточек тарифа.
-- `src/lib/siteSlotManifest.ts` — allowlist `site_button_variant`.
+---
 
-**Backend edge functions:**
+Кроме этого, план выглядит согласованным с архитектурой.
 
-- `bepaid-create-token`, `bepaid-auto-process`, `bepaid-webhook`, `direct-charge`, `admin-create-public-link`, `payment-dialog-create-bridge-link`, `public-create-installment-link`, `public-rr-installment-initiate` — фильтры/валидации по `offer_type`; для `invoice` эквайринговые пути ДОЛЖНЫ явно отклонять оффер.
-- `public-product`, `public-product-by-slug`, `public-tariff-by-public-id`, `getcourse-grant-access` — просто читают/возвращают, менять не нужно.
-- `invoice-checkout-issue` — уже принимает любой активный оффер, не смотрит `document_scenarios`. Шаблон резолвится внутри `canonical-document-generate-strict` через сценарии → в дальнейшем всё равно надо иметь корректные `document_scenarios`, но edge не сломается без них.
-- `_shared/renewal-offer-resolver.ts`, `_shared/standard-fields.ts` — чисто снимок значения, менять не нужно.
+Итог:
 
-**База:** `tariff_offers.offer_type text` (не enum). Новое значение можно ввести без миграции схемы — только data.
+- ✅ исправление `payment_method='bank_transfer'`;
+- ✅ единый backend contract `offer_type_invoice_not_chargeable`;
+- ✅ publish **до** data-fix;
+- ✅ guarded UPDATE только трёх офферов;
+- ✅ production E2E;
+- ✅ документация по CHECK constraint и rollback.
 
-### 3. Что делаем
+После выполнения такого плана спринт можно считать закрытым при условии успешного прохождения всех проверок.
 
-#### 3.1. Новый offer_type `invoice` («Сформировать счёт»)
+&nbsp;
 
-Каноническая семантика: одно значение — вся конфигурация. Оффер этого типа:
+План: закрытие DoD спринта `offer_type='invoice'`
 
-- Не участвует в эквайринге (карта/Apple/Google/ЕРИП/bank_installment).
-- Всегда открывает `InvoiceCheckoutDialog`.
-- `payment_method` фиксируется как `bank_transfer` (для консистентности с существующим сценарием), `requires_card_tokenization=false`, `is_primary=false`, `installment_*`=null, `trial_*`=null, `preregistration=null`.
-- В админке автоматически заполняется один enabled `document_scenarios` legal_entity + bank_transfer. Шаблон/executor подтягиваются из product/tariff defaults; если у продукта они есть — берём их, иначе оставляем `template_id=null` (заполнит админ во вкладке «Документы»).
-- Вкладки «Оплата», «Автопродление» скрываются. Вкладка «Документы» показывается, но каналы жёстко = `['bank_transfer']`, остальные disabled (карта/Apple/Google/ЕРИП/GooglePay серые).
+## Статус проблем (подтверждено)
 
-#### 3.2. Изменения кода
+- В БД **3 оффера** с `offer_type='invoice'` имеют `payment_method='full_payment'` — противоречит канону.
+- В `AdminProductDetailV2.tsx` на строках **345, 508, 538, 777–781, 914, 2051** дефолт/normalization всегда пишут `full_payment`, включая ветку `offer_type='invoice'` (стр. 2051).
+- Guards в edge-функциях реализованы только для `bepaid-create-token` и `direct-charge`. Не покрыты: `admin-create-public-link`, `payment-dialog-create-bridge-link`, `public-create-installment-link`, `public-rr-installment-initiate`, `bepaid-auto-process`.
+- Frontend не опубликован — рассинхрон с БД (data-fix уже применён).
 
-**Frontend:**
+## Порядок релиза (без нарушений)
 
-1. `src/hooks/useTariffOffers.tsx`, `src/hooks/usePublicProduct.tsx`, `src/components/landing/TariffCard.tsx`, `src/components/live/LiveEventProductCta.tsx`, `src/dev/slotFixtureHtml.ts` — расширить union `offer_type` значением `"invoice"`.
-2. `src/pages/admin/AdminProductDetailV2.tsx`:
-  - Добавить `<SelectItem value="invoice">Сформировать счёт</SelectItem>` (между «Заявка» и «Рассрочка банка»).
-  - В onChange: при переключении на `invoice` — установить `payment_method='bank_transfer'`, `button_label='Сформировать счёт'` (если поле не редактировалось), `requires_card_tokenization=false`, `is_primary=false`, `installment_*`=null, `trial_*`=null, `preregistration=null`, `meta.site_button_variant='legal_entity'`, `meta.slot_role` — если пуст, ставим `payment_invoice`.
-  - На save: если `offer_type==='invoice'` и `meta.document_scenarios` пуст — вставить один enabled сценарий `{payer_type:'legal_entity', payment_channels:['bank_transfer'], is_enabled:true, requires_required_requisites:true, template_id: product_default||null, executor_id: product_default||null}`.
-  - Условный рендер вкладок: `offer_type==='invoice'` → показываем только «Основное» + «Документы» (или блокируем «Оплата»/«Автопродление» с подсказкой «недоступно для типа Сформировать счёт»).
-  - В вкладке «Документы» при `offer_type==='invoice'` — заблокировать выбор `payment_channels` (только `bank_transfer`), спрятать «+ Ещё сценарий Физлицо».
-3. `src/lib/invoiceCheckout.ts` — `detectInvoiceOnlyOffer`: первым условием возвращать `{isInvoiceOnly:true}` если `offer.offer_type==='invoice'`. Существующий scenarios-based путь остаётся как обратная совместимость для старых офферов `pay_now` с настроенными сценариями.
-4. `src/pages/SitePageBySlug.tsx`:
-  - `pickOfferForFlow`, ветка `flow==='invoice'` — искать сначала `offer_type==='invoice'`, потом fallback на `pay_now + detectInvoiceOnlyOffer` (legacy).
-  - Ветка `flow==='payment'` — исключать `offer_type==='invoice'` (уже исключено, но подтвердить).
-  - Ветка рендера диалога — если `offer.offer_type==='invoice'`, всегда `InvoiceCheckoutDialog`.
-5. `src/components/landing/TariffCard.tsx`, `UniversalPricingSection.tsx`, `TariffPricing.tsx` — добавить invoiceOffers-фильтр и роутинг клика на `InvoiceCheckoutDialog`.
-6. `src/lib/siteSlotManifest.ts` — allowlist `variant` уже содержит `legal_entity`; менять не надо.
+```
+1. code fixes (frontend + edge)         [до publish]
+2. edge deploy                          [автоматически]
+3. tsgo verify                          [gate]
+4. frontend publish + live commit       [gate]
+5. guarded data-fix для 3 офферов       [payment_method]
+6. production E2E + backend smoke       [DoD]
+7. финальный отчёт                      [DoD]
+```
 
-**Backend defensive-guards:**
-7. `bepaid-create-token`, `direct-charge`, `admin-create-public-link`, `payment-dialog-create-bridge-link`, `public-create-installment-link`, `public-rr-installment-initiate` — если `offer.offer_type==='invoice'` → 400 `offer_type_invoice_not_chargeable`. Это защита от прямого дёрганья URL/link с invoice-оффером.
-8. `invoice-checkout-issue` — принять `offer_type in ('invoice','pay_now')`, для `pay_now` — не ломать существующий путь (legacy).
+Data-fix уже применён по `offer_type`, но `payment_method` ещё не исправлен → выполняем шаг 5 как **UPDATE только `payment_method**` ПОСЛЕ publish (иначе противоречивое состояние сохраняется).
 
-**Ничего не трогаем:**
+## Шаг 1. Frontend: канон `payment_method='bank_transfer'` для invoice
 
-- Миграции БД (offer_type — text).
-- `InvoiceCheckoutDialog`, `canonical-document-generate-strict`, `canonical-document-send` — уже работают правильно.
+Файл `src/pages/admin/AdminProductDetailV2.tsx`:
 
-#### 3.3. Data-fix (INSERT tool)
+- **Строка 2051** (переключение типа на `invoice`): `payment_method: "bank_transfer"` вместо `"full_payment"`.
+- **Save-normalization (строки 777–781)**: добавить ветку — если `offer_type === "invoice"` → форсим `payment_method = "bank_transfer"` (перед `pay_now`-веткой).
+- **Load-defaults (строки 508, 538, 914)**: если у загружаемого оффера `offer_type='invoice'` и `payment_method !== 'bank_transfer'` — приводить к `bank_transfer` в состоянии формы (без автосохранения; корректная нормализация при следующем сохранении).
+- Postflight assertion в admin UI (dev-warning в консоли, необязательно): `offer_type==='invoice' && payment_method!=='bank_transfer'` → `console.warn`.
 
-Один UPDATE на три оффера продукта «Ценный бухгалтер» (`3e43fb28-…`):
+## Шаг 2. Backend guards: единый контракт ошибки
 
-- `b6476800-…` (Бухгалтер), `d749583b-…` (Гл. бухгалтер), `4c6d6110-…` (Бизнес-леди).
+Во все перечисленные функции добавить проверку сразу после загрузки оффера из БД:
 
-Изменения:
+```ts
+if (offer?.offer_type === "invoice") {
+  return new Response(
+    JSON.stringify({ error: "offer_type_invoice_not_chargeable" }),
+    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+```
 
-- `offer_type := 'invoice'`
-- `payment_method := 'bank_transfer'`
-- `is_primary := false`
-- `meta.site_button_variant := 'legal_entity'` (уже так)
-- `meta.slot_role := 'payment_invoice'` (уже так)
-- `meta.document_scenarios`:
-  - Для «Бухгалтер» — оставить как есть (2 сценария с шаблонами ЮЛ и ИП).
-  - Для «Гл. бухгалтер» и «Бизнес-леди» — записать 2 сценария 1:1 с «Бухгалтер»: `payer_type=legal_entity`, `payment_channels=['bank_transfer']`, `is_enabled=true`, `requires_required_requisites=true`, `executor_id=d0c7fe75-1192-40a9-bbae-b652b69e6882`, `template_id` = `4fa3160f-…` (ЮЛ-Исполнитель) и `bcf5e015-…` (ИП-Исполнитель) — те же, что настроены у «Бухгалтер». Пользователь подтвердил в чате, что настройки такие же (одна пара шаблонов на весь продукт).
+Файлы:
 
-Dry-run: `SELECT id, offer_type, payment_method, meta->'document_scenarios' FROM tariff_offers WHERE id IN (...)` до и после.
+1. `supabase/functions/admin-create-public-link/index.ts`
+2. `supabase/functions/payment-dialog-create-bridge-link/index.ts`
+3. `supabase/functions/public-create-installment-link/index.ts`
+4. `supabase/functions/public-rr-installment-initiate/index.ts`
+5. `supabase/functions/bepaid-auto-process/index.ts` — только если функция получает `offer_id` до charge (проверить при реализации; если оффер не читается — записать в отчёт как N/A с обоснованием).
 
-#### 3.4. Verify
+Существующие guards в `bepaid-create-token` и `direct-charge` — оставить.
 
-1. **TS build** — расширение union-типа `offer_type` не должно ломать сборку. Прогнать `tsgo` (агент сам запустит).
-2. **Playwright на `localhost:8080/cb**`, viewport 1280×1800:
-  - Клик по «Оплатить от юрлица» на каждом из трёх тарифов → скриншот заголовка `Оформление счёта` (InvoiceCheckoutDialog).
-  - Клик по «Оплатить обучение» → скриншот PaymentDialog (регрессии нет).
-  - Клик по «Оплатить в рассрочку» → скриншот PaymentDialog с installment-режимом.
-3. **Админка** `admin/products-v2/3e43fb28-…?tab=offers` → открыть оффер «Бухгалтер»:
-  - `Тип кнопки` теперь `Сформировать счёт`.
-  - Вкладка «Оплата» скрыта/задизейблена.
-  - Вкладка «Документы» — channels зафиксированы на bank_transfer, шаблоны сохранены.
-4. **Backend smoke:**
-  - `curl invoice-checkout-issue` c одним из офферов + фейковым legal_details_id → должен вернуть либо 200, либо валидную бизнес-ошибку (не 500).
-  - `curl bepaid-create-token` c `offer_type='invoice'` → должен вернуть `offer_type_invoice_not_chargeable`.
+## Шаг 3. Проверки перед publish
 
-### 4. Definition of Done
+- `tsgo` на весь проект (гейт).
+- Edge deploy — автоматом после push edge-функций.
+- Curl-smoke каждой из 6 функций с фиктивным `offer_id` invoice-оффера → ожидаем `400 offer_type_invoice_not_chargeable`.
 
-- Три оффера в базе имеют `offer_type='invoice'`, `payment_method='bank_transfer'`, корректные `document_scenarios`.
-- В `AdminProductDetailV2` в селекте есть пункт «Сформировать счёт»; при его выборе автозаполняются нужные поля, вкладки «Оплата»/«Автопродление» скрыты, в «Документах» channels зафиксированы на bank_transfer.
-- На `/cb` все три кнопки «Оплатить от юрлица» открывают `InvoiceCheckoutDialog` — скриншоты приложены.
-- Ни одна из трёх кнопок не открывает PaymentDialog (карту).
-- `bepaid-create-token`/`direct-charge`/`admin-create-public-link`/`public-create-installment-link` отклоняют `offer_type='invoice'` кодом 400.
-- `invoice-checkout-issue` успешно принимает `offer_type='invoice'`.
-- `tsgo` без новых ошибок.
-- Отчёт в формате «Отчёт о выполнении:» с приложенными grep/скриншотами.
+## Шаг 4. Frontend publish + live commit
 
-### 5. Технические детали
+- Публикация через `preview_ui--publish`.
+- Зафиксировать точный commit hash и live URL в отчёте.
 
-- **Файлы под правки** (frontend): `src/hooks/useTariffOffers.tsx`, `src/hooks/usePublicProduct.tsx`, `src/components/landing/TariffCard.tsx`, `src/components/landing/UniversalPricingSection.tsx`, `src/pages/TariffPricing.tsx`, `src/components/live/LiveEventProductCta.tsx`, `src/dev/slotFixtureHtml.ts`, `src/pages/admin/AdminProductDetailV2.tsx`, `src/lib/invoiceCheckout.ts`, `src/pages/SitePageBySlug.tsx`.
-- **Файлы под правки** (edges): `bepaid-create-token/index.ts`, `direct-charge/index.ts`, `admin-create-public-link/index.ts`, `payment-dialog-create-bridge-link/index.ts`, `public-create-installment-link/index.ts`, `public-rr-installment-initiate/index.ts`.
-- **Deploy**: перечисленные edge-функции нужно задеплоить (`supabase--deploy_edge_functions`) — иначе backend-гарды не применятся.
-- **Data-fix**: один `UPDATE public.tariff_offers ... WHERE id IN (...)` через `supabase--insert`.
-- **Миграций схемы нет**: `offer_type` — `text`, добавление значения не требует ALTER TYPE.
-- **Обратная совместимость**: старые `pay_now`-офферы с настроенными `document_scenarios` продолжают работать через legacy-ветку `detectInvoiceOnlyOffer` (не удаляем её).
+## Шаг 5. Guarded data-fix `payment_method`
 
-### 6. Открытые вопросы (нужны перед Execute)
+Выполняется **после** подтверждённого publish. SQL:
 
-1. **Название пункта в селекте** — «Сформировать счёт» подтверждаем? Или, например, «Счёт для юрлица (Б/Н)»?
-2. **Что делать со старыми `pay_now`-офферами с document_scenarios на других продуктах**, если такие есть? Оставить legacy-ветку и не мигрировать (безопасно) — предпочтительно. Если хочется единого канона — прогнать backfill-скрипт, который переводит все `pay_now`+invoice-only офферы в `invoice`. Рекомендую пока НЕ трогать (только три оффера «Ценный бухгалтер») и вернуться к этому отдельной задачей после проверки на продакшне.
-3. **Скрывать ли вкладку «Оплата» полностью** для типа `invoice`, или оставить её видимой но disabled с подсказкой «эквайринг недоступен для типа Сформировать счёт»? Рекомендую скрыть (как сейчас скрыты Оплата/Автопродление для `lead`).
+```sql
+UPDATE public.tariff_offers
+SET payment_method = 'bank_transfer'
+WHERE offer_type = 'invoice'
+  AND payment_method <> 'bank_transfer'
+  AND id IN (
+    'b6476800-cc42-4332-836d-5e63ccc83c47',
+    'd749583b-86ba-44cc-9d9c-bd0e38a70137',
+    '4c6d6110-5c9b-419c-82ef-524dfe44ecc1'
+  );
+```
+
+Verify: `SELECT id, offer_type, payment_method FROM tariff_offers WHERE offer_type='invoice'` → все три с `bank_transfer`.
+
+## Шаг 6. Production E2E (Playwright на live URL)
+
+На `https://gorbova.by/cb` для трёх тарифов (Бухгалтер, Гл. бухгалтер, Бизнес-леди):
+
+1. Кнопка «Оплатить от юрлица/ЮЛ» → открывается `InvoiceCheckoutDialog`, не `PaymentDialog`.
+2. В network — запрос на `invoice-checkout-issue` с корректным `offer_id` (сверка с БД).
+3. Кнопки «Оплатить обучение» и «Рассрочка» → открывают `PaymentDialog` (регрессия card-flow и installment-flow).
+4. Curl-smoke: POST в `admin-create-public-link`, `payment-dialog-create-bridge-link`, `public-create-installment-link`, `public-rr-installment-initiate`, `bepaid-create-token`, `direct-charge` с invoice `offer_id` → все возвращают `400 offer_type_invoice_not_chargeable`.
+5. Admin `/admin/products-v2/3e43fb28-…?tab=offers` — три оффера показываются как «Сформировать счёт», вкладки «Оплата»/«Автопродление» скрыты.
+
+## Шаг 7. Отчёт DoD (обязательные артефакты)
+
+Отчёт по форме:
+
+```
+CODE IMPLEMENTATION      : PASS  (файлы: …)
+TSGO                     : PASS  (0 errors)
+EDGE DEPLOY              : PASS  (список функций + timestamp)
+FRONTEND PUBLISH         : PASS  (live URL, commit hash)
+DATA FIX                 : PASS  (3 rows updated, verify query result)
+PRODUCTION E2E           : PASS  (3 invoice buttons, screenshots)
+CARD-FLOW REGRESSION     : PASS  (Оплатить обучение)
+INSTALLMENT REGRESSION   : PASS  (Рассрочка)
+ADMIN UI                 : PASS  (screenshots)
+BACKEND SMOKE            : PASS  (6 endpoints × 400 response)
+CHECK CONSTRAINT         : имя, новое определение, rollback SQL
+SPRINT STATUS            : PASS
+```
+
+## Шаг 8. CHECK constraint — документация
+
+Приложить в отчёт (уже есть миграция `20260717071715_…sql`):
+
+- имя constraint (`tariff_offers_offer_type_check`);
+- новое определение (список допустимых значений включая `invoice`);
+- подтверждение сохранности `pay_now`, `trial`, `preregistration`, `lead`, `bank_installment`;
+- rollback SQL (DROP + ADD старого определения).
+
+## Технические детали
+
+- Все изменения обратно совместимы: старые офферы без `offer_type='invoice'` не затрагиваются.
+- `document_scenarios.payment_channels=['bank_transfer']` теперь согласован с `payment_method='bank_transfer'`.
+- Между шагами 4 и 5 существует временное окно, где frontend уже понимает `invoice`, а `payment_method` ещё `full_payment` — это безопасно, так как guards в edge-функциях уже отсекают charge-попытки по `offer_type`, а `InvoiceCheckoutDialog` использует `payment_method` только для отображения (не для роутинга).
+
+## Открытые вопросы (не блокируют — использую дефолты)
+
+1. `bepaid-auto-process` — если функция читает оффер: добавляем guard. Если работает исключительно с уже подготовленным charge — фиксируем N/A с обоснованием. Проверю при реализации.
+2. Локальный несовпадающий `tariff.code` (`trf_…` вместо `buh/gl_buh/biz-l`) — отдельный follow-up тикет в `.lovable/backlog/`, вне текущего DoD.

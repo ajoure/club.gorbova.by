@@ -505,7 +505,7 @@ export default function AdminProductDetailV2() {
         is_primary: offer.is_primary ?? false,
         getcourse_offer_id: offer.getcourse_offer_id || "",
         reject_virtual_cards: offer.reject_virtual_cards ?? false,
-        payment_method: offer.payment_method || "full_payment",
+        payment_method: offer.offer_type === "invoice" ? "bank_transfer" : (offer.payment_method || "full_payment"),
         installment_count: offer.installment_count || 3,
         installment_interval_days: offer.installment_interval_days || 30,
         first_payment_delay_days: offer.first_payment_delay_days || 0,
@@ -774,11 +774,13 @@ export default function AdminProductDetailV2() {
       getcourse_offer_id: offerForm.getcourse_offer_id || null,
       reject_virtual_cards: offerForm.reject_virtual_cards,
       // Installment fields (legacy mirror — installment_count хранит max_months)
-      payment_method: offerForm.offer_type === "pay_now"
-        ? offerForm.payment_method
-        : offerForm.offer_type === "bank_installment"
-          ? (offerForm.payment_method || "full_payment")
-          : "full_payment",
+      payment_method: offerForm.offer_type === "invoice"
+        ? "bank_transfer"
+        : offerForm.offer_type === "pay_now"
+          ? offerForm.payment_method
+          : offerForm.offer_type === "bank_installment"
+            ? (offerForm.payment_method || "full_payment")
+            : "full_payment",
       installment_count: isInstallment ? Math.max(2, Math.min(12, offerForm.installment_count || 6)) : null,
       installment_interval_days: isInstallment ? 30 : null,
       first_payment_delay_days: isInstallment ? 0 : null,
@@ -911,7 +913,7 @@ export default function AdminProductDetailV2() {
         sort_order: (offer.sort_order ?? 0),
         getcourse_offer_id: null, // do not copy provider-side ID
         reject_virtual_cards: !!offer.reject_virtual_cards,
-        payment_method: offer.payment_method ?? "full_payment",
+        payment_method: offer.offer_type === "invoice" ? "bank_transfer" : (offer.payment_method ?? "full_payment"),
         installment_count: offer.installment_count ?? null,
         installment_interval_days: offer.installment_interval_days ?? null,
         first_payment_delay_days: offer.first_payment_delay_days ?? null,
@@ -2048,7 +2050,7 @@ export default function AdminProductDetailV2() {
                         setOfferForm({
                           ...offerForm,
                           offer_type: "invoice",
-                          payment_method: "full_payment",
+                          payment_method: "bank_transfer",
                           is_primary: false,
                           button_label: isDefaultLabel ? "Сформировать счёт" : prevLabel,
                           requires_card_tokenization: false,

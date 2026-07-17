@@ -168,6 +168,7 @@ Deno.serve(async (req) => {
       if (!offer) return errorResponse('Offer not found', 400);
       if (offer.tariff_id !== tariff_id) return errorResponse('Offer does not belong to tariff', 400);
       if (!offer.is_active) return errorResponse('Offer is not active', 400);
+      if ((offer as any).offer_type === 'invoice') return errorResponse('offer_type_invoice_not_chargeable', 400);
       if (offer.offer_type !== 'pay_now') return errorResponse('Offer is not a pay_now offer', 400);
       offerIsRecurring = !!(offer as any).meta?.recurring?.is_recurring;
       offerPaymentMethod = (offer as any).payment_method ?? null;

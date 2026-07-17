@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-export type PaymentMethod = "full_payment" | "internal_installment" | "bank_installment";
+export type PaymentMethod = "full_payment" | "internal_installment" | "bank_installment" | "bank_transfer";
 
 // Preregistration settings for auto-charge after specific date
 export interface PreregistrationConfig {
