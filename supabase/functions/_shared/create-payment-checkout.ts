@@ -913,6 +913,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       preSubMeta.installment_total_amount_byn = Number(extraMeta.installment_total_amount_byn ?? (amountByn * (billingCycles || 1)));
       preSubMeta.installment = installmentExtra;
       preSubMeta.model = 'bepaid_finite_subscription';
+      // Retry policy (parsed canonical form).
+      preSubMeta.retry_policy_mode = installmentExtra.retry_policy_mode ?? null;
+      preSubMeta.max_charge_attempts_configured = installmentExtra.max_charge_attempts ?? null;
     }
     const { data: preSub, error: preSubError } = await supabase
       .from('subscriptions_v2')
