@@ -1296,11 +1296,16 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         active_checkout_kind: 'bepaid_subscription_id',
         checkout_created_at: new Date().toISOString(),
         checkout_tokens_history: [subTokenHistoryEntry],
+        // B2 corrective. Explicit orders_v2 snapshot — не полагаемся на spread.
+        charge_notifications: chargeNotifSnapshot,
+        charge_notifications_source: chargeNotifPolicy.source,
         ...(isInstallmentSubscription && retryPolicySnapshotPre
           ? {
               installment: {
                 ...(installmentExtra || {}),
                 retry_policy: retryPolicySnapshotPre,
+                charge_notifications: chargeNotifSnapshot,
+                charge_notifications_source: chargeNotifPolicy.source,
               },
             }
           : {}),
