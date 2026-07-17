@@ -1385,6 +1385,25 @@ Deno.serve(async (req) => {
         // Check if user has active SBS for this product
         const userHasSBS = await hasActiveSBS(supabase, userId, productId);
 
+        // B4: Branch 1 (access-end reminder) applies ONLY to subscriptions without an
+        // active provider-managed auto-charge. Provider-managed subs (recurring + finite
+        // installments) are covered by Branch 2 (upcoming-charge reminders) below.
+        if (userHasSBS && !productIsOneTime) {
+          await supabase.from('audit_logs').insert({
+            action: 'reminders.branch1_skipped_provider_managed',
+            actor_type: 'system',
+            actor_label: 'subscription-renewal-reminders',
+            meta: {
+              user_id: userId,
+              subscription_id: sub.id,
+              product_id: productId,
+              days_left: daysLeft,
+              reason: 'handled_by_upcoming_charge_reminder',
+            },
+          });
+          continue;
+        }
+
         // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links for non-SBS, non-one-time
         let oneTimeUrl: string | null = null;
         let subscriptionUrl: string | null = null;
