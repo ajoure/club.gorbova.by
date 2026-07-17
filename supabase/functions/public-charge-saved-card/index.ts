@@ -259,9 +259,10 @@ Deno.serve(async (req) => {
     plannedEnd.setDate(plannedEnd.getDate() + accessDays);
 
     // --- 10. CRM routing snapshot (B.0 invariant) -------------------------
-    const routing = await resolveOfferRoutingWithFallback(supabase, {
+    const routing = await resolveOrderRouting(supabase, {
       offer_id: link.offer_id,
       tariff_id: link.tariff_id,
+      product_id: link.product_id,
     });
     const crmSnapshot = routing.ok && routing.snapshot
       ? routing.snapshot
@@ -269,8 +270,10 @@ Deno.serve(async (req) => {
           reason: routing.reason || 'unknown',
           offer_id: link.offer_id ?? null,
           tariff_id: link.tariff_id,
+          product_id: link.product_id,
           resolved_via: routing.resolved_via ?? 'none',
           candidates_count: routing.candidates_count ?? 0,
+          primary_reason: routing.primary_reason ?? null,
         });
 
     // --- 11. Generate order number + INSERT order ------------------------
