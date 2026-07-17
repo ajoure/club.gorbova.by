@@ -206,6 +206,7 @@ function isFiniteInstallmentModel(ps: any, subV2: any): boolean {
 export type RunChargeRemindersArgs = {
   supabase: any;
   botToken: string | null;
+  botId?: string | null;
   nowIso?: string;
   dryRun?: boolean;
   /** Optional filter: only process this provider_subscription (for smoke tests). */
@@ -521,7 +522,7 @@ export async function runChargeReminders(
         claimed.telegram++;
         const delivery = await sendTelegram(supabase, {
           botToken,
-          botId: null,
+          botId: args.botId ?? null,
           userId: ps.user_id,
           chatId: telegramChatId,
           text: tgText,
