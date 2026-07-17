@@ -2478,26 +2478,10 @@ Deno.serve(async (req) => {
           },
         });
 
-        // B7 Item 8: on retry_exhausted, terminate the current pending
-        // installment_payments row with provider evidence.
-        if (termIsRetryExhausted) {
-          try {
-            await terminateFirstPendingInstallment({
-              supabase,
-              subscriptionId: subscriptionV2Id,
-              transactionUid: transactionUid ? String(transactionUid) : null,
-              evidence: {
-                gateway_recurring_reason: grReason || null,
-                attempts_left: Number.isFinite(attemptsLeft) ? attemptsLeft : null,
-                cancellation_reason: cancellationReason || null,
-                transaction_status: transaction?.status ?? null,
-              },
-              atIso: now.toISOString(),
-            });
-          } catch (termErr) {
-            console.error('[WEBHOOK-SUBSCRIPTION] schedule termination non-fatal:', termErr);
-          }
-        }
+        // B7 Item 8 DISABLED — provider-managed finite bePaid subscriptions do
+        // not maintain a local installment_payments schedule. Termination is
+        // reflected only in subscriptions_v2/provider_subscriptions status.
+        void terminateFirstPendingInstallment;
 
         // Deliver retry-exhausted notification (independent flag).
         if (termIsRetryExhausted) {
