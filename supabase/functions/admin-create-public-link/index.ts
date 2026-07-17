@@ -290,10 +290,12 @@ Deno.serve(async (req) => {
         return errorResponse('Offer is not an installment offer', 400);
       }
       if (!offerInstallmentMaxMonths || offerInstallmentMaxMonths < 2) {
-        return errorResponse('Installment offer has no valid max_months', 400);
+        return errorResponse('Installment offer has no valid installment_count', 400);
       }
+      // Admin path: количество платежей всегда 2..12 (не ограничивается настройкой оффера).
+      // Админ может создать индивидуальную ссылку с любым N вне зависимости от кнопки.
       const sel = Number(selected_installment_months);
-      if (!Number.isInteger(sel) || sel < 2 || sel > offerInstallmentMaxMonths) {
+      if (!Number.isInteger(sel) || sel < 2 || sel > 12) {
         return errorResponse('invalid_installment_months', 400);
       }
       // amount приходит в копейках = ПОЛНАЯ стоимость (UI всегда шлёт total).
