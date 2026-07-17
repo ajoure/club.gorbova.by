@@ -26,7 +26,12 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
-import { resolveInstallmentRetryPolicy } from '../_shared/installment-retry-policy.ts';
+import {
+  resolveInstallmentRetryPolicy,
+  resolveBepaidAttemptsValue,
+  ProviderUnlimitedAttemptsNotSupportedError,
+} from '../_shared/installment-retry-policy.ts';
+import { getBepaidCredsStrict, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import {
   resolveChargeNotificationSnapshotForWriter,
   serializeChargeNotificationPolicy,
