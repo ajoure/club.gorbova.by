@@ -1219,6 +1219,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
               installment_count: installmentCountRaw,
               billing_cycles: billingCycles,
               model: 'bepaid_finite_subscription',
+              retry_policy: retryPolicySnapshotPre,
             }
           : {}),
       },
