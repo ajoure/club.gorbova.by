@@ -1061,13 +1061,12 @@ ${amountLine}
 
   const activeProducts = products?.filter((p) => p.is_active) || [];
 
-  // Stage L: для installment селект срока ОБЯЗАТЕЛЕН.
+  // Индивидуальная ссылка: N обязателен, диапазон 2..12 (не ограничивается настройкой кнопки).
   const installmentInvalid =
     isInstallmentOffer &&
     (!selectedInstallmentMonths ||
-      !installmentMaxMonths ||
       selectedInstallmentMonths < 2 ||
-      selectedInstallmentMonths > installmentMaxMonths);
+      selectedInstallmentMonths > 12);
 
   // Phase 4.1 — Stripe-specific guards (UI level, backend validates повторно).
   const stripeInstallmentBlocked = provider === "stripe" && isInstallmentOffer;
