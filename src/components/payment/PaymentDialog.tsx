@@ -1577,6 +1577,8 @@ export function PaymentDialog({
                   isLoading ||
 
                   isLoadingCard ||
+                  // B8: для installment-оффера блокируем, пока клиент не выбрал N.
+                  (isInstallmentOffer && !selectedInstallmentMonths) ||
                   // F1: блокируем оплату только при конфликте по ТОМУ ЖЕ продукту в subscription-flow.
                   (!!conflictData && conflictData.product_id === productId && !!isSubscription && !isTrial)
                 }
