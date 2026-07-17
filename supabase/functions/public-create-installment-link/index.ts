@@ -123,28 +123,21 @@ Deno.serve(async (req) => {
       return errorResponse('not_installment_offer', 400);
     }
 
-    // B9. В tariff_offers.installment_count хранится max_months (2..12).
-    const maxMonthsColumn = Number((offer as any).installment_count ?? 0);
-    if (!Number.isInteger(maxMonthsColumn) || maxMonthsColumn < 2) {
+    // Публичный путь: точное количество платежей = tariff_offers.installment_count.
+    // Клиентские значения игнорируются (см. .lovable/plan.md §2.2 "Публичный backend
+    // не доверяет клиенту"). Диапазон валидности 2..12.
+    const offerCycles = Number((offer as any).installment_count ?? 0);
+    const metaMaxLegacy = Number((offer as any).meta?.installment?.max_months ?? 0);
+    const publicCycles = Number.isInteger(offerCycles) && offerCycles >= 2 && offerCycles <= 12
+      ? offerCycles
+      : (Number.isInteger(metaMaxLegacy) && metaMaxLegacy >= 2 && metaMaxLegacy <= 12
+          ? metaMaxLegacy
+          : null);
+    if (!publicCycles) {
       return errorResponse('installment_count_invalid', 400);
     }
+    const selectedMonths = publicCycles;
 
-    // B9. Выбор клиента (N платежей). Default: если max=2 и не передано — 2.
-    const requestedSel = body.selected_installment_months;
-    let selectedMonths: number;
-    if (requestedSel === null || requestedSel === undefined) {
-      if (maxMonthsColumn === 2) {
-        selectedMonths = 2;
-      } else {
-        return errorResponse('installment_months_required', 400);
-      }
-    } else {
-      const n = Number(requestedSel);
-      if (!Number.isInteger(n) || n < 2 || n > maxMonthsColumn) {
-        return errorResponse('installment_months_out_of_range', 400);
-      }
-      selectedMonths = n;
-    }
 
     const totalByn = Number(offer.amount);
     if (!Number.isFinite(totalByn) || totalByn < 1) {
@@ -182,7 +175,7 @@ Deno.serve(async (req) => {
       return errorResponse('invalid_first_payment_delay_days', 400);
     }
     const metaMax = Number((offer as any).meta?.installment?.max_months ?? 0);
-    const maxMonths = metaMax >= 2 ? metaMax : maxMonthsColumn;
+    const maxMonths = metaMax >= 2 ? metaMax : publicCycles;
 
     let retryPolicy;
     try {

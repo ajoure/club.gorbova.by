@@ -290,10 +290,12 @@ Deno.serve(async (req) => {
         return errorResponse('Offer is not an installment offer', 400);
       }
       if (!offerInstallmentMaxMonths || offerInstallmentMaxMonths < 2) {
-        return errorResponse('Installment offer has no valid max_months', 400);
+        return errorResponse('Installment offer has no valid installment_count', 400);
       }
+      // Admin path: количество платежей всегда 2..12 (не ограничивается настройкой оффера).
+      // Админ может создать индивидуальную ссылку с любым N вне зависимости от кнопки.
       const sel = Number(selected_installment_months);
-      if (!Number.isInteger(sel) || sel < 2 || sel > offerInstallmentMaxMonths) {
+      if (!Number.isInteger(sel) || sel < 2 || sel > 12) {
         return errorResponse('invalid_installment_months', 400);
       }
       // amount приходит в копейках = ПОЛНАЯ стоимость (UI всегда шлёт total).
@@ -394,6 +396,14 @@ Deno.serve(async (req) => {
       });
       const chargeNotifSnapshot = serializeChargeNotificationPolicy(chargeNotifPolicy);
 
+      // Manual override detection: изменил ли админ N или сумму относительно оффера.
+      const offerAmountByn = Number((resolvedOffer as any).amount ?? 0);
+      const offerAmountKopecks = Math.round(offerAmountByn * 100);
+      const overriddenFields: string[] = [];
+      if (sel !== offerInstallmentCountLegacy) overriddenFields.push('billing_cycles');
+      if (Math.round(amount) !== offerAmountKopecks) overriddenFields.push('amount');
+      const manualOverride = overriddenFields.length > 0;
+
       installmentLinkAmountKopecks = perPaymentKopecks;
       installmentBlock = {
         payment_method: 'internal_installment',
@@ -405,7 +415,6 @@ Deno.serve(async (req) => {
         per_payment_amount: perPaymentByn,
         per_payment_amount_byn: perPaymentByn,
         total_installment_amount: totalInstallmentByn,
-        // B9. Canonical rounding snapshot fields.
         requested_total_byn: totalByn,
         per_payment_byn: perPaymentByn,
         effective_total_byn: totalInstallmentByn,
@@ -413,14 +422,38 @@ Deno.serve(async (req) => {
         rounding_mode: plan.rounding_mode,
         as_finite_subscription: true,
         billing_cycles: sel,
-        // Retry policy (см. _shared/installment-retry-policy.ts).
         max_charge_attempts: retryPolicy.configured_value,
         retry_policy_mode: retryPolicy.mode,
-        // B2. Canonical charge_notifications snapshot (installment scope).
         charge_notifications: chargeNotifSnapshot,
         charge_notifications_source: chargeNotifPolicy.source,
+        // Manual override snapshot (см. .lovable/plan.md §6).
+        source_offer_id: resolvedOffer.id,
+        source_offer_public_cycles: offerInstallmentCountLegacy,
+        source_offer_amount_byn: offerAmountByn,
+        manual_override: manualOverride,
+        overridden_fields: overriddenFields,
       };
       payment_type = 'subscription';
+
+      // Audit: административное создание индивидуальной ссылки на рассрочку.
+      await supabase.from('audit_logs').insert({
+        actor_type: 'user',
+        actor_user_id: user.id,
+        actor_label: 'admin-create-public-link',
+        action: 'installment.admin_link_created',
+        meta: {
+          contact_id: user_id ?? null,
+          offer_id: resolvedOffer.id,
+          public_cycles: offerInstallmentCountLegacy,
+          selected_cycles: sel,
+          public_amount_byn: offerAmountByn,
+          selected_amount_byn: totalByn,
+          rounding_delta_byn: roundingDeltaByn,
+          manual_override: manualOverride,
+          overridden_fields: overriddenFields,
+          source: 'AdminPaymentLinkDialog',
+        },
+      });
     }
 
     // ── Phase 8 follow-up FIX — auto vs explicit recurring handling ──

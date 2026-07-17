@@ -2431,7 +2431,7 @@ export default function AdminProductDetailV2() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label>Максимальное количество платежей</Label>
+                    <Label>Количество платежей на сайте</Label>
                     <Select
                       value={String(Math.max(2, Math.min(12, offerForm.installment_count || 6)))}
                       onValueChange={(v) =>
@@ -2450,7 +2450,7 @@ export default function AdminProductDetailV2() {
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                      Допустимо 2..12 платежей. Это верхний лимит — при создании ссылки администратор или клиент выберут фактическое число платежей от 2 до выбранного максимума.
+                      Укажите точное количество платежей, которое будет предложено клиенту на сайте. Индивидуальную ссылку с другим количеством платежей администратор сможет создать из карточки контакта.
                     </p>
                   </div>
 
