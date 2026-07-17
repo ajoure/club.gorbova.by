@@ -556,7 +556,9 @@ export default function SitePageBySlug() {
               resolved.offer.payment_method !== "internal_installment"
             }
             paymentMethod={resolved.offer.payment_method}
-            installmentCount={resolved.offer.installment_count ?? null}
+            installmentMaxMonths={resolved.offer.installment_count ?? null}
+            installmentIntervalDays={(resolved.offer as any).installment_interval_days ?? null}
+            installmentTotalAmountKopecks={Math.round(Number(resolved.offer.amount) * 100)}
           />
         );
       })()}

@@ -3318,7 +3318,9 @@ export default function AdminProductDetailV2() {
             selectedOfferForPayment.offer.payment_method !== "internal_installment"
           }
           paymentMethod={selectedOfferForPayment.offer.payment_method}
-          installmentCount={selectedOfferForPayment.offer.installment_count ?? null}
+          installmentMaxMonths={selectedOfferForPayment.offer.installment_count ?? null}
+          installmentIntervalDays={(selectedOfferForPayment.offer as any).installment_interval_days ?? null}
+          installmentTotalAmountKopecks={Math.round(Number(selectedOfferForPayment.offer.amount) * 100)}
         />
       )}
     </AdminLayout>

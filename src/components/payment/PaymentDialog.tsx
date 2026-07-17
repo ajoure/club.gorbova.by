@@ -18,6 +18,17 @@ import { toast } from "sonner";
 import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Info, AlertTriangle, Repeat, Shield } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  calculateInstallmentPlan,
+  kopecksToDecimal,
+} from "@/lib/calculateInstallmentPlan";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
@@ -50,7 +61,11 @@ interface PaymentDialogProps {
   // Installment offer (payment_method='internal_installment'). Если задано
   // и >=2 — кнопка «Оплатить» создаёт installment payment_link и редиректит на /pay/:token.
   paymentMethod?: string | null;
+  /** @deprecated legacy alias — используйте installmentMaxMonths */
   installmentCount?: number | null;
+  installmentMaxMonths?: number | null;
+  installmentIntervalDays?: number | null;
+  installmentTotalAmountKopecks?: number | null;
   subscriptionMessage?: SubscriptionMessage;
 }
 
@@ -141,10 +156,42 @@ export function PaymentDialog({
   isSubscription,
   paymentMethod,
   installmentCount,
+  installmentMaxMonths,
+  installmentIntervalDays,
+  installmentTotalAmountKopecks,
   subscriptionMessage,
 }: PaymentDialogProps) {
   const displayCurrency = currency || "BYN";
   const paymentDescription = tariffName ? `${productName} — ${tariffName}` : productName;
+  // B8/B9. Публичный flow рассрочки: клиент явно выбирает N в диапазоне 2..max.
+  // installmentCount оставлен как legacy alias для fallback.
+  const installmentMaxMonthsResolved: number | null =
+    (typeof installmentMaxMonths === 'number' && installmentMaxMonths >= 2
+      ? installmentMaxMonths
+      : null) ??
+    (typeof installmentCount === 'number' && installmentCount >= 2
+      ? installmentCount
+      : null);
+  const installmentIntervalDaysResolved: number =
+    typeof installmentIntervalDays === 'number' && installmentIntervalDays > 0
+      ? installmentIntervalDays
+      : 30;
+  // Парсим сумму: пробуем props → парсим price ("1950" | "1950 BYN" | "1 950,50").
+  const installmentTotalKopecks: number | null = (() => {
+    if (
+      typeof installmentTotalAmountKopecks === 'number' &&
+      Number.isFinite(installmentTotalAmountKopecks) &&
+      installmentTotalAmountKopecks > 0
+    ) {
+      return Math.round(installmentTotalAmountKopecks);
+    }
+    if (typeof price === 'string') {
+      const cleaned = price.replace(/[^\d.,-]/g, '').replace(/\s/g, '').replace(',', '.');
+      const num = Number.parseFloat(cleaned);
+      if (Number.isFinite(num) && num > 0) return Math.round(num * 100);
+    }
+    return null;
+  })();
   const { user, session } = useAuth();
   const { isSuperAdmin, isAdmin } = usePermissions();
   const [step, setStep] = useState<Step>("email");
@@ -177,6 +224,9 @@ export function PaymentDialog({
   // PAY-K: one_time saved-card selector. 'new_card' or payment_method_id (uuid).
   // Для subscription/trial карты остаются disabled (PAY-I behavior).
   const [selectedMethod, setSelectedMethod] = useState<string>('new_card');
+  // B8. Явный выбор клиентом количества платежей рассрочки (2..max).
+  // Для max===2 авто-подставляем 2 в useEffect ниже.
+  const [selectedInstallmentMonths, setSelectedInstallmentMonths] = useState<number | null>(null);
   const savedCardIdempotencyKeyRef = useRef<string>(crypto.randomUUID());
 
   // Same-pair subscription conflict (existing active subscription on same product+tariff)
@@ -299,6 +349,23 @@ export function PaymentDialog({
     setSelectedMethod(def?.id || 'new_card');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOneTimeFlow, savedCards]);
+
+  // B8. Инициализация выбранного N при открытии диалога с installment-оффером.
+  // max=2 → авто N=2; max>2 → ждём явного выбора клиента.
+  useEffect(() => {
+    if (!open) return;
+    if (paymentMethod !== 'internal_installment') {
+      if (selectedInstallmentMonths !== null) setSelectedInstallmentMonths(null);
+      return;
+    }
+    if (installmentMaxMonthsResolved === 2) {
+      if (selectedInstallmentMonths !== 2) setSelectedInstallmentMonths(2);
+    } else {
+      if (selectedInstallmentMonths !== null) setSelectedInstallmentMonths(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, paymentMethod, installmentMaxMonthsResolved]);
+
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -662,14 +729,19 @@ export function PaymentDialog({
   // работает существующий public-checkout → bepaid → installment_payments.
   const isInstallmentOffer =
     paymentMethod === 'internal_installment' &&
-    typeof installmentCount === 'number' &&
-    installmentCount >= 2 &&
+    typeof installmentMaxMonthsResolved === 'number' &&
+    installmentMaxMonthsResolved >= 2 &&
     !isTrial &&
     !isSubscription;
 
   const handleInstallmentPayment = async () => {
     if (!offerId) {
       setPaymentError('Не удалось определить оффер рассрочки.');
+      setStep('ready');
+      return;
+    }
+    if (!selectedInstallmentMonths) {
+      setPaymentError('Выберите количество платежей.');
       setStep('ready');
       return;
     }
@@ -683,10 +755,8 @@ export function PaymentDialog({
           body: {
             product_id: productId,
             offer_id: offerId,
-            // B9. Ландинг сейчас всегда выбирает max_months (installmentCount из оффера — это max).
-            // Публичный writer валидирует значение и вернёт installment_months_required,
-            // если для max>2 клиент явно не выбрал N.
-            selected_installment_months: installmentCount ?? null,
+            // B8. Клиент явно выбирает N (2..max). При max=2 auto-подставляется 2.
+            selected_installment_months: selectedInstallmentMonths,
           },
         },
       );
@@ -1300,20 +1370,100 @@ export function PaymentDialog({
               </span>
             </div>
 
-            {/* F3: installment summary */}
-            {isInstallmentOffer && (
-              <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1">
-                <p className="font-medium text-foreground">
-                  Рассрочка на {installmentCount} платежа
-                </p>
-                <p className="text-muted-foreground">
-                  Сегодня — первый платёж. Остальные спишутся автоматически с интервалом 30 дней.
-                </p>
-                <p className="text-xs text-muted-foreground/80 pt-1">
-                  После нажатия «Оплатить» вы перейдёте на защищённую страницу bePaid.
-                </p>
-              </div>
-            )}
+            {/* B8/B9: installment selector + summary */}
+            {isInstallmentOffer && installmentMaxMonthsResolved && (() => {
+              const maxN = installmentMaxMonthsResolved;
+              const options: number[] = [];
+              for (let n = 2; n <= maxN; n += 1) options.push(n);
+              const pluralize = (n: number) => {
+                const mod10 = n % 10;
+                const mod100 = n % 100;
+                if (mod10 === 1 && mod100 !== 11) return 'платёж';
+                if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'платежа';
+                return 'платежей';
+              };
+              const safePlan = (n: number) => {
+                if (!installmentTotalKopecks) return null;
+                try {
+                  return calculateInstallmentPlan({
+                    total_amount_kopecks: installmentTotalKopecks,
+                    selected_cycles: n,
+                  });
+                } catch {
+                  return null;
+                }
+              };
+              const currentPlan = selectedInstallmentMonths ? safePlan(selectedInstallmentMonths) : null;
+              return (
+                <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-2">
+                  {maxN > 2 && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-foreground/80">
+                        Количество платежей
+                      </label>
+                      <Select
+                        value={selectedInstallmentMonths ? String(selectedInstallmentMonths) : ''}
+                        onValueChange={(v) => setSelectedInstallmentMonths(parseInt(v, 10))}
+                      >
+                        <SelectTrigger className="bg-background">
+                          <SelectValue placeholder="Выберите количество платежей" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {options.map((n) => {
+                            const p = safePlan(n);
+                            const label = p
+                              ? `${n} ${pluralize(n)} × ${kopecksToDecimal(p.per_payment_kopecks).toFixed(0)} ${displayCurrency}`
+                              : `${n} ${pluralize(n)}`;
+                            return (
+                              <SelectItem key={n} value={String(n)}>
+                                {label}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                      {!selectedInstallmentMonths && (
+                        <p className="text-xs text-muted-foreground">
+                          Выберите количество платежей, чтобы продолжить.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {currentPlan && (
+                    <div className="space-y-0.5">
+                      <p className="font-medium text-foreground">
+                        {currentPlan.cycles} {pluralize(currentPlan.cycles)} рассрочки
+                      </p>
+                      <p className="text-muted-foreground">
+                        Один платёж:{' '}
+                        <span className="font-medium text-foreground">
+                          {kopecksToDecimal(currentPlan.per_payment_kopecks).toFixed(0)} {displayCurrency}
+                        </span>
+                      </p>
+                      <p className="text-muted-foreground">
+                        Итоговая сумма рассрочки:{' '}
+                        <span className="font-medium text-foreground">
+                          {kopecksToDecimal(currentPlan.effective_total_kopecks).toFixed(0)} {displayCurrency}
+                        </span>
+                      </p>
+                      {currentPlan.rounding_delta_kopecks !== 0 && (
+                        <p className="text-xs text-muted-foreground/80">
+                          Разница из-за округления вверх до целых {displayCurrency}: +
+                          {kopecksToDecimal(currentPlan.rounding_delta_kopecks).toFixed(0)} {displayCurrency}
+                        </p>
+                      )}
+                      <p className="text-muted-foreground pt-1">
+                        Первый платёж — сегодня, далее каждые {installmentIntervalDaysResolved} дней.
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground/80 pt-1">
+                    После нажатия «Оплатить» вы перейдёте на защищённую страницу bePaid.
+                  </p>
+                </div>
+              );
+            })()}
+
 
             {/* PAY-I: subscription-info — показываем ТОЛЬКО для реальных подписок, не для trial.
                 Для trial рендерится отдельный «Демо-доступ» блок выше с динамикой из настроек оффера. */}
@@ -1427,6 +1577,8 @@ export function PaymentDialog({
                   isLoading ||
 
                   isLoadingCard ||
+                  // B8: для installment-оффера блокируем, пока клиент не выбрал N.
+                  (isInstallmentOffer && !selectedInstallmentMonths) ||
                   // F1: блокируем оплату только при конфликте по ТОМУ ЖЕ продукту в subscription-flow.
                   (!!conflictData && conflictData.product_id === productId && !!isSubscription && !isTrial)
                 }

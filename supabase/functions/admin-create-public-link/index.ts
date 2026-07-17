@@ -410,7 +410,7 @@ Deno.serve(async (req) => {
         per_payment_byn: perPaymentByn,
         effective_total_byn: totalInstallmentByn,
         rounding_delta_byn: roundingDeltaByn,
-        rounding_mode: 'ceil_to_whole_byn',
+        rounding_mode: plan.rounding_mode,
         as_finite_subscription: true,
         billing_cycles: sel,
         // Retry policy (см. _shared/installment-retry-policy.ts).
