@@ -2075,7 +2075,14 @@ export default function AdminProductDetailV2() {
                               installment_provider: prevBI.installment_provider ?? 'rr',
                               currency: prevBI.currency ?? 'BYN',
                               rr_mode: prevBI.rr_mode ?? 'payment_url',
-                              // external_link / link_label / message_html — НЕ трогаем.
+                              // Канон Sprint B: при выборе типа «Рассрочка банка»
+                              // всегда включаем runtime-контур РР. Legacy external_link
+                              // остаётся только как аварийный fallback.
+                              rr_runtime: {
+                                enabled: true,
+                                provider: 'rr',
+                                mode: prevBI?.rr_runtime?.mode ?? 'initiate_only',
+                              },
                             },
                           },
                         });
