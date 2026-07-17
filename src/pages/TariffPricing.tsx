@@ -4,6 +4,8 @@ import { usePublicTariffByPublicId } from "@/hooks/usePublicTariff";
 import { TariffCard } from "@/components/landing/TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
+import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialog";
+import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import { Loader2, ExternalLink, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
