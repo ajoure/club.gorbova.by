@@ -157,18 +157,22 @@ export async function rrCreateOrder(
   input: RRCreateOrderInput,
 ): Promise<RRCreateOrderResult> {
   const amountRub = (input.amountMinor / 100).toFixed(2);
+  const itemName = (input.itemName && input.itemName.trim().length > 0)
+    ? input.itemName.trim().slice(0, 128)
+    : "Оплата заказа";
   const body = {
     order: {
       version: "2.0",
       id: input.externalId,
       amount: amountRub,
       currency: input.currency,
-      items: [{ name: "RR core test order", quantity: 1, price: amountRub }],
+      items: [{ name: itemName, quantity: 1, price: amountRub }],
     },
     notification_url: input.notificationUrl,
     complete_url: input.completeUrl,
     fail_url: input.failUrl,
   };
+
 
   const res = await rrHttpPost({
     baseUrl: cfg.baseUrl,
