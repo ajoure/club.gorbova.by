@@ -309,13 +309,27 @@ export async function sendChargeLifecycleNotification(
         }
       }
     } else if (telegramChatId && !botToken) {
-      // Non-fatal: telegram user known but link bot unavailable / encrypted-only.
+      // B7 iteration 4 (Item 1 corrective): observability — Telegram recipient known
+      // but link-bot token unavailable (encrypted-only decrypt path or no active
+      // link-bot). Claim the outbox slot so a future webhook replay can reclaim
+      // the failed slot after the token becomes available.
+      const key = buildIdempotencyKey(args, "telegram");
+      const claim = await claimSlot(supabase, args.userId, "telegram", messageType, key, {
+        ...commonMeta,
+        blocked_reason_hint: "link_bot_token_unavailable",
+      });
+      if (claim.claimed) {
+        result.claimed.telegram = 1;
+        result.telegram_error = "link_bot_token_unavailable";
+        await markFailed(supabase, key, "link_bot_token_unavailable");
+      }
       console.warn("[lifecycle-notify] telegram skipped: no usable link bot token", {
         event: args.event,
         user_id: args.userId,
         token_source: link.token_source,
       });
     }
+
 
     // Email
     if (email) {

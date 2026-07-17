@@ -2319,14 +2319,18 @@ Deno.serve(async (req) => {
           .eq('provider_subscription_id', subscriptionId);
         
         // Disable auto_renew but DON'T revoke access retroactively.
-        // B7 corrective (defect #4): retry_exhausted MUST rely on provider evidence,
-        // not the "expired-with-cycles-remaining" heuristic. We accept as evidence:
-        //   * explicit gateway_recurring_reason.code containing exhaust/retries/attempts
-        //   * subscription.attempts_left / retries_left == 0
+        // B7 corrective iteration 4 (defect #6 safe default):
+        // retry_exhausted MUST rely on EXPLICIT provider evidence only.
+        // Accepted evidence:
+        //   * attempts_left == 0 / retries_left == 0
+        //   * gateway_recurring_reason.code/message with exhaust/retries/attempts/max_retry
         //   * cancellation_reason mentioning retries/attempts
-        //   * transaction.status='failed' AND explicit failed-terminal marker
-        // Without evidence we classify as 'terminated' with
-        // reason='provider_terminal_unclassified' (audit severity=WARNING).
+        // REMOVED: `transaction.status='failed' AND subscription.state='failed'`
+        // (was overclassifying — a single failed webhook in `failed` state is NOT
+        // proof that provider exhausted all retries). Add-only extension is allowed
+        // once real bePaid payload sample confirms an additional signal.
+        // Without evidence → 'terminated' + termination_reason='provider_terminal_unclassified'
+        // (audit severity=WARNING).
         const termMeta = (subV2.meta || {}) as Record<string, any>;
         const termInstallmentCount = Number(termMeta.installment_count ?? 0);
         const termIsFinite =
@@ -2343,12 +2347,15 @@ Deno.serve(async (req) => {
           (subscription as any)?.gateway_recurring_reason?.code ||
           ''
         ).toLowerCase();
-        const attemptsLeft = Number(
+        const attemptsLeftRaw =
           (subscription as any)?.attempts_left ??
           (subscription as any)?.retries_left ??
           (body as any)?.attempts_left ??
-          NaN
-        );
+          (body as any)?.retries_left ??
+          null;
+        const attemptsLeft = attemptsLeftRaw === null || attemptsLeftRaw === undefined
+          ? NaN
+          : Number(attemptsLeftRaw);
         const cancellationReason = String(
           (subscription as any)?.cancellation_reason ||
           (body as any)?.cancellation_reason ||
@@ -2362,8 +2369,7 @@ Deno.serve(async (req) => {
           termPaidCycles < termInstallmentCount &&
           (
             reasonMentionsExhaust ||
-            (Number.isFinite(attemptsLeft) && attemptsLeft === 0) ||
-            (transaction?.status === 'failed' && subscriptionState === 'failed')
+            (Number.isFinite(attemptsLeft) && attemptsLeft === 0)
           );
 
         const termIsRetryExhausted = hasProviderExhaustEvidence;
@@ -2371,6 +2377,7 @@ Deno.serve(async (req) => {
           termIsFinite &&
           termPaidCycles < termInstallmentCount &&
           !hasProviderExhaustEvidence;
+
 
         const installmentStatusValue = termIsRetryExhausted
           ? 'retry_exhausted'
