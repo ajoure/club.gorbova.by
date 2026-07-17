@@ -978,6 +978,24 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const source = body.source || 'manual';
 
+    // B4/B5/B6: Upcoming-charge reminder dry-run.
+    // Returns rendered payload (TG text, email HTML, idempotency keys, timezone, policy)
+    // WITHOUT writing to notification_outbox and WITHOUT sending anything.
+    if (body?.dry_run === true) {
+      const { runChargeReminders } = await import('../_shared/run-charge-reminders.ts');
+      const result = await runChargeReminders({
+        supabase,
+        botToken: null,
+        dryRun: true,
+        onlyProviderSubscriptionId: typeof body.provider_subscription_id === 'string'
+          ? body.provider_subscription_id
+          : undefined,
+      });
+      return new Response(JSON.stringify({ ok: true, mode: 'dry_run', ...result }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // === DEBUG MODE: orphan DoD single-user test ===
     if (body.debug_mode === true) {
       const debugUserId = String(body.debug_user_id || '').trim();
@@ -1385,6 +1403,25 @@ Deno.serve(async (req) => {
         // Check if user has active SBS for this product
         const userHasSBS = await hasActiveSBS(supabase, userId, productId);
 
+        // B4: Branch 1 (access-end reminder) applies ONLY to subscriptions without an
+        // active provider-managed auto-charge. Provider-managed subs (recurring + finite
+        // installments) are covered by Branch 2 (upcoming-charge reminders) below.
+        if (userHasSBS && !productIsOneTime) {
+          await supabase.from('audit_logs').insert({
+            action: 'reminders.branch1_skipped_provider_managed',
+            actor_type: 'system',
+            actor_label: 'subscription-renewal-reminders',
+            meta: {
+              user_id: userId,
+              subscription_id: sub.id,
+              product_id: productId,
+              days_left: daysLeft,
+              reason: 'handled_by_upcoming_charge_reminder',
+            },
+          });
+          continue;
+        }
+
         // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links for non-SBS, non-one-time
         let oneTimeUrl: string | null = null;
         let subscriptionUrl: string | null = null;
@@ -1515,6 +1552,24 @@ Deno.serve(async (req) => {
     // Email отправляется только из основного цикла. Email точки 7/3/1 в UI
     // строятся из email_logs.meta.subscription_id + meta.event_type.
 
+    // ============ B4: Branch 2 — Upcoming auto-charge reminders ============
+    // Provider-managed subscriptions (recurring + finite installments).
+    // TZ-aware calendar-day filter, atomic outbox idempotency, separate templates.
+    let chargeRemindersSummary: unknown = null;
+    try {
+      const { runChargeReminders } = await import('../_shared/run-charge-reminders.ts');
+      chargeRemindersSummary = await runChargeReminders({
+        supabase,
+        botToken,
+        dryRun: false,
+      });
+      console.log('[charge-reminders] summary:', JSON.stringify(chargeRemindersSummary));
+    } catch (chargeErr) {
+      console.error('[charge-reminders] run failed:', chargeErr);
+      chargeRemindersSummary = { error: chargeErr instanceof Error ? chargeErr.message : 'unknown' };
+    }
+
+
     // ============ Statistics ============
     const reminders7d = results.filter(r => r.days_until_expiry === 7 && r.reminder_type === 'expiry_reminder');
     const reminders3d = results.filter(r => r.days_until_expiry === 3 && r.reminder_type === 'expiry_reminder');
@@ -1543,6 +1598,7 @@ Deno.serve(async (req) => {
       failed_send: failedSend.length,
       failed_log_insert: failedLogInsert.length,
       duplicate_suppressed: duplicateSuppressed.length,
+      charge_reminders: chargeRemindersSummary,
     };
 
     await supabase.from('audit_logs').insert({
