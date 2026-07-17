@@ -1,686 +1,972 @@
-## Решение по плану: **RETURN до capability proof bePaid**
+# Решение по плану: **RETURN — исходная задача сокращена и частично заменена Trial-спринтом**
 
-План в целом архитектурно правильный: отдельно разведены конечное число платежных циклов, политика повторных списаний, публичные ссылки invoice/RR и существующий acquiring-flow.
+План качественно закрывает corrective retry-patch и правильно запрещает создание второго trial/MIT-контура. Но он **не закрывает первоначальную задачу целиком**:
 
-Но требование:
+1. внутренняя рассрочка на заданное количество платежей;
+2. создание из карточки контакта ссылок по конкретным кнопкам продукта;
+3. поддержка обычной оплаты, внутренней рассрочки, счёта и банковской рассрочки.
 
-```text
-NULL / отсутствует / 0
-→ провайдер пытается списывать без ограничения
+В текущем плане третий блок вынесен в «отдельный спринт», а вместо него добавлена крупная реализация provider-managed Trial. Это изменение scope без согласования.
 
-```
+---
 
-пока **не подтверждается источниками**.
+## Что в плане сделано правильно
 
-Документация совместимого subscription API однозначно разделяет:
+### Corrective retry-patch
 
-- `infinite` — бесконечное количество **платёжных циклов**;
-- `billing_cycles` — конечное количество платежей;
-- `number_payment_attempts` — конечное количество неудачных попыток перед отменой подписки;
-- при отсутствии `number_payment_attempts` применяется значение `3`. ([BeGateway](https://doc.begateway.com/ru/payment_management/subscriptions/plans/))
+A1–A4 правильные:
 
-Документация также говорит, что повторные попытки выполняются до успеха либо до исчерпания указанного количества. Она не определяет `0` как бесконечность. ([BeGateway](https://doc.begateway.com/ru/payment_management/subscriptions/plans/))
+- capability должен проверяться до создания заказа;
+- effective provider strategy должна сохраняться;
+- ошибка должна иметь машинный код;
+- legacy-значение должно отличаться от явного `0`.
 
-## Что в плане оставить
+A7 также правильный: поле задержки первого платежа нельзя показывать рабочим, пока оно только сохраняется в metadata и не меняет payload провайдера.
 
-### 1. Внутренняя бизнес-семантика
+### Переиспользование Trial
 
-Допустимо зафиксировать:
+Discovery нужен. В коде действительно уже существуют три разных исторических механизма:
 
-```text
-meta.installment.max_charge_attempts = 0
-или NULL / отсутствует
-→ unlimited_requested
+- бесплатный no-card trial;
+- MIT-tokenization;
+- provider-managed bePaid subscription с `plan.plan + plan.trial`.
 
-1..10
-→ limited
+Старый builder уже формировал trial amount, trial interval, основную сумму и основной период.
 
-```
+MIT сейчас отключён, а в админке прямо указано, что внутреннее автосписание после trial платформенно выключено.
 
-Но до подтверждения провайдера значение `unlimited_requested` означает только **намерение системы**, а не доказанную возможность bePaid.
+Старая subscription-ветка в `bepaid-create-token` находится после hard guard и фактически недостижима.
 
-Правильный тип:
+Поэтому запрет на новую edge-функцию, новый MIT и второй builder обоснован.
 
-```ts
-type InstallmentRetryPolicy =
-  | {
-      mode: "unlimited_requested";
-      configured_value: 0;
-    }
-  | {
-      mode: "limited";
-      configured_value: number;
-      max_attempts: number;
-    };
+---
 
-```
+# Что план упустил
 
-Не называть режим просто `unlimited`, пока не доказано фактическое поведение провайдера.
+## 1. Из исходной задачи исключены ссылки из карточки контакта
 
-### 2. Capability gate
-
-Раздел capability probe обязателен и должен выполняться первым:
+В плане написано:
 
 ```text
-number_payment_attempts omitted
-number_payment_attempts = 0
-number_payment_attempts = 1
-number_payment_attempts = 10
-number_payment_attempts = 9999
+AdminPaymentLinkDialog — отдельный спринт
 
 ```
 
-Для каждого варианта сохранить:
+Но это не дополнительная задача. Это половина исходного требования.
 
-- request payload;
-- HTTP status;
-- response body;
-- фактическое значение в созданном плане;
-- результат повторного GET плана.
-
-До прохождения этого теста production checkout с `unlimited_requested` должен возвращать:
+Сейчас `AdminPaymentLinkDialog` работает только с активными:
 
 ```text
-provider_unlimited_attempts_not_supported
+offer_type = pay_now
 
 ```
 
-## Что необходимо исправить
+Резолвер, список видимых офферов и ручной выбор отбрасывают `invoice` и `bank_installment`.
 
-### 1. Не использовать `9999` без доказательства
-
-Стратегия с большим sentinel допустима только после подтверждения:
-
-- что API принимает значение;
-- что оно не ограничено меньшим внутренним максимумом;
-- что значение действительно сохраняется;
-- что подписка не отменяется раньше из-за иных правил провайдера.
-
-Без этого `9999` — неподтверждённый хардкод.
-
-### 2. Не обещать «будет списывать, пока карту не отменят»
-
-Документация делает важное различие:
-
-- повторные попытки применяются, когда в подписке **уже были успешные платежи**;
-- если самый первый платёж возвращает `failed` или `error`, подписка может сразу получить конечный неуспешный статус. ([BeGateway](https://doc.begateway.com/en/payment_management/subscriptions/subscriptions/))
-
-Поэтому подсказка в UI должна быть такой:
-
-> При поддержке провайдером система не ограничивает количество повторных попыток последующих списаний. Фактическое выполнение зависит от статуса подписки, ответа банка и правил платёжного провайдера.
-
-Нельзя гарантировать:
-
-> Будет списывать до тех пор, пока карта не будет отменена.
-
-### 3. Не менять legacy-поведение скрыто
-
-В плане отсутствующее поле у всех старых офферов автоматически становится `0`. Это меняет действующий provider default `3` на новое поведение.
-
-Нужен отдельный выбор:
+Следовательно, итог текущего плана будет таким:
 
 ```text
-Новые офферы:
-default = 0 / unlimited_requested
-
-Существующие офферы без поля:
-до capability proof сохраняют legacy-provider-default
+Внутренняя рассрочка исправлена
+Invoice из контакта отсутствует
+RR из контакта отсутствует
 
 ```
 
-После подтверждения провайдера можно выполнить отдельный guarded backfill старых installment-офферов:
+Это нельзя объявить завершением исходной задачи.
 
-```json
-{
-  "max_charge_attempts": 0,
-  "retry_policy_mode": "unlimited_requested"
-}
+### Требуемая корректировка
 
-```
-
-с BEFORE snapshot и точным перечнем затронутых офферов.
-
-### 4. Добавить третий режим для обратной совместимости
-
-Каноническая модель должна различать:
+Блок контактных ссылок можно выполнять после corrective patch, но он должен оставаться **частью того же master-DoD**.
 
 ```text
-provider_default
-limited
-unlimited_requested
+A. Retry corrective
+B. Internal installment completion
+C. Contact action links
+D. Trial Discovery
+E. Trial implementation — только после отдельного согласования
 
 ```
 
-Пример:
+`SPRINT STATUS: GREEN` запрещён до завершения блока C.
 
-```ts
-type InstallmentRetryPolicy =
-  | {
-      mode: "provider_default";
-      configured_value: null;
-    }
-  | {
-      mode: "limited";
-      configured_value: number;
-      max_attempts: number;
-    }
-  | {
-      mode: "unlimited_requested";
-      configured_value: 0;
-    };
+---
 
-```
+## 2. Trial Implementation B2–B7 — расширение scope, а не обязательная часть текущей задачи
 
-Но поскольку пользовательское бизнес-правило требует «пусто = бесконечность», `provider_default` нужен только для уже существующих legacy-офферов и технической миграции.
+Ваше замечание было:
 
-## UI
+> Проверить существующий Trial и ничего не дублировать.
 
-После capability proof варианты:
+Для этого обязательно требуется **B1 Discovery**.
+
+Но из замечания не следует, что в текущем спринте нужно немедленно:
+
+- переделывать `PaymentDialog`;
+- расширять trial UI;
+- переносить provider-managed trial;
+- изменять webhook lifecycle;
+- проводить отдельный paid-trial E2E.
+
+Это самостоятельный платёжный scope с высоким риском.
+
+### Правильная граница
+
+В текущем спринте:
 
 ```text
-Без ограничения
-1 попытка
-2 попытки
-...
-10 попыток
+B1 Trial Discovery           : REQUIRED
+B2–B7 Trial implementation   : HOLD AFTER DISCOVERY
 
 ```
 
-До capability proof:
+После Discovery должен быть отдельный отчёт:
 
 ```text
-Без ограничения — недоступно до подтверждения провайдера
-1 попытка
-2 попытки
-...
-10 попыток
+что работает;
+что недостижимо;
+что дублируется;
+что переиспользовать;
+какие production trial-офферы существуют;
+какой точный root-fix предлагается.
 
 ```
 
-Сохранение `0` разрешается, но активный checkout блокируется controlled error, пока capability не подтверждена.
+Только после согласования этого отчёта переходить к коду Trial.
 
-## Provider mapping
+Иначе план ушёл в сторону: основной contact-link scope отложен, а значительно более крупный Trial scope включён в обязательный DoD.
 
-### Подтверждено, что `0` поддерживается
+---
 
-```ts
-number_payment_attempts: 0
+## 3. В B2 используется несуществующий канонический тип `offer_type='regular'`
 
-```
-
-Snapshot:
-
-```json
-{
-  "retry_policy": {
-    "mode": "unlimited_requested",
-    "provider_strategy": "native_zero",
-    "provider_number_payment_attempts": 0,
-    "capability_proven": true
-  }
-}
-
-```
-
-### Подтверждён большой sentinel
-
-```ts
-number_payment_attempts: VERIFIED_SENTINEL
-
-```
-
-UI при этом должен говорить:
-
-> Практически без ограничения
-
-Snapshot:
-
-```json
-{
-  "retry_policy": {
-    "mode": "unlimited_requested",
-    "provider_strategy": "verified_large_sentinel",
-    "provider_number_payment_attempts": 9999,
-    "capability_proven": true
-  }
-}
-
-```
-
-### Провайдер не поддерживает режим
+В плане:
 
 ```text
-provider_unlimited_attempts_not_supported
+для offer_type='regular'
 
 ```
 
-Не восстанавливать для этого `direct-charge`: MIT runtime отключён и является отдельной архитектурой.
-
-## Остальные разделы плана
-
-### Внутренняя рассрочка
-
-Одобрено:
+Но текущая модель обычной подписки использует:
 
 ```text
-installment_count = 3/4/N
-infinite = false
+offer_type = pay_now
+meta.recurring.is_recurring = true
+
+```
+
+Админский интерфейс также определяет подписку через recurring metadata, а `offer_type='trial'` обрабатывает отдельно.
+
+Нужно заменить:
+
+```text
+offer_type='regular'
+
+```
+
+на:
+
+```text
+offer_type='pay_now'
+и meta.recurring.is_recurring=true
+
+```
+
+Иначе разработчик может добавить новый неканонический тип либо написать недостижимую ветку.
+
+---
+
+## 4. Не определена семантика `installment_count`
+
+В админке поле сейчас описано как:
+
+> Максимальный срок рассрочки. Реальное число платежей выберет клиент или администратор.
+
+Но `public-create-installment-link` использует `offer.installment_count` сразу как фактическое количество платежей:
+
+```text
+selected_installment_months = installment_count
 billing_cycles = installment_count
-interval = offer.installment_interval_days
-payment_type = subscription
 
 ```
 
-### `first_payment_delay_days`
-
-Оставить вне DoD, пока значение не будет реально преобразовано в поддерживаемую провайдером конструкцию. Простая запись в metadata ничего не меняет.
-
-### Invoice и bank installment из карточки контакта
-
-Одобрено при следующих условиях:
-
-- отдельный `link_kind`;
-- явные ветки в `PublicPayPage`;
-- отсутствие фиктивного `provider='bepaid'`;
-- серверная сумма из оффера;
-- атомарный consume;
-- идемпотентность invoice/RR action;
-- `SitePageBySlug` не считается участником `/pay/:token`.
-
-### Publish
-
-Правильно:
+Получаются разные контракты:
 
 ```text
-FRONTEND PUBLISH: HOLD
+Админка:
+installment_count = максимум
+
+Публичный writer:
+installment_count = фактическое N
 
 ```
 
-Публиковать только после:
+### Нужно выбрать единый канон
 
-1. capability proof;
-2. typecheck;
-3. edge deploy;
-4. preview E2E;
-5. отдельной команды.
-
-## Исправленный финальный DoD
+Рекомендуемый:
 
 ```text
-PROVIDER ZERO SEMANTICS             : MUST BE PROVEN
-PROVIDER OMITTED SEMANTICS          : DEFAULT 3, NOT UNLIMITED
-LARGE SENTINEL                      : FORBIDDEN WITHOUT PROOF
-INITIAL PAYMENT UNLIMITED RETRIES   : NOT GUARANTEED
-SUBSEQUENT PAYMENT RETRIES          : PROVIDER-DEPENDENT
+max_months / installment_count
+→ максимально допустимое число платежей;
 
-APP NULL / 0 SEMANTICS              : UNLIMITED_REQUESTED
-LIMITED ATTEMPTS 1..10              : REQUIRED
-LEGACY MISSING VALUE                : PRESERVE UNTIL MIGRATION
-PROVIDER EFFECTIVE VALUE SNAPSHOT   : REQUIRED
+selected_installment_months
+→ фактическое число платежей конкретной ссылки/заказа;
 
-INSTALLMENT COUNT 3/4/N             : REQUIRED
-INSTALLMENT EFFECTIVE TYPE          : SUBSCRIPTION
-INSTALLMENT INTERVAL FROM OFFER     : REQUIRED
-ATTEMPTS IN PROVIDER PAYLOAD        : REQUIRED
-ATTEMPTS IN ORDER/SUB/AUDIT         : REQUIRED
+billing_cycles
+→ selected_installment_months.
 
-CONTACT LINK — PAYMENT              : REQUIRED
-CONTACT LINK — INTERNAL INSTALLMENT : REQUIRED
-CONTACT LINK — INVOICE              : REQUIRED
-CONTACT LINK — BANK INSTALLMENT     : REQUIRED
-ACTION LINK IDEMPOTENCY             : REQUIRED
-NON-PAYMENT PROVIDER = NULL         : REQUIRED
+```
 
-FIRST PAYMENT DELAY                 : OUT OF SCOPE UNTIL PROVEN
+Тогда:
+
+- из карточки контакта администратор выбирает `2..max_months`;
+- на публичной странице либо клиент выбирает `2..max_months`, либо кнопка явно задаёт фиксированное число;
+- writer никогда не подменяет maximum фактическим количеством без явного решения.
+
+Это должно войти в DoD.
+
+---
+
+## 5. Не определена политика суммы при делении на 3/4/N
+
+Сейчас используется:
+
+```ts
+perPaymentByn = Math.round(totalByn / selectedMonths);
+totalInstallmentByn = perPaymentByn * selectedMonths;
+
+```
+
+То есть:
+
+```text
+100 BYN / 3
+→ 33 BYN × 3
+→ 99 BYN
+
+```
+
+или:
+
+```text
+101 BYN / 3
+→ 34 BYN × 3
+→ 102 BYN
+
+```
+
+Сейчас система может незаметно изменить итоговую стоимость.
+
+### В плане требуется отдельное бизнес-решение
+
+Для provider-managed finite subscription сумма каждого цикла обычно одинаковая. Поэтому выбрать один канон:
+
+#### Вариант 1 — строгая делимость
+
+```text
+total_kopecks % billing_cycles === 0
+
+```
+
+Иначе оффер не сохраняется или ссылка не создаётся.
+
+#### Вариант 2 — корректировка общего итога
+
+Показывать до создания:
+
+```text
+Цена продукта: 100 BYN
+Фактическая сумма рассрочки: 99,99 BYN
+3 × 33,33 BYN
+
+```
+
+Отклонение допускается только в копейках, не в целых BYN.
+
+#### Вариант 3 — первый платёж отличается
+
+Требует доказанной provider-схемы через trial/initial amount и не должен внедряться скрыто.
+
+Текущее округление до целого BYN необходимо запретить либо явно утвердить как бизнес-правило.
+
+---
+
+## 6. A5 уже реализован — это verify, а не новая работа
+
+В актуальном `public-create-installment-link` уже стоит:
+
+```ts
+payment_type: 'subscription'
+
+```
+
+и сохраняются:
+
+```text
+as_finite_subscription=true
+billing_cycles=installment_count
+
+```
+
+`admin-create-public-link` также уже переводит installment-link в `subscription`.
+
+Поэтому A5 нужно переименовать:
+
+```text
+A5. Verify both writers use payment_type='subscription'
+
+```
+
+Также удалить устаревший комментарий в `admin-create-public-link`, который всё ещё утверждает, что installment-ссылка всегда `one_time`, хотя ниже код ставит `subscription`.
+
+---
+
+## 7. A3 неправильно возлагает provider error на writer’ы
+
+`public-create-installment-link` и `admin-create-public-link` только создают ссылку. Они не вызывают bePaid и не выполняют provider capability gate.
+
+Поэтому они не могут «прокинуть» ошибку, которая возникнет позже в `create-payment-checkout`, если не выполняют отдельный preflight.
+
+Каноническая цепочка:
+
+```text
+create-payment-checkout
+→ public-checkout
+→ PublicPayPage / frontend
+
+```
+
+Именно там должны сохраняться:
+
+```json
+{
+  "error": "provider_unlimited_attempts_not_supported",
+  "message": "..."
+}
+
+```
+
+Writer’ы должны:
+
+- валидировать `null / 0 / 1..10`;
+- сохранять retry policy;
+- не подменять значение;
+- опционально делать capability preflight, только если это отдельное явно принятое решение.
+
+---
+
+## 8. Trial SOT пока сформулирован слишком расплывчато
+
+В B6 указано:
+
+```text
+подтверждённый recurring-флаг
+
+```
+
+Но не определено, какое поле является источником истины.
+
+Существуют одновременно:
+
+```text
+auto_charge_after_trial
+auto_charge_offer_id
+auto_charge_amount
+requires_card_tokenization
+meta.recurring.is_recurring
+
+```
+
+До реализации B2 необходимо после Discovery зафиксировать точное правило, например:
+
+```text
+no_card_trial:
+  amount = 0
+  requires_card_tokenization = false
+
+provider_managed_trial:
+  offer_type = trial
+  requires_card_tokenization = true
+  auto_charge_after_trial = true
+  trial_days >= 1
+  regular amount resolvable
+
+```
+
+Это только пример. Финальное правило должно следовать production-данным.
+
+### Также отсутствует precedence суммы после trial
+
+Нужно определить:
+
+```text
+1. auto_charge_offer_id?
+2. auto_charge_amount?
+3. основной pay_now offer?
+4. tariff original price?
+
+```
+
+Нельзя оставить silent fallback на случайную цену.
+
+Без этого provider-managed trial может списывать не ту сумму.
+
+---
+
+# Исправленный master-план
+
+## Этап A. Corrective retry patch
+
+Оставить A1–A7 с поправками:
+
+```text
+A1 capability до mutations
+A2 effective snapshot
+A3 error через checkout chain
+A4 missing=provider_default, 0=unlimited, 1..10=limited
+A5 verify subscription writers
+A6 полный UI 1..10 + default + unlimited
+A7 delay UI hidden
+
+```
+
+Дополнительно:
+
+```text
+A8 при controlled error:
+orders_v2 created = 0
+subscriptions_v2 created = 0
+provider_subscriptions created = 0
+audit business failure = 1
+
+```
+
+---
+
+## Этап B. Завершение внутренней рассрочки
+
+Это основной scope, который сейчас недостаточно выделен.
+
+### B1. Единый контракт срока
+
+```text
+max_months
+selected_installment_months
+billing_cycles
+
+```
+
+### B2. Единый контракт суммы
+
+Зафиксировать:
+
+```text
+offer amount
+per-cycle amount
+effective total
+rounding delta
+
+```
+
+Не допускать скрытого изменения цены на целые BYN.
+
+### B3. Все writer’ы
+
+Проверить:
+
+```text
+admin-create-public-link
+public-create-installment-link
+payment-dialog bridge при наличии
+public-checkout compatibility
+
+```
+
+### B4. Provider payload
+
+Проверить:
+
+```json
+{
+  "infinite": false,
+  "billing_cycles": 3,
+  "number_payment_attempts": 5,
+  "plan": {
+    "amount": "...",
+    "interval": 30,
+    "interval_unit": "day"
+  }
+}
+
+```
+
+### B5. Snapshot
+
+Во всех сущностях:
+
+```text
+orders_v2
+subscriptions_v2
+provider_subscriptions
+audit_logs
+
+```
+
+### B6. Lifecycle
+
+Проверить:
+
+```text
+первый платёж;
+следующий платёж;
+последний платёж;
+завершение после N циклов;
+ошибка;
+исчерпание retry;
+ручная отмена;
+отсутствие лишнего автопродления.
+
+```
+
+---
+
+## Этап C. Ссылки из карточки контакта — вернуть в исходный scope
+
+### C1. Выбор конкретной кнопки продукта
+
+Не резолвить только `payment_type`. Администратор должен выбирать точный активный `offer_id`.
+
+Список:
+
+```text
+pay_now
+pay_now + internal_installment
+invoice
+bank_installment
+
+```
+
+### C2. Классификация действия
+
+```text
+link_kind='payment'
+link_kind='invoice'
+link_kind='bank_installment'
+
+```
+
+Внутренняя рассрочка остаётся:
+
+```text
+link_kind='payment'
+payment_type='subscription'
+meta.installment...
+
+```
+
+### C3. Контекстный UI
+
+
+| Оффер                | CTA                                    |
+| -------------------- | -------------------------------------- |
+| разовая оплата       | Создать ссылку на оплату               |
+| подписка             | Создать ссылку на подписку             |
+| внутренняя рассрочка | Создать ссылку на рассрочку            |
+| invoice              | Создать ссылку для оформления счёта    |
+| bank installment     | Создать ссылку на банковскую рассрочку |
+
+
+### C4. Non-acquiring actions
+
+Для invoice/RR:
+
+```text
+provider = NULL
+account_code = NULL
+provider_mode = NULL
+
+```
+
+Без фиктивного `bepaid`.
+
+### C5. `/pay/:token`
+
+Явные ветки:
+
+```text
+payment
+invoice
+bank_installment
+
+```
+
+### C6. Consumption
+
+После успешного:
+
+```text
+invoice создан;
+RR order создан;
+payment checkout создан;
+
+```
+
+одноразовая ссылка атомарно consume’ится.
+
+### C7. CRM
+
+RR создаёт заказ через существующий:
+
+```text
+public-rr-installment-initiate
+resolveOrderRouting
+
+```
+
+Invoice использует существующий invoice-flow.
+
+---
+
+## Этап D. Trial Discovery
+
+Оставить B1 текущего плана:
+
+```text
+код;
+миграции;
+production offers;
+runtime paths;
+keep/merge/delete;
+SOT;
+price precedence;
+webhook lifecycle.
+
+```
+
+Но после Discovery:
+
+```text
+STOP
+REPORT
+APPROVAL
+
+```
+
+---
+
+## Этап E. Provider-managed Trial
+
+Только после отдельного одобрения Discovery:
+
+```text
+canonical writer extension;
+shared plan builder;
+PaymentDialog routing;
+trial admin UI;
+paid trial E2E;
+dead code cleanup.
+
+```
+
+Этот этап не должен блокировать завершение внутренней рассрочки и контактных ссылок, пока delay UI скрыт.
+
+---
+
+# Обновлённый DoD исходной задачи
+
+```text
+RETRY PRE-MUTATION GATE             : REQUIRED
+RETRY DEFAULT / LIMITED / UNLIMITED : REQUIRED
+EFFECTIVE RETRY SNAPSHOT            : REQUIRED
+
+INSTALLMENT MAX VS SELECTED COUNT   : DEFINED
+INSTALLMENT 3 PAYMENTS              : PASS
+INSTALLMENT 4 PAYMENTS              : PASS
+INSTALLMENT N PAYMENTS              : PASS
+INSTALLMENT PRICE ROUNDING          : EXPLICIT, NO HIDDEN WHOLE-BYN DELTA
+INSTALLMENT INTERVAL                : FROM OFFER
+INSTALLMENT PAYMENT_TYPE            : SUBSCRIPTION
+INSTALLMENT FINAL CYCLE             : STOPS AFTER N
+INSTALLMENT AUTO_RENEW              : FALSE
+
+CONTACT LINK — ONE-TIME             : PASS
+CONTACT LINK — SUBSCRIPTION         : PASS
+CONTACT LINK — INTERNAL INSTALLMENT : PASS
+CONTACT LINK — INVOICE              : PASS
+CONTACT LINK — BANK INSTALLMENT     : PASS
+CONTACT EXACT OFFER_ID              : PASS
+NON-ACQUIRING PROVIDER NULL         : PASS
+ACTION LINK ATOMIC CONSUME          : PASS
+
+TRIAL DISCOVERY                     : PASS
+TRIAL NEW IMPLEMENTATION            : SEPARATE APPROVAL
+INTERNAL MIT                        : REMAINS DISABLED
+DIRECT-CHARGE                       : NOT REINTRODUCED
+
 FRONTEND PUBLISH                    : HOLD
-PLAN STATUS                         : RETURN — CAPABILITY GATE
+MASTER SPRINT STATUS                : RETURN
 
 ```
 
-Итог: план можно передавать в работу, но **нельзя ставить `SPRINT STATUS: GREEN` и нельзя обещать бесконечные попытки**, пока тестовый либо письменный ответ bePaid не подтвердит конкретное значение API. Публичной bePaid-документации, подтверждающей семантику `number_payment_attempts=0`, найти не удалось; доступные совместимые источники подтверждают только конечный лимит и default `3`.
+## Итог
+
+План **не ушёл полностью в неправильную сторону**, но нарушил приоритет:
+
+```text
+Основную задачу contact links отложил,
+а дополнительный Trial Discovery превратил
+в обязательную крупную реализацию.
+
+```
+
+Правильная корректировка:
+
+```text
+A — закончить retry;
+B — доказать внутреннюю рассрочку 3/4/N;
+C — закончить ссылки из карточки контакта;
+D — провести Trial Discovery;
+E — Trial implementation только после отдельного согласования.
+
+```
+
+До выполнения C план не закрывает исходную задачу.
 
 &nbsp;
 
-План: внутренняя рассрочка, попытки списания и ссылки из карточки контакта
+План: узкий corrective patch по retry-policy + Trial Discovery (переиспользование существующего provider-managed trial). Все правки — без публикации до закрытия DoD.
 
-## Важное ограничение источников
+## Часть A. Узкий corrective retry-patch (BLOCKERS)
 
-В доступной документации совместимого bePaid subscription API параметр `number_payment_attempts` — это **конечное** количество неудачных попыток до отмены подписки. При отсутствии параметра применяется default 3; попытки прекращаются после исчерпания лимита. Значение 0 как «бесконечно» в документации не описано. Параметр `infinite` относится только к количеству платёжных циклов, а не к попыткам списания. (docs.pay-cross.com)
+### A1. Capability gate ДО любых INSERT (BLOCKER)
 
-Поэтому нельзя просто удалить `number_payment_attempts`: это даст не бесконечность, а 3 попытки. План вводит требуемую бизнес-семантику **0/null = без ограничения**, но перед production требует подтвердить, как именно боевой API bePaid кодирует такой режим.
+Файл: `supabase/functions/_shared/create-payment-checkout.ts`.
 
-## Цель
+Порядок сейчас: `orders_v2 INSERT` → `subscriptions_v2 INSERT` → resolver → controlled error. Это оставляет мусор.
 
-1. Внутренняя рассрочка 3 / 4 / N платежей с интервалом, заданным в оффере.
-2. Настройка «Попыток списания каждого платежа».
-  - отсутствует / NULL / 0 → без ограничения;
-  - 1..10 → строго указанное количество неудачных попыток.
-3. Ссылки из карточки контакта для: обычной оплаты, внутренней рассрочки, счёта, банковской рассрочки РР.
-4. **Publish frontend НЕ запускать** до отдельной команды.
+Правка:
 
----
+- Перенести `resolveInstallmentRetryPolicy` + `resolveBepaidAttemptsValue` (с чтением `bepaidCreds.subscription_attempts_capability`) в блок валидации ДО первого INSERT.
+- При `ProviderUnlimitedAttemptsNotSupportedError` — возвращать controlled error БЕЗ создания orders_v2 / subscriptions_v2 / CRM-сделки.
+- Сохранить полученный `resolution` в переменной и переиспользовать ниже (не пересчитывать).
 
-## 0. Provider capability gate (обязательный shift-left)
+### A2. Effective retry snapshot (FAIL)
 
-Через тестовые credentials bePaid выполнить изолированный capability probe до реализации production mapping:
+Сейчас `resolution.provider_strategy` вычисляется и выбрасывается (`void`).
 
-- план без `number_payment_attempts` (ожидание по докам — вернётся 3);
-- план с `number_payment_attempts` ∈ {0, 1, 10, 9999}.
-
-Для каждого — сохранить HTTP status, request/response payload, фактически возвращённое значение и статус подписки после исчерпания.
-
-Стратегии выбора (одна из):
-
-- **A. Нативная бесконечность** — только если bePaid подтвердит: `number_payment_attempts=0` означает без лимита. В payload передаём `0`.
-- **B. Провайдерский sentinel** — если `0` не поддерживается, но принимается большое целое (напр. `9999`). UI-название режима: «Без ограничения со стороны системы»; в snapshot фиксируется `provider_strategy='large_sentinel'`.
-- **C. Не поддерживается** — не имитируем поддержку. Writer возвращает controlled error `provider_unlimited_attempts_not_supported`. App-managed retries — отдельный billing-спринт, MIT direct-charge не восстанавливается.
-
-Результат гейта фиксируется в `acquiring_connections.meta.subscription_attempts_capability` и в архитектурной памяти.
-
----
-
-## 1. Каноническая модель попыток
-
-Хранение — без новой колонки: `tariff_offers.meta.installment.max_charge_attempts`.
-
-
-| Значение                      | Семантика       |
-| ----------------------------- | --------------- |
-| отсутствует                   | без ограничения |
-| null                          | без ограничения |
-| 0                             | без ограничения |
-| 1..10                         | конечный лимит  |
-| отрицательное / дробное / >10 | ошибка          |
-
-
-**Замечание о legacy-офферах:** отсутствующее значение сейчас неявно даёт provider default 3. Нормализация в 0 меняет поведение старых офферов на «без ограничения». Это осознанное изменение бизнес-семантики; данные не мигрируем — правило действует за счёт `resolveInstallmentRetryPolicy`.
-
-Shared helper (единственный парсер):
-
-```ts
-// supabase/functions/_shared/installment-retry-policy.ts
-// + зеркало для клиента: src/lib/installmentRetryPolicy.ts
-export type InstallmentRetryPolicy =
-  | { mode: "unlimited"; configured_value: 0 }
-  | { mode: "limited"; configured_value: number; max_attempts: number };
-
-export function resolveInstallmentRetryPolicy(raw: unknown): InstallmentRetryPolicy {
-  if (raw === null || raw === undefined || raw === "") return { mode: "unlimited", configured_value: 0 };
-  const v = Number(raw);
-  if (v === 0) return { mode: "unlimited", configured_value: 0 };
-  if (!Number.isInteger(v) || v < 1 || v > 10) throw new Error("invalid_installment_max_charge_attempts");
-  return { mode: "limited", configured_value: v, max_attempts: v };
-}
-```
-
-Ни один writer/checkout не парсит поле напрямую.
-
-Provider adapter (в `_shared/create-payment-checkout.ts`):
-
-```ts
-function resolveBepaidAttemptsValue({ retryPolicy, capability }): 
-  { mode: "limited"|"provider_zero"|"provider_large_sentinel"; payloadValue: number }
-```
-
-`capability` берётся из `acquiring_connections.meta.subscription_attempts_capability` (заполняется по итогам §0).
-
----
-
-## 2. UI оффера
-
-`src/pages/admin/AdminProductDetailV2.tsx`, блок «Рассрочка (внутренняя)»:
-
-- Новое поле «Попытки списания каждого платежа»:
-  - Опции: «Без ограничения» (=0), «1 попытка», … «10 попыток».
-  - Default: 0.
-  - Подсказка (нейтральная, до capability proof): «Если выбрано „Без ограничения" или значение не задано, система не завершает рассрочку из-за количества неудачных попыток. Повторные списания продолжаются по расписанию провайдера до успешной оплаты, окончания рассрочки, ручной отмены либо окончательного отказа со стороны провайдера.» Слово «бесконечно» не используем до §0.
-- `offerForm.installment_max_charge_attempts: number`.
-- Load: `attemptsRaw == null ? 0 : Number(attemptsRaw)`.
-- Save: `metaToSave.installment.max_charge_attempts = offerForm.installment_max_charge_attempts ?? 0`.
-
-Поле «первый платёж» / delay в UI этого спринта **не появляется**, пока его provider-передача не доказана (см. §3).
-
----
-
-## 3. Интервал и задержка первого платежа
-
-`supabase/functions/admin-create-public-link/index.ts`:
-
-- В SELECT добавить `installment_interval_days`, `first_payment_delay_days`.
-- Убрать хардкод `interval_days: 30`, `first_payment_delay_days: 0`.
-- Строгая валидация:
-  - `interval_days` ∈ Integer[1..365] иначе `invalid_installment_interval_days`.
-  - `first_payment_delay_days` ∈ Integer[0..365] иначе `invalid_first_payment_delay_days`, **и** этот параметр сохраняем только в metadata; provider-передача первой отсрочки в bePaid в этом спринте не заявляется как реализованная фича — вынесена в backlog «trial/first-charge delay live proof».
-
----
-
-## 4. Writer внутренней рассрочки
-
-`admin-create-public-link` — installmentBlock:
-
-```ts
-const retryPolicy = resolveInstallmentRetryPolicy(offer.meta?.installment?.max_charge_attempts);
-installmentBlock = {
-  payment_method: "internal_installment",
-  max_installment_months: offerInstallmentMaxMonths,
-  selected_installment_months: sel,
-  billing_cycles: sel,
-  as_finite_subscription: true,
-  interval_days: intervalDays,
-  first_payment_delay_days: firstDelayDays,
-  max_charge_attempts: retryPolicy.configured_value,
-  retry_policy_mode: retryPolicy.mode,
-  total_amount: totalByn,
-  per_payment_amount: perPaymentByn,
-  per_payment_amount_byn: perPaymentByn,
-  total_installment_amount: totalInstallmentByn,
-  rounding_mode: "round_half_up_byn",
-};
-payment_type = "subscription";
-```
-
-`public-create-installment-link/index.ts`:
-
-- То же поведение через тот же shared resolver.
-- Исправить `payment_type: "one_time"` → `"subscription"`.
-- Записать `as_finite_subscription`, `billing_cycles=installment_count`, `max_charge_attempts`, `retry_policy_mode`.
-
----
-
-## 5. Defensive compatibility в `public-checkout`
-
-`supabase/functions/public-checkout/index.ts`:
-
-```ts
-max_charge_attempts: linkInstallment.max_charge_attempts == null ? 0 : Number(linkInstallment.max_charge_attempts),
-retry_policy_mode:  linkInstallment.retry_policy_mode
-  ?? (Number(linkInstallment.max_charge_attempts ?? 0) === 0 ? "unlimited" : "limited"),
-```
-
-Защита старых ссылок (`payment_type='one_time'` + installment meta):
-
-```ts
-const effectivePaymentType =
-  linkInstallment && Number(linkInstallment.selected_installment_months) >= 2
-    ? "subscription"
-    : link.payment_type;
-```
-
-Передавать `payment_type: effectivePaymentType` в `createPaymentCheckout`.
-
----
-
-## 6. Provider adapter (`_shared/create-payment-checkout.ts`)
-
-```ts
-const retryPolicy = resolveInstallmentRetryPolicy(installmentExtra.max_charge_attempts);
-const providerAttempts = resolveBepaidAttemptsValue({
-  retryPolicy,
-  capability: bepaidCreds.subscription_attempts_capability,
-});
-
-// payload:
-plan: {
-  shop_id: Number(bepaidCreds.shop_id), currency: "BYN",
-  title: planTitle, description: planDescription,
-  plan: { amount, interval: intervalDays, interval_unit: "day" },
-  infinite: false,               // billing_cycles конечен всегда
-  billing_cycles: billingCycles,
-  number_payment_attempts: providerAttempts.payloadValue,
-}
-```
-
-`number_payment_attempts` **никогда не опускается** для unlimited — иначе провайдер применит default 3.
-
----
-
-## 7. Snapshot & audit
-
-`subscriptions_v2.meta`, `provider_subscriptions.meta`, `orders_v2.meta.installment`, checkout-audit и pre-request server log:
+Правка — сохранять в трёх местах (`orders_v2.meta.installment`, `subscriptions_v2.meta`, `provider_subscriptions.meta`) единый snapshot:
 
 ```json
 {
-  "installment": {
-    "billing_cycles": 4,
-    "interval_days": 30,
-    "retry_policy": {
-      "mode": "unlimited" | "limited",
-      "configured_value": 0 | 1..10,
-      "provider_strategy": "zero" | "large_sentinel" | "explicit_limit",
-      "provider_number_payment_attempts": <fact>
-    }
+  "retry_policy": {
+    "mode": "limited|unlimited_requested",
+    "configured_value": 0|1..10,
+    "provider_strategy": "explicit_limit|native_zero|verified_large_sentinel",
+    "provider_number_payment_attempts": <int>,
+    "capability_proven": true|false,
+    "capability_source": "integration_instances.config.subscription_attempts_capability",
+    "resolved_at": "<iso>"
   }
 }
 ```
 
-Не логируем credentials и card tokens.
+Тот же snapshot — в audit-запись перед запросом к bePaid.
 
----
+### A3. Machine-readable error code (FAIL)
 
-## 8. Ссылки из карточки контакта — архитектурный контракт
+Заменить длинный русский текст на канонический ответ:
 
-`/pay/:token` обслуживается `PublicPayPage → public-checkout`; SitePageBySlug там не задействован. Поэтому invoice и bank_installment требуют явных веток в `PublicPayPage`.
+```json
+{
+  "success": false,
+  "error": "provider_unlimited_attempts_not_supported",
+  "message": "Безлимитные попытки не подтверждены провайдером. Выберите значение от 1 до 10."
+}
+```
 
-### DB migration
+Прокинуть код в `public-create-installment-link` и `admin-create-public-link` без изменения UX-текста.
 
-`payment_links` — новая колонка `link_kind text not null default 'payment' check (link_kind in ('payment','invoice','bank_installment'))`. Для `invoice` и `bank_installment`: `provider=null`, `account_code=null`, `provider_mode=null`. Обновить CHECK, чтобы не требовать `provider='bepaid'` для non-payment. RLS/GRANTs не меняются.
+### A4. Legacy retry semantics: единый контракт (FAIL)
 
-### 8A. `admin-create-public-link` — три server branches
+Канон:
+
+```
+meta.installment.max_charge_attempts отсутствует → provider_default = 3
+явный 0                                          → unlimited_requested
+1..10                                            → limited
+```
+
+Правки:
+
+- `supabase/functions/_shared/installment-retry-policy.ts` — ветка «missing» возвращает `{ mode: "provider_default", configured_value: null, max_attempts: 3 }` (новый режим), а не `unlimited_requested`.
+- `src/lib/installmentRetryPolicy.ts` — синхронно.
+- `src/pages/admin/AdminProductDetailV2.tsx` — убрать fallback `?? 3` при загрузке; для отсутствующего значения показывать отдельный item «По умолчанию (3)», отличный от «Без ограничения».
+- `supabase/functions/public-checkout/index.ts` — убрать преобразование отсутствующего значения в `0`.
+
+### A5. Public writer пишет `subscription` (PARTIAL)
+
+`supabase/functions/public-create-installment-link/index.ts` — при записи новой ссылки `payment_type: "subscription"`. Defensive promotion в `public-checkout` оставить только как compatibility для уже созданных `one_time` записей.
+
+### A6. UI 1..10 из общего helper (PARTIAL)
+
+`AdminProductDetailV2.tsx` — использовать `INSTALLMENT_MAX_CHARGE_ATTEMPTS_OPTIONS` из `src/lib/installmentRetryPolicy.ts`, а не локальный список `1,2,3,5,10,0`. Добавить сверху отдельный item «По умолчанию (3)» = `null`.
+
+### A7. First payment delay — временно убрать из UI (FAIL)
+
+`first_payment_delay_days` в bePaid payload не уходит. До Discovery Trial:
+
+- скрыть поле «Первый платёж через, дней» из редактируемого UI в `AdminProductDetailV2.tsx`;
+- колонку/meta НЕ удалять;
+- ничего не мигрировать.
+
+Настоящая реализация — только через переиспользование trial (см. часть B), не как отдельный delay-engine.
+
+## Часть B. Trial Discovery + переиспользование существующего provider-managed trial
+
+Никаких новых edge-функций, таблиц, cron, MIT, direct-charge, второго builder'а не создаём.
+
+### B1. Discovery (обязательно ДО кода)
+
+Оформить `.lovable/discovery/trial-canonical-map.md`:
+
+Поля (аудит по коду + миграциям + production-данным):
+
+```
+tariff_offers.offer_type
+tariff_offers.trial_days
+tariff_offers.auto_charge_amount
+tariff_offers.auto_charge_after_trial
+tariff_offers.auto_charge_offer_id
+tariff_offers.requires_card_tokenization
+tariff_offers.amount
+tariff_offers.meta.recurring
+tariff_offers.meta.acquiring
+auto_charge_delay_days
+first_payment_delay_days
+```
+
+Для каждого: где редактируется / где сохраняется / где читается runtime / используется ли / MIT vs provider-managed / есть ли активные офферы.
+
+Runtime-пути:
+
+```
+PaymentDialog · bepaid-create-token · bepaid-create-subscription-checkout ·
+_shared/create-payment-checkout · bepaid-webhook · grant-access-for-order ·
+subscriptions_v2 · provider_subscriptions · access_rules · subscription-charge · direct-charge
+```
+
+Таблица keep/merge/delete по каждой ветке.
+
+Production-аудит активных `offer_type='trial'` — вывод всех перечисленных полей, деление на 4 категории (free no-card / paid no-continue / paid + subscription / legacy MIT / противоречивые). Без backfill.
+
+### B2. Канонический subscription writer — `bepaid-create-subscription-checkout`
+
+Расширить существующую функцию (НЕ создавать новую):
+
+- принимает `offer_id`, читает всё из БД (клиент не источник истины по суммам/срокам);
+- для `offer_type='regular'` — текущий payload без изменений;
+- для `offer_type='trial'` с provider-managed recurring — собирает `plan.plan` + `plan.trial` из существующих полей:
+  - `trial.amount` ← `tariff_offers.amount` (trial-оффер), `trial.interval` ← `trial_days`;
+  - `plan.amount` ← `auto_charge_amount` (или canonical regular источник), `plan.interval` ← existing recurring interval;
+- строгая валидация ДО INSERT (amounts, days, interval, repeat-guard, active-sub conflict).
+
+### B3. Shared helper (только чистая сборка plan)
+
+`supabase/functions/_shared/build-bepaid-subscription-plan.ts`:
 
 ```ts
-switch (offer.offer_type) {
-  case "pay_now":          return createPaymentLink();
-  case "invoice":          return createInvoiceActionLink();
-  case "bank_installment": return createBankInstallmentActionLink();
-  default: return errorResponse("unsupported_offer_type_for_public_link", 400);
-}
+buildBepaidSubscriptionPlan({
+  mode: "regular" | "trial" | "finite_installment",
+  regularAmount, regularIntervalDays,
+  trialAmount, trialDays,
+  billingCycles, retryPolicy,
+})
 ```
 
-Payment — существующая логика.
+- НЕ создаёт заказ/подписку, НЕ вызывает bePaid;
+- используется в `bepaid-create-subscription-checkout` и `_shared/create-payment-checkout` (finite installment) — устраняем расходящиеся builder'ы.
 
-Invoice / bank_installment ветки:
+### B4. Legacy `/subscriptions` в `bepaid-create-token`
 
-- `link_kind` соответствующий;
-- `amount` берётся из `offer.amount` на сервере (client-value игнорируется);
-- provider-поля = NULL;
-- НЕ выполнять: acquiring validation, customer-choice validation, Stripe lookup, recurring promotion, internal installment расчёт.
+- guard остаётся, ветка не разблокируется;
+- в token-функции только: no-card trial + one-time + compat;
+- удаление мёртвого кода — только после E2E-proof, отдельным шагом.
 
-### 8B. `AdminPaymentLinkDialog`
+### B5. PaymentDialog маршрутизация
 
-- Фильтр офферов: `["pay_now","invoice","bank_installment"]`.
-- CTA-лейблы:
-  - `pay_now` обычный → «Создать ссылку на оплату»;
-  - `pay_now` + internal_installment → «Создать ссылку на рассрочку»;
-  - `invoice` → «Создать ссылку для оформления счёта»;
-  - `bank_installment` → «Создать ссылку на банковскую рассрочку».
-- Для `invoice` / `bank_installment` скрыть: провайдер (bePaid/Stripe), тип payment/subscription, customer choice, сохранённые карты, настройки внутренней рассрочки.
+Порядок:
 
-### 8C. `PublicPayPage` — маршрутизация по `link_kind`
-
-```tsx
-if (linkInfo.link_kind === "invoice") {
-  return <InvoicePublicLinkFlow token={token} offerId={linkInfo.offer_id} paymentLinkId={linkInfo.id} />;
-}
-if (linkInfo.link_kind === "bank_installment") {
-  return <BankInstallmentPublicLinkFlow token={token} offerId={linkInfo.offer_id} paymentLinkId={linkInfo.id} />;
-}
-// иначе — существующий payment flow
+```
+trial без карты                → bepaid-create-token (no-card branch)
+trial с provider-managed sub   → bepaid-create-subscription-checkout
+regular subscription           → bepaid-create-subscription-checkout
+one-time                       → существующий one-time
+internal installment           → public-create-installment-link
 ```
 
-- `InvoicePublicLinkFlow`: открывает существующий `InvoiceCheckoutDialog`, вызывает `invoice-checkout-issue` с `offer_id` и `payment_link_id`, после успеха — consume ссылки.
-- `BankInstallmentPublicLinkFlow`: форма ФИО/телефон/email, вызов `public-rr-installment-initiate` с `offer_id` и `payment_link_id`, редирект на `pay.rrllc.ru/pay/...`; legacy `external_link` — только controlled fallback; после успешной инициации — consume ссылки.
+Режим — по server-side snapshot оффера, а не по клиентскому `isTrial`. Новую колонку не вводим — вычисляем из существующих полей.
 
-### 8D. Idempotency & consumption
+### B6. Админский Trial-блок в `AdminProductDetailV2.tsx`
 
-Новый shared RPC:
+Не создавать второй интерфейс. Переработать существующий:
 
-```sql
-consume_public_action_link(p_link_id uuid, p_action_id uuid, p_action_kind text) returns void
+```
+Режим после trial:
+  ○ Только пробный доступ, без карты
+  ○ Подписка через bePaid после пробного платежа
 ```
 
-- Условия: `status='active'`, не истекла, `current_uses < max_uses`.
-- Повторный вызов с тем же `action_id` идемпотентен (см. `meta.action_ids[]` или отдельная таблица `payment_link_actions(link_id, action_id, kind)`).
-- Атомарно: `current_uses += 1`; при достижении `max_uses` → `status='consumed'`.
-- Вызывается из `invoice-checkout-issue` и `public-rr-installment-initiate` после успешного создания заказа / выдачи счёта.
+Маппинг на существующие поля: `trial_days`, `amount`, `auto_charge_amount`, `auto_charge_offer_id`, `requires_card_tokenization`, подтверждённый recurring-флаг. Никаких `trial_initial_amount`/`trial_regular_amount`.
 
----
+### B7. First payment delay ⇄ Trial
 
-## 9. Verify
+Классификация:
 
-### Unit
+- A: списать сейчас + первый основной через N дней → provider-managed trial (реализовано);
+- B: 0 сейчас + первый через N дней → только после provider-proof (bePaid принимает `trial.amount=0` и сохраняет карту) — иначе не заявлять;
+- C: finite installment (первый сейчас, второй через 30) → trial не нужен, обычная finite subscription.
 
-- `installment-retry-policy.test.ts`: undefined/null/""/0 → unlimited; 1/5/10 → limited; -1/1.5/11/"abc" → error.
-- Routing по `offer_type`.
-- Defensive promotion legacy one_time + installment meta → subscription.
+До proof-сценария B поле в UI скрыто (см. A7).
 
-### `tsgo`
+## Часть C. HOLD
 
-Зелёный (клиент + edge shared).
-
-### Live smoke
-
-1. **Limited retry:** оффер `installment_count=3, interval_days=30, max_charge_attempts=5`. В payload bePaid: `infinite:false, billing_cycles:3, number_payment_attempts:5, plan.interval:30`.
-2. **Unlimited:** `installment_count=4, interval_days=15, max_charge_attempts=0`. Snapshot: `retry_policy.mode='unlimited'`; payload содержит подтверждённое provider-значение согласно §0 (не опущение).
-3. **Contact invoice:** карточка контакта → invoice offer → `/pay/:token` → `InvoiceCheckoutDialog` → счёт → email/TG/download → link consumed.
-4. **Contact bank installment:** карточка контакта → bank_installment → `/pay/:token` → форма → `public-rr-installment-initiate` → индивидуальный `pay.rrllc.ru/pay/...` → CRM stage → link consumed.
-5. **Регресс:** one-time bePaid, subscription bePaid, Stripe one-time, Stripe subscription, внутренняя рассрочка (без изменений semantics для существующих 3-attempts default проверить, что legacy офферы теперь идут unlimited — это ожидаемое поведение per §1).
-
-### Deploy (после подтверждения плана)
-
-`admin-create-public-link`, `public-create-installment-link`, `public-checkout`, `admin-create-payment-link`, `subscription-charge`, `subscription-renewal-reminders`, `invoice-checkout-issue`, `public-rr-installment-initiate`. Изменение `_shared` само по себе не обновляет bundles.
-
-### Frontend Publish — HOLD
-
-Не запускать до отдельной команды.
-
----
+- Frontend publish: HOLD.
+- `AdminPaymentLinkDialog` расширение (`link_kind: payment|invoice|bank_installment`, nullable provider fields, 3 server-ветки в `admin-create-public-link`, invoice/RR ветки в `PublicPayPage`, atomic consume, контекстный диалог, preview E2E) — отдельным этапом ПОСЛЕ закрытия A + B Discovery.
 
 ## DoD
 
-```text
-PROVIDER UNLIMITED CAPABILITY     : PROVEN
-NULL / MISSING / 0 SEMANTICS      : UNLIMITED
-LIMITED ATTEMPTS 1..10            : PASS
-OMITTED PROVIDER PARAMETER        : FORBIDDEN FOR UNLIMITED
-PROVIDER EFFECTIVE VALUE SNAPSHOT : PASS
+```
+A1 CAPABILITY PRE-MUTATION GATE     : PASS (нет orders_v2/subs при controlled error)
+A2 EFFECTIVE RETRY SNAPSHOT         : PASS (orders/subs/provider_subs/audit)
+A3 MACHINE-READABLE ERROR CODE      : PASS
+A4 LEGACY RETRY SEMANTICS UNIFIED   : PASS (missing→default 3, 0→unlimited, 1..10→limited)
+A5 PUBLIC WRITER SUBSCRIPTION       : PASS
+A6 ATTEMPTS UI 1..10 SHARED         : PASS
+A7 FIRST PAYMENT DELAY UI HIDDEN    : PASS
 
-INSTALLMENT COUNT 3/4/N           : PASS
-INSTALLMENT EFFECTIVE TYPE        : SUBSCRIPTION
-INSTALLMENT INTERVAL FROM OFFER   : PASS
-ATTEMPTS IN PROVIDER PAYLOAD      : PASS
-ATTEMPTS IN ORDER/SUB SNAPSHOTS   : PASS
+B1 TRIAL DISCOVERY MAP              : PASS
+B1 ACTIVE TRIAL OFFERS AUDITED      : PASS
+B2 CANONICAL SUB WRITER EXTENDED    : bepaid-create-subscription-checkout
+B3 SHARED PLAN BUILDER              : _shared/build-bepaid-subscription-plan.ts
+B4 LEGACY /subscriptions IN TOKEN   : NOT REACHABLE (guard kept)
+B5 PAYMENTDIALOG ROUTING            : PASS
+B6 ADMIN TRIAL UI UNIFIED           : PASS
+B7 DELAY REUSES TRIAL SEMANTICS     : PASS
 
-CONTACT LINK — PAYMENT            : PASS
-CONTACT LINK — INTERNAL INSTALL.  : PASS
-CONTACT LINK — INVOICE            : PASS
-CONTACT LINK — BANK INSTALLMENT   : PASS
-ACTION LINK IDEMPOTENCY           : PASS
-NON-PAYMENT PROVIDER = NULL       : PASS
+INTERNAL MIT                        : REMAINS DISABLED
+DIRECT-CHARGE                       : NOT REINTRODUCED
+NEW PARALLEL DELAY ENGINE           : FORBIDDEN
+ORDERS_V2 / SUBS_V2 / PROVIDER_SUBS : SINGLE ROW EACH
+WEBHOOK DUPLICATES                  : 0
 
-REGRESSION ONE-TIME / SUB         : PASS
-EDGE DEPLOY                       : PASS
-FRONTEND PUBLISH                  : HOLD
-SPRINT STATUS                     : READY AFTER CAPABILITY GATE
+E2E:
+  no-card trial                     : PASS
+  paid provider-managed trial       : PASS (plan.plan + plan.trial payload verified)
+  regular bePaid subscription       : PASS
+  finite installment + retry policy : PASS
+  unlimited без capability          : controlled error, нет INSERT
+  legacy offers без max_charge_att. : provider_default=3, checkout проходит
+
+FRONTEND PUBLISH                    : HOLD
 ```
 
-Ключевое правило реализации: `0/null` внутри системы = «без ограничения», но конкретное значение, отправляемое bePaid, выбирается только после capability proof §0.
+Порядок исполнения после аппрува: A1→A2→A3→A4→A5→A6→A7 → B1 (Discovery доклад) → согласование → B2..B7. AdminPaymentLinkDialog — отдельный спринт.
