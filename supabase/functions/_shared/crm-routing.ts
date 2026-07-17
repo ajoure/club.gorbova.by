@@ -68,7 +68,8 @@ export interface NegativeRoutingSnapshot {
   resolved_at: string;
   offer_id: string | null;
   tariff_id: string | null;
-  resolved_via: 'offer_id' | 'tariff_fallback' | 'none';
+  product_id?: string | null;
+  resolved_via: ResolvedVia | 'none';
   candidates_count: number;
 }
 
