@@ -373,9 +373,11 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         order_id: order.id,
         offer_id: offer_id ?? null,
         tariff_id,
+        product_id,
         reason: oneTimeRouting.reason || 'unknown',
         resolved_via: oneTimeRouting.resolved_via ?? 'none',
         candidates_count: oneTimeRouting.candidates_count ?? 0,
+        primary_reason: oneTimeRouting.primary_reason ?? null,
       });
     }
 
