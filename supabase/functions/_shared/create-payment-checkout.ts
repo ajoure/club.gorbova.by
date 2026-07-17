@@ -1266,7 +1266,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
               charge_notifications: chargeNotifSnapshot,
             }
           : {
-              // Non-installment MIT subscription: тоже сохраняем policy (subscription-scope).
+              // Non-installment provider-managed subscription: сохраняем policy (subscription-scope).
               charge_notifications: chargeNotifSnapshot,
               charge_notifications_source: chargeNotifPolicy.source,
             }),
