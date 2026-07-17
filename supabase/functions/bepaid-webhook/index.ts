@@ -2107,7 +2107,7 @@ Deno.serve(async (req) => {
                     subscriptionV2Id,
                     providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
                     transactionUid: transactionUid ? String(transactionUid) : null,
-                    productName: subV2.tariffs?.products_v2?.name || subV2.tariffs?.name || null,
+                    productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
                     tariffName: subV2.tariffs?.name || null,
                     amount: paymentAmount,
                     currency: body.plan?.currency || 'BYN',
