@@ -278,7 +278,6 @@ Deno.serve(async (req) => {
       }
       // amount приходит в копейках = ПОЛНАЯ стоимость (UI всегда шлёт total).
       const totalByn = amount / 100;
-      // round half-up до целых BYN (Math.round в JS — half away from zero для положительных = round half-up).
       const perPaymentByn = Math.round(totalByn / sel);
       if (perPaymentByn < 1) {
         return errorResponse('per_payment_too_small', 400);
@@ -286,25 +285,45 @@ Deno.serve(async (req) => {
       const perPaymentKopecks = perPaymentByn * 100;
       const totalInstallmentByn = perPaymentByn * sel;
 
+      // PATCH INSTALLMENT-RETRY-POLICY: интервал и попытки берутся из оффера.
+      const rawInterval = (offer as any)?.installment_interval_days ?? 30;
+      const intervalDays = Number(rawInterval);
+      if (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > 365) {
+        return errorResponse('invalid_installment_interval_days', 400);
+      }
+      const rawFirstDelay = (offer as any)?.first_payment_delay_days ?? 0;
+      const firstDelayDays = Number(rawFirstDelay);
+      if (!Number.isInteger(firstDelayDays) || firstDelayDays < 0 || firstDelayDays > 365) {
+        return errorResponse('invalid_first_payment_delay_days', 400);
+      }
+
+      let retryPolicy;
+      try {
+        retryPolicy = resolveInstallmentRetryPolicy(
+          (offer as any)?.meta?.installment?.max_charge_attempts,
+        );
+      } catch (_e) {
+        return errorResponse('invalid_installment_max_charge_attempts', 400);
+      }
+
       installmentLinkAmountKopecks = perPaymentKopecks;
       installmentBlock = {
         payment_method: 'internal_installment',
         max_installment_months: offerInstallmentMaxMonths,
         selected_installment_months: sel,
-        interval_days: 30,
-        first_payment_delay_days: 0,
+        interval_days: intervalDays,
+        first_payment_delay_days: firstDelayDays,
         total_amount: totalByn,
         per_payment_amount: perPaymentByn,
-        // Canonical key для public-checkout (читает per_payment_amount_byn).
         per_payment_amount_byn: perPaymentByn,
         total_installment_amount: totalInstallmentByn,
         rounding_mode: 'round_half_up_byn',
-        // PATCH INSTALLMENT-PUBLIC-LINK: installment теперь оформляется как finite bePaid subscription.
-        // billing_cycles = N, провайдер сам списывает оставшиеся N-1 платежей.
         as_finite_subscription: true,
         billing_cycles: sel,
+        // Retry policy (см. _shared/installment-retry-policy.ts).
+        max_charge_attempts: retryPolicy.configured_value,
+        retry_policy_mode: retryPolicy.mode,
       };
-      // PATCH INSTALLMENT-PUBLIC-LINK: installment-link теперь = finite subscription (billing_cycles=N).
       payment_type = 'subscription';
     }
 
