@@ -22,6 +22,8 @@ import {
   resolveInstallmentRetryPolicy,
   resolveBepaidAttemptsValue,
   ProviderUnlimitedAttemptsNotSupportedError,
+  buildRetryPolicySnapshot,
+  type BepaidAttemptsResolution,
 } from './installment-retry-policy.ts';
 
 export interface CreateCheckoutParams {
