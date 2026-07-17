@@ -890,9 +890,29 @@ export default function AdminProductDetailV2() {
   const handleCopyOffer = async (offer: any) => {
     try {
       const meta = (offer.meta ? { ...offer.meta } : {}) as OfferMetaConfig & { slot_role?: unknown };
-      // slot_role уникален в рамках tariff_id (частичный uniq index tariff_offers_slot_role_per_tariff_uidx),
-      // поэтому копия обязана быть без роли — админ при необходимости назначит её вручную.
-      if ("slot_role" in meta) delete (meta as any).slot_role;
+      // slot_role уникален в рамках tariff_id (частичный uniq index tariff_offers_slot_role_per_tariff_uidx).
+      // Если у источника роль есть — сгенерируем уникальный суффикс, чтобы копию можно было сразу
+      // активировать без ручного заполнения (валидация требует slot_role+variant для активных офферов
+      // на продуктах с динамическими слотами). Админ может переименовать роль позже.
+      const srcRole = typeof (meta as any).slot_role === "string" ? String((meta as any).slot_role) : "";
+      if (srcRole) {
+        const usedRoles = new Set<string>(
+          (offers || [])
+            .filter((o: any) => o.tariff_id === offer.tariff_id)
+            .map((o: any) => String((o.meta as any)?.slot_role || ""))
+            .filter(Boolean),
+        );
+        let candidate = `${srcRole}_copy`;
+        let n = 2;
+        while (usedRoles.has(candidate)) {
+          candidate = `${srcRole}_copy_${n++}`;
+        }
+        // Ограничение длины по regex ^[a-z][a-z0-9_]{1,63}$ — максимум 64 символа.
+        if (candidate.length > 64) candidate = candidate.slice(0, 64);
+        (meta as any).slot_role = candidate;
+      } else if ("slot_role" in meta) {
+        delete (meta as any).slot_role;
+      }
       // Don't copy crm_routing payment-link conflicts: keep crm_routing but reset welcome message media path
       const insert: TariffOfferInsert = {
         tariff_id: offer.tariff_id,
