@@ -178,6 +178,10 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Build canonical public_url ──
+    // ВСЕГДА https://gorbova.by — независимо от продукта.
+    const canonicalOrigin = CANONICAL_PUBLIC_HOST;
+    if (!/^https:\/\//.test(canonicalOrigin) || FORBIDDEN_HOST_RE.test(canonicalOrigin)) {
       console.error('[public-create-installment-link] invalid canonical origin:', canonicalOrigin);
       return errorResponse('internal_invalid_origin', 500);
     }
