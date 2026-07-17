@@ -1776,7 +1776,7 @@ ${amountLine}
                       <p className="text-lg font-bold">
                         {selectedInstallmentMonths} × {Math.ceil(amount / selectedInstallmentMonths)} {previewCurrency} = ИТОГО {Math.ceil(amount / selectedInstallmentMonths) * selectedInstallmentMonths} {previewCurrency}
                       </p>
-                      <p className="text-xs text-muted-foreground">Рассрочка · первый платёж сегодня, далее каждые 30 дней</p>
+                      <p className="text-xs text-muted-foreground">Рассрочка · первый платёж сегодня, далее каждые {Number((effectiveOffer as any)?.installment_interval_days ?? 30)} дней</p>
                     </>
                   ) : (
                     <>
