@@ -27,6 +27,10 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { resolveInstallmentRetryPolicy } from '../_shared/installment-retry-policy.ts';
+import {
+  resolveChargeNotificationSnapshotForWriter,
+  serializeChargeNotificationPolicy,
+} from '../_shared/charge-notification-policy.ts';
 
 interface CreateInstallmentLinkRequest {
   product_id: string;
