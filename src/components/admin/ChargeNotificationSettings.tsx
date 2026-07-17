@@ -29,8 +29,8 @@ interface Props {
 
 function subsectionOf(meta: Record<string, any> | null | undefined, mode: Mode): unknown {
   const m = (meta ?? {}) as Record<string, any>;
-  if (mode === "subscription") return m; // resolver прочитает recurring.* legacy
-  return m.installment ?? null;           // resolver прочитает installment.charge_notifications
+  if (mode === "subscription") return m; // resolver: recurring.charge_notifications → legacy recurring.*
+  return m.installment ?? null;           // resolver: installment.charge_notifications
 }
 
 export function ChargeNotificationSettings({ mode, meta, onChange }: Props) {
@@ -38,15 +38,26 @@ export function ChargeNotificationSettings({ mode, meta, onChange }: Props) {
 
   const emit = (patch: Partial<ChargeNotificationPolicy>) => {
     const next: ChargeNotificationPolicy = { ...current, ...patch };
+    const sortedDays = [...next.reminder_days].sort((a, b) => b - a);
     const base = (meta ?? {}) as Record<string, any>;
+    const canonical = {
+      enabled: next.enabled,
+      reminder_days: sortedDays,
+      timezone: next.timezone,
+      notify_on_failure: next.notify_on_failure,
+      notify_on_retry_exhausted: next.notify_on_retry_exhausted,
+    };
     if (mode === "subscription") {
-      // Пишем в legacy recurring-контракт (SoT для существующего runtime подписок).
+      // Canonical SoT: meta.recurring.charge_notifications.
+      // Legacy зеркала сохраняем для старого runtime подписок.
       const prevRec = (base.recurring ?? {}) as Record<string, any>;
       onChange({
         ...base,
         recurring: {
           ...prevRec,
-          pre_due_reminders_days: [...next.reminder_days].sort((a, b) => b - a),
+          charge_notifications: canonical,
+          // Legacy mirrors (derived).
+          pre_due_reminders_days: sortedDays,
           notify_before_each_charge: next.enabled,
           notify_grace_events: next.notify_on_failure || next.notify_on_retry_exhausted,
           timezone: next.timezone,
@@ -60,13 +71,7 @@ export function ChargeNotificationSettings({ mode, meta, onChange }: Props) {
       ...base,
       installment: {
         ...prevInst,
-        charge_notifications: {
-          enabled: next.enabled,
-          reminder_days: [...next.reminder_days].sort((a, b) => b - a),
-          timezone: next.timezone,
-          notify_on_failure: next.notify_on_failure,
-          notify_on_retry_exhausted: next.notify_on_retry_exhausted,
-        },
+        charge_notifications: canonical,
       },
     });
   };
