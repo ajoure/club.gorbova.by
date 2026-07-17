@@ -1655,18 +1655,21 @@ ${amountLine}
 
                   {selectedInstallmentMonths && amount > 0 && (() => {
                     const N = selectedInstallmentMonths;
-                    const perPayment = Math.round(amount / N);
+                    const perPayment = Math.ceil(amount / N);
                     const totalInstallment = perPayment * N;
                     const diff = totalInstallment - amount;
                     return (
                       <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-1">
-                        <p className="text-base font-semibold">
-                          {N} платеж{N === 1 ? "" : N < 5 ? "а" : "ей"} × {perPayment} {previewCurrency} = ИТОГО {totalInstallment} {previewCurrency}
-                        </p>
+                        <p className="text-sm">Количество платежей: <b>{N}</b></p>
+                        <p className="text-sm">Один платёж: <b>{perPayment} {previewCurrency}</b></p>
+                        <p className="text-sm">Итоговая сумма рассрочки: <b>{totalInstallment} {previewCurrency}</b></p>
+                        {diff !== 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            Разница из-за округления: +{diff} {previewCurrency}
+                          </p>
+                        )}
                         <p className="text-xs text-muted-foreground">
-                          Сумма платежа округлена до целых {previewCurrency}. Итог рассрочки рассчитан с учётом выбранного срока и может отличаться от полной цены ({amount} {previewCurrency}
-                          {diff !== 0 ? `, разница: ${diff > 0 ? "+" : ""}${diff} ${previewCurrency}` : ""}).
-                          Списание происходит каждые 30 дней. Первый платёж — сегодня.
+                          Первый платёж — сегодня, далее каждые 30 дней.
                         </p>
                       </div>
                     );
