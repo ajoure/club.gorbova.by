@@ -426,10 +426,11 @@ export function AdminPaymentLinkDialog({
     !!effectiveOffer && (effectiveOffer as any).payment_method === "internal_installment";
   const installmentMaxMonths = useMemo(() => {
     if (!isInstallmentOffer || !effectiveOffer) return null;
-    const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
-    if (metaMax >= 2) return Math.min(12, metaMax);
+    // Priority: precise installment_count > legacy meta.installment.max_months.
     const legacy = Number((effectiveOffer as any).installment_count ?? 0);
     if (legacy >= 2) return Math.min(12, legacy);
+    const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
+    if (metaMax >= 2) return Math.min(12, metaMax);
     return null;
   }, [isInstallmentOffer, effectiveOffer]);
   // per_payment для installment считается inline в JSX (там, где amount уже доступен).
