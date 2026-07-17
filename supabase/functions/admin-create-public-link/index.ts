@@ -339,7 +339,7 @@ Deno.serve(async (req) => {
           });
         } catch (e) {
           if (e instanceof ProviderUnlimitedAttemptsNotSupportedError) {
-            await supabase.from('audit_logs').insert({
+            const { error: auditError } = await supabase.from('audit_logs').insert({
               actor_type: 'user',
               actor_user_id: user.id,
               actor_label: 'admin-create-public-link',
@@ -350,6 +350,13 @@ Deno.serve(async (req) => {
                 source: 'admin-create-public-link',
               },
             });
+            if (auditError) {
+              console.error('[installment-preflight] audit insert failed', {
+                error: auditError.message,
+                offer_id: offer_id ?? null,
+                source: 'admin-create-public-link',
+              });
+            }
             return jsonResponse({
               success: false,
               error_code: 'provider_unlimited_attempts_not_supported',
