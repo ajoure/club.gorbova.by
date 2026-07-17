@@ -38,6 +38,7 @@ import { TariffCard } from "@/components/landing/TariffCard";
 import { TariffCarouselGrid } from "@/components/landing/TariffCarouselGrid";
 import { UniversalPricingSection } from "@/components/landing/UniversalPricingSection";
 import { buildTariffCardViewModel, type CardConfig } from "@/lib/tariffCardViewModel";
+import { INSTALLMENT_MAX_CHARGE_ATTEMPTS_OPTIONS } from "@/lib/installmentRetryPolicy";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { SortPill } from "@/components/admin/SortPill";
 import { TariffDeleteConfirmDialog } from "@/components/admin/TariffDeleteConfirmDialog";
