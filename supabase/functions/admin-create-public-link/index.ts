@@ -441,7 +441,7 @@ Deno.serve(async (req) => {
 
       // Audit deferred until after payment_links INSERT succeeds (so we can
       // capture payment_link_id + url_token in the audit record).
-      var pendingInstallmentAudit: Record<string, unknown> = {
+      pendingInstallmentAudit = {
         contact_id: user_id ?? null,
         offer_id: resolvedOffer.id,
         public_cycles: offerInstallmentCountLegacy,
