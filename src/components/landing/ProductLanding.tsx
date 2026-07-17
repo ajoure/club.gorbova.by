@@ -180,7 +180,9 @@ export function ProductLanding({ data, header, footer, customSections }: Product
             selectedOffer.offer.payment_method !== "internal_installment"
           }
           paymentMethod={selectedOffer.offer.payment_method}
-          installmentCount={selectedOffer.offer.installment_count ?? null}
+          installmentMaxMonths={selectedOffer.offer.installment_count ?? null}
+          installmentIntervalDays={(selectedOffer.offer as any).installment_interval_days ?? null}
+          installmentTotalAmountKopecks={Math.round(Number(selectedOffer.offer.amount) * 100)}
         />
       ) : null}
     </div>
