@@ -297,14 +297,27 @@ Deno.serve(async (req) => {
         return errorResponse('invalid_installment_months', 400);
       }
       // amount приходит в копейках = ПОЛНАЯ стоимость (UI всегда шлёт total).
-      const totalByn = amount / 100;
-      // B9. Округление вверх до целого BYN: per_payment = ceil(total / N).
-      const perPaymentByn = Math.ceil(totalByn / sel);
+      // B9. Backend SoT — calculate-installment-plan (shared helper).
+      let plan;
+      try {
+        plan = calculateInstallmentPlan({
+          total_amount_kopecks: amount,
+          selected_cycles: sel,
+        });
+      } catch (e) {
+        if (e instanceof InstallmentPlanError) {
+          return errorResponse(e.code, 400);
+        }
+        throw e;
+      }
+      const totalByn = kopecksToDecimal(amount);
+      const perPaymentByn = kopecksToDecimal(plan.per_payment_kopecks);
+      const totalInstallmentByn = kopecksToDecimal(plan.effective_total_kopecks);
+      const roundingDeltaByn = kopecksToDecimal(plan.rounding_delta_kopecks);
       if (perPaymentByn < 1) {
         return errorResponse('per_payment_too_small', 400);
       }
-      const perPaymentKopecks = perPaymentByn * 100;
-      const totalInstallmentByn = perPaymentByn * sel;
+      const perPaymentKopecks = plan.per_payment_kopecks;
 
       // PATCH INSTALLMENT-RETRY-POLICY: интервал и попытки берутся из оффера.
       const rawInterval = resolvedOffer.installment_interval_days ?? 30;
