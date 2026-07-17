@@ -426,10 +426,11 @@ export function AdminPaymentLinkDialog({
     !!effectiveOffer && (effectiveOffer as any).payment_method === "internal_installment";
   const installmentMaxMonths = useMemo(() => {
     if (!isInstallmentOffer || !effectiveOffer) return null;
-    const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
-    if (metaMax >= 2) return Math.min(12, metaMax);
+    // Priority: precise installment_count > legacy meta.installment.max_months.
     const legacy = Number((effectiveOffer as any).installment_count ?? 0);
     if (legacy >= 2) return Math.min(12, legacy);
+    const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
+    if (metaMax >= 2) return Math.min(12, metaMax);
     return null;
   }, [isInstallmentOffer, effectiveOffer]);
   // per_payment для installment считается inline в JSX (там, где amount уже доступен).
@@ -551,10 +552,11 @@ export function AdminPaymentLinkDialog({
         ? "Подписка с автосписанием"
         : "Разовая оплата";
 
-    const perPayment = amount;
-    const totalAmount = perPayment * (selectedInstallmentMonths || 1);
+    const N = selectedInstallmentMonths || 1;
+    const perPayment = isInstallmentMsg ? Math.ceil(amount / N) : amount;
+    const totalAmount = isInstallmentMsg ? perPayment * N : amount;
     const amountLine = isInstallmentMsg
-      ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} ${previewCurrency} (итого ${totalAmount} ${previewCurrency})`
+      ? `💰 Стоимость: ${N} × ${perPayment} ${previewCurrency} (итого ${totalAmount} ${previewCurrency})`
       : `💰 Стоимость: ${amount} ${previewCurrency}`;
 
     return `💳 <b>Оплата ${headerKind}</b>
@@ -708,9 +710,10 @@ ${amountLine}
       // Индивидуальная ссылка: по умолчанию N = точное количество платежей из оффера,
       // но админ может изменить на любое значение 2..12.
       if ((effectiveOffer as any).payment_method === "internal_installment") {
-        const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
+        // Priority: precise installment_count > legacy meta.installment.max_months.
         const legacy = Number((effectiveOffer as any).installment_count ?? 0);
-        const defaultN = metaMax >= 2 ? Math.min(12, metaMax) : (legacy >= 2 ? Math.min(12, legacy) : null);
+        const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
+        const defaultN = legacy >= 2 ? Math.min(12, legacy) : (metaMax >= 2 ? Math.min(12, metaMax) : null);
         setSelectedInstallmentMonths(defaultN);
         if (paymentType !== "one_time") setPaymentType("one_time");
       } else {

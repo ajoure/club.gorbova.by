@@ -179,7 +179,7 @@ Deno.serve(async (req) => {
     if (offer_id) {
       const { data: loadedOffer } = await supabase
         .from('tariff_offers')
-        .select('id, tariff_id, is_active, offer_type, payment_method, installment_count, installment_interval_days, first_payment_delay_days, meta')
+        .select('id, tariff_id, is_active, offer_type, payment_method, amount, installment_count, installment_interval_days, first_payment_delay_days, meta')
         .eq('id', offer_id).maybeSingle();
       if (!loadedOffer) return errorResponse('Offer not found', 400);
       if (loadedOffer.tariff_id !== tariff_id) return errorResponse('Offer does not belong to tariff', 400);
@@ -190,9 +190,12 @@ Deno.serve(async (req) => {
       offerIsRecurring = !!(resolvedOffer as any).meta?.recurring?.is_recurring;
       offerPaymentMethod = (resolvedOffer as any).payment_method ?? null;
       offerInstallmentCountLegacy = Number((resolvedOffer as any).installment_count ?? 0) || null;
+      // Priority: precise installment_count > legacy meta.installment.max_months.
       const metaMax = Number((resolvedOffer as any).meta?.installment?.max_months ?? 0);
       offerInstallmentMaxMonths =
-        metaMax >= 2 ? metaMax : (offerInstallmentCountLegacy && offerInstallmentCountLegacy >= 2 ? offerInstallmentCountLegacy : null);
+        (offerInstallmentCountLegacy && offerInstallmentCountLegacy >= 2)
+          ? offerInstallmentCountLegacy
+          : (metaMax >= 2 ? metaMax : null);
       const acq = (resolvedOffer as any).meta?.acquiring;
       if (Array.isArray(acq?.allowed_payment_providers)) {
         offerAllowedProviders = acq.allowed_payment_providers.filter(
@@ -282,6 +285,7 @@ Deno.serve(async (req) => {
     //   • amount ссылки = per_payment_kopecks; total — в meta.installment.
     let installmentBlock: Record<string, unknown> | null = null;
     let installmentLinkAmountKopecks: number | null = null;
+    let pendingInstallmentAudit: Record<string, unknown> | null = null;
     if (installment_offer || offerPaymentMethod === 'internal_installment') {
       if (!resolvedOffer) {
         return errorResponse('installment_offer_id_required', 400);
@@ -435,25 +439,20 @@ Deno.serve(async (req) => {
       };
       payment_type = 'subscription';
 
-      // Audit: административное создание индивидуальной ссылки на рассрочку.
-      await supabase.from('audit_logs').insert({
-        actor_type: 'user',
-        actor_user_id: user.id,
-        actor_label: 'admin-create-public-link',
-        action: 'installment.admin_link_created',
-        meta: {
-          contact_id: user_id ?? null,
-          offer_id: resolvedOffer.id,
-          public_cycles: offerInstallmentCountLegacy,
-          selected_cycles: sel,
-          public_amount_byn: offerAmountByn,
-          selected_amount_byn: totalByn,
-          rounding_delta_byn: roundingDeltaByn,
-          manual_override: manualOverride,
-          overridden_fields: overriddenFields,
-          source: 'AdminPaymentLinkDialog',
-        },
-      });
+      // Audit deferred until after payment_links INSERT succeeds (so we can
+      // capture payment_link_id + url_token in the audit record).
+      pendingInstallmentAudit = {
+        contact_id: user_id ?? null,
+        offer_id: resolvedOffer.id,
+        public_cycles: offerInstallmentCountLegacy,
+        selected_cycles: sel,
+        public_amount_byn: offerAmountByn,
+        selected_amount_byn: totalByn,
+        rounding_delta_byn: roundingDeltaByn,
+        manual_override: manualOverride,
+        overridden_fields: overriddenFields,
+        source: 'AdminPaymentLinkDialog',
+      };
     }
 
     // ── Phase 8 follow-up FIX — auto vs explicit recurring handling ──
@@ -769,6 +768,22 @@ Deno.serve(async (req) => {
       console.error('[admin-create-public-link] INSERT failed:', insertErr);
       return errorResponse(`Failed to create payment link: ${insertErr?.message}`, 500);
     }
+
+    // Deferred installment audit — write only after payment_link exists.
+    if (pendingInstallmentAudit) {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'user',
+        actor_user_id: user.id,
+        actor_label: 'admin-create-public-link',
+        action: 'installment.admin_link_created',
+        meta: {
+          ...pendingInstallmentAudit,
+          payment_link_id: link.id,
+          url_token: link.url_token,
+        },
+      });
+    }
+
 
     // ── Audit (proof contract: payment_type / mode / offer_id / tariff_id / cta_source) ──
     await supabase.from('audit_logs').insert({
