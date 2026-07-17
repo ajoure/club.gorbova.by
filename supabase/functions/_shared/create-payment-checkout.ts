@@ -1222,6 +1222,12 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
               installment_count: installmentCountRaw,
               billing_cycles: billingCycles,
               model: 'bepaid_finite_subscription',
+              // PATCH A2 — канонический путь meta.installment.retry_policy.
+              installment: {
+                ...(installmentExtra || {}),
+                retry_policy: retryPolicySnapshotPre,
+              },
+              // legacy дубль — к удалению.
               retry_policy: retryPolicySnapshotPre,
             }
           : {}),
