@@ -774,11 +774,13 @@ export default function AdminProductDetailV2() {
       getcourse_offer_id: offerForm.getcourse_offer_id || null,
       reject_virtual_cards: offerForm.reject_virtual_cards,
       // Installment fields (legacy mirror — installment_count хранит max_months)
-      payment_method: offerForm.offer_type === "pay_now"
-        ? offerForm.payment_method
-        : offerForm.offer_type === "bank_installment"
-          ? (offerForm.payment_method || "full_payment")
-          : "full_payment",
+      payment_method: offerForm.offer_type === "invoice"
+        ? "bank_transfer"
+        : offerForm.offer_type === "pay_now"
+          ? offerForm.payment_method
+          : offerForm.offer_type === "bank_installment"
+            ? (offerForm.payment_method || "full_payment")
+            : "full_payment",
       installment_count: isInstallment ? Math.max(2, Math.min(12, offerForm.installment_count || 6)) : null,
       installment_interval_days: isInstallment ? 30 : null,
       first_payment_delay_days: isInstallment ? 0 : null,
