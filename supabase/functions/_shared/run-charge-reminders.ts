@@ -326,7 +326,7 @@ export async function runChargeReminders(
           user_id: ps.user_id,
           kind,
           days_before: -1,
-          effective_charge_at: effectiveChargeIso,
+          effective_charge_at: effectiveChargeIso ?? '',
           effective_charge_source: effectiveSource,
           amount: Number(pending.amount) || 0,
           currency: pending.currency || 'BYN',
