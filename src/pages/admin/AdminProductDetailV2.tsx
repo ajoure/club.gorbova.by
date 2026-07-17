@@ -32,6 +32,7 @@ import { ProductDocumentsOverview } from "@/components/admin/product/ProductDocu
 import { ProductCompositionTab } from "@/components/products/ProductCompositionTab";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
+import { ChargeNotificationSettings } from "@/components/admin/ChargeNotificationSettings";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffCard } from "@/components/landing/TariffCard";
@@ -2503,6 +2504,16 @@ export default function AdminProductDetailV2() {
                   </div>
 
 
+                  {/* B3. Уведомления об автосписаниях рассрочки — canonical meta.installment.charge_notifications */}
+                  <div className="pt-3 border-t space-y-3">
+                    <Label className="text-sm font-medium">Уведомления о платежах рассрочки</Label>
+                    <ChargeNotificationSettings
+                      mode="installment"
+                      meta={offerForm.meta as any}
+                      onChange={(nextMeta) => setOfferForm({ ...offerForm, meta: nextMeta as any })}
+                    />
+                  </div>
+
                   {offerForm.amount > 0 && offerForm.installment_count > 1 && (
                     <div className="pt-3 border-t">
                       <Label className="text-xs text-muted-foreground">
@@ -2835,79 +2846,14 @@ export default function AdminProductDetailV2() {
                                 </p>
                               </div>
                               
-                              {/* Pre-due reminders */}
-                              <div className="space-y-2">
-                                <Label className="text-sm">Напоминания до списания (дней)</Label>
-                                <div className="flex gap-3">
-                                  {[7, 3, 1].map(day => {
-                                    const currentDays = offerForm.meta?.recurring?.pre_due_reminders_days || [7, 3, 1];
-                                    const isChecked = currentDays.includes(day);
-                                    return (
-                                      <label key={day} className="flex items-center gap-1.5 cursor-pointer">
-                                        <input
-                                          type="checkbox"
-                                          checked={isChecked}
-                                          onChange={(e) => {
-                                            const newDays = e.target.checked
-                                              ? [...currentDays, day].sort((a, b) => b - a)
-                                              : currentDays.filter(d => d !== day);
-                                            setOfferForm({
-                                              ...offerForm,
-                                              meta: {
-                                                ...offerForm.meta,
-                                                recurring: {
-                                                  ...offerForm.meta?.recurring,
-                                                  pre_due_reminders_days: newDays,
-                                                }
-                                              }
-                                            });
-                                          }}
-                                          className="rounded border-border"
-                                        />
-                                        <span className="text-sm">{day} {day === 1 ? 'день' : 'дней'}</span>
-                                      </label>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                              
-                              <Separator />
-
-                              {/* Notification toggles */}
+                              {/* B3. Единый UI-компонент — пишет в recurring-контракт (SoT подписки). */}
                               <div className="space-y-3">
-                                <div className="flex items-center justify-between">
-                                  <Label className="text-sm font-normal">Уведомлять перед списанием</Label>
-                                  <Switch
-                                    checked={offerForm.meta?.recurring?.notify_before_each_charge ?? true}
-                                    onCheckedChange={(checked) => setOfferForm({
-                                      ...offerForm,
-                                      meta: {
-                                        ...offerForm.meta,
-                                        recurring: {
-                                          ...offerForm.meta?.recurring,
-                                          notify_before_each_charge: checked,
-                                        }
-                                      }
-                                    })}
-                                  />
-                                </div>
-                                
-                                <div className="flex items-center justify-between">
-                                  <Label className="text-sm font-normal">Уведомления в grace (0/24/48/72ч)</Label>
-                                  <Switch
-                                    checked={offerForm.meta?.recurring?.notify_grace_events ?? true}
-                                    onCheckedChange={(checked) => setOfferForm({
-                                      ...offerForm,
-                                      meta: {
-                                        ...offerForm.meta,
-                                        recurring: {
-                                          ...offerForm.meta?.recurring,
-                                          notify_grace_events: checked,
-                                        }
-                                      }
-                                    })}
-                                  />
-                                </div>
+                                <Label className="text-sm font-medium">Уведомления о списаниях</Label>
+                                <ChargeNotificationSettings
+                                  mode="subscription"
+                                  meta={offerForm.meta as any}
+                                  onChange={(nextMeta) => setOfferForm({ ...offerForm, meta: nextMeta as any })}
+                                />
                               </div>
                               
                             </CardContent>
