@@ -647,9 +647,19 @@ Deno.serve(async (req: Request) => {
     : `${Deno.env.get("SUPABASE_URL")}/functions/v1/rr-webhook`;
 
   // 3. Вызов РР (pre-call marker уже durable записан).
+  const productDisplayName = String(
+    (product as any)?.public_title || (product as any)?.name || "",
+  ).trim();
+  const tariffDisplayName = String((tariff as any)?.name || "").trim();
+  const itemNameRaw = [productDisplayName, tariffDisplayName]
+    .filter(Boolean)
+    .join(" — ") || "Оплата заказа";
+  const itemName = itemNameRaw.slice(0, 128);
+
   const rrRes = await rrCreateOrder(cfg, {
-    externalId, amountMinor, currency, notificationUrl, correlationId,
+    externalId, amountMinor, currency, notificationUrl, correlationId, itemName,
   });
+
   const redacted = redactRRResponse(rrRes.http.json);
 
   // 4. Классификация исхода.
