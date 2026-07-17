@@ -385,6 +385,7 @@ export function buildNegativeSnapshot(args: {
   product_id?: string | null;
   resolved_via?: ResolvedVia | 'none';
   candidates_count?: number;
+  primary_reason?: string | null;
 }): NegativeRoutingSnapshot {
   return {
     enabled: false,
@@ -395,6 +396,7 @@ export function buildNegativeSnapshot(args: {
     product_id: args.product_id ?? null,
     resolved_via: args.resolved_via ?? 'none',
     candidates_count: args.candidates_count ?? 0,
+    primary_reason: args.primary_reason ?? null,
   };
 }
 
@@ -411,6 +413,7 @@ export async function auditNegativeSnapshot(
     reason: string;
     resolved_via: ResolvedVia | 'none';
     candidates_count: number;
+    primary_reason?: string | null;
   },
 ): Promise<void> {
   await audit(supabase, 'crm_routing_snapshot_negative', {
@@ -421,6 +424,7 @@ export async function auditNegativeSnapshot(
     reason: args.reason,
     resolved_via: args.resolved_via,
     candidates_count: args.candidates_count,
+    primary_reason: args.primary_reason ?? null,
   });
 }
 
