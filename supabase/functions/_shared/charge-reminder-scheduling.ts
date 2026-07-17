@@ -83,6 +83,19 @@ function formatAmount(a: number, currency: string): string {
   return `${a.toFixed(2)} ${currency}`;
 }
 
+export function escapeTelegramMarkdown(value: unknown): string {
+  return String(value ?? '').replace(/([*_`\[\]])/g, '\\$1');
+}
+
+export function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function daysWord(n: number): string {
   if (n === 1) return 'день';
   if (n >= 2 && n <= 4) return 'дня';
@@ -95,13 +108,17 @@ export function renderInstallmentTelegram(input: InstallmentTemplateInput): stri
     input.daysBefore === 0
       ? 'сегодня'
       : `через ${input.daysBefore} ${daysWord(input.daysBefore)}`;
+  const productName = escapeTelegramMarkdown(input.productName);
+  const amount = escapeTelegramMarkdown(formatAmount(input.amount, input.currency));
+  const safeWhen = escapeTelegramMarkdown(when);
+  const safeDLabel = escapeTelegramMarkdown(dLabel);
   return [
     `🔔 *Напоминание об автоплатеже*`,
     ``,
-    `📦 *Продукт:* ${input.productName}`,
+    `📦 *Продукт:* ${productName}`,
     `💳 *Платёж:* №${input.paymentNumber} из ${input.totalPayments}`,
-    `💰 *Сумма:* ${formatAmount(input.amount, input.currency)}`,
-    `📆 *Дата списания:* ${when} (${dLabel})`,
+    `💰 *Сумма:* ${amount}`,
+    `📆 *Дата списания:* ${safeWhen} (${safeDLabel})`,
     ``,
     `Если данные карты изменились — обновите способ оплаты в личном кабинете.`,
   ].join('\n');
@@ -112,6 +129,9 @@ export function renderInstallmentEmail(input: InstallmentTemplateInput): {
   html: string;
 } {
   const when = formatChargeDateTime(input.effectiveChargeIso, input.timezone);
+  const safeProductName = escapeHtml(input.productName);
+  const safeAmount = escapeHtml(formatAmount(input.amount, input.currency));
+  const safeWhen = escapeHtml(when);
   const subject = `Напоминание об автоплатеже — платёж №${input.paymentNumber} из ${input.totalPayments}`;
   const html = `
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:20px">
@@ -119,10 +139,10 @@ export function renderInstallmentEmail(input: InstallmentTemplateInput): {
   <p>Здравствуйте!</p>
   <p>Напоминаем о предстоящем автоматическом списании по вашей рассрочке.</p>
   <div style="background:#f3f4f6;border-radius:8px;padding:16px;margin:16px 0">
-    <p style="margin:0 0 8px 0"><strong>📦 Продукт:</strong> ${input.productName}</p>
+    <p style="margin:0 0 8px 0"><strong>📦 Продукт:</strong> ${safeProductName}</p>
     <p style="margin:0 0 8px 0"><strong>💳 Платёж:</strong> №${input.paymentNumber} из ${input.totalPayments}</p>
-    <p style="margin:0 0 8px 0"><strong>💰 Сумма:</strong> ${formatAmount(input.amount, input.currency)}</p>
-    <p style="margin:0"><strong>📆 Дата списания:</strong> ${when}</p>
+    <p style="margin:0 0 8px 0"><strong>💰 Сумма:</strong> ${safeAmount}</p>
+    <p style="margin:0"><strong>📆 Дата списания:</strong> ${safeWhen}</p>
   </div>
   <p style="color:#6b7280">Если данные карты изменились — обновите способ оплаты в личном кабинете.</p>
 </div>`.trim();
@@ -147,13 +167,18 @@ export function renderSubscriptionChargeTelegram(input: SubscriptionTemplateInpu
     input.daysBefore === 0
       ? 'сегодня'
       : `через ${input.daysBefore} ${daysWord(input.daysBefore)}`;
+  const productName = escapeTelegramMarkdown(input.productName);
+  const tariffName = escapeTelegramMarkdown(input.tariffName);
+  const amount = escapeTelegramMarkdown(formatAmount(input.amount, input.currency));
+  const safeWhen = escapeTelegramMarkdown(when);
+  const safeDLabel = escapeTelegramMarkdown(dLabel);
   return [
     `🔔 *Напоминание об автоплатеже*`,
     ``,
-    `📦 *Продукт:* ${input.productName}`,
-    `🎯 *Тариф:* ${input.tariffName}`,
-    `💰 *Сумма:* ${formatAmount(input.amount, input.currency)}`,
-    `📆 *Дата списания:* ${when} (${dLabel})`,
+    `📦 *Продукт:* ${productName}`,
+    `🎯 *Тариф:* ${tariffName}`,
+    `💰 *Сумма:* ${amount}`,
+    `📆 *Дата списания:* ${safeWhen} (${safeDLabel})`,
     ``,
     `Управлять подпиской можно в личном кабинете.`,
   ].join('\n');
@@ -164,6 +189,10 @@ export function renderSubscriptionChargeEmail(input: SubscriptionTemplateInput):
   html: string;
 } {
   const when = formatChargeDateTime(input.effectiveChargeIso, input.timezone);
+  const safeProductName = escapeHtml(input.productName);
+  const safeTariffName = escapeHtml(input.tariffName);
+  const safeAmount = escapeHtml(formatAmount(input.amount, input.currency));
+  const safeWhen = escapeHtml(when);
   const subject = `Напоминание об автоплатеже — ${input.productName}`;
   const html = `
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:20px">
@@ -171,10 +200,10 @@ export function renderSubscriptionChargeEmail(input: SubscriptionTemplateInput):
   <p>Здравствуйте!</p>
   <p>Напоминаем о предстоящем автоматическом списании.</p>
   <div style="background:#f3f4f6;border-radius:8px;padding:16px;margin:16px 0">
-    <p style="margin:0 0 8px 0"><strong>📦 Продукт:</strong> ${input.productName}</p>
-    <p style="margin:0 0 8px 0"><strong>🎯 Тариф:</strong> ${input.tariffName}</p>
-    <p style="margin:0 0 8px 0"><strong>💰 Сумма:</strong> ${formatAmount(input.amount, input.currency)}</p>
-    <p style="margin:0"><strong>📆 Дата списания:</strong> ${when}</p>
+    <p style="margin:0 0 8px 0"><strong>📦 Продукт:</strong> ${safeProductName}</p>
+    <p style="margin:0 0 8px 0"><strong>🎯 Тариф:</strong> ${safeTariffName}</p>
+    <p style="margin:0 0 8px 0"><strong>💰 Сумма:</strong> ${safeAmount}</p>
+    <p style="margin:0"><strong>📆 Дата списания:</strong> ${safeWhen}</p>
   </div>
   <p style="color:#6b7280">Управлять подпиской можно в личном кабинете.</p>
 </div>`.trim();
