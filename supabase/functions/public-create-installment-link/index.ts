@@ -123,22 +123,53 @@ Deno.serve(async (req) => {
       return errorResponse('not_installment_offer', 400);
     }
 
-    const installmentCount = Number((offer as any).installment_count ?? 0);
-    if (!Number.isInteger(installmentCount) || installmentCount < 2) {
+    // B9. В tariff_offers.installment_count хранится max_months (2..12).
+    const maxMonthsColumn = Number((offer as any).installment_count ?? 0);
+    if (!Number.isInteger(maxMonthsColumn) || maxMonthsColumn < 2) {
       return errorResponse('installment_count_invalid', 400);
+    }
+
+    // B9. Выбор клиента (N платежей). Default: если max=2 и не передано — 2.
+    const requestedSel = body.selected_installment_months;
+    let selectedMonths: number;
+    if (requestedSel === null || requestedSel === undefined) {
+      if (maxMonthsColumn === 2) {
+        selectedMonths = 2;
+      } else {
+        return errorResponse('installment_months_required', 400);
+      }
+    } else {
+      const n = Number(requestedSel);
+      if (!Number.isInteger(n) || n < 2 || n > maxMonthsColumn) {
+        return errorResponse('installment_months_out_of_range', 400);
+      }
+      selectedMonths = n;
     }
 
     const totalByn = Number(offer.amount);
     if (!Number.isFinite(totalByn) || totalByn < 1) {
       return errorResponse('invalid_offer_amount', 500);
     }
-    // B9. Округление вверх до целого BYN (per_payment = ceil(total / N)).
-    const perPaymentByn = Math.ceil(totalByn / installmentCount);
+    const totalKopecks = Math.round(totalByn * 100);
+    let plan;
+    try {
+      plan = calculateInstallmentPlan({
+        total_amount_kopecks: totalKopecks,
+        selected_cycles: selectedMonths,
+      });
+    } catch (e) {
+      if (e instanceof InstallmentPlanError) {
+        return errorResponse(e.code, 400);
+      }
+      throw e;
+    }
+    const perPaymentByn = kopecksToDecimal(plan.per_payment_kopecks);
     if (perPaymentByn < 1) {
       return errorResponse('per_payment_too_small', 400);
     }
-    const perPaymentKopecks = perPaymentByn * 100;
-    const totalInstallmentByn = perPaymentByn * installmentCount;
+    const perPaymentKopecks = plan.per_payment_kopecks;
+    const totalInstallmentByn = kopecksToDecimal(plan.effective_total_kopecks);
+    const roundingDeltaByn = kopecksToDecimal(plan.rounding_delta_kopecks);
 
     const rawInterval = (offer as any).installment_interval_days ?? 30;
     const intervalDays = Number(rawInterval);
