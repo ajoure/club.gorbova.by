@@ -1852,8 +1852,84 @@ Deno.serve(async (req) => {
               },
             });
             console.error('[WEBHOOK-SUBSCRIPTION] CRITICAL: payment.order_id != rebill_order_id post-STEP-E', postCheck);
+        }
+
+        // ===================================================================
+        // B7 Item 8. INSTALLMENT SCHEDULE MATERIALIZATION + CYCLE ADVANCEMENT
+        // Runs only for finite bePaid installment subscriptions (subv2 tracking).
+        // On the very first successful webhook — materialize N rows with row 1
+        // succeeded. On subsequent successes — advance row K (dup-UID guarded).
+        // ===================================================================
+        if (subIsInstallmentFinite && subInstallmentCount >= 2) {
+          try {
+            const instMeta = (subV2Meta.installment ?? {}) as Record<string, any>;
+            const orderMetaAny = (orderV2?.meta ?? {}) as Record<string, any>;
+            const orderInstMeta = (orderMetaAny.installment ?? {}) as Record<string, any>;
+            const perPaymentByn = Number(
+              instMeta.per_payment_byn
+              ?? orderMetaAny.installment_per_payment_amount_byn
+              ?? orderInstMeta.per_payment_byn
+              ?? (body.plan?.amount ? body.plan.amount / 100 : 0)
+            );
+            const intervalDays = Number(
+              instMeta.interval_days ?? orderInstMeta.interval_days ?? 30
+            );
+            const currency = String(
+              instMeta.currency ?? body.plan?.currency ?? subV2.currency ?? 'BYN'
+            );
+            const firstPaidAtIso = transaction?.paid_at || now.toISOString();
+            const firstUid = transactionUid ? String(transactionUid) : null;
+            const providerNextChargeAtIso = body.renew_at || body.subscription?.renew_at || null;
+
+            const matRes = await materializeFiniteInstallmentSchedule({
+              supabase,
+              subscriptionId: subscriptionV2Id,
+              orderId: orderV2Id,
+              userId: subV2.user_id,
+              installmentCount: subInstallmentCount,
+              perPaymentByn,
+              intervalDays,
+              currency,
+              firstPaidAtIso,
+              firstTransactionUid: firstUid,
+              firstProviderNextChargeAtIso: providerNextChargeAtIso,
+              paymentId: subPayResult?.id ?? null,
+            });
+
+            if (matRes.ok && matRes.created === false && firstUid) {
+              // Schedule pre-existed → this is a subsequent cycle. Advance.
+              const advRes = await advanceInstallmentCycleOnSuccess({
+                supabase,
+                subscriptionId: subscriptionV2Id,
+                transactionUid: firstUid,
+                paidAtIso: firstPaidAtIso,
+                providerPaidCycles: Number.isFinite(paidCycles) && paidCycles >= 1 ? paidCycles : null,
+                providerNextChargeAtIso,
+                userId: subV2.user_id,
+              });
+              console.log('[WEBHOOK-SUBSCRIPTION] cycle advancement:', advRes);
+            } else {
+              console.log('[WEBHOOK-SUBSCRIPTION] schedule materialization:', matRes);
+            }
+          } catch (schedErr) {
+            console.error('[WEBHOOK-SUBSCRIPTION] schedule non-fatal:', schedErr);
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'bepaid-webhook',
+              action: 'installment.schedule_invariant_failed',
+              target_user_id: subV2.user_id,
+              meta: {
+                subscription_v2_id: subscriptionV2Id,
+                order_id: orderV2Id,
+                provider_subscription_id: subscriptionId,
+                transaction_uid: transactionUid,
+                error: String((schedErr as Error)?.message || schedErr),
+                severity: 'CRITICAL',
+              },
+            });
           }
         }
+
 
         // NOTE (PATCH H2.1): entitlements insert/update and prior secondary
         // grant-access invoke removed. The single STEP A invocation above
