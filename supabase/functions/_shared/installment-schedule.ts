@@ -421,7 +421,7 @@ export async function advanceInstallmentCycleOnSuccess(args: {
     }, userId);
     return { ok: false, error: 'update_failed', details: updErr.message };
   }
-  return { ok: true, advanced: true, payment_number: targetNumber, payment_id: target.id };
+  return { ok: true, advanced: true, payment_number: targetNumber as number, payment_id: target.id };
 }
 
 // ---------------------------------------------------------------------------
