@@ -353,9 +353,33 @@ Deno.serve(async (req) => {
                 : Number(linkInstallment!.max_charge_attempts) === 0
                 ? 'unlimited_requested'
                 : 'limited'),
+            // B2 corrective. Явно транспонируем charge_notifications из link.meta
+            // в installment-scope, чтобы shared checkout сохранил snapshot без
+            // дополнительного чтения offer.meta.
+            ...(linkInstallment!.charge_notifications
+              ? {
+                  charge_notifications: linkInstallment!.charge_notifications,
+                  charge_notifications_source:
+                    linkInstallment!.charge_notifications_source ?? 'link',
+                }
+              : {}),
           },
         }
       : {};
+
+    // B2 corrective. Non-installment subscription: явный transfer recurring.charge_notifications.
+    const linkRecurring = (linkMeta.recurring || null) as Record<string, any> | null;
+    const recurringMetaExtra =
+      !hasInstallment && linkRecurring?.charge_notifications
+        ? {
+            recurring: {
+              charge_notifications: linkRecurring.charge_notifications,
+              charge_notifications_source:
+                linkRecurring.charge_notifications_source ?? 'link',
+            },
+          }
+        : {};
+
 
     const result = await createPaymentCheckout({
       supabase,
@@ -372,6 +396,7 @@ Deno.serve(async (req) => {
       meta_extra: {
         payment_link_id: link.id,
         ...installmentMetaExtra,
+        ...recurringMetaExtra,
         // Phase 5-C — фиксируем фактический выбор в audit-trail order'а.
         provider_choice_resolution: {
           mode: providerMode,
