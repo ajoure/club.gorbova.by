@@ -19,8 +19,13 @@ export interface CrmRoutingConfig {
   stage_on_failed: string;
 }
 
+export type ResolvedVia =
+  | 'offer_id'
+  | 'tariff_fallback'
+  | 'product_binding_fallback';
+
 export interface CrmRoutingSnapshot extends CrmRoutingConfig {
-  offer_id: string;
+  offer_id: string | null;
   offer_updated_at: string | null;
   pipeline_name: string | null;
   stage_names: {
@@ -34,6 +39,12 @@ export interface CrmRoutingSnapshot extends CrmRoutingConfig {
     failed: string | null;
   };
   offer_title: string | null;
+  /** How resolution happened — echoed into positive snapshot for observability. */
+  resolved_via?: ResolvedVia;
+  resolved_at?: string;
+  /** Present when resolved via product_binding_fallback. */
+  product_id?: string | null;
+  binding_id?: string | null;
 }
 
 export interface ResolvedRouting {
@@ -41,7 +52,7 @@ export interface ResolvedRouting {
   reason?: string;
   snapshot?: CrmRoutingSnapshot;
   /** How resolution happened — for audit/snapshot transparency. */
-  resolved_via?: 'offer_id' | 'tariff_fallback';
+  resolved_via?: ResolvedVia;
   /** Number of routing-enabled candidates considered during fallback. */
   candidates_count?: number;
 }
