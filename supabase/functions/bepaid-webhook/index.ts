@@ -15,6 +15,7 @@ import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
 import { generateInstallmentSchedule } from '../_shared/installment-schedule.ts';
+import { sendChargeLifecycleNotification } from '../_shared/charge-lifecycle-notifications.ts';
 // PATCH-RB1: REBILL materialization engine (gated by BEPAID_REBILL_MATERIALIZATION).
 import { runRebillFlow } from './rebill_flow.ts';
 import { resolveKillSwitchMode } from './rebill_builders.ts';
@@ -2036,9 +2037,16 @@ Deno.serve(async (req) => {
           try {
             const alreadyCompleted = String((subV2Meta as any)?.installment_status || '') === 'completed';
             if (!alreadyCompleted) {
-              await supabase
+              // Full canonical lifecycle close: subscriptions_v2 + provider_subscriptions
+              // + last installment_payments row + audit. Check {error} on each update
+              // because Supabase JS returns SQL failures via the result envelope, not
+              // via exceptions.
+              const lifecycleErrors: Array<{ table: string; error: unknown }> = [];
+
+              const { error: subUpdErr } = await supabase
                 .from('subscriptions_v2')
                 .update({
+                  status: 'completed',
                   auto_renew: false,
                   next_charge_at: null,
                   meta: {
@@ -2050,26 +2058,85 @@ Deno.serve(async (req) => {
                   updated_at: now.toISOString(),
                 })
                 .eq('id', subscriptionV2Id);
-              await supabase.from('audit_logs').insert({
-                actor_type: 'system',
-                actor_label: 'bepaid-webhook',
-                action: 'bepaid.subscription.installment_completed',
-                target_user_id: subV2.user_id,
-                meta: {
-                  subscription_v2_id: subscriptionV2Id,
-                  order_id: orderV2Id,
-                  provider_subscription_id: subscriptionId,
-                  paid_billing_cycles: paidCycles,
-                  installment_count: subInstallmentCount,
-                  last_tx_uid: transactionUid,
-                },
-              });
-              console.log('[WEBHOOK-SUBSCRIPTION] finite installment COMPLETED', { paidCycles, subInstallmentCount });
+              if (subUpdErr) lifecycleErrors.push({ table: 'subscriptions_v2', error: subUpdErr });
+
+              const { error: psUpdErr } = await supabase
+                .from('provider_subscriptions')
+                .update({
+                  state: 'completed',
+                  next_charge_at: null,
+                  meta: { status: 'completed', completed_at: now.toISOString(), paid_billing_cycles: paidCycles },
+                })
+                .eq('provider_subscription_id', subscriptionId);
+              if (psUpdErr) lifecycleErrors.push({ table: 'provider_subscriptions', error: psUpdErr });
+
+              // Finalize the last pending installment_payments row for this subscription
+              // (idempotent: if the schedule was materialized elsewhere).
+              try {
+                await supabase
+                  .from('installment_payments')
+                  .update({ status: 'succeeded', paid_at: transaction?.paid_at || now.toISOString() })
+                  .eq('subscription_id', subscriptionV2Id)
+                  .eq('payment_number', subInstallmentCount)
+                  .eq('status', 'pending');
+              } catch (_) { /* best-effort */ }
+
+              if (lifecycleErrors.length === 0) {
+                await supabase.from('audit_logs').insert({
+                  actor_type: 'system',
+                  actor_label: 'bepaid-webhook',
+                  action: 'bepaid.subscription.installment_completed',
+                  target_user_id: subV2.user_id,
+                  meta: {
+                    subscription_v2_id: subscriptionV2Id,
+                    order_id: orderV2Id,
+                    provider_subscription_id: subscriptionId,
+                    paid_billing_cycles: paidCycles,
+                    installment_count: subInstallmentCount,
+                    last_tx_uid: transactionUid,
+                  },
+                });
+                console.log('[WEBHOOK-SUBSCRIPTION] finite installment COMPLETED', { paidCycles, subInstallmentCount });
+
+                // Fire completion notification (independent of enabled/reminder flags).
+                try {
+                  await sendChargeLifecycleNotification({
+                    supabase,
+                    event: 'installment_completed',
+                    userId: subV2.user_id,
+                    subscriptionV2Id,
+                    providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
+                    transactionUid: transactionUid ? String(transactionUid) : null,
+                    productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
+                    tariffName: subV2.tariffs?.name || null,
+                    amount: paymentAmount,
+                    currency: body.plan?.currency || 'BYN',
+                    meta: { paid_billing_cycles: paidCycles, installment_count: subInstallmentCount },
+                  });
+                } catch (nErr) {
+                  console.error('[WEBHOOK-SUBSCRIPTION] completion notification non-fatal:', nErr);
+                }
+              } else {
+                console.error('[WEBHOOK-SUBSCRIPTION] finite completion lifecycle errors:', lifecycleErrors);
+                await supabase.from('audit_logs').insert({
+                  actor_type: 'system',
+                  actor_label: 'bepaid-webhook',
+                  action: 'bepaid.subscription.installment_completed_lifecycle_error',
+                  target_user_id: subV2.user_id,
+                  meta: {
+                    subscription_v2_id: subscriptionV2Id,
+                    provider_subscription_id: subscriptionId,
+                    errors: lifecycleErrors.map((e) => ({ table: e.table, message: String((e.error as any)?.message ?? e.error) })),
+                    severity: 'CRITICAL',
+                  },
+                });
+              }
             }
           } catch (finErr) {
             console.error('[WEBHOOK-SUBSCRIPTION] finite completion non-fatal:', finErr);
           }
         }
+
 
         return new Response(JSON.stringify({ 
           ok: true, 
@@ -2095,15 +2162,18 @@ Deno.serve(async (req) => {
           transaction?.gateway_recurring_reason?.message ||
           'charge_failed';
 
-        // provider_subscriptions: reflect next_charge_at if provided
+        // provider_subscriptions: preserve existing next_charge_at when provider
+        // did not include renew_at (defect #5 — must not clobber to NULL on retry).
+        const failNextChargeIso = body.renew_at || body.subscription?.renew_at || null;
         try {
+          const providerUpdate: Record<string, unknown> = {
+            state: 'active',
+            last_error: String(errMsg).slice(0, 200),
+          };
+          if (failNextChargeIso) providerUpdate.next_charge_at = failNextChargeIso;
           await supabase
             .from('provider_subscriptions')
-            .update({
-              state: 'active',
-              next_charge_at: body.renew_at || body.subscription?.renew_at || null,
-              last_error: String(errMsg).slice(0, 200),
-            })
+            .update(providerUpdate)
             .eq('provider_subscription_id', subscriptionId);
         } catch (e) {
           console.error('[WEBHOOK-SUBSCRIPTION] provider_subscriptions failed-update non-fatal:', e);
@@ -2166,15 +2236,60 @@ Deno.serve(async (req) => {
             model: failIsFinite ? 'bepaid_finite_subscription' : undefined,
             error_message: String(errMsg).slice(0, 500),
             retry_pending: true,
-            next_charge_at: body.renew_at || body.subscription?.renew_at || null,
+            next_charge_at: failNextChargeIso,
           },
         });
+
+        // Look up pending installment_payments row for idempotency subject
+        // (payment_number is the retry attempt anchor). Absence is tolerated —
+        // helper falls back to subscription-scoped key.
+        let failInstallmentPaymentId: string | null = null;
+        if (failIsFinite) {
+          try {
+            const { data: pending } = await supabase
+              .from('installment_payments')
+              .select('id')
+              .eq('subscription_id', subscriptionV2Id)
+              .eq('status', 'pending')
+              .order('payment_number', { ascending: true })
+              .limit(1)
+              .maybeSingle();
+            failInstallmentPaymentId = pending?.id ?? null;
+          } catch { /* best-effort */ }
+        }
+
+        // Deliver policy-gated notification (notify_on_failure independent flag).
+        try {
+          await sendChargeLifecycleNotification({
+            supabase,
+            event: failIsFinite ? 'installment_charge_failed' : 'subscription_charge_failed',
+            userId: subV2.user_id,
+            subscriptionV2Id,
+            providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
+            installmentPaymentId: failInstallmentPaymentId,
+            transactionUid: transactionUid ? String(transactionUid) : null,
+            providerEventId: (body as any)?.uid ? String((body as any).uid) : null,
+            productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
+            tariffName: subV2.tariffs?.name || null,
+            amount: failAmount,
+            currency: failCurrency,
+            errorMessage: String(errMsg),
+            meta: {
+              paid_billing_cycles: paidCyclesOnFail,
+              installment_count: failInstallmentCount,
+              retry_pending: true,
+            },
+          });
+        } catch (nErr) {
+          console.error('[WEBHOOK-SUBSCRIPTION] failure notification non-fatal:', nErr);
+        }
 
         return new Response(JSON.stringify({
           ok: true,
           mode: 'provider_managed_subscription',
           status: 'charge_failed_retry_pending',
         }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
 
       } else if (['canceled', 'expired', 'failed', 'redirecting'].includes(subscriptionState)) {
         console.log(`[WEBHOOK-SUBSCRIPTION] Processing TERMINAL subscription state: ${subscriptionState}`);
@@ -2188,8 +2303,14 @@ Deno.serve(async (req) => {
           .eq('provider_subscription_id', subscriptionId);
         
         // Disable auto_renew but DON'T revoke access retroactively.
-        // B7: for finite installment subs, distinguish retry-exhausted from
-        // normal terminal states by checking paid_billing_cycles vs installment_count.
+        // B7 corrective (defect #4): retry_exhausted MUST rely on provider evidence,
+        // not the "expired-with-cycles-remaining" heuristic. We accept as evidence:
+        //   * explicit gateway_recurring_reason.code containing exhaust/retries/attempts
+        //   * subscription.attempts_left / retries_left == 0
+        //   * cancellation_reason mentioning retries/attempts
+        //   * transaction.status='failed' AND explicit failed-terminal marker
+        // Without evidence we classify as 'terminated' with
+        // reason='provider_terminal_unclassified' (audit severity=WARNING).
         const termMeta = (subV2.meta || {}) as Record<string, any>;
         const termInstallmentCount = Number(termMeta.installment_count ?? 0);
         const termIsFinite =
@@ -2198,10 +2319,46 @@ Deno.serve(async (req) => {
         const termPaidCycles = Number(
           (body as any)?.paid_billing_cycles ?? (subscription as any)?.paid_billing_cycles ?? termMeta.paid_billing_cycles ?? 0
         );
-        const termIsRetryExhausted =
+
+        // Collect provider evidence (best-effort — schemas differ across bePaid variants).
+        const grReason = String(
+          transaction?.gateway_recurring_reason?.code ||
+          transaction?.gateway_recurring_reason?.message ||
+          (subscription as any)?.gateway_recurring_reason?.code ||
+          ''
+        ).toLowerCase();
+        const attemptsLeft = Number(
+          (subscription as any)?.attempts_left ??
+          (subscription as any)?.retries_left ??
+          (body as any)?.attempts_left ??
+          NaN
+        );
+        const cancellationReason = String(
+          (subscription as any)?.cancellation_reason ||
+          (body as any)?.cancellation_reason ||
+          ''
+        ).toLowerCase();
+        const reasonMentionsExhaust =
+          /exhaust|retries|attempts|no_more_attempts|max_retry/.test(grReason) ||
+          /exhaust|retries|attempts/.test(cancellationReason);
+        const hasProviderExhaustEvidence =
           termIsFinite &&
           termPaidCycles < termInstallmentCount &&
-          (subscriptionState === 'expired' || subscriptionState === 'failed');
+          (
+            reasonMentionsExhaust ||
+            (Number.isFinite(attemptsLeft) && attemptsLeft === 0) ||
+            (transaction?.status === 'failed' && subscriptionState === 'failed')
+          );
+
+        const termIsRetryExhausted = hasProviderExhaustEvidence;
+        const termIsUnclassifiedTerminated =
+          termIsFinite &&
+          termPaidCycles < termInstallmentCount &&
+          !hasProviderExhaustEvidence;
+
+        const installmentStatusValue = termIsRetryExhausted
+          ? 'retry_exhausted'
+          : (termPaidCycles >= termInstallmentCount ? 'completed' : 'terminated');
 
         await supabase
           .from('subscriptions_v2')
@@ -2215,9 +2372,10 @@ Deno.serve(async (req) => {
               ...(termIsFinite
                 ? {
                     paid_billing_cycles: termPaidCycles,
-                    installment_status: termIsRetryExhausted
-                      ? 'retry_exhausted'
-                      : (termPaidCycles >= termInstallmentCount ? 'completed' : 'terminated'),
+                    installment_status: installmentStatusValue,
+                    ...(termIsUnclassifiedTerminated
+                      ? { termination_reason: 'provider_terminal_unclassified' }
+                      : {}),
                   }
                 : {}),
             },
@@ -2237,7 +2395,18 @@ Deno.serve(async (req) => {
             subscription_v2_id: subscriptionV2Id,
             provider_subscription_id: subscriptionId,
             state: subscriptionState,
-            reason: termIsRetryExhausted ? 'installment_retry_exhausted' : 'terminal_provider_state',
+            reason: termIsRetryExhausted
+              ? 'installment_retry_exhausted'
+              : (termIsUnclassifiedTerminated
+                  ? 'provider_terminal_unclassified'
+                  : 'terminal_provider_state'),
+            provider_evidence: {
+              gateway_recurring_reason: grReason || null,
+              attempts_left: Number.isFinite(attemptsLeft) ? attemptsLeft : null,
+              cancellation_reason: cancellationReason || null,
+              transaction_status: transaction?.status ?? null,
+            },
+            severity: termIsUnclassifiedTerminated ? 'WARNING' : undefined,
             ...(termIsFinite
               ? {
                   model: 'bepaid_finite_subscription',
@@ -2247,15 +2416,55 @@ Deno.serve(async (req) => {
               : {}),
           },
         });
-        
-        return new Response(JSON.stringify({ 
-          ok: true, 
-          mode: 'provider_managed_subscription', 
+
+        // Deliver retry-exhausted notification (independent flag).
+        if (termIsRetryExhausted) {
+          try {
+            // Look up installment_payment_id (best-effort, subject key).
+            let exhaustInstallmentPaymentId: string | null = null;
+            try {
+              const { data: pending } = await supabase
+                .from('installment_payments')
+                .select('id')
+                .eq('subscription_id', subscriptionV2Id)
+                .eq('status', 'pending')
+                .order('payment_number', { ascending: true })
+                .limit(1)
+                .maybeSingle();
+              exhaustInstallmentPaymentId = pending?.id ?? null;
+            } catch { /* best-effort */ }
+
+            await sendChargeLifecycleNotification({
+              supabase,
+              event: 'installment_charge_retry_exhausted',
+              userId: subV2.user_id,
+              subscriptionV2Id,
+              providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
+              installmentPaymentId: exhaustInstallmentPaymentId,
+              productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
+              tariffName: subV2.tariffs?.name || null,
+              amount: Number(termMeta?.per_payment_amount ?? 0) || null,
+              currency: (subV2 as any)?.currency || 'BYN',
+              errorMessage: grReason || cancellationReason || 'retry_exhausted',
+              meta: {
+                paid_billing_cycles: termPaidCycles,
+                installment_count: termInstallmentCount,
+              },
+            });
+          } catch (nErr) {
+            console.error('[WEBHOOK-SUBSCRIPTION] retry-exhausted notification non-fatal:', nErr);
+          }
+        }
+
+        return new Response(JSON.stringify({
+          ok: true,
+          mode: 'provider_managed_subscription',
           status: subscriptionState,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+
       
       // Unknown state - log for investigation
       console.warn('[WEBHOOK-SUBSCRIPTION] Unknown subscription state:', subscriptionState);
