@@ -607,6 +607,31 @@ export default function AdminProductDetailV2() {
       return !!r;
     });
     if (offerForm.is_active && productUsesSlots) {
+      // Автогенерация уникального slot_role для скопированных/legacy офферов,
+      // когда variant задан, а роль пустая — админ может переименовать позже.
+      if (!rawSlotRole && rawVariant) {
+        const base = rawVariant === "installment"
+          ? `installment_${offerForm.installment_count || "n"}`
+          : rawVariant === "legal_entity"
+            ? "payment_invoice"
+            : rawVariant === "lead"
+              ? "lead"
+              : rawVariant === "outline"
+                ? "payment_outline"
+                : "payment_card";
+        const usedRoles = new Set<string>(
+          (offers || [])
+            .filter((o: any) => o.tariff_id === offerForm.tariff_id && (!offerDialog.editing || o.id !== offerDialog.editing.id))
+            .map((o: any) => String((o.meta as any)?.slot_role || ""))
+            .filter(Boolean),
+        );
+        let candidate = base;
+        let n = 2;
+        while (usedRoles.has(candidate)) candidate = `${base}_${n++}`;
+        if (candidate.length > 64) candidate = candidate.slice(0, 64);
+        rawSlotRole = candidate;
+        (offerForm.meta as any) = { ...(offerForm.meta as any), slot_role: candidate };
+      }
       if (!rawSlotRole || !rawVariant) {
         toast.error("Активный оффер: slot_role и site_button_variant обязательны для этого продукта (динамические слоты)");
         return;
