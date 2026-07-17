@@ -1048,37 +1048,28 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       ? `Рассрочка: ${billingCycles} платежа по ${amountByn} BYN каждые ${intervalDays} дней. Подписка завершится после ${billingCycles} платежей.`
       : `Подписка. Автосписание каждый месяц. Можно отменить в любой момент.`;
 
-    // PATCH INSTALLMENT-RETRY-POLICY: number_payment_attempts зависит от офера + capability.
-    // Дефолт 3 сохраняем как fallback для legacy installment-подписок без meta.installment.max_charge_attempts.
-    let bepaidAttemptsValue: number = 3;
-    let bepaidAttemptsStrategy: string | null = null;
-    if (isInstallmentSubscription) {
-      try {
-        const retryPolicy = resolveInstallmentRetryPolicy(installmentExtra.max_charge_attempts);
-        const resolution = resolveBepaidAttemptsValue({
-          retryPolicy,
-          capability: bepaidCreds.subscription_attempts_capability,
-        });
-        bepaidAttemptsValue = resolution.payloadValue;
-        bepaidAttemptsStrategy = resolution.provider_strategy;
-      } catch (e) {
-        if (e instanceof ProviderUnlimitedAttemptsNotSupportedError) {
-          console.error('[create-payment-checkout] unlimited attempts requested but provider capability not proven', {
-            order_id: order.id,
-            offer_id: offer_id || null,
-            reason: e.reason,
-          });
-          return {
-            success: false,
-            error:
-              'Провайдер оплаты не поддерживает безлимитные попытки списания без явного подтверждения. ' +
-              'Установите конкретное число попыток (1-10) в настройках оффера или подтвердите capability провайдера.',
-          };
-        }
-        throw e;
-      }
+    // PATCH INSTALLMENT-RETRY-POLICY (A1): используем resolution, вычисленный ДО INSERT'ов.
+    const bepaidAttemptsValue: number = isInstallmentSubscription
+      ? (retryPolicyResolutionPre?.payloadValue ?? 3)
+      : 3;
+
+    // Audit — snapshot retry-policy перед bePaid запросом.
+    if (isInstallmentSubscription && retryPolicySnapshotPre) {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'create-payment-checkout',
+        action: 'installment.retry_policy.resolved_pre_bepaid',
+        target_user_id: user_id,
+        meta: {
+          order_id: order.id,
+          subscription_v2_id: subscriptionV2Id,
+          offer_id: offer_id || null,
+          retry_policy: retryPolicySnapshotPre,
+        },
+      });
     }
-    void bepaidAttemptsStrategy;
+
 
     const bepaidPayload: Record<string, any> = {
       notification_url: notificationUrl,
