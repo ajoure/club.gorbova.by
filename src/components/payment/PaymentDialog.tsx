@@ -1372,11 +1372,9 @@ export function PaymentDialog({
               </span>
             </div>
 
-            {/* B8/B9: installment selector + summary */}
+            {/* Публичный summary рассрочки. N и сумма — из настроек оффера, read-only. */}
             {isInstallmentOffer && installmentMaxMonthsResolved && (() => {
-              const maxN = installmentMaxMonthsResolved;
-              const options: number[] = [];
-              for (let n = 2; n <= maxN; n += 1) options.push(n);
+              const N = installmentMaxMonthsResolved;
               const pluralize = (n: number) => {
                 const mod10 = n % 10;
                 const mod100 = n % 100;
@@ -1384,81 +1382,47 @@ export function PaymentDialog({
                 if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'платежа';
                 return 'платежей';
               };
-              const safePlan = (n: number) => {
-                if (!installmentTotalKopecks) return null;
+              let plan = null as null | ReturnType<typeof calculateInstallmentPlan>;
+              if (installmentTotalKopecks) {
                 try {
-                  return calculateInstallmentPlan({
+                  plan = calculateInstallmentPlan({
                     total_amount_kopecks: installmentTotalKopecks,
-                    selected_cycles: n,
+                    selected_cycles: N,
                   });
                 } catch {
-                  return null;
+                  plan = null;
                 }
-              };
-              const currentPlan = selectedInstallmentMonths ? safePlan(selectedInstallmentMonths) : null;
+              }
               return (
-                <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-2">
-                  {maxN > 2 && (
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-foreground/80">
-                        Количество платежей
-                      </label>
-                      <Select
-                        value={selectedInstallmentMonths ? String(selectedInstallmentMonths) : ''}
-                        onValueChange={(v) => setSelectedInstallmentMonths(parseInt(v, 10))}
-                      >
-                        <SelectTrigger className="bg-background">
-                          <SelectValue placeholder="Выберите количество платежей" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {options.map((n) => {
-                            const p = safePlan(n);
-                            const label = p
-                              ? `${n} ${pluralize(n)} × ${kopecksToDecimal(p.per_payment_kopecks).toFixed(0)} ${displayCurrency}`
-                              : `${n} ${pluralize(n)}`;
-                            return (
-                              <SelectItem key={n} value={String(n)}>
-                                {label}
-                              </SelectItem>
-                            );
-                          })}
-                        </SelectContent>
-                      </Select>
-                      {!selectedInstallmentMonths && (
-                        <p className="text-xs text-muted-foreground">
-                          Выберите количество платежей, чтобы продолжить.
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  {currentPlan && (
-                    <div className="space-y-0.5">
-                      <p className="font-medium text-foreground">
-                        {currentPlan.cycles} {pluralize(currentPlan.cycles)} рассрочки
-                      </p>
+                <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1">
+                  <p className="font-medium text-foreground">
+                    Рассрочка: {N} {pluralize(N)}
+                  </p>
+                  {plan && (
+                    <>
                       <p className="text-muted-foreground">
                         Один платёж:{' '}
                         <span className="font-medium text-foreground">
-                          {kopecksToDecimal(currentPlan.per_payment_kopecks).toFixed(0)} {displayCurrency}
+                          {kopecksToDecimal(plan.per_payment_kopecks).toFixed(0)} {displayCurrency}
                         </span>
                       </p>
                       <p className="text-muted-foreground">
-                        Итоговая сумма рассрочки:{' '}
+                        Итоговая сумма:{' '}
                         <span className="font-medium text-foreground">
-                          {kopecksToDecimal(currentPlan.effective_total_kopecks).toFixed(0)} {displayCurrency}
+                          {kopecksToDecimal(plan.effective_total_kopecks).toFixed(0)} {displayCurrency}
                         </span>
                       </p>
-                      {currentPlan.rounding_delta_kopecks !== 0 && (
+                      {plan.rounding_delta_kopecks !== 0 && (
                         <p className="text-xs text-muted-foreground/80">
                           Разница из-за округления вверх до целых {displayCurrency}: +
-                          {kopecksToDecimal(currentPlan.rounding_delta_kopecks).toFixed(0)} {displayCurrency}
+                          {kopecksToDecimal(plan.rounding_delta_kopecks).toFixed(0)} {displayCurrency}
                         </p>
                       )}
-                      <p className="text-muted-foreground pt-1">
-                        Первый платёж — сегодня, далее каждые {installmentIntervalDaysResolved} дней.
-                      </p>
-                    </div>
+                    </>
                   )}
+                  <p className="text-muted-foreground pt-1">
+                    Первый платёж — сегодня, далее каждые {installmentIntervalDaysResolved} дней.
+                  </p>
                   <p className="text-xs text-muted-foreground/80 pt-1">
                     После нажатия «Оплатить» вы перейдёте на защищённую страницу bePaid.
                   </p>
