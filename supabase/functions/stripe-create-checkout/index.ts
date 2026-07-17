@@ -18,7 +18,7 @@ import { resolveStripeCheckoutUrls } from '../_shared/public-app-host.ts';
 import { resolveStripeCustomer } from '../_shared/acquiring/stripe-customer-resolver.ts';
 import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 import {
-  resolveOfferRoutingWithFallback,
+  resolveOrderRouting,
   buildNegativeSnapshot,
   auditNegativeSnapshot,
 } from '../_shared/crm-routing.ts';
