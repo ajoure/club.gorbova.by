@@ -850,7 +850,10 @@ export default function AdminProductDetailV2() {
   // and forces is_active=false to avoid accidental publication / payment-link conflicts.
   const handleCopyOffer = async (offer: any) => {
     try {
-      const meta = (offer.meta ? { ...offer.meta } : {}) as OfferMetaConfig;
+      const meta = (offer.meta ? { ...offer.meta } : {}) as OfferMetaConfig & { slot_role?: unknown };
+      // slot_role уникален в рамках tariff_id (частичный uniq index tariff_offers_slot_role_per_tariff_uidx),
+      // поэтому копия обязана быть без роли — админ при необходимости назначит её вручную.
+      if ("slot_role" in meta) delete (meta as any).slot_role;
       // Don't copy crm_routing payment-link conflicts: keep crm_routing but reset welcome message media path
       const insert: TariffOfferInsert = {
         tariff_id: offer.tariff_id,
