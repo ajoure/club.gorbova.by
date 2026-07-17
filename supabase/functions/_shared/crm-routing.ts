@@ -45,6 +45,11 @@ export interface CrmRoutingSnapshot extends CrmRoutingConfig {
   /** Present when resolved via product_binding_fallback. */
   product_id?: string | null;
   binding_id?: string | null;
+  /**
+   * Primary resolver reason preserved when positive result came from a fallback.
+   * Add-only field for audit/observability (JSONB, no migration).
+   */
+  primary_reason?: string;
 }
 
 export interface ResolvedRouting {
@@ -55,6 +60,8 @@ export interface ResolvedRouting {
   resolved_via?: ResolvedVia;
   /** Number of routing-enabled candidates considered during fallback. */
   candidates_count?: number;
+  /** Primary resolver reason before any fallback was attempted. */
+  primary_reason?: string;
 }
 
 /**
