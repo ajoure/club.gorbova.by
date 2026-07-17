@@ -25,6 +25,10 @@ import {
   buildRetryPolicySnapshot,
   type BepaidAttemptsResolution,
 } from './installment-retry-policy.ts';
+import {
+  resolveChargeNotificationSnapshotForWriter,
+  serializeChargeNotificationPolicy,
+} from './charge-notification-policy.ts';
 
 export interface CreateCheckoutParams {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
