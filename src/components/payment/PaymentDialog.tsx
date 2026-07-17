@@ -350,6 +350,23 @@ export function PaymentDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOneTimeFlow, savedCards]);
 
+  // B8. Инициализация выбранного N при открытии диалога с installment-оффером.
+  // max=2 → авто N=2; max>2 → ждём явного выбора клиента.
+  useEffect(() => {
+    if (!open) return;
+    if (paymentMethod !== 'internal_installment') {
+      if (selectedInstallmentMonths !== null) setSelectedInstallmentMonths(null);
+      return;
+    }
+    if (installmentMaxMonthsResolved === 2) {
+      if (selectedInstallmentMonths !== 2) setSelectedInstallmentMonths(2);
+    } else {
+      if (selectedInstallmentMonths !== null) setSelectedInstallmentMonths(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, paymentMethod, installmentMaxMonthsResolved]);
+
+
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
