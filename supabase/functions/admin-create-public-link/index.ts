@@ -438,25 +438,20 @@ Deno.serve(async (req) => {
       };
       payment_type = 'subscription';
 
-      // Audit: административное создание индивидуальной ссылки на рассрочку.
-      await supabase.from('audit_logs').insert({
-        actor_type: 'user',
-        actor_user_id: user.id,
-        actor_label: 'admin-create-public-link',
-        action: 'installment.admin_link_created',
-        meta: {
-          contact_id: user_id ?? null,
-          offer_id: resolvedOffer.id,
-          public_cycles: offerInstallmentCountLegacy,
-          selected_cycles: sel,
-          public_amount_byn: offerAmountByn,
-          selected_amount_byn: totalByn,
-          rounding_delta_byn: roundingDeltaByn,
-          manual_override: manualOverride,
-          overridden_fields: overriddenFields,
-          source: 'AdminPaymentLinkDialog',
-        },
-      });
+      // Audit deferred until after payment_links INSERT succeeds (so we can
+      // capture payment_link_id + url_token in the audit record).
+      var pendingInstallmentAudit: Record<string, unknown> = {
+        contact_id: user_id ?? null,
+        offer_id: resolvedOffer.id,
+        public_cycles: offerInstallmentCountLegacy,
+        selected_cycles: sel,
+        public_amount_byn: offerAmountByn,
+        selected_amount_byn: totalByn,
+        rounding_delta_byn: roundingDeltaByn,
+        manual_override: manualOverride,
+        overridden_fields: overriddenFields,
+        source: 'AdminPaymentLinkDialog',
+      };
     }
 
     // ── Phase 8 follow-up FIX — auto vs explicit recurring handling ──
