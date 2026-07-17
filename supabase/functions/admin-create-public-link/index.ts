@@ -594,6 +594,27 @@ Deno.serve(async (req) => {
       linkMeta.stripe_recurring_snapshot = linkMetaStripeRecurringSnapshot;
     }
 
+    // B2 corrective. Non-installment subscription (bePaid recurring MIT-legacy или
+    // Stripe subscription) — snapshot canonical charge_notifications policy на
+    // уровне payment_links.meta.recurring. Precedence: live offer meta → legacy → defaults.
+    if (!installmentBlock && payment_type === 'subscription' && offer_id) {
+      const { data: offerForNotif } = await supabase
+        .from('tariff_offers')
+        .select('meta')
+        .eq('id', offer_id)
+        .maybeSingle();
+      const recurringPolicy = resolveChargeNotificationSnapshotForWriter({
+        offerMeta: (offerForNotif as { meta?: unknown } | null)?.meta ?? null,
+      });
+      const recurringSnapshot = serializeChargeNotificationPolicy(recurringPolicy);
+      const existingRecurring = (linkMeta.recurring as Record<string, unknown> | undefined) ?? {};
+      linkMeta.recurring = {
+        ...existingRecurring,
+        charge_notifications: recurringSnapshot,
+        charge_notifications_source: recurringPolicy.source,
+      };
+    }
+
     // Phase 5-C: для customer_choice payment_links.provider не может быть NULL
     // (DB CHECK + NOT NULL). Используем default_provider оффера = 'bepaid' как fallback,
     // фактический выбор делается в public-checkout по provider_choice от покупателя.
