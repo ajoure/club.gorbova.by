@@ -1858,79 +1858,24 @@ Deno.serve(async (req) => {
 
 
         // ===================================================================
-        // B7 Item 8. INSTALLMENT SCHEDULE MATERIALIZATION + CYCLE ADVANCEMENT
-        // Runs only for finite bePaid installment subscriptions (subv2 tracking).
-        // On the very first successful webhook — materialize N rows with row 1
-        // succeeded. On subsequent successes — advance row K (dup-UID guarded).
+        // B7 Item 8 — DISABLED (2026-07-17).
+        // Scope correction: finite bePaid subscriptions are fully provider-
+        // managed. Do NOT materialize a local installment_payments schedule
+        // for `bepaid_finite_subscription`. bePaid tracks paid_billing_cycles,
+        // retries, and termination on its side; the webhook only records the
+        // actual payment row and updates aggregate progress on the original
+        // order (Stage 3 of the approved plan).
+        //
+        // The helpers materialize/advance/annotate/terminate remain in
+        // _shared/installment-schedule.ts as they may be used by other
+        // installment flows in the future, but MUST NOT be invoked for
+        // provider-managed finite bePaid subscriptions.
         // ===================================================================
-        if (subIsInstallmentFinite && subInstallmentCount >= 2) {
-          try {
-            const instMeta = (subV2Meta.installment ?? {}) as Record<string, any>;
-            const orderMetaAny = (orderV2?.meta ?? {}) as Record<string, any>;
-            const orderInstMeta = (orderMetaAny.installment ?? {}) as Record<string, any>;
-            const perPaymentByn = Number(
-              instMeta.per_payment_byn
-              ?? orderMetaAny.installment_per_payment_amount_byn
-              ?? orderInstMeta.per_payment_byn
-              ?? (body.plan?.amount ? body.plan.amount / 100 : 0)
-            );
-            const intervalDays = Number(
-              instMeta.interval_days ?? orderInstMeta.interval_days ?? 30
-            );
-            const currency = String(
-              instMeta.currency ?? body.plan?.currency ?? subV2.currency ?? 'BYN'
-            );
-            const firstPaidAtIso = transaction?.paid_at || now.toISOString();
-            const firstUid = transactionUid ? String(transactionUid) : null;
-            const providerNextChargeAtIso = body.renew_at || body.subscription?.renew_at || null;
-
-            const matRes = await materializeFiniteInstallmentSchedule({
-              supabase,
-              subscriptionId: subscriptionV2Id,
-              orderId: orderV2Id,
-              userId: subV2.user_id,
-              installmentCount: subInstallmentCount,
-              perPaymentByn,
-              intervalDays,
-              currency,
-              firstPaidAtIso,
-              firstTransactionUid: firstUid,
-              firstProviderNextChargeAtIso: providerNextChargeAtIso,
-              paymentId: subPayResult?.id ?? null,
-            });
-
-            if (matRes.ok && matRes.created === false && firstUid) {
-              // Schedule pre-existed → this is a subsequent cycle. Advance.
-              const advRes = await advanceInstallmentCycleOnSuccess({
-                supabase,
-                subscriptionId: subscriptionV2Id,
-                transactionUid: firstUid,
-                paidAtIso: firstPaidAtIso,
-                providerPaidCycles: Number.isFinite(paidCycles) && paidCycles >= 1 ? paidCycles : null,
-                providerNextChargeAtIso,
-                userId: subV2.user_id,
-              });
-              console.log('[WEBHOOK-SUBSCRIPTION] cycle advancement:', advRes);
-            } else {
-              console.log('[WEBHOOK-SUBSCRIPTION] schedule materialization:', matRes);
-            }
-          } catch (schedErr) {
-            console.error('[WEBHOOK-SUBSCRIPTION] schedule non-fatal:', schedErr);
-            await supabase.from('audit_logs').insert({
-              actor_type: 'system',
-              actor_label: 'bepaid-webhook',
-              action: 'installment.schedule_invariant_failed',
-              target_user_id: subV2.user_id,
-              meta: {
-                subscription_v2_id: subscriptionV2Id,
-                order_id: orderV2Id,
-                provider_subscription_id: subscriptionId,
-                transaction_uid: transactionUid,
-                error: String((schedErr as Error)?.message || schedErr),
-                severity: 'CRITICAL',
-              },
-            });
-          }
+        if (false && subIsInstallmentFinite && subInstallmentCount >= 2) {
+          // Intentionally unreachable — kept for diff clarity and to preserve
+          // imports until follow-up cleanup removes them.
+          void materializeFiniteInstallmentSchedule;
+          void advanceInstallmentCycleOnSuccess;
         }
 
 
@@ -2343,21 +2288,9 @@ Deno.serve(async (req) => {
           },
         });
 
-        // B7 Item 8: annotate current pending installment_payments row with
-        // provider failure metadata (dup-UID protected inside helper).
-        if (failIsFinite) {
-          try {
-            await annotateInstallmentCycleFailure({
-              supabase,
-              subscriptionId: subscriptionV2Id,
-              transactionUid: transactionUid ? String(transactionUid) : null,
-              errorMessage: String(errMsg),
-              atIso: transaction?.paid_at || now.toISOString(),
-            });
-          } catch (annErr) {
-            console.error('[WEBHOOK-SUBSCRIPTION] failure annotation non-fatal:', annErr);
-          }
-        }
+        // B7 Item 8 DISABLED — do not touch local installment_payments schedule
+        // for provider-managed finite bePaid subscriptions.
+        void annotateInstallmentCycleFailure;
 
 
 
@@ -2545,26 +2478,10 @@ Deno.serve(async (req) => {
           },
         });
 
-        // B7 Item 8: on retry_exhausted, terminate the current pending
-        // installment_payments row with provider evidence.
-        if (termIsRetryExhausted) {
-          try {
-            await terminateFirstPendingInstallment({
-              supabase,
-              subscriptionId: subscriptionV2Id,
-              transactionUid: transactionUid ? String(transactionUid) : null,
-              evidence: {
-                gateway_recurring_reason: grReason || null,
-                attempts_left: Number.isFinite(attemptsLeft) ? attemptsLeft : null,
-                cancellation_reason: cancellationReason || null,
-                transaction_status: transaction?.status ?? null,
-              },
-              atIso: now.toISOString(),
-            });
-          } catch (termErr) {
-            console.error('[WEBHOOK-SUBSCRIPTION] schedule termination non-fatal:', termErr);
-          }
-        }
+        // B7 Item 8 DISABLED — provider-managed finite bePaid subscriptions do
+        // not maintain a local installment_payments schedule. Termination is
+        // reflected only in subscriptions_v2/provider_subscriptions status.
+        void terminateFirstPendingInstallment;
 
         // Deliver retry-exhausted notification (independent flag).
         if (termIsRetryExhausted) {
