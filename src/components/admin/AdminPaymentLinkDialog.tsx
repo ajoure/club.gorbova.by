@@ -1767,7 +1767,7 @@ ${amountLine}
                   {isInstallmentOffer && selectedInstallmentMonths ? (
                     <>
                       <p className="text-lg font-bold">
-                        {selectedInstallmentMonths} × {Math.round(amount / selectedInstallmentMonths)} {previewCurrency} = ИТОГО {Math.round(amount / selectedInstallmentMonths) * selectedInstallmentMonths} {previewCurrency}
+                        {selectedInstallmentMonths} × {Math.ceil(amount / selectedInstallmentMonths)} {previewCurrency} = ИТОГО {Math.ceil(amount / selectedInstallmentMonths) * selectedInstallmentMonths} {previewCurrency}
                       </p>
                       <p className="text-xs text-muted-foreground">Рассрочка · первый платёж сегодня, далее каждые 30 дней</p>
                     </>
