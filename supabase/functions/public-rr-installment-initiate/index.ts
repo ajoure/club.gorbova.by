@@ -381,6 +381,7 @@ Deno.serve(async (req: Request) => {
         product_id: product.id,
         resolved_via: routing.resolved_via ?? "none",
         candidates_count: routing.candidates_count ?? 0,
+        primary_reason: routing.primary_reason ?? null,
       });
     }
   } catch (e) {
