@@ -2425,26 +2425,26 @@ export default function AdminProductDetailV2() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label>Максимальный срок рассрочки, мес</Label>
-                    <Input
-                      type="number"
-                      min={2}
-                      max={12}
-                      value={offerForm.installment_count === 0 ? "" : offerForm.installment_count}
-                      onChange={(e) => {
-                        const raw = e.target.value === "" ? 0 : parseInt(e.target.value) || 0;
-                        setOfferForm({ ...offerForm, installment_count: raw });
-                      }}
-                      onBlur={() => {
-                        const clamped = Math.max(2, Math.min(12, offerForm.installment_count || 6));
-                        if (clamped !== offerForm.installment_count) {
-                          setOfferForm({ ...offerForm, installment_count: clamped });
-                        }
-                      }}
-                      className="w-32"
-                    />
+                    <Label>Максимальное количество платежей</Label>
+                    <Select
+                      value={String(Math.max(2, Math.min(12, offerForm.installment_count || 6)))}
+                      onValueChange={(v) =>
+                        setOfferForm({ ...offerForm, installment_count: parseInt(v, 10) })
+                      }
+                    >
+                      <SelectTrigger className="w-32">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: 11 }, (_, i) => i + 2).map((n) => (
+                          <SelectItem key={n} value={String(n)}>
+                            {n}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <p className="text-xs text-muted-foreground">
-                      Допустимо 2..12. Это верхний лимит. Реальное число платежей выберет клиент или администратор при оплате (от 2 до выбранного максимума).
+                      Допустимо 2..12 платежей. Это верхний лимит — при создании ссылки администратор или клиент выберут фактическое число платежей от 2 до выбранного максимума.
                     </p>
                   </div>
 
