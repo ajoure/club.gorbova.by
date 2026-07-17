@@ -729,14 +729,19 @@ export function PaymentDialog({
   // работает существующий public-checkout → bepaid → installment_payments.
   const isInstallmentOffer =
     paymentMethod === 'internal_installment' &&
-    typeof installmentCount === 'number' &&
-    installmentCount >= 2 &&
+    typeof installmentMaxMonthsResolved === 'number' &&
+    installmentMaxMonthsResolved >= 2 &&
     !isTrial &&
     !isSubscription;
 
   const handleInstallmentPayment = async () => {
     if (!offerId) {
       setPaymentError('Не удалось определить оффер рассрочки.');
+      setStep('ready');
+      return;
+    }
+    if (!selectedInstallmentMonths) {
+      setPaymentError('Выберите количество платежей.');
       setStep('ready');
       return;
     }
@@ -750,10 +755,8 @@ export function PaymentDialog({
           body: {
             product_id: productId,
             offer_id: offerId,
-            // B9. Ландинг сейчас всегда выбирает max_months (installmentCount из оффера — это max).
-            // Публичный writer валидирует значение и вернёт installment_months_required,
-            // если для max>2 клиент явно не выбрал N.
-            selected_installment_months: installmentCount ?? null,
+            // B8. Клиент явно выбирает N (2..max). При max=2 auto-подставляется 2.
+            selected_installment_months: selectedInstallmentMonths,
           },
         },
       );
