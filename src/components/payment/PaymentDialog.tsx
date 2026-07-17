@@ -61,7 +61,11 @@ interface PaymentDialogProps {
   // Installment offer (payment_method='internal_installment'). Если задано
   // и >=2 — кнопка «Оплатить» создаёт installment payment_link и редиректит на /pay/:token.
   paymentMethod?: string | null;
+  /** @deprecated legacy alias — используйте installmentMaxMonths */
   installmentCount?: number | null;
+  installmentMaxMonths?: number | null;
+  installmentIntervalDays?: number | null;
+  installmentTotalAmountKopecks?: number | null;
   subscriptionMessage?: SubscriptionMessage;
 }
 
