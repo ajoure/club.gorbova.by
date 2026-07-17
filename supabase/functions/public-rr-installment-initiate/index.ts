@@ -610,6 +610,7 @@ Deno.serve(async (req: Request) => {
       reason: crmRoutingContext.reason || "unknown",
       resolved_via: (crmRoutingContext.resolved_via as any) ?? "none",
       candidates_count: crmRoutingContext.candidates_count ?? 0,
+      primary_reason: crmRoutingContext.primary_reason ?? null,
     });
   }
 
