@@ -557,10 +557,45 @@ export async function resolveOrderRouting(
     };
   }
 
+  // Product-binding fallback разрешён ТОЛЬКО при ожидаемом отсутствии явной
+  // настройки. Сломанная явная конфигурация должна fail-closed, чтобы не
+  // маскировать администраторскую ошибку.
+  const PRODUCT_FALLBACK_REASONS = new Set([
+    'routing_disabled_or_missing',
+    'no_offer_id',
+    'no_offer_for_tariff',
+  ]);
+  const primaryReason = primary.reason ?? '';
+  if (!PRODUCT_FALLBACK_REASONS.has(primaryReason)) {
+    return primary;
+  }
+
   // Layer 3 — product-binding compatibility fallback
   const secondary = await resolveRoutingByProductFallback(supabase, product_id);
-  if (secondary.ok) return secondary;
+  if (secondary.ok && secondary.snapshot) {
+    return {
+      ...secondary,
+      snapshot: {
+        ...secondary.snapshot,
+        // Сохраняем контекст конкретного заказа для полной трассировки.
+        offer_id: offer_id ?? null,
+      },
+    };
+  }
 
-  // Propagate primary reason for backwards-compatible audits.
+  // Product-fallback был допустимо запущен, но сам вернул negative — отдаём
+  // его причину как основную (это и есть то, что реально помешало резолву),
+  // сохраняя primary_reason для аудита.
+  if (secondary.reason) {
+    return {
+      ok: false,
+      reason: secondary.reason,
+      resolved_via: 'product_binding_fallback',
+      candidates_count: secondary.candidates_count ?? 0,
+      // @ts-ignore — расширяем структурно для observability
+      primary_reason: primaryReason || undefined,
+    } as ResolvedRouting & { primary_reason?: string };
+  }
+
   return primary;
 }
