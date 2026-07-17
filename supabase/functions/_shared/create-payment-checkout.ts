@@ -10,7 +10,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from './bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from './build-purchase-snapshot.ts';
-import { resolveOfferRoutingWithFallback, buildNegativeSnapshot, auditNegativeSnapshot } from './crm-routing.ts';
+import { resolveOrderRouting, buildNegativeSnapshot, auditNegativeSnapshot } from './crm-routing.ts';
 import {
   validateReplacementSubscription,
   classifySameProductState,
