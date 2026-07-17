@@ -588,7 +588,7 @@ export default function AdminProductDetailV2() {
     // still enforces the invariant on the write path. Warn on stable-role rename.
     const SLOT_VARIANTS = ["primary", "outline", "installment", "legal_entity", "lead"] as const;
     const SLOT_ROLE_RE = /^[a-z][a-z0-9_]{1,63}$/;
-    const rawSlotRole = ((offerForm.meta as any)?.slot_role as string | undefined) || "";
+    let rawSlotRole = ((offerForm.meta as any)?.slot_role as string | undefined) || "";
     const rawVariant = ((offerForm.meta as any)?.site_button_variant as string | undefined) || "";
     if (rawSlotRole && !SLOT_ROLE_RE.test(rawSlotRole)) {
       toast.error("slot_role: только a-z, 0-9 и «_», 2–64 символа, начинается с буквы");
@@ -607,6 +607,31 @@ export default function AdminProductDetailV2() {
       return !!r;
     });
     if (offerForm.is_active && productUsesSlots) {
+      // Автогенерация уникального slot_role для скопированных/legacy офферов,
+      // когда variant задан, а роль пустая — админ может переименовать позже.
+      if (!rawSlotRole && rawVariant) {
+        const base = rawVariant === "installment"
+          ? `installment_${offerForm.installment_count || "n"}`
+          : rawVariant === "legal_entity"
+            ? "payment_invoice"
+            : rawVariant === "lead"
+              ? "lead"
+              : rawVariant === "outline"
+                ? "payment_outline"
+                : "payment_card";
+        const usedRoles = new Set<string>(
+          (offers || [])
+            .filter((o: any) => o.tariff_id === offerForm.tariff_id && (!offerDialog.editing || o.id !== offerDialog.editing.id))
+            .map((o: any) => String((o.meta as any)?.slot_role || ""))
+            .filter(Boolean),
+        );
+        let candidate = base;
+        let n = 2;
+        while (usedRoles.has(candidate)) candidate = `${base}_${n++}`;
+        if (candidate.length > 64) candidate = candidate.slice(0, 64);
+        rawSlotRole = candidate;
+        (offerForm.meta as any) = { ...(offerForm.meta as any), slot_role: candidate };
+      }
       if (!rawSlotRole || !rawVariant) {
         toast.error("Активный оффер: slot_role и site_button_variant обязательны для этого продукта (динамические слоты)");
         return;
@@ -890,9 +915,29 @@ export default function AdminProductDetailV2() {
   const handleCopyOffer = async (offer: any) => {
     try {
       const meta = (offer.meta ? { ...offer.meta } : {}) as OfferMetaConfig & { slot_role?: unknown };
-      // slot_role уникален в рамках tariff_id (частичный uniq index tariff_offers_slot_role_per_tariff_uidx),
-      // поэтому копия обязана быть без роли — админ при необходимости назначит её вручную.
-      if ("slot_role" in meta) delete (meta as any).slot_role;
+      // slot_role уникален в рамках tariff_id (частичный uniq index tariff_offers_slot_role_per_tariff_uidx).
+      // Если у источника роль есть — сгенерируем уникальный суффикс, чтобы копию можно было сразу
+      // активировать без ручного заполнения (валидация требует slot_role+variant для активных офферов
+      // на продуктах с динамическими слотами). Админ может переименовать роль позже.
+      const srcRole = typeof (meta as any).slot_role === "string" ? String((meta as any).slot_role) : "";
+      if (srcRole) {
+        const usedRoles = new Set<string>(
+          (offers || [])
+            .filter((o: any) => o.tariff_id === offer.tariff_id)
+            .map((o: any) => String((o.meta as any)?.slot_role || ""))
+            .filter(Boolean),
+        );
+        let candidate = `${srcRole}_copy`;
+        let n = 2;
+        while (usedRoles.has(candidate)) {
+          candidate = `${srcRole}_copy_${n++}`;
+        }
+        // Ограничение длины по regex ^[a-z][a-z0-9_]{1,63}$ — максимум 64 символа.
+        if (candidate.length > 64) candidate = candidate.slice(0, 64);
+        (meta as any).slot_role = candidate;
+      } else if ("slot_role" in meta) {
+        delete (meta as any).slot_role;
+      }
       // Don't copy crm_routing payment-link conflicts: keep crm_routing but reset welcome message media path
       const insert: TariffOfferInsert = {
         tariff_id: offer.tariff_id,
