@@ -783,7 +783,7 @@ Deno.serve(async (req) => {
 
     // Deferred installment audit — write only after payment_link exists.
     if (pendingInstallmentAudit) {
-      await supabase.from('audit_logs').insert({
+      const { error: installmentAuditError } = await supabase.from('audit_logs').insert({
         actor_type: 'user',
         actor_user_id: user.id,
         actor_label: 'admin-create-public-link',
@@ -794,6 +794,13 @@ Deno.serve(async (req) => {
           url_token: link.url_token,
         },
       });
+      if (installmentAuditError) {
+        console.error('[installment-admin-link] audit insert failed', {
+          payment_link_id: link.id,
+          offer_id,
+          error: installmentAuditError.message,
+        });
+      }
     }
 
 
