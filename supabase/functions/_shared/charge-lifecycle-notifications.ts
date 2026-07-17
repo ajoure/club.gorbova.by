@@ -20,6 +20,8 @@
 
 import { resolveChargeNotificationPolicy } from "./charge-notification-policy.ts";
 import { logAutomatedTelegramMessage } from "./log-automated-telegram.ts";
+import { escapeTelegramMarkdown, escapeHtml } from "./charge-reminder-scheduling.ts";
+import { resolveLinkBot } from "./link-bot-resolver.ts";
 
 export type LifecycleEvent =
   | "installment_charge_failed"
