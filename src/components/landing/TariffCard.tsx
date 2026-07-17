@@ -283,6 +283,17 @@ export function TariffCard({
               <ChevronRight className="ml-2 h-4 w-4" />
             </Button>
           ))}
+          {invoiceOffers.map((offer) => (
+            <Button
+              key={offer.id}
+              onClick={() => onSelectOffer?.(offer, tariff)}
+              variant="outline"
+              className="w-full"
+            >
+              {offer.button_label || "Сформировать счёт"}
+              <ChevronRight className="ml-2 h-4 w-4" />
+            </Button>
+          ))}
         </div>
       )}
 
