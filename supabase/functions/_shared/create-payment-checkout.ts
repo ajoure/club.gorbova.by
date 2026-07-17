@@ -1241,14 +1241,22 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
               billing_cycles: billingCycles,
               model: 'bepaid_finite_subscription',
               // PATCH A2 — канонический путь meta.installment.retry_policy.
+              // B2 — canonical installment.charge_notifications snapshot.
               installment: {
                 ...(installmentExtra || {}),
                 retry_policy: retryPolicySnapshotPre,
+                charge_notifications: chargeNotifSnapshot,
+                charge_notifications_source: chargeNotifPolicy.source,
               },
               // legacy дубль — к удалению.
               retry_policy: retryPolicySnapshotPre,
+              charge_notifications: chargeNotifSnapshot,
             }
-          : {}),
+          : {
+              // Non-installment MIT subscription: тоже сохраняем policy (subscription-scope).
+              charge_notifications: chargeNotifSnapshot,
+              charge_notifications_source: chargeNotifPolicy.source,
+            }),
       },
     }, { onConflict: 'provider,provider_subscription_id' });
 
