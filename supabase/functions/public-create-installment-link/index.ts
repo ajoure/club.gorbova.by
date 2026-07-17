@@ -26,7 +26,12 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
-import { resolveInstallmentRetryPolicy } from '../_shared/installment-retry-policy.ts';
+import {
+  resolveInstallmentRetryPolicy,
+  resolveBepaidAttemptsValue,
+  ProviderUnlimitedAttemptsNotSupportedError,
+} from '../_shared/installment-retry-policy.ts';
+import { getBepaidCredsStrict, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import {
   resolveChargeNotificationSnapshotForWriter,
   serializeChargeNotificationPolicy,
@@ -147,6 +152,30 @@ Deno.serve(async (req) => {
       );
     } catch (_e) {
       return errorResponse('invalid_installment_max_charge_attempts', 400);
+    }
+
+    // P0.2 — Capability preflight ДО INSERT в payment_links.
+    if (retryPolicy.mode === 'unlimited_requested') {
+      const bepaidCreds = await getBepaidCredsStrict(supabase);
+      if (isBepaidCredsError(bepaidCreds)) {
+        return errorResponse('bepaid_not_configured', 500);
+      }
+      try {
+        resolveBepaidAttemptsValue({
+          retryPolicy,
+          capability: bepaidCreds.subscription_attempts_capability,
+        });
+      } catch (e) {
+        if (e instanceof ProviderUnlimitedAttemptsNotSupportedError) {
+          return jsonResponse({
+            success: false,
+            error_code: 'provider_unlimited_attempts_not_supported',
+            error:
+              'Рассрочка по этому тарифу временно недоступна. Обратитесь к менеджеру.',
+          }, 400);
+        }
+        throw e;
+      }
     }
 
     // ── Build canonical public_url ──

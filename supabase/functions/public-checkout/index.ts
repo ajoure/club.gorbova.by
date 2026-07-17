@@ -419,7 +419,30 @@ Deno.serve(async (req) => {
           conflict: result.conflict,
         });
       }
-      return jsonResponse({ success: false, error: result.error });
+      // PATCH P0.1 — публично не показываем машинные коды.
+      // Внутренний error сохраняем как error_code (для логов/аналитики),
+      // а в error/message выводим понятный русский текст без слов
+      // provider/capability/native_zero.
+      const internalCode = String(result.error || 'checkout_failed');
+      const PUBLIC_MESSAGES: Record<string, string> = {
+        provider_unlimited_attempts_not_supported:
+          'Оплата по этой ссылке временно недоступна из-за настроек рассрочки. Обратитесь к менеджеру для получения новой ссылки.',
+        invalid_installment_max_charge_attempts:
+          'Оплата по этой ссылке временно недоступна из-за настроек рассрочки. Обратитесь к менеджеру для получения новой ссылки.',
+        installment_retry_policy_resolution_failed:
+          'Оплата по этой ссылке временно недоступна из-за настроек рассрочки. Обратитесь к менеджеру для получения новой ссылки.',
+      };
+      const publicMessage =
+        PUBLIC_MESSAGES[internalCode] ||
+        (typeof (result as any).message === 'string' && !/provider|capability|native_zero/i.test((result as any).message)
+          ? (result as any).message
+          : 'Не удалось оформить оплату. Попробуйте позже или обратитесь к менеджеру.');
+      return jsonResponse({
+        success: false,
+        error_code: internalCode,
+        error: publicMessage,
+        message: publicMessage,
+      });
     }
 
     // Audit log (создание checkout-сессии). Счётчик НЕ инкрементируем здесь — это делает webhook.

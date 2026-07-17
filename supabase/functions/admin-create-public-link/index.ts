@@ -18,7 +18,12 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
-import { resolveInstallmentRetryPolicy } from '../_shared/installment-retry-policy.ts';
+import {
+  resolveInstallmentRetryPolicy,
+  resolveBepaidAttemptsValue,
+  ProviderUnlimitedAttemptsNotSupportedError,
+} from '../_shared/installment-retry-policy.ts';
+import { getBepaidCredsStrict, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import {
   resolveChargeNotificationSnapshotForWriter,
   serializeChargeNotificationPolicy,
@@ -309,6 +314,44 @@ Deno.serve(async (req) => {
         );
       } catch (_e) {
         return errorResponse('invalid_installment_max_charge_attempts', 400);
+      }
+
+      // P0.2 — Capability preflight ДО INSERT в payment_links.
+      // Если оффер требует unlimited attempts, а bePaid capability не proven,
+      // блокируем создание ссылки с понятной ошибкой.
+      if (retryPolicy.mode === 'unlimited_requested') {
+        const bepaidCreds = await getBepaidCredsStrict(supabase);
+        if (isBepaidCredsError(bepaidCreds)) {
+          return errorResponse(
+            'Не удалось проверить конфигурацию bePaid для рассрочки. Обратитесь к администратору.',
+            500,
+          );
+        }
+        try {
+          resolveBepaidAttemptsValue({
+            retryPolicy,
+            capability: bepaidCreds.subscription_attempts_capability,
+          });
+        } catch (e) {
+          if (e instanceof ProviderUnlimitedAttemptsNotSupportedError) {
+            await supabase.from('audit_logs').insert({
+              actor_type: 'admin',
+              actor_label: 'admin-create-public-link',
+              action: 'installment.retry_policy.preflight_blocked',
+              meta: {
+                product_id, tariff_id, offer_id: offer_id ?? null,
+                reason: e.reason,
+              },
+            });
+            return jsonResponse({
+              success: false,
+              error_code: 'provider_unlimited_attempts_not_supported',
+              error:
+                'Настройка оффера «без ограничения попыток списания» не подтверждена платёжным провайдером. Задайте лимит от 1 до 10 в настройках оффера и повторите создание ссылки.',
+            }, 400);
+          }
+          throw e;
+        }
       }
 
       // B2. Snapshot charge_notifications policy at link creation time
