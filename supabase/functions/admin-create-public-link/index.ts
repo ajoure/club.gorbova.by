@@ -179,7 +179,7 @@ Deno.serve(async (req) => {
     if (offer_id) {
       const { data: loadedOffer } = await supabase
         .from('tariff_offers')
-        .select('id, tariff_id, is_active, offer_type, payment_method, installment_count, installment_interval_days, first_payment_delay_days, meta')
+        .select('id, tariff_id, is_active, offer_type, payment_method, amount, installment_count, installment_interval_days, first_payment_delay_days, meta')
         .eq('id', offer_id).maybeSingle();
       if (!loadedOffer) return errorResponse('Offer not found', 400);
       if (loadedOffer.tariff_id !== tariff_id) return errorResponse('Offer does not belong to tariff', 400);
@@ -190,9 +190,12 @@ Deno.serve(async (req) => {
       offerIsRecurring = !!(resolvedOffer as any).meta?.recurring?.is_recurring;
       offerPaymentMethod = (resolvedOffer as any).payment_method ?? null;
       offerInstallmentCountLegacy = Number((resolvedOffer as any).installment_count ?? 0) || null;
+      // Priority: precise installment_count > legacy meta.installment.max_months.
       const metaMax = Number((resolvedOffer as any).meta?.installment?.max_months ?? 0);
       offerInstallmentMaxMonths =
-        metaMax >= 2 ? metaMax : (offerInstallmentCountLegacy && offerInstallmentCountLegacy >= 2 ? offerInstallmentCountLegacy : null);
+        (offerInstallmentCountLegacy && offerInstallmentCountLegacy >= 2)
+          ? offerInstallmentCountLegacy
+          : (metaMax >= 2 ? metaMax : null);
       const acq = (resolvedOffer as any).meta?.acquiring;
       if (Array.isArray(acq?.allowed_payment_providers)) {
         offerAllowedProviders = acq.allowed_payment_providers.filter(
