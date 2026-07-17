@@ -2050,7 +2050,7 @@ export default function AdminProductDetailV2() {
                         setOfferForm({
                           ...offerForm,
                           offer_type: "invoice",
-                          payment_method: "full_payment",
+                          payment_method: "bank_transfer",
                           is_primary: false,
                           button_label: isDefaultLabel ? "Сформировать счёт" : prevLabel,
                           requires_card_tokenization: false,
