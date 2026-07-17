@@ -1630,27 +1630,33 @@ ${amountLine}
                 </div>
               )}
 
-              {/* Stage L: Селектор срока рассрочки + блок суммы */}
-              {selectedTariffId && isInstallmentOffer && installmentMaxMonths && installmentMaxMonths >= 2 && (
+              {/* Stage L: Селектор количества платежей + блок суммы */}
+              {selectedTariffId && isInstallmentOffer && installmentMaxMonths && installmentMaxMonths >= 2 && (() => {
+                const intervalDays = Number((effectiveOffer as any)?.installment_interval_days ?? 30);
+                const pluralPayment = (n: number) =>
+                  n === 1 ? "платёж" : n < 5 ? "платежа" : "платежей";
+                const pluralDay = (n: number) =>
+                  n === 1 ? "день" : n < 5 ? "дня" : "дней";
+                return (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
-                  <Label>Срок рассрочки</Label>
+                  <Label>Количество платежей</Label>
                   <Select
                     value={selectedInstallmentMonths ? String(selectedInstallmentMonths) : ""}
                     onValueChange={(v) => setSelectedInstallmentMonths(Number(v))}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Выберите срок…" />
+                      <SelectValue placeholder="Выберите количество…" />
                     </SelectTrigger>
                     <SelectContent>
                       {Array.from({ length: installmentMaxMonths - 1 }, (_, i) => i + 2).map((n) => (
                         <SelectItem key={n} value={String(n)}>
-                          {n} {n === 1 ? "месяц" : n < 5 ? "месяца" : "месяцев"}
+                          {n} {pluralPayment(n)}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Выберите, на сколько месяцев создать рассрочку для клиента. Доступны варианты 2–{installmentMaxMonths} (зависит от настроек кнопки в тарифе).
+                    Выберите, на сколько платежей разбить рассрочку. Доступны варианты 2–{installmentMaxMonths} (зависит от настроек кнопки в тарифе).
                   </p>
 
                   {selectedInstallmentMonths && amount > 0 && (() => {
@@ -1669,13 +1675,14 @@ ${amountLine}
                           </p>
                         )}
                         <p className="text-xs text-muted-foreground">
-                          Первый платёж — сегодня, далее каждые 30 дней.
+                          Первый платёж — сегодня, далее каждые {intervalDays} {pluralDay(intervalDays)}.
                         </p>
                       </div>
                     );
                   })()}
                 </div>
-              )}
+                );
+              })()}
               {isCurrentConflict && conflictData && (
                 <div className="p-3 rounded-lg border border-destructive/50 bg-destructive/5 space-y-2">
                   <div className="flex items-center gap-2 text-destructive">
