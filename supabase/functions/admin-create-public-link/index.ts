@@ -278,6 +278,9 @@ Deno.serve(async (req) => {
     let installmentBlock: Record<string, unknown> | null = null;
     let installmentLinkAmountKopecks: number | null = null;
     if (installment_offer || offerPaymentMethod === 'internal_installment') {
+      if (!resolvedOffer) {
+        return errorResponse('installment_offer_id_required', 400);
+      }
       if (offerPaymentMethod !== 'internal_installment') {
         return errorResponse('Offer is not an installment offer', 400);
       }
@@ -298,12 +301,12 @@ Deno.serve(async (req) => {
       const totalInstallmentByn = perPaymentByn * sel;
 
       // PATCH INSTALLMENT-RETRY-POLICY: интервал и попытки берутся из оффера.
-      const rawInterval = (offer as any)?.installment_interval_days ?? 30;
+      const rawInterval = resolvedOffer.installment_interval_days ?? 30;
       const intervalDays = Number(rawInterval);
       if (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > 365) {
         return errorResponse('invalid_installment_interval_days', 400);
       }
-      const rawFirstDelay = (offer as any)?.first_payment_delay_days ?? 0;
+      const rawFirstDelay = resolvedOffer.first_payment_delay_days ?? 0;
       const firstDelayDays = Number(rawFirstDelay);
       if (!Number.isInteger(firstDelayDays) || firstDelayDays < 0 || firstDelayDays > 365) {
         return errorResponse('invalid_first_payment_delay_days', 400);
@@ -312,7 +315,7 @@ Deno.serve(async (req) => {
       let retryPolicy;
       try {
         retryPolicy = resolveInstallmentRetryPolicy(
-          (offer as any)?.meta?.installment?.max_charge_attempts,
+          resolvedOffer.meta?.installment?.max_charge_attempts,
         );
       } catch (_e) {
         return errorResponse('invalid_installment_max_charge_attempts', 400);
