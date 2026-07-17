@@ -1,423 +1,469 @@
-## Проверка: **патч public PaymentDialog ещё не выполнен в `main**`
+# План по сути правильный. Перед выполнением нужно внести **четыре технические поправки**, иначе можно сломать dedup подписок или записывать marker не в тот момент.
 
-Последний commit в репозитории по-прежнему:
+## 1. Не перезаписывать существующий `meta.payment_flow`
+
+Сейчас `createPaymentCheckout` использует системные значения:
 
 ```text
-53079793f5d489977a7a930201727efd1e2c2ff8
-Исправил блокеры B8/B9
+admin_subscription
+renewal_subscription
 
 ```
 
-Нового commit после него нет.
+и по ним ищет уже созданный pending-order для dedup.
 
-Текущий `PaymentDialog.tsx` всё ещё содержит старую реализацию:
+При создании заказа сначала устанавливается системный `payment_flow`, а затем мержится `extraMeta`. Поэтому передача:
 
-- в props есть только `installmentCount`;
-- нет `installmentMaxMonths`;
-- нет `installmentIntervalDays`;
-- нет `installmentTotalAmountKopecks`;
-- нет state `selectedInstallmentMonths`;
-- нет публичного Select `2..max`;
-- frontend по-прежнему передаёт максимум как выбранное значение:
+```json
+{
+  "payment_flow": "internal_installment"
+}
+
+```
+
+перезапишет системное значение в сохранённом заказе, но следующий dedup продолжит искать `admin_subscription` или `renewal_subscription`.
+
+### Правильно
+
+Существующий `meta.payment_flow` не менять.
+
+Canonical marker хранить отдельно:
+
+```json
+{
+  "payment_method": "internal_installment",
+  "installment": {
+    "type": "internal",
+    "provider": "bepaid",
+    "model": "bepaid_finite_subscription",
+    "billing_cycles": 5,
+    "infinite": false
+  }
+}
+
+```
+
+Guard routing:
 
 ```ts
-selected_installment_months: installmentCount ?? null
+const installment =
+  subscription.meta?.installment ??
+  providerSubscription.meta?.installment ??
+  order.meta?.installment;
+
+const isFiniteInternalInstallment =
+  order.meta?.payment_method === 'internal_installment' &&
+  installment?.type === 'internal' &&
+  installment?.provider === 'bepaid' &&
+  installment?.model === 'bepaid_finite_subscription' &&
+  installment?.infinite === false &&
+  Number(installment?.billing_cycles) >= 2;
 
 ```
 
-Summary также остался старым:
-
-```text
-Рассрочка на {installmentCount} платежа
-интервал 30 дней
-
-```
-
-То есть сейчас:
-
-```text
-B8 PUBLIC SELECTED N : FAIL
-
-```
-
-Передай ему следующее.
+Системный `payment_flow` остаётся прежним.
 
 ---
 
-# Продолжай выполнение. Не останавливай спринт на новом планировании
+## 2. `admin-create-public-link` не может сразу записать marker в три таблицы
 
-План public PaymentDialog утверждён. Теперь его нужно **реализовать, зафиксировать commit и сразу вернуться к основному спринту**.
+Эта функция принципиально:
 
-## 1. Закрыть узкий public PaymentDialog corrective
+- не создаёт `orders_v2`;
+- не создаёт подписку;
+- не обращается в bePaid;
+- создаёт только `payment_links`.
 
-Обязательные изменения:
+Поэтому Этап 1 нужно разделить.
 
-```text
-src/components/payment/PaymentDialog.tsx
+### При создании ссылки
 
-```
-
-Добавить:
-
-```ts
-installmentMaxMonths?: number | null;
-installmentIntervalDays?: number | null;
-installmentTotalAmountKopecks?: number | null;
-
-```
-
-Legacy:
-
-```ts
-installmentCount?: number | null;
-
-```
-
-оставить только как fallback:
-
-```ts
-const maxMonths =
-  installmentMaxMonths ??
-  installmentCount ??
-  null;
-
-```
-
-Добавить:
-
-```ts
-const [selectedInstallmentMonths, setSelectedInstallmentMonths] =
-  useState<number | null>(null);
-
-```
-
-Поведение:
-
-```text
-max=2
-→ N=2 автоматически;
-→ Select можно скрыть;
-
-max>2
-→ N=null при открытии;
-→ показать Select 2..max;
-→ кнопка оплаты disabled до выбора;
-→ текст «Выберите количество платежей».
-
-```
-
-Не передавать maximum как выбранный срок.
-
-В backend request:
-
-```ts
-selected_installment_months: selectedInstallmentMonths
-
-```
-
-Перед вызовом:
-
-```ts
-if (!selectedInstallmentMonths) return;
-
-```
-
-## 2. Summary и расчёт
-
-Использовать клиентский:
-
-```text
-src/lib/calculateInstallmentPlan.ts
-
-```
-
-Не создавать ещё один `Math.ceil`-calculator внутри компонента.
-
-Показывать:
-
-```text
-Количество платежей: N
-Один платёж: X BYN
-Итоговая сумма рассрочки: Y BYN
-Разница из-за округления: +Z BYN
-Первый платёж сегодня, далее каждые D дней
-
-```
-
-При `delta=0` строку разницы скрывать.
-
-Расчёт:
-
-```text
-100 / 3  → 34 × 3 = 102, delta +2
-1000 / 12 → 84 × 12 = 1008, delta +8
-1650 / 2 → 825 × 2 = 1650, delta 0
-
-```
-
-## 3. Прокинуть props из реальных call sites
-
-Обновить все места, где вызывается публичный `PaymentDialog`.
-
-Минимально проверить:
-
-```text
-ProductLanding
-UniversalPricingSection
-SitePageBySlug
-AdminProductDetailV2 preview
-
-```
-
-Передавать фактические данные оффера:
-
-```tsx
-installmentMaxMonths={
-  offer.meta?.installment?.max_months ??
-  offer.installment_count
-}
-installmentIntervalDays={
-  offer.installment_interval_days ??
-  offer.meta?.installment?.interval_days ??
-  30
-}
-installmentTotalAmountKopecks={
-  Math.round(Number(offer.amount) * 100)
-}
-
-```
-
-Не использовать несуществующее `amount_minor`, если его нет в фактическом типе данных.
-
-## 4. Backend SoT
-
-В двух writer’ах:
+В:
 
 ```text
 admin-create-public-link
-public-create-installment-link
+public writer кнопки
 
 ```
 
-писать:
-
-```ts
-rounding_mode: plan.rounding_mode
-
-```
-
-а не повторять литерал.
-
-Логику диапазона public writer не менять:
+сохранять canonical marker только в:
 
 ```text
-max=2, N отсутствует → N=2
-max>2, N отсутствует → installment_months_required
-N вне 2..max → installment_months_out_of_range
+payment_links.meta
 
 ```
 
-## 5. Проверки до отчёта
+Текущий installment block уже записывается туда.
 
-```text
-max=2
-→ auto N=2
-→ Select скрыт
-→ кнопка доступна
+Дополнить его:
 
-max=6
-→ N не выбран
-→ кнопка disabled
-
-max=6, N=4
-→ 4 платежа
-→ правильный preview
-→ billing_cycles=4
-
-max=12, N=3
-→ billing_cycles=3
-
-max=12, N=12
-→ billing_cycles=12
+```json
+{
+  "payment_method": "internal_installment",
+  "type": "internal",
+  "provider": "bepaid",
+  "model": "bepaid_finite_subscription",
+  "infinite": false
+}
 
 ```
 
-API snapshot:
+### При фактическом открытии checkout
+
+`create-payment-checkout` получает snapshot ссылки и уже после создания сущностей распространяет его в:
 
 ```text
-selected_installment_months
-billing_cycles
-requested_total_byn
-per_payment_byn
-effective_total_byn
-rounding_delta_byn
-rounding_mode=ceil_to_whole_byn
-payment_links.amount
+orders_v2.meta
+subscriptions_v2.meta
+provider_subscriptions.meta
 
 ```
 
-Обязательно предоставить:
+Эта функция уже создаёт заказ, локальную подписку, provider subscription и отправляет bePaid:
 
 ```text
-commit SHA
-diff по файлам
-typecheck
-deno check двух writer’ов
-edge deploy version/time
-frontend publish = HOLD
+infinite=false
+billing_cycles=N
 
 ```
 
 ---
 
-# После этого не останавливаться и не просить нового решения
+## 3. `original_order_id` устанавливать только сервером после INSERT заказа
 
-Сразу продолжить основной маршрут:
+При создании payment link исходного заказа ещё нет.
+
+Поэтому в `payment_links.meta`:
 
 ```text
-1. B4–B6 fixture runtime matrix
-2. B7 failure/retry-exhausted из bepaid-webhook
-3. B8/B9 полная admin + public runtime matrix
-4. B10 provider smoke
-5. Stage C:
-   - exact offer picker;
-   - payment;
-   - subscription;
-   - internal installment;
-   - invoice;
-   - RR links;
-   - PublicPay link_kind;
-   - atomic consume/idempotency
-6. Trial Discovery — document only
-7. Финальный consolidated E2E
+original_order_id отсутствует или null
 
 ```
 
-Отсутствие безопасного Telegram/email тестового пользователя **не должно останавливать спринт**:
+После успешного INSERT `orders_v2`:
 
-```text
-REAL TG/EMAIL DELIVERY : PENDING SAFE TEST CONTACT
-
-```
-
-Остальные сценарии выполнять через изолированные fixtures, dry-run и cleanup.
-
-## Следующий отчёт должен быть не планом, а результатом
-
-```text
-PUBLIC PAYMENTDIALOG COMMIT       : <SHA>
-PUBLIC MAX=2 AUTO                 : PASS/FAIL
-PUBLIC MAX>2 EXPLICIT SELECT      : PASS/FAIL
-PUBLIC BUTTON BLOCK WITHOUT N     : PASS/FAIL
-PUBLIC SELECTED N SNAPSHOT        : PASS/FAIL
-ROUNDING SNAPSHOT                 : PASS/FAIL
-
-B4–B6 FIXTURE RUNTIME             : PASS/FAIL
-B7 IMPLEMENTATION                 : PASS/FAIL
-B10 STATUS                        : PASS/IN PROGRESS
-STAGE C STATUS                    : IN PROGRESS/NOT STARTED
-FRONTEND PUBLISH                  : HOLD
+```ts
+const originalOrderId = order.id;
 
 ```
 
-Текущий общий статус:
+Именно сервер добавляет его в snapshots:
 
 ```text
-P0                              : PASS
-OUTBOX RPC                      : PASS
-B8 ADMIN 2..12                  : PASS — CODE
-B9 WHOLE-BYN CEIL               : PASS — CODE
-B8 PUBLIC EXPLICIT N            : FAIL — NOT COMMITTED
-B4–B6 RUNTIME                   : NOT CLOSED
-B7                              : NOT STARTED
-B10                             : NOT STARTED
-STAGE C                         : NOT STARTED
-MASTER SPRINT                   : IN PROGRESS
-FRONTEND PUBLISH                : HOLD
+orders_v2.meta.installment.original_order_id
+subscriptions_v2.meta.installment.original_order_id
+provider_subscriptions.meta.installment.original_order_id
 
-
-План: узкий corrective для публичного PaymentDialog (B8 PUBLIC SELECTED N)
 ```
 
-## Контекст
+Не принимать `original_order_id` от клиента или UI.
 
-`installment_count` в оффере хранит **максимум** платежей (2..12). Сейчас `src/components/payment/PaymentDialog.tsx` передаёт `selected_installment_months: installmentCount ?? null`, т.е. всегда максимум. Guard `max>2 && N отсутствует → installment_months_required` не срабатывает. Админ уже правильно выбирает N в `AdminPaymentLinkDialog.tsx` и может менять сумму (это остаётся без изменений).
+`provider_subscriptions` уже получает прямые:
 
-## Скоуп (только public flow)
+```text
+subscription_v2_id
+order_id
+user_id
+profile_id
 
-### 1. `src/components/payment/PaymentDialog.tsx`
+```
 
-Props расширить:
+поэтому связь может быть зафиксирована без дополнительного поиска.
 
-- `installmentMaxMonths?: number | null` — фактический max (переименование смысла `installmentCount`, оставим `installmentCount` как alias для обратной совместимости; внутренне используем `maxMonths = installmentMaxMonths ?? installmentCount ?? null`).
-- `installmentIntervalDays?: number | null` — интервал (fallback 30).
-- `installmentTotalAmountKopecks?: number | null` — total из оффера в копейках (для точного расчёта; если не задан — парсим `price`).
+---
 
-State:
+## 4. Историю платежей не запрашивать по несуществующему `payments_v2.subscription_id`
 
-- `selectedInstallmentMonths: number | null`.
+В плане указано:
 
-Поведение:
+```sql
+WHERE subscription_id = ...
 
-- `maxMonths === 2` → авто N=2 (устанавливаем в useEffect при открытии).
-- `maxMonths > 2` → рендерим Select со значениями 2..maxMonths. Пока `selectedInstallmentMonths === null` — кнопка «Оплатить» disabled с подсказкой «Выберите количество платежей».
-- В опциях Select для каждого N показываем `N платежей × per_payment BYN`, где `per_payment = ceil(total_byn / N)` через клиентский `calculateInstallmentPlan`.
+```
 
-Summary-блок `isInstallmentOffer` (около строки 1303) переписать: показываем выбранное N, один платёж, итоговую сумму (`effective_total`), разницу из-за округления (`rounding_delta`) с пометкой «из-за округления вверх до целых BYN», интервал `installmentIntervalDays ?? 30` дней. Убрать хардкод «раз в 30 дней» и «на {installmentCount} платежа».
+Но текущий canonical writer `payments_v2` обновляет и хранит прежде всего:
 
-`handleInstallmentPayment`:
+```text
+order_id
+user_id
+profile_id
+provider_payment_id
+meta
 
-- Передавать `selected_installment_months: selectedInstallmentMonths` (не installmentCount).
-- Если `null` — не отправлять запрос (кнопка disabled на UI-уровне).
+```
 
-Плюрализация «платёж/платежа/платежей» — использовать существующий подход из `AdminPaymentLinkDialog.tsx`.
+Прямой `subscription_id` среди записываемых полей этого helper не используется.
 
-### 2. Прокидывание props из вызывающих мест
+### История исходной сделки
 
-`src/components/landing/ProductLanding.tsx`, `src/components/landing/UniversalPricingSection.tsx`, `src/pages/SitePageBySlug.tsx`:
+Основной фильтр:
 
-- Заменить/дополнить `installmentCount={offer.installment_count}` на:
-  - `installmentMaxMonths={offer.installment_count}` (canonical max),
-  - `installmentIntervalDays={offer.installment_interval_days}`,
-  - `installmentTotalAmountKopecks={offer.amount_minor ?? Math.round(Number(offer.amount) * 100)}` (в зависимости от того, что уже доступно; при отсутствии — парсим price внутри диалога).
+```sql
+payments_v2.order_id = original_order_id
+AND payments_v2.provider = 'bepaid'
 
-Админский вызов `AdminProductDetailV2.tsx:3321` — оставить как есть (использует AdminPaymentLinkDialog отдельно, публичный PaymentDialog там для превью). Прокинуть те же новые props чтобы preview совпадал.
+```
 
-### 3. SoT rounding_mode
+Для дополнительной защиты в `payments_v2.meta` при finite installment сохранять:
 
-`supabase/functions/admin-create-public-link` и `supabase/functions/public-create-installment-link`: заменить литерал `rounding_mode: 'ceil_to_whole_byn'` на `rounding_mode: plan.rounding_mode` (значение уже возвращает shared helper). Это исключает будущий drift.
+```json
+{
+  "subscription_v2_id": "...",
+  "provider_subscription_id": "...",
+  "payment_method": "internal_installment",
+  "model": "bepaid_finite_subscription"
+}
 
-### 4. Матрица проверки (B8/B9 PUBLIC)
+```
 
-Локально проверить UX-состояния:
+Тогда запрос истории:
 
-- `max=2` → auto N=2, Select скрыт, кнопка активна.
-- `max=6` без выбора → кнопка disabled, подсказка.
-- `max=6`, выбор N=4 → summary показывает 4 × ceil(total/4), delta, interval.
-- `max=12`, выбор N=3 → аналогично.
-- `max=12`, выбор N=12 → аналогично.
+```text
+order_id = original_order_id
++
+provider_subscription_id из meta
 
-По API-контракту:
+```
 
-- Ссылка на рассрочку сохраняет `billing_cycles = selected N`, `per_payment_byn`, `effective_total_byn`, `rounding_delta_byn`, `rounding_mode = 'ceil_to_whole_byn'` в `payment_links.meta.installment`.
+Это исключит смешивание платежей, если в одной сделке когда-либо появятся другие операции.
 
-Примеры: 100/3 → 34×3=102 delta+2; 1000/12 → 84×12=1008 delta+8; 1650/2 → 825×2=1650 delta 0.
+---
 
-### 5. Что НЕ меняется
+# Поправка к вкладке контакта
 
-- Настройки самой кнопки в продукте (публично клиент по-прежнему ограничен диапазоном 2..max, как задано админом).
-- Возможность администратора вручную создавать ссылки с другим N и другой суммой через `AdminPaymentLinkDialog` — работает как есть.
-- Backend writer `public-create-installment-link` уже принимает `selected_installment_months` и валидирует диапазон — правок логики не требуется.
-- Никаких изменений в БД/миграциях.
+Не использовать абстрактное:
 
-### 6. Deploy
+```text
+user_id = :contact_id
 
-После правок — деплой `admin-create-public-link` и `public-create-installment-link` (изменение только строки `rounding_mode`).
+```
+
+без проверки типа идентификатора.
+
+Карточка контакта может быть открыта по `[profiles.id](http://profiles.id)`, тогда запрос должен использовать:
+
+```text
+profile_id = contact.id
+
+```
+
+или сначала получить `profiles.user_id`, а затем фильтровать подписки по нему.
+
+Система уже хранит одновременно `user_id` и `profile_id` в заказах и provider subscriptions.
+
+---
+
+# Исправленный canonical marker
+
+## В `payment_links.meta`
+
+```json
+{
+  "payment_method": "internal_installment",
+  "installment": {
+    "type": "internal",
+    "provider": "bepaid",
+    "model": "bepaid_finite_subscription",
+    "billing_cycles": 5,
+    "infinite": false,
+    "per_payment_byn": 600,
+    "effective_total_byn": 3000,
+    "rounding_mode": "ceil_to_whole_byn",
+    "rounding_delta_byn": 0
+  }
+}
+
+```
+
+## После создания заказа
+
+```json
+{
+  "payment_flow": "admin_subscription",
+  "payment_method": "internal_installment",
+  "installment": {
+    "type": "internal",
+    "provider": "bepaid",
+    "model": "bepaid_finite_subscription",
+    "billing_cycles": 5,
+    "infinite": false,
+    "original_order_id": "<server order.id>",
+    "per_payment_byn": 600,
+    "effective_total_byn": 3000,
+    "rounding_mode": "ceil_to_whole_byn",
+    "rounding_delta_byn": 0
+  }
+}
+
+```
+
+`payment_flow` здесь пример существующего системного значения — его не подменять.
+
+---
+
+# Итоговый статус плана
+
+```text
+SCOPE ONLY INTERNAL INSTALLMENT     : PASS
+ONE DEAL FOR FINITE INSTALLMENT     : PASS
+ALL OTHER SUBSCRIPTIONS UNCHANGED   : PASS
+NO LOCAL PAYMENT SCHEDULE           : PASS
+EXISTING NOTIFICATIONS REUSED       : PASS
+
+ROOT PAYMENT_FLOW OVERWRITE         : MUST REMOVE
+LINK SNAPSHOT TIMING                 : MUST CORRECT
+ORIGINAL_ORDER_ID SOURCE             : SERVER ONLY
+PAYMENT HISTORY JOIN                 : MUST USE ORDER/META
+CONTACT ID DOMAIN                    : MUST RESOLVE
+
+```
+
+После этих поправок план можно выполнять. Остальной Definition of Done и runtime-матрица сформулированы правильно.
+
+&nbsp;
+
+План: Finite bePaid installment — одна сделка, без локального schedule
+
+## Этап 0. СТОП текущего Item 8
+
+Отключить/откатить в коде без удаления файлов (файлы могут пригодиться для других сценариев рассрочки, если есть):
+
+- В `supabase/functions/bepaid-webhook/index.ts` убрать вызовы `materializeFiniteInstallmentSchedule`, `advanceInstallmentCycleOnSuccess`, `annotateInstallmentCycleFailure`, `terminateFirstPendingInstallment` из ветки finite bePaid subv2.
+- В `supabase/functions/_shared/charge-lifecycle-notifications.ts` — не вызывать для `model=bepaid_finite_subscription`. Provider-managed lifecycle уже покрыт существующими subscription-уведомлениями.
+- Не публиковать frontend. Таблицу `installment_payments` НЕ трогать (используется другими flow).
+
+## Этап 1. Canonical marker покупки
+
+При создании finite bePaid installment (public-checkout + admin-create-public-link) сохранять неизменяемый snapshot в `orders_v2.meta`, `subscriptions_v2.meta`, `provider_subscriptions.meta`:
+
+```json
+{
+  "payment_flow": "internal_installment",
+  "installment": {
+    "type": "internal",
+    "provider": "bepaid",
+    "model": "bepaid_finite_subscription",
+    "billing_cycles": 5,
+    "infinite": false,
+    "original_order_id": "<uuid>",
+    "per_payment_byn": 600,
+    "effective_total_byn": 3000,
+    "rounding_mode": "ceil_to_whole_byn",
+    "rounding_delta_byn": 0
+  }
+}
+```
+
+Snapshot фиксирует параметры покупки — изменение оффера потом не должно влиять на уже созданную рассрочку.
+
+## Этап 2. Узкая ветка маршрутизации в webhook
+
+Единственное правило routing. В `supabase/functions/_shared/crm-routing.ts` (или на вызывающей стороне webhook перед REBILL-order веткой) добавить точный guard:
+
+```ts
+const isFiniteInternalInstallment =
+  order.meta?.payment_flow === 'internal_installment' &&
+  subscription.meta?.installment?.model === 'bepaid_finite_subscription' &&
+  subscription.meta?.installment?.infinite === false &&
+  Number(subscription.meta?.installment?.billing_cycles) >= 2;
+
+if (isFiniteInternalInstallment) {
+  paymentOrderId = subscription.meta.installment.original_order_id;
+  createRebillOrder = false;
+} else {
+  // существующий flow без изменений
+}
+```
+
+Требования:
+
+- Маршрутизация читает **snapshot покупки**, не текущие настройки оффера.
+- Признаки `auto_renew=false` / `provider=bepaid` / наличие `billing_cycles` сами по себе НЕ активируют ветку.
+- `resolveOrderRouting` fallback для всех остальных подписок сохранён.
+
+## Этап 3. Агрегация прогресса в исходной сделке
+
+После каждого successful/failed webhook для finite internal installment обновлять `orders_v2.meta.installment_progress`:
+
+```
+billing_cycles, paid_billing_cycles, remaining_billing_cycles,
+per_payment_byn, effective_total_byn,
+paid_amount, remaining_amount, next_charge_at,
+installment_status, provider_subscription_id
+```
+
+`paid_billing_cycles` — приоритет:
+
+1. `paid_billing_cycles` из bePaid webhook.
+2. Сохранённое значение `provider_subscriptions`.
+3. Fallback: `COUNT(DISTINCT provider_payment_id)` succeeded `payments_v2` этой subscription.
+
+Статусы: `active | completed | failed | canceled` — только на основании provider события. Локально retry не определяем.
+
+Никаких `installment_payments` строк не создавать.
+
+## Этап 4. UI: блок «Рассрочка bePaid» в исходной сделке
+
+В карточке `orders_v2` (админский `DealDetail` / `OrderDetail`) отрендерить блок при наличии `meta.installment_progress` с `model=bepaid_finite_subscription`:
+
+- Сводка: X из N, суммы, next_charge_at, provider_subscription_id.
+- История: список фактических `payments_v2` этой subscription (`WHERE subscription_id = ...`), только реальные, без будущих строк.
+
+## Этап 5. Вкладка «Рассрочки» в карточке контакта
+
+`src/components/installments/ContactInstallments` — источник данных заменить/дополнить:
+
+Запрос:
+
+```
+subscriptions_v2 JOIN provider_subscriptions JOIN orders_v2 (original)
+WHERE user_id = :contact_id
+  AND meta.installment.model = 'bepaid_finite_subscription'
+  AND meta.payment_flow = 'internal_installment'
+```
+
+Одна карточка = одна рассрочка = одна исходная сделка. Группировка: Активные / Завершённые / Проблемные. Клик → исходная сделка.
+
+Не показывать: обычные подписки клуба, бесконечные, Stripe, RR bank installment, счёт, разовые.
+
+Существующие `installment_payments`-читатели (если есть для других сценариев) не трогать.
+
+## Этап 6. Регрессионный аудит
+
+Проверить, что НЕ изменилось:
+
+- Обычная бесконечная подписка клуба → REBILL-flow работает как раньше.
+- Подписки других продуктов, Stripe, разовые платежи, счёт, RR — без изменений.
+- Существующие уведомления, доступы, Telegram/email, GetCourse, reconciliation не переопределены для не-finite веток.
+
+## Runtime proof (6 сценариев + regression)
+
+
+| #   | Сценарий                       | Ожидание                                                                      |
+| --- | ------------------------------ | ----------------------------------------------------------------------------- |
+| A   | Public N=2 через кнопку оффера | 1 сделка, provider `billing_cycles=2`, `infinite=false`, `amount=per_payment` |
+| B   | Admin link N=5, total=3000     | `per_payment=600`, `billing_cycles=5`, оффер не изменён                       |
+| C   | 1-й webhook                    | `payments_v2 count=1`, `order_id=original`, progress `1/5`, REBILL=0          |
+| D   | 2-й webhook                    | `count=2`, оба на `original_order_id`, `2/5`, REBILL=0                        |
+| E   | Дубль webhook с тем же UID     | новых `payments_v2=0`, прогресс не растёт, уведомление не повторяется         |
+| F   | Финальный webhook              | `N/N`, `remaining=0`, `status=completed`, `next_charge_at=null`, REBILL=0     |
+| R1  | Обычная подписка клуба         | старое поведение, REBILL-сделка создаётся как раньше                          |
+| R2  | Дубль-guard                    | `auto_renew=false` без canonical marker → **не** попадает в новую ветку       |
+
+
+## Технические файлы (ожидаемый scope изменений)
+
+- `supabase/functions/bepaid-webhook/index.ts` — убрать Item 8 вызовы; добавить update `orders_v2.meta.installment_progress`; вызов узкого routing guard.
+- `supabase/functions/_shared/crm-routing.ts` — точечная ветка `isFiniteInternalInstallment` перед REBILL-fallback.
+- `supabase/functions/_shared/create-payment-checkout.ts` + `admin-create-public-link` — запись canonical marker в meta трёх таблиц.
+- `src/components/installments/ContactInstallments.tsx` (+ query hook) — источник данных.
+- Админский компонент карточки сделки — блок «Рассрочка bePaid».
+- НЕ трогать: `installment_payments` таблицу и её потребителей, обычные subscription-notifications, Stripe, RR.
 
 ## Definition of Done
 
-- Public PaymentDialog: при `max>2` клиент обязан явно выбрать N; кнопка «Оплатить» блокируется до выбора.
-- Summary отражает выбранное N, per_payment, effective_total, rounding_delta, реальный интервал оффера.
-- В обоих backend writer’ах `rounding_mode` берётся из результата shared helper.
-- Матрица max=2 / max=6 / max=12 проходит визуально в preview и создаёт корректные `payment_links.meta.installment`.
-- Ничего не публикуем (FRONTEND PUBLISH: HOLD), продолжаем B4–B6 fixture runtime отдельно.
+- Все 6 runtime сценариев PASS с реальным bePaid sandbox.
+- R1/R2 регрессия PASS.
+- Вкладка «Рассрочки» контакта показывает finite bePaid installment; пустой state исчезает для клиента с активной рассрочкой.
+- Frontend НЕ публикуется (`FRONTEND PUBLISH: HOLD`).
+- Отчёт по каждому пункту с evidence, без нового плана.
