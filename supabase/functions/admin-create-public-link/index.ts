@@ -405,7 +405,12 @@ Deno.serve(async (req) => {
         per_payment_amount: perPaymentByn,
         per_payment_amount_byn: perPaymentByn,
         total_installment_amount: totalInstallmentByn,
-        rounding_mode: 'ceil_byn',
+        // B9. Canonical rounding snapshot fields.
+        requested_total_byn: totalByn,
+        per_payment_byn: perPaymentByn,
+        effective_total_byn: totalInstallmentByn,
+        rounding_delta_byn: roundingDeltaByn,
+        rounding_mode: 'ceil_to_whole_byn',
         as_finite_subscription: true,
         billing_cycles: sel,
         // Retry policy (см. _shared/installment-retry-policy.ts).
