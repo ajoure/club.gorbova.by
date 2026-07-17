@@ -456,7 +456,7 @@ Deno.serve(async (req) => {
       pendingInstallmentAudit = {
         contact_id: user_id ?? null,
         offer_id: resolvedOffer.id,
-        public_cycles: offerInstallmentCountLegacy,
+        public_cycles: sourceOfferPublicCycles,
         selected_cycles: sel,
         public_amount_byn: offerAmountByn,
         selected_amount_byn: totalByn,
