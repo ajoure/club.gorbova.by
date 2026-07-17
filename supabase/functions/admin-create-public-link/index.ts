@@ -262,7 +262,7 @@ Deno.serve(async (req) => {
     // Контракт:
     //   • installment_offer=true ↔ offer.payment_method='internal_installment'.
     //   • selected_installment_months: integer, 2..max_months.
-    //   • payment_type ссылки ВСЕГДА 'one_time' (первый платёж = bePaid checkout).
+    //   • payment_type ссылки для installment = 'subscription' (finite bePaid subscription).
     //   • amount ссылки = per_payment_kopecks; total — в meta.installment.
     let installmentBlock: Record<string, unknown> | null = null;
     let installmentLinkAmountKopecks: number | null = null;
