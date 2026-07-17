@@ -339,7 +339,7 @@ Deno.serve(async (req: Request) => {
   let crmSnapshot: any;
   let crmRoutingOk = false;
   let crmRoutingContext: {
-    reason?: string; resolved_via?: string; candidates_count?: number;
+    reason?: string; resolved_via?: string; candidates_count?: number; primary_reason?: string | null;
   } = {};
   try {
     const routing = await resolveOrderRouting(supabaseAdmin, {
@@ -351,6 +351,7 @@ Deno.serve(async (req: Request) => {
       reason: routing.reason,
       resolved_via: routing.resolved_via ?? "none",
       candidates_count: routing.candidates_count ?? 0,
+      primary_reason: routing.primary_reason ?? null,
     };
     if (routing.ok && routing.snapshot) {
       crmSnapshot = routing.snapshot;
