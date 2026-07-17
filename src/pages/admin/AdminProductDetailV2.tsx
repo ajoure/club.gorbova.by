@@ -346,6 +346,8 @@ export default function AdminProductDetailV2() {
     installment_count: 3,
     installment_interval_days: 30,
     first_payment_delay_days: 0,
+    // PATCH INSTALLMENT-RETRY-POLICY: 0 = «безлимитно» (требует provable capability бэкендом).
+    installment_max_charge_attempts: 3 as number,
     // Meta for welcome message
     meta: {} as OfferMetaConfig,
     // Preregistration fields (stored in meta.preregistration)
@@ -730,11 +732,19 @@ export default function AdminProductDetailV2() {
     // legacy-зеркало в столбцах installment_count / installment_interval_days / first_payment_delay_days сохраняем.
     if (isInstallment) {
       const maxMonths = Math.max(2, Math.min(12, offerForm.installment_count || 6));
+      const intervalDays = Math.max(1, Math.min(365, offerForm.installment_interval_days || 30));
+      const firstDelay = Math.max(0, Math.min(365, offerForm.first_payment_delay_days || 0));
+      // 0 = unlimited_requested; 1..10 = limited.
+      const rawAttempts = Number(offerForm.installment_max_charge_attempts);
+      const maxAttempts = Number.isFinite(rawAttempts) && rawAttempts >= 0 && rawAttempts <= 10
+        ? Math.floor(rawAttempts)
+        : 3;
       metaToSave.installment = {
         max_months: maxMonths,
-        interval_days: 30,
-        first_payment_delay_days: 0,
+        interval_days: intervalDays,
+        first_payment_delay_days: firstDelay,
         rounding_mode: 'round_half_up_byn',
+        max_charge_attempts: maxAttempts,
       };
     } else {
       delete metaToSave.installment;
@@ -807,8 +817,8 @@ export default function AdminProductDetailV2() {
             ? (offerForm.payment_method || "full_payment")
             : "full_payment",
       installment_count: isInstallment ? Math.max(2, Math.min(12, offerForm.installment_count || 6)) : null,
-      installment_interval_days: isInstallment ? 30 : null,
-      first_payment_delay_days: isInstallment ? 0 : null,
+      installment_interval_days: isInstallment ? Math.max(1, Math.min(365, offerForm.installment_interval_days || 30)) : null,
+      first_payment_delay_days: isInstallment ? Math.max(0, Math.min(365, offerForm.first_payment_delay_days || 0)) : null,
       // Meta field for welcome message + preregistration settings + installment
       meta: Object.keys(metaToSave).length > 0 ? metaToSave : (offerForm.requires_card_tokenization ? metaToSave : null),
     };
