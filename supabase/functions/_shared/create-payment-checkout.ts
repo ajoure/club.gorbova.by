@@ -22,6 +22,8 @@ import {
   resolveInstallmentRetryPolicy,
   resolveBepaidAttemptsValue,
   ProviderUnlimitedAttemptsNotSupportedError,
+  buildRetryPolicySnapshot,
+  type BepaidAttemptsResolution,
 } from './installment-retry-policy.ts';
 
 export interface CreateCheckoutParams {
@@ -735,6 +737,79 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       }
     }
 
+    // ============================================================================
+    // PATCH INSTALLMENT-RETRY-POLICY (Sprint A · A1+A2+A3):
+    //   Capability gate ДО любых INSERT в orders_v2 / subscriptions_v2 / provider_subscriptions.
+    //   При unlimited_requested без proven capability возвращаем controlled error
+    //   'provider_unlimited_attempts_not_supported' без создания заказов, подписок и CRM-сделки.
+    // ============================================================================
+    const installmentCountRawPre = Number(extraMeta.installment_count);
+    const isInstallmentSubscriptionPre =
+      Number.isFinite(installmentCountRawPre) && installmentCountRawPre >= 2;
+    const billingCyclesPre = isInstallmentSubscriptionPre ? installmentCountRawPre : null;
+    const installmentExtraPre =
+      extraMeta.installment && typeof extraMeta.installment === 'object'
+        ? (extraMeta.installment as Record<string, any>)
+        : {};
+    const intervalDaysPre = isInstallmentSubscriptionPre
+      ? Number(installmentExtraPre.interval_days ?? 30)
+      : 30;
+
+    let retryPolicyResolutionPre: BepaidAttemptsResolution | null = null;
+    let retryPolicySnapshotPre: Record<string, unknown> | null = null;
+    if (isInstallmentSubscriptionPre) {
+      try {
+        const parsedPolicy = resolveInstallmentRetryPolicy(installmentExtraPre.max_charge_attempts);
+        retryPolicyResolutionPre = resolveBepaidAttemptsValue({
+          retryPolicy: parsedPolicy,
+          capability: bepaidCreds.subscription_attempts_capability,
+        });
+        retryPolicySnapshotPre = buildRetryPolicySnapshot({
+          retryPolicy: parsedPolicy,
+          resolution: retryPolicyResolutionPre,
+        });
+      } catch (e) {
+        const errCode =
+          e instanceof ProviderUnlimitedAttemptsNotSupportedError
+            ? e.code
+            : (e as Error)?.message === 'invalid_installment_max_charge_attempts'
+            ? 'invalid_installment_max_charge_attempts'
+            : 'installment_retry_policy_resolution_failed';
+        const message =
+          errCode === 'provider_unlimited_attempts_not_supported'
+            ? 'Безлимитные попытки не подтверждены провайдером. Выберите значение от 1 до 10.'
+            : errCode === 'invalid_installment_max_charge_attempts'
+            ? 'Некорректное значение количества попыток списания. Допустимо: пусто, 0 или 1..10.'
+            : 'Не удалось определить политику повторных попыток по офферу.';
+        console.error('[create-payment-checkout] retry policy pre-gate blocked checkout', {
+          user_id,
+          product_id,
+          tariff_id,
+          offer_id: offer_id || null,
+          error: errCode,
+          reason: (e as any)?.reason ?? null,
+        });
+        // Audit — но БЕЗ создания orders_v2 / subscriptions_v2 / provider_subscriptions.
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'create-payment-checkout',
+          action: 'installment.retry_policy.pre_gate_blocked',
+          target_user_id: user_id,
+          meta: {
+            product_id,
+            tariff_id,
+            offer_id: offer_id || null,
+            payment_flow: paymentFlow,
+            error: errCode,
+            reason: (e as any)?.reason ?? null,
+            configured_value: installmentExtraPre.max_charge_attempts ?? null,
+          },
+        });
+        return { success: false, error: errCode, message };
+      }
+    }
+
     const orderNumber = `SUB-LINK-${Date.now().toString(36).toUpperCase()}`;
 
     const subOrderMeta = {
@@ -880,23 +955,15 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
 
     const accessDays = tariff.access_days || 30;
-    // PATCH INSTALLMENT-PUBLIC-LINK: распознаём installment-subscription по meta_extra.installment_count.
-    // Для обычной подписки — старое поведение (infinite, interval=30).
-    const installmentCountRaw = Number(extraMeta.installment_count);
-    const isInstallmentSubscription = Number.isFinite(installmentCountRaw) && installmentCountRaw >= 2;
-    const billingCycles = isInstallmentSubscription ? installmentCountRaw : null;
-    const installmentExtra = (extraMeta.installment && typeof extraMeta.installment === 'object')
-      ? extraMeta.installment as Record<string, any>
-      : {};
-    const intervalDays = isInstallmentSubscription
-      ? Number(installmentExtra.interval_days ?? 30)
-      : 30;
+    // PATCH INSTALLMENT-PUBLIC-LINK: используем pre-computed installment-контекст (см. A1 gate выше).
+    const installmentCountRaw = installmentCountRawPre;
+    const isInstallmentSubscription = isInstallmentSubscriptionPre;
+    const billingCycles = billingCyclesPre;
+    const installmentExtra = installmentExtraPre;
+    const intervalDays = intervalDaysPre;
 
     // PATCH PAYMENTS-REVISION: pre-create subscriptions_v2 ДО bePaid /subscriptions,
-    // чтобы tracking_id содержал реальный subscription_v2_id (canonical формат subv2:{sub_id}:order:{order_id}).
-    // billing_type=provider_managed (enum допускает только 'mit'|'provider_managed').
-    // ВАЖНО: subscriptions_v2 НЕ имеет колонки access_days/amount/currency —
-    // храним их ТОЛЬКО в meta (источник истины: tariffs.access_days + orders_v2.final_price).
+    // чтобы tracking_id содержал реальный subscription_v2_id.
     const preSubMeta: Record<string, any> = {
       source: isInstallmentSubscription ? 'public_link_installment' : 'public_link_subscription',
       checkout_order_id: order.id,
@@ -913,8 +980,10 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       preSubMeta.installment_total_amount_byn = Number(extraMeta.installment_total_amount_byn ?? (amountByn * (billingCycles || 1)));
       preSubMeta.installment = installmentExtra;
       preSubMeta.model = 'bepaid_finite_subscription';
-      // Retry policy (parsed canonical form).
-      preSubMeta.retry_policy_mode = installmentExtra.retry_policy_mode ?? null;
+      // PATCH A2 — единый effective retry snapshot.
+      preSubMeta.retry_policy = retryPolicySnapshotPre;
+      // Обратная совместимость (legacy читатели).
+      preSubMeta.retry_policy_mode = retryPolicySnapshotPre?.mode ?? null;
       preSubMeta.max_charge_attempts_configured = installmentExtra.max_charge_attempts ?? null;
     }
     const { data: preSub, error: preSubError } = await supabase
@@ -979,37 +1048,28 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       ? `Рассрочка: ${billingCycles} платежа по ${amountByn} BYN каждые ${intervalDays} дней. Подписка завершится после ${billingCycles} платежей.`
       : `Подписка. Автосписание каждый месяц. Можно отменить в любой момент.`;
 
-    // PATCH INSTALLMENT-RETRY-POLICY: number_payment_attempts зависит от офера + capability.
-    // Дефолт 3 сохраняем как fallback для legacy installment-подписок без meta.installment.max_charge_attempts.
-    let bepaidAttemptsValue: number = 3;
-    let bepaidAttemptsStrategy: string | null = null;
-    if (isInstallmentSubscription) {
-      try {
-        const retryPolicy = resolveInstallmentRetryPolicy(installmentExtra.max_charge_attempts);
-        const resolution = resolveBepaidAttemptsValue({
-          retryPolicy,
-          capability: bepaidCreds.subscription_attempts_capability,
-        });
-        bepaidAttemptsValue = resolution.payloadValue;
-        bepaidAttemptsStrategy = resolution.provider_strategy;
-      } catch (e) {
-        if (e instanceof ProviderUnlimitedAttemptsNotSupportedError) {
-          console.error('[create-payment-checkout] unlimited attempts requested but provider capability not proven', {
-            order_id: order.id,
-            offer_id: offer_id || null,
-            reason: e.reason,
-          });
-          return {
-            success: false,
-            error:
-              'Провайдер оплаты не поддерживает безлимитные попытки списания без явного подтверждения. ' +
-              'Установите конкретное число попыток (1-10) в настройках оффера или подтвердите capability провайдера.',
-          };
-        }
-        throw e;
-      }
+    // PATCH INSTALLMENT-RETRY-POLICY (A1): используем resolution, вычисленный ДО INSERT'ов.
+    const bepaidAttemptsValue: number = isInstallmentSubscription
+      ? (retryPolicyResolutionPre?.payloadValue ?? 3)
+      : 3;
+
+    // Audit — snapshot retry-policy перед bePaid запросом.
+    if (isInstallmentSubscription && retryPolicySnapshotPre) {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'create-payment-checkout',
+        action: 'installment.retry_policy.resolved_pre_bepaid',
+        target_user_id: user_id,
+        meta: {
+          order_id: order.id,
+          subscription_v2_id: subscriptionV2Id,
+          offer_id: offer_id || null,
+          retry_policy: retryPolicySnapshotPre,
+        },
+      });
     }
-    void bepaidAttemptsStrategy;
+
 
     const bepaidPayload: Record<string, any> = {
       notification_url: notificationUrl,
@@ -1159,6 +1219,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
               installment_count: installmentCountRaw,
               billing_cycles: billingCycles,
               model: 'bepaid_finite_subscription',
+              retry_policy: retryPolicySnapshotPre,
             }
           : {}),
       },
@@ -1187,6 +1248,14 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         active_checkout_kind: 'bepaid_subscription_id',
         checkout_created_at: new Date().toISOString(),
         checkout_tokens_history: [subTokenHistoryEntry],
+        ...(isInstallmentSubscription && retryPolicySnapshotPre
+          ? {
+              installment: {
+                ...(installmentExtra || {}),
+                retry_policy: retryPolicySnapshotPre,
+              },
+            }
+          : {}),
       },
     }).eq('id', order.id);
     if (subMetaActiveErr) console.error('[payment_checkout] subscription order meta merge failed', { order_id: order.id, payment_type: 'subscription', error: subMetaActiveErr });

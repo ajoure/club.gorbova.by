@@ -38,6 +38,7 @@ import { TariffCard } from "@/components/landing/TariffCard";
 import { TariffCarouselGrid } from "@/components/landing/TariffCarouselGrid";
 import { UniversalPricingSection } from "@/components/landing/UniversalPricingSection";
 import { buildTariffCardViewModel, type CardConfig } from "@/lib/tariffCardViewModel";
+import { INSTALLMENT_MAX_CHARGE_ATTEMPTS_OPTIONS } from "@/lib/installmentRetryPolicy";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { SortPill } from "@/components/admin/SortPill";
 import { TariffDeleteConfirmDialog } from "@/components/admin/TariffDeleteConfirmDialog";
@@ -2446,66 +2447,59 @@ export default function AdminProductDetailV2() {
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Интервал между платежами, дней</Label>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={365}
-                        value={offerForm.installment_interval_days}
-                        onChange={(e) =>
-                          setOfferForm({
-                            ...offerForm,
-                            installment_interval_days: parseInt(e.target.value) || 30,
-                          })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Первый платёж через, дней</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={365}
-                        value={offerForm.first_payment_delay_days}
-                        onChange={(e) =>
-                          setOfferForm({
-                            ...offerForm,
-                            first_payment_delay_days: parseInt(e.target.value) || 0,
-                          })
-                        }
-                      />
-                      <p className="text-[11px] text-muted-foreground">0 = сразу при покупке</p>
-                    </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Интервал между платежами, дней</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={offerForm.installment_interval_days}
+                      onChange={(e) =>
+                        setOfferForm({
+                          ...offerForm,
+                          installment_interval_days: parseInt(e.target.value) || 30,
+                        })
+                      }
+                      className="w-32"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      По умолчанию 30 дней. Первое списание — сразу при покупке.
+                    </p>
                   </div>
 
                   <div className="space-y-1.5">
                     <Label className="text-xs">Попытки списания при неудаче</Label>
                     <Select
-                      value={String(offerForm.installment_max_charge_attempts ?? 3)}
+                      value={
+                        offerForm.installment_max_charge_attempts === null ||
+                        offerForm.installment_max_charge_attempts === undefined
+                          ? "__default__"
+                          : String(offerForm.installment_max_charge_attempts)
+                      }
                       onValueChange={(v) =>
                         setOfferForm({
                           ...offerForm,
-                          installment_max_charge_attempts: parseInt(v),
+                          installment_max_charge_attempts:
+                            v === "__default__" ? (null as any) : parseInt(v),
                         })
                       }
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="1">1 попытка</SelectItem>
-                        <SelectItem value="2">2 попытки</SelectItem>
-                        <SelectItem value="3">3 попытки (по умолчанию)</SelectItem>
-                        <SelectItem value="5">5 попыток</SelectItem>
-                        <SelectItem value="10">10 попыток</SelectItem>
-                        <SelectItem value="0">Безлимитно (требует подтверждения провайдера)</SelectItem>
+                        <SelectItem value="__default__">По умолчанию провайдера (3)</SelectItem>
+                        {INSTALLMENT_MAX_CHARGE_ATTEMPTS_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={String(opt.value)}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <p className="text-[11px] text-muted-foreground">
                       Сколько раз bePaid будет пытаться списать очередной платёж рассрочки, если карта отклонила.
-                      «Безлимитно» работает только при подтверждённой способности провайдера — иначе бэкенд вернёт ошибку и попросит выбрать конкретное число.
+                      «Без ограничения» работает только при подтверждённой capability провайдера — иначе бэкенд вернёт ошибку и попросит выбрать конкретное число.
                     </p>
                   </div>
+
 
                   {offerForm.amount > 0 && offerForm.installment_count > 1 && (
                     <div className="pt-3 border-t">

@@ -334,12 +334,23 @@ Deno.serve(async (req) => {
             // PATCH INSTALLMENT-PUBLIC-LINK: маркер для shared checkout — оформить как finite bePaid subscription.
             as_finite_subscription: true,
             billing_cycles: Number(linkInstallment!.selected_installment_months),
-            // Retry policy — пробрасываем в shared checkout.
-            max_charge_attempts: linkInstallment!.max_charge_attempts == null
-              ? 0
-              : Number(linkInstallment!.max_charge_attempts),
-            retry_policy_mode: linkInstallment!.retry_policy_mode
-              ?? (Number(linkInstallment!.max_charge_attempts ?? 0) === 0
+            // PATCH A4 — retry policy пробрасываем БЕЗ преобразования отсутствующего значения в 0.
+            //   null/undefined → provider_default (checkout возьмёт bePaid дефолт 3);
+            //   явный 0        → unlimited_requested (capability gate в checkout);
+            //   1..10          → limited.
+            max_charge_attempts:
+              linkInstallment!.max_charge_attempts === null ||
+              linkInstallment!.max_charge_attempts === undefined ||
+              linkInstallment!.max_charge_attempts === ''
+                ? null
+                : Number(linkInstallment!.max_charge_attempts),
+            retry_policy_mode:
+              linkInstallment!.retry_policy_mode ??
+              (linkInstallment!.max_charge_attempts === null ||
+              linkInstallment!.max_charge_attempts === undefined ||
+              linkInstallment!.max_charge_attempts === ''
+                ? 'provider_default'
+                : Number(linkInstallment!.max_charge_attempts) === 0
                 ? 'unlimited_requested'
                 : 'limited'),
           },
