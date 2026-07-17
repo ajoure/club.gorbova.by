@@ -646,7 +646,7 @@ export default function AdminProductDetailV2() {
       const prevRole = ((offerDialog.editing as any).meta?.slot_role as string | undefined) || "";
       if (prevRole && rawSlotRole && prevRole !== rawSlotRole) {
         const ok = window.confirm(
-          `Роль слота меняется: "${prevRole}" → "${rawSlotRole}". Все HTML-кнопки с data-lovable-slot=…|offer:${prevRole} перестанут находить этот оффер. Продолжить?`,
+          `Технический код назначения меняется: «${prevRole}» → «${rawSlotRole}». Кнопки на публичной странице, привязанные к прежнему коду, перестанут находить этот оффер. Продолжить?`,
         );
         if (!ok) return;
       }
