@@ -124,8 +124,8 @@ Deno.serve(async (req) => {
     if (!Number.isFinite(totalByn) || totalByn < 1) {
       return errorResponse('invalid_offer_amount', 500);
     }
-    // round-half-up до целых BYN (см. admin-create-public-link).
-    const perPaymentByn = Math.round(totalByn / installmentCount);
+    // B9. Округление вверх до целого BYN (per_payment = ceil(total / N)).
+    const perPaymentByn = Math.ceil(totalByn / installmentCount);
     if (perPaymentByn < 1) {
       return errorResponse('per_payment_too_small', 400);
     }
