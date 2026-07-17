@@ -293,7 +293,8 @@ Deno.serve(async (req) => {
       }
       // amount приходит в копейках = ПОЛНАЯ стоимость (UI всегда шлёт total).
       const totalByn = amount / 100;
-      const perPaymentByn = Math.round(totalByn / sel);
+      // B9. Округление вверх до целого BYN: per_payment = ceil(total / N).
+      const perPaymentByn = Math.ceil(totalByn / sel);
       if (perPaymentByn < 1) {
         return errorResponse('per_payment_too_small', 400);
       }
@@ -386,7 +387,7 @@ Deno.serve(async (req) => {
         per_payment_amount: perPaymentByn,
         per_payment_amount_byn: perPaymentByn,
         total_installment_amount: totalInstallmentByn,
-        rounding_mode: 'round_half_up_byn',
+        rounding_mode: 'ceil_byn',
         as_finite_subscription: true,
         billing_cycles: sel,
         // Retry policy (см. _shared/installment-retry-policy.ts).

@@ -124,8 +124,8 @@ Deno.serve(async (req) => {
     if (!Number.isFinite(totalByn) || totalByn < 1) {
       return errorResponse('invalid_offer_amount', 500);
     }
-    // round-half-up до целых BYN (см. admin-create-public-link).
-    const perPaymentByn = Math.round(totalByn / installmentCount);
+    // B9. Округление вверх до целого BYN (per_payment = ceil(total / N)).
+    const perPaymentByn = Math.ceil(totalByn / installmentCount);
     if (perPaymentByn < 1) {
       return errorResponse('per_payment_too_small', 400);
     }
@@ -255,7 +255,7 @@ Deno.serve(async (req) => {
       // Canonical key для public-checkout/index.ts:194-196.
       per_payment_amount_byn: perPaymentByn,
       total_installment_amount: totalInstallmentByn,
-      rounding_mode: 'round_half_up_byn',
+      rounding_mode: 'ceil_byn',
       source: 'landing_payment_dialog',
       offer_id: offer.id,
       as_finite_subscription: true,

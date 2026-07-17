@@ -39,13 +39,17 @@ export function calculateInstallmentPlan(
       "selected_cycles must be an integer in [2, 60]",
     );
   }
-  const perPayment = Math.round(total / cycles);
+  // B9. Округление ВВЕРХ до целых BYN: per_payment_byn = ceil(total_byn / N).
+  // На уровне копеек это = ceil(total / N / 100) * 100.
+  const totalByn = total / 100;
+  const perPaymentByn = Math.ceil(totalByn / cycles);
+  const perPayment = perPaymentByn * 100;
   const effectiveTotal = perPayment * cycles;
   const rounding = effectiveTotal - total;
-  if (Math.abs(rounding) >= cycles) {
+  if (Math.abs(rounding) >= cycles * 100) {
     throw new InstallmentPlanError(
       "invalid_installment_rounding",
-      `rounding_delta=${rounding} kopecks exceeds cycles=${cycles}`,
+      `rounding_delta=${rounding} kopecks exceeds cycles*100=${cycles * 100}`,
     );
   }
   return {

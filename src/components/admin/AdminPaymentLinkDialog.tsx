@@ -705,12 +705,14 @@ ${amountLine}
     if (effectiveOffer) {
       setCustomAmount(String(Number(effectiveOffer.amount)));
       setGeneratedUrl(null);
-      // Stage L: если оффер installment — выставляем default = max_months и форсим one_time.
+      // Stage L: если оффер installment — форсим one_time и требуем явный выбор.
+      // Автоподставляем значение ТОЛЬКО когда max_months === 2 (единственный вариант),
+      // в остальных случаях админ обязан выбрать N в dropdown вручную.
       if ((effectiveOffer as any).payment_method === "internal_installment") {
         const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
         const legacy = Number((effectiveOffer as any).installment_count ?? 0);
         const max = Math.min(12, metaMax >= 2 ? metaMax : (legacy >= 2 ? legacy : 0));
-        setSelectedInstallmentMonths(max >= 2 ? max : null);
+        setSelectedInstallmentMonths(max === 2 ? 2 : null);
         if (paymentType !== "one_time") setPaymentType("one_time");
       } else {
         setSelectedInstallmentMonths(null);
@@ -1653,18 +1655,21 @@ ${amountLine}
 
                   {selectedInstallmentMonths && amount > 0 && (() => {
                     const N = selectedInstallmentMonths;
-                    const perPayment = Math.round(amount / N);
+                    const perPayment = Math.ceil(amount / N);
                     const totalInstallment = perPayment * N;
                     const diff = totalInstallment - amount;
                     return (
                       <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-1">
-                        <p className="text-base font-semibold">
-                          {N} платеж{N === 1 ? "" : N < 5 ? "а" : "ей"} × {perPayment} {previewCurrency} = ИТОГО {totalInstallment} {previewCurrency}
-                        </p>
+                        <p className="text-sm">Количество платежей: <b>{N}</b></p>
+                        <p className="text-sm">Один платёж: <b>{perPayment} {previewCurrency}</b></p>
+                        <p className="text-sm">Итоговая сумма рассрочки: <b>{totalInstallment} {previewCurrency}</b></p>
+                        {diff !== 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            Разница из-за округления: +{diff} {previewCurrency}
+                          </p>
+                        )}
                         <p className="text-xs text-muted-foreground">
-                          Сумма платежа округлена до целых {previewCurrency}. Итог рассрочки рассчитан с учётом выбранного срока и может отличаться от полной цены ({amount} {previewCurrency}
-                          {diff !== 0 ? `, разница: ${diff > 0 ? "+" : ""}${diff} ${previewCurrency}` : ""}).
-                          Списание происходит каждые 30 дней. Первый платёж — сегодня.
+                          Первый платёж — сегодня, далее каждые 30 дней.
                         </p>
                       </div>
                     );
@@ -1762,7 +1767,7 @@ ${amountLine}
                   {isInstallmentOffer && selectedInstallmentMonths ? (
                     <>
                       <p className="text-lg font-bold">
-                        {selectedInstallmentMonths} × {Math.round(amount / selectedInstallmentMonths)} {previewCurrency} = ИТОГО {Math.round(amount / selectedInstallmentMonths) * selectedInstallmentMonths} {previewCurrency}
+                        {selectedInstallmentMonths} × {Math.ceil(amount / selectedInstallmentMonths)} {previewCurrency} = ИТОГО {Math.ceil(amount / selectedInstallmentMonths) * selectedInstallmentMonths} {previewCurrency}
                       </p>
                       <p className="text-xs text-muted-foreground">Рассрочка · первый платёж сегодня, далее каждые 30 дней</p>
                     </>
