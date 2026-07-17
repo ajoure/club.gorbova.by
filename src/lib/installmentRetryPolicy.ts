@@ -3,12 +3,15 @@
 // Держим синхронно с supabase/functions/_shared/installment-retry-policy.ts.
 
 export type InstallmentRetryPolicy =
+  | { mode: "provider_default"; configured_value: null; max_attempts: 3 }
   | { mode: "unlimited_requested"; configured_value: 0 }
   | { mode: "limited"; configured_value: number; max_attempts: number };
 
+export const PROVIDER_DEFAULT_ATTEMPTS = 3 as const;
+
 export function resolveInstallmentRetryPolicy(raw: unknown): InstallmentRetryPolicy {
   if (raw === null || raw === undefined || raw === "") {
-    return { mode: "unlimited_requested", configured_value: 0 };
+    return { mode: "provider_default", configured_value: null, max_attempts: PROVIDER_DEFAULT_ATTEMPTS };
   }
   const v = Number(raw);
   if (v === 0) {
@@ -21,13 +24,13 @@ export function resolveInstallmentRetryPolicy(raw: unknown): InstallmentRetryPol
 }
 
 // UI options для селекта.
-// Значение 0 отображается как «Без ограничения» — при незасвидетельствованной
-// provider capability checkout вернёт controlled error, admin увидит это в UI
-// как явную ошибку. Опция при этом остаётся допустимой на уровне оффера.
-export const INSTALLMENT_MAX_CHARGE_ATTEMPTS_OPTIONS: Array<{
-  value: number;
-  label: string;
-}> = [
+// null           → «По умолчанию (3 попытки)» — bePaid default, capability gate не требуется.
+// 0              → «Без ограничения» — потребует provider capability proof на checkout.
+// 1..10          → явный лимит.
+export type InstallmentAttemptsOption = { value: number | null; label: string };
+
+export const INSTALLMENT_MAX_CHARGE_ATTEMPTS_OPTIONS: InstallmentAttemptsOption[] = [
+  { value: null, label: "По умолчанию (3 попытки)" },
   { value: 0, label: "Без ограничения" },
   { value: 1, label: "1 попытка" },
   { value: 2, label: "2 попытки" },
