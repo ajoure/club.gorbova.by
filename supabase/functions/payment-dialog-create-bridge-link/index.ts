@@ -151,6 +151,7 @@ Deno.serve(async (req) => {
       if (!offer) return errorResponse('offer_not_found', 404);
       if (offer.tariff_id !== tariff_id) return errorResponse('offer_tariff_mismatch', 400);
       if (!offer.is_active) return errorResponse('offer_inactive', 400);
+      if ((offer as any).offer_type === 'invoice') return errorResponse('offer_type_invoice_not_chargeable', 400);
       if (offer.offer_type !== 'pay_now') return errorResponse('offer_not_pay_now', 400);
       canonicalAmountByn = Number(offer.amount);
     } else {
