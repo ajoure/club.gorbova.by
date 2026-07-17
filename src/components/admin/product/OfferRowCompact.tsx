@@ -98,8 +98,14 @@ export function OfferRowCompact({
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <div className="flex items-center gap-1.5 flex-wrap">
           <Badge
-            variant={offer.offer_type === "trial" ? "secondary" : offer.offer_type === "preregistration" ? "outline" : "default"}
-            className={offer.offer_type === "preregistration" ? "shrink-0 border-amber-500 text-amber-600" : "shrink-0"}
+            variant={offer.offer_type === "trial" ? "secondary" : offer.offer_type === "preregistration" ? "outline" : offer.offer_type === "invoice" ? "outline" : "default"}
+            className={
+              offer.offer_type === "preregistration"
+                ? "shrink-0 border-amber-500 text-amber-600"
+                : offer.offer_type === "invoice"
+                  ? "shrink-0 border-sky-500 text-sky-600"
+                  : "shrink-0"
+            }
           >
             {offer.offer_type === "trial"
               ? "Trial"
@@ -109,7 +115,9 @@ export function OfferRowCompact({
                   ? "Рассрочка банка"
                   : offer.offer_type === "lead"
                     ? "Заявка"
-                    : "Оплата"}
+                    : offer.offer_type === "invoice"
+                      ? "Сформировать счёт"
+                      : "Оплата"}
           </Badge>
           {isPrimary && (
             <Badge variant="outline" className="shrink-0 border-primary text-primary gap-1">

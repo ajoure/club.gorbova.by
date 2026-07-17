@@ -82,7 +82,13 @@ export function buildSlotManifest(
     offers.sort(
       (a, b) => a.sort_order - b.sort_order || a.offer_id.localeCompare(b.offer_id),
     );
-    tariffs.push({ tariff_id: t.id, tariff_code: t.code, offers });
+    // Canonical slot key: meta.site_slot_key (stable across renames/regeneration)
+    // with fallback to tariff.code for legacy tariffs without an override.
+    const slotKey =
+      (typeof (t.meta as any)?.site_slot_key === "string" &&
+        ((t.meta as any).site_slot_key as string).trim()) ||
+      t.code;
+    tariffs.push({ tariff_id: t.id, tariff_code: slotKey, offers });
   }
 
   if (!tariffs.length) return null;

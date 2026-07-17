@@ -4,6 +4,8 @@ import { usePublicTariffByPublicId } from "@/hooks/usePublicTariff";
 import { TariffCard } from "@/components/landing/TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
+import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialog";
+import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import { Loader2, ExternalLink, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -119,6 +121,17 @@ export default function TariffPricing() {
           {...(selectedOffer.offer.offer_type === "bank_installment"
             ? readBankInstallmentMeta(selectedOffer.offer)
             : {})}
+        />
+      ) : selectedOffer && detectInvoiceOnlyOffer(selectedOffer.offer).isInvoiceOnly ? (
+        <InvoiceCheckoutDialog
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          productId={selectedOffer.productId}
+          productName={data.product.public_title || data.product.name}
+          tariffName={selectedOffer.tariff.name}
+          offerId={selectedOffer.offer.id}
+          amount={selectedOffer.offer.amount}
+          currency={data.product.currency || "BYN"}
         />
       ) : selectedOffer ? (
         <PaymentDialog

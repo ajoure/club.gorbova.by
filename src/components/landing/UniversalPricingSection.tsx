@@ -5,6 +5,8 @@ import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
+import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialog";
+import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TariffCarouselGrid } from "./TariffCarouselGrid";
@@ -156,6 +158,17 @@ export function UniversalPricingSection({
           onOpenChange={setPaymentOpen}
           tariffName={selectedOffer.tariff.name}
           offerId={selectedOffer.offer.id}
+        />
+      ) : selectedOffer && detectInvoiceOnlyOffer(selectedOffer.offer).isInvoiceOnly ? (
+        <InvoiceCheckoutDialog
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          productId={selectedOffer.productId}
+          productName={product.public_title || product.name}
+          tariffName={selectedOffer.tariff.name}
+          offerId={selectedOffer.offer.id}
+          amount={selectedOffer.offer.amount}
+          currency={product.currency || "BYN"}
         />
       ) : selectedOffer ? (
         <PaymentDialog
