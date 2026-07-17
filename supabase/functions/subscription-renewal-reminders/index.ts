@@ -1592,6 +1592,7 @@ Deno.serve(async (req) => {
       chargeRemindersSummary = await runChargeReminders({
         supabase,
         botToken,
+        botId: linkBot?.id ?? null,
         dryRun: false,
       });
       console.log('[charge-reminders] summary:', JSON.stringify(chargeRemindersSummary));
