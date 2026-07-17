@@ -155,10 +155,32 @@ Deno.serve(async (req) => {
     }
 
     // P0.2 — Capability preflight ДО INSERT в payment_links.
+    // Публичный endpoint → возвращаем ТОЛЬКО нейтральный текст.
+    // Внутренний код фиксируем в audit_logs.
     if (retryPolicy.mode === 'unlimited_requested') {
+      const publicInstallmentUnavailable = () =>
+        jsonResponse({
+          success: false,
+          error_code: 'installment_temporarily_unavailable',
+          error: 'Рассрочка по этому тарифу временно недоступна. Обратитесь к менеджеру.',
+          message: 'Рассрочка по этому тарифу временно недоступна. Обратитесь к менеджеру.',
+        }, 400);
+
       const bepaidCreds = await getBepaidCredsStrict(supabase);
       if (isBepaidCredsError(bepaidCreds)) {
-        return errorResponse('bepaid_not_configured', 500);
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_label: 'public-create-installment-link',
+          action: 'installment.retry_policy.preflight_blocked',
+          meta: {
+            offer_id,
+            tariff_id: (offer as any).tariff_id ?? null,
+            product_id,
+            reason: 'bepaid_not_configured',
+            source: 'public-create-installment-link',
+          },
+        });
+        return publicInstallmentUnavailable();
       }
       try {
         resolveBepaidAttemptsValue({
@@ -167,12 +189,19 @@ Deno.serve(async (req) => {
         });
       } catch (e) {
         if (e instanceof ProviderUnlimitedAttemptsNotSupportedError) {
-          return jsonResponse({
-            success: false,
-            error_code: 'provider_unlimited_attempts_not_supported',
-            error:
-              'Рассрочка по этому тарифу временно недоступна. Обратитесь к менеджеру.',
-          }, 400);
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system',
+            actor_label: 'public-create-installment-link',
+            action: 'installment.retry_policy.preflight_blocked',
+            meta: {
+              offer_id,
+              tariff_id: (offer as any).tariff_id ?? null,
+              product_id,
+              reason: e.reason,
+              source: 'public-create-installment-link',
+            },
+          });
+          return publicInstallmentUnavailable();
         }
         throw e;
       }
