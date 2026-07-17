@@ -20,6 +20,8 @@
 
 import { resolveChargeNotificationPolicy } from "./charge-notification-policy.ts";
 import { logAutomatedTelegramMessage } from "./log-automated-telegram.ts";
+import { escapeTelegramMarkdown, escapeHtml } from "./charge-reminder-scheduling.ts";
+import { resolveLinkBot } from "./link-bot-resolver.ts";
 
 export type LifecycleEvent =
   | "installment_charge_failed"
@@ -85,16 +87,28 @@ function buildIdempotencyKey(args: SendLifecycleArgs, channel: ChargeChannel): s
   }
 }
 
-function fmtAmount(a: number | null | undefined, c: string | null | undefined): string {
+// B7 corrective — installment amount format: WHOLE BYN (no decimals).
+// Non-installment (regular subscription) keeps 2-decimal precision.
+function fmtAmountWholeByn(a: number | null | undefined, c: string | null | undefined): string {
+  const num = Number(a);
+  if (!Number.isFinite(num) || num <= 0) return "";
+  const whole = Math.ceil(num);
+  return `${whole} ${c || "BYN"}`;
+}
+function fmtAmountDecimal(a: number | null | undefined, c: string | null | undefined): string {
   const num = Number(a);
   if (!Number.isFinite(num) || num <= 0) return "";
   return `${num.toFixed(2)} ${c || "BYN"}`;
 }
+function fmtAmountForEvent(event: LifecycleEvent, a: number | null | undefined, c: string | null | undefined): string {
+  if (event === "subscription_charge_failed") return fmtAmountDecimal(a, c);
+  return fmtAmountWholeByn(a, c); // installment_* → whole BYN
+}
 
 function renderTelegram(args: SendLifecycleArgs): string {
-  const product = args.productName || "Продукт";
-  const amt = fmtAmount(args.amount, args.currency);
-  const err = (args.errorMessage || "Платёж не прошёл").slice(0, 200);
+  const product = escapeTelegramMarkdown(args.productName || "Продукт");
+  const amt = escapeTelegramMarkdown(fmtAmountForEvent(args.event, args.amount, args.currency));
+  const err = escapeTelegramMarkdown((args.errorMessage || "Платёж не прошёл").slice(0, 200));
   switch (args.event) {
     case "installment_charge_failed":
     case "subscription_charge_failed":
@@ -107,24 +121,25 @@ function renderTelegram(args: SendLifecycleArgs): string {
 }
 
 function renderEmail(args: SendLifecycleArgs): { subject: string; html: string } {
-  const product = args.productName || "Продукт";
-  const amt = fmtAmount(args.amount, args.currency);
-  const err = (args.errorMessage || "Платёж не прошёл").slice(0, 500);
+  const productPlain = args.productName || "Продукт";
+  const product = escapeHtml(productPlain);
+  const amt = escapeHtml(fmtAmountForEvent(args.event, args.amount, args.currency));
+  const err = escapeHtml((args.errorMessage || "Платёж не прошёл").slice(0, 500));
   switch (args.event) {
     case "installment_charge_failed":
     case "subscription_charge_failed":
       return {
-        subject: `Не удалось списать платёж — ${product}`,
+        subject: `Не удалось списать платёж — ${productPlain}`,
         html: `<p>К сожалению, автоматическое списание не прошло.</p><p><b>Продукт:</b> ${product}${amt ? `<br/><b>Сумма:</b> ${amt}` : ""}<br/><b>Причина:</b> ${err}</p><p>Мы повторим попытку автоматически. При необходимости обновите платёжную карту в личном кабинете.</p>`,
       };
     case "installment_charge_retry_exhausted":
       return {
-        subject: `Попытки списания исчерпаны — ${product}`,
+        subject: `Попытки списания исчерпаны — ${productPlain}`,
         html: `<p>Попытки автоматического списания по рассрочке исчерпаны.</p><p><b>Продукт:</b> ${product}${amt ? `<br/><b>Сумма:</b> ${amt}` : ""}</p><p>Пожалуйста, свяжитесь с поддержкой или обновите платёжный метод, чтобы продолжить.</p>`,
       };
     case "installment_completed":
       return {
-        subject: `Рассрочка погашена — ${product}`,
+        subject: `Рассрочка погашена — ${productPlain}`,
         html: `<p>Все платежи по рассрочке успешно завершены.</p><p><b>Продукт:</b> ${product}</p><p>Спасибо, что были с нами!</p>`,
       };
   }
@@ -209,20 +224,10 @@ export async function sendChargeLifecycleNotification(
     }
     const telegramChatId = profile?.telegram_user_id ?? null;
 
-    // Bot token (link bot, matches existing webhook pattern).
-    let botToken: string | null = null;
-    let botId: string | null = null;
-    try {
-      const { data: bot } = await supabase
-        .from("telegram_bots")
-        .select("id, token, bot_token_encrypted")
-        .eq("is_link_bot", true)
-        .eq("is_active", true)
-        .limit(1)
-        .maybeSingle();
-      botToken = (bot as any)?.token ?? null;
-      botId = (bot as any)?.id ?? null;
-    } catch { /* best-effort */ }
+    // Bot token via canonical link-bot resolver (single source of truth).
+    const link = await resolveLinkBot(supabase);
+    const botToken = link.token;
+    const botId = link.bot_id;
 
     const commonMeta: Record<string, unknown> = {
       event: args.event,
@@ -236,6 +241,8 @@ export async function sendChargeLifecycleNotification(
       currency: args.currency ?? null,
       product_name: args.productName ?? null,
       policy_source: policy.source,
+      link_bot_id: botId,
+      link_bot_token_source: link.token_source,
       ...args.meta,
     };
 
@@ -258,10 +265,12 @@ export async function sendChargeLifecycleNotification(
           if (j?.ok === true) {
             result.sent.telegram = 1;
             const tgMsgId = typeof j?.result?.message_id === "number" ? j.result.message_id : null;
-            await markSent(supabase, key, { ...commonMeta, telegram_message_id: tgMsgId });
+            // Attempt mirror and capture outcome for the outbox meta.
+            let mirrored = false;
+            let mirrorError: string | null = null;
             if (tgMsgId && botId) {
               try {
-                await logAutomatedTelegramMessage({
+                const mirror = await logAutomatedTelegramMessage({
                   supabase,
                   user_id: args.userId,
                   telegram_user_id: telegramChatId,
@@ -271,8 +280,23 @@ export async function sendChargeLifecycleNotification(
                   source: "bepaid-webhook-lifecycle",
                   extra_meta: { ...commonMeta, idempotency_key: key },
                 });
-              } catch { /* best-effort mirror */ }
+                mirrored = mirror?.ok === true && mirror?.inserted === true;
+                if (!mirrored && mirror?.reason && mirror.reason !== "duplicate_idempotency_key") {
+                  mirrorError = String(mirror.reason);
+                }
+              } catch (mErr) {
+                mirrorError = mErr instanceof Error ? mErr.message : String(mErr);
+              }
+            } else if (!botId) {
+              mirrorError = "no_bot_id";
             }
+            await markSent(supabase, key, {
+              ...commonMeta,
+              telegram_sent: true,
+              telegram_message_id: tgMsgId,
+              contact_center_mirrored: mirrored,
+              mirror_error: mirrorError,
+            });
           } else {
             const err = j?.description ?? `HTTP ${r.status}`;
             result.telegram_error = String(err);
@@ -284,6 +308,13 @@ export async function sendChargeLifecycleNotification(
           await markFailed(supabase, key, msg);
         }
       }
+    } else if (telegramChatId && !botToken) {
+      // Non-fatal: telegram user known but link bot unavailable / encrypted-only.
+      console.warn("[lifecycle-notify] telegram skipped: no usable link bot token", {
+        event: args.event,
+        user_id: args.userId,
+        token_source: link.token_source,
+      });
     }
 
     // Email

@@ -1401,17 +1401,30 @@ Deno.serve(async (req) => {
       
       console.log('[WEBHOOK-SUBSCRIPTION] Parsed:', { subscriptionV2Id, orderV2Id, subscriptionState, transactionStatus });
       
-      // P3.0.7: IDEMPOTENCY CHECK with provider filter + recordWebhookEvent
+      // P3.0.7 + B7 corrective: separate payment-fact idempotency from
+      // lifecycle-event idempotency. When an existing payments_v2 row for the
+      // same transactionUid is `failed`, we MUST continue processing so that
+      // (a) the terminal / retry-exhausted branches can classify correctly and
+      // (b) the notification_outbox helper can reclaim a previously failed
+      // delivery. Only truly settled successful/refunded facts short-circuit.
+      // Downstream payments_v2 writes are already idempotent via
+      // upsertPaymentV2(provider, provider_payment_id).
       if (transactionUid) {
         const { data: existingPayment } = await supabase
           .from('payments_v2')
-          .select('id')
+          .select('id, status')
           .eq('provider_payment_id', transactionUid)
           .eq('provider', 'bepaid')
           .maybeSingle();
-        
-        if (existingPayment) {
-          console.log('[WEBHOOK-SUBSCRIPTION] Already processed (idempotency):', transactionUid);
+
+        const existingStatus = String(existingPayment?.status ?? '');
+        const isRetryableLifecycleReplay =
+          existingStatus === 'failed' ||
+          (transaction?.status === 'failed') ||
+          (subscriptionState === 'failed' || subscriptionState === 'expired' || subscriptionState === 'canceled');
+
+        if (existingPayment && !isRetryableLifecycleReplay) {
+          console.log('[WEBHOOK-SUBSCRIPTION] Already processed (idempotency, terminal-success):', transactionUid, 'status=', existingStatus);
           await recordWebhookEvent(supabase, {
             provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
             subscription_id: subscriptionId ? String(subscriptionId) : null,
@@ -1426,6 +1439,9 @@ Deno.serve(async (req) => {
             status: 200,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
+        }
+        if (existingPayment && isRetryableLifecycleReplay) {
+          console.log('[WEBHOOK-SUBSCRIPTION] Duplicate UID but lifecycle replay allowed:', transactionUid, 'existing_status=', existingStatus, 'tx_status=', transaction?.status, 'sub_state=', subscriptionState);
         }
       }
       
