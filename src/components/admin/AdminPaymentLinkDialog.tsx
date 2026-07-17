@@ -709,9 +709,10 @@ ${amountLine}
       // Индивидуальная ссылка: по умолчанию N = точное количество платежей из оффера,
       // но админ может изменить на любое значение 2..12.
       if ((effectiveOffer as any).payment_method === "internal_installment") {
-        const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
+        // Priority: precise installment_count > legacy meta.installment.max_months.
         const legacy = Number((effectiveOffer as any).installment_count ?? 0);
-        const defaultN = metaMax >= 2 ? Math.min(12, metaMax) : (legacy >= 2 ? Math.min(12, legacy) : null);
+        const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
+        const defaultN = legacy >= 2 ? Math.min(12, legacy) : (metaMax >= 2 ? Math.min(12, metaMax) : null);
         setSelectedInstallmentMonths(defaultN);
         if (paymentType !== "one_time") setPaymentType("one_time");
       } else {
