@@ -163,7 +163,7 @@ Deno.serve(async (req) => {
     if (offer_id) {
       const { data: offer } = await supabase
         .from('tariff_offers')
-        .select('id, tariff_id, is_active, offer_type, payment_method, installment_count, meta')
+        .select('id, tariff_id, is_active, offer_type, payment_method, installment_count, installment_interval_days, first_payment_delay_days, meta')
         .eq('id', offer_id).maybeSingle();
       if (!offer) return errorResponse('Offer not found', 400);
       if (offer.tariff_id !== tariff_id) return errorResponse('Offer does not belong to tariff', 400);
