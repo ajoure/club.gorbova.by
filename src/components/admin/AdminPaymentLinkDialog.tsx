@@ -552,10 +552,11 @@ export function AdminPaymentLinkDialog({
         ? "Подписка с автосписанием"
         : "Разовая оплата";
 
-    const perPayment = amount;
-    const totalAmount = perPayment * (selectedInstallmentMonths || 1);
+    const N = selectedInstallmentMonths || 1;
+    const perPayment = isInstallmentMsg ? Math.ceil(amount / N) : amount;
+    const totalAmount = isInstallmentMsg ? perPayment * N : amount;
     const amountLine = isInstallmentMsg
-      ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} ${previewCurrency} (итого ${totalAmount} ${previewCurrency})`
+      ? `💰 Стоимость: ${N} × ${perPayment} ${previewCurrency} (итого ${totalAmount} ${previewCurrency})`
       : `💰 Стоимость: ${amount} ${previewCurrency}`;
 
     return `💳 <b>Оплата ${headerKind}</b>
