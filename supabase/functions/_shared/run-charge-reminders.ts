@@ -18,10 +18,10 @@ import {
   renderInstallmentEmail,
   renderSubscriptionChargeTelegram,
   renderSubscriptionChargeEmail,
-  formatChargeDateTime,
   type ChargeChannel,
 } from './charge-reminder-scheduling.ts';
 import { toTzDateKey } from './timezone.ts';
+import { logAutomatedTelegramMessage } from './log-automated-telegram.ts';
 
 export type ChargeReminderPreview = {
   provider_subscription_id: string;
@@ -58,7 +58,7 @@ export type RunChargeRemindersResult = {
 };
 
 // Atomic claim of an idempotency slot in notification_outbox.
-// Returns true if this run owns the slot, false if a concurrent run already claimed it.
+// Returns true if this run owns the slot. Failed/stale rows can be reclaimed.
 async function claimOutboxSlot(
   supabase: any,
   args: {
@@ -68,21 +68,26 @@ async function claimOutboxSlot(
     idempotencyKey: string;
     meta: Record<string, unknown>;
   },
-): Promise<boolean> {
-  const { error } = await supabase.from('notification_outbox').insert({
-    user_id: args.userId,
-    channel: args.channel,
-    message_type: args.messageType,
-    idempotency_key: args.idempotencyKey,
-    source: 'subscription-renewal-reminders',
-    status: 'sending',
-    meta: args.meta,
+): Promise<{ claimed: boolean; reason: string; outboxId: string | null; attemptCount: number }> {
+  const { data, error } = await supabase.rpc('claim_notification_outbox_slot', {
+    p_user_id: args.userId,
+    p_channel: args.channel,
+    p_message_type: args.messageType,
+    p_idempotency_key: args.idempotencyKey,
+    p_source: 'subscription-renewal-reminders',
+    p_meta: args.meta,
   });
-  if (!error) return true;
-  // 23505 unique_violation → someone else already claimed
-  if ((error as any)?.code === '23505') return false;
-  console.error('[charge-reminders] outbox claim error:', error);
-  return false;
+  if (error) {
+    console.error('[charge-reminders] outbox claim error:', error);
+    return { claimed: false, reason: 'claim_error', outboxId: null, attemptCount: 0 };
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    claimed: row?.claimed === true,
+    reason: String(row?.reason ?? 'unknown'),
+    outboxId: row?.outbox_id ?? null,
+    attemptCount: Number(row?.attempt_count ?? 0),
+  };
 }
 
 async function markOutboxSent(
@@ -92,7 +97,7 @@ async function markOutboxSent(
 ): Promise<void> {
   await supabase
     .from('notification_outbox')
-    .update({ status: 'sent', sent_at: new Date().toISOString(), meta: metaPatch })
+    .update({ status: 'sent', sent_at: new Date().toISOString(), blocked_reason: null, last_attempt_at: new Date().toISOString(), meta: metaPatch })
     .eq('idempotency_key', idempotencyKey);
 }
 
@@ -103,23 +108,56 @@ async function markOutboxFailed(
 ): Promise<void> {
   await supabase
     .from('notification_outbox')
-    .update({ status: 'failed', blocked_reason: reason })
+    .update({ status: 'failed', blocked_reason: reason, last_attempt_at: new Date().toISOString() })
     .eq('idempotency_key', idempotencyKey);
 }
 
-async function sendTelegram(botToken: string | null, chatId: string | number, text: string): Promise<boolean> {
-  if (!botToken) return false;
+async function sendTelegram(
+  supabase: any,
+  args: {
+    botToken: string | null;
+    botId: string | null;
+    userId: string;
+    chatId: string | number;
+    text: string;
+    messageType: string;
+    idempotencyKey: string;
+    meta: Record<string, unknown>;
+  },
+): Promise<{ ok: boolean; error: string | null; telegramMessageId: number | null; mirrored: boolean }> {
+  if (!args.botToken) return { ok: false, error: 'no_link_bot_configured', telegramMessageId: null, mirrored: false };
   try {
-    const r = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    const r = await fetch(`https://api.telegram.org/bot${args.botToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
+      body: JSON.stringify({ chat_id: args.chatId, text: args.text, parse_mode: 'Markdown' }),
     });
     const j = await r.json();
-    return j?.ok === true;
+    const ok = j?.ok === true;
+    const telegramMessageId = ok && typeof j?.result?.message_id === 'number' ? j.result.message_id : null;
+    let mirrored = false;
+    if (ok && telegramMessageId) {
+      const mirror = await logAutomatedTelegramMessage({
+        supabase,
+        user_id: args.userId,
+        telegram_user_id: args.chatId,
+        bot_id: args.botId,
+        text: args.text,
+        telegram_message_id: telegramMessageId,
+        source: 'subscription-renewal-reminders',
+        extra_meta: {
+          ...args.meta,
+          message_type: args.messageType,
+          idempotency_key: args.idempotencyKey,
+          notification_branch: 'upcoming_charge',
+        },
+      });
+      mirrored = mirror.ok === true && mirror.inserted === true;
+    }
+    return { ok, error: ok ? null : (j?.description ?? `HTTP ${r.status}`), telegramMessageId, mirrored };
   } catch (e) {
     console.error('[charge-reminders] telegram send error:', e);
-    return false;
+    return { ok: false, error: e instanceof Error ? e.message : 'telegram_send_exception', telegramMessageId: null, mirrored: false };
   }
 }
 
@@ -137,6 +175,32 @@ async function sendEmail(supabase: any, to: string, subject: string, html: strin
     console.error('[charge-reminders] send-email exception:', e);
     return false;
   }
+}
+
+function numberFromMeta(...values: unknown[]): number {
+  for (const value of values) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 0;
+}
+
+function isFiniteInstallmentModel(ps: any, subV2: any): boolean {
+  const psMeta = ps?.meta ?? {};
+  const subMeta = subV2?.meta ?? {};
+  const installmentMeta = subMeta?.installment ?? psMeta?.installment ?? {};
+  const count = numberFromMeta(
+    subMeta?.installment_count,
+    subMeta?.billing_cycles,
+    psMeta?.installment_count,
+    psMeta?.billing_cycles,
+    installmentMeta?.selected_installment_months,
+    installmentMeta?.billing_cycles,
+  );
+  return subMeta?.model === 'bepaid_finite_subscription'
+    || psMeta?.model === 'bepaid_finite_subscription'
+    || installmentMeta?.as_finite_subscription === true
+    || count >= 2;
 }
 
 export type RunChargeRemindersArgs = {
@@ -161,11 +225,12 @@ export async function runChargeReminders(
   const claimed = { telegram: 0, email: 0 };
   const sent = { telegram: 0, email: 0 };
 
-  // 1. Load candidates: provider_subscriptions with next_charge_at, active/trialing.
+  // 1. Load candidates. Allow NULL next_charge_at so finite installments can
+  // fall back to installment_payments.due_date when provider hasn't sent renew_at.
   let psQuery = supabase
     .from('provider_subscriptions')
     .select(`
-      id, user_id, subscription_v2_id, state, next_charge_at, amount_cents, currency,
+      id, user_id, subscription_v2_id, state, next_charge_at, amount_cents, currency, meta,
       subscriptions_v2 (
         id, user_id, tariff_id, meta, payment_type,
         tariffs (
@@ -174,8 +239,7 @@ export async function runChargeReminders(
         )
       )
     `)
-    .in('state', ['active', 'trialing'])
-    .not('next_charge_at', 'is', null);
+    .in('state', ['active', 'trialing']);
   if (args.onlyProviderSubscriptionId) {
     psQuery = psQuery.eq('id', args.onlyProviderSubscriptionId);
   }
@@ -192,6 +256,7 @@ export async function runChargeReminders(
 
     const meta = subV2.meta ?? {};
     const policy = resolveChargeNotificationPolicy(meta);
+    const finiteInstallment = isFiniteInstallmentModel(ps, subV2);
 
     // Pre-charge reminders are gated by enabled + reminder_days membership.
     // (failure/retry-exhausted paths flow through bepaid-webhook, not here.)
@@ -200,8 +265,8 @@ export async function runChargeReminders(
 
     // Determine kind: installment vs subscription.
     let pending: any = null;
-    let kind: 'installment' | 'subscription' = 'subscription';
-    let effectiveChargeIso = ps.next_charge_at as string;
+    let kind: 'installment' | 'subscription' = finiteInstallment ? 'installment' : 'subscription';
+    let effectiveChargeIso = ps.next_charge_at as string | null;
     let effectiveSource: ChargeReminderPreview['effective_charge_source'] = 'provider_next_charge_at';
     let providerDriftHours: number | undefined;
 
@@ -276,6 +341,25 @@ export async function runChargeReminders(
         });
         continue;
       }
+    } else if (finiteInstallment) {
+      previews.push({
+        provider_subscription_id: ps.id,
+        subscription_v2_id: subV2.id,
+        user_id: ps.user_id,
+        kind: 'installment',
+        days_before: -1,
+        effective_charge_at: ps.next_charge_at ?? '',
+        effective_charge_source: 'provider_next_charge_at',
+        amount: Number(ps.amount_cents ?? 0) / 100,
+        currency: (ps.currency as string) || 'BYN',
+        timezone: policy.timezone,
+        policy_source: policy.source,
+        policy_enabled: policy.enabled,
+        reminder_days: policy.reminder_days,
+        idempotency_keys: { telegram: `installment_completed:${ps.id}:telegram`, email: `installment_completed:${ps.id}:email` },
+        skipped: 'installment_completed_or_no_pending_payment',
+      });
+      continue;
     }
 
     if (!effectiveChargeIso) continue;
@@ -411,39 +495,86 @@ export async function runChargeReminders(
       policy_source: policy.source,
       amount,
       currency,
+      payment_number: pending?.payment_number ?? null,
+      total_payments: pending?.total_payments ?? null,
     };
+
+    await supabase.from('audit_logs').insert({
+      action: `reminders.charge_reminder_due_${daysBefore}d`,
+      actor_type: 'system',
+      actor_label: 'subscription-renewal-reminders',
+      target_user_id: ps.user_id,
+      meta: commonMeta,
+    });
 
     // -------- Telegram channel --------
     if (telegramChatId) {
-      const ok = await claimOutboxSlot(supabase, {
+      const messageType = kind === 'installment' ? 'installment_charge_reminder' : 'subscription_charge_reminder';
+      const claim = await claimOutboxSlot(supabase, {
         userId: ps.user_id,
         channel: 'telegram',
-        messageType: kind === 'installment' ? 'installment_charge_reminder' : 'subscription_charge_reminder',
+        messageType,
         idempotencyKey: tgKey,
         meta: commonMeta,
       });
-      if (ok) {
+      if (claim.claimed) {
         claimed.telegram++;
-        const delivered = await sendTelegram(botToken, telegramChatId, tgText);
-        if (delivered) {
+        const delivery = await sendTelegram(supabase, {
+          botToken,
+          botId: null,
+          userId: ps.user_id,
+          chatId: telegramChatId,
+          text: tgText,
+          messageType,
+          idempotencyKey: tgKey,
+          meta: commonMeta,
+        });
+        if (delivery.ok) {
           sent.telegram++;
-          await markOutboxSent(supabase, tgKey, { ...commonMeta, telegram_text_len: tgText.length });
+          await markOutboxSent(supabase, tgKey, {
+            ...commonMeta,
+            telegram_text_len: tgText.length,
+            telegram_message_id: delivery.telegramMessageId,
+            mirrored_to_telegram_messages: delivery.mirrored,
+          });
+          await supabase.from('telegram_logs').insert({
+            user_id: ps.user_id,
+            action: messageType,
+            target: 'user',
+            status: 'success',
+            message_text: delivery.mirrored ? null : tgText,
+            meta: {
+              ...commonMeta,
+              idempotency_key: tgKey,
+              telegram_message_id: delivery.telegramMessageId,
+              mirrored_to_telegram_messages: delivery.mirrored,
+            },
+          });
         } else {
-          await markOutboxFailed(supabase, tgKey, 'telegram_send_failed');
+          await markOutboxFailed(supabase, tgKey, delivery.error ?? 'telegram_send_failed');
+          await supabase.from('telegram_logs').insert({
+            user_id: ps.user_id,
+            action: messageType,
+            target: 'user',
+            status: 'error',
+            error_message: delivery.error ?? 'telegram_send_failed',
+            message_text: tgText,
+            meta: { ...commonMeta, idempotency_key: tgKey },
+          });
         }
       }
     }
 
     // -------- Email channel --------
     if (email) {
-      const ok = await claimOutboxSlot(supabase, {
+      const claim = await claimOutboxSlot(supabase, {
         userId: ps.user_id,
         channel: 'email',
         messageType: kind === 'installment' ? 'installment_charge_reminder' : 'subscription_charge_reminder',
         idempotencyKey: emailKey,
         meta: commonMeta,
       });
-      if (ok) {
+      if (claim.claimed) {
         claimed.email++;
         const delivered = await sendEmail(supabase, email, emailBody.subject, emailBody.html, {
           user_id: ps.user_id,
