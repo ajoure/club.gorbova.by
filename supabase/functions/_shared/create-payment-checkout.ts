@@ -955,23 +955,15 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
 
     const accessDays = tariff.access_days || 30;
-    // PATCH INSTALLMENT-PUBLIC-LINK: распознаём installment-subscription по meta_extra.installment_count.
-    // Для обычной подписки — старое поведение (infinite, interval=30).
-    const installmentCountRaw = Number(extraMeta.installment_count);
-    const isInstallmentSubscription = Number.isFinite(installmentCountRaw) && installmentCountRaw >= 2;
-    const billingCycles = isInstallmentSubscription ? installmentCountRaw : null;
-    const installmentExtra = (extraMeta.installment && typeof extraMeta.installment === 'object')
-      ? extraMeta.installment as Record<string, any>
-      : {};
-    const intervalDays = isInstallmentSubscription
-      ? Number(installmentExtra.interval_days ?? 30)
-      : 30;
+    // PATCH INSTALLMENT-PUBLIC-LINK: используем pre-computed installment-контекст (см. A1 gate выше).
+    const installmentCountRaw = installmentCountRawPre;
+    const isInstallmentSubscription = isInstallmentSubscriptionPre;
+    const billingCycles = billingCyclesPre;
+    const installmentExtra = installmentExtraPre;
+    const intervalDays = intervalDaysPre;
 
     // PATCH PAYMENTS-REVISION: pre-create subscriptions_v2 ДО bePaid /subscriptions,
-    // чтобы tracking_id содержал реальный subscription_v2_id (canonical формат subv2:{sub_id}:order:{order_id}).
-    // billing_type=provider_managed (enum допускает только 'mit'|'provider_managed').
-    // ВАЖНО: subscriptions_v2 НЕ имеет колонки access_days/amount/currency —
-    // храним их ТОЛЬКО в meta (источник истины: tariffs.access_days + orders_v2.final_price).
+    // чтобы tracking_id содержал реальный subscription_v2_id.
     const preSubMeta: Record<string, any> = {
       source: isInstallmentSubscription ? 'public_link_installment' : 'public_link_subscription',
       checkout_order_id: order.id,
@@ -988,8 +980,10 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       preSubMeta.installment_total_amount_byn = Number(extraMeta.installment_total_amount_byn ?? (amountByn * (billingCycles || 1)));
       preSubMeta.installment = installmentExtra;
       preSubMeta.model = 'bepaid_finite_subscription';
-      // Retry policy (parsed canonical form).
-      preSubMeta.retry_policy_mode = installmentExtra.retry_policy_mode ?? null;
+      // PATCH A2 — единый effective retry snapshot.
+      preSubMeta.retry_policy = retryPolicySnapshotPre;
+      // Обратная совместимость (legacy читатели).
+      preSubMeta.retry_policy_mode = retryPolicySnapshotPre?.mode ?? null;
       preSubMeta.max_charge_attempts_configured = installmentExtra.max_charge_attempts ?? null;
     }
     const { data: preSub, error: preSubError } = await supabase
