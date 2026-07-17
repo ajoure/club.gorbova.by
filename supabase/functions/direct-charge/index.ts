@@ -348,6 +348,16 @@ Deno.serve(async (req) => {
       offer = tariffOffer;
     }
 
+    // Reject invoice-only offers — этот путь только для эквайринга.
+    if (offer?.offer_type === 'invoice') {
+      return new Response(
+        JSON.stringify({ error: 'offer_type_invoice_not_chargeable' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
+
+
     // Check if this is an internal installment payment
     const isInternalInstallment = offer?.payment_method === 'internal_installment' && offer?.installment_count > 1;
     const installmentCount = isInternalInstallment ? offer.installment_count : 1;
