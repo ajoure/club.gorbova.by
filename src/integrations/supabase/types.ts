@@ -18480,6 +18480,24 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      claim_notification_outbox_slot: {
+        Args: {
+          p_channel: string
+          p_idempotency_key: string
+          p_message_type: string
+          p_meta?: Json
+          p_source?: string
+          p_stale_after?: string
+          p_user_id: string
+        }
+        Returns: {
+          attempt_count: number
+          claimed: boolean
+          outbox_id: string
+          outbox_status: string
+          reason: string
+        }[]
+      }
       cleanup_demo_counts: {
         Args: never
         Returns: {

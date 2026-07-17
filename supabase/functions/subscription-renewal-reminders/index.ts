@@ -127,6 +127,27 @@ async function hasActiveSBS(supabase: any, userId: string, productId: string | n
   return false;
 }
 
+async function hasProviderManagedForSubscription(supabase: any, subscriptionV2Id: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('provider_subscriptions')
+    .select('id, state, subscription_v2_id')
+    .eq('subscription_v2_id', subscriptionV2Id)
+    .in('state', ['active', 'trialing', 'past_due', 'failed_attempt'])
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error('[reminders] exact provider-managed check error:', error);
+    await supabase.from('audit_logs').insert({
+      action: 'reminders.exact_sbs_query_error',
+      actor_type: 'system',
+      actor_label: 'subscription-renewal-reminders',
+      meta: { subscription_id: subscriptionV2Id, error: error.message },
+    });
+    return true;
+  }
+  return !!data?.id;
+}
+
 /**
  * PATCH CHARGE-TIME-SOT v1 (2026-05-05):
  * Resolve provider-side next_charge_at for the «⚡ Списание» line.
@@ -982,6 +1003,14 @@ Deno.serve(async (req) => {
     // Returns rendered payload (TG text, email HTML, idempotency keys, timezone, policy)
     // WITHOUT writing to notification_outbox and WITHOUT sending anything.
     if (body?.dry_run === true) {
+      const dryRunSecret = req.headers.get('x-cron-secret') || req.headers.get('x-debug-secret');
+      const expectedDryRunSecret = Deno.env.get('CRON_SECRET') || Deno.env.get('DEBUG_SECRET');
+      if (!expectedDryRunSecret || dryRunSecret !== expectedDryRunSecret) {
+        return new Response(JSON.stringify({ error: 'unauthorized: invalid or missing dry-run secret' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
       const { runChargeReminders } = await import('../_shared/run-charge-reminders.ts');
       const result = await runChargeReminders({
         supabase,
@@ -1402,11 +1431,12 @@ Deno.serve(async (req) => {
 
         // Check if user has active SBS for this product
         const userHasSBS = await hasActiveSBS(supabase, userId, productId);
+        const currentSubHasProviderManaged = await hasProviderManagedForSubscription(supabase, sub.id);
 
         // B4: Branch 1 (access-end reminder) applies ONLY to subscriptions without an
         // active provider-managed auto-charge. Provider-managed subs (recurring + finite
         // installments) are covered by Branch 2 (upcoming-charge reminders) below.
-        if (userHasSBS && !productIsOneTime) {
+        if (currentSubHasProviderManaged && !productIsOneTime) {
           await supabase.from('audit_logs').insert({
             action: 'reminders.branch1_skipped_provider_managed',
             actor_type: 'system',
@@ -1417,6 +1447,7 @@ Deno.serve(async (req) => {
               product_id: productId,
               days_left: daysLeft,
               reason: 'handled_by_upcoming_charge_reminder',
+              exact_provider_subscription_match: true,
             },
           });
           continue;
@@ -1425,7 +1456,7 @@ Deno.serve(async (req) => {
         // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links for non-SBS, non-one-time
         let oneTimeUrl: string | null = null;
         let subscriptionUrl: string | null = null;
-        if (!productIsOneTime && !userHasSBS && productId && sub.tariff_id && amount > 0) {
+        if (!productIsOneTime && !currentSubHasProviderManaged && productId && sub.tariff_id && amount > 0) {
           const ctas = await generateRenewalCTAs({
             supabase, userId, productId, tariffId: sub.tariff_id,
             amount, currency, actorType: 'system',
@@ -1444,7 +1475,7 @@ Deno.serve(async (req) => {
               },
             });
           }
-        } else if (userHasSBS && !productIsOneTime) {
+        } else if (currentSubHasProviderManaged && !productIsOneTime) {
           await supabase.from('audit_logs').insert({
             action: 'reminders.paylink_cta_suppressed_sbs',
             actor_type: 'system',
@@ -1477,7 +1508,7 @@ Deno.serve(async (req) => {
           const telegramResult = await sendTelegramReminder(
             supabase, botToken, userId,
             productName, tariffName, expiryDate, daysLeft,
-            amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
+            amount, currency, currentSubHasProviderManaged, oneTimeUrl, subscriptionUrl,
             sub.id, sub.order_id, sub.tariff_id, productId, productIsOneTime,
             linkBot?.id ?? null,
             nextChargeAt,
@@ -1508,7 +1539,7 @@ Deno.serve(async (req) => {
             const emailOk = await sendEmailReminder(
               supabase, userId, profile?.id || null, userEmail,
               productName, tariffName, expiryDate, daysLeft,
-              amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
+              amount, currency, currentSubHasProviderManaged, oneTimeUrl, subscriptionUrl,
               sub.id, sub.order_id, sub.tariff_id, productIsOneTime,
               await resolveProviderNextChargeAt(supabase, sub.id, expiryDate),
             );
@@ -1540,7 +1571,7 @@ Deno.serve(async (req) => {
         }
 
         results.push(result);
-        console.log(`Processed reminder for user ${userId}: TG sent=${result.telegram_sent}, SBS=${userHasSBS}, oneTime=${productIsOneTime}, paylink_oneTime=${!!oneTimeUrl}, paylink_sub=${!!subscriptionUrl}, Email=${result.email_sent}`);
+        console.log(`Processed reminder for user ${userId}: TG sent=${result.telegram_sent}, SBS=${currentSubHasProviderManaged}, broadSBS=${userHasSBS}, oneTime=${productIsOneTime}, paylink_oneTime=${!!oneTimeUrl}, paylink_sub=${!!subscriptionUrl}, Email=${result.email_sent}`);
       }
     }
 
@@ -1561,6 +1592,7 @@ Deno.serve(async (req) => {
       chargeRemindersSummary = await runChargeReminders({
         supabase,
         botToken,
+        botId: linkBot?.id ?? null,
         dryRun: false,
       });
       console.log('[charge-reminders] summary:', JSON.stringify(chargeRemindersSummary));
