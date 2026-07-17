@@ -2162,15 +2162,18 @@ Deno.serve(async (req) => {
           transaction?.gateway_recurring_reason?.message ||
           'charge_failed';
 
-        // provider_subscriptions: reflect next_charge_at if provided
+        // provider_subscriptions: preserve existing next_charge_at when provider
+        // did not include renew_at (defect #5 — must not clobber to NULL on retry).
+        const failNextChargeIso = body.renew_at || body.subscription?.renew_at || null;
         try {
+          const providerUpdate: Record<string, unknown> = {
+            state: 'active',
+            last_error: String(errMsg).slice(0, 200),
+          };
+          if (failNextChargeIso) providerUpdate.next_charge_at = failNextChargeIso;
           await supabase
             .from('provider_subscriptions')
-            .update({
-              state: 'active',
-              next_charge_at: body.renew_at || body.subscription?.renew_at || null,
-              last_error: String(errMsg).slice(0, 200),
-            })
+            .update(providerUpdate)
             .eq('provider_subscription_id', subscriptionId);
         } catch (e) {
           console.error('[WEBHOOK-SUBSCRIPTION] provider_subscriptions failed-update non-fatal:', e);
@@ -2233,15 +2236,60 @@ Deno.serve(async (req) => {
             model: failIsFinite ? 'bepaid_finite_subscription' : undefined,
             error_message: String(errMsg).slice(0, 500),
             retry_pending: true,
-            next_charge_at: body.renew_at || body.subscription?.renew_at || null,
+            next_charge_at: failNextChargeIso,
           },
         });
+
+        // Look up pending installment_payments row for idempotency subject
+        // (payment_number is the retry attempt anchor). Absence is tolerated —
+        // helper falls back to subscription-scoped key.
+        let failInstallmentPaymentId: string | null = null;
+        if (failIsFinite) {
+          try {
+            const { data: pending } = await supabase
+              .from('installment_payments')
+              .select('id')
+              .eq('subscription_id', subscriptionV2Id)
+              .eq('status', 'pending')
+              .order('payment_number', { ascending: true })
+              .limit(1)
+              .maybeSingle();
+            failInstallmentPaymentId = pending?.id ?? null;
+          } catch { /* best-effort */ }
+        }
+
+        // Deliver policy-gated notification (notify_on_failure independent flag).
+        try {
+          await sendChargeLifecycleNotification({
+            supabase,
+            event: failIsFinite ? 'installment_charge_failed' : 'subscription_charge_failed',
+            userId: subV2.user_id,
+            subscriptionV2Id,
+            providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
+            installmentPaymentId: failInstallmentPaymentId,
+            transactionUid: transactionUid ? String(transactionUid) : null,
+            providerEventId: (body as any)?.uid ? String((body as any).uid) : null,
+            productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
+            tariffName: subV2.tariffs?.name || null,
+            amount: failAmount,
+            currency: failCurrency,
+            errorMessage: String(errMsg),
+            meta: {
+              paid_billing_cycles: paidCyclesOnFail,
+              installment_count: failInstallmentCount,
+              retry_pending: true,
+            },
+          });
+        } catch (nErr) {
+          console.error('[WEBHOOK-SUBSCRIPTION] failure notification non-fatal:', nErr);
+        }
 
         return new Response(JSON.stringify({
           ok: true,
           mode: 'provider_managed_subscription',
           status: 'charge_failed_retry_pending',
         }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
 
       } else if (['canceled', 'expired', 'failed', 'redirecting'].includes(subscriptionState)) {
         console.log(`[WEBHOOK-SUBSCRIPTION] Processing TERMINAL subscription state: ${subscriptionState}`);
