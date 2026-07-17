@@ -350,18 +350,20 @@ export function PaymentDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOneTimeFlow, savedCards]);
 
-  // B8. Инициализация выбранного N при открытии диалога с installment-оффером.
-  // max=2 → авто N=2; max>2 → ждём явного выбора клиента.
+  // Публичный flow рассрочки: точное количество платежей задаётся оффером
+  // (tariff_offers.installment_count = точное N, НЕ максимум). Клиент на сайте
+  // не может изменить N или сумму — это делает только администратор через
+  // AdminPaymentLinkDialog.
   useEffect(() => {
     if (!open) return;
     if (paymentMethod !== 'internal_installment') {
       if (selectedInstallmentMonths !== null) setSelectedInstallmentMonths(null);
       return;
     }
-    if (installmentMaxMonthsResolved === 2) {
-      if (selectedInstallmentMonths !== 2) setSelectedInstallmentMonths(2);
-    } else {
-      if (selectedInstallmentMonths !== null) setSelectedInstallmentMonths(null);
+    if (installmentMaxMonthsResolved && installmentMaxMonthsResolved >= 2) {
+      if (selectedInstallmentMonths !== installmentMaxMonthsResolved) {
+        setSelectedInstallmentMonths(installmentMaxMonthsResolved);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, paymentMethod, installmentMaxMonthsResolved]);
