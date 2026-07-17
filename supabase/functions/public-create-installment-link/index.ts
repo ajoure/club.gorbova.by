@@ -36,11 +36,19 @@ import {
   resolveChargeNotificationSnapshotForWriter,
   serializeChargeNotificationPolicy,
 } from '../_shared/charge-notification-policy.ts';
+import {
+  calculateInstallmentPlan,
+  InstallmentPlanError,
+  kopecksToDecimal,
+} from '../_shared/calculate-installment-plan.ts';
 
 interface CreateInstallmentLinkRequest {
   product_id: string;
   tariff_id?: string | null;
   offer_id: string;
+  // B9. Публичный клиент выбирает N платежей. Если max=2 и поле отсутствует —
+  // берём 2. Если max>2 и поле отсутствует — 400 installment_months_required.
+  selected_installment_months?: number | null;
 }
 
 // SINGLE SOURCE OF TRUTH: все payment ссылки строятся на https://gorbova.by.
