@@ -54,6 +54,9 @@ export interface InstallmentConfig {
   first_payment_delay_days: number;
   // Текущий контракт округления per-payment суммы.
   rounding_mode: 'round_half_up_byn';
+  // PATCH INSTALLMENT-RETRY-POLICY: 0 = «безлимитно» (unlimited_requested), 1..10 = ограничение.
+  // Backend применяет capability gate провайдера (см. _shared/installment-retry-policy.ts).
+  max_charge_attempts?: number;
 }
 
 export interface OfferMetaConfig {

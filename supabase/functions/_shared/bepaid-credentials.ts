@@ -25,6 +25,11 @@ export interface BepaidCreds {
   webhook_secret: string | null;
   test_mode: boolean;
   creds_source: 'integration_instances';
+  // PATCH INSTALLMENT-RETRY-POLICY: результат capability proof для
+  // number_payment_attempts. Хранится в integration_instances.config.subscription_attempts_capability
+  // Формат: { strategy: 'native_zero'|'large_sentinel'|'not_supported', proven: true, value?, proven_at? }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  subscription_attempts_capability: any;
 }
 
 export interface BepaidCredsError {
@@ -106,6 +111,8 @@ export async function getBepaidCredsStrict(
     webhook_secret,
     test_mode,
     creds_source: 'integration_instances',
+    subscription_attempts_capability:
+      (config as Record<string, unknown>).subscription_attempts_capability ?? null,
   };
 }
 

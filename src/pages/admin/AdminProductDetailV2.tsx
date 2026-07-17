@@ -346,6 +346,8 @@ export default function AdminProductDetailV2() {
     installment_count: 3,
     installment_interval_days: 30,
     first_payment_delay_days: 0,
+    // PATCH INSTALLMENT-RETRY-POLICY: 0 = «безлимитно» (требует provable capability бэкендом).
+    installment_max_charge_attempts: 3 as number,
     // Meta for welcome message
     meta: {} as OfferMetaConfig,
     // Preregistration fields (stored in meta.preregistration)
@@ -509,6 +511,7 @@ export default function AdminProductDetailV2() {
         installment_count: offer.installment_count || 3,
         installment_interval_days: offer.installment_interval_days || 30,
         first_payment_delay_days: offer.first_payment_delay_days || 0,
+        installment_max_charge_attempts: Number((meta as any)?.installment?.max_charge_attempts ?? 3),
         meta,
         // Preregistration fields from meta
         preregistration_first_charge_date: prereg.first_charge_date || "",
@@ -539,6 +542,7 @@ export default function AdminProductDetailV2() {
         installment_count: 3,
         installment_interval_days: 30,
         first_payment_delay_days: 0,
+        installment_max_charge_attempts: 3,
         meta: {},
         // Preregistration defaults
         preregistration_first_charge_date: "",
@@ -730,11 +734,19 @@ export default function AdminProductDetailV2() {
     // legacy-зеркало в столбцах installment_count / installment_interval_days / first_payment_delay_days сохраняем.
     if (isInstallment) {
       const maxMonths = Math.max(2, Math.min(12, offerForm.installment_count || 6));
+      const intervalDays = Math.max(1, Math.min(365, offerForm.installment_interval_days || 30));
+      const firstDelay = Math.max(0, Math.min(365, offerForm.first_payment_delay_days || 0));
+      // 0 = unlimited_requested; 1..10 = limited.
+      const rawAttempts = Number(offerForm.installment_max_charge_attempts);
+      const maxAttempts = Number.isFinite(rawAttempts) && rawAttempts >= 0 && rawAttempts <= 10
+        ? Math.floor(rawAttempts)
+        : 3;
       metaToSave.installment = {
         max_months: maxMonths,
-        interval_days: 30,
-        first_payment_delay_days: 0,
+        interval_days: intervalDays,
+        first_payment_delay_days: firstDelay,
         rounding_mode: 'round_half_up_byn',
+        max_charge_attempts: maxAttempts,
       };
     } else {
       delete metaToSave.installment;
@@ -807,8 +819,8 @@ export default function AdminProductDetailV2() {
             ? (offerForm.payment_method || "full_payment")
             : "full_payment",
       installment_count: isInstallment ? Math.max(2, Math.min(12, offerForm.installment_count || 6)) : null,
-      installment_interval_days: isInstallment ? 30 : null,
-      first_payment_delay_days: isInstallment ? 0 : null,
+      installment_interval_days: isInstallment ? Math.max(1, Math.min(365, offerForm.installment_interval_days || 30)) : null,
+      first_payment_delay_days: isInstallment ? Math.max(0, Math.min(365, offerForm.first_payment_delay_days || 0)) : null,
       // Meta field for welcome message + preregistration settings + installment
       meta: Object.keys(metaToSave).length > 0 ? metaToSave : (offerForm.requires_card_tokenization ? metaToSave : null),
     };
@@ -2434,9 +2446,65 @@ export default function AdminProductDetailV2() {
                     </p>
                   </div>
 
-                  <div className="text-xs text-muted-foreground border rounded-md p-3 bg-muted/30 space-y-1">
-                    <div>Интервал между платежами: <span className="font-medium text-foreground">30 дней</span> (фиксировано)</div>
-                    <div>Первый платёж: <span className="font-medium text-foreground">сразу при покупке</span> (фиксировано)</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Интервал между платежами, дней</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={365}
+                        value={offerForm.installment_interval_days}
+                        onChange={(e) =>
+                          setOfferForm({
+                            ...offerForm,
+                            installment_interval_days: parseInt(e.target.value) || 30,
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Первый платёж через, дней</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={365}
+                        value={offerForm.first_payment_delay_days}
+                        onChange={(e) =>
+                          setOfferForm({
+                            ...offerForm,
+                            first_payment_delay_days: parseInt(e.target.value) || 0,
+                          })
+                        }
+                      />
+                      <p className="text-[11px] text-muted-foreground">0 = сразу при покупке</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Попытки списания при неудаче</Label>
+                    <Select
+                      value={String(offerForm.installment_max_charge_attempts ?? 3)}
+                      onValueChange={(v) =>
+                        setOfferForm({
+                          ...offerForm,
+                          installment_max_charge_attempts: parseInt(v),
+                        })
+                      }
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">1 попытка</SelectItem>
+                        <SelectItem value="2">2 попытки</SelectItem>
+                        <SelectItem value="3">3 попытки (по умолчанию)</SelectItem>
+                        <SelectItem value="5">5 попыток</SelectItem>
+                        <SelectItem value="10">10 попыток</SelectItem>
+                        <SelectItem value="0">Безлимитно (требует подтверждения провайдера)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      Сколько раз bePaid будет пытаться списать очередной платёж рассрочки, если карта отклонила.
+                      «Безлимитно» работает только при подтверждённой способности провайдера — иначе бэкенд вернёт ошибку и попросит выбрать конкретное число.
+                    </p>
                   </div>
 
                   {offerForm.amount > 0 && offerForm.installment_count > 1 && (

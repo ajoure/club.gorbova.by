@@ -18,6 +18,11 @@ import {
   type ExistingProviderSub,
 } from './subscription-conflict.ts';
 import { createStripeCheckout } from './create-stripe-checkout.ts';
+import {
+  resolveInstallmentRetryPolicy,
+  resolveBepaidAttemptsValue,
+  ProviderUnlimitedAttemptsNotSupportedError,
+} from './installment-retry-policy.ts';
 
 export interface CreateCheckoutParams {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -908,6 +913,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       preSubMeta.installment_total_amount_byn = Number(extraMeta.installment_total_amount_byn ?? (amountByn * (billingCycles || 1)));
       preSubMeta.installment = installmentExtra;
       preSubMeta.model = 'bepaid_finite_subscription';
+      // Retry policy (parsed canonical form).
+      preSubMeta.retry_policy_mode = installmentExtra.retry_policy_mode ?? null;
+      preSubMeta.max_charge_attempts_configured = installmentExtra.max_charge_attempts ?? null;
     }
     const { data: preSub, error: preSubError } = await supabase
       .from('subscriptions_v2')
@@ -971,6 +979,38 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       ? `Рассрочка: ${billingCycles} платежа по ${amountByn} BYN каждые ${intervalDays} дней. Подписка завершится после ${billingCycles} платежей.`
       : `Подписка. Автосписание каждый месяц. Можно отменить в любой момент.`;
 
+    // PATCH INSTALLMENT-RETRY-POLICY: number_payment_attempts зависит от офера + capability.
+    // Дефолт 3 сохраняем как fallback для legacy installment-подписок без meta.installment.max_charge_attempts.
+    let bepaidAttemptsValue: number = 3;
+    let bepaidAttemptsStrategy: string | null = null;
+    if (isInstallmentSubscription) {
+      try {
+        const retryPolicy = resolveInstallmentRetryPolicy(installmentExtra.max_charge_attempts);
+        const resolution = resolveBepaidAttemptsValue({
+          retryPolicy,
+          capability: bepaidCreds.subscription_attempts_capability,
+        });
+        bepaidAttemptsValue = resolution.payloadValue;
+        bepaidAttemptsStrategy = resolution.provider_strategy;
+      } catch (e) {
+        if (e instanceof ProviderUnlimitedAttemptsNotSupportedError) {
+          console.error('[create-payment-checkout] unlimited attempts requested but provider capability not proven', {
+            order_id: order.id,
+            offer_id: offer_id || null,
+            reason: e.reason,
+          });
+          return {
+            success: false,
+            error:
+              'Провайдер оплаты не поддерживает безлимитные попытки списания без явного подтверждения. ' +
+              'Установите конкретное число попыток (1-10) в настройках оффера или подтвердите capability провайдера.',
+          };
+        }
+        throw e;
+      }
+    }
+    void bepaidAttemptsStrategy;
+
     const bepaidPayload: Record<string, any> = {
       notification_url: notificationUrl,
       return_url: successReturnUrl,
@@ -992,7 +1032,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           interval_unit: 'day',
         },
         ...(isInstallmentSubscription
-          ? { infinite: false, billing_cycles: billingCycles, number_payment_attempts: 3 }
+          ? { infinite: false, billing_cycles: billingCycles, number_payment_attempts: bepaidAttemptsValue }
           : {}),
       },
       settings: {

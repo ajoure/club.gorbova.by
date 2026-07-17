@@ -316,20 +316,32 @@ Deno.serve(async (req) => {
     // Webhook bepaid (LINK-ORDER) использует эти поля для материализации installment_payments.
     const linkMeta = (link.meta || {}) as Record<string, any>;
     const linkInstallment = (linkMeta.installment || null) as Record<string, any> | null;
-    const installmentMetaExtra = linkInstallment && Number(linkInstallment.selected_installment_months) >= 2
+    const hasInstallment = !!linkInstallment && Number(linkInstallment.selected_installment_months) >= 2;
+    // PATCH INSTALLMENT-RETRY-POLICY: legacy-ссылки могли быть созданы с payment_type='one_time',
+    // но фактически содержат installment meta → защитно повышаем до 'subscription'.
+    const effectivePaymentType = hasInstallment ? 'subscription' : (link.payment_type as 'one_time' | 'subscription');
+    const installmentMetaExtra = hasInstallment
       ? {
-          installment_count: Number(linkInstallment.selected_installment_months),
-          installment_per_payment_amount_byn: Number(linkInstallment.per_payment_amount_byn),
-          installment_total_amount_byn: Number(linkInstallment.per_payment_amount_byn) * Number(linkInstallment.selected_installment_months),
+          installment_count: Number(linkInstallment!.selected_installment_months),
+          installment_per_payment_amount_byn: Number(linkInstallment!.per_payment_amount_byn),
+          installment_total_amount_byn: Number(linkInstallment!.per_payment_amount_byn) * Number(linkInstallment!.selected_installment_months),
           installment: {
-            interval_days: Number(linkInstallment.interval_days ?? 30),
-            first_payment_delay_days: Number(linkInstallment.first_payment_delay_days ?? 0),
-            rounding_mode: String(linkInstallment.rounding_mode ?? 'round_half_up_byn'),
-            max_installment_months: Number(linkInstallment.max_installment_months ?? linkInstallment.selected_installment_months),
+            interval_days: Number(linkInstallment!.interval_days ?? 30),
+            first_payment_delay_days: Number(linkInstallment!.first_payment_delay_days ?? 0),
+            rounding_mode: String(linkInstallment!.rounding_mode ?? 'round_half_up_byn'),
+            max_installment_months: Number(linkInstallment!.max_installment_months ?? linkInstallment!.selected_installment_months),
             source: 'payment_link',
             // PATCH INSTALLMENT-PUBLIC-LINK: маркер для shared checkout — оформить как finite bePaid subscription.
             as_finite_subscription: true,
-            billing_cycles: Number(linkInstallment.selected_installment_months),
+            billing_cycles: Number(linkInstallment!.selected_installment_months),
+            // Retry policy — пробрасываем в shared checkout.
+            max_charge_attempts: linkInstallment!.max_charge_attempts == null
+              ? 0
+              : Number(linkInstallment!.max_charge_attempts),
+            retry_policy_mode: linkInstallment!.retry_policy_mode
+              ?? (Number(linkInstallment!.max_charge_attempts ?? 0) === 0
+                ? 'unlimited_requested'
+                : 'limited'),
           },
         }
       : {};
@@ -340,7 +352,7 @@ Deno.serve(async (req) => {
       product_id: link.product_id,
       tariff_id: link.tariff_id,
       amount: link.amount,
-      payment_type: link.payment_type as 'one_time' | 'subscription',
+      payment_type: effectivePaymentType,
       description: link.description || undefined,
       offer_id: link.offer_id || undefined,
       origin,
