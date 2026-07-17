@@ -168,7 +168,7 @@ Deno.serve(async (req) => {
 
       const bepaidCreds = await getBepaidCredsStrict(supabase);
       if (isBepaidCredsError(bepaidCreds)) {
-        await supabase.from('audit_logs').insert({
+        const { error: auditError } = await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_label: 'public-create-installment-link',
           action: 'installment.retry_policy.preflight_blocked',
@@ -180,6 +180,13 @@ Deno.serve(async (req) => {
             source: 'public-create-installment-link',
           },
         });
+        if (auditError) {
+          console.error('[installment-preflight] audit insert failed', {
+            error: auditError.message,
+            offer_id,
+            source: 'public-create-installment-link',
+          });
+        }
         return publicInstallmentUnavailable();
       }
       try {
@@ -189,7 +196,7 @@ Deno.serve(async (req) => {
         });
       } catch (e) {
         if (e instanceof ProviderUnlimitedAttemptsNotSupportedError) {
-          await supabase.from('audit_logs').insert({
+          const { error: auditError } = await supabase.from('audit_logs').insert({
             actor_type: 'system',
             actor_label: 'public-create-installment-link',
             action: 'installment.retry_policy.preflight_blocked',
@@ -201,6 +208,13 @@ Deno.serve(async (req) => {
               source: 'public-create-installment-link',
             },
           });
+          if (auditError) {
+            console.error('[installment-preflight] audit insert failed', {
+              error: auditError.message,
+              offer_id,
+              source: 'public-create-installment-link',
+            });
+          }
           return publicInstallmentUnavailable();
         }
         throw e;
