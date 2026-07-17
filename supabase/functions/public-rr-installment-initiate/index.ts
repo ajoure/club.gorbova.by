@@ -50,7 +50,7 @@ import {
   applyCrmStageOnTerminal,
   auditNegativeSnapshot,
   buildNegativeSnapshot,
-  resolveOfferRoutingWithFallback,
+  resolveOrderRouting,
 } from "../_shared/crm-routing.ts";
 
 const UUID_RE =
@@ -342,9 +342,10 @@ Deno.serve(async (req: Request) => {
     reason?: string; resolved_via?: string; candidates_count?: number;
   } = {};
   try {
-    const routing = await resolveOfferRoutingWithFallback(supabaseAdmin, {
+    const routing = await resolveOrderRouting(supabaseAdmin, {
       offer_id: offerId,
       tariff_id: tariff.id,
+      product_id: product.id,
     });
     crmRoutingContext = {
       reason: routing.reason,
@@ -354,11 +355,30 @@ Deno.serve(async (req: Request) => {
     if (routing.ok && routing.snapshot) {
       crmSnapshot = routing.snapshot;
       crmRoutingOk = true;
+      if (routing.resolved_via === "product_binding_fallback") {
+        // observability: mark compatibility-layer usage
+        await supabaseAdmin.from("audit_logs").insert({
+          actor_type: "system",
+          actor_label: "public-rr-installment-initiate",
+          action: "rr.create_order.routing_fallback_used",
+          meta: {
+            offer_id: offerId,
+            tariff_id: tariff.id,
+            product_id: product.id,
+            pipeline_id: routing.snapshot.pipeline_id,
+            pipeline_name: routing.snapshot.pipeline_name,
+            stage_id: routing.snapshot.stage_on_pending,
+            stage_name: routing.snapshot.stage_names?.pending ?? null,
+            binding_id: routing.snapshot.binding_id ?? null,
+          },
+        });
+      }
     } else {
       crmSnapshot = buildNegativeSnapshot({
         reason: routing.reason || "unknown",
         offer_id: offerId,
         tariff_id: tariff.id,
+        product_id: product.id,
         resolved_via: routing.resolved_via ?? "none",
         candidates_count: routing.candidates_count ?? 0,
       });
@@ -584,8 +604,9 @@ Deno.serve(async (req: Request) => {
       order_id: externalId,
       offer_id: offerId,
       tariff_id: tariff.id,
+      product_id: product.id,
       reason: crmRoutingContext.reason || "unknown",
-      resolved_via: crmRoutingContext.resolved_via ?? "none",
+      resolved_via: (crmRoutingContext.resolved_via as any) ?? "none",
       candidates_count: crmRoutingContext.candidates_count ?? 0,
     });
   }

@@ -15,7 +15,7 @@
 // На ошибку Stripe — FAIL (controlled). НИКАКОГО bePaid fallback.
 
 import {
-  resolveOfferRoutingWithFallback,
+  resolveOrderRouting,
   buildNegativeSnapshot,
   auditNegativeSnapshot,
 } from './crm-routing.ts';
@@ -166,13 +166,14 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     }
 
     // CRM routing snapshot (parity with bePaid one_time)
-    const routing = await resolveOfferRoutingWithFallback(supabase, { offer_id, tariff_id });
+    const routing = await resolveOrderRouting(supabase, { offer_id, tariff_id, product_id });
     const crmSnapshot = routing.ok && routing.snapshot
       ? routing.snapshot
       : buildNegativeSnapshot({
           reason: routing.reason || 'unknown',
           offer_id: offer_id ?? null,
           tariff_id,
+          product_id,
           resolved_via: routing.resolved_via ?? 'none',
           candidates_count: routing.candidates_count ?? 0,
         });
