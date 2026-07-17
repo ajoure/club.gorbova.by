@@ -769,6 +769,22 @@ Deno.serve(async (req) => {
       return errorResponse(`Failed to create payment link: ${insertErr?.message}`, 500);
     }
 
+    // Deferred installment audit — write only after payment_link exists.
+    if (pendingInstallmentAudit) {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'user',
+        actor_user_id: user.id,
+        actor_label: 'admin-create-public-link',
+        action: 'installment.admin_link_created',
+        meta: {
+          ...pendingInstallmentAudit,
+          payment_link_id: link.id,
+          url_token: link.url_token,
+        },
+      });
+    }
+
+
     // ── Audit (proof contract: payment_type / mode / offer_id / tariff_id / cta_source) ──
     await supabase.from('audit_logs').insert({
       actor_type: 'user',
