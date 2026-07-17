@@ -826,9 +826,9 @@ export default function AdminProductDetailV2() {
       const msg = String(err?.message || err || "");
       if (/tariff_offers_slot_role|slot_role|site_button_variant/i.test(msg)) {
         if (/unique|duplicate/i.test(msg)) {
-          toast.error(`slot_role "${rawSlotRole}" уже используется в этом тарифе. Роль должна быть уникальной.`);
+          toast.error(`Назначение «${rawSlotRole}» уже используется другим оффером этого тарифа. Выберите другое назначение или укажите уникальный технический код.`);
         } else {
-          toast.error(`Проверка слота отклонена: ${msg}`);
+          toast.error("Не удалось сохранить размещение кнопки на публичной странице. Проверьте выбранные назначение и внешний вид.");
         }
         return;
       }
