@@ -379,7 +379,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
       success: true,
       provider: 'stripe',
       payment_type: 'one_time',
-      redirect_url: adapterResult.redirect_url,
+      redirect_url: adapterResult.redirect_url ?? '',
       order_id: order.id,
       order_number: orderNumber,
       checkout_session_id: adapterResult.session_id ?? undefined,
