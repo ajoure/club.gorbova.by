@@ -291,8 +291,9 @@ Deno.serve(async (req: Request) => {
   const { data: offer, error: offerErr } = await supabaseAdmin
     .from("tariff_offers")
     .select(
-      "id, tariff_id, offer_type, amount, meta, is_active, tariffs:tariff_id(id, is_active, product_id, products_v2:product_id(id, is_active, currency))",
+      "id, tariff_id, offer_type, amount, meta, is_active, tariffs:tariff_id(id, name, is_active, product_id, products_v2:product_id(id, name, public_title, is_active, currency))",
     )
+
     .eq("id", offerId)
     .maybeSingle();
 
