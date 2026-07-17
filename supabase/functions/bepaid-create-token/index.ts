@@ -891,15 +891,17 @@ Deno.serve(async (req) => {
           const orderNumber = `ORD-TEST-${Date.now().toString(36).toUpperCase()}`;
 
           // CRM routing — Layer A (B.0 invariant): always materialize crm_routing_snapshot
-          const testRouting = await resolveOfferRoutingWithFallback(supabase, { offer_id: offerId, tariff_id: tariffId });
+          const testRouting = await resolveOrderRouting(supabase, { offer_id: offerId, tariff_id: tariffId, product_id: productId });
           const testCrmSnapshot = testRouting.ok && testRouting.snapshot
             ? testRouting.snapshot
             : buildNegativeSnapshot({
                 reason: testRouting.reason || 'unknown',
                 offer_id: offerId ?? null,
                 tariff_id: tariffId,
+                product_id: productId,
                 resolved_via: testRouting.resolved_via ?? 'none',
                 candidates_count: testRouting.candidates_count ?? 0,
+                primary_reason: testRouting.primary_reason ?? null,
               });
           const testMeta: Record<string, unknown> = {
             source: 'admin_test',
