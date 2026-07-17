@@ -2187,31 +2187,64 @@ Deno.serve(async (req) => {
           })
           .eq('provider_subscription_id', subscriptionId);
         
-        // Disable auto_renew but DON'T revoke access retroactively
+        // Disable auto_renew but DON'T revoke access retroactively.
+        // B7: for finite installment subs, distinguish retry-exhausted from
+        // normal terminal states by checking paid_billing_cycles vs installment_count.
+        const termMeta = (subV2.meta || {}) as Record<string, any>;
+        const termInstallmentCount = Number(termMeta.installment_count ?? 0);
+        const termIsFinite =
+          termMeta.model === 'bepaid_finite_subscription' ||
+          (Number.isFinite(termInstallmentCount) && termInstallmentCount >= 2);
+        const termPaidCycles = Number(
+          (body as any)?.paid_billing_cycles ?? (subscription as any)?.paid_billing_cycles ?? termMeta.paid_billing_cycles ?? 0
+        );
+        const termIsRetryExhausted =
+          termIsFinite &&
+          termPaidCycles < termInstallmentCount &&
+          (subscriptionState === 'expired' || subscriptionState === 'failed');
+
         await supabase
           .from('subscriptions_v2')
           .update({
             auto_renew: false,
+            next_charge_at: null,
             meta: {
-              ...(subV2.meta || {}),
+              ...termMeta,
               bepaid_terminal_at: now.toISOString(),
               bepaid_terminal_state: subscriptionState,
+              ...(termIsFinite
+                ? {
+                    paid_billing_cycles: termPaidCycles,
+                    installment_status: termIsRetryExhausted
+                      ? 'retry_exhausted'
+                      : (termPaidCycles >= termInstallmentCount ? 'completed' : 'terminated'),
+                  }
+                : {}),
             },
           })
           .eq('id', subscriptionV2Id);
-        
+
         // Audit log
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
           actor_label: 'bepaid-webhook',
-          action: 'billing.inv22.autorenew_disabled_from_provider_state',
+          action: termIsRetryExhausted
+            ? 'bepaid.subscription.installment_retry_exhausted'
+            : 'billing.inv22.autorenew_disabled_from_provider_state',
           target_user_id: subV2.user_id,
           meta: {
             subscription_v2_id: subscriptionV2Id,
             provider_subscription_id: subscriptionId,
             state: subscriptionState,
-            reason: 'terminal_provider_state',
+            reason: termIsRetryExhausted ? 'installment_retry_exhausted' : 'terminal_provider_state',
+            ...(termIsFinite
+              ? {
+                  model: 'bepaid_finite_subscription',
+                  paid_billing_cycles: termPaidCycles,
+                  installment_count: termInstallmentCount,
+                }
+              : {}),
           },
         });
         
