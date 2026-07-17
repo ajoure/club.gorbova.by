@@ -78,6 +78,8 @@ export interface NegativeRoutingSnapshot {
   product_id?: string | null;
   resolved_via: ResolvedVia | 'none';
   candidates_count: number;
+  /** Primary resolver reason before fallback (if fallback also failed). */
+  primary_reason?: string | null;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
