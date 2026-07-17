@@ -2075,8 +2075,10 @@ Deno.serve(async (req) => {
                   billing_cycles: Number((subV2.meta as any)?.billing_cycles ?? installmentCountForAudit),
                   installment_count: installmentCountForAudit,
                   per_payment_amount: transaction?.amount ? transaction.amount / 100 : null,
-                  // STAGE L3 GUARD: для finite bePaid installment internal installment_payments НЕ материализуется.
-                  internal_installment_skipped: true,
+                  // B7 Item 8: schedule is now materialized via helper above.
+                  installment_schedule_materialized: true,
+                  installment_schedule_count: installmentCountForAudit,
+
                 }
               : {}),
           },
