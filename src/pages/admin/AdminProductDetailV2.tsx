@@ -633,12 +633,12 @@ export default function AdminProductDetailV2() {
         (offerForm.meta as any) = { ...(offerForm.meta as any), slot_role: candidate };
       }
       if (!rawSlotRole || !rawVariant) {
-        toast.error("Активный оффер: slot_role и site_button_variant обязательны для этого продукта (динамические слоты)");
+        toast.error("Для активного оффера этого продукта укажите назначение и внешний вид кнопки — блок «Размещение кнопки на публичной странице».");
         return;
       }
     } else if (offerForm.is_active && (rawSlotRole || rawVariant)) {
       if (!rawSlotRole || !rawVariant) {
-        toast.error("Активный оффер: slot_role и site_button_variant должны быть заданы вместе");
+        toast.error("Заполните оба поля в блоке «Размещение кнопки на публичной странице»: назначение и внешний вид.");
         return;
       }
     }
