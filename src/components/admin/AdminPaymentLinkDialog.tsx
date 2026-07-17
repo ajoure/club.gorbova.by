@@ -1630,15 +1630,36 @@ ${amountLine}
                 </div>
               )}
 
-              {/* Stage L: Селектор количества платежей + блок суммы */}
-              {selectedTariffId && isInstallmentOffer && installmentMaxMonths && installmentMaxMonths >= 2 && (() => {
+              {/* Индивидуальная ссылка: N всегда 2..12, независимо от настроек кнопки.
+                  Админ может изменить количество платежей и сумму. Публичная кнопка не меняется. */}
+              {selectedTariffId && isInstallmentOffer && (() => {
                 const intervalDays = Number((effectiveOffer as any)?.installment_interval_days ?? 30);
+                const offerAmountByn = Number((effectiveOffer as any)?.amount ?? 0);
+                const offerN = installmentMaxMonths ?? null;
                 const pluralPayment = (n: number) =>
                   n === 1 ? "платёж" : n < 5 ? "платежа" : "платежей";
                 const pluralDay = (n: number) =>
                   n === 1 ? "день" : n < 5 ? "дня" : "дней";
+                const overrideN = selectedInstallmentMonths !== null && selectedInstallmentMonths !== offerN;
+                const overrideAmount = offerAmountByn > 0 && amount > 0 && Math.round(amount) !== Math.round(offerAmountByn);
                 return (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Параметры индивидуальной ссылки</p>
+                    <p className="text-xs text-muted-foreground">
+                      Кнопка используется как базовое предложение. Для этой индивидуальной ссылки можно изменить общую сумму и количество платежей. Настройки публичной кнопки при этом не изменятся.
+                    </p>
+                  </div>
+
+                  {offerN && offerAmountByn > 0 && (
+                    <div className="rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
+                      <p>Стандартные параметры кнопки:</p>
+                      <p className="text-foreground">
+                        {offerN} {pluralPayment(offerN)} · {offerAmountByn} {previewCurrency}
+                      </p>
+                    </div>
+                  )}
+
                   <Label>Количество платежей</Label>
                   <Select
                     value={selectedInstallmentMonths ? String(selectedInstallmentMonths) : ""}
@@ -1648,7 +1669,7 @@ ${amountLine}
                       <SelectValue placeholder="Выберите количество…" />
                     </SelectTrigger>
                     <SelectContent>
-                      {Array.from({ length: installmentMaxMonths - 1 }, (_, i) => i + 2).map((n) => (
+                      {Array.from({ length: 11 }, (_, i) => i + 2).map((n) => (
                         <SelectItem key={n} value={String(n)}>
                           {n} {pluralPayment(n)}
                         </SelectItem>
@@ -1656,7 +1677,7 @@ ${amountLine}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Выберите, на сколько платежей разбить рассрочку. Доступны варианты 2–{installmentMaxMonths} (зависит от настроек кнопки в тарифе).
+                    Доступно от 2 до 12 платежей. Настройки публичной кнопки не изменятся.
                   </p>
 
                   {selectedInstallmentMonths && amount > 0 && (() => {
@@ -1666,17 +1687,25 @@ ${amountLine}
                     const diff = totalInstallment - amount;
                     return (
                       <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-1">
-                        <p className="text-sm">Количество платежей: <b>{N}</b></p>
+                        <p className="text-sm">Параметры этой ссылки:</p>
+                        <p className="text-sm">
+                          <b>{N} {pluralPayment(N)}</b> · <b>{amount} {previewCurrency}</b>
+                        </p>
                         <p className="text-sm">Один платёж: <b>{perPayment} {previewCurrency}</b></p>
-                        <p className="text-sm">Итоговая сумма рассрочки: <b>{totalInstallment} {previewCurrency}</b></p>
+                        <p className="text-sm">Итоговая сумма: <b>{totalInstallment} {previewCurrency}</b></p>
                         {diff !== 0 && (
                           <p className="text-xs text-muted-foreground">
-                            Разница из-за округления: +{diff} {previewCurrency}
+                            Разница из-за округления вверх до целых {previewCurrency}: +{diff} {previewCurrency}
                           </p>
                         )}
                         <p className="text-xs text-muted-foreground">
                           Первый платёж — сегодня, далее каждые {intervalDays} {pluralDay(intervalDays)}.
                         </p>
+                        {(overrideN || overrideAmount) && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400">
+                            Индивидуальные параметры отличаются от кнопки. Кнопка на сайте не изменится.
+                          </p>
+                        )}
                       </div>
                     );
                   })()}
