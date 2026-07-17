@@ -1506,7 +1506,7 @@ ${amountLine}
                     <span className="font-medium text-sm">Тип оплаты: Рассрочка</span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Серия из {selectedInstallmentMonths ?? "—"} ежемесячных платежей. Сегодня клиент оплачивает первый платёж, остальные списываются с карты автоматически каждые 30 дней.
+                    Серия из {selectedInstallmentMonths ?? "—"} платежей. Сегодня клиент оплачивает первый платёж, остальные списываются с карты автоматически каждые {Number((effectiveOffer as any)?.installment_interval_days ?? 30)} дней.
                   </p>
                 </div>
               )}
