@@ -299,6 +299,9 @@ Deno.serve(async (req: Request) => {
   if (offerErr) return errorResponse("offer_lookup_failed", 500);
   if (!offer) return errorResponse("offer_not_found", 404);
   if (!offer.is_active) return errorResponse("offer_inactive", 403);
+  if ((offer as any).offer_type === "invoice") {
+    return errorResponse("offer_type_invoice_not_chargeable", 400);
+  }
   if (offer.offer_type !== "bank_installment") {
     return errorResponse("offer_not_bank_installment", 403);
   }
