@@ -2022,8 +2022,55 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ===================================================================
+        // B7 — FINAL COMPLETION for finite bePaid subscriptions.
+        // When paid_billing_cycles >= installment_count → mark subscription
+        // completed (auto_renew off, next_charge_at null). Idempotent.
+        // ===================================================================
+        if (
+          subIsInstallmentFinite &&
+          Number.isFinite(paidCycles) &&
+          subInstallmentCount > 0 &&
+          paidCycles >= subInstallmentCount
+        ) {
+          try {
+            const alreadyCompleted = String((subV2Meta as any)?.installment_status || '') === 'completed';
+            if (!alreadyCompleted) {
+              await supabase
+                .from('subscriptions_v2')
+                .update({
+                  auto_renew: false,
+                  next_charge_at: null,
+                  meta: {
+                    ...subV2Meta,
+                    installment_status: 'completed',
+                    installment_completed_at: now.toISOString(),
+                    paid_billing_cycles: paidCycles,
+                  },
+                  updated_at: now.toISOString(),
+                })
+                .eq('id', subscriptionV2Id);
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.subscription.installment_completed',
+                target_user_id: subV2.user_id,
+                meta: {
+                  subscription_v2_id: subscriptionV2Id,
+                  order_id: orderV2Id,
+                  provider_subscription_id: subscriptionId,
+                  paid_billing_cycles: paidCycles,
+                  installment_count: subInstallmentCount,
+                  last_tx_uid: transactionUid,
+                },
+              });
+              console.log('[WEBHOOK-SUBSCRIPTION] finite installment COMPLETED', { paidCycles, subInstallmentCount });
+            }
+          } catch (finErr) {
+            console.error('[WEBHOOK-SUBSCRIPTION] finite completion non-fatal:', finErr);
+          }
+        }
 
-        
         return new Response(JSON.stringify({ 
           ok: true, 
           mode: 'provider_managed_subscription', 
@@ -2031,7 +2078,104 @@ Deno.serve(async (req) => {
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
-        
+
+      } else if (subscriptionState === 'active' && transaction?.status === 'failed') {
+        // ===================================================================
+        // B7 — CHARGE FAILED / RETRY PENDING for provider-managed subscription.
+        // Subscription stays active while bePaid retries. We record the failed
+        // payment fact + audit, do NOT revoke access, do NOT disable auto_renew.
+        // ===================================================================
+        console.log('[WEBHOOK-SUBSCRIPTION] Processing FAILED charge on active subscription (retry pending)');
+
+        const failAmount = transaction?.amount ? transaction.amount / 100 : 0;
+        const failCurrency = transaction?.currency || body.plan?.currency || 'BYN';
+        const errMsg =
+          transaction?.message ||
+          (body as any)?.message ||
+          transaction?.gateway_recurring_reason?.message ||
+          'charge_failed';
+
+        // provider_subscriptions: reflect next_charge_at if provided
+        try {
+          await supabase
+            .from('provider_subscriptions')
+            .update({
+              state: 'active',
+              next_charge_at: body.renew_at || body.subscription?.renew_at || null,
+              last_error: String(errMsg).slice(0, 200),
+            })
+            .eq('provider_subscription_id', subscriptionId);
+        } catch (e) {
+          console.error('[WEBHOOK-SUBSCRIPTION] provider_subscriptions failed-update non-fatal:', e);
+        }
+
+        // payments_v2: record failed attempt (only when uid present)
+        if (transactionUid) {
+          try {
+            const { data: prof } = await supabase
+              .from('profiles').select('id').eq('user_id', subV2.user_id).maybeSingle();
+            await upsertPaymentV2(supabase, {
+              order_id: orderV2Id,
+              user_id: subV2.user_id,
+              profile_id: prof?.id || null,
+              amount: failAmount,
+              currency: failCurrency,
+              status: 'failed',
+              provider: 'bepaid',
+              provider_payment_id: transactionUid,
+              card_brand: subscription?.card?.brand || body.card?.brand || null,
+              card_last4: subscription?.card?.last_4 || body.card?.last_4 || null,
+              paid_at: null,
+              is_recurring: true,
+              error_message: String(errMsg).slice(0, 500),
+              meta: {
+                bepaid_subscription_id: subscriptionId,
+                provider_managed: true,
+                retry_pending: true,
+                bepaid_description: extractBepaidDescription(body),
+              },
+            }, '[WEBHOOK-SUBSCRIPTION-FAIL]');
+          } catch (e) {
+            console.error('[WEBHOOK-SUBSCRIPTION] payments_v2 failed-write non-fatal:', e);
+          }
+        }
+
+        const subV2MetaFail = (subV2.meta || {}) as Record<string, any>;
+        const failInstallmentCount = Number(subV2MetaFail.installment_count ?? 0);
+        const failIsFinite =
+          subV2MetaFail.model === 'bepaid_finite_subscription' ||
+          (Number.isFinite(failInstallmentCount) && failInstallmentCount >= 2);
+        const paidCyclesOnFail = Number(
+          (body as any)?.paid_billing_cycles ?? (subscription as any)?.paid_billing_cycles ?? 0
+        );
+
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_label: 'bepaid-webhook',
+          action: failIsFinite
+            ? 'bepaid.subscription.installment_charge_failed'
+            : 'bepaid.subscription.charge_failed',
+          target_user_id: subV2.user_id,
+          meta: {
+            subscription_v2_id: subscriptionV2Id,
+            order_id: orderV2Id,
+            provider_subscription_id: subscriptionId,
+            transaction_uid: transactionUid,
+            paid_billing_cycles: paidCyclesOnFail,
+            installment_count: failInstallmentCount,
+            model: failIsFinite ? 'bepaid_finite_subscription' : undefined,
+            error_message: String(errMsg).slice(0, 500),
+            retry_pending: true,
+            next_charge_at: body.renew_at || body.subscription?.renew_at || null,
+          },
+        });
+
+        return new Response(JSON.stringify({
+          ok: true,
+          mode: 'provider_managed_subscription',
+          status: 'charge_failed_retry_pending',
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
       } else if (['canceled', 'expired', 'failed', 'redirecting'].includes(subscriptionState)) {
         console.log(`[WEBHOOK-SUBSCRIPTION] Processing TERMINAL subscription state: ${subscriptionState}`);
         
