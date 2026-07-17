@@ -306,13 +306,14 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     // CRM routing — Layer A (B.0 invariant): always materialize crm_routing_snapshot
     // (positive or structural-negative). Snapshot is written once at INSERT and never
     // overwritten downstream — see B.0 contract.
-    const oneTimeRouting = await resolveOfferRoutingWithFallback(supabase, { offer_id, tariff_id });
+    const oneTimeRouting = await resolveOrderRouting(supabase, { offer_id, tariff_id, product_id });
     const oneTimeCrmSnapshot = oneTimeRouting.ok && oneTimeRouting.snapshot
       ? oneTimeRouting.snapshot
       : buildNegativeSnapshot({
           reason: oneTimeRouting.reason || 'unknown',
           offer_id: offer_id ?? null,
           tariff_id,
+          product_id,
           resolved_via: oneTimeRouting.resolved_via ?? 'none',
           candidates_count: oneTimeRouting.candidates_count ?? 0,
         });
