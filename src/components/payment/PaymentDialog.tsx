@@ -224,6 +224,9 @@ export function PaymentDialog({
   // PAY-K: one_time saved-card selector. 'new_card' or payment_method_id (uuid).
   // Для subscription/trial карты остаются disabled (PAY-I behavior).
   const [selectedMethod, setSelectedMethod] = useState<string>('new_card');
+  // B8. Явный выбор клиентом количества платежей рассрочки (2..max).
+  // Для max===2 авто-подставляем 2 в useEffect ниже.
+  const [selectedInstallmentMonths, setSelectedInstallmentMonths] = useState<number | null>(null);
   const savedCardIdempotencyKeyRef = useRef<string>(crypto.randomUUID());
 
   // Same-pair subscription conflict (existing active subscription on same product+tariff)
