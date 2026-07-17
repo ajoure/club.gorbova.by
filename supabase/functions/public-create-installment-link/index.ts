@@ -175,7 +175,7 @@ Deno.serve(async (req) => {
       return errorResponse('invalid_first_payment_delay_days', 400);
     }
     const metaMax = Number((offer as any).meta?.installment?.max_months ?? 0);
-    const maxMonths = metaMax >= 2 ? metaMax : maxMonthsColumn;
+    const maxMonths = metaMax >= 2 ? metaMax : publicCycles;
 
     let retryPolicy;
     try {
