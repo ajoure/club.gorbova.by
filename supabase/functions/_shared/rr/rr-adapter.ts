@@ -88,7 +88,9 @@ export interface RRCreateOrderInput {
   completeUrl?: string;
   failUrl?: string;
   correlationId: string;
+  itemName?: string;
 }
+
 
 export type RRFailureKind =
   | "timeout"
