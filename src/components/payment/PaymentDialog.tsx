@@ -18,6 +18,17 @@ import { toast } from "sonner";
 import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Info, AlertTriangle, Repeat, Shield } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  calculateInstallmentPlan,
+  kopecksToDecimal,
+} from "@/lib/calculateInstallmentPlan";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
