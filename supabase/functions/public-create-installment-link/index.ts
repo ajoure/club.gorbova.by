@@ -27,6 +27,10 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { resolveInstallmentRetryPolicy } from '../_shared/installment-retry-policy.ts';
+import {
+  resolveChargeNotificationSnapshotForWriter,
+  serializeChargeNotificationPolicy,
+} from '../_shared/charge-notification-policy.ts';
 
 interface CreateInstallmentLinkRequest {
   product_id: string;
@@ -160,6 +164,13 @@ Deno.serve(async (req) => {
     // 24h окно — гость может вернуться завершить оплату.
     const expires_at = new Date(Date.now() + 24 * 60 * 60_000).toISOString();
 
+    // B2. Snapshot charge_notifications policy at link creation time.
+    // Precedence: (no link meta yet) → live offer meta → legacy → defaults.
+    const chargeNotifPolicy = resolveChargeNotificationSnapshotForWriter({
+      offerMeta: (offer as any)?.meta,
+    });
+    const chargeNotifSnapshot = serializeChargeNotificationPolicy(chargeNotifPolicy);
+
     const installmentBlock = {
       payment_method: 'internal_installment',
       max_installment_months: maxMonths,
@@ -180,6 +191,9 @@ Deno.serve(async (req) => {
       // Retry policy — единый парсер (_shared/installment-retry-policy.ts).
       max_charge_attempts: retryPolicy.configured_value,
       retry_policy_mode: retryPolicy.mode,
+      // B2. Canonical charge_notifications snapshot (installment scope).
+      charge_notifications: chargeNotifSnapshot,
+      charge_notifications_source: chargeNotifPolicy.source,
     };
 
     const meta = {

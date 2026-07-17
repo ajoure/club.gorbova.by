@@ -25,6 +25,10 @@ import {
   buildRetryPolicySnapshot,
   type BepaidAttemptsResolution,
 } from './installment-retry-policy.ts';
+import {
+  resolveChargeNotificationSnapshotForWriter,
+  serializeChargeNotificationPolicy,
+} from './charge-notification-policy.ts';
 
 export interface CreateCheckoutParams {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -964,6 +968,14 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     // PATCH PAYMENTS-REVISION: pre-create subscriptions_v2 ДО bePaid /subscriptions,
     // чтобы tracking_id содержал реальный subscription_v2_id.
+    // B2. Resolve canonical charge_notifications policy from link snapshot
+    // (extraMeta пришёл из payment_links.meta.installment / .recurring). Offer
+    // fallback здесь не читаем — precedence link→offer уже применяется в writer'ах.
+    const chargeNotifPolicy = resolveChargeNotificationSnapshotForWriter({
+      linkMeta: extraMeta,
+    });
+    const chargeNotifSnapshot = serializeChargeNotificationPolicy(chargeNotifPolicy);
+
     const preSubMeta: Record<string, any> = {
       source: isInstallmentSubscription ? 'public_link_installment' : 'public_link_subscription',
       checkout_order_id: order.id,
@@ -972,6 +984,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       tariff_access_days: accessDays,
       amount_byn: amountByn,
       currency: 'BYN',
+      // B2. Canonical charge_notifications snapshot (subscription scope).
+      charge_notifications: chargeNotifSnapshot,
+      charge_notifications_source: chargeNotifPolicy.source,
     };
     if (isInstallmentSubscription) {
       preSubMeta.installment_count = installmentCountRaw;
@@ -981,6 +996,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       preSubMeta.installment = {
         ...installmentExtra,
         retry_policy: retryPolicySnapshotPre,
+        // B2. Canonical installment-scope charge_notifications snapshot.
+        charge_notifications: chargeNotifSnapshot,
+        charge_notifications_source: chargeNotifPolicy.source,
       };
       preSubMeta.model = 'bepaid_finite_subscription';
       // PATCH A2 — единый effective retry snapshot (канонический путь meta.installment.retry_policy).
@@ -1223,14 +1241,22 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
               billing_cycles: billingCycles,
               model: 'bepaid_finite_subscription',
               // PATCH A2 — канонический путь meta.installment.retry_policy.
+              // B2 — canonical installment.charge_notifications snapshot.
               installment: {
                 ...(installmentExtra || {}),
                 retry_policy: retryPolicySnapshotPre,
+                charge_notifications: chargeNotifSnapshot,
+                charge_notifications_source: chargeNotifPolicy.source,
               },
               // legacy дубль — к удалению.
               retry_policy: retryPolicySnapshotPre,
+              charge_notifications: chargeNotifSnapshot,
             }
-          : {}),
+          : {
+              // Non-installment MIT subscription: тоже сохраняем policy (subscription-scope).
+              charge_notifications: chargeNotifSnapshot,
+              charge_notifications_source: chargeNotifPolicy.source,
+            }),
       },
     }, { onConflict: 'provider,provider_subscription_id' });
 

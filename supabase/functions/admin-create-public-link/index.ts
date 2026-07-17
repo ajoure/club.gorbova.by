@@ -19,6 +19,10 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
 import { resolveInstallmentRetryPolicy } from '../_shared/installment-retry-policy.ts';
+import {
+  resolveChargeNotificationSnapshotForWriter,
+  serializeChargeNotificationPolicy,
+} from '../_shared/charge-notification-policy.ts';
 
 interface CreatePublicLinkRequest {
   product_id: string;
@@ -307,6 +311,13 @@ Deno.serve(async (req) => {
         return errorResponse('invalid_installment_max_charge_attempts', 400);
       }
 
+      // B2. Snapshot charge_notifications policy at link creation time
+      // (installment path). Precedence: live offer meta → legacy → defaults.
+      const chargeNotifPolicy = resolveChargeNotificationSnapshotForWriter({
+        offerMeta: (offer as any)?.meta,
+      });
+      const chargeNotifSnapshot = serializeChargeNotificationPolicy(chargeNotifPolicy);
+
       installmentLinkAmountKopecks = perPaymentKopecks;
       installmentBlock = {
         payment_method: 'internal_installment',
@@ -324,6 +335,9 @@ Deno.serve(async (req) => {
         // Retry policy (см. _shared/installment-retry-policy.ts).
         max_charge_attempts: retryPolicy.configured_value,
         retry_policy_mode: retryPolicy.mode,
+        // B2. Canonical charge_notifications snapshot (installment scope).
+        charge_notifications: chargeNotifSnapshot,
+        charge_notifications_source: chargeNotifPolicy.source,
       };
       payment_type = 'subscription';
     }
