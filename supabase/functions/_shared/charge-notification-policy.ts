@@ -68,7 +68,13 @@ export function resolveChargeNotificationPolicy(
   const canonicalInst = installment?.charge_notifications as
     | Record<string, unknown>
     | undefined;
-  const canonical = canonicalRoot ?? canonicalInst;
+  // B2 corrective. Also accept canonical snapshot under meta.recurring.charge_notifications
+  // (used by payment_links.meta.recurring for non-installment subscriptions).
+  const recurringBag = m.recurring as Record<string, unknown> | undefined;
+  const canonicalRecurring = recurringBag?.charge_notifications as
+    | Record<string, unknown>
+    | undefined;
+  const canonical = canonicalRoot ?? canonicalInst ?? canonicalRecurring;
 
   if (canonical && typeof canonical === "object") {
     const days = sanitizeReminderDays(canonical.reminder_days) ??
