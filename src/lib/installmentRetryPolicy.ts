@@ -31,7 +31,8 @@ export type InstallmentAttemptsOption = { value: number | null; label: string };
 
 export const INSTALLMENT_MAX_CHARGE_ATTEMPTS_OPTIONS: InstallmentAttemptsOption[] = [
   { value: null, label: "По умолчанию (3 попытки)" },
-  { value: 0, label: "Без ограничения" },
+  // NB: «Без ограничения» (0) временно скрыто — provider capability не подтверждён.
+  // При выборе 0 checkout возвращает controlled error provider_unlimited_attempts_not_supported.
   { value: 1, label: "1 попытка" },
   { value: 2, label: "2 попытки" },
   { value: 3, label: "3 попытки" },
