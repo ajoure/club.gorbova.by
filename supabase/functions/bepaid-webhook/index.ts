@@ -2288,21 +2288,9 @@ Deno.serve(async (req) => {
           },
         });
 
-        // B7 Item 8: annotate current pending installment_payments row with
-        // provider failure metadata (dup-UID protected inside helper).
-        if (failIsFinite) {
-          try {
-            await annotateInstallmentCycleFailure({
-              supabase,
-              subscriptionId: subscriptionV2Id,
-              transactionUid: transactionUid ? String(transactionUid) : null,
-              errorMessage: String(errMsg),
-              atIso: transaction?.paid_at || now.toISOString(),
-            });
-          } catch (annErr) {
-            console.error('[WEBHOOK-SUBSCRIPTION] failure annotation non-fatal:', annErr);
-          }
-        }
+        // B7 Item 8 DISABLED — do not touch local installment_payments schedule
+        // for provider-managed finite bePaid subscriptions.
+        void annotateInstallmentCycleFailure;
 
 
 
