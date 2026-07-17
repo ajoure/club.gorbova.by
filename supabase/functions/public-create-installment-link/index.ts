@@ -83,6 +83,7 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (!offer) return errorResponse('offer_not_found', 404);
     if (!offer.is_active) return errorResponse('offer_inactive', 400);
+    if ((offer as any).offer_type === 'invoice') return errorResponse('offer_type_invoice_not_chargeable', 400);
     if (offer.offer_type !== 'pay_now') return errorResponse('offer_not_pay_now', 400);
 
     // Cross-check tariff
