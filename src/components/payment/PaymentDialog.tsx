@@ -757,8 +757,9 @@ export function PaymentDialog({
           body: {
             product_id: productId,
             offer_id: offerId,
-            // B8. Клиент явно выбирает N (2..max). При max=2 auto-подставляется 2.
-            selected_installment_months: selectedInstallmentMonths,
+            // Публичный клиент не выбирает N — сервер берёт точное значение из
+            // tariff_offers.installment_count. Поле оставлено для совместимости
+            // и игнорируется сервером на публичном пути.
           },
         },
       );
