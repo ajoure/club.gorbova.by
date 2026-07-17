@@ -679,7 +679,16 @@ export function PaymentDialog({
     try {
       const { data, error } = await supabase.functions.invoke(
         'public-create-installment-link',
-        { body: { product_id: productId, offer_id: offerId } }
+        {
+          body: {
+            product_id: productId,
+            offer_id: offerId,
+            // B9. Ландинг сейчас всегда выбирает max_months (installmentCount из оффера — это max).
+            // Публичный writer валидирует значение и вернёт installment_months_required,
+            // если для max>2 клиент явно не выбрал N.
+            selected_installment_months: installmentCount ?? null,
+          },
+        },
       );
       if (error || !data?.success || !data?.url_token) {
         const msg = data?.error || error?.message || 'Не удалось создать ссылку на рассрочку';

@@ -36,11 +36,19 @@ import {
   resolveChargeNotificationSnapshotForWriter,
   serializeChargeNotificationPolicy,
 } from '../_shared/charge-notification-policy.ts';
+import {
+  calculateInstallmentPlan,
+  InstallmentPlanError,
+  kopecksToDecimal,
+} from '../_shared/calculate-installment-plan.ts';
 
 interface CreateInstallmentLinkRequest {
   product_id: string;
   tariff_id?: string | null;
   offer_id: string;
+  // B9. Публичный клиент выбирает N платежей. Если max=2 и поле отсутствует —
+  // берём 2. Если max>2 и поле отсутствует — 400 installment_months_required.
+  selected_installment_months?: number | null;
 }
 
 // SINGLE SOURCE OF TRUTH: все payment ссылки строятся на https://gorbova.by.
@@ -115,22 +123,53 @@ Deno.serve(async (req) => {
       return errorResponse('not_installment_offer', 400);
     }
 
-    const installmentCount = Number((offer as any).installment_count ?? 0);
-    if (!Number.isInteger(installmentCount) || installmentCount < 2) {
+    // B9. В tariff_offers.installment_count хранится max_months (2..12).
+    const maxMonthsColumn = Number((offer as any).installment_count ?? 0);
+    if (!Number.isInteger(maxMonthsColumn) || maxMonthsColumn < 2) {
       return errorResponse('installment_count_invalid', 400);
+    }
+
+    // B9. Выбор клиента (N платежей). Default: если max=2 и не передано — 2.
+    const requestedSel = body.selected_installment_months;
+    let selectedMonths: number;
+    if (requestedSel === null || requestedSel === undefined) {
+      if (maxMonthsColumn === 2) {
+        selectedMonths = 2;
+      } else {
+        return errorResponse('installment_months_required', 400);
+      }
+    } else {
+      const n = Number(requestedSel);
+      if (!Number.isInteger(n) || n < 2 || n > maxMonthsColumn) {
+        return errorResponse('installment_months_out_of_range', 400);
+      }
+      selectedMonths = n;
     }
 
     const totalByn = Number(offer.amount);
     if (!Number.isFinite(totalByn) || totalByn < 1) {
       return errorResponse('invalid_offer_amount', 500);
     }
-    // B9. Округление вверх до целого BYN (per_payment = ceil(total / N)).
-    const perPaymentByn = Math.ceil(totalByn / installmentCount);
+    const totalKopecks = Math.round(totalByn * 100);
+    let plan;
+    try {
+      plan = calculateInstallmentPlan({
+        total_amount_kopecks: totalKopecks,
+        selected_cycles: selectedMonths,
+      });
+    } catch (e) {
+      if (e instanceof InstallmentPlanError) {
+        return errorResponse(e.code, 400);
+      }
+      throw e;
+    }
+    const perPaymentByn = kopecksToDecimal(plan.per_payment_kopecks);
     if (perPaymentByn < 1) {
       return errorResponse('per_payment_too_small', 400);
     }
-    const perPaymentKopecks = perPaymentByn * 100;
-    const totalInstallmentByn = perPaymentByn * installmentCount;
+    const perPaymentKopecks = plan.per_payment_kopecks;
+    const totalInstallmentByn = kopecksToDecimal(plan.effective_total_kopecks);
+    const roundingDeltaByn = kopecksToDecimal(plan.rounding_delta_kopecks);
 
     const rawInterval = (offer as any).installment_interval_days ?? 30;
     const intervalDays = Number(rawInterval);
@@ -143,7 +182,7 @@ Deno.serve(async (req) => {
       return errorResponse('invalid_first_payment_delay_days', 400);
     }
     const metaMax = Number((offer as any).meta?.installment?.max_months ?? 0);
-    const maxMonths = metaMax >= 2 ? metaMax : installmentCount;
+    const maxMonths = metaMax >= 2 ? metaMax : maxMonthsColumn;
 
     let retryPolicy;
     try {
@@ -246,8 +285,8 @@ Deno.serve(async (req) => {
     const installmentBlock = {
       payment_method: 'internal_installment',
       max_installment_months: maxMonths,
-      selected_installment_months: installmentCount,
-      installment_count: installmentCount,
+      selected_installment_months: selectedMonths,
+      installment_count: selectedMonths,
       interval_days: intervalDays,
       first_payment_delay_days: firstDelay,
       total_amount: totalByn,
@@ -255,11 +294,16 @@ Deno.serve(async (req) => {
       // Canonical key для public-checkout/index.ts:194-196.
       per_payment_amount_byn: perPaymentByn,
       total_installment_amount: totalInstallmentByn,
-      rounding_mode: 'ceil_byn',
+      // B9. Canonical rounding snapshot fields.
+      requested_total_byn: totalByn,
+      per_payment_byn: perPaymentByn,
+      effective_total_byn: totalInstallmentByn,
+      rounding_delta_byn: roundingDeltaByn,
+      rounding_mode: 'ceil_to_whole_byn',
       source: 'landing_payment_dialog',
       offer_id: offer.id,
       as_finite_subscription: true,
-      billing_cycles: installmentCount,
+      billing_cycles: selectedMonths,
       // Retry policy — единый парсер (_shared/installment-retry-policy.ts).
       max_charge_attempts: retryPolicy.configured_value,
       retry_policy_mode: retryPolicy.mode,
@@ -320,7 +364,7 @@ Deno.serve(async (req) => {
         tariff_id,
         offer_id: offer.id,
         per_payment_amount_byn: perPaymentByn,
-        installment_count: installmentCount,
+        installment_count: selectedMonths,
         total_installment_amount_byn: totalInstallmentByn,
         source: 'landing_payment_dialog',
       },
@@ -331,7 +375,7 @@ Deno.serve(async (req) => {
       url_token: link.url_token,
       public_url: link.public_url,
       installment: {
-        installment_count: installmentCount,
+        installment_count: selectedMonths,
         per_payment_amount_byn: perPaymentByn,
         total_installment_amount_byn: totalInstallmentByn,
       },

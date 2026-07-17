@@ -10,7 +10,7 @@ export type InstallmentPlanResult = {
   per_payment_kopecks: number;
   effective_total_kopecks: number;
   rounding_delta_kopecks: number;
-  rounding_mode: "round_half_up";
+  rounding_mode: "ceil_to_whole_byn";
   cycles: number;
 };
 
@@ -61,7 +61,7 @@ export function calculateInstallmentPlan(
     per_payment_kopecks: perPayment,
     effective_total_kopecks: effectiveTotal,
     rounding_delta_kopecks: rounding,
-    rounding_mode: "round_half_up",
+    rounding_mode: "ceil_to_whole_byn",
     cycles,
   };
 }

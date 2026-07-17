@@ -52,8 +52,9 @@ export interface InstallmentConfig {
   interval_days: number;
   // Фиксировано 0 — первый платёж сразу при покупке.
   first_payment_delay_days: number;
-  // Текущий контракт округления per-payment суммы.
-  rounding_mode: 'round_half_up_byn';
+  // Canonical value: 'ceil_to_whole_byn'. Legacy values ('round_half_up_byn', 'ceil_byn') читаются
+  // на чтении для совместимости, но новые записи всегда используют canonical.
+  rounding_mode: 'ceil_to_whole_byn' | 'round_half_up_byn' | 'ceil_byn';
   // PATCH INSTALLMENT-RETRY-POLICY: 0 = «безлимитно» (unlimited_requested), 1..10 = ограничение.
   // Backend применяет capability gate провайдера (см. _shared/installment-retry-policy.ts).
   max_charge_attempts?: number;

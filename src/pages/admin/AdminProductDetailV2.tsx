@@ -713,7 +713,10 @@ export default function AdminProductDetailV2() {
         chargeTimesLocal = chargeTimesLocal.slice(0, chargeAttemptsPerDay);
       }
       
+      // Merge вместо пересборки с нуля — сохраняем canonical charge_notifications
+      // и любые другие поля, которые UI-компонент уже записал в existingRecurring.
       metaToSave.recurring = {
+        ...(existingRecurring as any),
         is_recurring: true,
         timezone: existingRecurring.timezone || 'Europe/Minsk',
         billing_period_mode: existingRecurring.billing_period_mode || 'month',
@@ -733,7 +736,8 @@ export default function AdminProductDetailV2() {
     
     // Installment metadata (Stage L0a-1):
     // meta.installment = { max_months 2..12, interval_days:30, first_payment_delay_days:0, rounding_mode }
-    // legacy-зеркало в столбцах installment_count / installment_interval_days / first_payment_delay_days сохраняем.
+    // Merge вместо пересборки — сохраняем canonical charge_notifications и любые
+    // add-only поля, записанные другими UI-компонентами.
     if (isInstallment) {
       const maxMonths = Math.max(2, Math.min(12, offerForm.installment_count || 6));
       const intervalDays = Math.max(1, Math.min(365, offerForm.installment_interval_days || 30));
@@ -743,13 +747,15 @@ export default function AdminProductDetailV2() {
       const maxAttempts = Number.isFinite(rawAttempts) && rawAttempts >= 0 && rawAttempts <= 10
         ? Math.floor(rawAttempts)
         : 3;
+      const prevInstallment = (metaToSave.installment ?? {}) as Record<string, any>;
       metaToSave.installment = {
+        ...prevInstallment,
         max_months: maxMonths,
         interval_days: intervalDays,
         first_payment_delay_days: firstDelay,
-        rounding_mode: 'round_half_up_byn',
+        rounding_mode: 'ceil_to_whole_byn',
         max_charge_attempts: maxAttempts,
-      };
+      } as any;
     } else {
       delete metaToSave.installment;
     }

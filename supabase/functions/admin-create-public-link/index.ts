@@ -28,6 +28,11 @@ import {
   resolveChargeNotificationSnapshotForWriter,
   serializeChargeNotificationPolicy,
 } from '../_shared/charge-notification-policy.ts';
+import {
+  calculateInstallmentPlan,
+  InstallmentPlanError,
+  kopecksToDecimal,
+} from '../_shared/calculate-installment-plan.ts';
 
 interface CreatePublicLinkRequest {
   product_id: string;
@@ -292,14 +297,27 @@ Deno.serve(async (req) => {
         return errorResponse('invalid_installment_months', 400);
       }
       // amount приходит в копейках = ПОЛНАЯ стоимость (UI всегда шлёт total).
-      const totalByn = amount / 100;
-      // B9. Округление вверх до целого BYN: per_payment = ceil(total / N).
-      const perPaymentByn = Math.ceil(totalByn / sel);
+      // B9. Backend SoT — calculate-installment-plan (shared helper).
+      let plan;
+      try {
+        plan = calculateInstallmentPlan({
+          total_amount_kopecks: amount,
+          selected_cycles: sel,
+        });
+      } catch (e) {
+        if (e instanceof InstallmentPlanError) {
+          return errorResponse(e.code, 400);
+        }
+        throw e;
+      }
+      const totalByn = kopecksToDecimal(amount);
+      const perPaymentByn = kopecksToDecimal(plan.per_payment_kopecks);
+      const totalInstallmentByn = kopecksToDecimal(plan.effective_total_kopecks);
+      const roundingDeltaByn = kopecksToDecimal(plan.rounding_delta_kopecks);
       if (perPaymentByn < 1) {
         return errorResponse('per_payment_too_small', 400);
       }
-      const perPaymentKopecks = perPaymentByn * 100;
-      const totalInstallmentByn = perPaymentByn * sel;
+      const perPaymentKopecks = plan.per_payment_kopecks;
 
       // PATCH INSTALLMENT-RETRY-POLICY: интервал и попытки берутся из оффера.
       const rawInterval = resolvedOffer.installment_interval_days ?? 30;
@@ -387,7 +405,12 @@ Deno.serve(async (req) => {
         per_payment_amount: perPaymentByn,
         per_payment_amount_byn: perPaymentByn,
         total_installment_amount: totalInstallmentByn,
-        rounding_mode: 'ceil_byn',
+        // B9. Canonical rounding snapshot fields.
+        requested_total_byn: totalByn,
+        per_payment_byn: perPaymentByn,
+        effective_total_byn: totalInstallmentByn,
+        rounding_delta_byn: roundingDeltaByn,
+        rounding_mode: 'ceil_to_whole_byn',
         as_finite_subscription: true,
         billing_cycles: sel,
         // Retry policy (см. _shared/installment-retry-policy.ts).
