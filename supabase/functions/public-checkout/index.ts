@@ -396,6 +396,7 @@ Deno.serve(async (req) => {
       meta_extra: {
         payment_link_id: link.id,
         ...installmentMetaExtra,
+        ...recurringMetaExtra,
         // Phase 5-C — фиксируем фактический выбор в audit-trail order'а.
         provider_choice_resolution: {
           mode: providerMode,
