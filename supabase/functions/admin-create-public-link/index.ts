@@ -170,23 +170,25 @@ Deno.serve(async (req) => {
     // Phase 5-C — snapshot acquiring из оффера для customer_choice ссылок.
     let offerAllowedProviders: ('bepaid' | 'stripe')[] = [];
     let offerStripeAccountCode: string | null = null;
+    let resolvedOffer: any = null;
     if (offer_id) {
-      const { data: offer } = await supabase
+      const { data: loadedOffer } = await supabase
         .from('tariff_offers')
         .select('id, tariff_id, is_active, offer_type, payment_method, installment_count, installment_interval_days, first_payment_delay_days, meta')
         .eq('id', offer_id).maybeSingle();
-      if (!offer) return errorResponse('Offer not found', 400);
-      if (offer.tariff_id !== tariff_id) return errorResponse('Offer does not belong to tariff', 400);
-      if (!offer.is_active) return errorResponse('Offer is not active', 400);
-      if ((offer as any).offer_type === 'invoice') return errorResponse('offer_type_invoice_not_chargeable', 400);
-      if (offer.offer_type !== 'pay_now') return errorResponse('Offer is not a pay_now offer', 400);
-      offerIsRecurring = !!(offer as any).meta?.recurring?.is_recurring;
-      offerPaymentMethod = (offer as any).payment_method ?? null;
-      offerInstallmentCountLegacy = Number((offer as any).installment_count ?? 0) || null;
-      const metaMax = Number((offer as any).meta?.installment?.max_months ?? 0);
+      if (!loadedOffer) return errorResponse('Offer not found', 400);
+      if (loadedOffer.tariff_id !== tariff_id) return errorResponse('Offer does not belong to tariff', 400);
+      if (!loadedOffer.is_active) return errorResponse('Offer is not active', 400);
+      if ((loadedOffer as any).offer_type === 'invoice') return errorResponse('offer_type_invoice_not_chargeable', 400);
+      if (loadedOffer.offer_type !== 'pay_now') return errorResponse('Offer is not a pay_now offer', 400);
+      resolvedOffer = loadedOffer;
+      offerIsRecurring = !!(resolvedOffer as any).meta?.recurring?.is_recurring;
+      offerPaymentMethod = (resolvedOffer as any).payment_method ?? null;
+      offerInstallmentCountLegacy = Number((resolvedOffer as any).installment_count ?? 0) || null;
+      const metaMax = Number((resolvedOffer as any).meta?.installment?.max_months ?? 0);
       offerInstallmentMaxMonths =
         metaMax >= 2 ? metaMax : (offerInstallmentCountLegacy && offerInstallmentCountLegacy >= 2 ? offerInstallmentCountLegacy : null);
-      const acq = (offer as any).meta?.acquiring;
+      const acq = (resolvedOffer as any).meta?.acquiring;
       if (Array.isArray(acq?.allowed_payment_providers)) {
         offerAllowedProviders = acq.allowed_payment_providers.filter(
           (p: any) => p === 'bepaid' || p === 'stripe'
