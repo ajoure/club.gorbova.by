@@ -482,9 +482,10 @@ Deno.serve(async (req) => {
         const orderNumber = `ORD-TRIAL-${Date.now().toString(36).toUpperCase()}`;
 
         // CRM routing snapshot (Layer A invariant — always materialize)
-        const ncRouting = await resolveOfferRoutingWithFallback(supabase, {
+        const ncRouting = await resolveOrderRouting(supabase, {
           offer_id: trialOfferRow.id,
           tariff_id: trialOfferRow.tariff_id,
+          product_id: productId,
         });
         const ncSnapshot = ncRouting.ok && ncRouting.snapshot
           ? ncRouting.snapshot
@@ -492,8 +493,10 @@ Deno.serve(async (req) => {
               reason: ncRouting.reason || 'unknown',
               offer_id: trialOfferRow.id,
               tariff_id: trialOfferRow.tariff_id,
+              product_id: productId,
               resolved_via: ncRouting.resolved_via ?? 'none',
               candidates_count: ncRouting.candidates_count ?? 0,
+              primary_reason: ncRouting.primary_reason ?? null,
             });
 
         const ncMeta: Record<string, unknown> = {
