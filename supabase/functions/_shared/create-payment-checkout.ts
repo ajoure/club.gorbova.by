@@ -316,6 +316,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           product_id,
           resolved_via: oneTimeRouting.resolved_via ?? 'none',
           candidates_count: oneTimeRouting.candidates_count ?? 0,
+          primary_reason: oneTimeRouting.primary_reason ?? null,
         });
     const oneTimeMetaWithRouting = { ...orderMeta, crm_routing_snapshot: oneTimeCrmSnapshot };
 
