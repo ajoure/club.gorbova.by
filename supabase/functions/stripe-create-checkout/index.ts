@@ -237,9 +237,11 @@ Deno.serve(async (req) => {
         order_id: body.order_id,
         offer_id: offerIdForRouting,
         tariff_id: tariffIdForRouting,
+        product_id: body.product_id,
         reason: routing.reason || 'unknown',
         resolved_via: routing.resolved_via ?? 'none',
         candidates_count: routing.candidates_count ?? 0,
+        primary_reason: routing.primary_reason ?? null,
       });
     }
 
