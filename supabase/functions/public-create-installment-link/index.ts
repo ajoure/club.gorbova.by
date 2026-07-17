@@ -285,8 +285,8 @@ Deno.serve(async (req) => {
     const installmentBlock = {
       payment_method: 'internal_installment',
       max_installment_months: maxMonths,
-      selected_installment_months: installmentCount,
-      installment_count: installmentCount,
+      selected_installment_months: selectedMonths,
+      installment_count: selectedMonths,
       interval_days: intervalDays,
       first_payment_delay_days: firstDelay,
       total_amount: totalByn,
@@ -294,11 +294,16 @@ Deno.serve(async (req) => {
       // Canonical key для public-checkout/index.ts:194-196.
       per_payment_amount_byn: perPaymentByn,
       total_installment_amount: totalInstallmentByn,
-      rounding_mode: 'ceil_byn',
+      // B9. Canonical rounding snapshot fields.
+      requested_total_byn: totalByn,
+      per_payment_byn: perPaymentByn,
+      effective_total_byn: totalInstallmentByn,
+      rounding_delta_byn: roundingDeltaByn,
+      rounding_mode: 'ceil_to_whole_byn',
       source: 'landing_payment_dialog',
       offer_id: offer.id,
       as_finite_subscription: true,
-      billing_cycles: installmentCount,
+      billing_cycles: selectedMonths,
       // Retry policy — единый парсер (_shared/installment-retry-policy.ts).
       max_charge_attempts: retryPolicy.configured_value,
       retry_policy_mode: retryPolicy.mode,
