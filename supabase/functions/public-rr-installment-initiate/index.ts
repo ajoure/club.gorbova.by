@@ -50,7 +50,7 @@ import {
   applyCrmStageOnTerminal,
   auditNegativeSnapshot,
   buildNegativeSnapshot,
-  resolveOfferRoutingWithFallback,
+  resolveOrderRouting,
 } from "../_shared/crm-routing.ts";
 
 const UUID_RE =
