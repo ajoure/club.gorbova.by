@@ -26,6 +26,7 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
+import { resolveInstallmentRetryPolicy } from '../_shared/installment-retry-policy.ts';
 
 interface CreateInstallmentLinkRequest {
   product_id: string;
@@ -122,10 +123,27 @@ Deno.serve(async (req) => {
     const perPaymentKopecks = perPaymentByn * 100;
     const totalInstallmentByn = perPaymentByn * installmentCount;
 
-    const intervalDays = Number((offer as any).installment_interval_days ?? 30) || 30;
-    const firstDelay = Number((offer as any).first_payment_delay_days ?? 0) || 0;
+    const rawInterval = (offer as any).installment_interval_days ?? 30;
+    const intervalDays = Number(rawInterval);
+    if (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > 365) {
+      return errorResponse('invalid_installment_interval_days', 400);
+    }
+    const rawFirstDelay = (offer as any).first_payment_delay_days ?? 0;
+    const firstDelay = Number(rawFirstDelay);
+    if (!Number.isInteger(firstDelay) || firstDelay < 0 || firstDelay > 365) {
+      return errorResponse('invalid_first_payment_delay_days', 400);
+    }
     const metaMax = Number((offer as any).meta?.installment?.max_months ?? 0);
     const maxMonths = metaMax >= 2 ? metaMax : installmentCount;
+
+    let retryPolicy;
+    try {
+      retryPolicy = resolveInstallmentRetryPolicy(
+        (offer as any).meta?.installment?.max_charge_attempts,
+      );
+    } catch (_e) {
+      return errorResponse('invalid_installment_max_charge_attempts', 400);
+    }
 
     // ── Build canonical public_url ──
     // ВСЕГДА https://gorbova.by — независимо от продукта.
@@ -157,6 +175,11 @@ Deno.serve(async (req) => {
       rounding_mode: 'round_half_up_byn',
       source: 'landing_payment_dialog',
       offer_id: offer.id,
+      as_finite_subscription: true,
+      billing_cycles: installmentCount,
+      // Retry policy — единый парсер (_shared/installment-retry-policy.ts).
+      max_charge_attempts: retryPolicy.configured_value,
+      retry_policy_mode: retryPolicy.mode,
     };
 
     const meta = {
