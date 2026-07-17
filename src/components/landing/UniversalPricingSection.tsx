@@ -5,6 +5,8 @@ import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
+import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialog";
+import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TariffCarouselGrid } from "./TariffCarouselGrid";
