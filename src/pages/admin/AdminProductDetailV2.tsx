@@ -913,7 +913,7 @@ export default function AdminProductDetailV2() {
         sort_order: (offer.sort_order ?? 0),
         getcourse_offer_id: null, // do not copy provider-side ID
         reject_virtual_cards: !!offer.reject_virtual_cards,
-        payment_method: offer.payment_method ?? "full_payment",
+        payment_method: offer.offer_type === "invoice" ? "bank_transfer" : (offer.payment_method ?? "full_payment"),
         installment_count: offer.installment_count ?? null,
         installment_interval_days: offer.installment_interval_days ?? null,
         first_payment_delay_days: offer.first_payment_delay_days ?? null,
