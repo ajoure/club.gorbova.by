@@ -122,6 +122,17 @@ export default function TariffPricing() {
             ? readBankInstallmentMeta(selectedOffer.offer)
             : {})}
         />
+      ) : selectedOffer && detectInvoiceOnlyOffer(selectedOffer.offer).isInvoiceOnly ? (
+        <InvoiceCheckoutDialog
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          productId={selectedOffer.productId}
+          productName={data.product.public_title || data.product.name}
+          tariffName={selectedOffer.tariff.name}
+          offerId={selectedOffer.offer.id}
+          amount={selectedOffer.offer.amount}
+          currency={data.product.currency || "BYN"}
+        />
       ) : selectedOffer ? (
         <PaymentDialog
           open={paymentOpen}
