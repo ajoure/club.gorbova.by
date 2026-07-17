@@ -1,189 +1,239 @@
-# План в целом корректный. Есть две правки, которые рекомендую внести до выполнения.
+## Да. Вы правы: объяснение «на другом сайте работает» — неправильное и маскирует архитектурный дефект.
 
-### 1. Не выполнять blind UPDATE по `offer_type='invoice'`
+## Почему две одинаковые кнопки работают по-разному
 
-Вместо:
+Сейчас тип:
 
-```sql
-UPDATE public.tariff_offers
-SET payment_method='bank_transfer'
-WHERE offer_type='invoice'
-...
+```text
+offer_type = bank_installment
 
 ```
 
-лучше использовать guarded UPDATE по трём конкретным UUID и ожидаемому текущему состоянию:
+**не определяет поведение кнопки полностью**.
 
-```sql
-WHERE id IN (...)
-  AND offer_type='invoice'
-  AND payment_method='full_payment'
+После него код проверяет ещё один скрытый параметр:
+
+```text
+meta.bank_installment.rr_runtime.enabled
+
+```
+
+Фактическая развилка в коде такая:
+
+```text
+bank_installment
+        │
+        ├─ rr_runtime.enabled = true
+        │      → public-rr-installment-initiate
+        │      → API Ресурс Развития
+        │      → индивидуальная ссылка /order/...
+        │
+        └─ rr_runtime отсутствует или false
+               → API вообще не вызывается
+               → открывается legacy external_link
+               → katerina-gorbova-credit
 
 ```
 
-и затем проверить, что обновлены **ровно 3 строки**. Если обновлено 0–2 или больше 3 — остановить релиз.
+Я проверил саму реализацию:
 
----
+- `readBankInstallmentMeta()` передаёт runtime дальше **только**, когда одновременно:
+  - `enabled === true`;
+  - `provider === 'rr'`.
+- `LeadRequestDialog` вызывает `startBankInstallment()` только при наличии этого runtime.
+- `startBankInstallment()` без runtime немедленно возвращает legacy-ссылку и не обращается к edge-функции.
 
-### 2. Production E2E дополнить проверкой network
+То есть визуально в админке две кнопки одинаковые:
 
-Помимо открытия `InvoiceCheckoutDialog`, проверить, что:
-
-- запрос уходит именно в `invoice-checkout-issue`;
-- **не происходит** обращений к:
-  - `bepaid-create-token`;
-  - `payment-dialog-create-bridge-link`;
-  - `direct-charge`;
-  - другим card-flow endpoint'ам.
-
-Это подтвердит, что routing действительно переключился на invoice-flow, а не только изменился UI.
-
----
-
-Кроме этого, план выглядит согласованным с архитектурой.
-
-Итог:
-
-- ✅ исправление `payment_method='bank_transfer'`;
-- ✅ единый backend contract `offer_type_invoice_not_chargeable`;
-- ✅ publish **до** data-fix;
-- ✅ guarded UPDATE только трёх офферов;
-- ✅ production E2E;
-- ✅ документация по CHECK constraint и rollback.
-
-После выполнения такого плана спринт можно считать закрытым при условии успешного прохождения всех проверок.
-
-&nbsp;
-
-План: закрытие DoD спринта `offer_type='invoice'`
-
-## Статус проблем (подтверждено)
-
-- В БД **3 оффера** с `offer_type='invoice'` имеют `payment_method='full_payment'` — противоречит канону.
-- В `AdminProductDetailV2.tsx` на строках **345, 508, 538, 777–781, 914, 2051** дефолт/normalization всегда пишут `full_payment`, включая ветку `offer_type='invoice'` (стр. 2051).
-- Guards в edge-функциях реализованы только для `bepaid-create-token` и `direct-charge`. Не покрыты: `admin-create-public-link`, `payment-dialog-create-bridge-link`, `public-create-installment-link`, `public-rr-installment-initiate`, `bepaid-auto-process`.
-- Frontend не опубликован — рассинхрон с БД (data-fix уже применён).
-
-## Порядок релиза (без нарушений)
+```text
+Тип кнопки: Рассрочка банка
 
 ```
-1. code fixes (frontend + edge)         [до publish]
-2. edge deploy                          [автоматически]
-3. tsgo verify                          [gate]
-4. frontend publish + live commit       [gate]
-5. guarded data-fix для 3 офферов       [payment_method]
-6. production E2E + backend smoke       [DoD]
-7. финальный отчёт                      [DoD]
-```
 
-Data-fix уже применён по `offer_type`, но `payment_method` ещё не исправлен → выполняем шаг 5 как **UPDATE только `payment_method**` ПОСЛЕ publish (иначе противоречивое состояние сохраняется).
+но технически одна имеет скрытый JSON-флаг, а другая — нет.
 
-## Шаг 1. Frontend: канон `payment_method='bank_transfer'` для invoice
+## Это хардкод?
 
-Файл `src/pages/admin/AdminProductDetailV2.tsx`:
+Это не хардкод конкретного сайта по домену. Но по сути это **скрытый конфигурационный хардкод на уровне каждого оффера**, что для администратора ничем не лучше.
 
-- **Строка 2051** (переключение типа на `invoice`): `payment_method: "bank_transfer"` вместо `"full_payment"`.
-- **Save-normalization (строки 777–781)**: добавить ветку — если `offer_type === "invoice"` → форсим `payment_method = "bank_transfer"` (перед `pay_now`-веткой).
-- **Load-defaults (строки 508, 538, 914)**: если у загружаемого оффера `offer_type='invoice'` и `payment_method !== 'bank_transfer'` — приводить к `bank_transfer` в состоянии формы (без автосохранения; корректная нормализация при следующем сохранении).
-- Postflight assertion в admin UI (dev-warning в консоли, необязательно): `offer_type==='invoice' && payment_method!=='bank_transfer'` → `console.warn`.
+У продукта «1 ступень 2.0» при создании офферов вручную записали:
 
-## Шаг 2. Backend guards: единый контракт ошибки
-
-Во все перечисленные функции добавить проверку сразу после загрузки оффера из БД:
-
-```ts
-if (offer?.offer_type === "invoice") {
-  return new Response(
-    JSON.stringify({ error: "offer_type_invoice_not_chargeable" }),
-    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
+```json
+{
+  "rr_runtime": {
+    "enabled": true,
+    "provider": "rr",
+    "mode": "initiate_only"
+  }
 }
-```
-
-Файлы:
-
-1. `supabase/functions/admin-create-public-link/index.ts`
-2. `supabase/functions/payment-dialog-create-bridge-link/index.ts`
-3. `supabase/functions/public-create-installment-link/index.ts`
-4. `supabase/functions/public-rr-installment-initiate/index.ts`
-5. `supabase/functions/bepaid-auto-process/index.ts` — только если функция получает `offer_id` до charge (проверить при реализации; если оффер не читается — записать в отчёт как N/A с обоснованием).
-
-Существующие guards в `bepaid-create-token` и `direct-charge` — оставить.
-
-## Шаг 3. Проверки перед publish
-
-- `tsgo` на весь проект (гейт).
-- Edge deploy — автоматом после push edge-функций.
-- Curl-smoke каждой из 6 функций с фиктивным `offer_id` invoice-оффера → ожидаем `400 offer_type_invoice_not_chargeable`.
-
-## Шаг 4. Frontend publish + live commit
-
-- Публикация через `preview_ui--publish`.
-- Зафиксировать точный commit hash и live URL в отчёте.
-
-## Шаг 5. Guarded data-fix `payment_method`
-
-Выполняется **после** подтверждённого publish. SQL:
-
-```sql
-UPDATE public.tariff_offers
-SET payment_method = 'bank_transfer'
-WHERE offer_type = 'invoice'
-  AND payment_method <> 'bank_transfer'
-  AND id IN (
-    'b6476800-cc42-4332-836d-5e63ccc83c47',
-    'd749583b-86ba-44cc-9d9c-bd0e38a70137',
-    '4c6d6110-5c9b-419c-82ef-524dfe44ecc1'
-  );
-```
-
-Verify: `SELECT id, offer_type, payment_method FROM tariff_offers WHERE offer_type='invoice'` → все три с `bank_transfer`.
-
-## Шаг 6. Production E2E (Playwright на live URL)
-
-На `https://gorbova.by/cb` для трёх тарифов (Бухгалтер, Гл. бухгалтер, Бизнес-леди):
-
-1. Кнопка «Оплатить от юрлица/ЮЛ» → открывается `InvoiceCheckoutDialog`, не `PaymentDialog`.
-2. В network — запрос на `invoice-checkout-issue` с корректным `offer_id` (сверка с БД).
-3. Кнопки «Оплатить обучение» и «Рассрочка» → открывают `PaymentDialog` (регрессия card-flow и installment-flow).
-4. Curl-smoke: POST в `admin-create-public-link`, `payment-dialog-create-bridge-link`, `public-create-installment-link`, `public-rr-installment-initiate`, `bepaid-create-token`, `direct-charge` с invoice `offer_id` → все возвращают `400 offer_type_invoice_not_chargeable`.
-5. Admin `/admin/products-v2/3e43fb28-…?tab=offers` — три оффера показываются как «Сформировать счёт», вкладки «Оплата»/«Автопродление» скрыты.
-
-## Шаг 7. Отчёт DoD (обязательные артефакты)
-
-Отчёт по форме:
 
 ```
-CODE IMPLEMENTATION      : PASS  (файлы: …)
-TSGO                     : PASS  (0 errors)
-EDGE DEPLOY              : PASS  (список функций + timestamp)
-FRONTEND PUBLISH         : PASS  (live URL, commit hash)
-DATA FIX                 : PASS  (3 rows updated, verify query result)
-PRODUCTION E2E           : PASS  (3 invoice buttons, screenshots)
-CARD-FLOW REGRESSION     : PASS  (Оплатить обучение)
-INSTALLMENT REGRESSION   : PASS  (Рассрочка)
-ADMIN UI                 : PASS  (screenshots)
-BACKEND SMOKE            : PASS  (6 endpoints × 400 response)
-CHECK CONSTRAINT         : имя, новое определение, rollback SQL
-SPRINT STATUS            : PASS
+
+У продукта «20 поток» этот вложенный объект не записали. Поэтому одинаковый тип кнопки даёт разные результаты.
+
+Следовательно, проблема не в РР и не в том, что «на этом сайте API не работает». Проблема в том, что система позволяет создать кнопку **«Рассрочка банка» без включённой банковской рассрочки через API**.
+
+## Что должно быть исправлено архитектурно
+
+Просто дописать `rr_runtime` двум офферам недостаточно. Это починит текущие данные, но проблема повторится при следующем копировании или создании кнопки.
+
+Канон должен быть таким:
+
+```text
+offer_type = bank_installment
+provider = rr
+
 ```
 
-## Шаг 8. CHECK constraint — документация
+означает:
 
-Приложить в отчёт (уже есть миграция `20260717071715_…sql`):
+```text
+Всегда использовать public-rr-installment-initiate.
 
-- имя constraint (`tariff_offers_offer_type_check`);
-- новое определение (список допустимых значений включая `invoice`);
-- подтверждение сохранности `pay_now`, `trial`, `preregistration`, `lead`, `bank_installment`;
-- rollback SQL (DROP + ADD старого определения).
+```
 
-## Технические детали
+Legacy-ссылка должна быть только аварийным fallback после ошибки API, а не отдельным неявным режимом по умолчанию.
 
-- Все изменения обратно совместимы: старые офферы без `offer_type='invoice'` не затрагиваются.
-- `document_scenarios.payment_channels=['bank_transfer']` теперь согласован с `payment_method='bank_transfer'`.
-- Между шагами 4 и 5 существует временное окно, где frontend уже понимает `invoice`, а `payment_method` ещё `full_payment` — это безопасно, так как guards в edge-функциях уже отсекают charge-попытки по `offer_type`, а `InvoiceCheckoutDialog` использует `payment_method` только для отображения (не для роутинга).
+### Правильная модель в админке
 
-## Открытые вопросы (не блокируют — использую дефолты)
+Для типа **«Рассрочка банка»** администратор должен видеть:
 
-1. `bepaid-auto-process` — если функция читает оффер: добавляем guard. Если работает исключительно с уже подготовленным charge — фиксируем N/A с обоснованием. Проверю при реализации.
-2. Локальный несовпадающий `tariff.code` (`trf_…` вместо `buh/gl_buh/biz-l`) — отдельный follow-up тикет в `.lovable/backlog/`, вне текущего DoD.
+- **Провайдер:** Ресурс Развития;
+- **Режим:** API;
+- **Резервная ссылка:** используется только при ошибке API;
+- состояние: **API включён** / **не настроено**.
+
+Но лучше вообще не давать сохранять активный оффер РР без runtime-конфигурации.
+
+При выборе типа `bank_installment` система автоматически должна записывать:
+
+```json
+{
+  "bank_installment": {
+    "installment_provider": "rr",
+    "rr_mode": "payment_url",
+    "currency": "BYN",
+    "rr_runtime": {
+      "enabled": true,
+      "provider": "rr",
+      "mode": "initiate_only"
+    }
+  }
+}
+
+```
+
+А если администратор сознательно хочет только внешнюю ссылку, это должен быть отдельный явный режим:
+
+```text
+Способ запуска:
+○ Через API Ресурс Развития
+○ Внешняя ссылка без API
+
+```
+
+Не скрытый отсутствующий JSON-параметр.
+
+## Решение по текущей задаче
+
+Предложенный data-fix правильный:
+
+- включить runtime у `58de9fea`;
+- включить runtime у `136a1076` на будущее;
+- сохранить `external_link` только как fallback.
+
+Но frontend-патч нужно усилить:
+
+1. При создании или переключении на **«Рассрочка банка»** автоматически включать API РР.
+2. При сохранении активного `bank_installment` не позволять пустой `rr_runtime`, если выбран провайдер РР.
+3. Статическую жёлтую плашку удалить.
+4. Показывать фактическое состояние конкретного оффера.
+5. Копирование оффера должно сохранять или канонически пересоздавать всю конфигурацию банковской рассрочки.
+6. Добавить аудит всех активных `bank_installment`-офферов, а не исправлять только найденные два.
+
+`integration_instances.status='disconnected'` к этой конкретной проблеме отношения не имеет. API работает, боевые credentials используются. Этот статус нужно исправить для админки, но он не объясняет отсутствие вызова edge-функции.
+
+```text
+ПРИЧИНА:
+скрытый per-offer rr_runtime.enabled
+
+ПРОБЛЕМА РР API:
+нет — API работает
+
+ПРОБЛЕМА САЙТА:
+нет привязки к конкретному домену
+
+АРХИТЕКТУРНЫЙ ДЕФЕКТ:
+тип «Рассрочка банка» не является единым источником поведения
+
+ТЕКУЩИЙ FIX:
+дописать runtime двум офферам
+
+ОБЯЗАТЕЛЬНЫЙ ROOT-FIX:
+автоматически включать и валидировать API-конфигурацию
+для offer_type='bank_installment'
+
+
+Отчёт о диагностике
+```
+
+Проверил цепочку кнопки «Рассрочка от банка» → `LeadRequestDialog` → `startBankInstallment` → edge-функция `public-rr-installment-initiate` → REST API `https://pay.rrllc.ru/api/v2` (loader `_shared/rr/rr-config.ts`).
+
+### Что реально в БД
+
+`**integration_instances` (provider=rr):**
+
+- `config.mode = "battle"` — боевой режим уже включён.
+- Логин/пароли для battle и test присутствуют, `secret_key` тоже.
+- `**status = "disconnected"**` — это только UI-флаг, боевой поток в edge-функции его НЕ проверяет (`loadRRConfig` смотрит только на mode + креды). Заказы создаются без проблем.
+
+`**tariff_offers` с `offer_type='bank_installment'`:**
+
+
+| Оффер        | Продукт / тариф                   | rr_runtime.enabled | Что происходит по кнопке                                                          |
+| ------------ | --------------------------------- | ------------------ | --------------------------------------------------------------------------------- |
+| 4f64def7     | 1 ступень 2.0 / Бизнес-леди       | ✅ true             | Идёт в API РР                                                                     |
+| 15ce91ec     | 1 ступень 2.0 / Бухгалтер         | ✅ true             | Идёт в API РР                                                                     |
+| 2a07af43     | 1 ступень 2.0 / Гл. бухгалтер     | ✅ true             | Идёт в API РР                                                                     |
+| **58de9fea** | **20 поток / Гл. бухгалтер**      | **❌ отсутствует**  | **Открывает legacy `pay.rrllc.ru/katerina-gorbova-credit` (это второй скриншот)** |
+| 136a1076     | 20 поток / Бизнес-леди (inactive) | ❌ отсутствует      | То же                                                                             |
+
+
+`**orders_v2` (flow=rr_installment):** последние заказы за 10–12 июля — все `initiation_status=created`, `payment_url` присутствует, много `status=paid`. Значит API-контур физически работает; никаких `upstream_outcome_unknown` или `rr_call_in_flight` в свежих данных нет.
+
+**Edge-логи `public-rr-installment-initiate`:** за последние сутки пусто — никто не жал кнопку на офферах с `rr_runtime.enabled`. Пользователь, который «жаловался», кликал на 20-поток → там нет rr_runtime → сработал legacy-редирект (это ровно то, что видно на скриншоте с `Оплата заказа / Кредит от банка / Беларусь`, эту страницу отдаёт РР без нашего API).
+
+### Диагноз
+
+1. **Основная причина отсутствия API-вызова у пользователя:** на офферах продукта «Ценный бухгалтер | 20 поток» не проставлен `meta.bank_installment.rr_runtime`, поэтому фронт идёт по legacy-ссылке. На основном продукте всё уже работает через API в боевом режиме.
+2. **Косметическая, но вводящая в заблуждение регрессия:** в `AdminProductDetailV2.tsx:2477-2480` жёстко зашитая жёлтая плашка «Runtime-контур РР ещё не включён» показывается ВСЕГДА, независимо от фактического состояния оффера и интеграции. Она и породила предположение «боевой режим не включён».
+3. `integration_instances.status='disconnected'` — фактически не влияет на работу, но лучше привести к `active`, чтобы админский экран RRSettingsCard не путал.
+
+### План работ
+
+**Данные (миграция/SQL):**
+
+1. Обновить `tariff_offers` для `58de9fea` (и inactive `136a1076` — на будущее) в продукте «20 поток»: дописать в `meta.bank_installment` поля `installment_provider='rr'`, `rr_mode='payment_url'`, `rr_runtime={enabled:true, provider:'rr', mode:'initiate_only'}`, `currency='BYN'`. Legacy `external_link` не трогаем — он останется как fallback.
+2. Обновить `integration_instances.status` для `provider='rr'` на `'active'` (реальное состояние соответствует).
+
+**Фронт (`src/pages/admin/AdminProductDetailV2.tsx`, блок «Рассрочка банка», ~строки 2463–2510):**
+3. Заменить статическую жёлтую плашку на динамическую:
+
+- если `offer.meta.bank_installment.rr_runtime?.enabled === true` → зелёный бейдж «Runtime РР включён (боевой режим)»;
+- иначе → текущая жёлтая с текстом «Runtime не включён, работает legacy `external_link`».
+
+4. Добавить чекбокс «Использовать API Ресурс Развития (боевой режим)» — переключает `rr_runtime.enabled` прямо из редактора оффера, чтобы такие ситуации не возникали снова.
+
+**Верификация (smoke):**
+5. Из sandbox дернуть `POST /functions/v1/public-rr-installment-initiate` для оффера `58de9fea` после патча с тестовым контактом; проверить, что вернулся `payment_url` вида `https://pay.rrllc.ru/order/...` (не статическая посадочная).
+6. Прочитать логи `public-rr-installment-initiate` и `rr-webhook` за окно теста — должны быть `rr_create_order_ok` / `rr.create_order.*` без `upstream_outcome_unknown`.
+7. Проверить `orders_v2` по свежему `correlation_id`: `initiation_status='created'`, `upstream_call_state='completed'`, `payment_url` заполнен, `crm_routing_snapshot` присутствует.
+8. Проверить в UI `/cb` (три тарифа продукта «20 поток»): кнопка «Рассрочка от банка» → форма заявки → редирект на `pay.rrllc.ru/order/...`, а не на общий landing.
+
+### DoD
+
+- Все активные bank_installment офферы имеют `rr_runtime.enabled=true`; legacy `external_link` только как fallback при ошибке initiate.
+- Админский блок отражает реальное состояние runtime по каждому офферу и позволяет его переключить.
+- `integration_instances(provider=rr).status='active'`.
+- Живой POST в `public-rr-installment-initiate` для проблемного оффера возвращает валидный `payment_url` с домена `pay.rrllc.ru/order/`; в логах нет ошибок; заказ появляется в `orders_v2`.
+- Публикация фронтового патча (пункты 3–4) — отдельным шагом после подтверждения.
