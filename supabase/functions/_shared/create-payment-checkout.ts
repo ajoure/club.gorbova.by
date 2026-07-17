@@ -737,6 +737,79 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       }
     }
 
+    // ============================================================================
+    // PATCH INSTALLMENT-RETRY-POLICY (Sprint A · A1+A2+A3):
+    //   Capability gate ДО любых INSERT в orders_v2 / subscriptions_v2 / provider_subscriptions.
+    //   При unlimited_requested без proven capability возвращаем controlled error
+    //   'provider_unlimited_attempts_not_supported' без создания заказов, подписок и CRM-сделки.
+    // ============================================================================
+    const installmentCountRawPre = Number(extraMeta.installment_count);
+    const isInstallmentSubscriptionPre =
+      Number.isFinite(installmentCountRawPre) && installmentCountRawPre >= 2;
+    const billingCyclesPre = isInstallmentSubscriptionPre ? installmentCountRawPre : null;
+    const installmentExtraPre =
+      extraMeta.installment && typeof extraMeta.installment === 'object'
+        ? (extraMeta.installment as Record<string, any>)
+        : {};
+    const intervalDaysPre = isInstallmentSubscriptionPre
+      ? Number(installmentExtraPre.interval_days ?? 30)
+      : 30;
+
+    let retryPolicyResolutionPre: BepaidAttemptsResolution | null = null;
+    let retryPolicySnapshotPre: Record<string, unknown> | null = null;
+    if (isInstallmentSubscriptionPre) {
+      try {
+        const parsedPolicy = resolveInstallmentRetryPolicy(installmentExtraPre.max_charge_attempts);
+        retryPolicyResolutionPre = resolveBepaidAttemptsValue({
+          retryPolicy: parsedPolicy,
+          capability: bepaidCreds.subscription_attempts_capability,
+        });
+        retryPolicySnapshotPre = buildRetryPolicySnapshot({
+          retryPolicy: parsedPolicy,
+          resolution: retryPolicyResolutionPre,
+        });
+      } catch (e) {
+        const errCode =
+          e instanceof ProviderUnlimitedAttemptsNotSupportedError
+            ? e.code
+            : (e as Error)?.message === 'invalid_installment_max_charge_attempts'
+            ? 'invalid_installment_max_charge_attempts'
+            : 'installment_retry_policy_resolution_failed';
+        const message =
+          errCode === 'provider_unlimited_attempts_not_supported'
+            ? 'Безлимитные попытки не подтверждены провайдером. Выберите значение от 1 до 10.'
+            : errCode === 'invalid_installment_max_charge_attempts'
+            ? 'Некорректное значение количества попыток списания. Допустимо: пусто, 0 или 1..10.'
+            : 'Не удалось определить политику повторных попыток по офферу.';
+        console.error('[create-payment-checkout] retry policy pre-gate blocked checkout', {
+          user_id,
+          product_id,
+          tariff_id,
+          offer_id: offer_id || null,
+          error: errCode,
+          reason: (e as any)?.reason ?? null,
+        });
+        // Audit — но БЕЗ создания orders_v2 / subscriptions_v2 / provider_subscriptions.
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'create-payment-checkout',
+          action: 'installment.retry_policy.pre_gate_blocked',
+          target_user_id: user_id,
+          meta: {
+            product_id,
+            tariff_id,
+            offer_id: offer_id || null,
+            payment_flow: paymentFlow,
+            error: errCode,
+            reason: (e as any)?.reason ?? null,
+            configured_value: installmentExtraPre.max_charge_attempts ?? null,
+          },
+        });
+        return { success: false, error: errCode, message };
+      }
+    }
+
     const orderNumber = `SUB-LINK-${Date.now().toString(36).toUpperCase()}`;
 
     const subOrderMeta = {
