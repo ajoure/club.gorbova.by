@@ -10,7 +10,7 @@ export type InstallmentPlanResult = {
   per_payment_kopecks: number;
   effective_total_kopecks: number;
   rounding_delta_kopecks: number;
-  rounding_mode: "round_half_up";
+  rounding_mode: "ceil_to_whole_byn";
   cycles: number;
 };
 
