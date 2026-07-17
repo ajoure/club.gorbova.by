@@ -2343,6 +2343,24 @@ Deno.serve(async (req) => {
           },
         });
 
+        // B7 Item 8: annotate current pending installment_payments row with
+        // provider failure metadata (dup-UID protected inside helper).
+        if (failIsFinite) {
+          try {
+            await annotateInstallmentCycleFailure({
+              supabase,
+              subscriptionId: subscriptionV2Id,
+              transactionUid: transactionUid ? String(transactionUid) : null,
+              errorMessage: String(errMsg),
+              atIso: transaction?.paid_at || now.toISOString(),
+            });
+          } catch (annErr) {
+            console.error('[WEBHOOK-SUBSCRIPTION] failure annotation non-fatal:', annErr);
+          }
+        }
+
+
+
         // Look up pending installment_payments row for idempotency subject
         // (payment_number is the retry attempt anchor). Absence is tolerated —
         // helper falls back to subscription-scoped key.
