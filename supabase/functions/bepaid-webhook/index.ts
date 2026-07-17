@@ -2303,8 +2303,14 @@ Deno.serve(async (req) => {
           .eq('provider_subscription_id', subscriptionId);
         
         // Disable auto_renew but DON'T revoke access retroactively.
-        // B7: for finite installment subs, distinguish retry-exhausted from
-        // normal terminal states by checking paid_billing_cycles vs installment_count.
+        // B7 corrective (defect #4): retry_exhausted MUST rely on provider evidence,
+        // not the "expired-with-cycles-remaining" heuristic. We accept as evidence:
+        //   * explicit gateway_recurring_reason.code containing exhaust/retries/attempts
+        //   * subscription.attempts_left / retries_left == 0
+        //   * cancellation_reason mentioning retries/attempts
+        //   * transaction.status='failed' AND explicit failed-terminal marker
+        // Without evidence we classify as 'terminated' with
+        // reason='provider_terminal_unclassified' (audit severity=WARNING).
         const termMeta = (subV2.meta || {}) as Record<string, any>;
         const termInstallmentCount = Number(termMeta.installment_count ?? 0);
         const termIsFinite =
@@ -2313,10 +2319,46 @@ Deno.serve(async (req) => {
         const termPaidCycles = Number(
           (body as any)?.paid_billing_cycles ?? (subscription as any)?.paid_billing_cycles ?? termMeta.paid_billing_cycles ?? 0
         );
-        const termIsRetryExhausted =
+
+        // Collect provider evidence (best-effort — schemas differ across bePaid variants).
+        const grReason = String(
+          transaction?.gateway_recurring_reason?.code ||
+          transaction?.gateway_recurring_reason?.message ||
+          (subscription as any)?.gateway_recurring_reason?.code ||
+          ''
+        ).toLowerCase();
+        const attemptsLeft = Number(
+          (subscription as any)?.attempts_left ??
+          (subscription as any)?.retries_left ??
+          (body as any)?.attempts_left ??
+          NaN
+        );
+        const cancellationReason = String(
+          (subscription as any)?.cancellation_reason ||
+          (body as any)?.cancellation_reason ||
+          ''
+        ).toLowerCase();
+        const reasonMentionsExhaust =
+          /exhaust|retries|attempts|no_more_attempts|max_retry/.test(grReason) ||
+          /exhaust|retries|attempts/.test(cancellationReason);
+        const hasProviderExhaustEvidence =
           termIsFinite &&
           termPaidCycles < termInstallmentCount &&
-          (subscriptionState === 'expired' || subscriptionState === 'failed');
+          (
+            reasonMentionsExhaust ||
+            (Number.isFinite(attemptsLeft) && attemptsLeft === 0) ||
+            (transaction?.status === 'failed' && subscriptionState === 'failed')
+          );
+
+        const termIsRetryExhausted = hasProviderExhaustEvidence;
+        const termIsUnclassifiedTerminated =
+          termIsFinite &&
+          termPaidCycles < termInstallmentCount &&
+          !hasProviderExhaustEvidence;
+
+        const installmentStatusValue = termIsRetryExhausted
+          ? 'retry_exhausted'
+          : (termPaidCycles >= termInstallmentCount ? 'completed' : 'terminated');
 
         await supabase
           .from('subscriptions_v2')
@@ -2330,9 +2372,10 @@ Deno.serve(async (req) => {
               ...(termIsFinite
                 ? {
                     paid_billing_cycles: termPaidCycles,
-                    installment_status: termIsRetryExhausted
-                      ? 'retry_exhausted'
-                      : (termPaidCycles >= termInstallmentCount ? 'completed' : 'terminated'),
+                    installment_status: installmentStatusValue,
+                    ...(termIsUnclassifiedTerminated
+                      ? { termination_reason: 'provider_terminal_unclassified' }
+                      : {}),
                   }
                 : {}),
             },
@@ -2352,7 +2395,18 @@ Deno.serve(async (req) => {
             subscription_v2_id: subscriptionV2Id,
             provider_subscription_id: subscriptionId,
             state: subscriptionState,
-            reason: termIsRetryExhausted ? 'installment_retry_exhausted' : 'terminal_provider_state',
+            reason: termIsRetryExhausted
+              ? 'installment_retry_exhausted'
+              : (termIsUnclassifiedTerminated
+                  ? 'provider_terminal_unclassified'
+                  : 'terminal_provider_state'),
+            provider_evidence: {
+              gateway_recurring_reason: grReason || null,
+              attempts_left: Number.isFinite(attemptsLeft) ? attemptsLeft : null,
+              cancellation_reason: cancellationReason || null,
+              transaction_status: transaction?.status ?? null,
+            },
+            severity: termIsUnclassifiedTerminated ? 'WARNING' : undefined,
             ...(termIsFinite
               ? {
                   model: 'bepaid_finite_subscription',
@@ -2362,15 +2416,55 @@ Deno.serve(async (req) => {
               : {}),
           },
         });
-        
-        return new Response(JSON.stringify({ 
-          ok: true, 
-          mode: 'provider_managed_subscription', 
+
+        // Deliver retry-exhausted notification (independent flag).
+        if (termIsRetryExhausted) {
+          try {
+            // Look up installment_payment_id (best-effort, subject key).
+            let exhaustInstallmentPaymentId: string | null = null;
+            try {
+              const { data: pending } = await supabase
+                .from('installment_payments')
+                .select('id')
+                .eq('subscription_id', subscriptionV2Id)
+                .eq('status', 'pending')
+                .order('payment_number', { ascending: true })
+                .limit(1)
+                .maybeSingle();
+              exhaustInstallmentPaymentId = pending?.id ?? null;
+            } catch { /* best-effort */ }
+
+            await sendChargeLifecycleNotification({
+              supabase,
+              event: 'installment_charge_retry_exhausted',
+              userId: subV2.user_id,
+              subscriptionV2Id,
+              providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
+              installmentPaymentId: exhaustInstallmentPaymentId,
+              productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
+              tariffName: subV2.tariffs?.name || null,
+              amount: Number(termMeta?.per_payment_amount ?? 0) || null,
+              currency: (subV2 as any)?.currency || 'BYN',
+              errorMessage: grReason || cancellationReason || 'retry_exhausted',
+              meta: {
+                paid_billing_cycles: termPaidCycles,
+                installment_count: termInstallmentCount,
+              },
+            });
+          } catch (nErr) {
+            console.error('[WEBHOOK-SUBSCRIPTION] retry-exhausted notification non-fatal:', nErr);
+          }
+        }
+
+        return new Response(JSON.stringify({
+          ok: true,
+          mode: 'provider_managed_subscription',
           status: subscriptionState,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+
       
       // Unknown state - log for investigation
       console.warn('[WEBHOOK-SUBSCRIPTION] Unknown subscription state:', subscriptionState);
