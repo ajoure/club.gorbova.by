@@ -53,7 +53,8 @@ function asBool(v: unknown, fallback: boolean): boolean {
 export function readChargeNotificationPolicy(meta: unknown): ChargeNotificationPolicy {
   const m = (meta ?? {}) as Record<string, unknown>;
   const canonical = (m.charge_notifications ??
-    (m.installment as Record<string, unknown> | undefined)?.charge_notifications) as
+    (m.installment as Record<string, unknown> | undefined)?.charge_notifications ??
+    (m.recurring as Record<string, unknown> | undefined)?.charge_notifications) as
     | Record<string, unknown>
     | undefined;
   if (canonical && typeof canonical === "object") {
