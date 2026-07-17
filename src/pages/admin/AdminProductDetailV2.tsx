@@ -2446,9 +2446,65 @@ export default function AdminProductDetailV2() {
                     </p>
                   </div>
 
-                  <div className="text-xs text-muted-foreground border rounded-md p-3 bg-muted/30 space-y-1">
-                    <div>Интервал между платежами: <span className="font-medium text-foreground">30 дней</span> (фиксировано)</div>
-                    <div>Первый платёж: <span className="font-medium text-foreground">сразу при покупке</span> (фиксировано)</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Интервал между платежами, дней</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={365}
+                        value={offerForm.installment_interval_days}
+                        onChange={(e) =>
+                          setOfferForm({
+                            ...offerForm,
+                            installment_interval_days: parseInt(e.target.value) || 30,
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Первый платёж через, дней</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={365}
+                        value={offerForm.first_payment_delay_days}
+                        onChange={(e) =>
+                          setOfferForm({
+                            ...offerForm,
+                            first_payment_delay_days: parseInt(e.target.value) || 0,
+                          })
+                        }
+                      />
+                      <p className="text-[11px] text-muted-foreground">0 = сразу при покупке</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Попытки списания при неудаче</Label>
+                    <Select
+                      value={String(offerForm.installment_max_charge_attempts ?? 3)}
+                      onValueChange={(v) =>
+                        setOfferForm({
+                          ...offerForm,
+                          installment_max_charge_attempts: parseInt(v),
+                        })
+                      }
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">1 попытка</SelectItem>
+                        <SelectItem value="2">2 попытки</SelectItem>
+                        <SelectItem value="3">3 попытки (по умолчанию)</SelectItem>
+                        <SelectItem value="5">5 попыток</SelectItem>
+                        <SelectItem value="10">10 попыток</SelectItem>
+                        <SelectItem value="0">Безлимитно (требует подтверждения провайдера)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      Сколько раз bePaid будет пытаться списать очередной платёж рассрочки, если карта отклонила.
+                      «Безлимитно» работает только при подтверждённой способности провайдера — иначе бэкенд вернёт ошибку и попросит выбрать конкретное число.
+                    </p>
                   </div>
 
                   {offerForm.amount > 0 && offerForm.installment_count > 1 && (
