@@ -996,6 +996,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       preSubMeta.installment = {
         ...installmentExtra,
         retry_policy: retryPolicySnapshotPre,
+        // B2. Canonical installment-scope charge_notifications snapshot.
+        charge_notifications: chargeNotifSnapshot,
+        charge_notifications_source: chargeNotifPolicy.source,
       };
       preSubMeta.model = 'bepaid_finite_subscription';
       // PATCH A2 — единый effective retry snapshot (канонический путь meta.installment.retry_policy).
