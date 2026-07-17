@@ -224,20 +224,10 @@ export async function sendChargeLifecycleNotification(
     }
     const telegramChatId = profile?.telegram_user_id ?? null;
 
-    // Bot token (link bot, matches existing webhook pattern).
-    let botToken: string | null = null;
-    let botId: string | null = null;
-    try {
-      const { data: bot } = await supabase
-        .from("telegram_bots")
-        .select("id, token, bot_token_encrypted")
-        .eq("is_link_bot", true)
-        .eq("is_active", true)
-        .limit(1)
-        .maybeSingle();
-      botToken = (bot as any)?.token ?? null;
-      botId = (bot as any)?.id ?? null;
-    } catch { /* best-effort */ }
+    // Bot token via canonical link-bot resolver (single source of truth).
+    const link = await resolveLinkBot(supabase);
+    const botToken = link.token;
+    const botId = link.bot_id;
 
     const commonMeta: Record<string, unknown> = {
       event: args.event,
@@ -251,6 +241,8 @@ export async function sendChargeLifecycleNotification(
       currency: args.currency ?? null,
       product_name: args.productName ?? null,
       policy_source: policy.source,
+      link_bot_id: botId,
+      link_bot_token_source: link.token_source,
       ...args.meta,
     };
 
@@ -273,10 +265,12 @@ export async function sendChargeLifecycleNotification(
           if (j?.ok === true) {
             result.sent.telegram = 1;
             const tgMsgId = typeof j?.result?.message_id === "number" ? j.result.message_id : null;
-            await markSent(supabase, key, { ...commonMeta, telegram_message_id: tgMsgId });
+            // Attempt mirror and capture outcome for the outbox meta.
+            let mirrored = false;
+            let mirrorError: string | null = null;
             if (tgMsgId && botId) {
               try {
-                await logAutomatedTelegramMessage({
+                const mirror = await logAutomatedTelegramMessage({
                   supabase,
                   user_id: args.userId,
                   telegram_user_id: telegramChatId,
@@ -286,8 +280,23 @@ export async function sendChargeLifecycleNotification(
                   source: "bepaid-webhook-lifecycle",
                   extra_meta: { ...commonMeta, idempotency_key: key },
                 });
-              } catch { /* best-effort mirror */ }
+                mirrored = mirror?.ok === true && mirror?.inserted === true;
+                if (!mirrored && mirror?.reason && mirror.reason !== "duplicate_idempotency_key") {
+                  mirrorError = String(mirror.reason);
+                }
+              } catch (mErr) {
+                mirrorError = mErr instanceof Error ? mErr.message : String(mErr);
+              }
+            } else if (!botId) {
+              mirrorError = "no_bot_id";
             }
+            await markSent(supabase, key, {
+              ...commonMeta,
+              telegram_sent: true,
+              telegram_message_id: tgMsgId,
+              contact_center_mirrored: mirrored,
+              mirror_error: mirrorError,
+            });
           } else {
             const err = j?.description ?? `HTTP ${r.status}`;
             result.telegram_error = String(err);
@@ -299,6 +308,13 @@ export async function sendChargeLifecycleNotification(
           await markFailed(supabase, key, msg);
         }
       }
+    } else if (telegramChatId && !botToken) {
+      // Non-fatal: telegram user known but link bot unavailable / encrypted-only.
+      console.warn("[lifecycle-notify] telegram skipped: no usable link bot token", {
+        event: args.event,
+        user_id: args.userId,
+        token_source: link.token_source,
+      });
     }
 
     // Email
