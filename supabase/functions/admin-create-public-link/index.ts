@@ -362,7 +362,7 @@ Deno.serve(async (req) => {
       // B2. Snapshot charge_notifications policy at link creation time
       // (installment path). Precedence: live offer meta → legacy → defaults.
       const chargeNotifPolicy = resolveChargeNotificationSnapshotForWriter({
-        offerMeta: (offer as any)?.meta,
+        offerMeta: resolvedOffer.meta,
       });
       const chargeNotifSnapshot = serializeChargeNotificationPolicy(chargeNotifPolicy);
 
