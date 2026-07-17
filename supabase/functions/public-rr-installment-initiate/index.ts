@@ -291,8 +291,9 @@ Deno.serve(async (req: Request) => {
   const { data: offer, error: offerErr } = await supabaseAdmin
     .from("tariff_offers")
     .select(
-      "id, tariff_id, offer_type, amount, meta, is_active, tariffs:tariff_id(id, is_active, product_id, products_v2:product_id(id, is_active, currency))",
+      "id, tariff_id, offer_type, amount, meta, is_active, tariffs:tariff_id(id, name, is_active, product_id, products_v2:product_id(id, name, public_title, is_active, currency))",
     )
+
     .eq("id", offerId)
     .maybeSingle();
 
@@ -646,9 +647,19 @@ Deno.serve(async (req: Request) => {
     : `${Deno.env.get("SUPABASE_URL")}/functions/v1/rr-webhook`;
 
   // 3. Вызов РР (pre-call marker уже durable записан).
+  const productDisplayName = String(
+    (product as any)?.public_title || (product as any)?.name || "",
+  ).trim();
+  const tariffDisplayName = String((tariff as any)?.name || "").trim();
+  const itemNameRaw = [productDisplayName, tariffDisplayName]
+    .filter(Boolean)
+    .join(" — ") || "Оплата заказа";
+  const itemName = itemNameRaw.slice(0, 128);
+
   const rrRes = await rrCreateOrder(cfg, {
-    externalId, amountMinor, currency, notificationUrl, correlationId,
+    externalId, amountMinor, currency, notificationUrl, correlationId, itemName,
   });
+
   const redacted = redactRRResponse(rrRes.http.json);
 
   // 4. Классификация исхода.
