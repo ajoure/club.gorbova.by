@@ -588,7 +588,7 @@ export default function AdminProductDetailV2() {
     // still enforces the invariant on the write path. Warn on stable-role rename.
     const SLOT_VARIANTS = ["primary", "outline", "installment", "legal_entity", "lead"] as const;
     const SLOT_ROLE_RE = /^[a-z][a-z0-9_]{1,63}$/;
-    const rawSlotRole = ((offerForm.meta as any)?.slot_role as string | undefined) || "";
+    let rawSlotRole = ((offerForm.meta as any)?.slot_role as string | undefined) || "";
     const rawVariant = ((offerForm.meta as any)?.site_button_variant as string | undefined) || "";
     if (rawSlotRole && !SLOT_ROLE_RE.test(rawSlotRole)) {
       toast.error("slot_role: только a-z, 0-9 и «_», 2–64 символа, начинается с буквы");
