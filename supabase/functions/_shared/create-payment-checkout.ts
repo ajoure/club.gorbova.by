@@ -743,13 +743,14 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     plannedEndSub.setDate(plannedEndSub.getDate() + accessDaysSub);
 
     // CRM routing — Layer A (B.0 invariant): always materialize crm_routing_snapshot
-    const subRouting = await resolveOfferRoutingWithFallback(supabase, { offer_id, tariff_id });
+    const subRouting = await resolveOrderRouting(supabase, { offer_id, tariff_id, product_id });
     const subCrmSnapshot = subRouting.ok && subRouting.snapshot
       ? subRouting.snapshot
       : buildNegativeSnapshot({
           reason: subRouting.reason || 'unknown',
           offer_id: offer_id ?? null,
           tariff_id,
+          product_id,
           resolved_via: subRouting.resolved_via ?? 'none',
           candidates_count: subRouting.candidates_count ?? 0,
         });
