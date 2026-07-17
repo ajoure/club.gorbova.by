@@ -982,19 +982,22 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     // PATCH INSTALLMENT-RETRY-POLICY: number_payment_attempts зависит от офера + capability.
     // Дефолт 3 сохраняем как fallback для legacy installment-подписок без meta.installment.max_charge_attempts.
     let bepaidAttemptsValue: number = 3;
-    let retryPolicyForMeta: ReturnType<typeof resolveInstallmentRetryPolicy> | null = null;
+    let bepaidAttemptsStrategy: string | null = null;
     if (isInstallmentSubscription) {
       try {
-        retryPolicyForMeta = resolveInstallmentRetryPolicy(installmentExtra.max_charge_attempts);
-        bepaidAttemptsValue = resolveBepaidAttemptsValue(
-          retryPolicyForMeta,
-          bepaidCreds.subscription_attempts_capability,
-        );
+        const retryPolicy = resolveInstallmentRetryPolicy(installmentExtra.max_charge_attempts);
+        const resolution = resolveBepaidAttemptsValue({
+          retryPolicy,
+          capability: bepaidCreds.subscription_attempts_capability,
+        });
+        bepaidAttemptsValue = resolution.payloadValue;
+        bepaidAttemptsStrategy = resolution.provider_strategy;
       } catch (e) {
         if (e instanceof ProviderUnlimitedAttemptsNotSupportedError) {
           console.error('[create-payment-checkout] unlimited attempts requested but provider capability not proven', {
             order_id: order.id,
             offer_id: offer_id || null,
+            reason: e.reason,
           });
           return {
             success: false,
@@ -1006,6 +1009,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         throw e;
       }
     }
+    void bepaidAttemptsStrategy;
 
     const bepaidPayload: Record<string, any> = {
       notification_url: notificationUrl,
