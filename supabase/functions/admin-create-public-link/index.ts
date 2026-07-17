@@ -401,10 +401,22 @@ Deno.serve(async (req) => {
       const chargeNotifSnapshot = serializeChargeNotificationPolicy(chargeNotifPolicy);
 
       // Manual override detection: изменил ли админ N или сумму относительно оффера.
+      // Resolve public cycles: installment_count > legacy meta.installment.max_months.
+      const _metaMaxResolved = Number((resolvedOffer as any).meta?.installment?.max_months ?? 0);
+      const sourceOfferPublicCycles: number | null =
+        (Number.isInteger(offerInstallmentCountLegacy) &&
+          (offerInstallmentCountLegacy as number) >= 2 &&
+          (offerInstallmentCountLegacy as number) <= 12)
+          ? (offerInstallmentCountLegacy as number)
+          : (Number.isInteger(_metaMaxResolved) && _metaMaxResolved >= 2 && _metaMaxResolved <= 12
+              ? _metaMaxResolved
+              : null);
       const offerAmountByn = Number((resolvedOffer as any).amount ?? 0);
       const offerAmountKopecks = Math.round(offerAmountByn * 100);
       const overriddenFields: string[] = [];
-      if (sel !== offerInstallmentCountLegacy) overriddenFields.push('billing_cycles');
+      if (sourceOfferPublicCycles === null || sel !== sourceOfferPublicCycles) {
+        overriddenFields.push('billing_cycles');
+      }
       if (Math.round(amount) !== offerAmountKopecks) overriddenFields.push('amount');
       const manualOverride = overriddenFields.length > 0;
 
