@@ -46,10 +46,10 @@ export function calculateInstallmentPlan(
   const perPayment = perPaymentByn * 100;
   const effectiveTotal = perPayment * cycles;
   const rounding = effectiveTotal - total;
-  if (Math.abs(rounding) >= cycles) {
+  if (Math.abs(rounding) >= cycles * 100) {
     throw new InstallmentPlanError(
       "invalid_installment_rounding",
-      `rounding_delta=${rounding} kopecks exceeds cycles=${cycles}`,
+      `rounding_delta=${rounding} kopecks exceeds cycles*100=${cycles * 100}`,
     );
   }
   return {
