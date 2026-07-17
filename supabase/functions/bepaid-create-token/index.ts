@@ -2,7 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveUserIds, getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
-import { resolveOfferRoutingWithFallback, buildNegativeSnapshot, auditNegativeSnapshot } from '../_shared/crm-routing.ts';
+import { resolveOrderRouting, buildNegativeSnapshot, auditNegativeSnapshot } from '../_shared/crm-routing.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
