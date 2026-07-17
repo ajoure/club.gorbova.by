@@ -978,6 +978,24 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const source = body.source || 'manual';
 
+    // B4/B5/B6: Upcoming-charge reminder dry-run.
+    // Returns rendered payload (TG text, email HTML, idempotency keys, timezone, policy)
+    // WITHOUT writing to notification_outbox and WITHOUT sending anything.
+    if (body?.dry_run === true) {
+      const { runChargeReminders } = await import('../_shared/run-charge-reminders.ts');
+      const result = await runChargeReminders({
+        supabase,
+        botToken: null,
+        dryRun: true,
+        onlyProviderSubscriptionId: typeof body.provider_subscription_id === 'string'
+          ? body.provider_subscription_id
+          : undefined,
+      });
+      return new Response(JSON.stringify({ ok: true, mode: 'dry_run', ...result }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // === DEBUG MODE: orphan DoD single-user test ===
     if (body.debug_mode === true) {
       const debugUserId = String(body.debug_user_id || '').trim();
