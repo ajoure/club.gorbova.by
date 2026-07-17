@@ -591,11 +591,11 @@ export default function AdminProductDetailV2() {
     let rawSlotRole = ((offerForm.meta as any)?.slot_role as string | undefined) || "";
     const rawVariant = ((offerForm.meta as any)?.site_button_variant as string | undefined) || "";
     if (rawSlotRole && !SLOT_ROLE_RE.test(rawSlotRole)) {
-      toast.error("slot_role: только a-z, 0-9 и «_», 2–64 символа, начинается с буквы");
+      toast.error("Технический код назначения: только латиница a–z, цифры и «_», 2–64 символа, должен начинаться с буквы");
       return;
     }
     if (rawVariant && !(SLOT_VARIANTS as readonly string[]).includes(rawVariant)) {
-      toast.error(`site_button_variant должен быть одним из: ${SLOT_VARIANTS.join(", ")}`);
+      toast.error("Выбран недопустимый внешний вид кнопки. Выберите значение из списка.");
       return;
     }
     // Product is opted into dynamic slots when ANY other offer on the product
@@ -633,12 +633,12 @@ export default function AdminProductDetailV2() {
         (offerForm.meta as any) = { ...(offerForm.meta as any), slot_role: candidate };
       }
       if (!rawSlotRole || !rawVariant) {
-        toast.error("Активный оффер: slot_role и site_button_variant обязательны для этого продукта (динамические слоты)");
+        toast.error("Для активного оффера этого продукта укажите назначение и внешний вид кнопки — блок «Размещение кнопки на публичной странице».");
         return;
       }
     } else if (offerForm.is_active && (rawSlotRole || rawVariant)) {
       if (!rawSlotRole || !rawVariant) {
-        toast.error("Активный оффер: slot_role и site_button_variant должны быть заданы вместе");
+        toast.error("Заполните оба поля в блоке «Размещение кнопки на публичной странице»: назначение и внешний вид.");
         return;
       }
     }
@@ -646,7 +646,7 @@ export default function AdminProductDetailV2() {
       const prevRole = ((offerDialog.editing as any).meta?.slot_role as string | undefined) || "";
       if (prevRole && rawSlotRole && prevRole !== rawSlotRole) {
         const ok = window.confirm(
-          `Роль слота меняется: "${prevRole}" → "${rawSlotRole}". Все HTML-кнопки с data-lovable-slot=…|offer:${prevRole} перестанут находить этот оффер. Продолжить?`,
+          `Технический код назначения меняется: «${prevRole}» → «${rawSlotRole}». Кнопки на публичной странице, привязанные к прежнему коду, перестанут находить этот оффер. Продолжить?`,
         );
         if (!ok) return;
       }
@@ -826,9 +826,9 @@ export default function AdminProductDetailV2() {
       const msg = String(err?.message || err || "");
       if (/tariff_offers_slot_role|slot_role|site_button_variant/i.test(msg)) {
         if (/unique|duplicate/i.test(msg)) {
-          toast.error(`slot_role "${rawSlotRole}" уже используется в этом тарифе. Роль должна быть уникальной.`);
+          toast.error(`Назначение «${rawSlotRole}» уже используется другим оффером этого тарифа. Выберите другое назначение или укажите уникальный технический код.`);
         } else {
-          toast.error(`Проверка слота отклонена: ${msg}`);
+          toast.error("Не удалось сохранить размещение кнопки на публичной странице. Проверьте выбранные назначение и внешний вид.");
         }
         return;
       }
@@ -2204,63 +2204,138 @@ export default function AdminProductDetailV2() {
               </CardContent>
             </Card>
 
-            {/* Slot on public site (Phase B dynamic slots) */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground">
-                  Слот на публичной странице
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  Стабильная роль кнопки внутри тарифа и её визуальный вариант
-                  на сайте. Обязательно для активных офферов продуктов,
-                  подключённых к динамическим слотам (PRD-000039 и др.).
-                  Уникально в пределах тарифа.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>slot_role</Label>
-                    <Input
-                      placeholder="payment_card / payment_invoice / installment_2 / installment_3 / installment_bank / lead"
-                      value={((offerForm.meta as any)?.slot_role as string) || ""}
-                      onChange={(e) =>
-                        setOfferForm({
-                          ...offerForm,
-                          meta: {
-                            ...offerForm.meta,
-                            slot_role: e.target.value.trim() || undefined,
-                          } as any,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>site_button_variant</Label>
-                    <select
-                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                      value={((offerForm.meta as any)?.site_button_variant as string) || ""}
-                      onChange={(e) =>
-                        setOfferForm({
-                          ...offerForm,
-                          meta: {
-                            ...offerForm.meta,
-                            site_button_variant: e.target.value || undefined,
-                          } as any,
-                        })
-                      }
-                    >
-                      <option value="">— не задан —</option>
-                      <option value="primary">primary</option>
-                      <option value="outline">outline</option>
-                      <option value="installment">installment</option>
-                      <option value="legal_entity">legal_entity</option>
-                      <option value="lead">lead</option>
-                    </select>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            {/* Размещение кнопки на публичной странице */}
+            {(() => {
+              const PURPOSE_OPTIONS: { value: string; label: string }[] = [
+                { value: "", label: "Не размещать автоматически" },
+                { value: "payment_card", label: "Оплата картой" },
+                { value: "payment_invoice", label: "Счёт для юридического лица" },
+                { value: "installment_2", label: "Рассрочка — вариант 1" },
+                { value: "installment_3", label: "Рассрочка — вариант 2" },
+                { value: "installment_bank", label: "Банковская рассрочка" },
+                { value: "lead", label: "Оставить заявку" },
+              ];
+              const VARIANT_OPTIONS: { value: string; label: string }[] = [
+                { value: "", label: "Не задан" },
+                { value: "primary", label: "Основная кнопка" },
+                { value: "outline", label: "Дополнительная, с контуром" },
+                { value: "installment", label: "Кнопка рассрочки" },
+                { value: "legal_entity", label: "Для юридического лица" },
+                { value: "lead", label: "Кнопка заявки" },
+              ];
+              const currentRole = (((offerForm.meta as any)?.slot_role as string) || "").trim();
+              const currentVariant = ((offerForm.meta as any)?.site_button_variant as string) || "";
+              const knownRoleValues = PURPOSE_OPTIONS.map((o) => o.value);
+              const isCustomRole = currentRole !== "" && !knownRoleValues.includes(currentRole);
+              const purposeSelectValue = isCustomRole ? "__custom__" : currentRole;
+              const setRole = (val: string | undefined) => {
+                setOfferForm({
+                  ...offerForm,
+                  meta: {
+                    ...offerForm.meta,
+                    slot_role: val && val.trim() ? val.trim() : undefined,
+                  } as any,
+                });
+              };
+              const setVariant = (val: string | undefined) => {
+                setOfferForm({
+                  ...offerForm,
+                  meta: {
+                    ...offerForm.meta,
+                    site_button_variant: val || undefined,
+                  } as any,
+                });
+              };
+              const purposeLabel =
+                purposeSelectValue === "__custom__"
+                  ? `Другое назначение (${currentRole})`
+                  : PURPOSE_OPTIONS.find((o) => o.value === currentRole)?.label;
+              const variantLabel = VARIANT_OPTIONS.find((o) => o.value === currentVariant)?.label;
+              return (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm text-muted-foreground">
+                      Размещение кнопки на публичной странице
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Назначение кнопки</Label>
+                        <select
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                          value={purposeSelectValue}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === "__custom__") {
+                              // keep existing custom value or start empty for the user to fill in
+                              if (!isCustomRole) setRole("");
+                            } else {
+                              setRole(v);
+                            }
+                          }}
+                        >
+                          {PURPOSE_OPTIONS.map((o) => (
+                            <option key={o.value || "empty"} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                          <option value="__custom__">Другое назначение</option>
+                        </select>
+                        {purposeSelectValue === "__custom__" && (
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">
+                              Технический код назначения
+                            </Label>
+                            <Input
+                              placeholder="например: payment_card_promo"
+                              value={currentRole}
+                              onChange={(e) => setRole(e.target.value)}
+                            />
+                          </div>
+                        )}
+                        <p className="text-xs text-muted-foreground">
+                          Назначение определяет, в каком месте карточки тарифа показывается кнопка.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Внешний вид кнопки</Label>
+                        <select
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                          value={currentVariant}
+                          onChange={(e) => setVariant(e.target.value)}
+                        >
+                          {VARIANT_OPTIONS.map((o) => (
+                            <option key={o.value || "empty"} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground">
+                          Внешний вид определяет оформление, но не способ оплаты.
+                        </p>
+                      </div>
+                    </div>
+                    {(purposeLabel || variantLabel) && (
+                      <div className="rounded-md bg-muted/40 p-3 text-xs space-y-1">
+                        {purposeLabel && (
+                          <div>
+                            <span className="text-muted-foreground">На странице: </span>
+                            <span className="font-medium">{purposeLabel}</span>
+                          </div>
+                        )}
+                        {variantLabel && (
+                          <div>
+                            <span className="text-muted-foreground">Оформление: </span>
+                            <span className="font-medium">{variantLabel}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })()}
 
             {/* Повторное вступление */}
 
