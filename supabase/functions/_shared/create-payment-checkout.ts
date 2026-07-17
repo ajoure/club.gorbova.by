@@ -1248,6 +1248,14 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         active_checkout_kind: 'bepaid_subscription_id',
         checkout_created_at: new Date().toISOString(),
         checkout_tokens_history: [subTokenHistoryEntry],
+        ...(isInstallmentSubscription && retryPolicySnapshotPre
+          ? {
+              installment: {
+                ...(installmentExtra || {}),
+                retry_policy: retryPolicySnapshotPre,
+              },
+            }
+          : {}),
       },
     }).eq('id', order.id);
     if (subMetaActiveErr) console.error('[payment_checkout] subscription order meta merge failed', { order_id: order.id, payment_type: 'subscription', error: subMetaActiveErr });
