@@ -87,16 +87,28 @@ function buildIdempotencyKey(args: SendLifecycleArgs, channel: ChargeChannel): s
   }
 }
 
-function fmtAmount(a: number | null | undefined, c: string | null | undefined): string {
+// B7 corrective — installment amount format: WHOLE BYN (no decimals).
+// Non-installment (regular subscription) keeps 2-decimal precision.
+function fmtAmountWholeByn(a: number | null | undefined, c: string | null | undefined): string {
+  const num = Number(a);
+  if (!Number.isFinite(num) || num <= 0) return "";
+  const whole = Math.ceil(num);
+  return `${whole} ${c || "BYN"}`;
+}
+function fmtAmountDecimal(a: number | null | undefined, c: string | null | undefined): string {
   const num = Number(a);
   if (!Number.isFinite(num) || num <= 0) return "";
   return `${num.toFixed(2)} ${c || "BYN"}`;
 }
+function fmtAmountForEvent(event: LifecycleEvent, a: number | null | undefined, c: string | null | undefined): string {
+  if (event === "subscription_charge_failed") return fmtAmountDecimal(a, c);
+  return fmtAmountWholeByn(a, c); // installment_* → whole BYN
+}
 
 function renderTelegram(args: SendLifecycleArgs): string {
-  const product = args.productName || "Продукт";
-  const amt = fmtAmount(args.amount, args.currency);
-  const err = (args.errorMessage || "Платёж не прошёл").slice(0, 200);
+  const product = escapeTelegramMarkdown(args.productName || "Продукт");
+  const amt = escapeTelegramMarkdown(fmtAmountForEvent(args.event, args.amount, args.currency));
+  const err = escapeTelegramMarkdown((args.errorMessage || "Платёж не прошёл").slice(0, 200));
   switch (args.event) {
     case "installment_charge_failed":
     case "subscription_charge_failed":
@@ -109,24 +121,25 @@ function renderTelegram(args: SendLifecycleArgs): string {
 }
 
 function renderEmail(args: SendLifecycleArgs): { subject: string; html: string } {
-  const product = args.productName || "Продукт";
-  const amt = fmtAmount(args.amount, args.currency);
-  const err = (args.errorMessage || "Платёж не прошёл").slice(0, 500);
+  const productPlain = args.productName || "Продукт";
+  const product = escapeHtml(productPlain);
+  const amt = escapeHtml(fmtAmountForEvent(args.event, args.amount, args.currency));
+  const err = escapeHtml((args.errorMessage || "Платёж не прошёл").slice(0, 500));
   switch (args.event) {
     case "installment_charge_failed":
     case "subscription_charge_failed":
       return {
-        subject: `Не удалось списать платёж — ${product}`,
+        subject: `Не удалось списать платёж — ${productPlain}`,
         html: `<p>К сожалению, автоматическое списание не прошло.</p><p><b>Продукт:</b> ${product}${amt ? `<br/><b>Сумма:</b> ${amt}` : ""}<br/><b>Причина:</b> ${err}</p><p>Мы повторим попытку автоматически. При необходимости обновите платёжную карту в личном кабинете.</p>`,
       };
     case "installment_charge_retry_exhausted":
       return {
-        subject: `Попытки списания исчерпаны — ${product}`,
+        subject: `Попытки списания исчерпаны — ${productPlain}`,
         html: `<p>Попытки автоматического списания по рассрочке исчерпаны.</p><p><b>Продукт:</b> ${product}${amt ? `<br/><b>Сумма:</b> ${amt}` : ""}</p><p>Пожалуйста, свяжитесь с поддержкой или обновите платёжный метод, чтобы продолжить.</p>`,
       };
     case "installment_completed":
       return {
-        subject: `Рассрочка погашена — ${product}`,
+        subject: `Рассрочка погашена — ${productPlain}`,
         html: `<p>Все платежи по рассрочке успешно завершены.</p><p><b>Продукт:</b> ${product}</p><p>Спасибо, что были с нами!</p>`,
       };
   }
