@@ -255,7 +255,7 @@ Deno.serve(async (req) => {
       // Canonical key для public-checkout/index.ts:194-196.
       per_payment_amount_byn: perPaymentByn,
       total_installment_amount: totalInstallmentByn,
-      rounding_mode: 'round_half_up_byn',
+      rounding_mode: 'ceil_byn',
       source: 'landing_payment_dialog',
       offer_id: offer.id,
       as_finite_subscription: true,
