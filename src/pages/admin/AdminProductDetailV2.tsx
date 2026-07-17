@@ -328,7 +328,7 @@ export default function AdminProductDetailV2() {
   // Offer form
   const [offerForm, setOfferForm] = useState({
     tariff_id: "",
-    offer_type: "pay_now" as "pay_now" | "trial" | "preregistration" | "lead" | "bank_installment",
+    offer_type: "pay_now" as "pay_now" | "trial" | "preregistration" | "lead" | "bank_installment" | "invoice",
     button_label: "",
     amount: 0,
     reentry_amount: null as number | null, // Price for re-entry (former club members)
@@ -713,6 +713,43 @@ export default function AdminProductDetailV2() {
       };
     } else {
       delete metaToSave.installment;
+    }
+
+    // Invoice-type: гарантируем один enabled сценарий legal_entity + bank_transfer.
+    if (offerForm.offer_type === "invoice") {
+      const existing = Array.isArray((metaToSave as any).document_scenarios)
+        ? ((metaToSave as any).document_scenarios as any[])
+        : [];
+      const hasEnabledBankTransfer = existing.some(
+        (s) =>
+          s &&
+          s.is_enabled !== false &&
+          s.payer_type === "legal_entity" &&
+          Array.isArray(s.payment_channels) &&
+          s.payment_channels.includes("bank_transfer"),
+      );
+      if (!hasEnabledBankTransfer) {
+        (metaToSave as any).document_scenarios = [
+          ...existing,
+          {
+            id: (globalThis.crypto as any)?.randomUUID?.() ?? `scn-${Date.now()}`,
+            is_enabled: true,
+            payer_type: "legal_entity",
+            payment_channels: ["bank_transfer"],
+            require_required_requisites: true,
+            template_id: null,
+            executor_id: null,
+          },
+        ];
+      }
+      // Каноничные слот-маркеры для «Сформировать счёт».
+      (metaToSave as any).site_button_variant = (metaToSave as any).site_button_variant || "legal_entity";
+      (metaToSave as any).slot_role = (metaToSave as any).slot_role || "payment_invoice";
+      // Удаляем чужие блоки эквайринга/подписки/рассрочки.
+      delete (metaToSave as any).acquiring;
+      delete (metaToSave as any).recurring;
+      delete (metaToSave as any).installment;
+      delete (metaToSave as any).bank_installment;
     }
     
     const data: TariffOfferInsert = {
@@ -1884,10 +1921,10 @@ export default function AdminProductDetailV2() {
 
           <Tabs defaultValue="main" className="flex-1 flex flex-col min-h-0">
             <div className="px-4 sm:px-6 pt-3 shrink-0">
-              <TabsList className="grid w-full grid-cols-5">
+              <TabsList className={offerForm.offer_type === "invoice" ? "grid w-full grid-cols-3" : "grid w-full grid-cols-5"}>
                 <TabsTrigger value="main">Основное</TabsTrigger>
-                <TabsTrigger value="payment">Оплата</TabsTrigger>
-                <TabsTrigger value="renewal">Автопродление</TabsTrigger>
+                {offerForm.offer_type !== "invoice" && <TabsTrigger value="payment">Оплата</TabsTrigger>}
+                {offerForm.offer_type !== "invoice" && <TabsTrigger value="renewal">Автопродление</TabsTrigger>}
                 <TabsTrigger value="documents">Документы</TabsTrigger>
                 <TabsTrigger value="extra">Дополнительно</TabsTrigger>
               </TabsList>
@@ -1928,7 +1965,7 @@ export default function AdminProductDetailV2() {
                         ? "installment"
                         : offerForm.offer_type
                     }
-                    onValueChange={(v: "pay_now" | "trial" | "preregistration" | "lead" | "installment" | "bank_installment") => {
+                    onValueChange={(v: "pay_now" | "trial" | "preregistration" | "lead" | "installment" | "bank_installment" | "invoice") => {
                       if (v === "installment") {
                         // Кнопка «Рассрочка» = pay_now + internal_installment.
                         // Очищаем meta.recurring (взаимоисключение типов кнопки).
@@ -1995,6 +2032,35 @@ export default function AdminProductDetailV2() {
                             },
                           },
                         });
+                      } else if (v === "invoice") {
+                        // «Сформировать счёт»: без эквайринга, без токенизации.
+                        // Каналы документа фиксируются на bank_transfer при сохранении.
+                        const prevMeta = (offerForm.meta || {}) as any;
+                        const { recurring, installment, acquiring, ...cleanMeta } = prevMeta;
+                        const prevLabel = offerForm.button_label;
+                        const isDefaultLabel = !prevLabel
+                          || prevLabel === "Оплатить"
+                          || prevLabel === "Оплатить в рассрочку"
+                          || prevLabel === "Оплатить в рассрочку от банка"
+                          || prevLabel === "Trial 1 BYN / 5 дней"
+                          || prevLabel === "Забронировать место"
+                          || prevLabel === "Оставить заявку";
+                        setOfferForm({
+                          ...offerForm,
+                          offer_type: "invoice",
+                          payment_method: "full_payment",
+                          is_primary: false,
+                          button_label: isDefaultLabel ? "Сформировать счёт" : prevLabel,
+                          requires_card_tokenization: false,
+                          installment_count: null as any,
+                          installment_interval_days: null as any,
+                          first_payment_delay_days: null as any,
+                          meta: {
+                            ...cleanMeta,
+                            site_button_variant: cleanMeta.site_button_variant || "legal_entity",
+                            slot_role: cleanMeta.slot_role || "payment_invoice",
+                          },
+                        });
                       } else {
                         setOfferForm({
                           ...offerForm,
@@ -2016,6 +2082,7 @@ export default function AdminProductDetailV2() {
                       <SelectItem value="preregistration">Предзапись (привязка карты)</SelectItem>
                       <SelectItem value="installment">Рассрочка</SelectItem>
                       <SelectItem value="lead">Заявка (без оплаты)</SelectItem>
+                      <SelectItem value="invoice">Сформировать счёт</SelectItem>
                       <SelectItem value="bank_installment">Рассрочка банка</SelectItem>
                     </SelectContent>
                   </Select>

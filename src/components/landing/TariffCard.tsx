@@ -20,7 +20,7 @@ export interface TariffCardFeature {
 
 export interface TariffCardOffer {
   id: string;
-  offer_type: "pay_now" | "trial" | "preregistration" | "lead" | "bank_installment";
+  offer_type: "pay_now" | "trial" | "preregistration" | "lead" | "bank_installment" | "invoice";
   button_label: string;
   amount: number;
   trial_days?: number | null;

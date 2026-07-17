@@ -138,6 +138,9 @@ Deno.serve(async (req) => {
           if (specificOffer.offer_type === 'lead') {
             return new Response(JSON.stringify({ error: 'Lead offers cannot be paid via bePaid' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           }
+          if (specificOffer.offer_type === 'invoice') {
+            return new Response(JSON.stringify({ error: 'offer_type_invoice_not_chargeable' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          }
           priceFromOffer = specificOffer.amount;
           console.log('Using specific offer by offerId:', offerId, 'price:', priceFromOffer);
         } else {

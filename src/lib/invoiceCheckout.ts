@@ -19,6 +19,11 @@ export interface InvoiceOnlyDetection {
 
 export function detectInvoiceOnlyOffer(offer: TariffOffer | null | undefined): InvoiceOnlyDetection {
   if (!offer) return { isInvoiceOnly: false, scenarioId: null };
+  // Каноничный признак — offer_type='invoice' (кнопка «Сформировать счёт»).
+  // Приоритетнее любых scenario-based эвристик.
+  if ((offer as any).offer_type === "invoice") {
+    return { isInvoiceOnly: true, scenarioId: null };
+  }
   const meta = (offer as unknown as { meta?: Record<string, unknown> }).meta;
   const scenariosRaw = meta && typeof meta === "object" ? (meta as any).document_scenarios : null;
   if (!Array.isArray(scenariosRaw) || scenariosRaw.length === 0) {

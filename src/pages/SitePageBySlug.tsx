@@ -81,14 +81,19 @@ function pickOfferForFlow(offers: readonly any[], flow: Flow) {
   const active = offers.filter((o) => o.is_active !== false);
   if (flow === "lead") return active.find((o) => o.offer_type === "lead") || null;
   if (flow === "bank_installment") return active.find((o) => o.offer_type === "bank_installment") || null;
+  if (flow === "invoice") {
+    // Каноничный invoice-оффер имеет offer_type='invoice'. Legacy: pay_now с document_scenarios.
+    return (
+      active.find((o) => o.offer_type === "invoice") ||
+      active.filter((o) => o.offer_type === "pay_now").find((o) => detectInvoiceOnlyOffer(o).isInvoiceOnly) ||
+      null
+    );
+  }
   const pn = active.filter((o) => o.offer_type === "pay_now");
   if (flow === "installment") {
     return pn.find((o) => o.payment_method === "internal_installment") || null;
   }
-  if (flow === "invoice") {
-    return pn.find((o) => detectInvoiceOnlyOffer(o).isInvoiceOnly) || null;
-  }
-  // payment: primary full_payment, non-installment, non-invoice-only.
+  // payment: primary full_payment, non-installment, non-invoice-only (legacy detector).
   return (
     pn
       .filter(
