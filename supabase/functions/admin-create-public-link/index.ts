@@ -594,7 +594,7 @@ Deno.serve(async (req) => {
       linkMeta.stripe_recurring_snapshot = linkMetaStripeRecurringSnapshot;
     }
 
-    // B2 corrective. Non-installment subscription (bePaid recurring MIT-legacy или
+    // B2 corrective. Non-installment subscription (bePaid provider-managed recurring или
     // Stripe subscription) — snapshot canonical charge_notifications policy на
     // уровне payment_links.meta.recurring. Precedence: live offer meta → legacy → defaults.
     if (!installmentBlock && payment_type === 'subscription' && offer_id) {
