@@ -1,239 +1,324 @@
-## Да. Вы правы: объяснение «на другом сайте работает» — неправильное и маскирует архитектурный дефект.
+## Диагноз — **подтверждён**
 
-## Почему две одинаковые кнопки работают по-разному
+Проблема не в канбане. Заказ создаётся без `pipeline_id`, поэтому `useDealsBoard` закономерно его не показывает.
 
-Сейчас тип:
+Но текущий план нужно скорректировать в четырёх местах. Иначе появится fallback, но исторические заказы и terminal-routing останутся частично сломанными.
 
-```text
-offer_type = bank_installment
+## 1. Нужен один общий resolver, а не одинаковые вставки в трёх функциях
 
-```
+Сейчас `resolveOfferRoutingWithFallback()` при наличии `offer_id` делает следующее:
 
-**не определяет поведение кнопки полностью**.
-
-После него код проверяет ещё один скрытый параметр:
-
-```text
-meta.bank_installment.rr_runtime.enabled
+```ts
+const r = await resolveOfferRouting(supabase, offer_id);
+return r;
 
 ```
 
-Фактическая развилка в коде такая:
+То есть при существующем `offer_id`, но отсутствующем `meta.crm_routing`, до tariff fallback он вообще не доходит. Название функции в этом случае вводит в заблуждение.
 
-```text
-bank_installment
-        │
-        ├─ rr_runtime.enabled = true
-        │      → public-rr-installment-initiate
-        │      → API Ресурс Развития
-        │      → индивидуальная ссылка /order/...
-        │
-        └─ rr_runtime отсутствует или false
-               → API вообще не вызывается
-               → открывается legacy external_link
-               → katerina-gorbova-credit
+Нужно добавить в `_shared/crm-routing.ts` единый публичный метод, например:
+
+```ts
+resolveOrderRouting(supabase, {
+  offer_id,
+  tariff_id,
+  product_id,
+  flow_kind,
+})
 
 ```
 
-Я проверил саму реализацию:
-
-- `readBankInstallmentMeta()` передаёт runtime дальше **только**, когда одновременно:
-  - `enabled === true`;
-  - `provider === 'rr'`.
-- `LeadRequestDialog` вызывает `startBankInstallment()` только при наличии этого runtime.
-- `startBankInstallment()` без runtime немедленно возвращает legacy-ссылку и не обращается к edge-функции.
-
-То есть визуально в админке две кнопки одинаковые:
+Порядок:
 
 ```text
-Тип кнопки: Рассрочка банка
+1. Явный crm_routing текущего offer_id
+2. Tariff fallback — только когда offer_id отсутствует
+3. Product-binding fallback
+4. Negative snapshot
 
 ```
 
-но технически одна имеет скрытый JSON-флаг, а другая — нет.
+И уже его использовать в:
 
-## Это хардкод?
+- `public-rr-installment-initiate`;
+- `_shared/create-payment-checkout.ts`;
+- `_shared/create-stripe-checkout.ts`.
 
-Это не хардкод конкретного сайта по домену. Но по сути это **скрытый конфигурационный хардкод на уровне каждого оффера**, что для администратора ничем не лучше.
+Не копировать последовательность resolver-вызовов по разным файлам.
 
-У продукта «1 ступень 2.0» при создании офферов вручную записали:
+---
+
+## 2. `resolved_via` сейчас не попадёт в положительный snapshot
+
+Текущий `CrmRoutingSnapshot` не содержит `resolved_via`. Это поле есть только в результате resolver, но в `orders_v2.meta.crm_routing_snapshot` записывается непосредственно `routing.snapshot`.
+
+Следовательно, заявленная проверка:
+
+```text
+meta.crm_routing_snapshot.resolved_via
+= product_binding_fallback
+
+```
+
+не пройдёт без изменения типа snapshot.
+
+Добавить:
+
+```ts
+resolved_via:
+  | "offer_id"
+  | "tariff_fallback"
+  | "product_binding_fallback";
+
+resolved_at: string;
+product_id: string | null;
+binding_id: string | null;
+
+```
+
+В положительном snapshot сохранять фактический `offer_id`, даже когда стадии получены через product binding.
+
+Также расширить union в:
+
+- `ResolvedRouting`;
+- `NegativeRoutingSnapshot`;
+- `buildNegativeSnapshot`;
+- `auditNegativeSnapshot`.
+
+---
+
+## 3. Product fallback не должен произвольно выбирать первую стадию по имени
+
+Правило:
+
+```text
+name ~* '^заявка'
+
+```
+
+опасно. В одной воронке могут существовать:
+
+- «Заявка»;
+- «Заявка на кредит»;
+- «Заявка на консультацию».
+
+Выбор первой по `order_index` снова создаст скрытое поведение.
+
+### Канонический root-fix
+
+Для всех активных `bank_installment`-офферов ЦБ 2.0 нужно явно заполнить:
 
 ```json
-{
-  "rr_runtime": {
-    "enabled": true,
-    "provider": "rr",
-    "mode": "initiate_only"
-  }
+meta.crm_routing = {
+  "enabled": true,
+  "pipeline_id": "...",
+  "stage_on_pending": "8c8ca380-cc65-4863-8e04-01d9dd357306",
+  "stage_on_success": "...",
+  "stage_on_failed": "..."
 }
 
 ```
 
-У продукта «20 поток» этот вложенный объект не записали. Поэтому одинаковый тип кнопки даёт разные результаты.
+То есть product-binding fallback остаётся страховочной compatibility-layer, но актуальные продающие офферы после data-fix больше не должны от него зависеть.
 
-Следовательно, проблема не в РР и не в том, что «на этом сайте API не работает». Проблема в том, что система позволяет создать кнопку **«Рассрочка банка» без включённой банковской рассрочки через API**.
+Для самого fallback:
 
-## Что должно быть исправлено архитектурно
+1. ровно один активный product binding;
+2. pending — `is_default=true` среди открытых стадий;
+3. success — единственная `closed_won`;
+4. failed — единственная `closed_lost`;
+5. при неоднозначности — negative snapshot, а не произвольный выбор.
 
-Просто дописать `rr_runtime` двум офферам недостаточно. Это починит текущие данные, но проблема повторится при следующем копировании или создании кнопки.
+Для РР нужная стадия **«Заявка на кредит»** должна задаваться явным `crm_routing` оффера.
 
-Канон должен быть таким:
+---
 
-```text
-offer_type = bank_installment
-provider = rr
+## 4. Backfill должен обновлять не только две колонки
+
+Предложенный UPDATE:
+
+```sql
+SET pipeline_id = ...,
+    pipeline_stage_id = ...
 
 ```
 
-означает:
+недостаточен.
+
+`applyCrmStageOnTerminal()` использует исключительно:
 
 ```text
-Всегда использовать public-rr-installment-initiate.
+orders_v2.meta.crm_routing_snapshot
 
 ```
 
-Legacy-ссылка должна быть только аварийным fallback после ошибки API, а не отдельным неявным режимом по умолчанию.
+Если оставить старый negative snapshot либо отсутствие snapshot, такой заказ впоследствии не перейдёт автоматически в успешную или неуспешную стадию.
 
-### Правильная модель в админке
+Backfill должен атомарно обновлять:
 
-Для типа **«Рассрочка банка»** администратор должен видеть:
+```text
+pipeline_id
+pipeline_stage_id
+meta.crm_routing_snapshot
 
-- **Провайдер:** Ресурс Развития;
-- **Режим:** API;
-- **Резервная ссылка:** используется только при ошибке API;
-- состояние: **API включён** / **не настроено**.
+```
 
-Но лучше вообще не давать сохранять активный оффер РР без runtime-конфигурации.
+### Стадия зависит от текущего статуса заказа
 
-При выборе типа `bank_installment` система автоматически должна записывать:
+Нельзя все заказы за 30 дней помещать в pending:
+
+
+| Текущий заказ            | Целевая стадия     |
+| ------------------------ | ------------------ |
+| pending / lead / created | `stage_on_pending` |
+| paid / completed         | `stage_on_success` |
+| failed / canceled        | `stage_on_failed`  |
+
+
+Для `ORD-26-00341` — стадия **«Заявка на кредит»**.
+
+Guard backfill:
+
+```text
+pipeline_id IS NULL
+pipeline_stage_id IS NULL
+meta.rr существует
+product_id имеет ровно один binding
+нет признаков ручного перемещения
+
+```
+
+В snapshot отметить:
 
 ```json
 {
-  "bank_installment": {
-    "installment_provider": "rr",
-    "rr_mode": "payment_url",
-    "currency": "BYN",
-    "rr_runtime": {
-      "enabled": true,
-      "provider": "rr",
-      "mode": "initiate_only"
-    }
-  }
+  "resolved_via": "product_binding_fallback",
+  "backfilled": true,
+  "backfilled_at": "..."
 }
 
 ```
 
-А если администратор сознательно хочет только внешнюю ссылку, это должен быть отдельный явный режим:
+## Верификация
+
+Не нужно создавать три реальные заявки в боевом API РР только ради проверки CRM-routing. Это создаст три внешних заказа у провайдера.
+
+Достаточно:
+
+1. unit/integration-проверки resolver для трёх офферов без вызова РР;
+2. deploy общего resolver и `public-rr-installment-initiate`;
+3. одного нового live smoke через проблемный оффер;
+4. проверить:
+  - `pipeline_id`;
+  - `pipeline_stage_id`;
+  - положительный snapshot;
+  - `resolved_via`;
+  - audit;
+  - видимость карточки в канбане;
+5. backfill `ORD-26-00341` и остальных подходящих NULL-заказов;
+6. screenshot канбана.
+
+Синтетические уже созданные заказы нельзя просто помечать `canceled`, не учитывая, что заявка могла сохраниться у РР. Для новых тестов использовать максимум один контролируемый live-вызов.
+
+## Решение
 
 ```text
-Способ запуска:
-○ Через API Ресурс Развития
-○ Внешняя ссылка без API
+DIAGNOSIS                    : PASS
+PRODUCT-BINDING FALLBACK     : APPROVED WITH CHANGES
+CENTRAL UNIFIED RESOLVER     : REQUIRED
+EXPLICIT ROUTING BACKFILL    : REQUIRED
+ORDERS SNAPSHOT BACKFILL     : REQUIRED
+BLIND STAGE NAME MATCHING    : REJECTED
+3 LIVE RR SIMULATIONS        : REJECTED
 
 ```
 
-Не скрытый отсутствующий JSON-параметр.
+После этих поправок план закрывает не только видимость сделки на канбане, но и последующий автоматический перевод сделки при успехе или отказе РР.
 
-## Решение по текущей задаче
-
-Предложенный data-fix правильный:
-
-- включить runtime у `58de9fea`;
-- включить runtime у `136a1076` на будущее;
-- сохранить `external_link` только как fallback.
-
-Но frontend-патч нужно усилить:
-
-1. При создании или переключении на **«Рассрочка банка»** автоматически включать API РР.
-2. При сохранении активного `bank_installment` не позволять пустой `rr_runtime`, если выбран провайдер РР.
-3. Статическую жёлтую плашку удалить.
-4. Показывать фактическое состояние конкретного оффера.
-5. Копирование оффера должно сохранять или канонически пересоздавать всю конфигурацию банковской рассрочки.
-6. Добавить аудит всех активных `bank_installment`-офферов, а не исправлять только найденные два.
-
-`integration_instances.status='disconnected'` к этой конкретной проблеме отношения не имеет. API работает, боевые credentials используются. Этот статус нужно исправить для админки, но он не объясняет отсутствие вызова edge-функции.
-
-```text
-ПРИЧИНА:
-скрытый per-offer rr_runtime.enabled
-
-ПРОБЛЕМА РР API:
-нет — API работает
-
-ПРОБЛЕМА САЙТА:
-нет привязки к конкретному домену
-
-АРХИТЕКТУРНЫЙ ДЕФЕКТ:
-тип «Рассрочка банка» не является единым источником поведения
-
-ТЕКУЩИЙ FIX:
-дописать runtime двум офферам
-
-ОБЯЗАТЕЛЬНЫЙ ROOT-FIX:
-автоматически включать и валидировать API-конфигурацию
-для offer_type='bank_installment'
-
+&nbsp;
 
 Отчёт о диагностике
+
+**Что нашёл в БД (последние 24 ч):**
+
+
+| Order                          | Кнопка / оффер                                                                                     | pipeline_id                       | Итог                             |
+| ------------------------------ | -------------------------------------------------------------------------------------------------- | --------------------------------- | -------------------------------- |
+| ORD-26-00343 (Сергей Ф.) 12:21 | offer `77dd831a` «Рассрочка от банка» (Бухгалтер, 20 поток) — `meta.crm_routing.enabled=true`      | ✅ проставлен, stage «Счет для ЮЛ» | Виден в CRM                      |
+| ORD-26-00341 (Сергей Ф.) 12:06 | offer `58de9fea` «Заявка на рассрочку» (Главный бухгалтер, 20 поток) — `meta.crm_routing` НЕ задан | ❌ `NULL`                          | **Пропала: невидима на канбане** |
+| ORD-26-00340 smoke 11:54       | тот же тип оффера                                                                                  | ❌ `NULL`                          | Пропала                          |
+
+
+**Корень проблемы.** `public-rr-installment-initiate` резолвит стадию через `resolveOfferRoutingWithFallback(offer_id, tariff_id)`. Резолвер положительный ТОЛЬКО когда в `tariff_offers.meta.crm_routing.enabled = true` и заполнены `pipeline_id / stage_on_pending / stage_on_success / stage_on_failed`. Для `offer_type='bank_installment'` эта настройка заполнена всего на 2 офферах из 8:
+
+- ✅ `77dd831a` «Рассрочка от банка» — Бухгалтер (20 поток)
+- ✅ `fc127066` «Рассрочка от банка (копия)» — Бухгалтер (20 поток) — is_active=false
+- ❌ остальные 6 (все продающие кнопки на актуальном лендинге ЦБ 2.0) — без `crm_routing` → `pipeline_id=NULL`, `pipeline_stage_id=NULL`
+
+`useDealsBoard` фильтрует по `pipeline_id = pipelineId` → сделка не отображается вовсе. Именно это описал пользователь: «человек оставил заявку, я не знаю, в CRM ничего нет».
+
+Дополнительно fallback по `tariff_id` (`resolveOfferRoutingWithFallback`) ищет только `offer_type='pay_now'` с включённым routing — bank_installment туда не попадают, поэтому fallback тоже пустой.
+
+Продукт-→воронка биндинг существует (`crm_pipeline_product_bindings`: `7101ed3c` ЦБ 20 поток → воронка `a0000001-…0002`), но в резолвере он не используется.
+
+---
+
+## План исправления
+
+### 1. Product-binding fallback в CRM routing (add-only)
+
+В `supabase/functions/_shared/crm-routing.ts` добавить экспорт `resolveRoutingByProductFallback(sb, product_id)`:
+
+- ищет `crm_pipeline_product_bindings` по `product_id` (1 запись — 1 воронка);
+- берёт стадии воронки: `stage_on_pending` = стадия с `name ~* '^заявка'` (иначе `is_default=true`, иначе минимальный `order_index` с `stage_type='open'`); `stage_on_success` = первая `stage_type='closed_won'`; `stage_on_failed` = первая `stage_type='closed_lost'`;
+- если ок → возвращает `ResolvedRouting.ok=true` со `snapshot.resolved_via='product_binding_fallback'`.
+
+Пометить как **compatibility_layer** — этот резолвер отключаем, когда все кнопки получат явный `crm_routing`.
+
+### 2. Подключить fallback в `public-rr-installment-initiate/index.ts`
+
+Порядок резолва при инициации:
+
+```
+resolveOfferRoutingWithFallback(offer_id, tariff_id)
+   → ok=false → resolveRoutingByProductFallback(product_id)
+      → ok=false → buildNegativeSnapshot()
 ```
 
-Проверил цепочку кнопки «Рассрочка от банка» → `LeadRequestDialog` → `startBankInstallment` → edge-функция `public-rr-installment-initiate` → REST API `https://pay.rrllc.ru/api/v2` (loader `_shared/rr/rr-config.ts`).
+`crmRoutingOk = true` уже в fallback-ветке → `_pipeline_id` и `_pipeline_stage_id` попадают в INSERT.
 
-### Что реально в БД
+Логировать в `audit_logs` шаг `rr.create_order.routing_fallback_used` c `product_id`, `pipeline_id`, `stage_id`, `stage_name` — для прозрачности.
 
-`**integration_instances` (provider=rr):**
+### 3. Единый резолвер и для чекаут-потоков (согласованность)
 
-- `config.mode = "battle"` — боевой режим уже включён.
-- Логин/пароли для battle и test присутствуют, `secret_key` тоже.
-- `**status = "disconnected"**` — это только UI-флаг, боевой поток в edge-функции его НЕ проверяет (`loadRRConfig` смотрит только на mode + креды). Заказы создаются без проблем.
+Те же две строчки добавить в `_shared/create-payment-checkout.ts` (one-time + subscription) и `_shared/create-stripe-checkout.ts` — чтобы поведение кнопок не расходилось. Это чисто add-only обёртка после существующего `resolveOfferRoutingWithFallback`.
 
-`**tariff_offers` с `offer_type='bank_installment'`:**
+### 4. Backfill потерянных сделок
 
+INSERT-миграцией (data-only) через `insert`-tool:
 
-| Оффер        | Продукт / тариф                   | rr_runtime.enabled | Что происходит по кнопке                                                          |
-| ------------ | --------------------------------- | ------------------ | --------------------------------------------------------------------------------- |
-| 4f64def7     | 1 ступень 2.0 / Бизнес-леди       | ✅ true             | Идёт в API РР                                                                     |
-| 15ce91ec     | 1 ступень 2.0 / Бухгалтер         | ✅ true             | Идёт в API РР                                                                     |
-| 2a07af43     | 1 ступень 2.0 / Гл. бухгалтер     | ✅ true             | Идёт в API РР                                                                     |
-| **58de9fea** | **20 поток / Гл. бухгалтер**      | **❌ отсутствует**  | **Открывает legacy `pay.rrllc.ru/katerina-gorbova-credit` (это второй скриншот)** |
-| 136a1076     | 20 поток / Бизнес-леди (inactive) | ❌ отсутствует      | То же                                                                             |
+```sql
+UPDATE orders_v2
+   SET pipeline_id = <из crm_pipeline_product_bindings по product_id>,
+       pipeline_stage_id = <по правилам из п.1>
+ WHERE pipeline_id IS NULL
+   AND meta ? 'rr'
+   AND created_at > now() - interval '30 days';
+```
 
+Отдельно для ORD-26-00341 (Сергей Федорчук, `7500084@gmail.com`) — воронка `a0000001-…0002`, стадия «Заявка на кредит» (`8c8ca380-cc65-4863-8e04-01d9dd357306`).
 
-`**orders_v2` (flow=rr_installment):** последние заказы за 10–12 июля — все `initiation_status=created`, `payment_url` присутствует, много `status=paid`. Значит API-контур физически работает; никаких `upstream_outcome_unknown` или `rr_call_in_flight` в свежих данных нет.
+### 5. Верификация (в режиме симуляции)
 
-**Edge-логи `public-rr-installment-initiate`:** за последние сутки пусто — никто не жал кнопку на офферах с `rr_runtime.enabled`. Пользователь, который «жаловался», кликал на 20-поток → там нет rr_runtime → сработал legacy-редирект (это ровно то, что видно на скриншоте с `Оплата заказа / Кредит от банка / Беларусь`, эту страницу отдаёт РР без нашего API).
-
-### Диагноз
-
-1. **Основная причина отсутствия API-вызова у пользователя:** на офферах продукта «Ценный бухгалтер | 20 поток» не проставлен `meta.bank_installment.rr_runtime`, поэтому фронт идёт по legacy-ссылке. На основном продукте всё уже работает через API в боевом режиме.
-2. **Косметическая, но вводящая в заблуждение регрессия:** в `AdminProductDetailV2.tsx:2477-2480` жёстко зашитая жёлтая плашка «Runtime-контур РР ещё не включён» показывается ВСЕГДА, независимо от фактического состояния оффера и интеграции. Она и породила предположение «боевой режим не включён».
-3. `integration_instances.status='disconnected'` — фактически не влияет на работу, но лучше привести к `active`, чтобы админский экран RRSettingsCard не путал.
-
-### План работ
-
-**Данные (миграция/SQL):**
-
-1. Обновить `tariff_offers` для `58de9fea` (и inactive `136a1076` — на будущее) в продукте «20 поток»: дописать в `meta.bank_installment` поля `installment_provider='rr'`, `rr_mode='payment_url'`, `rr_runtime={enabled:true, provider:'rr', mode:'initiate_only'}`, `currency='BYN'`. Legacy `external_link` не трогаем — он останется как fallback.
-2. Обновить `integration_instances.status` для `provider='rr'` на `'active'` (реальное состояние соответствует).
-
-**Фронт (`src/pages/admin/AdminProductDetailV2.tsx`, блок «Рассрочка банка», ~строки 2463–2510):**
-3. Заменить статическую жёлтую плашку на динамическую:
-
-- если `offer.meta.bank_installment.rr_runtime?.enabled === true` → зелёный бейдж «Runtime РР включён (боевой режим)»;
-- иначе → текущая жёлтая с текстом «Runtime не включён, работает legacy `external_link`».
-
-4. Добавить чекбокс «Использовать API Ресурс Развития (боевой режим)» — переключает `rr_runtime.enabled` прямо из редактора оффера, чтобы такие ситуации не возникали снова.
-
-**Верификация (smoke):**
-5. Из sandbox дернуть `POST /functions/v1/public-rr-installment-initiate` для оффера `58de9fea` после патча с тестовым контактом; проверить, что вернулся `payment_url` вида `https://pay.rrllc.ru/order/...` (не статическая посадочная).
-6. Прочитать логи `public-rr-installment-initiate` и `rr-webhook` за окно теста — должны быть `rr_create_order_ok` / `rr.create_order.*` без `upstream_outcome_unknown`.
-7. Проверить `orders_v2` по свежему `correlation_id`: `initiation_status='created'`, `upstream_call_state='completed'`, `payment_url` заполнен, `crm_routing_snapshot` присутствует.
-8. Проверить в UI `/cb` (три тарифа продукта «20 поток»): кнопка «Рассрочка от банка» → форма заявки → редирект на `pay.rrllc.ru/order/...`, а не на общий landing.
+1. Дёрнуть `public-rr-installment-initiate` для каждой активной bank_installment-кнопки продукта ЦБ 2.0 (3 тарифа × 1 оффер) — синтетическими контактами `sim-…@test.local`.
+2. Проверить `orders_v2` за последние 5 минут: `pipeline_id`, `pipeline_stage_id`, `meta.crm_routing_snapshot.resolved_via`. Ожидание: у всех 3-х заказов → воронка «ЦБ | 1 ступень» / стадия «Заявка на кредит».
+3. Открыть kanban `AdminDealsBoard` в этой воронке → все 3 карточки видимы в нужной стадии, плюс ORD-26-00341.
+4. Cleanup: пометить симуляционные заказы `status='canceled'` (как раньше).
 
 ### DoD
 
-- Все активные bank_installment офферы имеют `rr_runtime.enabled=true`; legacy `external_link` только как fallback при ошибке initiate.
-- Админский блок отражает реальное состояние runtime по каждому офферу и позволяет его переключить.
-- `integration_instances(provider=rr).status='active'`.
-- Живой POST в `public-rr-installment-initiate` для проблемного оффера возвращает валидный `payment_url` с домена `pay.rrllc.ru/order/`; в логах нет ошибок; заказ появляется в `orders_v2`.
-- Публикация фронтового патча (пункты 3–4) — отдельным шагом после подтверждения.
+- Резолвер routing использует product-binding, когда в оффере не задан `crm_routing`.
+- Три активные bank_installment-кнопки продукта ЦБ 2.0 создают сделки со стадией «Заявка на кредит».
+- ORD-26-00341 и остальные NULL-заказы за 30 дней с `meta.rr` видны на канбане.
+- `audit_logs` содержит запись `rr.create_order.routing_fallback_used` для каждого fallback-случая.
+- Скрин канбана с симуляционными заказами приложен в ответе.
