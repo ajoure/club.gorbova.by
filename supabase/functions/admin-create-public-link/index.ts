@@ -442,7 +442,7 @@ Deno.serve(async (req) => {
         actor_label: 'admin-create-public-link',
         action: 'installment.admin_link_created',
         meta: {
-          contact_id: (typeof (req as any).body?.user_id === 'string' ? (req as any).body.user_id : null),
+          contact_id: user_id ?? null,
           offer_id: resolvedOffer.id,
           public_cycles: offerInstallmentCountLegacy,
           selected_cycles: sel,
