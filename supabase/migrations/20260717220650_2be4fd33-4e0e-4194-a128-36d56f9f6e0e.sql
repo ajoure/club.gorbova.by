@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX IF NOT EXISTS installment_payments_subscription_payment_number_unique
+ON public.installment_payments(subscription_id, payment_number);
