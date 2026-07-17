@@ -591,11 +591,11 @@ export default function AdminProductDetailV2() {
     let rawSlotRole = ((offerForm.meta as any)?.slot_role as string | undefined) || "";
     const rawVariant = ((offerForm.meta as any)?.site_button_variant as string | undefined) || "";
     if (rawSlotRole && !SLOT_ROLE_RE.test(rawSlotRole)) {
-      toast.error("slot_role: только a-z, 0-9 и «_», 2–64 символа, начинается с буквы");
+      toast.error("Технический код назначения: только латиница a–z, цифры и «_», 2–64 символа, должен начинаться с буквы");
       return;
     }
     if (rawVariant && !(SLOT_VARIANTS as readonly string[]).includes(rawVariant)) {
-      toast.error(`site_button_variant должен быть одним из: ${SLOT_VARIANTS.join(", ")}`);
+      toast.error("Выбран недопустимый внешний вид кнопки. Выберите значение из списка.");
       return;
     }
     // Product is opted into dynamic slots when ANY other offer on the product
