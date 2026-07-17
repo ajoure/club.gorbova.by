@@ -340,12 +340,14 @@ Deno.serve(async (req) => {
         } catch (e) {
           if (e instanceof ProviderUnlimitedAttemptsNotSupportedError) {
             await supabase.from('audit_logs').insert({
-              actor_type: 'admin',
+              actor_type: 'user',
+              actor_user_id: user.id,
               actor_label: 'admin-create-public-link',
               action: 'installment.retry_policy.preflight_blocked',
               meta: {
                 product_id, tariff_id, offer_id: offer_id ?? null,
                 reason: e.reason,
+                source: 'admin-create-public-link',
               },
             });
             return jsonResponse({
