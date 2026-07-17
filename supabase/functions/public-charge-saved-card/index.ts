@@ -28,7 +28,7 @@ import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } 
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import {
-  resolveOfferRoutingWithFallback,
+  resolveOrderRouting,
   buildNegativeSnapshot,
   auditNegativeSnapshot,
 } from '../_shared/crm-routing.ts';
