@@ -5304,9 +5304,10 @@ Deno.serve(async (req) => {
                 updated_at: now.toISOString(),
               };
               if (grantNextChargeAt) providerSyncPatch.next_charge_at = grantNextChargeAt;
+              const paymentMethodId: string | null = (paymentV2 as any)?.payment_method_id ?? null;
               if (paymentMethodId) {
                 providerSyncPatch.payment_method_id = paymentMethodId;
-                providerSyncPatch.payment_token = paymentV2.payment_token;
+                providerSyncPatch.payment_token = (paymentV2 as any)?.payment_token ?? null;
               }
               const { data: curSub } = await supabase
                 .from('subscriptions_v2')
