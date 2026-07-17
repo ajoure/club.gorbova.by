@@ -552,9 +552,11 @@ Deno.serve(async (req) => {
             order_id: ncOrder.id,
             offer_id: trialOfferRow.id,
             tariff_id: trialOfferRow.tariff_id,
+            product_id: productId,
             reason: ncRouting.reason || 'unknown',
             resolved_via: ncRouting.resolved_via ?? 'none',
             candidates_count: ncRouting.candidates_count ?? 0,
+            primary_reason: ncRouting.primary_reason ?? null,
           });
         }
 
