@@ -756,6 +756,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           product_id,
           resolved_via: subRouting.resolved_via ?? 'none',
           candidates_count: subRouting.candidates_count ?? 0,
+          primary_reason: subRouting.primary_reason ?? null,
         });
     const subMetaWithRouting = { ...subOrderMeta, crm_routing_snapshot: subCrmSnapshot };
 
