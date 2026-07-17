@@ -505,7 +505,7 @@ export default function AdminProductDetailV2() {
         is_primary: offer.is_primary ?? false,
         getcourse_offer_id: offer.getcourse_offer_id || "",
         reject_virtual_cards: offer.reject_virtual_cards ?? false,
-        payment_method: offer.payment_method || "full_payment",
+        payment_method: offer.offer_type === "invoice" ? "bank_transfer" : (offer.payment_method || "full_payment"),
         installment_count: offer.installment_count || 3,
         installment_interval_days: offer.installment_interval_days || 30,
         first_payment_delay_days: offer.first_payment_delay_days || 0,
