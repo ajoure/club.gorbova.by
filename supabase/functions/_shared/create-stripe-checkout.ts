@@ -15,7 +15,7 @@
 // На ошибку Stripe — FAIL (controlled). НИКАКОГО bePaid fallback.
 
 import {
-  resolveOfferRoutingWithFallback,
+  resolveOrderRouting,
   buildNegativeSnapshot,
   auditNegativeSnapshot,
 } from './crm-routing.ts';
