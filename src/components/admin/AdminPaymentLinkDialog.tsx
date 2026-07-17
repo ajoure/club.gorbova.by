@@ -705,12 +705,14 @@ ${amountLine}
     if (effectiveOffer) {
       setCustomAmount(String(Number(effectiveOffer.amount)));
       setGeneratedUrl(null);
-      // Stage L: если оффер installment — выставляем default = max_months и форсим one_time.
+      // Stage L: если оффер installment — форсим one_time и требуем явный выбор.
+      // Автоподставляем значение ТОЛЬКО когда max_months === 2 (единственный вариант),
+      // в остальных случаях админ обязан выбрать N в dropdown вручную.
       if ((effectiveOffer as any).payment_method === "internal_installment") {
         const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
         const legacy = Number((effectiveOffer as any).installment_count ?? 0);
         const max = Math.min(12, metaMax >= 2 ? metaMax : (legacy >= 2 ? legacy : 0));
-        setSelectedInstallmentMonths(max >= 2 ? max : null);
+        setSelectedInstallmentMonths(max === 2 ? 2 : null);
         if (paymentType !== "one_time") setPaymentType("one_time");
       } else {
         setSelectedInstallmentMonths(null);
