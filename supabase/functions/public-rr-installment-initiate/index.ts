@@ -604,8 +604,9 @@ Deno.serve(async (req: Request) => {
       order_id: externalId,
       offer_id: offerId,
       tariff_id: tariff.id,
+      product_id: product.id,
       reason: crmRoutingContext.reason || "unknown",
-      resolved_via: crmRoutingContext.resolved_via ?? "none",
+      resolved_via: (crmRoutingContext.resolved_via as any) ?? "none",
       candidates_count: crmRoutingContext.candidates_count ?? 0,
     });
   }
