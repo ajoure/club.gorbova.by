@@ -316,6 +316,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           product_id,
           resolved_via: oneTimeRouting.resolved_via ?? 'none',
           candidates_count: oneTimeRouting.candidates_count ?? 0,
+          primary_reason: oneTimeRouting.primary_reason ?? null,
         });
     const oneTimeMetaWithRouting = { ...orderMeta, crm_routing_snapshot: oneTimeCrmSnapshot };
 
@@ -372,9 +373,11 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         order_id: order.id,
         offer_id: offer_id ?? null,
         tariff_id,
+        product_id,
         reason: oneTimeRouting.reason || 'unknown',
         resolved_via: oneTimeRouting.resolved_via ?? 'none',
         candidates_count: oneTimeRouting.candidates_count ?? 0,
+        primary_reason: oneTimeRouting.primary_reason ?? null,
       });
     }
 
@@ -753,6 +756,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           product_id,
           resolved_via: subRouting.resolved_via ?? 'none',
           candidates_count: subRouting.candidates_count ?? 0,
+          primary_reason: subRouting.primary_reason ?? null,
         });
     const subMetaWithRouting = { ...subOrderMeta, crm_routing_snapshot: subCrmSnapshot };
 
@@ -809,9 +813,11 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         order_id: order.id,
         offer_id: offer_id ?? null,
         tariff_id,
+        product_id,
         reason: subRouting.reason || 'unknown',
         resolved_via: subRouting.resolved_via ?? 'none',
         candidates_count: subRouting.candidates_count ?? 0,
+        primary_reason: subRouting.primary_reason ?? null,
       });
     }
 

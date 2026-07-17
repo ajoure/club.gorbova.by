@@ -2,7 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveUserIds, getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
-import { resolveOfferRoutingWithFallback, buildNegativeSnapshot, auditNegativeSnapshot } from '../_shared/crm-routing.ts';
+import { resolveOrderRouting, buildNegativeSnapshot, auditNegativeSnapshot } from '../_shared/crm-routing.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -482,9 +482,10 @@ Deno.serve(async (req) => {
         const orderNumber = `ORD-TRIAL-${Date.now().toString(36).toUpperCase()}`;
 
         // CRM routing snapshot (Layer A invariant — always materialize)
-        const ncRouting = await resolveOfferRoutingWithFallback(supabase, {
+        const ncRouting = await resolveOrderRouting(supabase, {
           offer_id: trialOfferRow.id,
           tariff_id: trialOfferRow.tariff_id,
+          product_id: productId,
         });
         const ncSnapshot = ncRouting.ok && ncRouting.snapshot
           ? ncRouting.snapshot
@@ -492,8 +493,10 @@ Deno.serve(async (req) => {
               reason: ncRouting.reason || 'unknown',
               offer_id: trialOfferRow.id,
               tariff_id: trialOfferRow.tariff_id,
+              product_id: productId,
               resolved_via: ncRouting.resolved_via ?? 'none',
               candidates_count: ncRouting.candidates_count ?? 0,
+              primary_reason: ncRouting.primary_reason ?? null,
             });
 
         const ncMeta: Record<string, unknown> = {
@@ -549,9 +552,11 @@ Deno.serve(async (req) => {
             order_id: ncOrder.id,
             offer_id: trialOfferRow.id,
             tariff_id: trialOfferRow.tariff_id,
+            product_id: productId,
             reason: ncRouting.reason || 'unknown',
             resolved_via: ncRouting.resolved_via ?? 'none',
             candidates_count: ncRouting.candidates_count ?? 0,
+            primary_reason: ncRouting.primary_reason ?? null,
           });
         }
 
@@ -886,15 +891,17 @@ Deno.serve(async (req) => {
           const orderNumber = `ORD-TEST-${Date.now().toString(36).toUpperCase()}`;
 
           // CRM routing — Layer A (B.0 invariant): always materialize crm_routing_snapshot
-          const testRouting = await resolveOfferRoutingWithFallback(supabase, { offer_id: offerId, tariff_id: tariffId });
+          const testRouting = await resolveOrderRouting(supabase, { offer_id: offerId, tariff_id: tariffId, product_id: productId });
           const testCrmSnapshot = testRouting.ok && testRouting.snapshot
             ? testRouting.snapshot
             : buildNegativeSnapshot({
                 reason: testRouting.reason || 'unknown',
                 offer_id: offerId ?? null,
                 tariff_id: tariffId,
+                product_id: productId,
                 resolved_via: testRouting.resolved_via ?? 'none',
                 candidates_count: testRouting.candidates_count ?? 0,
+                primary_reason: testRouting.primary_reason ?? null,
               });
           const testMeta: Record<string, unknown> = {
             source: 'admin_test',
@@ -940,9 +947,11 @@ Deno.serve(async (req) => {
                 order_id: orderV2.id,
                 offer_id: offerId ?? null,
                 tariff_id: tariffId,
+                product_id: productId,
                 reason: testRouting.reason || 'unknown',
                 resolved_via: testRouting.resolved_via ?? 'none',
                 candidates_count: testRouting.candidates_count ?? 0,
+                primary_reason: testRouting.primary_reason ?? null,
               });
             }
           }

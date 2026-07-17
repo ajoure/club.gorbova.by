@@ -339,7 +339,7 @@ Deno.serve(async (req: Request) => {
   let crmSnapshot: any;
   let crmRoutingOk = false;
   let crmRoutingContext: {
-    reason?: string; resolved_via?: string; candidates_count?: number;
+    reason?: string; resolved_via?: string; candidates_count?: number; primary_reason?: string | null;
   } = {};
   try {
     const routing = await resolveOrderRouting(supabaseAdmin, {
@@ -351,6 +351,7 @@ Deno.serve(async (req: Request) => {
       reason: routing.reason,
       resolved_via: routing.resolved_via ?? "none",
       candidates_count: routing.candidates_count ?? 0,
+      primary_reason: routing.primary_reason ?? null,
     };
     if (routing.ok && routing.snapshot) {
       crmSnapshot = routing.snapshot;
@@ -381,6 +382,7 @@ Deno.serve(async (req: Request) => {
         product_id: product.id,
         resolved_via: routing.resolved_via ?? "none",
         candidates_count: routing.candidates_count ?? 0,
+        primary_reason: routing.primary_reason ?? null,
       });
     }
   } catch (e) {
@@ -608,6 +610,7 @@ Deno.serve(async (req: Request) => {
       reason: crmRoutingContext.reason || "unknown",
       resolved_via: (crmRoutingContext.resolved_via as any) ?? "none",
       candidates_count: crmRoutingContext.candidates_count ?? 0,
+      primary_reason: crmRoutingContext.primary_reason ?? null,
     });
   }
 

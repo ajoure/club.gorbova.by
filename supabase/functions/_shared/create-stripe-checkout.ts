@@ -176,6 +176,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
           product_id,
           resolved_via: routing.resolved_via ?? 'none',
           candidates_count: routing.candidates_count ?? 0,
+          primary_reason: routing.primary_reason ?? null,
         });
 
     const { data: orderNumberData } = await supabase.rpc('generate_order_number');
@@ -255,9 +256,11 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
         order_id: order.id,
         offer_id: offer_id ?? null,
         tariff_id,
+        product_id,
         reason: routing.reason || 'unknown',
         resolved_via: routing.resolved_via ?? 'none',
         candidates_count: routing.candidates_count ?? 0,
+        primary_reason: routing.primary_reason ?? null,
       });
     }
 

@@ -173,7 +173,10 @@ Deno.serve(async (req) => {
         offer_id: offer.id,
         amount: perPaymentKopecks,
         currency: 'BYN',
-        payment_type: 'one_time',
+        // PATCH INSTALLMENT-SUB-FIX: installment-ссылка — это finite bePaid subscription
+        // (billing_cycles = installment_count). Ранее было 'one_time' → shared checkout
+        // уходил в разовую ветку и не создавал subscription. См. .lovable/plan.md.
+        payment_type: 'subscription',
         description: null,
         max_uses: 1,
         // Если пользователь авторизован — привязываем ссылку к нему,

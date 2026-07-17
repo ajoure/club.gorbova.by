@@ -18,7 +18,7 @@ import { resolveStripeCheckoutUrls } from '../_shared/public-app-host.ts';
 import { resolveStripeCustomer } from '../_shared/acquiring/stripe-customer-resolver.ts';
 import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 import {
-  resolveOfferRoutingWithFallback,
+  resolveOrderRouting,
   buildNegativeSnapshot,
   auditNegativeSnapshot,
 } from '../_shared/crm-routing.ts';
@@ -171,9 +171,10 @@ Deno.serve(async (req) => {
     // returning redirect URL. Same Layer A contract as create-payment-checkout.ts (bePaid).
     const offerIdForRouting = body.offer_id ?? order.offer_id ?? null;
     const tariffIdForRouting = body.tariff_id ?? order.tariff_id ?? null;
-    const routing = await resolveOfferRoutingWithFallback(supabase, {
+    const routing = await resolveOrderRouting(supabase, {
       offer_id: offerIdForRouting,
       tariff_id: tariffIdForRouting,
+      product_id: body.product_id,
     });
     const crmSnapshot = routing.ok && routing.snapshot
       ? routing.snapshot
@@ -181,8 +182,10 @@ Deno.serve(async (req) => {
           reason: routing.reason || 'unknown',
           offer_id: offerIdForRouting,
           tariff_id: tariffIdForRouting,
+          product_id: body.product_id,
           resolved_via: routing.resolved_via ?? 'none',
           candidates_count: routing.candidates_count ?? 0,
+          primary_reason: routing.primary_reason ?? null,
         });
 
     // PRR-FIX-02 (F2, F4): sticky stripe meta + business_stream on order.
@@ -234,9 +237,11 @@ Deno.serve(async (req) => {
         order_id: body.order_id,
         offer_id: offerIdForRouting,
         tariff_id: tariffIdForRouting,
+        product_id: body.product_id,
         reason: routing.reason || 'unknown',
         resolved_via: routing.resolved_via ?? 'none',
         candidates_count: routing.candidates_count ?? 0,
+        primary_reason: routing.primary_reason ?? null,
       });
     }
 

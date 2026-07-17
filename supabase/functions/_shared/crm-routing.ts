@@ -45,6 +45,11 @@ export interface CrmRoutingSnapshot extends CrmRoutingConfig {
   /** Present when resolved via product_binding_fallback. */
   product_id?: string | null;
   binding_id?: string | null;
+  /**
+   * Primary resolver reason preserved when positive result came from a fallback.
+   * Add-only field for audit/observability (JSONB, no migration).
+   */
+  primary_reason?: string;
 }
 
 export interface ResolvedRouting {
@@ -55,6 +60,8 @@ export interface ResolvedRouting {
   resolved_via?: ResolvedVia;
   /** Number of routing-enabled candidates considered during fallback. */
   candidates_count?: number;
+  /** Primary resolver reason before any fallback was attempted. */
+  primary_reason?: string;
 }
 
 /**
@@ -71,6 +78,8 @@ export interface NegativeRoutingSnapshot {
   product_id?: string | null;
   resolved_via: ResolvedVia | 'none';
   candidates_count: number;
+  /** Primary resolver reason before fallback (if fallback also failed). */
+  primary_reason?: string | null;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -376,6 +385,7 @@ export function buildNegativeSnapshot(args: {
   product_id?: string | null;
   resolved_via?: ResolvedVia | 'none';
   candidates_count?: number;
+  primary_reason?: string | null;
 }): NegativeRoutingSnapshot {
   return {
     enabled: false,
@@ -386,6 +396,7 @@ export function buildNegativeSnapshot(args: {
     product_id: args.product_id ?? null,
     resolved_via: args.resolved_via ?? 'none',
     candidates_count: args.candidates_count ?? 0,
+    primary_reason: args.primary_reason ?? null,
   };
 }
 
@@ -402,6 +413,7 @@ export async function auditNegativeSnapshot(
     reason: string;
     resolved_via: ResolvedVia | 'none';
     candidates_count: number;
+    primary_reason?: string | null;
   },
 ): Promise<void> {
   await audit(supabase, 'crm_routing_snapshot_negative', {
@@ -412,6 +424,7 @@ export async function auditNegativeSnapshot(
     reason: args.reason,
     resolved_via: args.resolved_via,
     candidates_count: args.candidates_count,
+    primary_reason: args.primary_reason ?? null,
   });
 }
 
@@ -575,10 +588,12 @@ export async function resolveOrderRouting(
   if (secondary.ok && secondary.snapshot) {
     return {
       ...secondary,
+      primary_reason: primaryReason || undefined,
       snapshot: {
         ...secondary.snapshot,
         // Сохраняем контекст конкретного заказа для полной трассировки.
         offer_id: offer_id ?? null,
+        primary_reason: primaryReason || undefined,
       },
     };
   }
@@ -592,10 +607,9 @@ export async function resolveOrderRouting(
       reason: secondary.reason,
       resolved_via: 'product_binding_fallback',
       candidates_count: secondary.candidates_count ?? 0,
-      // @ts-ignore — расширяем структурно для observability
       primary_reason: primaryReason || undefined,
-    } as ResolvedRouting & { primary_reason?: string };
+    };
   }
 
-  return primary;
+  return { ...primary, primary_reason: primaryReason || undefined };
 }
