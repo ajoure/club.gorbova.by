@@ -14,7 +14,13 @@ import { buildAdminNotifyMessage, maskEmail } from '../_shared/admin-notify-mess
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
-import { generateInstallmentSchedule } from '../_shared/installment-schedule.ts';
+import {
+  generateInstallmentSchedule,
+  materializeFiniteInstallmentSchedule,
+  advanceInstallmentCycleOnSuccess,
+  annotateInstallmentCycleFailure,
+  terminateFirstPendingInstallment,
+} from '../_shared/installment-schedule.ts';
 import { sendChargeLifecycleNotification } from '../_shared/charge-lifecycle-notifications.ts';
 // PATCH-RB1: REBILL materialization engine (gated by BEPAID_REBILL_MATERIALIZATION).
 import { runRebillFlow } from './rebill_flow.ts';
@@ -1849,6 +1855,85 @@ Deno.serve(async (req) => {
           }
         }
 
+
+
+        // ===================================================================
+        // B7 Item 8. INSTALLMENT SCHEDULE MATERIALIZATION + CYCLE ADVANCEMENT
+        // Runs only for finite bePaid installment subscriptions (subv2 tracking).
+        // On the very first successful webhook — materialize N rows with row 1
+        // succeeded. On subsequent successes — advance row K (dup-UID guarded).
+        // ===================================================================
+        if (subIsInstallmentFinite && subInstallmentCount >= 2) {
+          try {
+            const instMeta = (subV2Meta.installment ?? {}) as Record<string, any>;
+            const orderMetaAny = (orderV2?.meta ?? {}) as Record<string, any>;
+            const orderInstMeta = (orderMetaAny.installment ?? {}) as Record<string, any>;
+            const perPaymentByn = Number(
+              instMeta.per_payment_byn
+              ?? orderMetaAny.installment_per_payment_amount_byn
+              ?? orderInstMeta.per_payment_byn
+              ?? (body.plan?.amount ? body.plan.amount / 100 : 0)
+            );
+            const intervalDays = Number(
+              instMeta.interval_days ?? orderInstMeta.interval_days ?? 30
+            );
+            const currency = String(
+              instMeta.currency ?? body.plan?.currency ?? subV2.currency ?? 'BYN'
+            );
+            const firstPaidAtIso = transaction?.paid_at || now.toISOString();
+            const firstUid = transactionUid ? String(transactionUid) : null;
+            const providerNextChargeAtIso = body.renew_at || body.subscription?.renew_at || null;
+
+            const matRes = await materializeFiniteInstallmentSchedule({
+              supabase,
+              subscriptionId: subscriptionV2Id,
+              orderId: orderV2Id,
+              userId: subV2.user_id,
+              installmentCount: subInstallmentCount,
+              perPaymentByn,
+              intervalDays,
+              currency,
+              firstPaidAtIso,
+              firstTransactionUid: firstUid,
+              firstProviderNextChargeAtIso: providerNextChargeAtIso,
+              paymentId: subPayResult?.id ?? null,
+            });
+
+            if (matRes.ok && matRes.created === false && firstUid) {
+              // Schedule pre-existed → this is a subsequent cycle. Advance.
+              const advRes = await advanceInstallmentCycleOnSuccess({
+                supabase,
+                subscriptionId: subscriptionV2Id,
+                transactionUid: firstUid,
+                paidAtIso: firstPaidAtIso,
+                providerPaidCycles: Number.isFinite(paidCycles) && paidCycles >= 1 ? paidCycles : null,
+                providerNextChargeAtIso,
+                userId: subV2.user_id,
+              });
+              console.log('[WEBHOOK-SUBSCRIPTION] cycle advancement:', advRes);
+            } else {
+              console.log('[WEBHOOK-SUBSCRIPTION] schedule materialization:', matRes);
+            }
+          } catch (schedErr) {
+            console.error('[WEBHOOK-SUBSCRIPTION] schedule non-fatal:', schedErr);
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'bepaid-webhook',
+              action: 'installment.schedule_invariant_failed',
+              target_user_id: subV2.user_id,
+              meta: {
+                subscription_v2_id: subscriptionV2Id,
+                order_id: orderV2Id,
+                provider_subscription_id: subscriptionId,
+                transaction_uid: transactionUid,
+                error: String((schedErr as Error)?.message || schedErr),
+                severity: 'CRITICAL',
+              },
+            });
+          }
+        }
+
+
         // NOTE (PATCH H2.1): entitlements insert/update and prior secondary
         // grant-access invoke removed. The single STEP A invocation above
         // covers both primary (subscription/entitlement) and secondary
@@ -1990,8 +2075,10 @@ Deno.serve(async (req) => {
                   billing_cycles: Number((subV2.meta as any)?.billing_cycles ?? installmentCountForAudit),
                   installment_count: installmentCountForAudit,
                   per_payment_amount: transaction?.amount ? transaction.amount / 100 : null,
-                  // STAGE L3 GUARD: для finite bePaid installment internal installment_payments НЕ материализуется.
-                  internal_installment_skipped: true,
+                  // B7 Item 8: schedule is now materialized via helper above.
+                  installment_schedule_materialized: true,
+                  installment_schedule_count: installmentCountForAudit,
+
                 }
               : {}),
           },
@@ -2256,6 +2343,24 @@ Deno.serve(async (req) => {
           },
         });
 
+        // B7 Item 8: annotate current pending installment_payments row with
+        // provider failure metadata (dup-UID protected inside helper).
+        if (failIsFinite) {
+          try {
+            await annotateInstallmentCycleFailure({
+              supabase,
+              subscriptionId: subscriptionV2Id,
+              transactionUid: transactionUid ? String(transactionUid) : null,
+              errorMessage: String(errMsg),
+              atIso: transaction?.paid_at || now.toISOString(),
+            });
+          } catch (annErr) {
+            console.error('[WEBHOOK-SUBSCRIPTION] failure annotation non-fatal:', annErr);
+          }
+        }
+
+
+
         // Look up pending installment_payments row for idempotency subject
         // (payment_number is the retry attempt anchor). Absence is tolerated —
         // helper falls back to subscription-scoped key.
@@ -2439,6 +2544,27 @@ Deno.serve(async (req) => {
               : {}),
           },
         });
+
+        // B7 Item 8: on retry_exhausted, terminate the current pending
+        // installment_payments row with provider evidence.
+        if (termIsRetryExhausted) {
+          try {
+            await terminateFirstPendingInstallment({
+              supabase,
+              subscriptionId: subscriptionV2Id,
+              transactionUid: transactionUid ? String(transactionUid) : null,
+              evidence: {
+                gateway_recurring_reason: grReason || null,
+                attempts_left: Number.isFinite(attemptsLeft) ? attemptsLeft : null,
+                cancellation_reason: cancellationReason || null,
+                transaction_status: transaction?.status ?? null,
+              },
+              atIso: now.toISOString(),
+            });
+          } catch (termErr) {
+            console.error('[WEBHOOK-SUBSCRIPTION] schedule termination non-fatal:', termErr);
+          }
+        }
 
         // Deliver retry-exhausted notification (independent flag).
         if (termIsRetryExhausted) {
@@ -5178,9 +5304,10 @@ Deno.serve(async (req) => {
                 updated_at: now.toISOString(),
               };
               if (grantNextChargeAt) providerSyncPatch.next_charge_at = grantNextChargeAt;
+              const paymentMethodId: string | null = (paymentV2 as any)?.payment_method_id ?? null;
               if (paymentMethodId) {
                 providerSyncPatch.payment_method_id = paymentMethodId;
-                providerSyncPatch.payment_token = paymentV2.payment_token;
+                providerSyncPatch.payment_token = (paymentV2 as any)?.payment_token ?? null;
               }
               const { data: curSub } = await supabase
                 .from('subscriptions_v2')
