@@ -1598,6 +1598,7 @@ Deno.serve(async (req) => {
       failed_send: failedSend.length,
       failed_log_insert: failedLogInsert.length,
       duplicate_suppressed: duplicateSuppressed.length,
+      charge_reminders: chargeRemindersSummary,
     };
 
     await supabase.from('audit_logs').insert({
