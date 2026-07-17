@@ -2480,18 +2480,20 @@ export default function AdminProductDetailV2() {
                         setOfferForm({
                           ...offerForm,
                           installment_max_charge_attempts:
-                            v === "__default__" ? (null as any) : parseInt(v),
+                            v === "__default__" ? (null as any) : Number(v),
                         })
                       }
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="__default__">По умолчанию провайдера (3)</SelectItem>
-                        {INSTALLMENT_MAX_CHARGE_ATTEMPTS_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.value} value={String(opt.value)}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
+                        {INSTALLMENT_MAX_CHARGE_ATTEMPTS_OPTIONS.map((opt) => {
+                          const value = opt.value === null ? "__default__" : String(opt.value);
+                          return (
+                            <SelectItem key={value} value={value}>
+                              {opt.label}
+                            </SelectItem>
+                          );
+                        })}
                       </SelectContent>
                     </Select>
                     <p className="text-[11px] text-muted-foreground">
