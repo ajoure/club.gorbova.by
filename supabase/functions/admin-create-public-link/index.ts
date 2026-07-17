@@ -444,7 +444,7 @@ Deno.serve(async (req) => {
         charge_notifications_source: chargeNotifPolicy.source,
         // Manual override snapshot (см. .lovable/plan.md §6).
         source_offer_id: resolvedOffer.id,
-        source_offer_public_cycles: offerInstallmentCountLegacy,
+        source_offer_public_cycles: sourceOfferPublicCycles,
         source_offer_amount_byn: offerAmountByn,
         manual_override: manualOverride,
         overridden_fields: overriddenFields,
