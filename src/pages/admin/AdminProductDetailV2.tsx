@@ -2481,10 +2481,15 @@ export default function AdminProductDetailV2() {
                     <Badge variant="secondary">Валюта: BYN</Badge>
                     <Badge variant="secondary">Режим: внешний payment_url</Badge>
                   </div>
-                  <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-                    Runtime-контур РР ещё не включён. Кнопка сейчас работает по старой ссылке
-                    <code className="mx-1">meta.bank_installment.external_link</code> (fallback).
-                  </div>
+                  {((offerForm.meta as any)?.bank_installment?.rr_runtime?.enabled === true) ? (
+                    <div className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-xs text-emerald-900">
+                      Runtime-контур РР включён (боевой режим). Кнопка вызывает <code className="mx-1">public-rr-installment-initiate</code> и открывает индивидуальный <code>payment_url</code> от банка. Fallback-ссылка ниже используется только при ошибке API.
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                      Runtime-контур РР не включён. Кнопка работает по старой ссылке <code className="mx-1">meta.bank_installment.external_link</code> (fallback). Сохраните оффер, чтобы включить API-режим автоматически.
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Label>Fallback URL (external_link)</Label>
                     <Input
