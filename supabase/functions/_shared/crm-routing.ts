@@ -588,10 +588,12 @@ export async function resolveOrderRouting(
   if (secondary.ok && secondary.snapshot) {
     return {
       ...secondary,
+      primary_reason: primaryReason || undefined,
       snapshot: {
         ...secondary.snapshot,
         // Сохраняем контекст конкретного заказа для полной трассировки.
         offer_id: offer_id ?? null,
+        primary_reason: primaryReason || undefined,
       },
     };
   }
@@ -605,10 +607,9 @@ export async function resolveOrderRouting(
       reason: secondary.reason,
       resolved_via: 'product_binding_fallback',
       candidates_count: secondary.candidates_count ?? 0,
-      // @ts-ignore — расширяем структурно для observability
       primary_reason: primaryReason || undefined,
-    } as ResolvedRouting & { primary_reason?: string };
+    };
   }
 
-  return primary;
+  return { ...primary, primary_reason: primaryReason || undefined };
 }
