@@ -364,7 +364,7 @@ Deno.serve(async (req) => {
         tariff_id,
         offer_id: offer.id,
         per_payment_amount_byn: perPaymentByn,
-        installment_count: installmentCount,
+        installment_count: selectedMonths,
         total_installment_amount_byn: totalInstallmentByn,
         source: 'landing_payment_dialog',
       },
@@ -375,7 +375,7 @@ Deno.serve(async (req) => {
       url_token: link.url_token,
       public_url: link.public_url,
       installment: {
-        installment_count: installmentCount,
+        installment_count: selectedMonths,
         per_payment_amount_byn: perPaymentByn,
         total_installment_amount_byn: totalInstallmentByn,
       },
