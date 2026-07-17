@@ -285,6 +285,7 @@ Deno.serve(async (req) => {
     //   • amount ссылки = per_payment_kopecks; total — в meta.installment.
     let installmentBlock: Record<string, unknown> | null = null;
     let installmentLinkAmountKopecks: number | null = null;
+    let pendingInstallmentAudit: Record<string, unknown> | null = null;
     if (installment_offer || offerPaymentMethod === 'internal_installment') {
       if (!resolvedOffer) {
         return errorResponse('installment_offer_id_required', 400);
