@@ -1852,7 +1852,10 @@ Deno.serve(async (req) => {
               },
             });
             console.error('[WEBHOOK-SUBSCRIPTION] CRITICAL: payment.order_id != rebill_order_id post-STEP-E', postCheck);
+          }
         }
+
+
 
         // ===================================================================
         // B7 Item 8. INSTALLMENT SCHEDULE MATERIALIZATION + CYCLE ADVANCEMENT
