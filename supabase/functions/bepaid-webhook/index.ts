@@ -1844,8 +1844,13 @@ Deno.serve(async (req) => {
           .from('subscriptions_v2')
           .update({
             billing_type: 'provider_managed',
-            next_charge_at: subIsInstallmentFinite ? null : renewAt.toISOString(),
-            auto_renew: !subIsInstallmentFinite,
+            // Stage 2: next_charge_at stays populated until the final cycle for
+            // finite internal installments; only the LAST paid cycle nulls it out.
+            // auto_renew=false is a local marker only for finite internal installments.
+            next_charge_at: finiteInternalGuardActive
+              ? (finiteFinalCycle ? null : renewAt.toISOString())
+              : renewAt.toISOString(),
+            auto_renew: finiteInternalGuardActive ? false : (subV2.auto_renew ?? true),
             meta: {
               ...subV2Meta,
               bepaid_subscription_id: subscriptionId,
