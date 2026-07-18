@@ -1608,11 +1608,27 @@ Deno.serve(async (req) => {
         const subBlockOk = isInternalInstallmentBlock(subInstallmentBlock);
         const providerBlockOk = isInternalInstallmentBlock(providerInstallmentBlock);
 
-        const finiteInternalMarkerPresent =
+        // Stage 2 corrective: split marker into INTENT (ANY signal) and FULL
+        // (ALL three snapshots agree). Intent + partial data must NOT fall back
+        // to the generic REBILL branch — it must go to manual_review.
+        const finiteInternalIntentPresent =
+          orderMetaForGuard.payment_method === 'internal_installment' ||
+          subMetaForGuard.payment_method === 'internal_installment' ||
+          providerSubMetaForGuard.payment_method === 'internal_installment' ||
+          (orderInstallmentBlock?.model === 'bepaid_finite_subscription') ||
+          (subInstallmentBlock?.model === 'bepaid_finite_subscription') ||
+          (providerInstallmentBlock?.model === 'bepaid_finite_subscription');
+
+        const finiteInternalFullMarkerPresent =
           orderMetaForGuard.payment_method === 'internal_installment' &&
           subMetaForGuard.payment_method === 'internal_installment' &&
           providerSubMetaForGuard.payment_method === 'internal_installment' &&
           orderBlockOk && subBlockOk && providerBlockOk;
+
+        // Keep the legacy name pointing at the FULL marker so downstream reads
+        // (originalOrderIdForGuard, guardBillingCycles, consistency probe) stay
+        // strict — they require the full canonical snapshot to be present.
+        const finiteInternalMarkerPresent = finiteInternalFullMarkerPresent;
 
         const originalOrderIdForGuard = finiteInternalMarkerPresent
           ? String(orderInstallmentBlock!.original_order_id)
@@ -1679,9 +1695,12 @@ Deno.serve(async (req) => {
         }
 
         const finiteInternalGuardActive =
-          finiteInternalMarkerPresent && finiteInternalConsistencyOk;
+          finiteInternalFullMarkerPresent && finiteInternalConsistencyOk;
+        // Partial-marker safety: ANY intent signal without a fully valid guard
+        // → mismatch. This closes the case where e.g. provider_subscriptions
+        // lost its marker while orders_v2/subscriptions_v2 still carry it.
         const finiteInternalGuardMismatch =
-          finiteInternalMarkerPresent && !finiteInternalConsistencyOk;
+          finiteInternalIntentPresent && !finiteInternalGuardActive;
 
         if (finiteInternalGuardMismatch) {
           // Marker present but consistency failed. Absolutely do NOT run REBILL,
@@ -1753,7 +1772,10 @@ Deno.serve(async (req) => {
         const rebillMode = resolveKillSwitchMode(Deno.env.get('BEPAID_REBILL_MATERIALIZATION'));
         let rebillHandled = false;
         let rebillOrderIdFromFlow: string | null = null;
-        if (!finiteInternalMarkerPresent && rebillMode !== 'off' && paidCycles >= 2 && transactionUid && orderV2) {
+        // Stage 2 corrective: gate REBILL on INTENT, not just the FULL marker.
+        // Any hint of an internal installment must skip generic REBILL — either
+        // the guard is active (handled inline) or mismatch already returned 202.
+        if (!finiteInternalIntentPresent && rebillMode !== 'off' && paidCycles >= 2 && transactionUid && orderV2) {
           try {
             const deps = buildRebillDepsAdapter(supabase);
             const rebillResult = await runRebillFlow(deps, {
@@ -1966,6 +1988,10 @@ Deno.serve(async (req) => {
               ? (finiteFinalCycle ? null : renewAt.toISOString())
               : renewAt.toISOString(),
             auto_renew: finiteInternalGuardActive ? false : (subV2.auto_renew ?? true),
+            // Stage 2 corrective: on the last paid cycle of a finite internal
+            // installment, close the local subscription explicitly. Provider
+            // mirror is closed in STEP D; local status must match.
+            ...(finiteFinalCycle ? { status: 'completed' } : {}),
             meta: {
               ...subV2Meta,
               bepaid_subscription_id: subscriptionId,
