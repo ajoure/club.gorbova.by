@@ -3753,13 +3753,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
             {/* Installments Tab */}
             <TabsContent value="installments" className="m-0">
-              <div className="space-y-6">
-                <ContactInternalInstallments
-                  profileId={contact.id}
-                  userId={contact.user_id}
-                />
-                <ContactInstallments userId={contact.user_id} />
-              </div>
+              <ContactInstallmentsTabContent
+                profileId={contact.id}
+                userId={contact.user_id}
+              />
             </TabsContent>
 
             {/* Loyalty Tab */}
