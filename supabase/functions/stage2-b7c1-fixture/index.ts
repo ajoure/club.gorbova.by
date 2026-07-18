@@ -209,15 +209,20 @@ Deno.serve(async (req) => {
     };
 
     if (order_id) {
+      await del('payment_reconcile_queue', (q) => q.eq('processed_order_id', order_id));
       await del('payments_v2', (q) => q.eq('order_id', order_id));
+      await del('entitlements', (q) => q.eq('source_order_id', order_id));
       await del('access_grant_ledger', (q) => q.eq('order_id', order_id));
       await del('order_notification_deliveries', (q) => q.eq('order_id', order_id));
       await del('installment_payments', (q) => q.eq('order_id', order_id));
     }
+    if (profile_id) {
+      await del('payment_reconcile_queue', (q) => q.eq('matched_profile_id', profile_id));
+    }
     if (provider_subscription_id) {
-      await del('provider_events', (q) => q.eq('provider_subscription_id', provider_subscription_id));
       await del('provider_subscriptions', (q) => q.eq('provider_subscription_id', provider_subscription_id));
     }
+
     if (subscription_v2_id) {
       await del('subscriptions_v2', (q) => q.eq('id', subscription_v2_id));
     }
