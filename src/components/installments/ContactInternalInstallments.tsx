@@ -1,8 +1,6 @@
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,17 +8,28 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreditCard, ExternalLink, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  useContactInternalInstallments as useContactInternalInstallmentsHook,
+  type UiPlan,
+} from "@/hooks/useContactInstallmentsData";
 
 /**
  * Внутренние рассрочки контакта.
  * Одна карточка = одна исходная сделка (orders_v2). Filter — точный canonical marker.
  * UI-источник — orders_v2.meta.installment_progress.
+ *
+ * Data flow:
+ * - Если передан prop `plans` — компонент чисто презентационный.
+ * - Иначе — тянет данные через shared hook (single source of truth).
  */
 
 interface ContactInternalInstallmentsProps {
   profileId?: string | null;
   userId?: string | null;
   onOpenDeal?: (orderId: string) => void;
+  /** Preloaded plans (wrapper-driven). When provided, `isLoading` prop drives skeleton. */
+  plans?: UiPlan[];
+  isLoading?: boolean;
 }
 
 const formatAmount = (value: unknown, currency = "BYN") => {
@@ -31,67 +40,6 @@ const formatAmount = (value: unknown, currency = "BYN") => {
     maximumFractionDigits: 2,
   })} ${currency}`;
 };
-
-interface UiPlan {
-  orderId: string;
-  orderNumber: string | null;
-  productName: string;
-  tariffName: string;
-  currency: string;
-  uiStatus: "pending" | "active" | "completed" | "review";
-  totalCycles: number;
-  paidCycles: number;
-  perPayment: number;
-  paidTotal: number;
-  remainingTotal: number;
-  effectiveTotal: number;
-  nextChargeAt: string | null;
-  createdAt: string;
-}
-
-function mapOrderToPlan(order: any): UiPlan | null {
-  const meta = order?.meta ?? {};
-  const canonical = meta.installment ?? {};
-  const progress = meta.installment_progress ?? null;
-  const manualReview = meta.manual_review === true;
-
-  const totalCycles = Number(progress?.billing_cycles ?? canonical.billing_cycles ?? 0);
-  const paidCycles = Number(progress?.paid_billing_cycles ?? 0);
-  const perPayment = Number(
-    progress?.per_payment_byn ?? canonical.per_payment_byn ?? 0,
-  );
-  const effectiveTotal = Number(
-    progress?.effective_total_byn ??
-      canonical.effective_total_byn ??
-      (perPayment && totalCycles ? perPayment * totalCycles : 0),
-  );
-  const paidTotal = Number(progress?.paid_total_byn ?? 0);
-  const remainingTotal = Number(
-    progress?.remaining_total_byn ?? Math.max(effectiveTotal - paidTotal, 0),
-  );
-
-  let uiStatus: UiPlan["uiStatus"] = "pending";
-  if (manualReview) uiStatus = "review";
-  else if (progress?.status === "completed") uiStatus = "completed";
-  else if (progress?.status === "active") uiStatus = "active";
-
-  return {
-    orderId: order.id,
-    orderNumber: order.order_number ?? null,
-    productName: order?.products_v2?.name ?? "Продукт",
-    tariffName: order?.tariffs?.name ?? "Тариф",
-    currency: order.currency || "BYN",
-    uiStatus,
-    totalCycles,
-    paidCycles,
-    perPayment,
-    paidTotal,
-    remainingTotal,
-    effectiveTotal,
-    nextChargeAt: progress?.next_charge_at ?? null,
-    createdAt: order.created_at,
-  };
-}
 
 const STATUS_META: Record<
   UiPlan["uiStatus"],
@@ -123,56 +71,22 @@ export function ContactInternalInstallments({
   profileId,
   userId,
   onOpenDeal,
+  plans: plansProp,
+  isLoading: isLoadingProp,
 }: ContactInternalInstallmentsProps) {
   const navigate = useNavigate();
 
-  const { data: plans, isLoading } = useQuery({
-    queryKey: ["contact-internal-installments", profileId, userId],
-    enabled: Boolean(profileId || userId),
-    queryFn: async () => {
-      const orFilters: string[] = [];
-      if (profileId) orFilters.push(`profile_id.eq.${profileId}`);
-      if (userId) orFilters.push(`user_id.eq.${userId}`);
+  // Standalone режим: если plans не пришли пропом — тянем сами через shared hook.
+  const shouldFetch = plansProp === undefined;
+  const query = useContactInternalInstallmentsHook(
+    shouldFetch ? profileId : null,
+    shouldFetch ? userId : null,
+  );
 
-      let query: any = supabase
-        .from("orders_v2")
-        .select(
-          `id, order_number, currency, created_at, meta, product_id, tariff_id,
-           products_v2:product_id ( name ),
-           tariffs:tariff_id ( name )`,
-        )
-        .eq("meta->>payment_method", "internal_installment")
-        .order("created_at", { ascending: false });
+  const plans = plansProp ?? query.data;
+  const isLoading = isLoadingProp ?? (shouldFetch ? query.isLoading : false);
 
-      if (orFilters.length === 1) {
-        const [col, , val] = orFilters[0].split(".");
-        query = query.eq(col, val);
-      } else if (orFilters.length > 1) {
-        query = query.or(orFilters.join(","));
-      } else {
-        return [] as UiPlan[];
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-
-      // Точный canonical marker (двойная проверка на клиенте — БД-JSON фильтр только по одному полю)
-      const filtered = (data ?? []).filter((row: any) => {
-        const model = row?.meta?.installment?.model;
-        const progressModel = row?.meta?.installment_progress?.model;
-        return (
-          model === "bepaid_finite_subscription" ||
-          progressModel === "bepaid_finite_subscription"
-        );
-      });
-
-      return filtered
-        .map(mapOrderToPlan)
-        .filter((p): p is UiPlan => p !== null);
-    },
-  });
-
-  if (!profileId && !userId) {
+  if (!profileId && !userId && !plansProp) {
     return null;
   }
 
@@ -189,11 +103,12 @@ export function ContactInternalInstallments({
     return null;
   }
 
-  // Сортировка: активные и review сверху, потом pending, потом completed
   const order = { review: 0, active: 1, pending: 2, completed: 3 };
   const sorted = [...plans].sort(
     (a, b) => order[a.uiStatus] - order[b.uiStatus],
   );
+
+
 
   const handleOpen = (orderId: string) => {
     if (onOpenDeal) {
