@@ -2206,9 +2206,85 @@ Deno.serve(async (req) => {
         }
 
 
+        // ===================================================================
+        // STAGE 3: installment_progress on the ORIGINAL order.
+        // Aggregate progress for finite internal installments only. Provider
+        // remains the source of truth; DB is the fallback. No new UI, no
+        // local schedule materialization.
+        // ===================================================================
+        if (finiteInternalGuardActive && originalOrderIdForGuard) {
+          try {
+            const orderBlk = orderInstallmentBlock as Record<string, any>;
+            const perPaymentByn = Number(orderBlk?.per_payment_byn ?? orderBlk?.per_payment_amount ?? 0);
+            const effectiveTotalByn = Number(orderBlk?.effective_total_byn ?? orderBlk?.total_installment_amount ?? 0);
+
+            // Provider is source of truth. Fallback: unique succeeded
+            // payments on the original order (bepaid provider).
+            let paidCyclesEffective = Number.isFinite(paidCycles) && paidCycles > 0 ? paidCycles : 0;
+            if (paidCyclesEffective === 0) {
+              const { data: paidRows } = await supabase
+                .from('payments_v2')
+                .select('id, provider_payment_id')
+                .eq('order_id', originalOrderIdForGuard)
+                .eq('provider', 'bepaid')
+                .eq('status', 'succeeded');
+              if (Array.isArray(paidRows)) {
+                const uniq = new Set(paidRows.map((r: any) => r.provider_payment_id || r.id));
+                paidCyclesEffective = uniq.size;
+              }
+            }
+
+            const remainingCycles = Math.max(0, guardBillingCycles - paidCyclesEffective);
+            const paidTotalByn = Number((perPaymentByn * paidCyclesEffective).toFixed(2));
+            const remainingTotalByn = Number(Math.max(0, effectiveTotalByn - paidTotalByn).toFixed(2));
+            const progressStatus = finiteFinalCycle || paidCyclesEffective >= guardBillingCycles
+              ? 'completed' : 'active';
+
+            const { data: origOrderRow } = await supabase
+              .from('orders_v2')
+              .select('meta')
+              .eq('id', originalOrderIdForGuard)
+              .maybeSingle();
+            const origMeta = (origOrderRow?.meta || {}) as Record<string, any>;
+
+            const installmentProgress = {
+              billing_cycles: guardBillingCycles,
+              paid_billing_cycles: paidCyclesEffective,
+              remaining_cycles: remainingCycles,
+              per_payment_byn: perPaymentByn,
+              effective_total_byn: effectiveTotalByn,
+              paid_total_byn: paidTotalByn,
+              remaining_total_byn: remainingTotalByn,
+              currency: 'BYN',
+              last_cycle_paid_at: transaction?.paid_at || now.toISOString(),
+              last_provider_payment_uid: transactionUid ? String(transactionUid) : null,
+              status: progressStatus,
+              source: (Number.isFinite(paidCycles) && paidCycles > 0) ? 'provider' : 'db_fallback',
+              subscription_v2_id: subscriptionV2Id,
+              provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
+              updated_at: new Date().toISOString(),
+            };
+
+            const { error: progErr } = await supabase
+              .from('orders_v2')
+              .update({ meta: { ...origMeta, installment_progress: installmentProgress } })
+              .eq('id', originalOrderIdForGuard);
+            if (progErr) {
+              console.error('[WEBHOOK-SUBSCRIPTION] installment_progress update failed:', progErr);
+            } else {
+              console.log('[WEBHOOK-SUBSCRIPTION] installment_progress written',
+                originalOrderIdForGuard, paidCyclesEffective, '/', guardBillingCycles, progressStatus);
+            }
+          } catch (progExc) {
+            console.error('[WEBHOOK-SUBSCRIPTION] installment_progress exception:', progExc);
+          }
+        }
 
         // Finite bePaid installment is fully provider-managed. No local
         // installment_payments schedule is written from this webhook.
+
+
+
 
 
 
