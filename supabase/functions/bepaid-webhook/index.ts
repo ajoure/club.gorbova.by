@@ -2403,88 +2403,95 @@ Deno.serve(async (req) => {
         }
 
         // ===================================================================
-        // B7 — FINAL COMPLETION for finite bePaid subscriptions.
-        // When paid_billing_cycles >= installment_count → mark subscription
-        // completed (auto_renew off, next_charge_at null). Idempotent.
+        // B7 — FINAL COMPLETION POST-CHECK (diagnostic only).
+        //
+        // B7-C1 corrective: STEP C / STEP D above are the SOLE writers for the
+        // finite-internal-installment terminal state. This block MUST NOT write
+        // to subscriptions_v2 or provider_subscriptions — a second writer hides
+        // STEP C failures behind a fallback and produces divergent lineage.
+        //
+        // Gate on the canonical guard (finiteInternalGuardActive + guardBillingCycles)
+        // — NOT on legacy top-level meta.installment_count — and only when we
+        // just processed the final cycle. Re-read the current rows and audit any
+        // mismatch as CRITICAL. This is now diagnostics, not a fallback writer.
         // ===================================================================
         if (
-          subIsInstallmentFinite &&
-          Number.isFinite(paidCycles) &&
-          subInstallmentCount > 0 &&
-          paidCycles >= subInstallmentCount
+          finiteInternalGuardActive &&
+          finiteFinalCycle &&
+          Number.isInteger(guardBillingCycles)
         ) {
           try {
-            const alreadyCompleted = String((subV2Meta as any)?.installment_status || '') === 'completed';
-            if (!alreadyCompleted) {
-              // Full canonical lifecycle close: subscriptions_v2 + provider_subscriptions
-              // + last installment_payments row + audit. Check {error} on each update
-              // because Supabase JS returns SQL failures via the result envelope, not
-              // via exceptions.
-              const lifecycleErrors: Array<{ table: string; error: unknown }> = [];
-
-              const { error: subUpdErr } = await supabase
+            const [{ data: subCheck }, { data: psCheck }] = await Promise.all([
+              supabase
                 .from('subscriptions_v2')
-                .update({
-                  status: 'completed',
-                  auto_renew: false,
-                  next_charge_at: null,
-                  meta: {
-                    ...subV2Meta,
-                    installment_status: 'completed',
-                    installment_completed_at: now.toISOString(),
-                    paid_billing_cycles: paidCycles,
-                  },
-                  updated_at: now.toISOString(),
-                })
-                .eq('id', subscriptionV2Id);
-              if (subUpdErr) lifecycleErrors.push({ table: 'subscriptions_v2', error: subUpdErr });
-
-              const { error: psUpdErr } = await supabase
+                .select('id,status,next_charge_at,auto_renew,meta')
+                .eq('id', subscriptionV2Id)
+                .maybeSingle(),
+              supabase
                 .from('provider_subscriptions')
-                .update({
-                  state: 'completed',
-                  next_charge_at: null,
-                  meta: { status: 'completed', completed_at: now.toISOString(), paid_billing_cycles: paidCycles },
-                })
-                .eq('provider_subscription_id', subscriptionId);
-              if (psUpdErr) lifecycleErrors.push({ table: 'provider_subscriptions', error: psUpdErr });
+                .select('provider_subscription_id,state,next_charge_at')
+                .eq('provider_subscription_id', subscriptionId)
+                .maybeSingle(),
+            ]);
 
-              if (lifecycleErrors.length === 0) {
-                await supabase.from('audit_logs').insert({
-                  actor_type: 'system',
-                  actor_label: 'bepaid-webhook',
-                  action: 'bepaid.subscription.installment_completed',
-                  target_user_id: subV2.user_id,
-                  meta: {
-                    subscription_v2_id: subscriptionV2Id,
-                    order_id: orderV2Id,
-                    provider_subscription_id: subscriptionId,
-                    paid_billing_cycles: paidCycles,
-                    installment_count: subInstallmentCount,
-                    last_tx_uid: transactionUid,
-                  },
-                });
-                console.log('[WEBHOOK-SUBSCRIPTION] finite installment COMPLETED', { paidCycles, subInstallmentCount });
-              } else {
-                console.error('[WEBHOOK-SUBSCRIPTION] finite completion lifecycle errors:', lifecycleErrors);
-                await supabase.from('audit_logs').insert({
-                  actor_type: 'system',
-                  actor_label: 'bepaid-webhook',
-                  action: 'bepaid.subscription.installment_completed_lifecycle_error',
-                  target_user_id: subV2.user_id,
-                  meta: {
-                    subscription_v2_id: subscriptionV2Id,
-                    provider_subscription_id: subscriptionId,
-                    errors: lifecycleErrors.map((e) => ({ table: e.table, message: String((e.error as any)?.message ?? e.error) })),
-                    severity: 'CRITICAL',
-                  },
-                });
-              }
+            const subOk =
+              !!subCheck &&
+              String(subCheck.status) === 'completed' &&
+              subCheck.next_charge_at === null &&
+              subCheck.auto_renew === false;
+            const psOk =
+              !!psCheck &&
+              String(psCheck.state) === 'completed' &&
+              psCheck.next_charge_at === null;
+
+            if (subOk && psOk) {
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.subscription.installment_completed',
+                target_user_id: subV2.user_id,
+                meta: {
+                  subscription_v2_id: subscriptionV2Id,
+                  order_id: orderV2Id,
+                  provider_subscription_id: subscriptionId,
+                  paid_billing_cycles: paidCycles,
+                  billing_cycles: guardBillingCycles,
+                  last_tx_uid: transactionUid,
+                  source: 'post_check_diagnostic',
+                },
+              });
+              console.log(
+                '[WEBHOOK-SUBSCRIPTION] finite installment COMPLETED (post-check ok)',
+                { paidCycles, guardBillingCycles },
+              );
+            } else {
+              console.error(
+                '[WEBHOOK-SUBSCRIPTION] finite completion post-check MISMATCH',
+                { subCheck, psCheck },
+              );
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.subscription.installment_completed_post_check_mismatch',
+                target_user_id: subV2.user_id,
+                meta: {
+                  severity: 'CRITICAL',
+                  subscription_v2_id: subscriptionV2Id,
+                  provider_subscription_id: subscriptionId,
+                  order_id: orderV2Id,
+                  observed_subscriptions_v2: subCheck,
+                  observed_provider_subscriptions: psCheck,
+                  paid_billing_cycles: paidCycles,
+                  billing_cycles: guardBillingCycles,
+                  note: 'STEP C / STEP D did not converge to terminal contract; no fallback writer runs',
+                },
+              });
             }
           } catch (finErr) {
-            console.error('[WEBHOOK-SUBSCRIPTION] finite completion non-fatal:', finErr);
+            console.error('[WEBHOOK-SUBSCRIPTION] finite completion post-check non-fatal:', finErr);
           }
         }
+
 
 
         return new Response(JSON.stringify({ 
