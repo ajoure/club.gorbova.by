@@ -1772,7 +1772,10 @@ Deno.serve(async (req) => {
         const rebillMode = resolveKillSwitchMode(Deno.env.get('BEPAID_REBILL_MATERIALIZATION'));
         let rebillHandled = false;
         let rebillOrderIdFromFlow: string | null = null;
-        if (!finiteInternalMarkerPresent && rebillMode !== 'off' && paidCycles >= 2 && transactionUid && orderV2) {
+        // Stage 2 corrective: gate REBILL on INTENT, not just the FULL marker.
+        // Any hint of an internal installment must skip generic REBILL — either
+        // the guard is active (handled inline) or mismatch already returned 202.
+        if (!finiteInternalIntentPresent && rebillMode !== 'off' && paidCycles >= 2 && transactionUid && orderV2) {
           try {
             const deps = buildRebillDepsAdapter(supabase);
             const rebillResult = await runRebillFlow(deps, {
