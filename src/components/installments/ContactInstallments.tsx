@@ -70,7 +70,7 @@ interface InstallmentPlan {
   closedByEmail: string | null;
 }
 
-export function ContactInstallments({ userId, currency = "BYN" }: ContactInstallmentsProps) {
+export function ContactInstallments({ userId, currency = "BYN", hideEmptyState = false }: ContactInstallmentsProps) {
   const queryClient = useQueryClient();
   const [expandedPlans, setExpandedPlans] = useState<Set<string>>(new Set());
   const [closeDialogOpen, setCloseDialogOpen] = useState<string | null>(null);
