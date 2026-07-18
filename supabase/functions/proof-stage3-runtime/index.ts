@@ -207,8 +207,17 @@ Deno.serve(async (req) => {
       const activeToDays = 30 * cycle;
       const activeTo = new Date(Date.now() + activeToDays * 86400_000).toISOString();
       const renewAt = cycle >= 2 ? activeTo : new Date(Date.now() + 30 * 86400_000).toISOString();
+      // Root-level state+plan → isSubscriptionWebhook=true in bepaid-webhook.
       return {
-        transaction: {
+        id: providerSubId,
+        state: cycle >= 2 ? "completed" : "active",
+        plan: { amount: perPaymentByn * 100, currency: "BYN" },
+        tracking_id: trackingId,
+        paid_billing_cycles: cycle,
+        active_to: activeTo,
+        renew_at: renewAt,
+        card: { last_4: "4242", brand: "visa" },
+        last_transaction: {
           uid,
           status: "successful",
           amount: perPaymentByn * 100,
@@ -216,20 +225,6 @@ Deno.serve(async (req) => {
           paid_at: paidAt,
           tracking_id: trackingId,
         },
-        subscription: {
-          id: providerSubId,
-          state: cycle >= 2 ? "completed" : "active",
-          tracking_id: trackingId,
-          paid_billing_cycles: cycle,
-          active_to: activeTo,
-          renew_at: renewAt,
-          card: { last_4: "4242", brand: "visa" },
-          plan: { amount: perPaymentByn * 100, currency: "BYN" },
-        },
-        tracking_id: trackingId,
-        paid_billing_cycles: cycle,
-        active_to: activeTo,
-        renew_at: renewAt,
       };
     };
 
