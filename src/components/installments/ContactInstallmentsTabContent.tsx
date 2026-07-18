@@ -1,19 +1,25 @@
-import { useQuery } from "@tanstack/react-query";
-import { CreditCard } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { CreditCard, AlertTriangle, RefreshCw } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { ContactInternalInstallments } from "./ContactInternalInstallments";
 import { ContactInstallments } from "./ContactInstallments";
+import {
+  useContactInternalInstallments,
+  useContactLegacyInstallments,
+} from "@/hooks/useContactInstallmentsData";
 
 /**
- * Orchestration wrapper for the contact "Рассрочки" tab.
+ * Оркестрация вкладки «Рассрочки» контакта.
  *
- * Renders BOTH sources (new internal bepaid_finite_subscription orders
- * and legacy installment_payments) and shows a single combined
- * «Нет рассрочек» state only when both sources are loaded and both empty.
+ * Единый источник данных: shared hooks в useContactInstallmentsData.
+ * Дочерние компоненты получают готовые данные через props — не запускают
+ * собственных запросов, не создают cache-конфликтов.
  *
- * Query keys duplicate the child components' keys on purpose — react-query
- * dedupes them, so no extra network cost.
+ * Комбинированные состояния:
+ * - loading  → скелетоны, пока грузятся оба источника
+ * - error    → любой источник упал → error state + retry
+ * - empty    → оба загружены и оба пусты → одно сообщение «Нет рассрочек»
+ * - иначе    → рендерим оба раздела
  */
 
 interface ContactInstallmentsTabContentProps {
@@ -27,56 +33,14 @@ export function ContactInstallmentsTabContent({
   userId,
   currency = "BYN",
 }: ContactInstallmentsTabContentProps) {
-  // Internal (canonical bepaid finite subscription) — mirrors ContactInternalInstallments query key.
-  const internalQuery = useQuery({
-    queryKey: ["contact-internal-installments", profileId, userId],
-    enabled: Boolean(profileId || userId),
-    queryFn: async () => {
-      const filters: Array<{ col: string; val: string }> = [];
-      if (profileId) filters.push({ col: "profile_id", val: profileId });
-      if (userId) filters.push({ col: "user_id", val: userId });
-      if (filters.length === 0) return [] as any[];
+  const internal = useContactInternalInstallments(profileId, userId);
+  const legacy = useContactLegacyInstallments(userId);
 
-      let query: any = supabase
-        .from("orders_v2")
-        .select("id, meta")
-        .eq("meta->>payment_method", "internal_installment");
+  const internalEnabled = Boolean(profileId || userId);
+  const legacyEnabled = Boolean(userId);
 
-      if (filters.length === 1) {
-        query = query.eq(filters[0].col, filters[0].val);
-      } else {
-        query = query.or(
-          filters.map((f) => `${f.col}.eq.${f.val}`).join(","),
-        );
-      }
-      const { data, error } = await query;
-      if (error) throw error;
-      return (data ?? []).filter((row: any) => {
-        const m = row?.meta?.installment?.model;
-        const pm = row?.meta?.installment_progress?.model;
-        return m === "bepaid_finite_subscription" || pm === "bepaid_finite_subscription";
-      });
-    },
-  });
-
-  // Legacy installment_payments — mirrors ContactInstallments query key.
-  const legacyQuery = useQuery({
-    queryKey: ["user-all-installments", userId],
-    enabled: !!userId,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("installment_payments")
-        .select("id")
-        .eq("user_id", userId as string);
-      if (error) throw error;
-      return data ?? [];
-    },
-  });
-
-  const internalLoading = internalQuery.isLoading;
-  const legacyLoading = userId ? legacyQuery.isLoading : false;
-  const internalCount = internalQuery.data?.length ?? 0;
-  const legacyCount = legacyQuery.data?.length ?? 0;
+  const internalLoading = internalEnabled && internal.isLoading;
+  const legacyLoading = legacyEnabled && legacy.isLoading;
 
   if (internalLoading || legacyLoading) {
     return (
@@ -87,7 +51,38 @@ export function ContactInstallmentsTabContent({
     );
   }
 
-  if (internalCount === 0 && legacyCount === 0) {
+  if (internal.isError || legacy.isError) {
+    const message =
+      (internal.error as Error | null)?.message ||
+      (legacy.error as Error | null)?.message ||
+      "Не удалось загрузить данные";
+    return (
+      <div className="text-center py-8 space-y-3">
+        <AlertTriangle className="w-10 h-10 mx-auto text-destructive/70" />
+        <div>
+          <p className="font-medium">Не удалось загрузить рассрочки</p>
+          <p className="text-xs text-muted-foreground mt-1 break-all">{message}</p>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            if (internal.isError) internal.refetch();
+            if (legacy.isError) legacy.refetch();
+          }}
+          className="gap-1.5"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          Повторить
+        </Button>
+      </div>
+    );
+  }
+
+  const internalPlans = internal.data ?? [];
+  const legacyRows = legacy.data ?? [];
+
+  if (internalPlans.length === 0 && legacyRows.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
         <CreditCard className="w-12 h-12 mx-auto mb-3 opacity-30" />
@@ -98,9 +93,22 @@ export function ContactInstallmentsTabContent({
 
   return (
     <div className="space-y-6">
-      <ContactInternalInstallments profileId={profileId} userId={userId} />
-      {userId && (
-        <ContactInstallments userId={userId} currency={currency} hideEmptyState />
+      {internalPlans.length > 0 && (
+        <ContactInternalInstallments
+          profileId={profileId}
+          userId={userId}
+          plans={internalPlans}
+          isLoading={false}
+        />
+      )}
+      {userId && legacyRows.length > 0 && (
+        <ContactInstallments
+          userId={userId}
+          currency={currency}
+          hideEmptyState
+          installments={legacyRows}
+          isLoading={false}
+        />
       )}
     </div>
   );
