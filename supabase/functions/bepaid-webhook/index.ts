@@ -2218,24 +2218,43 @@ Deno.serve(async (req) => {
             const perPaymentByn = Number(orderBlk?.per_payment_byn ?? orderBlk?.per_payment_amount ?? 0);
             const effectiveTotalByn = Number(orderBlk?.effective_total_byn ?? orderBlk?.total_installment_amount ?? 0);
 
-            // Provider is source of truth. Fallback: unique succeeded
-            // payments on the original order (bepaid provider).
-            let paidCyclesEffective = Number.isFinite(paidCycles) && paidCycles > 0 ? paidCycles : 0;
-            if (paidCyclesEffective === 0) {
-              const { data: paidRows } = await supabase
-                .from('payments_v2')
-                .select('id, provider_payment_id')
-                .eq('order_id', originalOrderIdForGuard)
-                .eq('provider', 'bepaid')
-                .eq('status', 'succeeded');
-              if (Array.isArray(paidRows)) {
-                const uniq = new Set(paidRows.map((r: any) => r.provider_payment_id || r.id));
-                paidCyclesEffective = uniq.size;
+            // Dedup succeeded payments_v2 on the original order (bepaid) by
+            // provider_payment_id. Used for paid_total_byn (source of truth
+            // for money) and as DB fallback for paid cycles count.
+            const { data: paidRows } = await supabase
+              .from('payments_v2')
+              .select('id, provider_payment_id, amount, paid_at')
+              .eq('order_id', originalOrderIdForGuard)
+              .eq('provider', 'bepaid')
+              .eq('status', 'succeeded');
+
+            const dedup = new Map<string, { amount: number; paid_at: string | null }>();
+            if (Array.isArray(paidRows)) {
+              for (const r of paidRows as any[]) {
+                const key = String(r.provider_payment_id || r.id);
+                if (!dedup.has(key)) {
+                  dedup.set(key, { amount: Number(r.amount) || 0, paid_at: r.paid_at || null });
+                }
               }
             }
+            const uniquePaid = Array.from(dedup.values());
+            const dbPaidCount = uniquePaid.length;
 
+            // Provider counter priority for cycle count, clamped to [0, N].
+            // DB fallback when provider counter absent/zero.
+            const providerPaidCycles = Number.isFinite(paidCycles) && paidCycles > 0 ? paidCycles : 0;
+            const rawPaidCycles = providerPaidCycles > 0 ? providerPaidCycles : dbPaidCount;
+            const paidCyclesEffective = Math.min(
+              guardBillingCycles,
+              Math.max(0, rawPaidCycles),
+            );
+            const cycleSource = providerPaidCycles > 0 ? 'provider' : 'db_fallback';
+
+            // paid_total_byn = sum of unique succeeded payments (not per*cycles)
+            const paidTotalByn = Number(
+              uniquePaid.reduce((s, p) => s + (Number(p.amount) || 0), 0).toFixed(2),
+            );
             const remainingCycles = Math.max(0, guardBillingCycles - paidCyclesEffective);
-            const paidTotalByn = Number((perPaymentByn * paidCyclesEffective).toFixed(2));
             const remainingTotalByn = Number(Math.max(0, effectiveTotalByn - paidTotalByn).toFixed(2));
             const progressStatus = finiteFinalCycle || paidCyclesEffective >= guardBillingCycles
               ? 'completed' : 'active';
@@ -2247,10 +2266,16 @@ Deno.serve(async (req) => {
               .maybeSingle();
             const origMeta = (origOrderRow?.meta || {}) as Record<string, any>;
 
+            const nextChargeAt = progressStatus === 'completed'
+              ? null
+              : renewAt.toISOString();
+
             const installmentProgress = {
+              model: 'bepaid_finite_subscription',
               billing_cycles: guardBillingCycles,
               paid_billing_cycles: paidCyclesEffective,
               remaining_cycles: remainingCycles,
+              remaining_billing_cycles: remainingCycles, // canonical alias
               per_payment_byn: perPaymentByn,
               effective_total_byn: effectiveTotalByn,
               paid_total_byn: paidTotalByn,
@@ -2258,8 +2283,9 @@ Deno.serve(async (req) => {
               currency: 'BYN',
               last_cycle_paid_at: transaction?.paid_at || now.toISOString(),
               last_provider_payment_uid: transactionUid ? String(transactionUid) : null,
+              next_charge_at: nextChargeAt,
               status: progressStatus,
-              source: (Number.isFinite(paidCycles) && paidCycles > 0) ? 'provider' : 'db_fallback',
+              source: cycleSource,
               subscription_v2_id: subscriptionV2Id,
               provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
               updated_at: new Date().toISOString(),
@@ -2273,7 +2299,8 @@ Deno.serve(async (req) => {
               console.error('[WEBHOOK-SUBSCRIPTION] installment_progress update failed:', progErr);
             } else {
               console.log('[WEBHOOK-SUBSCRIPTION] installment_progress written',
-                originalOrderIdForGuard, paidCyclesEffective, '/', guardBillingCycles, progressStatus);
+                originalOrderIdForGuard, paidCyclesEffective, '/', guardBillingCycles, progressStatus,
+                'paid_total_byn=', paidTotalByn, 'source=', cycleSource);
             }
           } catch (progExc) {
             console.error('[WEBHOOK-SUBSCRIPTION] installment_progress exception:', progExc);
