@@ -14,14 +14,7 @@ import { buildAdminNotifyMessage, maskEmail } from '../_shared/admin-notify-mess
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
-import {
-  generateInstallmentSchedule,
-  materializeFiniteInstallmentSchedule,
-  advanceInstallmentCycleOnSuccess,
-  annotateInstallmentCycleFailure,
-  terminateFirstPendingInstallment,
-} from '../_shared/installment-schedule.ts';
-import { sendChargeLifecycleNotification } from '../_shared/charge-lifecycle-notifications.ts';
+import { generateInstallmentSchedule } from '../_shared/installment-schedule.ts';
 // PATCH-RB1: REBILL materialization engine (gated by BEPAID_REBILL_MATERIALIZATION).
 import { runRebillFlow } from './rebill_flow.ts';
 import { resolveKillSwitchMode } from './rebill_builders.ts';
@@ -1857,26 +1850,10 @@ Deno.serve(async (req) => {
 
 
 
-        // ===================================================================
-        // B7 Item 8 — DISABLED (2026-07-17).
-        // Scope correction: finite bePaid subscriptions are fully provider-
-        // managed. Do NOT materialize a local installment_payments schedule
-        // for `bepaid_finite_subscription`. bePaid tracks paid_billing_cycles,
-        // retries, and termination on its side; the webhook only records the
-        // actual payment row and updates aggregate progress on the original
-        // order (Stage 3 of the approved plan).
-        //
-        // The helpers materialize/advance/annotate/terminate remain in
-        // _shared/installment-schedule.ts as they may be used by other
-        // installment flows in the future, but MUST NOT be invoked for
-        // provider-managed finite bePaid subscriptions.
-        // ===================================================================
-        if (false && subIsInstallmentFinite && subInstallmentCount >= 2) {
-          // Intentionally unreachable — kept for diff clarity and to preserve
-          // imports until follow-up cleanup removes them.
-          void materializeFiniteInstallmentSchedule;
-          void advanceInstallmentCycleOnSuccess;
-        }
+        // Finite bePaid installment is fully provider-managed. No local
+        // installment_payments schedule is written from this webhook.
+
+
 
 
         // NOTE (PATCH H2.1): entitlements insert/update and prior secondary
@@ -2118,17 +2095,6 @@ Deno.serve(async (req) => {
                 .eq('provider_subscription_id', subscriptionId);
               if (psUpdErr) lifecycleErrors.push({ table: 'provider_subscriptions', error: psUpdErr });
 
-              // Finalize the last pending installment_payments row for this subscription
-              // (idempotent: if the schedule was materialized elsewhere).
-              try {
-                await supabase
-                  .from('installment_payments')
-                  .update({ status: 'succeeded', paid_at: transaction?.paid_at || now.toISOString() })
-                  .eq('subscription_id', subscriptionV2Id)
-                  .eq('payment_number', subInstallmentCount)
-                  .eq('status', 'pending');
-              } catch (_) { /* best-effort */ }
-
               if (lifecycleErrors.length === 0) {
                 await supabase.from('audit_logs').insert({
                   actor_type: 'system',
@@ -2145,25 +2111,6 @@ Deno.serve(async (req) => {
                   },
                 });
                 console.log('[WEBHOOK-SUBSCRIPTION] finite installment COMPLETED', { paidCycles, subInstallmentCount });
-
-                // Fire completion notification (independent of enabled/reminder flags).
-                try {
-                  await sendChargeLifecycleNotification({
-                    supabase,
-                    event: 'installment_completed',
-                    userId: subV2.user_id,
-                    subscriptionV2Id,
-                    providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
-                    transactionUid: transactionUid ? String(transactionUid) : null,
-                    productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
-                    tariffName: subV2.tariffs?.name || null,
-                    amount: paymentAmount,
-                    currency: body.plan?.currency || 'BYN',
-                    meta: { paid_billing_cycles: paidCycles, installment_count: subInstallmentCount },
-                  });
-                } catch (nErr) {
-                  console.error('[WEBHOOK-SUBSCRIPTION] completion notification non-fatal:', nErr);
-                }
               } else {
                 console.error('[WEBHOOK-SUBSCRIPTION] finite completion lifecycle errors:', lifecycleErrors);
                 await supabase.from('audit_logs').insert({
@@ -2288,55 +2235,8 @@ Deno.serve(async (req) => {
           },
         });
 
-        // B7 Item 8 DISABLED — do not touch local installment_payments schedule
-        // for provider-managed finite bePaid subscriptions.
-        void annotateInstallmentCycleFailure;
 
 
-
-        // Look up pending installment_payments row for idempotency subject
-        // (payment_number is the retry attempt anchor). Absence is tolerated —
-        // helper falls back to subscription-scoped key.
-        let failInstallmentPaymentId: string | null = null;
-        if (failIsFinite) {
-          try {
-            const { data: pending } = await supabase
-              .from('installment_payments')
-              .select('id')
-              .eq('subscription_id', subscriptionV2Id)
-              .eq('status', 'pending')
-              .order('payment_number', { ascending: true })
-              .limit(1)
-              .maybeSingle();
-            failInstallmentPaymentId = pending?.id ?? null;
-          } catch { /* best-effort */ }
-        }
-
-        // Deliver policy-gated notification (notify_on_failure independent flag).
-        try {
-          await sendChargeLifecycleNotification({
-            supabase,
-            event: failIsFinite ? 'installment_charge_failed' : 'subscription_charge_failed',
-            userId: subV2.user_id,
-            subscriptionV2Id,
-            providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
-            installmentPaymentId: failInstallmentPaymentId,
-            transactionUid: transactionUid ? String(transactionUid) : null,
-            providerEventId: (body as any)?.uid ? String((body as any).uid) : null,
-            productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
-            tariffName: subV2.tariffs?.name || null,
-            amount: failAmount,
-            currency: failCurrency,
-            errorMessage: String(errMsg),
-            meta: {
-              paid_billing_cycles: paidCyclesOnFail,
-              installment_count: failInstallmentCount,
-              retry_pending: true,
-            },
-          });
-        } catch (nErr) {
-          console.error('[WEBHOOK-SUBSCRIPTION] failure notification non-fatal:', nErr);
-        }
 
         return new Response(JSON.stringify({
           ok: true,
@@ -2478,49 +2378,8 @@ Deno.serve(async (req) => {
           },
         });
 
-        // B7 Item 8 DISABLED — provider-managed finite bePaid subscriptions do
-        // not maintain a local installment_payments schedule. Termination is
-        // reflected only in subscriptions_v2/provider_subscriptions status.
-        void terminateFirstPendingInstallment;
 
-        // Deliver retry-exhausted notification (independent flag).
-        if (termIsRetryExhausted) {
-          try {
-            // Look up installment_payment_id (best-effort, subject key).
-            let exhaustInstallmentPaymentId: string | null = null;
-            try {
-              const { data: pending } = await supabase
-                .from('installment_payments')
-                .select('id')
-                .eq('subscription_id', subscriptionV2Id)
-                .eq('status', 'pending')
-                .order('payment_number', { ascending: true })
-                .limit(1)
-                .maybeSingle();
-              exhaustInstallmentPaymentId = pending?.id ?? null;
-            } catch { /* best-effort */ }
 
-            await sendChargeLifecycleNotification({
-              supabase,
-              event: 'installment_charge_retry_exhausted',
-              userId: subV2.user_id,
-              subscriptionV2Id,
-              providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
-              installmentPaymentId: exhaustInstallmentPaymentId,
-              productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
-              tariffName: subV2.tariffs?.name || null,
-              amount: Number(termMeta?.per_payment_amount ?? 0) || null,
-              currency: (subV2 as any)?.currency || 'BYN',
-              errorMessage: grReason || cancellationReason || 'retry_exhausted',
-              meta: {
-                paid_billing_cycles: termPaidCycles,
-                installment_count: termInstallmentCount,
-              },
-            });
-          } catch (nErr) {
-            console.error('[WEBHOOK-SUBSCRIPTION] retry-exhausted notification non-fatal:', nErr);
-          }
-        }
 
         return new Response(JSON.stringify({
           ok: true,
