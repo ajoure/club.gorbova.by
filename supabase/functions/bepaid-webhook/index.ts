@@ -1546,81 +1546,196 @@ Deno.serve(async (req) => {
           .maybeSingle();
 
         // ===================================================================
-        // Stage 2 — EXACT internal-installment activation guard.
-        // Activated ONLY when the full canonical marker set is present in BOTH
-        // orders_v2.meta and subscriptions_v2.meta. Everything else (normal
-        // subscriptions, external installments, legacy shapes without marker)
-        // continues through the standard REBILL/legacy flow unchanged.
+        // Stage 2 — EXACT internal-installment activation guard (Stage 2 corrective).
+        //
+        // Split the guard into three independent signals:
+        //   • finiteInternalMarkerPresent  — the FULL canonical marker set is
+        //     present in orders_v2.meta AND subscriptions_v2.meta AND
+        //     provider_subscriptions.meta (nested installment blocks compared
+        //     independently in all three tables — never one-of).
+        //   • finiteInternalConsistencyOk  — all cross-table links align
+        //     (order_id/subscription_v2_id/provider_subscription_id/user/product/
+        //     tariff + snapshot equality on original_order_id / billing_cycles /
+        //     model / infinite=false).
+        //   • finiteInternalGuardActive    = marker AND consistency (safe path).
+        //   • finiteInternalGuardMismatch  = marker AND NOT consistency (danger).
+        //
+        // When marker is present but consistency fails, we MUST NOT fall back
+        // to normal REBILL (that would open a wrong-parent deal). We hard-stop:
+        // audit CRITICAL + write manual_review into the current order.meta +
+        // return controlled 202 for manual reconciliation.
         // ===================================================================
         const orderMetaForGuard = (orderV2?.meta ?? {}) as Record<string, any>;
         const subMetaForGuard = (subV2?.meta ?? {}) as Record<string, any>;
-        const installmentForGuard =
-          (subMetaForGuard.installment && typeof subMetaForGuard.installment === 'object'
-            ? subMetaForGuard.installment
-            : (orderMetaForGuard.installment && typeof orderMetaForGuard.installment === 'object'
-                ? orderMetaForGuard.installment
-                : null)) as Record<string, any> | null;
-        const originalOrderIdForGuard =
-          installmentForGuard && typeof installmentForGuard.original_order_id === 'string'
-            ? installmentForGuard.original_order_id
+
+        // Load provider_subscriptions row independently — required both for
+        // marker presence (installment block equality) and for consistency
+        // (order_id / subscription_v2_id / user_id linkage).
+        const { data: providerSubRowForGuard } = await supabase
+          .from('provider_subscriptions')
+          .select('subscription_v2_id, order_id, user_id, provider_subscription_id, meta')
+          .eq('provider', 'bepaid')
+          .eq('provider_subscription_id', subscriptionId)
+          .maybeSingle();
+        const providerSubMetaForGuard = (providerSubRowForGuard?.meta ?? {}) as Record<string, any>;
+
+        const orderInstallmentBlock =
+          orderMetaForGuard.installment && typeof orderMetaForGuard.installment === 'object'
+            ? (orderMetaForGuard.installment as Record<string, any>)
             : null;
-        const guardBillingCycles = Number(installmentForGuard?.billing_cycles);
-        const isFiniteInternalInstallment =
+        const subInstallmentBlock =
+          subMetaForGuard.installment && typeof subMetaForGuard.installment === 'object'
+            ? (subMetaForGuard.installment as Record<string, any>)
+            : null;
+        const providerInstallmentBlock =
+          providerSubMetaForGuard.installment && typeof providerSubMetaForGuard.installment === 'object'
+            ? (providerSubMetaForGuard.installment as Record<string, any>)
+            : null;
+
+        const isInternalInstallmentBlock = (b: Record<string, any> | null) =>
+          !!b &&
+          b.type === 'internal' &&
+          b.provider === 'bepaid' &&
+          b.model === 'bepaid_finite_subscription' &&
+          b.infinite === false &&
+          Number.isInteger(Number(b.billing_cycles)) &&
+          Number(b.billing_cycles) >= 2 &&
+          Number(b.billing_cycles) <= 12 &&
+          typeof b.original_order_id === 'string' &&
+          b.original_order_id.length > 0;
+
+        const orderBlockOk = isInternalInstallmentBlock(orderInstallmentBlock);
+        const subBlockOk = isInternalInstallmentBlock(subInstallmentBlock);
+        const providerBlockOk = isInternalInstallmentBlock(providerInstallmentBlock);
+
+        const finiteInternalMarkerPresent =
           orderMetaForGuard.payment_method === 'internal_installment' &&
           subMetaForGuard.payment_method === 'internal_installment' &&
-          installmentForGuard?.type === 'internal' &&
-          installmentForGuard?.provider === 'bepaid' &&
-          installmentForGuard?.model === 'bepaid_finite_subscription' &&
-          installmentForGuard?.infinite === false &&
-          Number.isInteger(guardBillingCycles) &&
-          guardBillingCycles >= 2 &&
-          guardBillingCycles <= 12 &&
-          typeof originalOrderIdForGuard === 'string' &&
-          originalOrderIdForGuard.length > 0;
+          providerSubMetaForGuard.payment_method === 'internal_installment' &&
+          orderBlockOk && subBlockOk && providerBlockOk;
 
-        // Consistency probe: original_order_id must match subscription/provider order_id
-        // and user/product/tariff must agree. Mismatch → audit CRITICAL + refuse
-        // to activate the guard (fall back to normal flow) so nothing routes to
-        // an unrelated order.
-        let finiteInternalGuardActive = isFiniteInternalInstallment;
-        if (isFiniteInternalInstallment) {
+        const originalOrderIdForGuard = finiteInternalMarkerPresent
+          ? String(orderInstallmentBlock!.original_order_id)
+          : null;
+        const guardBillingCycles = finiteInternalMarkerPresent
+          ? Number(orderInstallmentBlock!.billing_cycles)
+          : NaN;
+
+        // Consistency probe — no "missing => true" fallbacks. Any absent value
+        // is treated as mismatch for canonical Stage 1 entities.
+        let finiteInternalConsistencyOk = false;
+        let consistencyDetails: Record<string, any> = {};
+        if (finiteInternalMarkerPresent) {
           const subOrderId = subV2?.order_id ? String(subV2.order_id) : null;
-          const orderMatchesSub = subOrderId ? subOrderId === originalOrderIdForGuard : true;
-          const orderMatchesParent = orderV2?.id ? String(orderV2.id) === originalOrderIdForGuard : true;
-          const userMatches = subV2?.user_id && orderV2?.user_id
-            ? String(subV2.user_id) === String(orderV2.user_id)
-            : true;
-          const productMatches = subV2?.product_id && orderV2?.product_id
-            ? String(subV2.product_id) === String(orderV2.product_id)
-            : true;
-          const tariffMatches = subV2?.tariff_id && orderV2?.tariff_id
-            ? String(subV2.tariff_id) === String(orderV2.tariff_id)
-            : true;
-          if (!(orderMatchesSub && orderMatchesParent && userMatches && productMatches && tariffMatches)) {
-            finiteInternalGuardActive = false;
-            try {
-              await supabase.from('audit_logs').insert({
-                actor_type: 'system',
-                actor_label: 'bepaid-webhook',
-                action: 'bepaid.webhook.finite_internal_installment_guard_mismatch',
-                target_user_id: subV2?.user_id ?? null,
-                meta: {
-                  severity: 'CRITICAL',
-                  manual_review: true,
-                  order_id: orderV2?.id ?? null,
-                  subscription_v2_id: subscriptionV2Id,
-                  provider_subscription_id: subscriptionId,
-                  original_order_id: originalOrderIdForGuard,
-                  sub_order_id: subOrderId,
-                  order_matches_sub: orderMatchesSub,
-                  order_matches_parent: orderMatchesParent,
-                  user_matches: userMatches,
-                  product_matches: productMatches,
-                  tariff_matches: tariffMatches,
-                },
-              });
-            } catch (_) { /* best-effort */ }
+          const parentOrderId = orderV2?.id ? String(orderV2.id) : null;
+          const psSubV2Id = providerSubRowForGuard?.subscription_v2_id
+            ? String(providerSubRowForGuard.subscription_v2_id)
+            : null;
+          const psOrderId = providerSubRowForGuard?.order_id
+            ? String(providerSubRowForGuard.order_id)
+            : null;
+          const psUserId = providerSubRowForGuard?.user_id
+            ? String(providerSubRowForGuard.user_id)
+            : null;
+          const psProviderSubId = providerSubRowForGuard?.provider_subscription_id
+            ? String(providerSubRowForGuard.provider_subscription_id)
+            : null;
+
+          const orderBlk = orderInstallmentBlock!;
+          const subBlk = subInstallmentBlock!;
+          const provBlk = providerInstallmentBlock!;
+
+          const c = consistencyDetails;
+          c.order_matches_sub = subOrderId === originalOrderIdForGuard;
+          c.order_matches_parent = parentOrderId === originalOrderIdForGuard;
+          c.user_matches = !!subV2?.user_id && !!orderV2?.user_id
+            && String(subV2.user_id) === String(orderV2.user_id);
+          c.product_matches = !!subV2?.product_id && !!orderV2?.product_id
+            && String(subV2.product_id) === String(orderV2.product_id);
+          c.tariff_matches = !!subV2?.tariff_id && !!orderV2?.tariff_id
+            && String(subV2.tariff_id) === String(orderV2.tariff_id);
+          c.ps_sub_v2_matches = psSubV2Id === String(subscriptionV2Id);
+          c.ps_order_matches = psOrderId === originalOrderIdForGuard;
+          c.ps_user_matches = psUserId === (subV2?.user_id ? String(subV2.user_id) : null);
+          c.ps_provider_sub_matches = psProviderSubId === String(subscriptionId);
+          c.snapshot_original_order_id_matches =
+            String(orderBlk.original_order_id) === originalOrderIdForGuard &&
+            String(subBlk.original_order_id) === originalOrderIdForGuard &&
+            String(provBlk.original_order_id) === originalOrderIdForGuard;
+          c.snapshot_billing_cycles_matches =
+            Number(orderBlk.billing_cycles) === guardBillingCycles &&
+            Number(subBlk.billing_cycles) === guardBillingCycles &&
+            Number(provBlk.billing_cycles) === guardBillingCycles;
+          c.snapshot_model_matches =
+            orderBlk.model === 'bepaid_finite_subscription' &&
+            subBlk.model === 'bepaid_finite_subscription' &&
+            provBlk.model === 'bepaid_finite_subscription';
+          c.snapshot_infinite_false =
+            orderBlk.infinite === false &&
+            subBlk.infinite === false &&
+            provBlk.infinite === false;
+
+          finiteInternalConsistencyOk = Object.values(c).every((v) => v === true);
+        }
+
+        const finiteInternalGuardActive =
+          finiteInternalMarkerPresent && finiteInternalConsistencyOk;
+        const finiteInternalGuardMismatch =
+          finiteInternalMarkerPresent && !finiteInternalConsistencyOk;
+
+        if (finiteInternalGuardMismatch) {
+          // Marker present but consistency failed. Absolutely do NOT run REBILL,
+          // rebind the payment, or extend access — the deal linkage is untrusted.
+          // Write manual_review into the current order.meta so downstream tooling
+          // and admins see the flag directly on the deal, emit CRITICAL audit,
+          // and return controlled 202 for reconciliation.
+          try {
+            if (orderV2?.id) {
+              await supabase
+                .from('orders_v2')
+                .update({
+                  meta: {
+                    ...(orderV2.meta || {}),
+                    manual_review: true,
+                    finite_internal_installment_guard_mismatch: {
+                      provider_subscription_id: subscriptionId ?? null,
+                      original_order_id: originalOrderIdForGuard,
+                      subscription_v2_id: subscriptionV2Id,
+                      detected_at: new Date().toISOString(),
+                      details: consistencyDetails,
+                    },
+                  },
+                })
+                .eq('id', orderV2.id);
+            }
+          } catch (mrErr) {
+            console.error('[WEBHOOK-SUBSCRIPTION] failed to persist manual_review on order:', mrErr);
           }
+          try {
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'bepaid-webhook',
+              action: 'bepaid.webhook.finite_internal_installment_guard_mismatch',
+              target_user_id: subV2?.user_id ?? null,
+              meta: {
+                severity: 'CRITICAL',
+                manual_review: true,
+                marker_present: true,
+                consistency_ok: false,
+                order_id: orderV2?.id ?? null,
+                subscription_v2_id: subscriptionV2Id,
+                provider_subscription_id: subscriptionId,
+                original_order_id: originalOrderIdForGuard,
+                billing_cycles: guardBillingCycles,
+                details: consistencyDetails,
+                action_taken: 'no_rebill_no_rebind_no_grant_manual_review',
+              },
+            });
+          } catch (_) { /* best-effort */ }
+          return new Response(
+            JSON.stringify({ ok: false, status: 'manual_review', reason: 'finite_internal_installment_guard_mismatch' }),
+            { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+          );
         }
 
         // ===================================================================
