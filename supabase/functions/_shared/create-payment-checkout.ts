@@ -1277,10 +1277,13 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
               installment_count: installmentCountRaw,
               billing_cycles: billingCycles,
               model: 'bepaid_finite_subscription',
+              // Stage 1 canonical marker (provider_subscriptions scope).
+              payment_method: 'internal_installment',
               // PATCH A2 — канонический путь meta.installment.retry_policy.
               // B2 — canonical installment.charge_notifications snapshot.
               installment: {
                 ...(installmentExtra || {}),
+                ...(canonicalInstallmentSnapshot || {}),
                 retry_policy: retryPolicySnapshotPre,
                 charge_notifications: chargeNotifSnapshot,
                 charge_notifications_source: chargeNotifPolicy.source,
@@ -1325,8 +1328,11 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         charge_notifications_source: chargeNotifPolicy.source,
         ...(isInstallmentSubscription && retryPolicySnapshotPre
           ? {
+              // Stage 1 canonical marker (orders_v2 scope).
+              payment_method: 'internal_installment',
               installment: {
                 ...(installmentExtra || {}),
+                ...(canonicalInstallmentSnapshot || {}),
                 retry_policy: retryPolicySnapshotPre,
                 charge_notifications: chargeNotifSnapshot,
                 charge_notifications_source: chargeNotifPolicy.source,
