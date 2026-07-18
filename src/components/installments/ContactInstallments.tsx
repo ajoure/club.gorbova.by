@@ -46,6 +46,9 @@ import type { InstallmentPayment } from "@/hooks/useInstallments";
 interface ContactInstallmentsProps {
   userId: string;
   currency?: string;
+  /** When true, empty state renders `null` instead of «Нет рассрочек»
+   *  (used by ContactInstallmentsTabContent wrapper to avoid duplicate empty states). */
+  hideEmptyState?: boolean;
 }
 
 interface InstallmentPlan {
