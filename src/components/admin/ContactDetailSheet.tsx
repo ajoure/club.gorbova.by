@@ -121,6 +121,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { ContactInternalInstallments } from "@/components/installments/ContactInternalInstallments";
+import { ContactInstallmentsTabContent } from "@/components/installments/ContactInstallmentsTabContent";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
