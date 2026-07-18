@@ -2235,55 +2235,8 @@ Deno.serve(async (req) => {
           },
         });
 
-        // B7 Item 8 DISABLED — do not touch local installment_payments schedule
-        // for provider-managed finite bePaid subscriptions.
-        void annotateInstallmentCycleFailure;
 
 
-
-        // Look up pending installment_payments row for idempotency subject
-        // (payment_number is the retry attempt anchor). Absence is tolerated —
-        // helper falls back to subscription-scoped key.
-        let failInstallmentPaymentId: string | null = null;
-        if (failIsFinite) {
-          try {
-            const { data: pending } = await supabase
-              .from('installment_payments')
-              .select('id')
-              .eq('subscription_id', subscriptionV2Id)
-              .eq('status', 'pending')
-              .order('payment_number', { ascending: true })
-              .limit(1)
-              .maybeSingle();
-            failInstallmentPaymentId = pending?.id ?? null;
-          } catch { /* best-effort */ }
-        }
-
-        // Deliver policy-gated notification (notify_on_failure independent flag).
-        try {
-          await sendChargeLifecycleNotification({
-            supabase,
-            event: failIsFinite ? 'installment_charge_failed' : 'subscription_charge_failed',
-            userId: subV2.user_id,
-            subscriptionV2Id,
-            providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
-            installmentPaymentId: failInstallmentPaymentId,
-            transactionUid: transactionUid ? String(transactionUid) : null,
-            providerEventId: (body as any)?.uid ? String((body as any).uid) : null,
-            productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
-            tariffName: subV2.tariffs?.name || null,
-            amount: failAmount,
-            currency: failCurrency,
-            errorMessage: String(errMsg),
-            meta: {
-              paid_billing_cycles: paidCyclesOnFail,
-              installment_count: failInstallmentCount,
-              retry_pending: true,
-            },
-          });
-        } catch (nErr) {
-          console.error('[WEBHOOK-SUBSCRIPTION] failure notification non-fatal:', nErr);
-        }
 
         return new Response(JSON.stringify({
           ok: true,
