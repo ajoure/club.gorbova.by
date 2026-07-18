@@ -1888,11 +1888,6 @@ Deno.serve(async (req) => {
           .eq('user_id', subV2.user_id)
           .maybeSingle();
 
-        // PATCH-RB1.2: when REBILL handled, payment must stay attached to REBILL-order,
-        // not parent. Route upsert order_id to rebillOrderIdFromFlow.
-        const stepEOrderId = (rebillHandled && rebillOrderIdFromFlow)
-          ? rebillOrderIdFromFlow
-          : orderV2Id;
         // Stage 2: exact finite-internal-installment guard wins over REBILL routing.
         // All payments in this ветка attach to the ORIGINAL order (single-deal policy).
         const stepEOrderId = finiteInternalGuardActive
