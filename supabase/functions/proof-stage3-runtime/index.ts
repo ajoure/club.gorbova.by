@@ -48,6 +48,61 @@ Deno.serve(async (req) => {
     });
   }
 
+  const url = new URL(req.url);
+  if (url.searchParams.get("mode") === "purge_all") {
+    const purge: Record<string, unknown> = {};
+    // Find fixture orders
+    const { data: fxOrders } = await admin
+      .from("orders_v2").select("id,user_id,tariff_id,product_id,meta")
+      .filter("meta->>test_fixture", "eq", "true");
+    const orderIds = (fxOrders || []).map((o) => o.id);
+    const userIds = [...new Set((fxOrders || []).map((o) => o.user_id).filter(Boolean))];
+    const tariffIds = [...new Set((fxOrders || []).map((o) => o.tariff_id).filter(Boolean))];
+    const productIds = [...new Set((fxOrders || []).map((o) => o.product_id).filter(Boolean))];
+
+    if (orderIds.length) {
+      purge.reconcile_by_order = await admin.from("payment_reconcile_queue")
+        .delete().in("processed_order_id", orderIds).then((r) => r.error?.message ?? "ok");
+      purge.reconcile_by_profile = await admin.from("payment_reconcile_queue")
+        .delete().in("matched_user_id", userIds as string[]).then((r) => r.error?.message ?? "ok");
+      purge.payments = await admin.from("payments_v2")
+        .delete().in("order_id", orderIds).then((r) => r.error?.message ?? "ok");
+      purge.installments = await admin.from("installment_payments")
+        .delete().in("order_id", orderIds).then((r) => r.error?.message ?? "ok");
+      purge.subs = await admin.from("subscriptions_v2")
+        .delete().in("order_id", orderIds).then((r) => r.error?.message ?? "ok");
+      purge.provider_subs = await admin.from("provider_subscriptions")
+        .delete().in("order_id", orderIds).then((r) => r.error?.message ?? "ok");
+      purge.orders = await admin.from("orders_v2")
+        .delete().in("id", orderIds).then((r) => r.error?.message ?? "ok");
+    }
+    if (tariffIds.length) {
+      purge.tariffs = await admin.from("tariffs")
+        .delete().in("id", tariffIds as string[]).then((r) => r.error?.message ?? "ok");
+    }
+    if (productIds.length) {
+      purge.products = await admin.from("products_v2")
+        .delete().in("id", productIds as string[]).then((r) => r.error?.message ?? "ok");
+    }
+    if (userIds.length) {
+      purge.entitlements = await admin.from("entitlements")
+        .delete().in("user_id", userIds as string[]).then((r) => r.error?.message ?? "ok");
+      purge.access_ledger = await admin.from("access_grant_ledger")
+        .delete().in("user_id", userIds as string[]).then((r) => r.error?.message ?? "ok");
+      purge.reconcile_by_user = await admin.from("payment_reconcile_queue")
+        .delete().in("matched_user_id", userIds as string[]).then((r) => r.error?.message ?? "ok");
+      purge.profiles = await admin.from("profiles")
+        .delete().in("user_id", userIds as string[]).then((r) => r.error?.message ?? "ok");
+      for (const uid of userIds as string[]) {
+        await admin.auth.admin.deleteUser(uid).catch(() => {});
+      }
+    }
+    return new Response(JSON.stringify({ ok: true, orderIds, userIds, purge }, null, 2), {
+      status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+
   const steps: Step[] = [];
   const created: Record<string, string> = {};
   const runMarker = `stage3-runtime-${new Date().toISOString()}`;
