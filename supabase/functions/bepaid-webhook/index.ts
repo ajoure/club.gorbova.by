@@ -1608,11 +1608,27 @@ Deno.serve(async (req) => {
         const subBlockOk = isInternalInstallmentBlock(subInstallmentBlock);
         const providerBlockOk = isInternalInstallmentBlock(providerInstallmentBlock);
 
-        const finiteInternalMarkerPresent =
+        // Stage 2 corrective: split marker into INTENT (ANY signal) and FULL
+        // (ALL three snapshots agree). Intent + partial data must NOT fall back
+        // to the generic REBILL branch — it must go to manual_review.
+        const finiteInternalIntentPresent =
+          orderMetaForGuard.payment_method === 'internal_installment' ||
+          subMetaForGuard.payment_method === 'internal_installment' ||
+          providerSubMetaForGuard.payment_method === 'internal_installment' ||
+          (orderInstallmentBlock?.model === 'bepaid_finite_subscription') ||
+          (subInstallmentBlock?.model === 'bepaid_finite_subscription') ||
+          (providerInstallmentBlock?.model === 'bepaid_finite_subscription');
+
+        const finiteInternalFullMarkerPresent =
           orderMetaForGuard.payment_method === 'internal_installment' &&
           subMetaForGuard.payment_method === 'internal_installment' &&
           providerSubMetaForGuard.payment_method === 'internal_installment' &&
           orderBlockOk && subBlockOk && providerBlockOk;
+
+        // Keep the legacy name pointing at the FULL marker so downstream reads
+        // (originalOrderIdForGuard, guardBillingCycles, consistency probe) stay
+        // strict — they require the full canonical snapshot to be present.
+        const finiteInternalMarkerPresent = finiteInternalFullMarkerPresent;
 
         const originalOrderIdForGuard = finiteInternalMarkerPresent
           ? String(orderInstallmentBlock!.original_order_id)
@@ -1679,9 +1695,12 @@ Deno.serve(async (req) => {
         }
 
         const finiteInternalGuardActive =
-          finiteInternalMarkerPresent && finiteInternalConsistencyOk;
+          finiteInternalFullMarkerPresent && finiteInternalConsistencyOk;
+        // Partial-marker safety: ANY intent signal without a fully valid guard
+        // → mismatch. This closes the case where e.g. provider_subscriptions
+        // lost its marker while orders_v2/subscriptions_v2 still carry it.
         const finiteInternalGuardMismatch =
-          finiteInternalMarkerPresent && !finiteInternalConsistencyOk;
+          finiteInternalIntentPresent && !finiteInternalGuardActive;
 
         if (finiteInternalGuardMismatch) {
           // Marker present but consistency failed. Absolutely do NOT run REBILL,
