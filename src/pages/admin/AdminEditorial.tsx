@@ -552,23 +552,12 @@ const AdminEditorial = () => {
     },
   });
 
-  // Import channel history mutation
+  // Import channel history mutation — DISABLED (edge function undeployed in security hotfix)
   const importHistoryMutation = useMutation({
-    mutationFn: async (exportData: unknown) => {
-      const { data, error } = await supabase.functions.invoke("import-telegram-history", {
-        body: { 
-          export_data: exportData,
-          channel_id: channelWithStyle?.settings ? (channelWithStyle as { id: string; channel_name: string; settings: ChannelSettings & { channel_id?: string } })?.settings?.channel_id : null,
-        },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      return data;
+    mutationFn: async (_exportData: unknown) => {
+      throw new Error("Импорт истории временно недоступен: функция отключена в рамках security-hotfix.");
     },
-    onSuccess: (data) => {
-      toast.success("История канала импортирована", {
-        description: `Импортировано ${data.imported} постов из ${data.text_messages}`,
-      });
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["archived-posts-count"] });
     },
     onError: (error: Error) => {
