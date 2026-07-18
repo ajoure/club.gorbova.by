@@ -1984,16 +1984,22 @@ Deno.serve(async (req) => {
         console.log('[WEBHOOK-SUBSCRIPTION] provider-sync (non-access) applied, finite=', subIsInstallmentFinite);
 
         // STEP D: provider_subscriptions state (provider fact mirror)
+        // Stage 2 corrective: on the FINAL cycle of a finite internal installment,
+        // also null out provider_subscriptions.next_charge_at and mark the mirror
+        // completed so it does not linger in active state.
+        const providerStepDPatch: Record<string, any> = {
+          state: finiteFinalCycle ? 'completed' : 'active',
+          next_charge_at: (finiteInternalGuardActive && finiteFinalCycle)
+            ? null
+            : renewAt.toISOString(),
+          card_last4: subscription?.card?.last_4 || body.card?.last_4 || null,
+          card_brand: subscription?.card?.brand || body.card?.brand || null,
+        };
         await supabase
           .from('provider_subscriptions')
-          .update({
-            state: 'active',
-            next_charge_at: renewAt.toISOString(),
-            card_last4: subscription?.card?.last_4 || body.card?.last_4 || null,
-            card_brand: subscription?.card?.brand || body.card?.brand || null,
-          })
+          .update(providerStepDPatch)
           .eq('provider_subscription_id', subscriptionId);
-        console.log('[WEBHOOK-SUBSCRIPTION] provider_subscriptions updated to active');
+        console.log('[WEBHOOK-SUBSCRIPTION] provider_subscriptions updated', providerStepDPatch.state, 'finiteFinalCycle=', finiteFinalCycle);
 
         // STEP E: payments_v2 (payment fact, not access)
         const paymentAmount = transaction?.amount ? transaction.amount / 100 : (body.plan?.amount ? body.plan.amount / 100 : 0);
