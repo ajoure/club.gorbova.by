@@ -967,6 +967,26 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     const installmentExtra = installmentExtraPre;
     const intervalDays = intervalDaysPre;
 
+    // Stage 1 canonical snapshot — единый normalized блок для orders_v2.meta,
+    // subscriptions_v2.meta и provider_subscriptions.meta (installment scope).
+    // original_order_id пишется ТОЛЬКО сервером после INSERT orders_v2.
+    const canonicalInstallmentSnapshot: Record<string, any> | null = isInstallmentSubscription
+      ? {
+          type: 'internal',
+          provider: 'bepaid',
+          model: 'bepaid_finite_subscription',
+          billing_cycles: billingCycles,
+          infinite: false,
+          per_payment_byn: Number(extraMeta.installment_per_payment_amount_byn ?? amountByn),
+          effective_total_byn: Number(
+            extraMeta.installment_total_amount_byn ?? (amountByn * (billingCycles || 1)),
+          ),
+          rounding_mode: String(installmentExtra?.rounding_mode ?? 'ceil_to_whole_byn'),
+          rounding_delta_byn: Number(installmentExtra?.rounding_delta_byn ?? 0),
+          original_order_id: order.id,
+        }
+      : null;
+
     // PATCH PAYMENTS-REVISION: pre-create subscriptions_v2 ДО bePaid /subscriptions,
     // чтобы tracking_id содержал реальный subscription_v2_id.
     // B2 corrective. Resolve canonical charge_notifications policy with full
@@ -1009,12 +1029,15 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       preSubMeta.installment_total_amount_byn = Number(extraMeta.installment_total_amount_byn ?? (amountByn * (billingCycles || 1)));
       preSubMeta.installment = {
         ...installmentExtra,
+        ...(canonicalInstallmentSnapshot || {}),
         retry_policy: retryPolicySnapshotPre,
         // B2. Canonical installment-scope charge_notifications snapshot.
         charge_notifications: chargeNotifSnapshot,
         charge_notifications_source: chargeNotifPolicy.source,
       };
       preSubMeta.model = 'bepaid_finite_subscription';
+      // Stage 1 canonical marker (subscriptions_v2 scope).
+      preSubMeta.payment_method = 'internal_installment';
       // PATCH A2 — единый effective retry snapshot (канонический путь meta.installment.retry_policy).
       // Дублируем на верхний уровень для legacy читателей — постепенно к удалению.
       preSubMeta.retry_policy = retryPolicySnapshotPre;
@@ -1254,10 +1277,13 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
               installment_count: installmentCountRaw,
               billing_cycles: billingCycles,
               model: 'bepaid_finite_subscription',
+              // Stage 1 canonical marker (provider_subscriptions scope).
+              payment_method: 'internal_installment',
               // PATCH A2 — канонический путь meta.installment.retry_policy.
               // B2 — canonical installment.charge_notifications snapshot.
               installment: {
                 ...(installmentExtra || {}),
+                ...(canonicalInstallmentSnapshot || {}),
                 retry_policy: retryPolicySnapshotPre,
                 charge_notifications: chargeNotifSnapshot,
                 charge_notifications_source: chargeNotifPolicy.source,
@@ -1302,8 +1328,11 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         charge_notifications_source: chargeNotifPolicy.source,
         ...(isInstallmentSubscription && retryPolicySnapshotPre
           ? {
+              // Stage 1 canonical marker (orders_v2 scope).
+              payment_method: 'internal_installment',
               installment: {
                 ...(installmentExtra || {}),
+                ...(canonicalInstallmentSnapshot || {}),
                 retry_policy: retryPolicySnapshotPre,
                 charge_notifications: chargeNotifSnapshot,
                 charge_notifications_source: chargeNotifPolicy.source,

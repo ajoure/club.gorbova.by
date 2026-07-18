@@ -423,6 +423,11 @@ Deno.serve(async (req) => {
       installmentLinkAmountKopecks = perPaymentKopecks;
       installmentBlock = {
         payment_method: 'internal_installment',
+        // Stage 1 canonical marker — internal installment via finite bePaid subscription.
+        type: 'internal',
+        provider: 'bepaid',
+        model: 'bepaid_finite_subscription',
+        infinite: false,
         max_installment_months: offerInstallmentMaxMonths,
         selected_installment_months: sel,
         interval_days: intervalDays,
@@ -692,7 +697,11 @@ Deno.serve(async (req) => {
     const linkAmountKopecks =
       installmentLinkAmountKopecks !== null ? installmentLinkAmountKopecks : amount;
     const linkMeta: Record<string, unknown> = {};
-    if (installmentBlock) linkMeta.installment = installmentBlock;
+    if (installmentBlock) {
+      linkMeta.installment = installmentBlock;
+      // Stage 1 canonical marker at link.meta root — не перезаписываем payment_flow.
+      linkMeta.payment_method = 'internal_installment';
+    }
     // Phase 5-C — snapshot allowed providers + stripe account для рантайма customer_choice.
     if (providerMode === 'customer_choice') {
       linkMeta.allowed_payment_providers = effectiveAllowedProviders;
