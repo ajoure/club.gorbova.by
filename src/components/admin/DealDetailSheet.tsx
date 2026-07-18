@@ -70,6 +70,7 @@ import { DealPayerDocumentsCard } from "./DealPayerDocumentsCard";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
 import { CallButton } from "./calls/CallButton";
+import { InternalInstallmentBlock } from "@/components/installments/InternalInstallmentBlock";
 
 interface DealDetailSheetProps {
   deal: any | null;
@@ -901,6 +902,9 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 )}
               </CardContent>
             </Card>
+
+            {/* Внутренняя рассрочка (canonical bepaid finite subscription) */}
+            <InternalInstallmentBlock order={deal} />
 
             {/* Payments */}
             <Card>

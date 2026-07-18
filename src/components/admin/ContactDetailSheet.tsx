@@ -120,6 +120,7 @@ import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
+import { ContactInternalInstallments } from "@/components/installments/ContactInternalInstallments";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
@@ -3752,7 +3753,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
             {/* Installments Tab */}
             <TabsContent value="installments" className="m-0">
-              <ContactInstallments userId={contact.user_id} />
+              <div className="space-y-6">
+                <ContactInternalInstallments
+                  profileId={contact.id}
+                  userId={contact.user_id}
+                />
+                <ContactInstallments userId={contact.user_id} />
+              </div>
             </TabsContent>
 
             {/* Loyalty Tab */}
