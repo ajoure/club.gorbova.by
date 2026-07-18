@@ -1988,6 +1988,10 @@ Deno.serve(async (req) => {
               ? (finiteFinalCycle ? null : renewAt.toISOString())
               : renewAt.toISOString(),
             auto_renew: finiteInternalGuardActive ? false : (subV2.auto_renew ?? true),
+            // Stage 2 corrective: on the last paid cycle of a finite internal
+            // installment, close the local subscription explicitly. Provider
+            // mirror is closed in STEP D; local status must match.
+            ...(finiteFinalCycle ? { status: 'completed' } : {}),
             meta: {
               ...subV2Meta,
               bepaid_subscription_id: subscriptionId,
