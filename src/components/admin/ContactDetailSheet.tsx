@@ -119,8 +119,6 @@ import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ContactInstallments } from "@/components/installments/ContactInstallments";
-import { ContactInternalInstallments } from "@/components/installments/ContactInternalInstallments";
 import { ContactInstallmentsTabContent } from "@/components/installments/ContactInstallmentsTabContent";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
