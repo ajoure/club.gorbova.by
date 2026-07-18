@@ -210,7 +210,7 @@ Deno.serve(async (req) => {
       // Root-level state+plan → isSubscriptionWebhook=true in bepaid-webhook.
       return {
         id: providerSubId,
-        state: cycle >= 2 ? "completed" : "active",
+        state: "active",
         plan: { amount: perPaymentByn * 100, currency: "BYN" },
         tracking_id: trackingId,
         paid_billing_cycles: cycle,
