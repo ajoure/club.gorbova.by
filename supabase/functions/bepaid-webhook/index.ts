@@ -1977,37 +1977,142 @@ Deno.serve(async (req) => {
         // Fields here are provider facts (billing model, next charge moment, card
         // metadata). They do NOT grant or extend access — that is owned by
         // grant-access-for-order in STEP A.
-        await supabase
+        //
+        // B7-C1 corrective: this is the SOLE local writer of subscriptions_v2 for
+        // finite-internal-installment completion. We MUST inspect the Supabase
+        // response envelope (Supabase JS surfaces PostgREST/PG errors via `error`,
+        // not exceptions) and run a post-check on the returned row. On any error
+        // or post-check mismatch → CRITICAL audit + controlled 202/manual_review,
+        // and DO NOT close reconciliation.
+        //
+        // Terminal status choice: subscriptions_v2.status has no CHECK constraint;
+        // 'completed' is admissible and semantically distinct from 'expired'
+        // (lapsed) / 'canceled' / 'superseded'. It is the same value already used
+        // by the diagnostic post-check block below. Keep 'completed'.
+        const stepCPatch: Record<string, unknown> = {
+          billing_type: 'provider_managed',
+          // Stage 2: next_charge_at stays populated until the final cycle for
+          // finite internal installments; only the LAST paid cycle nulls it out.
+          // auto_renew=false is a local marker only for finite internal installments.
+          next_charge_at: finiteInternalGuardActive
+            ? (finiteFinalCycle ? null : renewAt.toISOString())
+            : renewAt.toISOString(),
+          auto_renew: finiteInternalGuardActive ? false : (subV2.auto_renew ?? true),
+          // B7-C1 corrective: on the last paid cycle of a finite internal
+          // installment, close the local subscription explicitly. Provider
+          // mirror is closed in STEP D; local status must match.
+          ...(finiteFinalCycle ? { status: 'completed' } : {}),
+          meta: {
+            ...subV2Meta,
+            bepaid_subscription_id: subscriptionId,
+            bepaid_activated_at: now.toISOString(),
+            ...(subIsInstallmentFinite
+              ? {
+                  model: 'bepaid_finite_subscription',
+                  billing_cycles: guardBillingCycles ?? Number(subV2Meta.billing_cycles ?? subInstallmentCount),
+                  installment_count: subInstallmentCount,
+                  ...(finiteFinalCycle
+                    ? {
+                        installment_status: 'completed',
+                        installment_completed_at: now.toISOString(),
+                        paid_billing_cycles: paidCycles,
+                      }
+                    : {}),
+                }
+              : {}),
+          },
+          updated_at: now.toISOString(),
+        };
+
+        const { data: stepCRow, error: stepCErr } = await supabase
           .from('subscriptions_v2')
-          .update({
-            billing_type: 'provider_managed',
-            // Stage 2: next_charge_at stays populated until the final cycle for
-            // finite internal installments; only the LAST paid cycle nulls it out.
-            // auto_renew=false is a local marker only for finite internal installments.
-            next_charge_at: finiteInternalGuardActive
-              ? (finiteFinalCycle ? null : renewAt.toISOString())
-              : renewAt.toISOString(),
-            auto_renew: finiteInternalGuardActive ? false : (subV2.auto_renew ?? true),
-            // Stage 2 corrective: on the last paid cycle of a finite internal
-            // installment, close the local subscription explicitly. Provider
-            // mirror is closed in STEP D; local status must match.
-            ...(finiteFinalCycle ? { status: 'completed' } : {}),
-            meta: {
-              ...subV2Meta,
-              bepaid_subscription_id: subscriptionId,
-              bepaid_activated_at: now.toISOString(),
-              ...(subIsInstallmentFinite
-                ? {
-                    model: 'bepaid_finite_subscription',
-                    billing_cycles: Number(subV2Meta.billing_cycles ?? subInstallmentCount),
-                    installment_count: subInstallmentCount,
-                  }
-                : {}),
+          .update(stepCPatch)
+          .eq('id', subscriptionV2Id)
+          .select('id,status,next_charge_at,auto_renew,updated_at')
+          .maybeSingle();
+
+        // Post-check contract for finite internal installments.
+        const expectedTerminalStatus = 'completed';
+        const stepCPostCheckOk = (() => {
+          if (stepCErr || !stepCRow) return false;
+          if (!finiteInternalGuardActive) return true; // non-finite: no strict contract here
+          if (finiteFinalCycle) {
+            return (
+              String(stepCRow.status) === expectedTerminalStatus &&
+              stepCRow.next_charge_at === null &&
+              stepCRow.auto_renew === false
+            );
+          }
+          // non-final cycle of a finite internal installment
+          return (
+            String(stepCRow.status) !== expectedTerminalStatus &&
+            stepCRow.next_charge_at !== null &&
+            stepCRow.auto_renew === false
+          );
+        })();
+
+        if (stepCErr || !stepCPostCheckOk) {
+          const errAny = stepCErr as any;
+          console.error(
+            '[WEBHOOK-SUBSCRIPTION] STEP C failed / post-check mismatch',
+            {
+              code: errAny?.code ?? null,
+              message: errAny?.message ?? null,
+              details: errAny?.details ?? null,
+              hint: errAny?.hint ?? null,
+              row: stepCRow ?? null,
+              finiteInternalGuardActive,
+              finiteFinalCycle,
+              guardBillingCycles,
+              paidCycles,
             },
-            updated_at: now.toISOString(),
-          })
-          .eq('id', subscriptionV2Id);
-        console.log('[WEBHOOK-SUBSCRIPTION] provider-sync (non-access) applied, finite=', subIsInstallmentFinite);
+          );
+          try {
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'bepaid-webhook',
+              action: 'bepaid.webhook.step_c_subscriptions_v2_update_failed',
+              target_user_id: subV2.user_id,
+              meta: {
+                severity: 'CRITICAL',
+                manual_review: true,
+                subscription_v2_id: subscriptionV2Id,
+                provider_subscription_id: subscriptionId,
+                order_id: orderV2Id,
+                transaction_uid: transactionUid,
+                finite_internal_guard_active: finiteInternalGuardActive,
+                finite_final_cycle: finiteFinalCycle,
+                guard_billing_cycles: guardBillingCycles,
+                paid_billing_cycles: paidCycles,
+                expected_terminal_status: expectedTerminalStatus,
+                observed_row: stepCRow,
+                db_error: stepCErr
+                  ? {
+                      code: errAny?.code ?? null,
+                      message: errAny?.message ?? null,
+                      details: errAny?.details ?? null,
+                      hint: errAny?.hint ?? null,
+                    }
+                  : null,
+                action_taken: 'no_reconcile_close_manual_review',
+              },
+            });
+          } catch (_) { /* best-effort audit */ }
+          // Leave reconciliation open — do NOT let subsequent code close the
+          // payment_reconcile_queue row for this UID.
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              status: 'manual_review',
+              reason: 'step_c_subscriptions_v2_update_failed',
+            }),
+            { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+          );
+        }
+        console.log(
+          '[WEBHOOK-SUBSCRIPTION] provider-sync (non-access) applied + post-check OK',
+          { finite: subIsInstallmentFinite, finalCycle: finiteFinalCycle, status: stepCRow?.status },
+        );
 
         // STEP D: provider_subscriptions state (provider fact mirror)
         // Stage 2 corrective: on the FINAL cycle of a finite internal installment,
