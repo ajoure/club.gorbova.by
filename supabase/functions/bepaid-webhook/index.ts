@@ -1638,7 +1638,7 @@ Deno.serve(async (req) => {
         const rebillMode = resolveKillSwitchMode(Deno.env.get('BEPAID_REBILL_MATERIALIZATION'));
         let rebillHandled = false;
         let rebillOrderIdFromFlow: string | null = null;
-        if (rebillMode !== 'off' && paidCycles >= 2 && transactionUid && orderV2) {
+        if (!finiteInternalGuardActive && rebillMode !== 'off' && paidCycles >= 2 && transactionUid && orderV2) {
           try {
             const deps = buildRebillDepsAdapter(supabase);
             const rebillResult = await runRebillFlow(deps, {
