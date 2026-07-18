@@ -1985,10 +1985,15 @@ Deno.serve(async (req) => {
         // or post-check mismatch → CRITICAL audit + controlled 202/manual_review,
         // and DO NOT close reconciliation.
         //
-        // Terminal status choice: subscriptions_v2.status has no CHECK constraint;
-        // 'completed' is admissible and semantically distinct from 'expired'
-        // (lapsed) / 'canceled' / 'superseded'. It is the same value already used
-        // by the diagnostic post-check block below. Keep 'completed'.
+        // Terminal status choice: subscriptions_v2.status is a Postgres enum
+        // (subscription_status) whose values are {active,trial,past_due,canceled,
+        // expired,superseded,expired_reentry,pending}. 'completed' is NOT a
+        // valid enum value — writing it fails at the DB with 22P02, which is
+        // the root cause of B7-C1. For a finite internal installment that has
+        // paid its last cycle the canonical terminal is 'expired' (natural end
+        // of the plan). UI/report semantics ("Завершена") are carried by
+        // meta.installment_status='completed' below, not by the enum value.
+        const finiteTerminalStatus = 'expired';
         const stepCPatch: Record<string, unknown> = {
           billing_type: 'provider_managed',
           // Stage 2: next_charge_at stays populated until the final cycle for
@@ -2001,7 +2006,7 @@ Deno.serve(async (req) => {
           // B7-C1 corrective: on the last paid cycle of a finite internal
           // installment, close the local subscription explicitly. Provider
           // mirror is closed in STEP D; local status must match.
-          ...(finiteFinalCycle ? { status: 'completed' } : {}),
+          ...(finiteFinalCycle ? { status: finiteTerminalStatus } : {}),
           meta: {
             ...subV2Meta,
             bepaid_subscription_id: subscriptionId,
@@ -2032,7 +2037,7 @@ Deno.serve(async (req) => {
           .maybeSingle();
 
         // Post-check contract for finite internal installments.
-        const expectedTerminalStatus = 'completed';
+        const expectedTerminalStatus = finiteTerminalStatus;
         const stepCPostCheckOk = (() => {
           if (stepCErr || !stepCRow) return false;
           if (!finiteInternalGuardActive) return true; // non-finite: no strict contract here
@@ -2436,7 +2441,7 @@ Deno.serve(async (req) => {
 
             const subOk =
               !!subCheck &&
-              String(subCheck.status) === 'completed' &&
+              String(subCheck.status) === 'expired' &&
               subCheck.next_charge_at === null &&
               subCheck.auto_renew === false;
             const psOk =
