@@ -2221,12 +2221,23 @@ Deno.serve(async (req) => {
             // Dedup succeeded payments_v2 on the original order (bepaid) by
             // provider_payment_id. Used for paid_total_byn (source of truth
             // for money) and as DB fallback for paid cycles count.
-            const { data: paidRows } = await supabase
+            const { data: paidRows, error: paidRowsError } = await supabase
               .from('payments_v2')
               .select('id, provider_payment_id, amount, paid_at')
               .eq('order_id', originalOrderIdForGuard)
               .eq('provider', 'bepaid')
               .eq('status', 'succeeded');
+
+            if (paidRowsError) {
+              console.error('[WEBHOOK-SUBSCRIPTION] installment_progress payments query failed', paidRowsError);
+              await audit('bepaid.installment_progress.query_failed', {
+                original_order_id: originalOrderIdForGuard,
+                subscription_v2_id: subscriptionV2Id,
+                error: String(paidRowsError?.message || paidRowsError),
+                severity: 'WARN',
+              });
+              // Skip progress write: paid_total would be incorrect (=0).
+            } else {
 
             const dedup = new Map<string, { amount: number; paid_at: string | null }>();
             if (Array.isArray(paidRows)) {
@@ -2237,6 +2248,7 @@ Deno.serve(async (req) => {
                 }
               }
             }
+
             const uniquePaid = Array.from(dedup.values());
             const dbPaidCount = uniquePaid.length;
 
