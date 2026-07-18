@@ -90,6 +90,20 @@ Deno.serve(async (req) => {
     const trackingId = `subv2:${subscriptionV2Id}:order:${orderId}`;
     const now = new Date();
 
+    // Canonical installment block required by bepaid-webhook finite-internal guard.
+    const canonicalInstallmentBlock = {
+      type: 'internal',
+      provider: 'bepaid',
+      model: 'bepaid_finite_subscription',
+      infinite: false,
+      billing_cycles: 2,
+      installment_count: 2,
+      interval_days: 30,
+      original_order_id: orderId,
+      as_finite_subscription: true,
+      selected_installment_months: 2,
+    };
+
     const { error: orderErr } = await supabase.from('orders_v2').insert({
       id: orderId,
       order_number: `SYNTH-B7C1-${Date.now()}`,
@@ -106,13 +120,7 @@ Deno.serve(async (req) => {
         runtime_tag: RUNTIME_TAG,
         synthetic: true,
         test_fixture: true,
-        installment: {
-          selected_installment_months: 2,
-          installment_count: 2,
-          billing_cycles: 2,
-          interval_days: 30,
-          as_finite_subscription: true,
-        },
+        installment: canonicalInstallmentBlock,
         payment_method: 'internal_installment',
       },
     });
@@ -134,6 +142,8 @@ Deno.serve(async (req) => {
         runtime_tag: RUNTIME_TAG,
         synthetic: true,
         model: 'internal_installment',
+        installment: canonicalInstallmentBlock,
+        payment_method: 'internal_installment',
         installment_count: 2,
         billing_cycles: 2,
         amount_byn: 1325,
@@ -149,6 +159,7 @@ Deno.serve(async (req) => {
       user_id: userId,
       profile_id: profile.id,
       subscription_v2_id: subscriptionV2Id,
+      order_id: orderId,
       state: 'pending',
       amount_cents: 132500,
       currency: 'BYN',
@@ -158,12 +169,15 @@ Deno.serve(async (req) => {
         synthetic: true,
         tracking_id: trackingId,
         order_id: orderId,
+        installment: canonicalInstallmentBlock,
+        payment_method: 'internal_installment',
         installment_count: 2,
         billing_cycles: 2,
         model: 'bepaid_finite_subscription',
       },
     });
     if (psErr) return json({ step: 'provider_sub', error: psErr }, 500);
+
 
     return json({
       ok: true,
