@@ -46,6 +46,9 @@ import type { InstallmentPayment } from "@/hooks/useInstallments";
 interface ContactInstallmentsProps {
   userId: string;
   currency?: string;
+  /** When true, empty state renders `null` instead of «Нет рассрочек»
+   *  (used by ContactInstallmentsTabContent wrapper to avoid duplicate empty states). */
+  hideEmptyState?: boolean;
 }
 
 interface InstallmentPlan {
@@ -67,7 +70,7 @@ interface InstallmentPlan {
   closedByEmail: string | null;
 }
 
-export function ContactInstallments({ userId, currency = "BYN" }: ContactInstallmentsProps) {
+export function ContactInstallments({ userId, currency = "BYN", hideEmptyState = false }: ContactInstallmentsProps) {
   const queryClient = useQueryClient();
   const [expandedPlans, setExpandedPlans] = useState<Set<string>>(new Set());
   const [closeDialogOpen, setCloseDialogOpen] = useState<string | null>(null);
@@ -141,6 +144,7 @@ export function ContactInstallments({ userId, currency = "BYN" }: ContactInstall
   }
 
   if (!installments?.length) {
+    if (hideEmptyState) return null;
     return (
       <div className="text-center py-8 text-muted-foreground">
         <CreditCard className="w-12 h-12 mx-auto mb-3 opacity-30" />

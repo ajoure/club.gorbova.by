@@ -34,9 +34,6 @@ const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
 const SlotFixturePage = import.meta.env.DEV
   ? lazy(() => import("./dev/SlotFixturePage"))
   : null;
-const InstallmentPreviewFixture = import.meta.env.DEV
-  ? lazy(() => import("./dev/InstallmentPreviewFixture"))
-  : null;
 const EmbedFormPage = lazy(() => import("./pages/embed/EmbedFormPage"));
 const DocumentDownloadPage = lazy(() => import("./pages/DocumentDownloadPage"));
 
@@ -210,9 +207,6 @@ const App = () => {
               <Route path="/.lovable/oauth/consent" element={<LazyRoute><OAuthConsent /></LazyRoute>} />
               {import.meta.env.DEV && SlotFixturePage && (
                 <Route path="/__slot-fixture" element={<LazyRoute><SlotFixturePage /></LazyRoute>} />
-              )}
-              {import.meta.env.DEV && InstallmentPreviewFixture && (
-                <Route path="/__installment-preview" element={<LazyRoute><InstallmentPreviewFixture /></LazyRoute>} />
               )}
               <Route path="/connect" element={<LazyRoute><ConnectAgent /></LazyRoute>} />
               <Route path="/pricing/tariff/:tariffPublicId" element={<LazyRoute><TariffPricing /></LazyRoute>} />
