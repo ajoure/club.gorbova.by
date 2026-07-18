@@ -2077,7 +2077,8 @@ Deno.serve(async (req) => {
         const installmentCountForAudit = Number(
           (subV2.meta as any)?.installment_count ?? (orderV2?.meta as any)?.installment_count ?? 0
         );
-        const isInstallmentFinite = Number.isFinite(installmentCountForAudit) && installmentCountForAudit >= 2;
+        // Stage 2: audit finite-installment path via the exact guard only.
+        const isInstallmentFinite = finiteInternalGuardActive;
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
@@ -2094,13 +2095,14 @@ Deno.serve(async (req) => {
             ...(isInstallmentFinite
               ? {
                   model: 'bepaid_finite_subscription',
-                  billing_cycles: Number((subV2.meta as any)?.billing_cycles ?? installmentCountForAudit),
+                  billing_cycles: guardBillingCycles,
                   installment_count: installmentCountForAudit,
                   per_payment_amount: transaction?.amount ? transaction.amount / 100 : null,
-                  // B7 Item 8: schedule is now materialized via helper above.
-                  installment_schedule_materialized: true,
-                  installment_schedule_count: installmentCountForAudit,
-
+                  original_order_id: originalOrderIdForGuard,
+                  // Stage 2: bePaid owns the schedule. No local installment_payments
+                  // rows are materialized for this branch.
+                  provider_managed_finite: true,
+                  local_installment_schedule: false,
                 }
               : {}),
           },
