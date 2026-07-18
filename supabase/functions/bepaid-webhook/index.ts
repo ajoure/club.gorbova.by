@@ -1544,7 +1544,85 @@ Deno.serve(async (req) => {
           .select('*')
           .eq('id', orderV2Id)
           .maybeSingle();
-        
+
+        // ===================================================================
+        // Stage 2 — EXACT internal-installment activation guard.
+        // Activated ONLY when the full canonical marker set is present in BOTH
+        // orders_v2.meta and subscriptions_v2.meta. Everything else (normal
+        // subscriptions, external installments, legacy shapes without marker)
+        // continues through the standard REBILL/legacy flow unchanged.
+        // ===================================================================
+        const orderMetaForGuard = (orderV2?.meta ?? {}) as Record<string, any>;
+        const subMetaForGuard = (subV2?.meta ?? {}) as Record<string, any>;
+        const installmentForGuard =
+          (subMetaForGuard.installment && typeof subMetaForGuard.installment === 'object'
+            ? subMetaForGuard.installment
+            : (orderMetaForGuard.installment && typeof orderMetaForGuard.installment === 'object'
+                ? orderMetaForGuard.installment
+                : null)) as Record<string, any> | null;
+        const originalOrderIdForGuard =
+          installmentForGuard && typeof installmentForGuard.original_order_id === 'string'
+            ? installmentForGuard.original_order_id
+            : null;
+        const guardBillingCycles = Number(installmentForGuard?.billing_cycles);
+        const isFiniteInternalInstallment =
+          orderMetaForGuard.payment_method === 'internal_installment' &&
+          subMetaForGuard.payment_method === 'internal_installment' &&
+          installmentForGuard?.type === 'internal' &&
+          installmentForGuard?.provider === 'bepaid' &&
+          installmentForGuard?.model === 'bepaid_finite_subscription' &&
+          installmentForGuard?.infinite === false &&
+          Number.isInteger(guardBillingCycles) &&
+          guardBillingCycles >= 2 &&
+          guardBillingCycles <= 12 &&
+          typeof originalOrderIdForGuard === 'string' &&
+          originalOrderIdForGuard.length > 0;
+
+        // Consistency probe: original_order_id must match subscription/provider order_id
+        // and user/product/tariff must agree. Mismatch → audit CRITICAL + refuse
+        // to activate the guard (fall back to normal flow) so nothing routes to
+        // an unrelated order.
+        let finiteInternalGuardActive = isFiniteInternalInstallment;
+        if (isFiniteInternalInstallment) {
+          const subOrderId = subV2?.order_id ? String(subV2.order_id) : null;
+          const orderMatchesSub = subOrderId ? subOrderId === originalOrderIdForGuard : true;
+          const orderMatchesParent = orderV2?.id ? String(orderV2.id) === originalOrderIdForGuard : true;
+          const userMatches = subV2?.user_id && orderV2?.user_id
+            ? String(subV2.user_id) === String(orderV2.user_id)
+            : true;
+          const productMatches = subV2?.product_id && orderV2?.product_id
+            ? String(subV2.product_id) === String(orderV2.product_id)
+            : true;
+          const tariffMatches = subV2?.tariff_id && orderV2?.tariff_id
+            ? String(subV2.tariff_id) === String(orderV2.tariff_id)
+            : true;
+          if (!(orderMatchesSub && orderMatchesParent && userMatches && productMatches && tariffMatches)) {
+            finiteInternalGuardActive = false;
+            try {
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.finite_internal_installment_guard_mismatch',
+                target_user_id: subV2?.user_id ?? null,
+                meta: {
+                  severity: 'CRITICAL',
+                  manual_review: true,
+                  order_id: orderV2?.id ?? null,
+                  subscription_v2_id: subscriptionV2Id,
+                  provider_subscription_id: subscriptionId,
+                  original_order_id: originalOrderIdForGuard,
+                  sub_order_id: subOrderId,
+                  order_matches_sub: orderMatchesSub,
+                  order_matches_parent: orderMatchesParent,
+                  user_matches: userMatches,
+                  product_matches: productMatches,
+                  tariff_matches: tariffMatches,
+                },
+              });
+            } catch (_) { /* best-effort */ }
+          }
+        }
+
         // ===================================================================
         // PATCH-RB1: REBILL MATERIALIZATION (gated by BEPAID_REBILL_MATERIALIZATION)
         // Cycle >= 2 (repeat charge) → create separate REBILL-order via existing engine.
