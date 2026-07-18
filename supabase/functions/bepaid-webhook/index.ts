@@ -1544,7 +1544,85 @@ Deno.serve(async (req) => {
           .select('*')
           .eq('id', orderV2Id)
           .maybeSingle();
-        
+
+        // ===================================================================
+        // Stage 2 — EXACT internal-installment activation guard.
+        // Activated ONLY when the full canonical marker set is present in BOTH
+        // orders_v2.meta and subscriptions_v2.meta. Everything else (normal
+        // subscriptions, external installments, legacy shapes without marker)
+        // continues through the standard REBILL/legacy flow unchanged.
+        // ===================================================================
+        const orderMetaForGuard = (orderV2?.meta ?? {}) as Record<string, any>;
+        const subMetaForGuard = (subV2?.meta ?? {}) as Record<string, any>;
+        const installmentForGuard =
+          (subMetaForGuard.installment && typeof subMetaForGuard.installment === 'object'
+            ? subMetaForGuard.installment
+            : (orderMetaForGuard.installment && typeof orderMetaForGuard.installment === 'object'
+                ? orderMetaForGuard.installment
+                : null)) as Record<string, any> | null;
+        const originalOrderIdForGuard =
+          installmentForGuard && typeof installmentForGuard.original_order_id === 'string'
+            ? installmentForGuard.original_order_id
+            : null;
+        const guardBillingCycles = Number(installmentForGuard?.billing_cycles);
+        const isFiniteInternalInstallment =
+          orderMetaForGuard.payment_method === 'internal_installment' &&
+          subMetaForGuard.payment_method === 'internal_installment' &&
+          installmentForGuard?.type === 'internal' &&
+          installmentForGuard?.provider === 'bepaid' &&
+          installmentForGuard?.model === 'bepaid_finite_subscription' &&
+          installmentForGuard?.infinite === false &&
+          Number.isInteger(guardBillingCycles) &&
+          guardBillingCycles >= 2 &&
+          guardBillingCycles <= 12 &&
+          typeof originalOrderIdForGuard === 'string' &&
+          originalOrderIdForGuard.length > 0;
+
+        // Consistency probe: original_order_id must match subscription/provider order_id
+        // and user/product/tariff must agree. Mismatch → audit CRITICAL + refuse
+        // to activate the guard (fall back to normal flow) so nothing routes to
+        // an unrelated order.
+        let finiteInternalGuardActive = isFiniteInternalInstallment;
+        if (isFiniteInternalInstallment) {
+          const subOrderId = subV2?.order_id ? String(subV2.order_id) : null;
+          const orderMatchesSub = subOrderId ? subOrderId === originalOrderIdForGuard : true;
+          const orderMatchesParent = orderV2?.id ? String(orderV2.id) === originalOrderIdForGuard : true;
+          const userMatches = subV2?.user_id && orderV2?.user_id
+            ? String(subV2.user_id) === String(orderV2.user_id)
+            : true;
+          const productMatches = subV2?.product_id && orderV2?.product_id
+            ? String(subV2.product_id) === String(orderV2.product_id)
+            : true;
+          const tariffMatches = subV2?.tariff_id && orderV2?.tariff_id
+            ? String(subV2.tariff_id) === String(orderV2.tariff_id)
+            : true;
+          if (!(orderMatchesSub && orderMatchesParent && userMatches && productMatches && tariffMatches)) {
+            finiteInternalGuardActive = false;
+            try {
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.finite_internal_installment_guard_mismatch',
+                target_user_id: subV2?.user_id ?? null,
+                meta: {
+                  severity: 'CRITICAL',
+                  manual_review: true,
+                  order_id: orderV2?.id ?? null,
+                  subscription_v2_id: subscriptionV2Id,
+                  provider_subscription_id: subscriptionId,
+                  original_order_id: originalOrderIdForGuard,
+                  sub_order_id: subOrderId,
+                  order_matches_sub: orderMatchesSub,
+                  order_matches_parent: orderMatchesParent,
+                  user_matches: userMatches,
+                  product_matches: productMatches,
+                  tariff_matches: tariffMatches,
+                },
+              });
+            } catch (_) { /* best-effort */ }
+          }
+        }
+
         // ===================================================================
         // PATCH-RB1: REBILL MATERIALIZATION (gated by BEPAID_REBILL_MATERIALIZATION)
         // Cycle >= 2 (repeat charge) → create separate REBILL-order via existing engine.
@@ -1560,7 +1638,7 @@ Deno.serve(async (req) => {
         const rebillMode = resolveKillSwitchMode(Deno.env.get('BEPAID_REBILL_MATERIALIZATION'));
         let rebillHandled = false;
         let rebillOrderIdFromFlow: string | null = null;
-        if (rebillMode !== 'off' && paidCycles >= 2 && transactionUid && orderV2) {
+        if (!finiteInternalGuardActive && rebillMode !== 'off' && paidCycles >= 2 && transactionUid && orderV2) {
           try {
             const deps = buildRebillDepsAdapter(supabase);
             const rebillResult = await runRebillFlow(deps, {
@@ -1670,12 +1748,18 @@ Deno.serve(async (req) => {
         }
         const renewAt = bepaidRenewAt ? new Date(bepaidRenewAt) : providerAccessEndDiag;
 
-        // Finite installment marker (provider-sync only)
+        // Finite installment marker (provider-sync only).
+        // Stage 2: strict — bound to the exact canonical guard. Broad detection
+        // by installment_count alone was removed to prevent misclassifying normal
+        // multi-cycle subscriptions as finite internal installments.
         const subV2Meta = (subV2.meta || {}) as Record<string, any>;
         const subInstallmentCount = Number(subV2Meta.installment_count ?? 0);
-        const subIsInstallmentFinite =
-          subV2Meta.model === 'bepaid_finite_subscription' ||
-          (Number.isFinite(subInstallmentCount) && subInstallmentCount >= 2);
+        const subIsInstallmentFinite = finiteInternalGuardActive;
+        const finiteFinalCycle =
+          finiteInternalGuardActive &&
+          Number.isFinite(paidCycles) &&
+          Number.isInteger(guardBillingCycles) &&
+          paidCycles >= guardBillingCycles;
 
         // === STEP A: Canonical writer FIRST (single access write-path) ===
         // PATCH-RB1: skip legacy grant if REBILL flow already invoked canonical writer
@@ -1760,8 +1844,13 @@ Deno.serve(async (req) => {
           .from('subscriptions_v2')
           .update({
             billing_type: 'provider_managed',
-            next_charge_at: subIsInstallmentFinite ? null : renewAt.toISOString(),
-            auto_renew: !subIsInstallmentFinite,
+            // Stage 2: next_charge_at stays populated until the final cycle for
+            // finite internal installments; only the LAST paid cycle nulls it out.
+            // auto_renew=false is a local marker only for finite internal installments.
+            next_charge_at: finiteInternalGuardActive
+              ? (finiteFinalCycle ? null : renewAt.toISOString())
+              : renewAt.toISOString(),
+            auto_renew: finiteInternalGuardActive ? false : (subV2.auto_renew ?? true),
             meta: {
               ...subV2Meta,
               bepaid_subscription_id: subscriptionId,
@@ -1799,11 +1888,13 @@ Deno.serve(async (req) => {
           .eq('user_id', subV2.user_id)
           .maybeSingle();
 
-        // PATCH-RB1.2: when REBILL handled, payment must stay attached to REBILL-order,
-        // not parent. Route upsert order_id to rebillOrderIdFromFlow.
-        const stepEOrderId = (rebillHandled && rebillOrderIdFromFlow)
-          ? rebillOrderIdFromFlow
-          : orderV2Id;
+        // Stage 2: exact finite-internal-installment guard wins over REBILL routing.
+        // All payments in this ветка attach to the ORIGINAL order (single-deal policy).
+        const stepEOrderId = finiteInternalGuardActive
+          ? originalOrderIdForGuard!
+          : ((rebillHandled && rebillOrderIdFromFlow)
+              ? rebillOrderIdFromFlow
+              : orderV2Id);
         const subPayResult = await upsertPaymentV2(supabase, {
             order_id: stepEOrderId,
             user_id: subV2.user_id,
@@ -1822,6 +1913,15 @@ Deno.serve(async (req) => {
               provider_managed: true,
               bepaid_description: extractBepaidDescription(body),
               ...(rebillHandled && rebillOrderIdFromFlow ? { rebill_order_id: rebillOrderIdFromFlow, step_e_routed_to_rebill: true } : {}),
+              ...(finiteInternalGuardActive
+                ? {
+                    payment_method: 'internal_installment',
+                    model: 'bepaid_finite_subscription',
+                    subscription_v2_id: subscriptionV2Id,
+                    provider_subscription_id: subscriptionId,
+                    original_order_id: originalOrderIdForGuard,
+                  }
+                : {}),
             },
           }, '[WEBHOOK-SUBSCRIPTION]');
         console.log('[WEBHOOK-SUBSCRIPTION] payments_v2', subPayResult.action, subPayResult.id, 'order_id=', stepEOrderId);
@@ -1977,7 +2077,8 @@ Deno.serve(async (req) => {
         const installmentCountForAudit = Number(
           (subV2.meta as any)?.installment_count ?? (orderV2?.meta as any)?.installment_count ?? 0
         );
-        const isInstallmentFinite = Number.isFinite(installmentCountForAudit) && installmentCountForAudit >= 2;
+        // Stage 2: audit finite-installment path via the exact guard only.
+        const isInstallmentFinite = finiteInternalGuardActive;
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
@@ -1994,13 +2095,14 @@ Deno.serve(async (req) => {
             ...(isInstallmentFinite
               ? {
                   model: 'bepaid_finite_subscription',
-                  billing_cycles: Number((subV2.meta as any)?.billing_cycles ?? installmentCountForAudit),
+                  billing_cycles: guardBillingCycles,
                   installment_count: installmentCountForAudit,
                   per_payment_amount: transaction?.amount ? transaction.amount / 100 : null,
-                  // B7 Item 8: schedule is now materialized via helper above.
-                  installment_schedule_materialized: true,
-                  installment_schedule_count: installmentCountForAudit,
-
+                  original_order_id: originalOrderIdForGuard,
+                  // Stage 2: bePaid owns the schedule. No local installment_payments
+                  // rows are materialized for this branch.
+                  provider_managed_finite: true,
+                  local_installment_schedule: false,
                 }
               : {}),
           },

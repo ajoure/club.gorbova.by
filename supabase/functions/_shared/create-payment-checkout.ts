@@ -749,13 +749,28 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     //   'provider_unlimited_attempts_not_supported' без создания заказов, подписок и CRM-сделки.
     // ============================================================================
     const installmentCountRawPre = Number(extraMeta.installment_count);
-    const isInstallmentSubscriptionPre =
-      Number.isFinite(installmentCountRawPre) && installmentCountRawPre >= 2;
-    const billingCyclesPre = isInstallmentSubscriptionPre ? installmentCountRawPre : null;
     const installmentExtraPre =
       extraMeta.installment && typeof extraMeta.installment === 'object'
         ? (extraMeta.installment as Record<string, any>)
         : {};
+    // Stage 1 corrective: activate internal_installment ONLY when the exact canonical marker
+    // is present (written by admin-create-public-link / public-create-installment-link after Stage 1).
+    // A narrow legacy fallback keeps pre-Stage-1 internal installment links working.
+    const hasCanonicalInternalInstallmentMarker =
+      (extraMeta as any).payment_method === 'internal_installment' &&
+      installmentExtraPre.type === 'internal' &&
+      installmentExtraPre.provider === 'bepaid' &&
+      installmentExtraPre.model === 'bepaid_finite_subscription' &&
+      installmentExtraPre.infinite === false;
+    const hasLegacyInternalInstallmentMarker =
+      installmentExtraPre.payment_method === 'internal_installment' &&
+      installmentExtraPre.as_finite_subscription === true;
+    const isInstallmentSubscriptionPre =
+      (hasCanonicalInternalInstallmentMarker || hasLegacyInternalInstallmentMarker) &&
+      Number.isInteger(installmentCountRawPre) &&
+      installmentCountRawPre >= 2 &&
+      installmentCountRawPre <= 12;
+    const billingCyclesPre = isInstallmentSubscriptionPre ? installmentCountRawPre : null;
     const intervalDaysPre = isInstallmentSubscriptionPre
       ? Number(installmentExtraPre.interval_days ?? 30)
       : 30;
