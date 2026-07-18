@@ -1893,6 +1893,13 @@ Deno.serve(async (req) => {
         const stepEOrderId = (rebillHandled && rebillOrderIdFromFlow)
           ? rebillOrderIdFromFlow
           : orderV2Id;
+        // Stage 2: exact finite-internal-installment guard wins over REBILL routing.
+        // All payments in this ветка attach to the ORIGINAL order (single-deal policy).
+        const stepEOrderId = finiteInternalGuardActive
+          ? originalOrderIdForGuard!
+          : ((rebillHandled && rebillOrderIdFromFlow)
+              ? rebillOrderIdFromFlow
+              : orderV2Id);
         const subPayResult = await upsertPaymentV2(supabase, {
             order_id: stepEOrderId,
             user_id: subV2.user_id,
@@ -1911,6 +1918,15 @@ Deno.serve(async (req) => {
               provider_managed: true,
               bepaid_description: extractBepaidDescription(body),
               ...(rebillHandled && rebillOrderIdFromFlow ? { rebill_order_id: rebillOrderIdFromFlow, step_e_routed_to_rebill: true } : {}),
+              ...(finiteInternalGuardActive
+                ? {
+                    payment_method: 'internal_installment',
+                    model: 'bepaid_finite_subscription',
+                    subscription_v2_id: subscriptionV2Id,
+                    provider_subscription_id: subscriptionId,
+                    original_order_id: originalOrderIdForGuard,
+                  }
+                : {}),
             },
           }, '[WEBHOOK-SUBSCRIPTION]');
         console.log('[WEBHOOK-SUBSCRIPTION] payments_v2', subPayResult.action, subPayResult.id, 'order_id=', stepEOrderId);
