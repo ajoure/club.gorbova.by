@@ -1748,12 +1748,18 @@ Deno.serve(async (req) => {
         }
         const renewAt = bepaidRenewAt ? new Date(bepaidRenewAt) : providerAccessEndDiag;
 
-        // Finite installment marker (provider-sync only)
+        // Finite installment marker (provider-sync only).
+        // Stage 2: strict — bound to the exact canonical guard. Broad detection
+        // by installment_count alone was removed to prevent misclassifying normal
+        // multi-cycle subscriptions as finite internal installments.
         const subV2Meta = (subV2.meta || {}) as Record<string, any>;
         const subInstallmentCount = Number(subV2Meta.installment_count ?? 0);
-        const subIsInstallmentFinite =
-          subV2Meta.model === 'bepaid_finite_subscription' ||
-          (Number.isFinite(subInstallmentCount) && subInstallmentCount >= 2);
+        const subIsInstallmentFinite = finiteInternalGuardActive;
+        const finiteFinalCycle =
+          finiteInternalGuardActive &&
+          Number.isFinite(paidCycles) &&
+          Number.isInteger(guardBillingCycles) &&
+          paidCycles >= guardBillingCycles;
 
         // === STEP A: Canonical writer FIRST (single access write-path) ===
         // PATCH-RB1: skip legacy grant if REBILL flow already invoked canonical writer
