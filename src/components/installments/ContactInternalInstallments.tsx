@@ -199,7 +199,7 @@ export function ContactInternalInstallments({
     if (onOpenDeal) {
       onOpenDeal(orderId);
     } else {
-      navigate(`/admin/orders/${orderId}`);
+      navigate(`/admin/deals?deal=${encodeURIComponent(orderId)}`);
     }
   };
 
