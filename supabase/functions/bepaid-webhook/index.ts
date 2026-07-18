@@ -2095,17 +2095,6 @@ Deno.serve(async (req) => {
                 .eq('provider_subscription_id', subscriptionId);
               if (psUpdErr) lifecycleErrors.push({ table: 'provider_subscriptions', error: psUpdErr });
 
-              // Finalize the last pending installment_payments row for this subscription
-              // (idempotent: if the schedule was materialized elsewhere).
-              try {
-                await supabase
-                  .from('installment_payments')
-                  .update({ status: 'succeeded', paid_at: transaction?.paid_at || now.toISOString() })
-                  .eq('subscription_id', subscriptionV2Id)
-                  .eq('payment_number', subInstallmentCount)
-                  .eq('status', 'pending');
-              } catch (_) { /* best-effort */ }
-
               if (lifecycleErrors.length === 0) {
                 await supabase.from('audit_logs').insert({
                   actor_type: 'system',
@@ -2122,25 +2111,6 @@ Deno.serve(async (req) => {
                   },
                 });
                 console.log('[WEBHOOK-SUBSCRIPTION] finite installment COMPLETED', { paidCycles, subInstallmentCount });
-
-                // Fire completion notification (independent of enabled/reminder flags).
-                try {
-                  await sendChargeLifecycleNotification({
-                    supabase,
-                    event: 'installment_completed',
-                    userId: subV2.user_id,
-                    subscriptionV2Id,
-                    providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
-                    transactionUid: transactionUid ? String(transactionUid) : null,
-                    productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
-                    tariffName: subV2.tariffs?.name || null,
-                    amount: paymentAmount,
-                    currency: body.plan?.currency || 'BYN',
-                    meta: { paid_billing_cycles: paidCycles, installment_count: subInstallmentCount },
-                  });
-                } catch (nErr) {
-                  console.error('[WEBHOOK-SUBSCRIPTION] completion notification non-fatal:', nErr);
-                }
               } else {
                 console.error('[WEBHOOK-SUBSCRIPTION] finite completion lifecycle errors:', lifecycleErrors);
                 await supabase.from('audit_logs').insert({
