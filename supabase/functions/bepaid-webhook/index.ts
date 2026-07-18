@@ -2314,6 +2314,8 @@ Deno.serve(async (req) => {
                 originalOrderIdForGuard, paidCyclesEffective, '/', guardBillingCycles, progressStatus,
                 'paid_total_byn=', paidTotalByn, 'source=', cycleSource);
             }
+            } // end else (paidRowsError guard)
+
           } catch (progExc) {
             console.error('[WEBHOOK-SUBSCRIPTION] installment_progress exception:', progExc);
           }
