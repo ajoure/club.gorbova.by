@@ -1850,26 +1850,10 @@ Deno.serve(async (req) => {
 
 
 
-        // ===================================================================
-        // B7 Item 8 — DISABLED (2026-07-17).
-        // Scope correction: finite bePaid subscriptions are fully provider-
-        // managed. Do NOT materialize a local installment_payments schedule
-        // for `bepaid_finite_subscription`. bePaid tracks paid_billing_cycles,
-        // retries, and termination on its side; the webhook only records the
-        // actual payment row and updates aggregate progress on the original
-        // order (Stage 3 of the approved plan).
-        //
-        // The helpers materialize/advance/annotate/terminate remain in
-        // _shared/installment-schedule.ts as they may be used by other
-        // installment flows in the future, but MUST NOT be invoked for
-        // provider-managed finite bePaid subscriptions.
-        // ===================================================================
-        if (false && subIsInstallmentFinite && subInstallmentCount >= 2) {
-          // Intentionally unreachable — kept for diff clarity and to preserve
-          // imports until follow-up cleanup removes them.
-          void materializeFiniteInstallmentSchedule;
-          void advanceInstallmentCycleOnSuccess;
-        }
+        // Finite bePaid installment is fully provider-managed. No local
+        // installment_payments schedule is written from this webhook.
+
+
 
 
         // NOTE (PATCH H2.1): entitlements insert/update and prior secondary
