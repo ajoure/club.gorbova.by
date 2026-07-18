@@ -144,6 +144,7 @@ export function ContactInstallments({ userId, currency = "BYN", hideEmptyState =
   }
 
   if (!installments?.length) {
+    if (hideEmptyState) return null;
     return (
       <div className="text-center py-8 text-muted-foreground">
         <CreditCard className="w-12 h-12 mx-auto mb-3 opacity-30" />
