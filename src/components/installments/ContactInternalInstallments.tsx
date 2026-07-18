@@ -109,28 +109,6 @@ export function ContactInternalInstallments({
   );
 
 
-  if (!profileId && !userId) {
-    return null;
-  }
-
-  if (isLoading) {
-    return (
-      <div className="space-y-3">
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-32 w-full" />
-      </div>
-    );
-  }
-
-  if (!plans || plans.length === 0) {
-    return null;
-  }
-
-  // Сортировка: активные и review сверху, потом pending, потом completed
-  const order = { review: 0, active: 1, pending: 2, completed: 3 };
-  const sorted = [...plans].sort(
-    (a, b) => order[a.uiStatus] - order[b.uiStatus],
-  );
 
   const handleOpen = (orderId: string) => {
     if (onOpenDeal) {
