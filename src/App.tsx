@@ -34,6 +34,9 @@ const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
 const SlotFixturePage = import.meta.env.DEV
   ? lazy(() => import("./dev/SlotFixturePage"))
   : null;
+const InstallmentPreviewFixture = import.meta.env.DEV
+  ? lazy(() => import("./dev/InstallmentPreviewFixture"))
+  : null;
 const EmbedFormPage = lazy(() => import("./pages/embed/EmbedFormPage"));
 const DocumentDownloadPage = lazy(() => import("./pages/DocumentDownloadPage"));
 
