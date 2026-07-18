@@ -1029,12 +1029,15 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       preSubMeta.installment_total_amount_byn = Number(extraMeta.installment_total_amount_byn ?? (amountByn * (billingCycles || 1)));
       preSubMeta.installment = {
         ...installmentExtra,
+        ...(canonicalInstallmentSnapshot || {}),
         retry_policy: retryPolicySnapshotPre,
         // B2. Canonical installment-scope charge_notifications snapshot.
         charge_notifications: chargeNotifSnapshot,
         charge_notifications_source: chargeNotifPolicy.source,
       };
       preSubMeta.model = 'bepaid_finite_subscription';
+      // Stage 1 canonical marker (subscriptions_v2 scope).
+      preSubMeta.payment_method = 'internal_installment';
       // PATCH A2 — единый effective retry snapshot (канонический путь meta.installment.retry_policy).
       // Дублируем на верхний уровень для legacy читателей — постепенно к удалению.
       preSubMeta.retry_policy = retryPolicySnapshotPre;
