@@ -967,6 +967,26 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     const installmentExtra = installmentExtraPre;
     const intervalDays = intervalDaysPre;
 
+    // Stage 1 canonical snapshot — единый normalized блок для orders_v2.meta,
+    // subscriptions_v2.meta и provider_subscriptions.meta (installment scope).
+    // original_order_id пишется ТОЛЬКО сервером после INSERT orders_v2.
+    const canonicalInstallmentSnapshot: Record<string, any> | null = isInstallmentSubscription
+      ? {
+          type: 'internal',
+          provider: 'bepaid',
+          model: 'bepaid_finite_subscription',
+          billing_cycles: billingCycles,
+          infinite: false,
+          per_payment_byn: Number(extraMeta.installment_per_payment_amount_byn ?? amountByn),
+          effective_total_byn: Number(
+            extraMeta.installment_total_amount_byn ?? (amountByn * (billingCycles || 1)),
+          ),
+          rounding_mode: String(installmentExtra?.rounding_mode ?? 'ceil_to_whole_byn'),
+          rounding_delta_byn: Number(installmentExtra?.rounding_delta_byn ?? 0),
+          original_order_id: order.id,
+        }
+      : null;
+
     // PATCH PAYMENTS-REVISION: pre-create subscriptions_v2 ДО bePaid /subscriptions,
     // чтобы tracking_id содержал реальный subscription_v2_id.
     // B2 corrective. Resolve canonical charge_notifications policy with full
