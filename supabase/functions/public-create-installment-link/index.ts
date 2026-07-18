@@ -277,6 +277,11 @@ Deno.serve(async (req) => {
 
     const installmentBlock = {
       payment_method: 'internal_installment',
+      // Stage 1 canonical marker — internal installment via finite bePaid subscription.
+      type: 'internal',
+      provider: 'bepaid',
+      model: 'bepaid_finite_subscription',
+      infinite: false,
       max_installment_months: maxMonths,
       selected_installment_months: selectedMonths,
       installment_count: selectedMonths,
@@ -308,6 +313,8 @@ Deno.serve(async (req) => {
     const meta = {
       source: 'landing_payment_dialog_installment',
       internal: false,
+      // Stage 1 canonical marker at link.meta root — payment_flow не трогаем.
+      payment_method: 'internal_installment',
       installment: installmentBlock,
     };
 
