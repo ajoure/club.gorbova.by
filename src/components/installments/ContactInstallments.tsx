@@ -46,9 +46,11 @@ import type { InstallmentPayment } from "@/hooks/useInstallments";
 interface ContactInstallmentsProps {
   userId: string;
   currency?: string;
-  /** When true, empty state renders `null` instead of «Нет рассрочек»
-   *  (used by ContactInstallmentsTabContent wrapper to avoid duplicate empty states). */
+  /** When true, empty state renders `null` instead of «Нет рассрочек» */
   hideEmptyState?: boolean;
+  /** Preloaded installments (wrapper-driven). When provided, no internal query is issued. */
+  installments?: any[];
+  isLoading?: boolean;
 }
 
 interface InstallmentPlan {
@@ -70,7 +72,13 @@ interface InstallmentPlan {
   closedByEmail: string | null;
 }
 
-export function ContactInstallments({ userId, currency = "BYN", hideEmptyState = false }: ContactInstallmentsProps) {
+export function ContactInstallments({
+  userId,
+  currency = "BYN",
+  hideEmptyState = false,
+  installments: installmentsProp,
+  isLoading: isLoadingProp,
+}: ContactInstallmentsProps) {
   const queryClient = useQueryClient();
   const [expandedPlans, setExpandedPlans] = useState<Set<string>>(new Set());
   const [closeDialogOpen, setCloseDialogOpen] = useState<string | null>(null);
@@ -79,8 +87,9 @@ export function ContactInstallments({ userId, currency = "BYN", hideEmptyState =
   const chargeInstallment = useChargeInstallment();
   const closeInstallmentPlan = useCloseInstallmentPlan();
 
-  // Fetch all installments for this user
-  const { data: installments, isLoading } = useQuery({
+  // Fetch all installments for this user — only if not preloaded by wrapper.
+  const shouldFetch = installmentsProp === undefined;
+  const { data: fetchedInstallments, isLoading: fetchedLoading } = useQuery({
     queryKey: ["user-all-installments", userId],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -99,8 +108,12 @@ export function ContactInstallments({ userId, currency = "BYN", hideEmptyState =
       if (error) throw error;
       return data;
     },
-    enabled: !!userId,
+    enabled: shouldFetch && !!userId,
   });
+
+  const installments = installmentsProp ?? fetchedInstallments;
+  const isLoading = isLoadingProp ?? (shouldFetch ? fetchedLoading : false);
+
 
   const togglePlan = (subscriptionId: string) => {
     setExpandedPlans(prev => {
