@@ -2378,49 +2378,8 @@ Deno.serve(async (req) => {
           },
         });
 
-        // B7 Item 8 DISABLED — provider-managed finite bePaid subscriptions do
-        // not maintain a local installment_payments schedule. Termination is
-        // reflected only in subscriptions_v2/provider_subscriptions status.
-        void terminateFirstPendingInstallment;
 
-        // Deliver retry-exhausted notification (independent flag).
-        if (termIsRetryExhausted) {
-          try {
-            // Look up installment_payment_id (best-effort, subject key).
-            let exhaustInstallmentPaymentId: string | null = null;
-            try {
-              const { data: pending } = await supabase
-                .from('installment_payments')
-                .select('id')
-                .eq('subscription_id', subscriptionV2Id)
-                .eq('status', 'pending')
-                .order('payment_number', { ascending: true })
-                .limit(1)
-                .maybeSingle();
-              exhaustInstallmentPaymentId = pending?.id ?? null;
-            } catch { /* best-effort */ }
 
-            await sendChargeLifecycleNotification({
-              supabase,
-              event: 'installment_charge_retry_exhausted',
-              userId: subV2.user_id,
-              subscriptionV2Id,
-              providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
-              installmentPaymentId: exhaustInstallmentPaymentId,
-              productName: subV2.products_v2?.name || subV2.tariffs?.name || null,
-              tariffName: subV2.tariffs?.name || null,
-              amount: Number(termMeta?.per_payment_amount ?? 0) || null,
-              currency: (subV2 as any)?.currency || 'BYN',
-              errorMessage: grReason || cancellationReason || 'retry_exhausted',
-              meta: {
-                paid_billing_cycles: termPaidCycles,
-                installment_count: termInstallmentCount,
-              },
-            });
-          } catch (nErr) {
-            console.error('[WEBHOOK-SUBSCRIPTION] retry-exhausted notification non-fatal:', nErr);
-          }
-        }
 
         return new Response(JSON.stringify({
           ok: true,
