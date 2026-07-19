@@ -216,7 +216,8 @@ Deno.serve(async (req) => {
         .eq("is_active", true)
         .or(`visible_from.is.null,visible_from.lte.${now}`)
         .or(`visible_to.is.null,visible_to.gte.${now}`)
-        .order("sort_order", { ascending: true });
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true });
 
       if (offersError) {
         console.error("[public-product] Error fetching offers:", offersError);
@@ -250,6 +251,11 @@ Deno.serve(async (req) => {
       features: tariffFeatures.filter((f) => f.tariff_id === tariff.id),
       offers: offers
         .filter((o) => o.tariff_id === tariff.id)
+        .sort((a, b) => {
+          const aSort = Number.isFinite(Number(a.sort_order)) ? Number(a.sort_order) : 0;
+          const bSort = Number.isFinite(Number(b.sort_order)) ? Number(b.sort_order) : 0;
+          return aSort - bSort || String(a.id).localeCompare(String(b.id));
+        })
         .map((offer) => {
           if (isReentryPricing && offer.reentry_amount) {
             return {

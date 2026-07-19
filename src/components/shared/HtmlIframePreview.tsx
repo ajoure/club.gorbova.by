@@ -35,8 +35,8 @@ const SANDBOX_POLICY =
 const MAX_IFRAME_HEIGHT = 100000;
 
 /** Unique marker to prevent double injection of bridge script (versioned). */
-const BRIDGE_MARKER = "data-lovable-resize-v9";
-const BRIDGE_VERSION = 9;
+const BRIDGE_MARKER = "data-lovable-resize-v10";
+const BRIDGE_VERSION = 10;
 
 /**
  * Single injected bridge script: resize + anchor intercept + scrollIntoView intercept
@@ -541,16 +541,25 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       if (w.hasAttribute('data-lovable-slot-template')) continue;
       var pos = parseInt(w.getAttribute('data-lovable-slot-position') || '', 10);
       var pv = w.getAttribute('data-lovable-position-variant') || '';
-      positioned.push({ el: w, pos: Number.isFinite(pos) ? pos : 999, variant: pv, assigned: false });
       ensureOrigDisplay(w);
+      var rect = null;
+      try { rect = w.getBoundingClientRect ? w.getBoundingClientRect() : null; } catch (e) { rect = null; }
+      var top = rect && Number.isFinite(rect.top) ? rect.top : (Number.isFinite(pos) ? pos : 999999);
+      var left = rect && Number.isFinite(rect.left) ? rect.left : 0;
+      positioned.push({ el: w, pos: Number.isFinite(pos) ? pos : 999, top: top, left: left, domIndex: i, variant: pv, assigned: false });
     }
-    positioned.sort(function(a, b) { return a.pos - b.pos; });
+    // Bridge v10 — fixed Tilda wrappers are ordered by actual rendered
+    // top-to-bottom geometry. Authored data-lovable-slot-position can drift
+    // from the visual order after template edits, so it is only a tie-breaker.
+    positioned.sort(function(a, b) {
+      return a.top - b.top || a.left - b.left || a.pos - b.pos || a.domIndex - b.domIndex;
+    });
 
     var offers = (tariffEntry && tariffEntry.offers) ? tariffEntry.offers.slice() : [];
     var tariffId = tariffEntry ? tariffEntry.tariff_id : '';
     var used = new Array(offers.length);
 
-    // Bridge v9 — strict index-based assignment.
+    // Bridge v10 — strict index-based assignment after visual-position sorting.
     // Offers arrive pre-sorted by sort_order ASC, offer_id ASC (see
     // buildSlotManifest). Position i is claimed by offer i regardless of
     // authored slot ↔ variant pairing. When the offer's variant differs
