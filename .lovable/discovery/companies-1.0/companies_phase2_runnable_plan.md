@@ -1746,54 +1746,121 @@ END $$;
 
 ### 11.10 `search_global` — replacement (LAST)
 
-Полное тело — pre-Phase-2 body из §12.4 + additive блок §6, размещённый непосредственно перед `RETURN jsonb_build_object(...)` (в блок возвращаемого объекта добавляется ключ `'companies'`). Для совместимости с existing callers ветки `contacts/deals/messages` остаются идентичны.
-
-### 11.11 Private emit helper и ACL
-
-Phase 2 **не создаёт** индексов, constraints или колонок на shared-таблице `public.domain_events`. Дедупликация делается в helper (§10.1).
+Полный текст (pre-Phase-2 body + additive `companies` branch с собственным role-guard). Сигнатура, owner, `SECURITY DEFINER`, `search_path` и ACL не меняются. Ветки `contacts/deals/messages` идентичны pre-Phase-2 body (SHA-256 §2.5). Ветка `companies` работает только для read-ролей Phase 2 (`super_admin`, `admin`, `menedzher`, `support`); для остальных возвращает `'[]'::jsonb`. Итоговый объект возврата дополнен ключом `'companies'`.
 
 ```sql
--- Private emit helper (§10.1) — дедуплицированная запись в domain_events
-CREATE OR REPLACE FUNCTION public._crm_company_emit_domain_event(
-  _event_type      text,
-  _entity_id       uuid,
-  _idempotency_key text,
-  _payload         jsonb
-) RETURNS uuid
-LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
-AS $$
-DECLARE v_existing uuid; v_new uuid;
+CREATE OR REPLACE FUNCTION public.search_global(p_query text, p_limit integer DEFAULT 20, p_offset integer DEFAULT 0)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_contacts  jsonb;
+  v_deals     jsonb;
+  v_messages  jsonb;
+  v_companies jsonb;
+  v_user_id   uuid;
 BEGIN
-  IF _event_type IS NULL OR _event_type NOT LIKE 'company.%' THEN
-    RAISE EXCEPTION 'emit: bad event_type %', _event_type;
-  END IF;
-  IF _idempotency_key IS NULL OR length(_idempotency_key) < 8 THEN
-    RAISE EXCEPTION 'emit: bad idempotency_key';
-  END IF;
-  IF NOT (_payload ? 'version') OR (_payload->>'version') <> '1' THEN
-    RAISE EXCEPTION 'emit: payload version must be 1';
-  END IF;
-  IF coalesce(_payload->>'idempotency_key','') <> _idempotency_key THEN
-    RAISE EXCEPTION 'emit: payload/key mismatch';
+  v_user_id := auth.uid();
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'Unauthorized' USING ERRCODE = '42501';
   END IF;
 
-  PERFORM pg_advisory_xact_lock(hashtextextended('crm_company_emit:' || _idempotency_key, 0));
-
-  SELECT id INTO v_existing FROM public.domain_events
-   WHERE event_type = _event_type
-     AND payload->>'idempotency_key' = _idempotency_key
-   LIMIT 1;
-  IF v_existing IS NOT NULL THEN
-    RETURN NULL;  -- дубль подавлен
+  IF NOT (
+    public.has_role(v_user_id, 'admin'::app_role)
+    OR public.has_role(v_user_id, 'superadmin'::app_role)
+    OR public.has_permission(v_user_id, 'users.view')
+    OR public.has_admin_section_access(v_user_id, 'contacts', 'view')
+    OR public.has_admin_section_access(v_user_id, 'deals', 'view')
+    OR public.has_admin_section_access(v_user_id, 'communication', 'view')
+  ) THEN
+    RAISE EXCEPTION 'Forbidden: admin access required' USING ERRCODE = '42501';
   END IF;
 
-  INSERT INTO public.domain_events(event_type, source, entity_id, payload)
-  VALUES (_event_type, 'crm', _entity_id, _payload)
-  RETURNING id INTO v_new;
-  RETURN v_new;
-END $$;
+  SELECT coalesce(jsonb_agg(row_to_json(c)), '[]'::jsonb) INTO v_contacts
+  FROM (
+    SELECT p.id as profile_id, p.full_name, p.email, p.phone,
+           p.telegram_username, p.status
+    FROM profiles p
+    WHERE to_tsvector('simple',
+      coalesce(p.full_name, '') || ' ' ||
+      coalesce(p.email, '') || ' ' ||
+      coalesce(p.phone, '') || ' ' ||
+      coalesce(p.telegram_username, '')
+    ) @@ websearch_to_tsquery('simple', p_query)
+    LIMIT p_limit OFFSET p_offset
+  ) c;
 
--- ACL для новых RPC (правка 3 — семь public RPC + два private helper)
+  SELECT coalesce(jsonb_agg(row_to_json(d)), '[]'::jsonb) INTO v_deals
+  FROM (
+    SELECT o.id as order_id, o.order_number, o.status::text, o.profile_id,
+           o.customer_email, o.customer_phone, p.full_name as contact_name
+    FROM orders_v2 o
+    LEFT JOIN profiles p ON p.id = o.profile_id
+    WHERE to_tsvector('simple',
+      coalesce(o.order_number, '') || ' ' ||
+      coalesce(o.customer_email, '') || ' ' ||
+      coalesce(o.customer_phone, '')
+    ) @@ websearch_to_tsquery('simple', p_query)
+    LIMIT p_limit OFFSET p_offset
+  ) d;
+
+  SELECT coalesce(jsonb_agg(row_to_json(m)), '[]'::jsonb) INTO v_messages
+  FROM (
+    SELECT
+      tm.id,
+      'private'::text as source,
+      left(tm.message_text, 150) as snippet,
+      tm.created_at,
+      tm.user_id,
+      tm.telegram_user_id,
+      NULL::bigint as chat_id,
+      p.id as profile_id,
+      p.full_name as contact_name
+    FROM telegram_messages tm
+    LEFT JOIN profiles p ON p.user_id = tm.user_id
+    WHERE to_tsvector('simple', coalesce(tm.message_text, ''))
+          @@ websearch_to_tsquery('simple', p_query)
+    LIMIT p_limit OFFSET p_offset
+  ) m;
+
+  -- Additive Phase 2 branch: companies (собственный role guard, без расширения доступа других веток)
+  IF (
+    public.has_role_v2(v_user_id, 'super_admin') OR public.has_role_v2(v_user_id, 'admin') OR
+    public.has_role_v2(v_user_id, 'menedzher')   OR public.has_role_v2(v_user_id, 'support')
+  ) THEN
+    SELECT coalesce(jsonb_agg(row_to_json(c)), '[]'::jsonb) INTO v_companies
+    FROM (
+      SELECT c.id, c.public_id, c.full_name, c.short_name, c.unp_normalized,
+             c.country, c.company_kind, c.status, 'company'::text AS entity
+      FROM public.companies c
+      WHERE c.status <> 'merged'
+        AND (c.public_id      ILIKE '%'||p_query||'%'
+          OR c.full_name      ILIKE '%'||p_query||'%'
+          OR c.short_name     ILIKE '%'||p_query||'%'
+          OR c.unp_normalized ILIKE '%'||p_query||'%')
+      LIMIT p_limit OFFSET p_offset
+    ) c;
+  ELSE
+    v_companies := '[]'::jsonb;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'contacts',  v_contacts,
+    'deals',     v_deals,
+    'messages',  v_messages,
+    'companies', v_companies
+  );
+END;
+$function$;
+```
+
+### 11.11 ACL для новых RPC
+
+Emit helper `_crm_company_emit_domain_event` создаётся раньше — в §11.2 (порядок: emit → resolve → public RPC → search_global → ACL → post-apply guards). Здесь только REVOKE/GRANT.
+
+```sql
 REVOKE ALL ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text,uuid)     FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)  FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.search_companies(jsonb)                                     FROM PUBLIC, anon, service_role;
@@ -1816,6 +1883,9 @@ REVOKE ALL ON FUNCTION public._crm_company_resolve_or_create_internal(text,text,
 REVOKE ALL ON FUNCTION public._crm_company_emit_domain_event(text,uuid,text,jsonb)
   FROM PUBLIC, anon, authenticated, service_role;
 ```
+
+Phase 2 **не создаёт** индексов, constraints или колонок на shared-таблице `public.domain_events`. Дедупликация выполнена внутри emit helper (§10.1 / §11.2).
+
 
 ### 11.12 Post-apply invariants
 
