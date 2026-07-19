@@ -634,6 +634,9 @@ _crm_company_emit_domain_event(
 
 ## 11. Полный migration SQL
 
+<!-- PHASE2_FORWARD_SQL_BEGIN -->
+
+
 Файл: `supabase/migrations/<ts>_crm_companies_phase2_rpc_layer.sql`. SHA-256 файла фиксируется при commit до execution approve.
 
 ### 11.1 Транзакционные настройки и preflight
