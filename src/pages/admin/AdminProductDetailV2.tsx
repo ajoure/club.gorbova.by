@@ -1359,6 +1359,7 @@ export default function AdminProductDetailV2() {
                                   isSelected={offerSelect.selectedIds.has(offer.id)}
                                   onToggleSelect={() => offerSelect.toggleSelection(offer.id, true)}
                                   registerRef={(el) => offerSelect.registerItemRef(offer.id, el)}
+                                  disabled={reorderOffers.isTariffReordering(tariff.id)}
                                   onRowClick={(e) => {
                                     if (e.shiftKey) { offerSelect.handleRangeSelect(offer.id, true); }
                                     else if (e.ctrlKey || e.metaKey) { offerSelect.toggleSelection(offer.id, true); }
@@ -1376,6 +1377,7 @@ export default function AdminProductDetailV2() {
                             </div>
                           </SortableContext>
                         </DndContext>
+
                       </GlassCard>
                     );
                   })}
