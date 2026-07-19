@@ -1974,6 +1974,14 @@ END $post$;
 COMMIT;
 ```
 
+<!-- PHASE2_FORWARD_SQL_END -->
+
+**Copy-paste readiness §11 checklist:**
+
+- [x] Весь SQL §11 заключён в непрерывную последовательность fence-блоков (§11.1–§11.12), без прозы между DDL-стейтментами внутри блоков.
+- [x] В canonical SQL нет переменных вида `<...>`, `{{...}}`, `TBD`.
+- [x] Порядок стейтментов соответствует зависимостям: preflight → `_crm_company_emit_domain_event` (§11.2a) → `_crm_company_resolve_or_create_internal` (§11.2b) → 7 public RPC (§11.3–§11.9) → `search_global` replacement (§11.10) → ACL REVOKE/GRANT (§11.11) → post-apply invariants (§11.12) → `COMMIT`.
+
 ---
 
 ## 12. Полный rollback SQL
