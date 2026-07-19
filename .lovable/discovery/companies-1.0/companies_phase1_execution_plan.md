@@ -94,9 +94,33 @@ CREATE INDEX companies_created_at_idx ON public.companies(created_at DESC);
 
 `company_kind` — canonical различие, сохраняет исходный `client_legal_details.client_type` без потери сведений об ИП / юрлице / foreign.
 
-### 2.2. `company_contacts` — утверждённый контракт
+### 2.2. `client_legal_details_company_map`
 
-Возвращён утверждённый Master Plan v2 контракт: связь `profile ↔ company` описывается через `relationship_type`, `source` и `is_billing_contact`. `role` **не используется** и удалён из DDL. Внешний импортированный контакт из Phase 9 поддерживается через nullable `profile_id` и внешние поля.
+Создаётся **до** `company_contacts`, поскольку `company_contacts.source_client_legal_details_map_id` содержит FK на эту таблицу.
+
+```sql
+CREATE TABLE public.client_legal_details_company_map (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_legal_details_id uuid NOT NULL UNIQUE
+    REFERENCES public.client_legal_details(id) ON DELETE CASCADE,
+  company_id uuid NOT NULL REFERENCES public.companies(id) ON DELETE RESTRICT,
+  linked_at timestamptz NOT NULL DEFAULT now(),
+  linked_by uuid,
+  -- Полный audit-набор (правка B9 review): created_by/updated_by выравнены с companies/company_contacts.
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  created_by uuid,
+  updated_by uuid,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX cld_company_map_company_idx ON public.client_legal_details_company_map(company_id);
+```
+
+Правка ревью: `updated_at` присутствует → триггер `update_updated_at_column` исполним; `meta` → `metadata`; полный audit-набор совпадает с DoD §9.
+
+### 2.3. `company_contacts` — утверждённый контракт
+
+Возвращён утверждённый Master Plan v2 контракт: связь `profile ↔ company` описывается через `relationship_type`, `source` и `is_billing_contact`. `role` **не используется** и удалён из DDL. Внешний импортированный контакт из Phase 9 поддерживается через nullable `profile_id` и внешние поля. Создаётся **после** `client_legal_details_company_map` (FK ниже).
 
 ```sql
 CREATE TABLE public.company_contacts (
@@ -136,6 +160,7 @@ CREATE TABLE public.company_contacts (
 
   -- Machine-checkable source lineage для source='billing_requisites'.
   -- FK на map-запись даёт детерминированный путь client_legal_details → company_contacts.
+  -- Требует, чтобы client_legal_details_company_map была создана раньше (см. §2.2).
   source_client_legal_details_map_id uuid
     REFERENCES public.client_legal_details_company_map(id) ON DELETE SET NULL,
 
@@ -167,26 +192,6 @@ CREATE INDEX company_contacts_billing_idx
 
 Правило импорта Phase 9 (внешний контакт): импорт-worker сначала пытается найти/создать `profiles` по (email/phone). Только если совпадений нет и профиль намеренно не создаётся — вставляет запись `relationship_type='external_contact'` с `profile_id=NULL`. Для `is_billing_contact=true` `profile_id` обязателен (CHECK выше).
 
-### 2.3. `client_legal_details_company_map`
-
-```sql
-CREATE TABLE public.client_legal_details_company_map (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  client_legal_details_id uuid NOT NULL UNIQUE
-    REFERENCES public.client_legal_details(id) ON DELETE CASCADE,
-  company_id uuid NOT NULL REFERENCES public.companies(id) ON DELETE RESTRICT,
-  linked_at timestamptz NOT NULL DEFAULT now(),
-  linked_by uuid,
-  -- Полный audit-набор + updated_at, чтобы update_updated_at_column был исполняем
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  metadata jsonb NOT NULL DEFAULT '{}'::jsonb
-);
-CREATE INDEX cld_company_map_company_idx ON public.client_legal_details_company_map(company_id);
-```
-
-Правка ревью: `updated_at` добавлен, поэтому назначенный ниже триггер `update_updated_at_column` теперь исполним. `meta` → `metadata`.
-
 ### 2.4. `company_sync_queue`
 
 Создаётся структурно, но **enqueue в Phase 1 не выполняется** (нет trigger'а на `client_legal_details`, нет backfill). Первая запись появится в Phase 3 (backfill) / Phase 4 (sync trigger).
@@ -208,8 +213,11 @@ CREATE TABLE public.company_sync_queue (
   locked_at timestamptz,
   idempotency_key text UNIQUE,    -- канонический формат см. companies_migration_strategy.md §5
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  -- Полный audit-набор (правка B9 review): created_by/updated_by выравнены с остальными Phase 1 таблицами.
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  created_by uuid,
+  updated_by uuid
 );
 CREATE INDEX csq_status_next_idx
   ON public.company_sync_queue(status, next_run_at)
@@ -222,52 +230,6 @@ CREATE INDEX csq_status_next_idx
 -- companies
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.companies TO authenticated;
 GRANT ALL ON public.companies TO service_role;
--- НЕ грантим anon.
-ALTER TABLE public.companies ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "companies read for CRM staff"
-  ON public.companies FOR SELECT TO authenticated
-  USING (
-    has_role_v2(auth.uid(),'super_admin') OR
-    has_role_v2(auth.uid(),'admin') OR
-    has_role_v2(auth.uid(),'menedzher') OR
-    has_role_v2(auth.uid(),'support')
-  );
--- admin_gost исключён из CRM RLS: у роли нет row в role_admin_resource_access
--- и role_admin_section_access для CRM (см. companies_permissions_matrix.md §2).
-
-CREATE POLICY "companies insert for admin+manager"
-  ON public.companies FOR INSERT TO authenticated
-  WITH CHECK (
-    has_role_v2(auth.uid(),'super_admin') OR
-    has_role_v2(auth.uid(),'admin') OR
-    has_role_v2(auth.uid(),'menedzher')
-  );
-
-CREATE POLICY "companies update for admin+manager"
-  ON public.companies FOR UPDATE TO authenticated
-  USING (
-    has_role_v2(auth.uid(),'super_admin') OR
-    has_role_v2(auth.uid(),'admin') OR
-    has_role_v2(auth.uid(),'menedzher')
-  );
-
-CREATE POLICY "companies delete for super_admin"
-  ON public.companies FOR DELETE TO authenticated
-  USING (has_role_v2(auth.uid(),'super_admin'));
-
--- company_contacts, client_legal_details_company_map — аналогично.
-
--- company_sync_queue — только service_role.
-GRANT ALL ON public.company_sync_queue TO service_role;
--- authenticated НЕ имеет никаких прав (deny by default + отсутствие GRANT).
-ALTER TABLE public.company_sync_queue ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "company_sync_queue service only"
-  ON public.company_sync_queue FOR ALL TO service_role
-  USING (true) WITH CHECK (true);
-```
-
-Единый контракт queue permissions зафиксирован здесь и в `companies_migration_strategy.md` §8 (правка B8 review).
 
 ## 4. Минимальные RPC-скелеты Phase 1
 
