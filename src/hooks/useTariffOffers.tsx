@@ -1,6 +1,15 @@
+import { useCallback, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import type { SlotVariant } from "@/lib/siteSlotManifest";
+
+/** Canonical site slot roles emitted by the admin UI. */
+export type SiteSlotRole =
+  | "button_1" | "button_2" | "button_3" | "button_4" | "button_5"
+  | "button_6" | "button_7" | "button_8" | "button_9" | "button_10";
+
+
 
 export type PaymentMethod = "full_payment" | "internal_installment" | "bank_installment" | "bank_transfer";
 
