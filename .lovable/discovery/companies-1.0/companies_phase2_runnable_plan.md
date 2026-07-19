@@ -301,15 +301,19 @@ Snapshot хранит **нормализованные** значения. Stale
 Алгоритм (для каждого mutable-поля):
 
 ```
-IF target IS NULL:                        target := billing; snapshot[f] := billing
-ELSIF target = snapshot[f]:               target := billing; snapshot[f] := billing
-ELSE:  -- admin/import override
-    snapshot[f] := billing
+IF normalized_billing IS NULL:            -- last non-null wins
+    target unchanged; snapshot[f] unchanged; conflict NOT recorded; f NOT в changed_fields
+ELSIF target IS NULL:                     target := billing; snapshot[f] := billing;      changed_fields += f
+ELSIF target IS NOT DISTINCT FROM snapshot[f]:
+                                          target := billing; snapshot[f] := billing;      changed_fields += f
+ELSE:  -- admin/import override сохраняется
+    snapshot[f] := billing                -- фиксируем последний билинг для будущего сравнения
+    conflict_fields += f
     INSERT crm_activity_log(activity_type='company.field.override_conflict',
                             metadata->>'field'=f, ...)
 ```
 
-`country`, `unp_normalized`, `company_kind` — только при INSERT.
+`country`, `unp_normalized`, `company_kind` — только при INSERT canonical company; в mutable-блоки НЕ включаются.
 
 ---
 
