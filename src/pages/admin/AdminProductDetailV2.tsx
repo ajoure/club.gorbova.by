@@ -595,75 +595,37 @@ export default function AdminProductDetailV2() {
       return;
     }
 
-    // Phase B — dynamic-slot validation (UI mirrors DB CHECK + trigger).
-    // slot_role: [a-z][a-z0-9_]{1,63}; site_button_variant: allowlist.
-    // Both required together for active offers on dynamic-slot products; DB trigger
-    // still enforces the invariant on the write path. Warn on stable-role rename.
+    // Phase B — dynamic-slot validation. UI now allows ONLY canonical values:
+    //   slot_role ∈ { button_1..button_10 }  (absent = «Не размещается на сайте»)
+    //   site_button_variant ∈ SLOT_VARIANTS
+    // Custom slot codes are not user-editable anymore — the DB trigger still
+    // enforces the invariant on write.
     const SLOT_VARIANTS = ["primary", "outline", "installment", "legal_entity", "lead"] as const;
-    const SLOT_ROLE_RE = /^[a-z][a-z0-9_]{1,63}$/;
-    let rawSlotRole = ((offerForm.meta as any)?.slot_role as string | undefined) || "";
-    const rawVariant = ((offerForm.meta as any)?.site_button_variant as string | undefined) || "";
-    if (rawSlotRole && !SLOT_ROLE_RE.test(rawSlotRole)) {
-      toast.error("Технический код назначения: только латиница a–z, цифры и «_», 2–64 символа, должен начинаться с буквы");
+    const ALLOWED_SLOT_ROLES = new Set<string>([
+      "button_1", "button_2", "button_3", "button_4", "button_5",
+      "button_6", "button_7", "button_8", "button_9", "button_10",
+    ]);
+    const rawSlotRole = (offerForm.meta?.slot_role ?? "").toString().trim();
+    const rawVariant = (offerForm.meta?.site_button_variant ?? "").toString().trim();
+    if (rawSlotRole && !ALLOWED_SLOT_ROLES.has(rawSlotRole)) {
+      toast.error("Слот на странице: разрешены только «Кнопка 1»…«Кнопка 10» либо «Не размещается на сайте».");
       return;
     }
-    if (rawVariant && !(SLOT_VARIANTS as readonly string[]).includes(rawVariant)) {
-      toast.error("Выбран недопустимый внешний вид кнопки. Выберите значение из списка.");
+    if (!rawVariant || !(SLOT_VARIANTS as readonly string[]).includes(rawVariant)) {
+      toast.error("Выберите цвет кнопки в блоке «Размещение кнопки на публичной странице».");
       return;
     }
-    // Product is opted into dynamic slots when ANY other offer on the product
-    // already carries meta.slot_role — mirrors the DB trigger's product-scope
-    // detection. On such products, active offers MUST declare both fields.
-    const productUsesSlots = (offers || []).some((o: any) => {
-      if (offerDialog.editing && o.id === offerDialog.editing.id) return false;
-      const r = ((o.meta as any)?.slot_role as string | undefined) || "";
-      return !!r;
-    });
-    if (offerForm.is_active && productUsesSlots) {
-      // Автогенерация уникального slot_role для скопированных/legacy офферов,
-      // когда variant задан, а роль пустая — админ может переименовать позже.
-      if (!rawSlotRole && rawVariant) {
-        const base = rawVariant === "installment"
-          ? `installment_${offerForm.installment_count || "n"}`
-          : rawVariant === "legal_entity"
-            ? "payment_invoice"
-            : rawVariant === "lead"
-              ? "lead"
-              : rawVariant === "outline"
-                ? "payment_outline"
-                : "payment_card";
-        const usedRoles = new Set<string>(
-          (offers || [])
-            .filter((o: any) => o.tariff_id === offerForm.tariff_id && (!offerDialog.editing || o.id !== offerDialog.editing.id))
-            .map((o: any) => String((o.meta as any)?.slot_role || ""))
-            .filter(Boolean),
-        );
-        let candidate = base;
-        let n = 2;
-        while (usedRoles.has(candidate)) candidate = `${base}_${n++}`;
-        if (candidate.length > 64) candidate = candidate.slice(0, 64);
-        rawSlotRole = candidate;
-        (offerForm.meta as any) = { ...(offerForm.meta as any), slot_role: candidate };
-      }
-      if (!rawSlotRole || !rawVariant) {
-        toast.error("Для активного оффера этого продукта укажите назначение и внешний вид кнопки — блок «Размещение кнопки на публичной странице».");
-        return;
-      }
-    } else if (offerForm.is_active && (rawSlotRole || rawVariant)) {
-      if (!rawSlotRole || !rawVariant) {
-        toast.error("Заполните оба поля в блоке «Размещение кнопки на публичной странице»: назначение и внешний вид.");
-        return;
-      }
-    }
+    // Rename warning — public HTML anchors bound to the old slot will lose this offer.
     if (offerDialog.editing) {
-      const prevRole = ((offerDialog.editing as any).meta?.slot_role as string | undefined) || "";
+      const prevRole = ((offerDialog.editing.meta as OfferMetaConfig | null | undefined)?.slot_role ?? "").toString().trim();
       if (prevRole && rawSlotRole && prevRole !== rawSlotRole) {
         const ok = window.confirm(
-          `Технический код назначения меняется: «${prevRole}» → «${rawSlotRole}». Кнопки на публичной странице, привязанные к прежнему коду, перестанут находить этот оффер. Продолжить?`,
+          `Слот меняется: «${prevRole}» → «${rawSlotRole}». Кнопки на публичной странице, привязанные к прежнему слоту, перестанут находить этот оффер. Продолжить?`,
         );
         if (!ok) return;
       }
     }
+
 
     const isInstallment = offerForm.payment_method === "internal_installment";
     const isPreregistration = offerForm.offer_type === "preregistration";
