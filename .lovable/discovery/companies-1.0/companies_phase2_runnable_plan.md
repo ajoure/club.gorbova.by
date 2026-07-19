@@ -301,15 +301,19 @@ Snapshot хранит **нормализованные** значения. Stale
 Алгоритм (для каждого mutable-поля):
 
 ```
-IF target IS NULL:                        target := billing; snapshot[f] := billing
-ELSIF target = snapshot[f]:               target := billing; snapshot[f] := billing
-ELSE:  -- admin/import override
-    snapshot[f] := billing
+IF normalized_billing IS NULL:            -- last non-null wins
+    target unchanged; snapshot[f] unchanged; conflict NOT recorded; f NOT в changed_fields
+ELSIF target IS NULL:                     target := billing; snapshot[f] := billing;      changed_fields += f
+ELSIF target IS NOT DISTINCT FROM snapshot[f]:
+                                          target := billing; snapshot[f] := billing;      changed_fields += f
+ELSE:  -- admin/import override сохраняется
+    snapshot[f] := billing                -- фиксируем последний билинг для будущего сравнения
+    conflict_fields += f
     INSERT crm_activity_log(activity_type='company.field.override_conflict',
                             metadata->>'field'=f, ...)
 ```
 
-`country`, `unp_normalized`, `company_kind` — только при INSERT.
+`country`, `unp_normalized`, `company_kind` — только при INSERT canonical company; в mutable-блоки НЕ включаются.
 
 ---
 
@@ -419,7 +423,7 @@ FOR v_src IN SELECT * FROM public.company_contacts WHERE company_id = _source_id
   --    - иначе если у source lineage валиден и ссылается на map, перенесённый на target → берём source
   --    - иначе NULL
   -- 3) source (text): 'billing_requisites' > 'manual' > прочие; ordered priority
-  -- 4) metadata: jsonb_deep_merge(target_meta, source_meta)   -- target ключи "побеждают" при коллизии
+  -- 4) metadata: COALESCE(source,{}) || COALESCE(target,{}) — при коллизии top-level ключей target побеждает; отдельный deep-merge helper не вводится
   UPDATE public.company_contacts SET
     is_billing_contact = v_tgt.is_billing_contact OR v_src.is_billing_contact,
     is_primary         = v_tgt.is_primary         OR v_src.is_primary,
@@ -630,6 +634,9 @@ _crm_company_emit_domain_event(
 
 ## 11. Полный migration SQL
 
+<!-- PHASE2_FORWARD_SQL_BEGIN -->
+
+
 Файл: `supabase/migrations/<ts>_crm_companies_phase2_rpc_layer.sql`. SHA-256 файла фиксируется при commit до execution approve.
 
 ### 11.1 Транзакционные настройки и preflight
@@ -702,7 +709,52 @@ $preflight$;
 
 Примечание: если `sha256`/`convert_to` недоступны в целевой БД (напр., отсутствие `pgcrypto` в default search_path), проверка выполняется через `md5(pg_get_functiondef(...))='7641d12fc0bea802a93935a384e7e349'` как fallback (значение приведено в §2.5).
 
-### 11.2 Private helper
+### 11.2 Private helpers (emit → resolve)
+
+Порядок создания обязателен: сначала `_crm_company_emit_domain_event`, затем `_crm_company_resolve_or_create_internal` (последний уже вызывает emit при `company.created.v1`).
+
+```sql
+-- 11.2.a Private emit helper — дедуплицированная запись в domain_events (§10.1)
+CREATE OR REPLACE FUNCTION public._crm_company_emit_domain_event(
+  _event_type      text,
+  _entity_id       uuid,
+  _idempotency_key text,
+  _payload         jsonb
+) RETURNS uuid
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $$
+DECLARE v_existing uuid; v_new uuid;
+BEGIN
+  IF _event_type IS NULL OR _event_type NOT LIKE 'company.%' THEN
+    RAISE EXCEPTION 'emit: bad event_type %', _event_type;
+  END IF;
+  IF _idempotency_key IS NULL OR length(_idempotency_key) < 8 THEN
+    RAISE EXCEPTION 'emit: bad idempotency_key';
+  END IF;
+  IF NOT (_payload ? 'version') OR (_payload->>'version') <> '1' THEN
+    RAISE EXCEPTION 'emit: payload version must be 1';
+  END IF;
+  IF coalesce(_payload->>'idempotency_key','') <> _idempotency_key THEN
+    RAISE EXCEPTION 'emit: payload/key mismatch';
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtextextended('crm_company_emit:' || _idempotency_key, 0));
+
+  SELECT id INTO v_existing FROM public.domain_events
+   WHERE event_type = _event_type
+     AND payload->>'idempotency_key' = _idempotency_key
+   LIMIT 1;
+  IF v_existing IS NOT NULL THEN
+    RETURN NULL;  -- дубль подавлен
+  END IF;
+
+  INSERT INTO public.domain_events(event_type, source, entity_id, payload)
+  VALUES (_event_type, 'crm', _entity_id, _payload)
+  RETURNING id INTO v_new;
+  RETURN v_new;
+END $$;
+
+-- 11.2.b Private resolve/create helper
 
 ```sql
 CREATE OR REPLACE FUNCTION public._crm_company_resolve_or_create_internal(
@@ -979,11 +1031,44 @@ CREATE OR REPLACE FUNCTION public.crm_company_upsert_from_billing(_client_legal_
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
 AS $$
-DECLARE v_cld public.client_legal_details%ROWTYPE;
-        v_country text := 'BY'; v_unp text; v_kind text; v_full text;
-        v_id uuid; v_snap jsonb; v_last_src ts;
-        v_company public.companies%ROWTYPE; v_changed text[] := '{}'; v_conflicts text[] := '{}';
-        v_prev_src timestamptz;
+DECLARE
+  v_cld       public.client_legal_details%ROWTYPE;
+  v_company   public.companies%ROWTYPE;
+  v_country   text := 'BY';
+  v_unp       text;
+  v_kind      text;
+  v_full      text;
+  v_id        uuid;
+  v_snap      jsonb;
+  v_prev_src  timestamptz;
+  v_changed   text[] := '{}';
+  v_conflicts text[] := '{}';
+  -- Нормализованные значения per §4 (последний non-null billing wins; NULL = не трогать)
+  n_full_name         text;
+  n_short_name        text;
+  n_legal_form        text;
+  n_legal_address     text;
+  n_director_name     text;
+  n_director_position text;
+  n_acts_on_basis     text;
+  n_bank_account      text;
+  n_bank_name         text;
+  n_bank_code         text;
+  n_email             text;
+  n_phone             text;
+  -- Новые значения после применения ownership (по умолчанию = текущее значение target)
+  new_full_name         text;
+  new_short_name        text;
+  new_legal_form        text;
+  new_legal_address     text;
+  new_director_name     text;
+  new_director_position text;
+  new_acts_on_basis     text;
+  new_bank_account      text;
+  new_bank_name         text;
+  new_bank_code         text;
+  new_email             text;
+  new_phone             text;
 BEGIN
   SELECT * INTO v_cld FROM public.client_legal_details WHERE id=_client_legal_details_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'cld not found' USING ERRCODE='23503'; END IF;
@@ -994,50 +1079,244 @@ BEGIN
 
   v_kind := v_cld.client_type;
   IF v_kind = 'legal_entity' THEN
-    v_unp := regexp_replace(coalesce(v_cld.leg_unp,''),'\D','','g');
+    v_unp  := regexp_replace(coalesce(v_cld.leg_unp,''),'\D','','g');
     v_full := NULLIF(btrim(concat_ws(' ', v_cld.leg_org_form, v_cld.leg_name)),'');
   ELSE
-    v_unp := regexp_replace(coalesce(v_cld.ent_unp,''),'\D','','g');
+    v_unp  := regexp_replace(coalesce(v_cld.ent_unp,''),'\D','','g');
     v_full := NULLIF(btrim(v_cld.ent_name),'');
   END IF;
   IF length(v_unp) = 0 OR v_full IS NULL THEN
     RAISE EXCEPTION 'billing cld missing unp or full_name' USING ERRCODE='23514';
   END IF;
 
+  -- create-or-resolve через private helper (set-once поля: country/unp_normalized/company_kind
+  -- задаются только при INSERT canonical company)
   v_id := public._crm_company_resolve_or_create_internal(
     v_country, v_unp, v_full, v_kind, NULL::uuid, 'billing_requisites', _client_legal_details_id);
 
   SELECT * INTO v_company FROM public.companies WHERE id=v_id FOR UPDATE;
 
-  -- stale detection
+  -- stale detection: если source updated_at раньше зафиксированного — идемпотентный no-op
   v_prev_src := (v_company.metadata->'company_sync'->>'last_billing_source_updated_at')::timestamptz;
   IF v_prev_src IS NOT NULL AND v_cld.updated_at IS NOT NULL AND v_cld.updated_at < v_prev_src THEN
-    RETURN v_id;  -- no-op stale
+    RETURN v_id;
   END IF;
 
   v_snap := COALESCE(v_company.metadata->'company_sync'->'billing_snapshot','{}'::jsonb);
 
-  -- Ownership алгоритм (§5) применяется для каждого mutable-поля.
-  -- Реализация — inline (сокращено для читаемости; в фактической миграции разворачивается
-  -- в 15 однотипных блоков, по одному на каждое поле билинг-маппинга из §4).
-  -- Пример для short_name:
-  --   IF v_company.short_name IS NULL THEN
-  --      UPDATE ... SET short_name = normalized_value;
-  --      v_snap := jsonb_set(v_snap, '{short_name}', to_jsonb(normalized_value));
-  --      v_changed := v_changed || 'short_name';
-  --   ELSIF v_company.short_name = v_snap->>'short_name' THEN
-  --      UPDATE ... SET short_name = normalized_value;
-  --      v_snap := jsonb_set(v_snap, '{short_name}', to_jsonb(normalized_value));
-  --      v_changed := v_changed || 'short_name';
-  --   ELSE
-  --      v_snap := jsonb_set(v_snap, '{short_name}', to_jsonb(normalized_value));
-  --      v_conflicts := v_conflicts || 'short_name';
-  --   END IF;
-  -- (аналогично для full_name, legal_form, legal_address, director_name, director_position,
-  --  acts_on_basis, bank_account, bank_name, bank_code, email, phone)
+  -- Нормализация 12 mutable-полей строго по §4
+  n_full_name         := v_full;
+  n_short_name        := CASE v_kind WHEN 'legal_entity'
+                             THEN NULLIF(btrim(v_cld.leg_name),'')
+                             ELSE NULLIF(btrim(v_cld.ent_name),'') END;
+  n_legal_form        := CASE v_kind WHEN 'legal_entity'
+                             THEN NULLIF(btrim(v_cld.leg_org_form),'')
+                             ELSE NULL END;
+  n_legal_address     := CASE v_kind WHEN 'legal_entity'
+                             THEN NULLIF(btrim(v_cld.leg_address),'')
+                             ELSE NULLIF(btrim(v_cld.ent_address),'') END;
+  n_director_name     := CASE v_kind WHEN 'legal_entity'
+                             THEN NULLIF(btrim(v_cld.leg_director_name),'')
+                             ELSE NULL END;
+  n_director_position := CASE v_kind WHEN 'legal_entity'
+                             THEN NULLIF(btrim(v_cld.leg_director_position),'')
+                             ELSE NULL END;
+  n_acts_on_basis     := CASE v_kind WHEN 'legal_entity'
+                             THEN NULLIF(btrim(v_cld.leg_acts_on_basis),'')
+                             ELSE NULLIF(btrim(v_cld.ent_acts_on_basis),'') END;
+  n_bank_account      := NULLIF(btrim(v_cld.bank_account),'');
+  n_bank_name         := NULLIF(btrim(v_cld.bank_name),'');
+  n_bank_code         := NULLIF(btrim(v_cld.bank_code),'');
+  n_email             := NULLIF(lower(btrim(v_cld.email)),'');
+  n_phone             := NULLIF(regexp_replace(coalesce(v_cld.phone,''),'[^\d+]','','g'),'');
 
-  -- финализация metadata
+  -- Default new_* = текущее значение target
+  new_full_name         := v_company.full_name;
+  new_short_name        := v_company.short_name;
+  new_legal_form        := v_company.legal_form;
+  new_legal_address     := v_company.legal_address;
+  new_director_name     := v_company.director_name;
+  new_director_position := v_company.director_position;
+  new_acts_on_basis     := v_company.acts_on_basis;
+  new_bank_account      := v_company.bank_account;
+  new_bank_name         := v_company.bank_name;
+  new_bank_code         := v_company.bank_code;
+  new_email             := v_company.email;
+  new_phone             := v_company.phone;
+
+  -- Ownership §5 для каждого mutable-поля.
+  -- Инвариант NULL: если normalized billing = NULL, target/snapshot/conflict не трогаем.
+
+  -- full_name
+  IF n_full_name IS NOT NULL THEN
+    IF v_company.full_name IS NULL
+       OR v_company.full_name IS NOT DISTINCT FROM (v_snap->>'full_name') THEN
+      new_full_name := n_full_name;
+      v_snap := jsonb_set(v_snap, '{full_name}', to_jsonb(n_full_name));
+      v_changed := v_changed || 'full_name';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{full_name}', to_jsonb(n_full_name));
+      v_conflicts := v_conflicts || 'full_name';
+    END IF;
+  END IF;
+
+  -- short_name
+  IF n_short_name IS NOT NULL THEN
+    IF v_company.short_name IS NULL
+       OR v_company.short_name IS NOT DISTINCT FROM (v_snap->>'short_name') THEN
+      new_short_name := n_short_name;
+      v_snap := jsonb_set(v_snap, '{short_name}', to_jsonb(n_short_name));
+      v_changed := v_changed || 'short_name';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{short_name}', to_jsonb(n_short_name));
+      v_conflicts := v_conflicts || 'short_name';
+    END IF;
+  END IF;
+
+  -- legal_form
+  IF n_legal_form IS NOT NULL THEN
+    IF v_company.legal_form IS NULL
+       OR v_company.legal_form IS NOT DISTINCT FROM (v_snap->>'legal_form') THEN
+      new_legal_form := n_legal_form;
+      v_snap := jsonb_set(v_snap, '{legal_form}', to_jsonb(n_legal_form));
+      v_changed := v_changed || 'legal_form';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{legal_form}', to_jsonb(n_legal_form));
+      v_conflicts := v_conflicts || 'legal_form';
+    END IF;
+  END IF;
+
+  -- legal_address
+  IF n_legal_address IS NOT NULL THEN
+    IF v_company.legal_address IS NULL
+       OR v_company.legal_address IS NOT DISTINCT FROM (v_snap->>'legal_address') THEN
+      new_legal_address := n_legal_address;
+      v_snap := jsonb_set(v_snap, '{legal_address}', to_jsonb(n_legal_address));
+      v_changed := v_changed || 'legal_address';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{legal_address}', to_jsonb(n_legal_address));
+      v_conflicts := v_conflicts || 'legal_address';
+    END IF;
+  END IF;
+
+  -- director_name
+  IF n_director_name IS NOT NULL THEN
+    IF v_company.director_name IS NULL
+       OR v_company.director_name IS NOT DISTINCT FROM (v_snap->>'director_name') THEN
+      new_director_name := n_director_name;
+      v_snap := jsonb_set(v_snap, '{director_name}', to_jsonb(n_director_name));
+      v_changed := v_changed || 'director_name';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{director_name}', to_jsonb(n_director_name));
+      v_conflicts := v_conflicts || 'director_name';
+    END IF;
+  END IF;
+
+  -- director_position
+  IF n_director_position IS NOT NULL THEN
+    IF v_company.director_position IS NULL
+       OR v_company.director_position IS NOT DISTINCT FROM (v_snap->>'director_position') THEN
+      new_director_position := n_director_position;
+      v_snap := jsonb_set(v_snap, '{director_position}', to_jsonb(n_director_position));
+      v_changed := v_changed || 'director_position';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{director_position}', to_jsonb(n_director_position));
+      v_conflicts := v_conflicts || 'director_position';
+    END IF;
+  END IF;
+
+  -- acts_on_basis
+  IF n_acts_on_basis IS NOT NULL THEN
+    IF v_company.acts_on_basis IS NULL
+       OR v_company.acts_on_basis IS NOT DISTINCT FROM (v_snap->>'acts_on_basis') THEN
+      new_acts_on_basis := n_acts_on_basis;
+      v_snap := jsonb_set(v_snap, '{acts_on_basis}', to_jsonb(n_acts_on_basis));
+      v_changed := v_changed || 'acts_on_basis';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{acts_on_basis}', to_jsonb(n_acts_on_basis));
+      v_conflicts := v_conflicts || 'acts_on_basis';
+    END IF;
+  END IF;
+
+  -- bank_account
+  IF n_bank_account IS NOT NULL THEN
+    IF v_company.bank_account IS NULL
+       OR v_company.bank_account IS NOT DISTINCT FROM (v_snap->>'bank_account') THEN
+      new_bank_account := n_bank_account;
+      v_snap := jsonb_set(v_snap, '{bank_account}', to_jsonb(n_bank_account));
+      v_changed := v_changed || 'bank_account';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{bank_account}', to_jsonb(n_bank_account));
+      v_conflicts := v_conflicts || 'bank_account';
+    END IF;
+  END IF;
+
+  -- bank_name
+  IF n_bank_name IS NOT NULL THEN
+    IF v_company.bank_name IS NULL
+       OR v_company.bank_name IS NOT DISTINCT FROM (v_snap->>'bank_name') THEN
+      new_bank_name := n_bank_name;
+      v_snap := jsonb_set(v_snap, '{bank_name}', to_jsonb(n_bank_name));
+      v_changed := v_changed || 'bank_name';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{bank_name}', to_jsonb(n_bank_name));
+      v_conflicts := v_conflicts || 'bank_name';
+    END IF;
+  END IF;
+
+  -- bank_code
+  IF n_bank_code IS NOT NULL THEN
+    IF v_company.bank_code IS NULL
+       OR v_company.bank_code IS NOT DISTINCT FROM (v_snap->>'bank_code') THEN
+      new_bank_code := n_bank_code;
+      v_snap := jsonb_set(v_snap, '{bank_code}', to_jsonb(n_bank_code));
+      v_changed := v_changed || 'bank_code';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{bank_code}', to_jsonb(n_bank_code));
+      v_conflicts := v_conflicts || 'bank_code';
+    END IF;
+  END IF;
+
+  -- email
+  IF n_email IS NOT NULL THEN
+    IF v_company.email IS NULL
+       OR v_company.email IS NOT DISTINCT FROM (v_snap->>'email') THEN
+      new_email := n_email;
+      v_snap := jsonb_set(v_snap, '{email}', to_jsonb(n_email));
+      v_changed := v_changed || 'email';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{email}', to_jsonb(n_email));
+      v_conflicts := v_conflicts || 'email';
+    END IF;
+  END IF;
+
+  -- phone
+  IF n_phone IS NOT NULL THEN
+    IF v_company.phone IS NULL
+       OR v_company.phone IS NOT DISTINCT FROM (v_snap->>'phone') THEN
+      new_phone := n_phone;
+      v_snap := jsonb_set(v_snap, '{phone}', to_jsonb(n_phone));
+      v_changed := v_changed || 'phone';
+    ELSE
+      v_snap := jsonb_set(v_snap, '{phone}', to_jsonb(n_phone));
+      v_conflicts := v_conflicts || 'phone';
+    END IF;
+  END IF;
+
+  -- Единый UPDATE: значения полей + обновление metadata (snapshot + timestamps).
   UPDATE public.companies SET
+    full_name         = new_full_name,
+    short_name        = new_short_name,
+    legal_form        = new_legal_form,
+    legal_address     = new_legal_address,
+    director_name     = new_director_name,
+    director_position = new_director_position,
+    acts_on_basis     = new_acts_on_basis,
+    bank_account      = new_bank_account,
+    bank_name         = new_bank_name,
+    bank_code         = new_bank_code,
+    email             = new_email,
+    phone             = new_phone,
     metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object(
       'company_sync', COALESCE(metadata->'company_sync','{}'::jsonb) || jsonb_build_object(
         'billing_snapshot', v_snap,
@@ -1048,7 +1327,7 @@ BEGIN
     updated_at = now()
   WHERE id = v_id;
 
-  -- override conflicts → crm_activity_log
+  -- override conflicts → crm_activity_log (idempotent per (company, field, cld))
   IF array_length(v_conflicts,1) IS NOT NULL THEN
     INSERT INTO public.crm_activity_log (activity_type, source_entity_id, source_entity_type,
                                          idempotency_key, metadata)
@@ -1062,7 +1341,7 @@ BEGIN
           AND idempotency_key='company.field.override_conflict:' || v_id::text || ':' || f || ':' || _client_legal_details_id::text);
   END IF;
 
-  -- domain_events (material change only) через private emit helper (§10.1)
+  -- domain_events (material change only) через private emit helper
   IF array_length(v_changed,1) IS NOT NULL OR array_length(v_conflicts,1) IS NOT NULL THEN
     PERFORM public._crm_company_emit_domain_event(
       'company.upserted_from_billing.v1',
@@ -1082,6 +1361,7 @@ BEGIN
   RETURN v_id;
 END $$;
 ```
+
 
 ### 11.6 `search_companies`
 
@@ -1174,29 +1454,82 @@ END $$;
 
 ### 11.7 `crm_company_merge`
 
-Полный SQL реализует §7 буквально. Ключевые фрагменты приведены в §7.1–§7.7; wrapping:
+Полный SQL реализует §7 буквально.
 
 ```sql
 CREATE OR REPLACE FUNCTION public.crm_company_merge(_source_id uuid, _target_id uuid)
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
 AS $$
-DECLARE v_target_leaf uuid; v_src public.companies%ROWTYPE;
-        v_tgt public.companies%ROWTYPE; v_moved_map int; v_moved_contacts int; v_merged_contacts int;
+DECLARE
+  v_target_leaf       uuid;
+  v_src               public.companies%ROWTYPE;
+  v_tgt               public.companies%ROWTYPE;
+  v_src_public_id     text;
+  v_tgt_public_id     text;
+  v_moved_map         int := 0;
+  v_moved_contacts    int := 0;
+  v_merged_contacts   int := 0;
+  v_cycle             int;
+  v_src_row           public.company_contacts%ROWTYPE;
+  v_tgt_row           public.company_contacts%ROWTYPE;
 BEGIN
   IF NOT (has_role_v2(auth.uid(),'admin') OR has_role_v2(auth.uid(),'super_admin')) THEN
     RAISE EXCEPTION 'forbidden' USING ERRCODE='42501';
   END IF;
   IF _source_id = _target_id THEN RAISE EXCEPTION 'source=target' USING ERRCODE='22023'; END IF;
 
-  -- §7.1 chain resolution
-  -- ... (см. §7.1 outline)
+  -- §7.1 разрешение цепочки merged_into для target до листа
+  WITH RECURSIVE chain AS (
+    SELECT id, merged_into_company_id, status, 1 AS depth
+      FROM public.companies WHERE id = _target_id
+    UNION ALL
+    SELECT c.id, c.merged_into_company_id, c.status, chain.depth + 1
+      FROM public.companies c
+      JOIN chain ON c.id = chain.merged_into_company_id
+      WHERE chain.depth < 32
+  )
+  SELECT id INTO v_target_leaf FROM chain
+   WHERE merged_into_company_id IS NULL AND status <> 'merged'
+   LIMIT 1;
+  IF v_target_leaf IS NULL THEN
+    RAISE EXCEPTION 'target chain broken or cyclic' USING ERRCODE='22023';
+  END IF;
+  IF v_target_leaf = _source_id THEN
+    RAISE EXCEPTION 'target leaf equals source' USING ERRCODE='22023';
+  END IF;
 
-  -- §7.2 cycle detection
-  -- ...
+  -- §7.2 detection циклов: source не должен лежать в цепочке target
+  WITH RECURSIVE chk AS (
+    SELECT id, merged_into_company_id, 1 AS depth
+      FROM public.companies WHERE id = v_target_leaf
+    UNION ALL
+    SELECT c.id, c.merged_into_company_id, chk.depth + 1
+      FROM public.companies c
+      JOIN chk ON c.id = chk.merged_into_company_id
+      WHERE chk.depth < 32
+  )
+  SELECT count(*) INTO v_cycle FROM chk WHERE id = _source_id;
+  IF v_cycle > 0 THEN
+    RAISE EXCEPTION 'cycle detected: source is ancestor of target' USING ERRCODE='22023';
+  END IF;
 
-  -- §7.3 locking (LEAST/GREATEST + FOR UPDATE)
-  -- ...
+  -- §7.3 locking — детерминированный порядок LEAST/GREATEST + FOR UPDATE
+  PERFORM 1 FROM public.companies
+    WHERE id = LEAST(_source_id, v_target_leaf) FOR UPDATE;
+  PERFORM 1 FROM public.companies
+    WHERE id = GREATEST(_source_id, v_target_leaf) FOR UPDATE;
+  PERFORM 1 FROM public.client_legal_details_company_map
+    WHERE company_id = _source_id FOR UPDATE;
+  PERFORM 1 FROM public.company_contacts
+    WHERE company_id = _source_id FOR UPDATE;
+  PERFORM 1 FROM public.company_contacts
+    WHERE company_id = v_target_leaf FOR UPDATE;
+
+  SELECT * INTO v_src FROM public.companies WHERE id = _source_id;
+  SELECT * INTO v_tgt FROM public.companies WHERE id = v_target_leaf;
+  v_src_public_id := v_src.public_id;
+  v_tgt_public_id := v_tgt.public_id;
 
   -- workspace check
   IF v_src.workspace_id <> v_tgt.workspace_id THEN
@@ -1213,27 +1546,109 @@ BEGIN
     RAISE EXCEPTION 'target is merged' USING ERRCODE='22023';
   END IF;
 
-  -- §7.4 map move
+  -- §7.4 перенос map (уникальный ключ = client_legal_details_id; конфликтов не создаёт).
   WITH m AS (
     UPDATE public.client_legal_details_company_map
-       SET company_id = v_target_leaf, updated_at=now(), updated_by=auth.uid()
-     WHERE company_id = _source_id RETURNING 1)
+       SET company_id = v_target_leaf, updated_at = now(), updated_by = auth.uid()
+     WHERE company_id = _source_id
+     RETURNING 1)
   SELECT count(*) INTO v_moved_map FROM m;
 
-  -- §7.5 contacts move+merge (loop, см. §7.5 body)
-  -- ... v_moved_contacts / v_merged_contacts заполняются
+  -- §7.5 перенос contacts — строгий row-by-row алгоритм.
+  FOR v_src_row IN
+    SELECT * FROM public.company_contacts
+     WHERE company_id = _source_id
+     ORDER BY id
+  LOOP
+    SELECT * INTO v_tgt_row FROM public.company_contacts
+     WHERE company_id = v_target_leaf
+       AND profile_id = v_src_row.profile_id
+       AND relationship_type = v_src_row.relationship_type
+     FOR UPDATE;
 
-  -- §7.6 metadata union и переключение source status
-  -- ... (см. §7.6 body)
+    IF NOT FOUND THEN
+      -- Целевой строки нет → простой перенос.
+      UPDATE public.company_contacts
+         SET company_id = v_target_leaf,
+             updated_at = now(),
+             updated_by = auth.uid()
+       WHERE id = v_src_row.id;
+      v_moved_contacts := v_moved_contacts + 1;
+      CONTINUE;
+    END IF;
 
-  -- domain_events через private emit helper (§10.1)
+    -- Обе строки существуют → детерминированное объединение.
+    UPDATE public.company_contacts SET
+      is_billing_contact = v_tgt_row.is_billing_contact OR v_src_row.is_billing_contact,
+      is_primary         = v_tgt_row.is_primary         OR v_src_row.is_primary,
+      source_client_legal_details_map_id = CASE
+        WHEN v_tgt_row.source_client_legal_details_map_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM public.client_legal_details_company_map m
+           WHERE m.id = v_tgt_row.source_client_legal_details_map_id
+             AND m.company_id = v_target_leaf)
+          THEN v_tgt_row.source_client_legal_details_map_id
+        WHEN v_src_row.source_client_legal_details_map_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM public.client_legal_details_company_map m
+           WHERE m.id = v_src_row.source_client_legal_details_map_id
+             AND m.company_id = v_target_leaf)
+          THEN v_src_row.source_client_legal_details_map_id
+        ELSE NULL END,
+      source = CASE
+        WHEN v_tgt_row.source = 'billing_requisites' OR v_src_row.source = 'billing_requisites'
+          THEN 'billing_requisites'
+        WHEN v_tgt_row.source = 'manual' OR v_src_row.source = 'manual'
+          THEN 'manual'
+        ELSE COALESCE(v_tgt_row.source, v_src_row.source) END,
+      metadata = COALESCE(v_src_row.metadata,'{}'::jsonb)
+              || COALESCE(v_tgt_row.metadata,'{}'::jsonb),
+      updated_at = now(),
+      updated_by = auth.uid()
+    WHERE id = v_tgt_row.id;
+
+    DELETE FROM public.company_contacts WHERE id = v_src_row.id;
+    v_merged_contacts := v_merged_contacts + 1;
+  END LOOP;
+
+  -- §7.6 объединение metadata на уровне компании и переключение status source.
+  UPDATE public.companies SET
+    metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object(
+      'merge', jsonb_build_object(
+        'consumed', COALESCE(metadata->'merge'->'consumed','[]'::jsonb) ||
+                    jsonb_build_array(jsonb_build_object(
+                      'source_id',        _source_id,
+                      'source_public_id', v_src_public_id,
+                      'at',               now(),
+                      'by',               auth.uid()
+                    ))
+      )
+    ),
+    updated_at = now(),
+    updated_by = auth.uid()
+  WHERE id = v_target_leaf;
+
+  UPDATE public.companies SET
+    status = 'merged',
+    merged_into_company_id = v_target_leaf,
+    metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object(
+      'merged', jsonb_build_object(
+        'at',   now(),
+        'by',   auth.uid(),
+        'from', v_src_public_id,
+        'into', v_tgt_public_id
+      )
+    ),
+    updated_at = now(),
+    updated_by = auth.uid()
+  WHERE id = _source_id AND status <> 'merged';
+
+  -- domain_events через private emit helper
   PERFORM public._crm_company_emit_domain_event(
     'company.merged.v1',
     _source_id,
     'company.merged:'||_source_id::text||':'||v_target_leaf::text,
     jsonb_build_object(
-      'version',1,'source_id',_source_id,'source_public_id',v_src.public_id,
-      'target_id',v_target_leaf,'target_public_id',v_tgt.public_id,
+      'version',1,'source_id',_source_id,'source_public_id',v_src_public_id,
+      'target_id',v_target_leaf,'target_public_id',v_tgt_public_id,
       'moved_map_rows',v_moved_map,'moved_contact_rows',v_moved_contacts,
       'merged_contact_rows',v_merged_contacts,'occurred_at',now(),'actor_user_id',auth.uid(),
       'idempotency_key','company.merged:'||_source_id::text||':'||v_target_leaf::text
@@ -1262,6 +1677,7 @@ BEGIN
   RETURN v_target_leaf;
 END $$;
 ```
+
 
 ### 11.8 `crm_company_archive`
 
@@ -1378,54 +1794,121 @@ END $$;
 
 ### 11.10 `search_global` — replacement (LAST)
 
-Полное тело — pre-Phase-2 body из §12.4 + additive блок §6, размещённый непосредственно перед `RETURN jsonb_build_object(...)` (в блок возвращаемого объекта добавляется ключ `'companies'`). Для совместимости с existing callers ветки `contacts/deals/messages` остаются идентичны.
-
-### 11.11 Private emit helper и ACL
-
-Phase 2 **не создаёт** индексов, constraints или колонок на shared-таблице `public.domain_events`. Дедупликация делается в helper (§10.1).
+Полный текст (pre-Phase-2 body + additive `companies` branch с собственным role-guard). Сигнатура, owner, `SECURITY DEFINER`, `search_path` и ACL не меняются. Ветки `contacts/deals/messages` идентичны pre-Phase-2 body (SHA-256 §2.5). Ветка `companies` работает только для read-ролей Phase 2 (`super_admin`, `admin`, `menedzher`, `support`); для остальных возвращает `'[]'::jsonb`. Итоговый объект возврата дополнен ключом `'companies'`.
 
 ```sql
--- Private emit helper (§10.1) — дедуплицированная запись в domain_events
-CREATE OR REPLACE FUNCTION public._crm_company_emit_domain_event(
-  _event_type      text,
-  _entity_id       uuid,
-  _idempotency_key text,
-  _payload         jsonb
-) RETURNS uuid
-LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
-AS $$
-DECLARE v_existing uuid; v_new uuid;
+CREATE OR REPLACE FUNCTION public.search_global(p_query text, p_limit integer DEFAULT 20, p_offset integer DEFAULT 0)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_contacts  jsonb;
+  v_deals     jsonb;
+  v_messages  jsonb;
+  v_companies jsonb;
+  v_user_id   uuid;
 BEGIN
-  IF _event_type IS NULL OR _event_type NOT LIKE 'company.%' THEN
-    RAISE EXCEPTION 'emit: bad event_type %', _event_type;
-  END IF;
-  IF _idempotency_key IS NULL OR length(_idempotency_key) < 8 THEN
-    RAISE EXCEPTION 'emit: bad idempotency_key';
-  END IF;
-  IF NOT (_payload ? 'version') OR (_payload->>'version') <> '1' THEN
-    RAISE EXCEPTION 'emit: payload version must be 1';
-  END IF;
-  IF coalesce(_payload->>'idempotency_key','') <> _idempotency_key THEN
-    RAISE EXCEPTION 'emit: payload/key mismatch';
+  v_user_id := auth.uid();
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'Unauthorized' USING ERRCODE = '42501';
   END IF;
 
-  PERFORM pg_advisory_xact_lock(hashtextextended('crm_company_emit:' || _idempotency_key, 0));
-
-  SELECT id INTO v_existing FROM public.domain_events
-   WHERE event_type = _event_type
-     AND payload->>'idempotency_key' = _idempotency_key
-   LIMIT 1;
-  IF v_existing IS NOT NULL THEN
-    RETURN NULL;  -- дубль подавлен
+  IF NOT (
+    public.has_role(v_user_id, 'admin'::app_role)
+    OR public.has_role(v_user_id, 'superadmin'::app_role)
+    OR public.has_permission(v_user_id, 'users.view')
+    OR public.has_admin_section_access(v_user_id, 'contacts', 'view')
+    OR public.has_admin_section_access(v_user_id, 'deals', 'view')
+    OR public.has_admin_section_access(v_user_id, 'communication', 'view')
+  ) THEN
+    RAISE EXCEPTION 'Forbidden: admin access required' USING ERRCODE = '42501';
   END IF;
 
-  INSERT INTO public.domain_events(event_type, source, entity_id, payload)
-  VALUES (_event_type, 'crm', _entity_id, _payload)
-  RETURNING id INTO v_new;
-  RETURN v_new;
-END $$;
+  SELECT coalesce(jsonb_agg(row_to_json(c)), '[]'::jsonb) INTO v_contacts
+  FROM (
+    SELECT p.id as profile_id, p.full_name, p.email, p.phone,
+           p.telegram_username, p.status
+    FROM profiles p
+    WHERE to_tsvector('simple',
+      coalesce(p.full_name, '') || ' ' ||
+      coalesce(p.email, '') || ' ' ||
+      coalesce(p.phone, '') || ' ' ||
+      coalesce(p.telegram_username, '')
+    ) @@ websearch_to_tsquery('simple', p_query)
+    LIMIT p_limit OFFSET p_offset
+  ) c;
 
--- ACL для новых RPC (правка 3 — семь public RPC + два private helper)
+  SELECT coalesce(jsonb_agg(row_to_json(d)), '[]'::jsonb) INTO v_deals
+  FROM (
+    SELECT o.id as order_id, o.order_number, o.status::text, o.profile_id,
+           o.customer_email, o.customer_phone, p.full_name as contact_name
+    FROM orders_v2 o
+    LEFT JOIN profiles p ON p.id = o.profile_id
+    WHERE to_tsvector('simple',
+      coalesce(o.order_number, '') || ' ' ||
+      coalesce(o.customer_email, '') || ' ' ||
+      coalesce(o.customer_phone, '')
+    ) @@ websearch_to_tsquery('simple', p_query)
+    LIMIT p_limit OFFSET p_offset
+  ) d;
+
+  SELECT coalesce(jsonb_agg(row_to_json(m)), '[]'::jsonb) INTO v_messages
+  FROM (
+    SELECT
+      tm.id,
+      'private'::text as source,
+      left(tm.message_text, 150) as snippet,
+      tm.created_at,
+      tm.user_id,
+      tm.telegram_user_id,
+      NULL::bigint as chat_id,
+      p.id as profile_id,
+      p.full_name as contact_name
+    FROM telegram_messages tm
+    LEFT JOIN profiles p ON p.user_id = tm.user_id
+    WHERE to_tsvector('simple', coalesce(tm.message_text, ''))
+          @@ websearch_to_tsquery('simple', p_query)
+    LIMIT p_limit OFFSET p_offset
+  ) m;
+
+  -- Additive Phase 2 branch: companies (собственный role guard, без расширения доступа других веток)
+  IF (
+    public.has_role_v2(v_user_id, 'super_admin') OR public.has_role_v2(v_user_id, 'admin') OR
+    public.has_role_v2(v_user_id, 'menedzher')   OR public.has_role_v2(v_user_id, 'support')
+  ) THEN
+    SELECT coalesce(jsonb_agg(row_to_json(c)), '[]'::jsonb) INTO v_companies
+    FROM (
+      SELECT c.id, c.public_id, c.full_name, c.short_name, c.unp_normalized,
+             c.country, c.company_kind, c.status, 'company'::text AS entity
+      FROM public.companies c
+      WHERE c.status <> 'merged'
+        AND (c.public_id      ILIKE '%'||p_query||'%'
+          OR c.full_name      ILIKE '%'||p_query||'%'
+          OR c.short_name     ILIKE '%'||p_query||'%'
+          OR c.unp_normalized ILIKE '%'||p_query||'%')
+      LIMIT p_limit OFFSET p_offset
+    ) c;
+  ELSE
+    v_companies := '[]'::jsonb;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'contacts',  v_contacts,
+    'deals',     v_deals,
+    'messages',  v_messages,
+    'companies', v_companies
+  );
+END;
+$function$;
+```
+
+### 11.11 ACL для новых RPC
+
+Emit helper `_crm_company_emit_domain_event` создаётся раньше — в §11.2 (порядок: emit → resolve → public RPC → search_global → ACL → post-apply guards). Здесь только REVOKE/GRANT.
+
+```sql
 REVOKE ALL ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text,uuid)     FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)  FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.search_companies(jsonb)                                     FROM PUBLIC, anon, service_role;
@@ -1448,6 +1931,9 @@ REVOKE ALL ON FUNCTION public._crm_company_resolve_or_create_internal(text,text,
 REVOKE ALL ON FUNCTION public._crm_company_emit_domain_event(text,uuid,text,jsonb)
   FROM PUBLIC, anon, authenticated, service_role;
 ```
+
+Phase 2 **не создаёт** индексов, constraints или колонок на shared-таблице `public.domain_events`. Дедупликация выполнена внутри emit helper (§10.1 / §11.2).
+
 
 ### 11.12 Post-apply invariants
 
@@ -1491,11 +1977,21 @@ END $post$;
 COMMIT;
 ```
 
+<!-- PHASE2_FORWARD_SQL_END -->
+
+**Copy-paste readiness §11 checklist:**
+
+- [x] Весь SQL §11 заключён в непрерывную последовательность fence-блоков (§11.1–§11.12), без прозы между DDL-стейтментами внутри блоков.
+- [x] В canonical SQL нет переменных вида `<...>`, `{{...}}`, `TBD`.
+- [x] Порядок стейтментов соответствует зависимостям: preflight → `_crm_company_emit_domain_event` (§11.2a) → `_crm_company_resolve_or_create_internal` (§11.2b) → 7 public RPC (§11.3–§11.9) → `search_global` replacement (§11.10) → ACL REVOKE/GRANT (§11.11) → post-apply invariants (§11.12) → `COMMIT`.
+
 ---
 
 ## 12. Полный rollback SQL
 
 Файл: `.lovable/rollback/companies-phase2/phase2_rpc_rollback.sql`. Не выполняется без отдельного решения.
+
+<!-- PHASE2_ROLLBACK_SQL_BEGIN -->
 
 ### 12.1 Транзакция
 
@@ -1662,7 +2158,16 @@ GRANT EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean
 COMMIT;
 ```
 
+<!-- PHASE2_ROLLBACK_SQL_END -->
+
 Rollback не изменяет таблицы и данные. Не использует `CASCADE`. `company_sync_queue` очищается отдельным решением при необходимости.
+
+**Copy-paste readiness §12 checklist:**
+
+- [x] Весь SQL §12 заключён в непрерывную последовательность fence-блоков (§12.1–§12.6), без прозы между DDL-стейтментами внутри блоков.
+- [x] В canonical SQL нет переменных вида `<...>`, `{{...}}`, `TBD`.
+- [x] Порядок стейтментов соответствует зависимостям: BEGIN → DROP 5 новых RPC (§12.2) → `CREATE OR REPLACE` двух Phase 1 skeletons (§12.3) → `CREATE OR REPLACE` pre-Phase-2 `search_global` (§12.4) → DROP двух private helper (resolve, затем emit — §12.5) → восстановление Phase 1 ACL (§12.6) → `COMMIT`.
+- [x] Итог: 5 DROP + 2 DROP = **7 DROP FUNCTION**; 2 + 1 = **3 CREATE OR REPLACE FUNCTION**. `search_global` восстанавливается через `CREATE OR REPLACE` (без промежуточного DROP).
 
 ---
 
@@ -1725,7 +2230,67 @@ SELECT (SELECT count(*) FROM public.companies) c,
 SELECT last_value FROM public.public_id_sequences WHERE entity_type='company';
 ```
 
+### 13.8 Placeholder scan (static, applied to canonical SQL blocks §11 и §12)
+
+Область: только текст внутри `sql` code fences между `<!-- PHASE2_FORWARD_SQL_BEGIN -->` / `<!-- PHASE2_FORWARD_SQL_END -->` и `<!-- PHASE2_ROLLBACK_SQL_BEGIN -->` / `<!-- PHASE2_ROLLBACK_SQL_END -->`. Описательная markdown-проза не сканируется — ссылки вида `см. §` вне canonical blocks допустимы.
+
+Патерны (case-insensitive):
+
+```
+\.\.\.        …
+сокращено     см\. body      см\. helpers
+при\s+финализации   в\s+фактической\s+миграции
+аналогично    остальные\s+поля
+TODO          FIXME
+<\.\.\.>      \{\{\.\.\.\}\}       \bTBD\b
+см\.\s*§
+```
+
+Фактический результат (`python3` extractor, только SQL внутри canonical blocks):
+
+```
+--- forward:  0 hits
+--- rollback: 0 hits
+```
+
+Ожидание: 0. Совпало.
+
+### 13.9 Счётчики canonical SQL blocks
+
+| Метрика | Область | Ожидание | Факт |
+|---|---|---|---|
+| `CREATE OR REPLACE FUNCTION` | §11 canonical | 10 (7 public RPC + 2 private helper + `search_global`) | 10 |
+| `PERFORM public._crm_company_emit_domain_event(` | §11 canonical (caller bodies + resolve helper) | 7 | 7 |
+| `CREATE OR REPLACE FUNCTION public._crm_company_emit_domain_event` | §11 canonical | 1 | 1 |
+| `INSERT INTO public.domain_events` | §11 canonical | 1 (только внутри emit helper) | 1 |
+| `ON CONFLICT ((payload->>'idempotency_key'))` | §11 canonical | 0 | 0 |
+| `DROP FUNCTION` | §12 canonical | 7 (5 новых RPC + 2 private helper) | 7 |
+| `CREATE OR REPLACE FUNCTION` | §12 canonical | 3 (2 Phase 1 skeleton + 1 `search_global` restore) | 3 |
+
+### 13.10 Schema whitelist
+
+Проверенные таблицы: `public.companies`, `public.company_contacts`, `public.client_legal_details_company_map`, `public.company_sync_queue`, `public.client_legal_details`. Все ссылки на колонки в canonical SQL §11 и §12 сверены с фактическим `information_schema.columns`.
+
+- `companies`: `id`, `public_id`, `workspace_id`, `company_kind`, `country`, `unp_normalized`, `full_name`, `short_name`, `legal_form`, `legal_address`, `email`, `phone`, `director_name`, `director_position`, `acts_on_basis`, `bank_account`, `bank_name`, `bank_code`, `status`, `merged_into_company_id`, `archived_at`, `metadata`, `created_at`, `created_by`, `updated_at`, `updated_by` — все существуют.
+- `company_contacts`: `id`, `company_id`, `profile_id`, `relationship_type`, `is_billing_contact`, `is_primary`, `source`, `source_client_legal_details_map_id`, `metadata`, `updated_at`, `updated_by` — все существуют.
+- `client_legal_details_company_map`: `id`, `client_legal_details_id`, `company_id`, `updated_at`, `updated_by` — все существуют. Unique constraint = `client_legal_details_id`; `UPDATE ... SET company_id = v_target_leaf` не создаёт конфликта.
+- `company_sync_queue`: `entity_type`, `entity_id`, `run_reason`, `status`, `idempotency_key`, `next_run_at`, `payload`, `created_by`, `updated_by` — все существуют.
+- `client_legal_details`: `id`, `client_type`, `purpose`, `leg_unp`, `ent_unp`, `leg_org_form`, `leg_name`, `ent_name`, `leg_address`, `ent_address`, `leg_director_name`, `leg_director_position`, `leg_acts_on_basis`, `ent_acts_on_basis`, `bank_account`, `bank_name`, `bank_code`, `email`, `phone`, `updated_at` — все существуют.
+
+Неизвестных колонок: **0**.
+
+### 13.11 FINALIZED gate
+
+Все три gate-check пройдены:
+
+- placeholder scan: 0 hits;
+- counter matrix (§13.9): все строки совпали;
+- schema whitelist (§13.10): 0 неизвестных колонок.
+
+Phase 2 runnable plan: **FINALIZED (documentation)**. Execution — по-прежнему **NOT APPROVED** до отдельного approve; admin fixture blocker сохранён.
+
 ---
+
 
 ## 14. Runtime proof (последовательность, правки 11 и 17)
 
