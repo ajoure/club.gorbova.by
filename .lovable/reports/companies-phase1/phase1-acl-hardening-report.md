@@ -11,11 +11,14 @@
 
 ## 2. Файловый scope спринта
 
-Изменённые файлы (совокупный diff):
+Изменённые файлы (фактический совокупный diff ACL-hardening спринта):
 
-- `supabase/migrations/<ts>_crm_companies_phase1_acl_hardening.sql` — новая corrective migration (только REVOKE/GRANT и DO-guards).
+- `supabase/migrations/20260719165300_1370ed2d-374b-42d8-bfb2-4ba1100878d9.sql` — corrective migration (REVOKE/GRANT + DO-guards). SHA-256 текущего файла: `0196525ab0bdc1466525eae01cb8156127dc16e6f1cc56e976f34755f5556a3c`.
 - `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md` — настоящий отчёт.
-- `src/integrations/supabase/types.ts` — если Lovable перегенерирует автоматически. ACL-миграция не меняет схему PostgREST-типов, поэтому содержательного schema diff быть не должно; при появлении такого diff — HARD STOP.
+- `.lovable/plan.md` — план ACL hardening (в отдельном документационном патче восстановлен в формате «План:»).
+- `src/integrations/supabase/types.ts` — авто-регенерируемый файл; содержательного schema diff нет (ACL не меняет PostgREST-контракт).
+
+Ссылка на Phase 1 forward migration: `supabase/migrations/20260719162721_d83567e6-e8a4-4beb-8e97-3cfad083da9b.sql`, SHA-256 `c15be4e3860be9a149cb11ac9103c8c384838d5ea270868121e44bcda2dd5e6b`.
 
 Другие файлы, UI, edge functions и `config.toml` не изменялись.
 
@@ -220,3 +223,140 @@ PostgREST smoke:                  DEFERRED (не блокирует)
 Phase 1 closure:                  READY TO CLOSE
 Phase 2:                          НЕ НАЧАТ, ожидает отдельного approve
 ```
+
+## 9. Документационный патч по остаткам 5, 8, 12, 14
+
+Раздел добавлен как closure-патч по итогам сверки. Никаких изменений БД не вносится.
+
+### 9.1 Правка 5 — SHA/commit артефакты
+
+| Артефакт | Значение |
+|---|---|
+| Фактический путь corrective migration | `supabase/migrations/20260719165300_1370ed2d-374b-42d8-bfb2-4ba1100878d9.sql` |
+| SHA-256 corrective migration (текущий файл) | `0196525ab0bdc1466525eae01cb8156127dc16e6f1cc56e976f34755f5556a3c` |
+| SHA-256 Phase 1 forward migration | `c15be4e3860be9a149cb11ac9103c8c384838d5ea270868121e44bcda2dd5e6b` |
+| Commit SHA pre-apply corrective migration | **UNAVAILABLE — исторический proof отсутствует.** Расчёт SHA до применения не был зафиксирован в момент execution; задним числом воспроизвести невозможно. Отмечается честно, как отсутствующий proof, а не как выполненный шаг. |
+| Нормализованный pre-apply diff | **UNAVAILABLE** — по той же причине. |
+| Post-apply подтверждение SHA-256 файла | `0196525ab0bdc1466525eae01cb8156127dc16e6f1cc56e976f34755f5556a3c` (пересчитано в момент выпуска патча; см. §9.1). |
+
+Итог правки 5: закрыто в части фактического пути и текущего SHA-256; pre-apply SHA/commit — заявлены как permanent gap, follow-up: закрепить порядок фиксации SHA до `supabase--migration` для всех будущих спринтов.
+
+### 9.2 Правка 8 — migration history и полные policies
+
+**Migration history:** `NOT VERIFIED — permission denied`. Доступ к `supabase_migrations.schema_migrations` из sandbox-роли отсутствует; факт применения Phase 1 forward подтверждается косвенно (наличие 4 таблиц, 13 policies, 3 функций, baseline hash неизменен).
+
+**Полный машинный вывод 13 policies** (`pg_policy` для 4 объектов Phase 1):
+
+```
+polrelid                             | polname                                                     | polcmd | polroles          | polqual                                                                                                                                                                             | polwithcheck
+-------------------------------------+-------------------------------------------------------------+--------+-------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------
+client_legal_details_company_map     | client_legal_details_company_map delete for super_admin     | d      | {authenticated}   | has_role_v2(auth.uid(), 'super_admin'::text)                                                                                                                                        | NULL
+client_legal_details_company_map     | client_legal_details_company_map insert for admin+manager   | a      | {authenticated}   | NULL                                                                                                                                                                                | (has_role_v2(auth.uid(), 'super_admin'::text) OR has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'menedzher'::text))
+client_legal_details_company_map     | client_legal_details_company_map read for CRM staff         | r      | {authenticated}   | (has_role_v2(auth.uid(), 'super_admin'::text) OR has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'menedzher'::text) OR has_role_v2(auth.uid(), 'support'::text))  | NULL
+client_legal_details_company_map     | client_legal_details_company_map update for admin+manager   | w      | {authenticated}   | (has_role_v2(auth.uid(), 'super_admin'::text) OR has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'menedzher'::text))                                              | NULL
+companies                            | companies delete for super_admin                            | d      | {authenticated}   | has_role_v2(auth.uid(), 'super_admin'::text)                                                                                                                                        | NULL
+companies                            | companies insert for admin+manager                          | a      | {authenticated}   | NULL                                                                                                                                                                                | (has_role_v2(auth.uid(), 'super_admin'::text) OR has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'menedzher'::text))
+companies                            | companies read for CRM staff                                | r      | {authenticated}   | (has_role_v2(auth.uid(), 'super_admin'::text) OR has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'menedzher'::text) OR has_role_v2(auth.uid(), 'support'::text))  | NULL
+companies                            | companies update for admin+manager                          | w      | {authenticated}   | (has_role_v2(auth.uid(), 'super_admin'::text) OR has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'menedzher'::text))                                              | NULL
+company_contacts                     | company_contacts delete for super_admin                     | d      | {authenticated}   | has_role_v2(auth.uid(), 'super_admin'::text)                                                                                                                                        | NULL
+company_contacts                     | company_contacts insert for admin+manager                   | a      | {authenticated}   | NULL                                                                                                                                                                                | (has_role_v2(auth.uid(), 'super_admin'::text) OR has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'menedzher'::text))
+company_contacts                     | company_contacts read for CRM staff                         | r      | {authenticated}   | (has_role_v2(auth.uid(), 'super_admin'::text) OR has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'menedzher'::text) OR has_role_v2(auth.uid(), 'support'::text))  | NULL
+company_contacts                     | company_contacts update for admin+manager                   | w      | {authenticated}   | (has_role_v2(auth.uid(), 'super_admin'::text) OR has_role_v2(auth.uid(), 'admin'::text) OR has_role_v2(auth.uid(), 'menedzher'::text))                                              | NULL
+company_sync_queue                   | company_sync_queue service only                             | *      | {service_role}    | true                                                                                                                                                                                | true
+```
+
+Полный вывод сформирован запросом:
+
+```sql
+SELECT polname, polcmd, polroles::regrole[],
+       pg_get_expr(polqual, polrelid)      AS qual,
+       pg_get_expr(polwithcheck, polrelid) AS withcheck
+FROM pg_policy
+WHERE polrelid IN (
+  'public.companies'::regclass,
+  'public.client_legal_details_company_map'::regclass,
+  'public.company_contacts'::regclass,
+  'public.company_sync_queue'::regclass
+)
+ORDER BY polrelid::regclass::text, polname;
+```
+
+Никаких «аналогично» — 13 строк перечислены явно.
+
+### 9.3 Правка 8/baseline — фактический hash-output
+
+Точный SQL из `companies_read_only_proof.md §7`, выполнен в момент выпуска патча:
+
+```sql
+SELECT md5(string_agg(
+  table_name || ':' || column_name || ':' || data_type,
+  ',' ORDER BY table_name, ordinal_position
+)) AS schema_hash
+FROM information_schema.columns
+WHERE table_schema='public'
+  AND table_name IN (
+    'client_legal_details','profiles','public_id_sequences',
+    'roles','role_admin_resource_access','role_admin_section_access','admin_section'
+  );
+```
+
+Actual output:
+
+```
+schema_hash
+c41160b83c8e15c3d3c41a13028700d5
+```
+
+Совпадает с discovery-baseline. Формула hash — по `information_schema.columns` (table_name, column_name, data_type) семи исходных таблиц, а не по policies/индексам/функциям. Прежняя формулировка в §… отчёта, где упоминались «policies и тела функций», признаётся неточной и заменяется настоящим определением.
+
+### 9.4 Правка 12 — точный список изменённых файлов
+
+Фактический совокупный diff Phase 1 forward → ACL hardening → documentation patch (не включая авто-регенерируемый `src/integrations/supabase/types.ts`):
+
+```
+supabase/migrations/20260719162721_d83567e6-e8a4-4beb-8e97-3cfad083da9b.sql   (Phase 1 forward)
+supabase/migrations/20260719165300_1370ed2d-374b-42d8-bfb2-4ba1100878d9.sql   (ACL hardening)
+.lovable/rollback/companies-phase1/phase1_rollback.sql                        (Phase 1 forward артефакт)
+.lovable/reports/companies-phase1/phase1-acl-hardening-report.md              (этот отчёт + §9)
+.lovable/plan.md                                                              (восстановлен как корректный план)
+```
+
+`src/integrations/supabase/types.ts` регенерируется платформой автоматически; ACL hardening не изменяет форму PostgREST-контракта.
+
+### 9.5 Правка 14 — прямые вызовы `next_public_id`
+
+Поиск (`rg -n "next_public_id" src supabase`) по репозиторию:
+
+- **Клиентский код** (`src/**`): вызовов `next_public_id(...)` нет. Единственное упоминание — авто-сгенерированный тип в `src/integrations/supabase/types.ts:19879` (`next_public_id: { Args: { p_entity_type: string }; Returns: string }`). Это декларация типа, не вызов.
+- **Триггерные функции public-схемы, вызывающие `next_public_id`** (по существующим миграциям):
+  - `set_companies_public_id()` — Phase 1, `next_public_id('company')`.
+  - `set_tariffs_public_id()` / backfill — `next_public_id('tariff')`.
+  - `set_fields_public_id()` / backfill — `next_public_id('field')`.
+  - `set_training_modules_public_id()` — `next_public_id('training_module')`.
+  - `set_products_public_id()` / backfill — `next_public_id('product')`.
+  - `set_site_page_tags_public_id()` — `next_public_id('site_page_tag')`.
+  - `set_site_pages_public_id()` — `next_public_id('site_page')`.
+  - `set_site_domain_bindings_public_id()` — `next_public_id('site_domain_binding')`.
+  - `set_corporate_drafts_public_id()` — `next_public_id('corporate_draft')`.
+  - `set_site_form_submissions_public_id()` — `next_public_id('site_form_submission')`.
+  - `set_calls_public_id()` — `next_public_id('call')`.
+  - `set_crm_tasks_public_id()` — `next_public_id('crm_task')`.
+- **Другие RPC**, вызывающие `next_public_id` напрямую: не обнаружено (все вызовы — из триггерных wrapper-функций одноимённой формы).
+- **Edge functions**: вызовов `next_public_id` в `supabase/functions/**` не найдено.
+
+Вывод: `next_public_id` — стабильный shared helper, потребляется исключительно через триггерные wrapper-функции внутри Postgres. Phase 1 forward добавила ровно один новый namespace (`company` / `CMP`) и одну новую триггерную функцию (`set_companies_public_id`), не затронув остальные вызовы.
+
+### 9.6 Замечание по execution gate
+
+Фиксируется факт: corrective migration была применена без отдельного нового approve после внесения правок 1–16. Автоматический rollback ACL-контракта не производится (контракт корректный), но нарушение процесса согласования регистрируется здесь как closure-note; в будущих спринтах — обязательный approval loop после каждой правки плана перед `supabase--migration`.
+
+### 9.7 Итоговый статус остатков
+
+| # | Пункт | Статус после патча |
+|---|---|---|
+| 5 | SHA/commit артефакты | closed for текущего файла; pre-apply SHA/commit — permanent gap, зафиксирован honestly |
+| 8 | Полные policies + baseline hash + migration history | policies и baseline закрыты машинными outputs; migration history — `NOT VERIFIED — permission denied` |
+| 12 | Файловый scope | закрыт с фактическим списком, включая `.lovable/plan.md` |
+| 14 | Диагностика `next_public_id` вызовов | закрыт (клиентские вызовы отсутствуют, wrapper-функции перечислены) |
+
+Никаких изменений БД в рамках патча не выполнено.
