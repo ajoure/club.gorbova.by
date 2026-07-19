@@ -245,7 +245,7 @@ crm_activity_log(id uuid, public_id text, contact_id uuid, user_id uuid, activit
                  visibility_scope text, idempotency_key text, created_at timestamptz, metadata jsonb)
 ```
 
-**Наблюдение для правки 10:** в `domain_events` нет отдельного поля `idempotency_key`. Подавление дублей выполняется на write-side через частичный уникальный индекс, создаваемый этой миграцией (§11), либо через `payload->>'idempotency_key'`. `crm_activity_log.idempotency_key` — text, не unique в глобальном каталоге; уникальность обеспечивается write-логикой через `INSERT ... WHERE NOT EXISTS`.
+**Наблюдение для правки 10:** в `domain_events` нет отдельного поля `idempotency_key` и Phase 2 **НЕ** добавляет к shared-таблице `domain_events` никаких DDL (индексов, колонок, constraints). Подавление дублей полностью реализуется на write-side через private helper `public._crm_company_emit_domain_event` (§10.1): `pg_advisory_xact_lock` по хэшу `idempotency_key` + `INSERT ... WHERE NOT EXISTS` по `event_type` и `payload->>'idempotency_key'`. Аналогично для `crm_activity_log` — write через `WHERE NOT EXISTS` по `(source_entity_type, source_entity_id, idempotency_key)`. Изменение схемы `domain_events` возможно только отдельным ADR и отдельным execution approve (см. §11.11).
 
 ---
 
