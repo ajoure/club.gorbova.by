@@ -1,8 +1,8 @@
 # CRM Companies — Phase 3A Backfill Discovery Report
 
-**Версия:** 1.0
+**Версия:** 1.1
 **Статус:** DISCOVERY PASS (read-only)
-**Область:** CRM Companies 1.0, backfill из `public.client_legal_details` (CLD) в canonical слой (`companies`, `maps`, `contacts`).
+**Область:** CRM Companies 1.0, backfill из `public.client_legal_details` (CLD) в canonical слой (`public.companies`, `public.client_legal_details_company_map`, `public.company_contacts`).
 **Режим выполнения discovery:** read-only. Никаких DDL/DML не выполнялось.
 
 ---
@@ -10,9 +10,15 @@
 ## 1. Источник истины
 
 - **Основная таблица-источник:** `public.client_legal_details` (CLD).
-- **Целевые таблицы:** `public.companies`, `public.maps`, `public.contacts`.
-- **RPC-контракт (Phase 2):** `crm_company_get_or_create`, `crm_company_link_contact`, billing upsert helpers.
-- **Country resolution:** поле `country` в CLD отсутствует → выводится доменно как `BY` (`inferred_by_domain`).
+- **Целевые таблицы:**
+  - `public.companies` — canonical компания.
+  - `public.client_legal_details_company_map` — маппинг CLD → company.
+  - `public.company_contacts` — контакты компании (billing помечается `relationship_type='billing_contact'` и `is_billing_contact=true`).
+- **RPC-контракт (Phase 2):**
+  - `crm_company_upsert_from_billing` — создаёт/обновляет **только** `public.companies`; жёстко использует `country='BY'`; **не создаёт** запись в `client_legal_details_company_map`; **не создаёт** `company_contacts`; **не пишет** `metadata.country_source`.
+  - `crm_company_link_contact` — создаёт/обновляет запись в `public.company_contacts`.
+  - Для `public.client_legal_details_company_map` **RPC отсутствует**.
+- **Country resolution:** поле `country` в CLD отсутствует. Значение `BY` задаётся жёстко внутри `crm_company_upsert_from_billing`. Метка `inferred_by_domain` **не** является текущим postcondition и в canonical метаданных не сохраняется; фиксация факта инференса — в execution ledger/report фазы 3C (если в Phase 3B не будет отдельно одобрен writer, пишущий такую метку).
 
 ---
 
@@ -32,28 +38,28 @@
 
 | Сущность | Кол-во | Комментарий |
 |---|---|---|
-| `companies` (canonical, unique UNP) | **16** | Дедупликация по UNP |
-| `maps` (CLD → company mapping) | **17** | По одной карте на каждую eligible CLD-строку |
-| `contacts` роли `billing_contact` | **17** | По одному контакту на CLD-профиль |
+| `public.companies` (unique UNP) | **16** | Дедупликация по UNP |
+| `public.client_legal_details_company_map` | **17** | По одной записи на каждую eligible CLD-строку |
+| `public.company_contacts` (`relationship_type='billing_contact'`, `is_billing_contact=true`) | **17** | По одной записи на CLD-профиль |
 
 ---
 
-## 4. Ambiguities и soft-flags
+## 4. Ambiguities: 0 hard data blockers, ровно 1 soft-flag
 
-### 4.1 Один UNP на двух профилях (SOFT-FLAG)
-- **UNP:** `193405000`
-- **Профилей:** 2
-- **Результат backfill:** 1 canonical `company` + 2 `billing_contact` (по одному на каждый профиль).
-- **Классификация:** soft-flag, не блокирует backfill. Требует явной фиксации в rehearsal.
+### 4.1 SOFT-FLAG — один UNP на двух профилях
+- **UNP:** `193405000`.
+- **Профилей:** 2.
+- **Результат backfill:** 1 canonical `companies` + 2 `company_contacts` (`relationship_type='billing_contact'`, `is_billing_contact=true`), по одному на каждый профиль.
+- **Классификация:** **единственный soft-flag**. Не блокирует backfill. Явно фиксируется в rehearsal и в execution ledger.
 
-### 4.2 Один профиль с двумя CLD (разные UNP)
-- **Профилей:** 1
-- **Результат backfill:** 2 canonical `company` (по одной на каждый UNP), 2 `map`.
-- **Классификация:** штатный сценарий канонической модели, не блокирует.
+### 4.2 Штатный сценарий — один профиль с двумя разными UNP
+- **Профилей:** 1.
+- **Результат backfill:** 2 canonical `companies` (по одной на каждый UNP), 2 записи в `client_legal_details_company_map`.
+- **Классификация:** **штатный сценарий** канонической модели (один профиль может владеть несколькими юр. лицами). **Не** soft-flag.
 
-### 4.3 Отсутствует `country` в источнике
-- **Резолюция:** значение `BY` устанавливается как `inferred_by_domain`.
-- **Классификация:** штатное поведение доменной модели.
+### 4.3 Отсутствие `country` в источнике
+- **Резолюция:** `BY` жёстко задан в `crm_company_upsert_from_billing`.
+- **Классификация:** штатное поведение контракта; факт инференса — только в execution ledger/report.
 
 ---
 
@@ -61,9 +67,9 @@
 
 | Таблица | Строк | Sequence |
 |---|---|---|
-| `companies` | 0 | 0 |
-| `maps` | 0 | 0 |
-| `contacts` (canonical) | 0 | — |
+| `public.companies` | 0 | 0 |
+| `public.client_legal_details_company_map` | 0 | 0 |
+| `public.company_contacts` (billing_contact) | 0 | — |
 
 Конфликтов с существующими данными нет. Backfill выполняется на чистый canonical слой.
 
@@ -71,32 +77,49 @@
 
 ## 6. Hard blockers
 
-**0 hard blockers.**
-Все выявленные аномалии классифицированы как soft-flag и покрываются штатным поведением RPC-контракта (идемпотентность + advisory locks из Phase 2).
+**0 hard data blockers.**
+Ровно **1 soft-flag** (см. §4.1). Штатный сценарий из §4.2 к soft-flag не относится.
 
 ---
 
-## 7. Стратегия волн
+## 7. Execution-identity gate (важно для Phase 3B/3C)
 
-- **Волна 1:** 16 уникальных UNP → 16 companies + 16 maps + 16 billing contacts.
-- **Волна 2:** 1 повторный UNP (`193405000`) → 0 новых companies (идемпотентный get_or_create), +1 map, +1 billing contact.
+Существующие Phase 2 RPC имеют **разные identity-требования**, поэтому один единый service-role вызов не выполняет все три действия backfill:
+
+| Действие | Механизм | Разрешённая identity |
+|---|---|---|
+| Upsert в `public.companies` | `crm_company_upsert_from_billing` | `service_role` |
+| Вставка в `public.client_legal_details_company_map` | **RPC отсутствует** | требуется controlled SQL или отдельный внутренний writer |
+| Вставка в `public.company_contacts` | `crm_company_link_contact` | `authenticated` + role guard `admin` / `super_admin` / `menedzher` |
+
+**Следствие:** до rehearsal Phase 3B обязан выбрать и доказать в rollback-only режиме **один согласованный способ** оркестрации всех трёх действий:
+- (a) controlled SQL с проверяемым admin JWT для `crm_company_link_contact` (+ прямой SQL для map под service_role), либо
+- (b) новый узкий internal service writer, покрывающий все три действия, — **только после отдельного approval**.
+
+---
+
+## 8. Стратегия волн
+
+- **Волна 1:** 16 уникальных UNP → 16 `companies` + 16 `client_legal_details_company_map` + 16 `company_contacts` (billing).
+- **Волна 2:** 1 повторный UNP (`193405000`) → 0 новых `companies` (идемпотентный upsert), +1 map, +1 billing contact.
 - **Итого после двух волн:** 16 companies, 17 maps, 17 billing contacts.
 
-Порядок волн важен для явной верификации идемпотентности `crm_company_get_or_create`.
+Порядок волн важен для явной верификации идемпотентности `crm_company_upsert_from_billing`.
 
 ---
 
-## 8. DoD discovery
+## 9. DoD discovery
 
 - [x] Полный inventory CLD (48/17).
-- [x] Прогноз canonical (16/17/17).
-- [x] Ambiguities перечислены и классифицированы (0 hard, 2 soft, 1 domain default).
-- [x] Baseline canonical подтвержден пустым.
+- [x] Прогноз canonical (16/17/17) на реальных именах таблиц.
+- [x] Ambiguities классифицированы: 0 hard, 1 soft-flag, 1 штатный сценарий, 1 доменный default.
+- [x] Baseline canonical подтверждён пустым.
 - [x] Стратегия волн зафиксирована.
+- [x] Execution-identity gate явно описан.
 - [x] Никакие данные не изменены; DDL/DML не выполнялись.
 
 ---
 
-## 9. Следующий шаг
+## 10. Следующий шаг
 
-Phase 3B — подготовка runnable-плана backfill (только план, без исполнения). Phase 3C (реальное выполнение) — **только после отдельного admin approval** и обязательного rollback-only rehearsal.
+Phase 3B — подготовка runnable-плана backfill **и** rollback-only rehearsal (без исполнения на реальных данных). Phase 3C (реальное выполнение) — **только после отдельного admin approval**.
