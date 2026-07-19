@@ -10,8 +10,13 @@
 
 Внутри Phase 1:
 
-- Таблицы: `companies`, `company_contacts`, `client_legal_details_company_map`, `company_sync_queue` (только структура, без enqueue).
-- Триггеры `updated_at` на 3 таблицы (map-таблица включается только после добавления в неё столбца `updated_at`, см. §2.3).
+- Таблицы (создавать строго в этом порядке из-за FK `company_contacts.source_client_legal_details_map_id → client_legal_details_company_map(id)`):
+  1. `companies`
+  2. `client_legal_details_company_map`
+  3. `company_contacts`
+  4. `company_sync_queue`
+  (только структура, без enqueue). Альтернатива при желании инвертировать: создать `company_contacts` без FK и добавить FK на map отдельным `ALTER TABLE ... ADD CONSTRAINT` после создания map — в Phase 1 не используется, зафиксировано как опция.
+- Триггеры `updated_at` на все 4 таблицы (у всех есть `updated_at`, см. §2.2–§2.4).
 - Триггер `trg_set_companies_public_id` через `next_public_id('company')`.
 - Регистрация entity_type в `public_id_sequences` (`entity_type='company'`, `prefix='CMP'`).
 - RLS + policies (см. `companies_permissions_matrix.md`).
