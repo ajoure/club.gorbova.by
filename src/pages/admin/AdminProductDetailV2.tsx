@@ -646,6 +646,15 @@ export default function AdminProductDetailV2() {
     
     // Build meta object with preregistration and recurring settings if applicable
     let metaToSave: OfferMetaConfig = { ...offerForm.meta };
+    // Canonical slot_role handling — physically remove the JSON key when
+    // «Не размещается на сайте» is selected. Never persist null / "" / undefined.
+    if (rawSlotRole && ALLOWED_SLOT_ROLES.has(rawSlotRole)) {
+      metaToSave.slot_role = rawSlotRole as OfferMetaConfig["slot_role"];
+    } else {
+      delete metaToSave.slot_role;
+    }
+    metaToSave.site_button_variant = rawVariant as OfferMetaConfig["site_button_variant"];
+
     
     if (isPreregistration) {
       metaToSave.preregistration = {
