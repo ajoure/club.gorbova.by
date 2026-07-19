@@ -326,19 +326,9 @@ c41160b83c8e15c3d3c41a13028700d5
 
 Совпадает с discovery-baseline. Формула hash — по `information_schema.columns` (table_name, column_name, data_type) семи исходных таблиц, а не по policies/индексам/функциям. Прежняя формулировка в §… отчёта, где упоминались «policies и тела функций», признаётся неточной и заменяется настоящим определением.
 
-### 9.4 Правка 12 — точный список изменённых файлов
+### 9.4 Правка 12 — точный файловый scope
 
-Фактический совокупный diff Phase 1 forward → ACL hardening → documentation patch (не включая авто-регенерируемый `src/integrations/supabase/types.ts`):
-
-```
-supabase/migrations/20260719162721_d83567e6-e8a4-4beb-8e97-3cfad083da9b.sql   (Phase 1 forward)
-supabase/migrations/20260719165300_1370ed2d-374b-42d8-bfb2-4ba1100878d9.sql   (ACL hardening)
-.lovable/rollback/companies-phase1/phase1_rollback.sql                        (Phase 1 forward артефакт)
-.lovable/reports/companies-phase1/phase1-acl-hardening-report.md              (этот отчёт + §9)
-.lovable/plan.md                                                              (восстановлен как корректный план)
-```
-
-`src/integrations/supabase/types.ts` регенерируется платформой автоматически; ACL hardening не изменяет форму PostgREST-контракта.
+Списки перенесены в §2 (`2.1` documentation patch, `2.2` ACL-hardening sprint, `2.3` полный Phase 1 production sequence) и являются единственным источником истины. Прежняя формулировка «фактический совокупный diff» без разделения scope признаётся неточной и заменена тремя раздельными списками в §2.
 
 ### 9.5 Правка 14 — прямые вызовы `next_public_id`
 
