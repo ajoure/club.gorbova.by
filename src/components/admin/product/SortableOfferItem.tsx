@@ -67,9 +67,7 @@ export function SortableOfferItem({
   const slotRoleRaw = (offer.meta?.slot_role ?? "").toString().trim();
   const slotLabel = (() => {
     if (!slotRoleRaw) return "Не размещается на сайте";
-    const match = /^button_(\d+)$/.exec(slotRoleRaw);
-    if (match) return `Слот: Кнопка ${match[1]}`;
-    return `Слот: ${slotRoleRaw}`;
+    return `Якорь сайта: ${slotRoleRaw}`;
   })();
 
   return (
