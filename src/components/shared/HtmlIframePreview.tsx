@@ -542,15 +542,26 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       var pos = parseInt(w.getAttribute('data-lovable-slot-position') || '', 10);
       var pv = w.getAttribute('data-lovable-position-variant') || '';
       ensureOrigDisplay(w);
+      // Bridge v11 — measure geometry with the authored display restored.
+      // A prior applyGroup() pass may have deactivated the wrapper (display:none),
+      // which makes getBoundingClientRect() return zeroes and corrupts the
+      // top-to-bottom sort on the next reapply. Temporarily restore the
+      // authored display before measuring; unassigned wrappers are re-hidden
+      // by deactivateWrapper() below.
+      var prevDisplay = w.style.display || '';
+      var origDisplay = w.getAttribute('data-lovable-slot-orig-display') || '';
+      if (prevDisplay === 'none') {
+        w.style.display = origDisplay;
+      }
       var rect = null;
       try { rect = w.getBoundingClientRect ? w.getBoundingClientRect() : null; } catch (e) { rect = null; }
       var top = rect && Number.isFinite(rect.top) ? rect.top : (Number.isFinite(pos) ? pos : 999999);
       var left = rect && Number.isFinite(rect.left) ? rect.left : 0;
       positioned.push({ el: w, pos: Number.isFinite(pos) ? pos : 999, top: top, left: left, domIndex: i, variant: pv, assigned: false });
     }
-    // Bridge v10 — fixed Tilda wrappers are ordered by actual rendered
-    // top-to-bottom geometry. Authored data-lovable-slot-position can drift
-    // from the visual order after template edits, so it is only a tie-breaker.
+    // Bridge v11 — fixed Tilda wrappers are ordered by actual rendered
+    // top-to-bottom geometry, measured with authored display forced on so
+    // previously-hidden wrappers still contribute a real rect.
     positioned.sort(function(a, b) {
       return a.top - b.top || a.left - b.left || a.pos - b.pos || a.domIndex - b.domIndex;
     });
