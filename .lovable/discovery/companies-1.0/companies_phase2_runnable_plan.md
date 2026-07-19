@@ -1062,16 +1062,21 @@ BEGIN
           AND idempotency_key='company.field.override_conflict:' || v_id::text || ':' || f || ':' || _client_legal_details_id::text);
   END IF;
 
-  -- domain_events (material change only)
+  -- domain_events (material change only) через private emit helper (§10.1)
   IF array_length(v_changed,1) IS NOT NULL OR array_length(v_conflicts,1) IS NOT NULL THEN
-    INSERT INTO public.domain_events (event_type, source, entity_id, payload)
-    SELECT 'company.upserted_from_billing.v1', 'crm', v_id, jsonb_build_object(
-      'version', 1, 'company_id', v_id, 'cld_id', _client_legal_details_id,
-      'changed_fields', to_jsonb(v_changed), 'override_conflict_fields', to_jsonb(v_conflicts),
-      'source_updated_at', v_cld.updated_at, 'occurred_at', now(),
-      'idempotency_key', 'company.upserted_from_billing:' || v_id::text || ':' || _client_legal_details_id::text || ':' ||
-                         md5(array_to_string(v_changed,',')))
-    ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING;
+    PERFORM public._crm_company_emit_domain_event(
+      'company.upserted_from_billing.v1',
+      v_id,
+      'company.upserted_from_billing:' || v_id::text || ':' || _client_legal_details_id::text || ':' ||
+        md5(array_to_string(v_changed,',')),
+      jsonb_build_object(
+        'version', 1, 'company_id', v_id, 'cld_id', _client_legal_details_id,
+        'changed_fields', to_jsonb(v_changed), 'override_conflict_fields', to_jsonb(v_conflicts),
+        'source_updated_at', v_cld.updated_at, 'occurred_at', now(),
+        'idempotency_key', 'company.upserted_from_billing:' || v_id::text || ':' || _client_legal_details_id::text || ':' ||
+                           md5(array_to_string(v_changed,','))
+      )
+    );
   END IF;
 
   RETURN v_id;
