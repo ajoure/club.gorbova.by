@@ -1065,9 +1065,29 @@ export default function AdminProductDetailV2() {
     setDeleteConfirm(null);
   };
 
-  // Get offers by tariff
-  const getOffersForTariff = (tariffId: string) => 
-    (offers || []).filter((o: any) => o.tariff_id === tariffId);
+  // Get offers by tariff (canonical order: manual sort_order).
+  const getOffersForTariff = (tariffId: string) =>
+    (offers || [])
+      .filter((o: any) => o.tariff_id === tariffId)
+      .slice()
+      .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+  // DnD reorder handler for offers within a single tariff.
+  const handleOfferDragEnd = (tariffId: string) => (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const list = getOffersForTariff(tariffId);
+    const oldIndex = list.findIndex((o: any) => o.id === active.id);
+    const newIndex = list.findIndex((o: any) => o.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = [...list];
+    const [moved] = reordered.splice(oldIndex, 1);
+    reordered.splice(newIndex, 0, moved);
+    reorderOffers.mutate({
+      tariffId,
+      orderedIds: reordered.map((o: any) => o.id),
+    });
+  };
 
   // Get features by tariff
   const getFeaturesForTariff = (tariffId: string) =>
