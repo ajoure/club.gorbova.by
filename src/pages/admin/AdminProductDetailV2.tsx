@@ -2260,41 +2260,35 @@ export default function AdminProductDetailV2() {
                 { value: "button_9", label: "Кнопка 9" },
                 { value: "button_10", label: "Кнопка 10" },
               ];
-              const VARIANT_OPTIONS: { value: string; label: string }[] = [
-                { value: "", label: "По умолчанию" },
+              const VARIANT_OPTIONS: { value: "primary" | "outline" | "installment" | "legal_entity" | "lead"; label: string }[] = [
                 { value: "primary", label: "Синяя (основная)" },
                 { value: "outline", label: "С контуром" },
                 { value: "installment", label: "Оранжевая (рассрочка)" },
-                { value: "legal_entity", label: "Тёмная (для юрлица)" },
-                { value: "lead", label: "Светлая (заявка)" },
+                { value: "legal_entity", label: "Зелёная (юрлицо)" },
+                { value: "lead", label: "Серая (заявка)" },
               ];
-              const currentRole = (((offerForm.meta as any)?.slot_role as string) || "").trim();
-              const currentVariant = ((offerForm.meta as any)?.site_button_variant as string) || "";
-              const knownRoleValues = PURPOSE_OPTIONS.map((o) => o.value);
-              const isCustomRole = currentRole !== "" && !knownRoleValues.includes(currentRole);
-              const purposeSelectValue = isCustomRole ? "__custom__" : currentRole;
-              const setRole = (val: string | undefined) => {
-                setOfferForm({
-                  ...offerForm,
-                  meta: {
-                    ...offerForm.meta,
-                    slot_role: val && val.trim() ? val.trim() : undefined,
-                  } as any,
-                });
+              const currentRole = (offerForm.meta?.slot_role ?? "").toString().trim();
+              const currentVariant = (offerForm.meta?.site_button_variant ?? "").toString().trim();
+              const purposeSelectValue = currentRole;
+              const setRole = (val: string) => {
+                const next: OfferMetaConfig = { ...offerForm.meta };
+                if (val && val.trim()) {
+                  next.slot_role = val.trim() as OfferMetaConfig["slot_role"];
+                } else {
+                  delete next.slot_role;
+                }
+                setOfferForm({ ...offerForm, meta: next });
               };
-              const setVariant = (val: string | undefined) => {
-                setOfferForm({
-                  ...offerForm,
-                  meta: {
-                    ...offerForm.meta,
-                    site_button_variant: val || undefined,
-                  } as any,
-                });
+              const setVariant = (val: string) => {
+                const next: OfferMetaConfig = { ...offerForm.meta };
+                if (val) {
+                  next.site_button_variant = val as OfferMetaConfig["site_button_variant"];
+                } else {
+                  delete next.site_button_variant;
+                }
+                setOfferForm({ ...offerForm, meta: next });
               };
-              const purposeLabel =
-                purposeSelectValue === "__custom__"
-                  ? `Другое назначение (${currentRole})`
-                  : PURPOSE_OPTIONS.find((o) => o.value === currentRole)?.label;
+              const purposeLabel = PURPOSE_OPTIONS.find((o) => o.value === currentRole)?.label;
               const variantLabel = VARIANT_OPTIONS.find((o) => o.value === currentVariant)?.label;
               return (
                 <Card>
@@ -2310,34 +2304,14 @@ export default function AdminProductDetailV2() {
                         <select
                           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                           value={purposeSelectValue}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (v === "__custom__") {
-                              if (!isCustomRole) setRole("");
-                            } else {
-                              setRole(v);
-                            }
-                          }}
+                          onChange={(e) => setRole(e.target.value)}
                         >
                           {PURPOSE_OPTIONS.map((o) => (
                             <option key={o.value || "empty"} value={o.value}>
                               {o.label}
                             </option>
                           ))}
-                          <option value="__custom__">Другой (свой код)</option>
                         </select>
-                        {purposeSelectValue === "__custom__" && (
-                          <div className="space-y-1">
-                            <Label className="text-xs text-muted-foreground">
-                              Технический код слота
-                            </Label>
-                            <Input
-                              placeholder="например: button_special"
-                              value={currentRole}
-                              onChange={(e) => setRole(e.target.value)}
-                            />
-                          </div>
-                        )}
                         <p className="text-xs text-muted-foreground">
                           «Кнопка N» — это якорь в HTML Tilda (<code>data-lovable-slot="button_N"</code>). Визуальный порядок в списке (#1, #2 …) настраивается отдельно перетаскиванием.
                         </p>
@@ -2350,7 +2324,7 @@ export default function AdminProductDetailV2() {
                           onChange={(e) => setVariant(e.target.value)}
                         >
                           {VARIANT_OPTIONS.map((o) => (
-                            <option key={o.value || "empty"} value={o.value}>
+                            <option key={o.value} value={o.value}>
                               {o.label}
                             </option>
                           ))}
@@ -2360,26 +2334,23 @@ export default function AdminProductDetailV2() {
                         </p>
                       </div>
                     </div>
-                    {(purposeLabel || variantLabel) && (
-                      <div className="rounded-md bg-muted/40 p-3 text-xs space-y-1">
-                        {purposeLabel && (
-                          <div>
-                            <span className="text-muted-foreground">Слот в HTML: </span>
-                            <span className="font-medium">{purposeLabel}</span>
-                          </div>
-                        )}
-                        {variantLabel && (
-                          <div>
-                            <span className="text-muted-foreground">Цвет: </span>
-                            <span className="font-medium">{variantLabel}</span>
-                          </div>
-                        )}
+                    <div className="rounded-md bg-muted/40 p-3 text-xs space-y-1">
+                      <div>
+                        <span className="text-muted-foreground">Слот в HTML: </span>
+                        <span className="font-medium">{purposeLabel ?? "Не размещается на сайте"}</span>
                       </div>
-                    )}
+                      {variantLabel && (
+                        <div>
+                          <span className="text-muted-foreground">Цвет: </span>
+                          <span className="font-medium">{variantLabel}</span>
+                        </div>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               );
             })()}
+
 
             {/* Повторное вступление */}
 
