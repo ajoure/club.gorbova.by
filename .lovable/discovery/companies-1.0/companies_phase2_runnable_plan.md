@@ -573,13 +573,57 @@ _crm_company_resolve_or_create_internal(
 ```
 crm_company_get_or_create        ──┐
 crm_company_upsert_from_billing  ──┴──> _crm_company_resolve_or_create_internal
+                                              │
+                                              ▼
+                              _crm_company_emit_domain_event (§10.1)
+crm_company_link_contact        ──────────────▲
+crm_company_merge               ──────────────┤
+crm_company_archive             ──────────────┤
+crm_company_grp_refetch         ──────────────┘
 ```
 
-Никто больше эту функцию не вызывает.
+Никто вне Phase 2 эти два private helper не вызывает.
 
-**Rollback order (§12):** `_crm_company_resolve_or_create_internal` дропается **после** `crm_company_get_or_create` и `crm_company_upsert_from_billing`, чтобы не сломать зависимости.
+**Rollback order (§12):** сначала DROP public RPC (§12.2), затем `_crm_company_resolve_or_create_internal`, затем `_crm_company_emit_domain_event` — оба helper без CASCADE, после того как их callers удалены.
 
-**Полный CREATE — см. §11.2.**
+**Полный CREATE — см. §11.2 (resolve) и §10.1 / §11.11 (emit).**
+
+### 10.1 Private helper `_crm_company_emit_domain_event` (правка 10)
+
+Специальный helper для дедуплицированной записи в shared-таблицу `public.domain_events`. Введён взамен ранее предполагавшегося `CREATE UNIQUE INDEX` на `domain_events` (правка 10) — DDL на shared-таблице Phase 2 не производит.
+
+**Имя:** `public._crm_company_emit_domain_event`.
+**Owner:** `postgres`. **Security:** `SECURITY DEFINER`. **search_path:** `public`. **Language:** `plpgsql`. **volatility:** `VOLATILE`.
+
+**Сигнатура:**
+
+```
+_crm_company_emit_domain_event(
+  _event_type      text,   -- 'company.*.v1'
+  _entity_id       uuid,   -- companies.id
+  _idempotency_key text,   -- см. §8, формат company.<op>:<...>
+  _payload         jsonb   -- полный payload v1 (без source, без event_type — источник фиксирован)
+) RETURNS uuid              -- domain_events.id (существующего или нового) либо NULL если запись подавлена
+```
+
+**Алгоритм (строгий):**
+
+1. Валидация: `_event_type LIKE 'company.%'` и не NULL; `_idempotency_key` не NULL и длиной ≥ 8; `_payload ? 'version'` и `_payload->>'version' = '1'`; `_payload->>'idempotency_key' = _idempotency_key` (иначе `RAISE EXCEPTION 'emit: payload/key mismatch'`).
+2. `PERFORM pg_advisory_xact_lock(hashtextextended('crm_company_emit:' || _idempotency_key, 0));` — блокировка только в рамках текущей транзакции, авто-освобождение на COMMIT/ROLLBACK.
+3. `SELECT id INTO v_existing FROM public.domain_events WHERE event_type=_event_type AND payload->>'idempotency_key'=_idempotency_key LIMIT 1;` — если найдено, вернуть NULL (запись подавлена, вызывающий RPC не считает это ошибкой).
+4. `INSERT INTO public.domain_events(event_type, source, entity_id, payload) VALUES (_event_type, 'crm', _entity_id, _payload) RETURNING id INTO v_new;` — `source` жёстко зафиксирован (`'crm'`).
+5. `RETURN v_new;`.
+6. При любом исключении внутри helper — `RAISE`, без swallow.
+
+**ACL:** `REVOKE ALL ON FUNCTION public._crm_company_emit_domain_event(text,uuid,text,jsonb) FROM PUBLIC, anon, authenticated, service_role`. Никаких GRANT. Вызов возможен только из другой функции owner `postgres`.
+
+**Callers (полный список Phase 2):** `crm_company_get_or_create`, `crm_company_link_contact`, `crm_company_upsert_from_billing`, `crm_company_merge`, `crm_company_archive`, `crm_company_grp_refetch`, а также `_crm_company_resolve_or_create_internal` (для `company.created.v1`). Все прямые `INSERT INTO public.domain_events (...)` из тел Phase 2 RPC заменены на `PERFORM public._crm_company_emit_domain_event(...)`; sample-фрагменты в §11.2–§11.9, где остался «сырой» INSERT (например §11.2 строки для `company.created.v1`), при финализации SQL заменяются на вызов helper — контракт §10.1 является нормативным.
+
+**Rollback order:** DROP выполняется **после** `_crm_company_resolve_or_create_internal` (§12.5).
+
+**Инварианты пост-миграции (§11.12):** функция существует, ACL пуста, `pg_proc.prosecdef=true`, `proowner=postgres`.
+
+**Явно вне scope:** любые DDL на `public.domain_events`, любые тригерры, любые indexes на `domain_events`, любой EXECUTE GRANT external ролям. Ослабление любого из этих ограничений требует отдельного ADR.
 
 ---
 
