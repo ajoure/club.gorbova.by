@@ -1,6 +1,6 @@
 # companies_architecture_freeze.md
 
-Статус: **DRAFT / NOT APPROVED**. После approval — architecture freeze. Изменения только через ADR.
+Статус: **APPROVED / FROZEN** на commit `04f85026c3458cdd3c8398c1841c1e4371e3dbfa` (Fixed CRM Discovery gaps). Дальнейшие архитектурные изменения — только через новый ADR. Freeze закрывает canonical-модель, SoT и границы фаз; технические правки в Phase 1 execution plan (referential actions, полные RLS policies) не отменяют freeze.
 
 ## 1. Неизменяемые инварианты (см. README §Инварианты)
 
