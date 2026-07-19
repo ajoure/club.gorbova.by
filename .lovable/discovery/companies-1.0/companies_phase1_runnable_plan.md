@@ -17,11 +17,24 @@ Runnable-план Phase 1. Восстановлен строго по approved `
 Все запросы — только `SELECT`. Выполняются оператором до forward migration и прикладываются к отчёту исполнения. Критические ассертации продублированы в §3 forward migration через `DO $$ … RAISE EXCEPTION … $$` — pass/fail preflight не является stop-guard самим по себе.
 
 ```sql
--- 1.1 Baseline schema hash discovery
-SELECT md5(string_agg(table_name, ',' ORDER BY table_name))
-FROM information_schema.tables
-WHERE table_schema='public';
--- Ожидается: c41160b83c8e15c3d3c41a13028700d5 (companies_read_only_proof.md §schema_hash).
+-- 1.1 Baseline schema hash (SQL идентичен companies_read_only_proof.md §7)
+SELECT md5(string_agg(
+  table_name || ':' || column_name || ':' || data_type,
+  ',' ORDER BY table_name, ordinal_position
+)) AS schema_hash
+FROM information_schema.columns
+WHERE table_schema='public'
+  AND table_name IN (
+    'client_legal_details',
+    'profiles',
+    'public_id_sequences',
+    'roles',
+    'role_admin_resource_access',
+    'role_admin_section_access',
+    'admin_section'
+  );
+-- Ожидается ровно: c41160b83c8e15c3d3c41a13028700d5
+-- (companies_read_only_proof.md §7). Любое другое значение — HARD STOP.
 
 -- 1.2 Объекты, обязанные отсутствовать
 SELECT to_regclass('public.companies'),
@@ -39,21 +52,35 @@ WHERE proname IN (
 );
 -- Ожидается: пустой результат.
 
--- 1.3 Обязательные helpers
-SELECT proname FROM pg_proc
-WHERE proname IN ('next_public_id','update_updated_at_column','has_role_v2');
--- Ожидается: все три.
+-- 1.3 Обязательные helpers — точные сигнатуры
+SELECT proname, pg_get_function_identity_arguments(oid) AS args
+FROM pg_proc
+WHERE proname IN ('next_public_id','update_updated_at_column','has_role_v2')
+ORDER BY proname, args;
+-- Ожидается ровно:
+--   has_role_v2              | _user_id uuid, _role_code text
+--   next_public_id           | p_entity_type text
+--   update_updated_at_column | (пустая строка аргументов)
 
-SELECT prefix, last_value FROM public.public_id_sequences WHERE entity_type='company';
--- Ожидается: 0 rows (регистрация в §3).
+-- 1.4 public_id namespace: ни одна из двух коллизий не должна существовать
+SELECT entity_type, prefix, last_value
+FROM public.public_id_sequences
+WHERE entity_type='company' OR prefix='CMP';
+-- Ожидается: 0 rows.
 
--- 1.4 CMP prefix свободен
-SELECT count(*) FROM public.public_id_sequences WHERE prefix='CMP';
--- Ожидается: 0.
+-- 1.5 SYSTEM tenant соответствует контракту (id + name + is_personal)
+SELECT id::text, name, is_personal
+FROM public.tenants
+WHERE id = '00000000-0000-0000-0000-000000000001';
+-- Ожидается ровно: 00000000-0000-0000-0000-000000000001 | system | false.
 
--- 1.5 SYSTEM workspace default
-SELECT id FROM public.tenants WHERE id = '00000000-0000-0000-0000-000000000001';
--- Ожидается: одна строка (используется как DEFAULT для companies.workspace_id).
+-- 1.6 Все 7 канонических ролей присутствуют
+SELECT array_agg(code ORDER BY code) FROM public.roles
+WHERE code IN ('admin','admin_gost','editor','menedzher','super_admin','support','user');
+-- Ожидается: {admin,admin_gost,editor,menedzher,super_admin,support,user}.
+
+-- 1.7 Schema hash (та же формула) обязан вернуть baseline и после rollback
+-- (см. §9 верификация). Дрейф значения = блокер release.
 ```
 
 ## 2. Файлы миграций
