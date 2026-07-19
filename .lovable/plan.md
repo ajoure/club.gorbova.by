@@ -1,182 +1,80 @@
-## да, согласен, с учетом правок:
+# План: CRM Companies — Phase 1 ACL hardening и финальная static verification
 
-1. В §2 исправить формулировку:
+Статус: **APPROVED и APPLIED** (см. отчёт `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md`, §9 — документационный closure-патч).
+Файл восстановлен в формате «План:» вместо ранее ошибочно закоммиченного текста review.
 
-```text
-Прямые записи присутствуют строго в семи фрагментах §11:
-шесть public RPC и один private helper.
+## 1. Scope
 
-```
+- Одна corrective migration через `supabase--migration`: только `REVOKE` / `GRANT` и DO-guards. Никаких DDL, никаких изменений схем, RLS-политик, RPC-тел, триггеров.
+- Один отчёт: `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md`.
+- Авто-регенерация `src/integrations/supabase/types.ts` допустима только как no-op (schema PostgREST не меняется).
+- UI, edge functions, `supabase/config.toml`, cron, storage — не трогать.
+- Phase 2 — не начинать.
 
-Сейчас ошибочно указано «в шести местах», хотя перечислено семь.
+## 2. Read-only диагностика ДО правок
 
-2. Не вводить новый `event_type`:
+1. `pg_class.relacl` и `has_table_privilege` для 4 таблиц Phase 1 (`companies`, `client_legal_details_company_map`, `company_contacts`, `company_sync_queue`).
+2. `pg_proc.proacl`, `prosecdef`, `proconfig` для 3 функций (`set_companies_public_id`, `crm_company_get_or_create`, `crm_company_link_contact`).
+3. `pg_policy` — 13 строк, полный вывод `polname/polcmd/polroles/polqual/polwithcheck` без сокращений.
+4. Baseline schema hash по discovery-запросу (`information_schema.columns` семи исходных таблиц, поля `table_name, column_name, data_type`); ожидание `c41160b83c8e15c3d3c41a13028700d5`.
+5. Наличие данных в 4 таблицах (4 × 0 rows подтвердить, но пустота **не** является предпосылкой hardening).
 
-```text
-company.linked_to_contact.updated.v1
+## 3. Corrective migration
 
-```
+Внутри одной транзакции с `SET LOCAL lock_timeout='3s'`, `statement_timeout='30s'`.
 
-Матрица §8 остаётся неизменной. Для создания связи и её материального обновления используется один тип:
+1. **Preflight DO-guards**: 4 таблицы существуют, `relrowsecurity=true` на каждой, ровно 13 policies, 3 функции с точными identity args (`public.set_companies_public_id()`, `public.crm_company_get_or_create(text,text,text,text,text,uuid)`, `public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)`).
+2. **Таблицы**:
+   - `REVOKE ALL ON <table> FROM PUBLIC, anon, authenticated` для всех 4.
+   - `GRANT SELECT, INSERT, UPDATE, DELETE ON <table> TO authenticated` для `companies`, `client_legal_details_company_map`, `company_contacts`.
+   - `GRANT ALL ON <table> TO service_role` для всех 4.
+   - `company_sync_queue`: никаких прав anon/authenticated.
+3. **Функции**:
+   - `set_companies_public_id()` — `REVOKE ALL FROM PUBLIC, anon, authenticated, service_role`. Никакого GRANT.
+   - `crm_company_get_or_create(...)` и `crm_company_link_contact(...)` — `REVOKE ALL FROM PUBLIC, anon, service_role`, затем `GRANT EXECUTE ... TO authenticated`. `service_role` явный EXECUTE не получает (использует superuser bypass при необходимости; matrix утверждена).
+4. **Post-apply invariants (DO-block)** через `has_table_privilege` / `has_function_privilege`:
+   - anon и authenticated не имеют доступа к `company_sync_queue`.
+   - anon не имеет EXECUTE на 3 функциях.
+   - authenticated не имеет EXECUTE на `set_companies_public_id()`.
+   - authenticated имеет CRUD на 3 CRM-таблицах и EXECUTE на 2 RPC.
+   - Любое расхождение → `RAISE EXCEPTION` → транзакционный rollback.
 
-```text
-company.linked_to_contact.v1
+Global default privileges (`ALTER DEFAULT PRIVILEGES`) не трогать: вынесено в security follow-up.
 
-```
+## 4. Финальная static verification
 
-Различаются только:
+Все проверки — read-only, машинные outputs без прозы:
 
-- `payload.update=true` для материального обновления;
-- формат `idempotency_key`;
-- состав payload.
+1. Матрицы `has_table_privilege` (4 таблицы × 3 роли × 4 действия) и `has_function_privilege` (3 функции × 3 роли × EXECUTE).
+2. `pg_class.relacl` для 4 таблиц; `pg_proc.proacl` для 3 функций.
+3. Полный `pg_policy` вывод для 13 строк.
+4. Владельцы 3 функций (`postgres`).
+5. Повторный baseline hash — обязан совпасть с `c41160b83c8e15c3d3c41a13028700d5`.
+6. Пустота 4 таблиц.
+7. Свежий `supabase--linter` — без новых findings по Phase 1 объектам.
+8. Поиск прямых вызовов `next_public_id` в `src/**` и `supabase/**` (ожидание: только wrapper-функции в public-схеме, никаких клиентских вызовов).
+9. Migration history: попытка чтения `supabase_migrations.schema_migrations`; при отказе доступа — статус `NOT VERIFIED — permission denied`.
+10. Фиксация фактического SHA-256 файла corrective migration после применения и точного пути миграции; pre-apply SHA/commit — permanent gap.
 
-Иначе патч незаметно изменит утверждённую event matrix, хотя §6 плана прямо запрещает это.
+## 5. Файловый scope патча
 
-3. В нормативном перечне event types оставить:
+- `supabase/migrations/<ts>_crm_companies_phase1_acl_hardening.sql` (создаётся `supabase--migration`, точный `<ts>` фиксируется в отчёте).
+- `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md`.
+- `.lovable/plan.md` (этот файл).
+- `src/integrations/supabase/types.ts` — только как no-op auto-regeneration.
 
-```text
-company.created.v1
-company.linked_to_contact.v1
-company.upserted_from_billing.v1
-company.merged.v1
-company.archived.v1
-company.grp_refetch_requested.v1
+Любой другой diff — HARD STOP.
 
-```
+## 6. Stop-guards
 
-Это шесть типов событий при семи местах вызова helper: два вызова относятся к `company.linked_to_contact.v1`.
+- Preflight DO-guard провалился → миграция не выполняется, транзакция откатывается.
+- Post-apply invariant нарушен → миграция откатывается, отчёт фиксирует SQLSTATE.
+- Baseline hash после применения ≠ `c41160b83c8e15c3d3c41a13028700d5` → HARD STOP, разбор до продолжения.
+- Появился schema-diff в `types.ts` → HARD STOP.
 
-4. Уточнить первый self-check: `rg` может найти описательные упоминания строки в §8 и §10.1. Критерий приёмки должен проверять не общее число hits, а отсутствие прямых inserts именно внутри SQL-блоков §11.2–§11.9, кроме тела самого emit-helper в §11.11.
-5. Заголовок итогового отчёта должен быть дословно:
+## 7. Deferred (не входит в этот спринт)
 
-```text
-Отчет о выполненной работе: CRM Companies — Phase 2 финализация event writers через _crm_company_emit_domain_event
-
-```
-
-Не использовать заголовок `Отчёт о выполнении`.
-
-6. В конец плана добавить дословно:
-
-```text
-План должен быть составлен на русском языке.
-Отчет о выполненной работе должен быть составлен на русском языке.
-Вся переписка, все пояснения и все результаты должны предоставляться только на русском языке.
-
-```
-
-```text
-Docs-only patch: APPROVED
-Разрешённый файл: companies_phase2_runnable_plan.md
-Phase 2 production execution: NOT APPROVED
-БД и миграции: НЕ ИЗМЕНЯТЬ
-Admin fixture blocker: СОХРАНИТЬ
-
-```
-
-&nbsp;
-
-&nbsp;
-
-## План: Phase 2 runnable plan — финализация §11 через `_crm_company_emit_domain_event`
-
-**Статус:** `PLAN ONLY / DOCS ONLY / DO NOT EXECUTE`.
-**Scope файлов:** ровно один файл — `.lovable/discovery/companies-1.0/companies_phase2_runnable_plan.md`.
-**НЕ трогать:** БД, миграции, `supabase/`, `src/`, `.lovable/plan.md`, ADR-0002, отчёты Phase 1.
-**Execution:** Phase 2 остаётся `NOT APPROVED`. Blocker `admin fixture required` сохранён.
-
-### 1. Цель патча (единственный остаток проверки)
-
-Закрыть частично внесённый остаток №1: убрать из §11 все прямые `INSERT INTO public.domain_events (...)` и выражения `ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING`, заменив их на `PERFORM public._crm_company_emit_domain_event(...)` согласно нормативному контракту §10.1. После патча §11 становится финальным runnable SQL, без формулировки «при финализации SQL заменяются».
-
-### 2. Точный перечень мест замены (по фактическим строкам файла)
-
-Проверено `rg` по документу. Прямые записи в `domain_events` присутствуют строго в шести местах §11:
-
-1. §11.2 `_crm_company_resolve_or_create_internal` — строки ~766–785 (`company.created.v1`, INSERT + WHERE NOT EXISTS-guard).
-2. §11.4 `crm_company_link_contact` — строки ~943–952 (`company.linked_to_contact.v1`, INSERT + WHERE NOT EXISTS).
-3. §11.4 `crm_company_link_contact` — строки ~954–961 (`company.linked_to_contact.updated.v1`, INSERT + `ON CONFLICT ((payload->>'idempotency_key'))`).
-4. §11.5 `crm_company_upsert_from_billing` — строки ~1058–1067 (`company.upserted_from_billing.v1`, INSERT + `ON CONFLICT`).
-5. §11.6 `crm_company_merge` — строки ~1217–1225 (`company.merged.v1`, INSERT + `ON CONFLICT`).
-6. §11.7 `crm_company_archive` — строки ~1285–1289 (`company.archived.v1`, INSERT + `ON CONFLICT`).
-7. §11.9 `crm_company_grp_refetch` — строки ~1344–1348 (`company.grp_refetch_requested.v1`, INSERT + `ON CONFLICT`).
-
-Итого семь фрагментов (шесть RPC + один private helper). Все остальные упоминания `domain_events` в §8, §10.1, §11.11 — описательные/контрактные и остаются без изменений.
-
-### 3. Нормативный шаблон замены
-
-Каждый фрагмент вида
-
-```sql
-INSERT INTO public.domain_events (event_type, source, entity_id, payload)
-VALUES ('company.<op>.v1', 'crm', <entity_id>,
-  jsonb_build_object('version',1, ..., 'idempotency_key','company.<op>:<...>'))
-ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING;
-```
-
-или эквивалент с `WHERE NOT EXISTS`, заменяется на:
-
-```sql
-PERFORM public._crm_company_emit_domain_event(
-  'company.<op>.v1',
-  <entity_id>,
-  'company.<op>:<...>',
-  jsonb_build_object(
-    'version', 1,
-    'idempotency_key', 'company.<op>:<...>',
-    -- остальные обязательные поля payload из §8 (occurred_at, actor_user_id и т.д.)
-    ...
-  )
-);
-```
-
-Правила:
-
-- `_idempotency_key` (3-й аргумент) и `payload->>'idempotency_key'` должны совпадать байт-в-байт — иначе helper падает `emit: payload/key mismatch` (§10.1 шаг 1).
-- `payload.version` строго `1` (integer 1, не строка).
-- `event_type` строго из матрицы §8 (`company.created.v1` / `company.linked_to_contact.v1` / `company.linked_to_contact.updated.v1` / `company.upserted_from_billing.v1` / `company.merged.v1` / `company.archived.v1` / `company.grp_refetch_requested.v1`).
-- `source` внутри helper прибит гвоздями к `'crm'` — параметра нет; убрать из вызывающих inserts любые `source`-поля payload, если они дублировали это значение.
-- Возврат helper (`uuid` либо `NULL`) не проверяется вызывающим RPC — подавление дубля не считается ошибкой (§10.1 шаг 3).
-
-Записи в `crm_activity_log` и `audit_logs` остаются как есть — они не проходят через `_crm_company_emit_domain_event` и уже guarded через `WHERE NOT EXISTS` по своим ключам (§8, §11.4–§11.7).
-
-### 4. Дополнительные редакционные правки в том же файле
-
-- §10.1, последний абзац: удалить формулировку «sample-фрагменты в §11.2–§11.9, где остался „сырой“ INSERT … при финализации SQL заменяются на вызов helper — контракт §10.1 является нормативным». Заменить на: «Все Phase 2 RPC в §11 вызывают helper напрямую; прямых `INSERT INTO public.domain_events` в §11 не осталось.»
-- §8, комментарий про «Прямых `INSERT INTO public.domain_events` из тел Phase 2 RPC нет — весь трафик идёт через helper» — оставить без изменений (после патча становится фактом, а не декларацией).
-- Историческое упоминание ранее предполагавшегося уникального индекса `domain_events_company_idem_uniq` в §10.1 (rationale) — оставить, оно допустимо.
-
-### 5. Post-edit self-check (без запуска SQL)
-
-Выполнить локально `rg` по обновлённому файлу и убедиться:
-
-```bash
-rg -n "INSERT INTO public\.domain_events" .lovable/discovery/companies-1.0/companies_phase2_runnable_plan.md
-# Ожидается: единственный hit в §10.1 (тело helper, строка ~615) и, возможно, в §8 (описательный текст). В §11.2–§11.9 — 0 hits.
-
-rg -n "ON CONFLICT \(\(payload->>'idempotency_key'\)\)" .lovable/discovery/companies-1.0/companies_phase2_runnable_plan.md
-# Ожидается: 0 hits.
-
-rg -n "_crm_company_emit_domain_event\(" .lovable/discovery/companies-1.0/companies_phase2_runnable_plan.md
-# Ожидается: минимум 7 hits в §11 (по одному на каждое место замены из §2 этого плана) + вхождения в §10.1/§8/§11.11.
-```
-
-Если любой из первых двух grep-ов возвращает hit внутри §11.2–§11.9 — патч не завершён.
-
-### 6. Инварианты, которые патч НЕ меняет
-
-- Матрица событий §8 (7 event_type, формат `idempotency_key`, обязательные поля payload).
-- Security matrix §9: 7 public RPC + 2 private helper, ACL для `_crm_company_emit_domain_event` (REVOKE ALL от PUBLIC/anon/authenticated/service_role, без GRANT).
-- Rollback §12: порядок `DROP` двух helper после public RPC.
-- Post-apply invariants §11.12/§13.5: helper существует, `SECURITY DEFINER`, отсутствие Phase 2 индексов на `domain_events`.
-- Baseline schema hash `c41160b83c8e15c3d3c41a13028700d5`.
-- ADR-0002: без изменений.
-
-### 7. Deliverable отчёта
-
-После применения (в build mode) отчёт «Отчёт о выполнении» на русском, содержащий:
-
-- фактический diff-summary по 7 фрагментам §11;
-- вывод трёх `rg`-команд из §5 этого плана как машинное доказательство;
-- подтверждение отсутствия изменений в БД, миграциях, `src/`, ADR-0002 и `.lovable/plan.md`;
-- статус: Phase 2 runnable plan — READY for review; execution по-прежнему NOT APPROVED.
+- Затягивание default privileges на public-схеме (project-wide security follow-up).
+- Runtime API proof (staging execution с реальными вызовами `crm_company_get_or_create` / `crm_company_link_contact`).
+- Фиксация pre-apply SHA/commit процесса для будущих спринтов (process fix, не data fix).
+- Backfill, sync worker, UI, Phase 2 RPC — по roadmap Discovery 1.0.
