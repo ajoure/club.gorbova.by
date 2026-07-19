@@ -32,6 +32,41 @@ export interface TariffCardOffer {
   sort_order?: number;
   payment_method?: string | null;
   installment_count?: number | null;
+  meta?: { site_button_variant?: string; slot_role?: string; [key: string]: any } | null;
+}
+
+/** Actionable offer types — those that render a CTA button on tariff cards. */
+const ACTIONABLE_TYPES = new Set([
+  "pay_now",
+  "trial",
+  "preregistration",
+  "lead",
+  "bank_installment",
+  "invoice",
+]);
+
+/**
+ * Map meta.site_button_variant → shadcn Button variant + optional colour override.
+ * Colour is a property of the offer (not its offer_type or its position).
+ */
+const VARIANT_STYLE: Record<string, { variant: "default" | "outline"; className?: string }> = {
+  primary:      { variant: "default" },
+  outline:      { variant: "outline" },
+  installment:  { variant: "default", className: "bg-orange-500 hover:bg-orange-600 text-white border-transparent" },
+  legal_entity: { variant: "default", className: "bg-emerald-600 hover:bg-emerald-700 text-white border-transparent" },
+  lead:         { variant: "default", className: "bg-slate-500 hover:bg-slate-600 text-white border-transparent" },
+};
+
+function defaultLabelFor(offer: TariffCardOffer): string {
+  if (offer.button_label) return offer.button_label;
+  switch (offer.offer_type) {
+    case "trial":            return `Пробный период ${offer.trial_days ?? ""} дней`.trim();
+    case "preregistration":  return "Оставить заявку";
+    case "lead":             return "Оставить заявку";
+    case "bank_installment": return "Заявка на рассрочку от банка";
+    case "invoice":          return "Сформировать счёт";
+    default:                 return "Оплатить";
+  }
 }
 
 export interface TariffCardData {
