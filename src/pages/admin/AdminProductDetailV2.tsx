@@ -147,10 +147,13 @@ export default function AdminProductDetailV2() {
   const updateTariff = useUpdateTariff();
   const deleteTariff = useDeleteTariff();
   const reorderTariffs = useReorderTariffs();
+  const reorderOffers = useReorderTariffOffers();
 
-  // DnD sensors for tariff reorder
+  // DnD sensors — Mouse (distance=5), Touch (long-press 250ms), Keyboard.
   const dndSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const handleTariffDragEnd = useCallback((event: DragEndEvent) => {
