@@ -24,9 +24,10 @@ import {
   ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X, EyeOff, Power, PowerOff, GripVertical, Shield
 } from "lucide-react";
 import { ProductAccessRulesTab } from "@/components/admin/product/ProductAccessRulesTab";
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
-import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { DndContext, closestCenter, PointerSensor, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { SortableTariffItem } from "@/components/admin/product/SortableTariffItem";
+import { SortableOfferItem } from "@/components/admin/product/SortableOfferItem";
 import { ProductCustomFields } from "@/components/products/ProductCustomFields";
 import { ProductDocumentsOverview } from "@/components/admin/product/ProductDocumentsOverview";
 import { ProductCompositionTab } from "@/components/products/ProductCompositionTab";
@@ -70,6 +71,7 @@ import {
   useUpdateTariffOffer,
   useDeleteTariffOffer,
   useSetPrimaryOffer,
+  useReorderTariffOffers,
   type TariffOffer,
   type TariffOfferInsert,
   type PaymentMethod,
@@ -145,10 +147,13 @@ export default function AdminProductDetailV2() {
   const updateTariff = useUpdateTariff();
   const deleteTariff = useDeleteTariff();
   const reorderTariffs = useReorderTariffs();
+  const reorderOffers = useReorderTariffOffers();
 
-  // DnD sensors for tariff reorder
+  // DnD sensors — Mouse (distance=5), Touch (long-press 250ms), Keyboard.
   const dndSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const handleTariffDragEnd = useCallback((event: DragEndEvent) => {
@@ -787,9 +792,9 @@ export default function AdminProductDetailV2() {
           },
         ];
       }
-      // Каноничные слот-маркеры для «Сформировать счёт».
-      (metaToSave as any).site_button_variant = (metaToSave as any).site_button_variant || "legal_entity";
-      (metaToSave as any).slot_role = (metaToSave as any).slot_role || "payment_invoice";
+      // NOTE: слот и оформление больше НЕ проставляются автоматически по offer_type.
+      // Администратор выбирает «Слот» (Кнопка 1…10) и «Цвет» вручную в разделе
+      // «Размещение кнопки». Пустой слот = «Не размещать автоматически».
       // Удаляем чужие блоки эквайринга/подписки/рассрочки.
       delete (metaToSave as any).acquiring;
       delete (metaToSave as any).recurring;
@@ -1060,9 +1065,29 @@ export default function AdminProductDetailV2() {
     setDeleteConfirm(null);
   };
 
-  // Get offers by tariff
-  const getOffersForTariff = (tariffId: string) => 
-    (offers || []).filter((o: any) => o.tariff_id === tariffId);
+  // Get offers by tariff (canonical order: manual sort_order).
+  const getOffersForTariff = (tariffId: string) =>
+    (offers || [])
+      .filter((o: any) => o.tariff_id === tariffId)
+      .slice()
+      .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+  // DnD reorder handler for offers within a single tariff.
+  const handleOfferDragEnd = (tariffId: string) => (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const list = getOffersForTariff(tariffId);
+    const oldIndex = list.findIndex((o: any) => o.id === active.id);
+    const newIndex = list.findIndex((o: any) => o.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = [...list];
+    const [moved] = reordered.splice(oldIndex, 1);
+    reordered.splice(newIndex, 0, moved);
+    reorderOffers.mutate({
+      tariffId,
+      orderedIds: reordered.map((o: any) => o.id),
+    });
+  };
 
   // Get features by tariff
   const getFeaturesForTariff = (tariffId: string) =>
@@ -1263,7 +1288,7 @@ export default function AdminProductDetailV2() {
               </GlassCard>
             ) : (
               <>
-                {/* Select All + Sort Pills */}
+                {/* Select All — ручной порядок теперь единственный канонический режим (SortPills убраны). */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <Checkbox
                     checked={offerSelect.selectedCount > 0 && offerSelect.selectedCount === allOffers.length}
@@ -1275,19 +1300,18 @@ export default function AdminProductDetailV2() {
                   {offerSelect.hasSelection && (
                     <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={offerSelect.clearSelection}>Сбросить</Button>
                   )}
-                  <div className="ml-auto flex items-center gap-1">
-                    <SortPill label="Сумма" sortKey="amount" currentSortKey={offerSort.sortKey} currentSortDirection={offerSort.sortDirection} onSort={offerSort.handleSort} />
-                    <SortPill label="Тип" sortKey="offer_type" currentSortKey={offerSort.sortKey} currentSortDirection={offerSort.sortDirection} onSort={offerSort.handleSort} />
-                  </div>
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    Перетащите <GripVertical className="inline h-3 w-3 -mt-0.5" />, чтобы изменить порядок кнопок.
+                  </span>
                 </div>
 
                 <div className="relative space-y-6" onMouseDown={offerSelect.handleMouseDown}>
                   {tariffs?.map((tariff) => {
-                    const tariffOffers = clientSort(getOffersForTariff(tariff.id), offerSort.sortKey, offerSort.sortDirection);
+                    const tariffOffers = getOffersForTariff(tariff.id);
                     if (!tariffOffers.length) return null;
-                    
+
                     const hasActivePayOffer = tariffOffers.some((o: any) => o.offer_type === 'pay_now' && o.is_active);
-                    
+
                     return (
                       <GlassCard key={tariff.id} className="p-4">
                         {/* Tariff group header — NOT selectable */}
@@ -1302,30 +1326,29 @@ export default function AdminProductDetailV2() {
                             </Badge>
                           )}
                         </div>
-                        <div className="space-y-2">
-                          {tariffOffers.map((offer: any) => (
-                            <div
-                              key={offer.id}
-                              ref={(el) => offerSelect.registerItemRef(offer.id, el)}
-                              className={cn(
-                                "flex items-start gap-2 cursor-pointer",
-                                offerSelect.selectedIds.has(offer.id) && "ring-2 ring-primary/30 rounded-lg"
-                              )}
-                              onClick={(e) => {
-                                if (e.shiftKey) { offerSelect.handleRangeSelect(offer.id, true); }
-                                else if (e.ctrlKey || e.metaKey) { offerSelect.toggleSelection(offer.id, true); }
-                                else { openOfferDialog(offer); }
-                              }}
-                            >
-                              <div className="pt-2 pl-1" onClick={(e) => e.stopPropagation()}>
-                                <Checkbox
-                                  checked={offerSelect.selectedIds.has(offer.id)}
-                                  onCheckedChange={() => offerSelect.toggleSelection(offer.id, true)}
-                                />
-                              </div>
-                              <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
-                                <OfferRowCompact
+                        <DndContext
+                          sensors={dndSensors}
+                          collisionDetection={closestCenter}
+                          onDragEnd={handleOfferDragEnd(tariff.id)}
+                        >
+                          <SortableContext
+                            items={tariffOffers.map((o: any) => o.id)}
+                            strategy={verticalListSortingStrategy}
+                          >
+                            <div className="space-y-2">
+                              {tariffOffers.map((offer: any, idx: number) => (
+                                <SortableOfferItem
+                                  key={offer.id}
                                   offer={offer}
+                                  positionNumber={idx + 1}
+                                  isSelected={offerSelect.selectedIds.has(offer.id)}
+                                  onToggleSelect={() => offerSelect.toggleSelection(offer.id, true)}
+                                  registerRef={(el) => offerSelect.registerItemRef(offer.id, el)}
+                                  onRowClick={(e) => {
+                                    if (e.shiftKey) { offerSelect.handleRangeSelect(offer.id, true); }
+                                    else if (e.ctrlKey || e.metaKey) { offerSelect.toggleSelection(offer.id, true); }
+                                    else { openOfferDialog(offer); }
+                                  }}
                                   onToggleActive={handleToggleOfferActive}
                                   onUpdateLabel={handleUpdateOfferLabel}
                                   onSetPrimary={(offerId) => setPrimaryOffer.mutate({ offerId, tariffId: tariff.id })}
@@ -1334,10 +1357,10 @@ export default function AdminProductDetailV2() {
                                   onDelete={() => setDeleteConfirm({ type: "offer", id: offer.id })}
                                   hasPrimaryInTariff={hasActivePayOffer}
                                 />
-                              </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
+                          </SortableContext>
+                        </DndContext>
                       </GlassCard>
                     );
                   })}
@@ -2131,8 +2154,8 @@ export default function AdminProductDetailV2() {
                           first_payment_delay_days: null as any,
                           meta: {
                             ...cleanMeta,
-                            site_button_variant: cleanMeta.site_button_variant || "legal_entity",
-                            slot_role: cleanMeta.slot_role || "payment_invoice",
+                            // Слот и цвет кнопки задаются вручную в разделе
+                            // «Размещение кнопки», а не по типу оффера.
                           },
                         });
                       } else {
@@ -2233,22 +2256,28 @@ export default function AdminProductDetailV2() {
 
             {/* Размещение кнопки на публичной странице */}
             {(() => {
+              // Слот — это якорь для Tilda HTML: data-lovable-slot="button_N".
+              // #N в списке — визуальный порядок; Кнопка N — стабильный якорь.
               const PURPOSE_OPTIONS: { value: string; label: string }[] = [
                 { value: "", label: "Не размещать автоматически" },
-                { value: "payment_card", label: "Оплата картой" },
-                { value: "payment_invoice", label: "Счёт для юридического лица" },
-                { value: "installment_2", label: "Рассрочка — вариант 1" },
-                { value: "installment_3", label: "Рассрочка — вариант 2" },
-                { value: "installment_bank", label: "Банковская рассрочка" },
-                { value: "lead", label: "Оставить заявку" },
+                { value: "button_1", label: "Кнопка 1" },
+                { value: "button_2", label: "Кнопка 2" },
+                { value: "button_3", label: "Кнопка 3" },
+                { value: "button_4", label: "Кнопка 4" },
+                { value: "button_5", label: "Кнопка 5" },
+                { value: "button_6", label: "Кнопка 6" },
+                { value: "button_7", label: "Кнопка 7" },
+                { value: "button_8", label: "Кнопка 8" },
+                { value: "button_9", label: "Кнопка 9" },
+                { value: "button_10", label: "Кнопка 10" },
               ];
               const VARIANT_OPTIONS: { value: string; label: string }[] = [
-                { value: "", label: "Не задан" },
-                { value: "primary", label: "Основная кнопка" },
-                { value: "outline", label: "Дополнительная, с контуром" },
-                { value: "installment", label: "Кнопка рассрочки" },
-                { value: "legal_entity", label: "Для юридического лица" },
-                { value: "lead", label: "Кнопка заявки" },
+                { value: "", label: "По умолчанию" },
+                { value: "primary", label: "Синяя (основная)" },
+                { value: "outline", label: "С контуром" },
+                { value: "installment", label: "Оранжевая (рассрочка)" },
+                { value: "legal_entity", label: "Тёмная (для юрлица)" },
+                { value: "lead", label: "Светлая (заявка)" },
               ];
               const currentRole = (((offerForm.meta as any)?.slot_role as string) || "").trim();
               const currentVariant = ((offerForm.meta as any)?.site_button_variant as string) || "";
@@ -2288,14 +2317,13 @@ export default function AdminProductDetailV2() {
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>Назначение кнопки</Label>
+                        <Label>Слот на странице</Label>
                         <select
                           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                           value={purposeSelectValue}
                           onChange={(e) => {
                             const v = e.target.value;
                             if (v === "__custom__") {
-                              // keep existing custom value or start empty for the user to fill in
                               if (!isCustomRole) setRole("");
                             } else {
                               setRole(v);
@@ -2307,26 +2335,26 @@ export default function AdminProductDetailV2() {
                               {o.label}
                             </option>
                           ))}
-                          <option value="__custom__">Другое назначение</option>
+                          <option value="__custom__">Другой (свой код)</option>
                         </select>
                         {purposeSelectValue === "__custom__" && (
                           <div className="space-y-1">
                             <Label className="text-xs text-muted-foreground">
-                              Технический код назначения
+                              Технический код слота
                             </Label>
                             <Input
-                              placeholder="например: payment_card_promo"
+                              placeholder="например: button_special"
                               value={currentRole}
                               onChange={(e) => setRole(e.target.value)}
                             />
                           </div>
                         )}
                         <p className="text-xs text-muted-foreground">
-                          Назначение определяет, в каком месте карточки тарифа показывается кнопка.
+                          «Кнопка N» — это якорь в HTML Tilda (<code>data-lovable-slot="button_N"</code>). Визуальный порядок в списке (#1, #2 …) настраивается отдельно перетаскиванием.
                         </p>
                       </div>
                       <div className="space-y-2">
-                        <Label>Внешний вид кнопки</Label>
+                        <Label>Цвет кнопки</Label>
                         <select
                           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                           value={currentVariant}
@@ -2339,7 +2367,7 @@ export default function AdminProductDetailV2() {
                           ))}
                         </select>
                         <p className="text-xs text-muted-foreground">
-                          Внешний вид определяет оформление, но не способ оплаты.
+                          Цвет влияет только на оформление, но не на способ оплаты.
                         </p>
                       </div>
                     </div>
@@ -2347,13 +2375,13 @@ export default function AdminProductDetailV2() {
                       <div className="rounded-md bg-muted/40 p-3 text-xs space-y-1">
                         {purposeLabel && (
                           <div>
-                            <span className="text-muted-foreground">На странице: </span>
+                            <span className="text-muted-foreground">Слот в HTML: </span>
                             <span className="font-medium">{purposeLabel}</span>
                           </div>
                         )}
                         {variantLabel && (
                           <div>
-                            <span className="text-muted-foreground">Оформление: </span>
+                            <span className="text-muted-foreground">Цвет: </span>
                             <span className="font-medium">{variantLabel}</span>
                           </div>
                         )}

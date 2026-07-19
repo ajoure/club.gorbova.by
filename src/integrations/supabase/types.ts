@@ -19643,6 +19643,44 @@ export type Database = {
         Returns: Json
       }
       release_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
+      reorder_tariff_offers: {
+        Args: { p_ordered_ids: string[]; p_tariff_id: string }
+        Returns: {
+          amount: number
+          auto_charge_after_trial: boolean | null
+          auto_charge_amount: number | null
+          auto_charge_delay_days: number | null
+          auto_charge_offer_id: string | null
+          button_label: string
+          created_at: string | null
+          first_payment_delay_days: number | null
+          getcourse_offer_id: string | null
+          id: string
+          installment_count: number | null
+          installment_interval_days: number | null
+          is_active: boolean | null
+          is_installment: boolean | null
+          is_primary: boolean | null
+          meta: Json | null
+          offer_type: string
+          payment_method: string | null
+          reentry_amount: number | null
+          reject_virtual_cards: boolean | null
+          requires_card_tokenization: boolean | null
+          sort_order: number | null
+          tariff_id: string
+          trial_days: number | null
+          updated_at: string | null
+          visible_from: string | null
+          visible_to: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "tariff_offers"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       report_package_field_dependencies: {
         Args: { _field_id: string }
         Returns: Json
