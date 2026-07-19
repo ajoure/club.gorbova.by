@@ -1,5 +1,5 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { corsHeaders } from "../_shared/cors.ts";
+import { requireSuperAdmin } from "../_shared/acquiring/auth-guard.ts";
 
 /**
  * split-multi-module-orders — PATCH G
@@ -26,9 +26,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, serviceKey);
+    const { supabase } = await requireSuperAdmin(req);
 
     const body = await req.json();
     const mode: string = body.mode || "dry_run";
@@ -361,8 +359,14 @@ Deno.serve(async (req) => {
     });
   } catch (err: any) {
     console.error("[split-multi-module-orders] Error:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
+    const message = err instanceof Error ? err.message : "Unknown error";
+    const status = message.startsWith("unauthorized")
+      ? 401
+      : message.startsWith("forbidden")
+        ? 403
+        : 500;
+    return new Response(JSON.stringify({ error: message }), {
+      status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

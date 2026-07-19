@@ -130,7 +130,15 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const body = await req.json();
-    console.log('Payment methods webhook received:', JSON.stringify(body));
+    const receivedTransaction = body?.transaction;
+    console.log('Payment methods webhook received:', JSON.stringify({
+      transaction_uid: receivedTransaction?.uid ?? null,
+      tracking_id: receivedTransaction?.tracking_id ?? null,
+      status: receivedTransaction?.status ?? null,
+      card_brand: receivedTransaction?.credit_card?.brand ?? null,
+      card_last4: receivedTransaction?.credit_card?.last_4 ?? null,
+      has_card_token: Boolean(receivedTransaction?.credit_card?.token),
+    }));
 
     // Handle tokenization webhook from bePaid
     const transaction = body.transaction;
