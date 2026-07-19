@@ -1471,8 +1471,9 @@ BEGIN
      OR has_function_privilege('service_role','public._crm_company_emit_domain_event(text,uuid,text,jsonb)','EXECUTE')
   THEN RAISE EXCEPTION 'post: private helper ACL drift'; END IF;
 
-  -- search_global ACL must stay executable for anon/authenticated/service_role per pre-Phase-2 contract.
-  IF NOT has_function_privilege('anon','public.search_global(text,integer,integer)','EXECUTE')
+  -- search_global ACL must preserve the observed pre-Phase-2 contract:
+  -- authenticated/service_role may execute; anon (including privileges inherited from PUBLIC) may not.
+  IF has_function_privilege('anon','public.search_global(text,integer,integer)','EXECUTE')
      OR NOT has_function_privilege('authenticated','public.search_global(text,integer,integer)','EXECUTE')
      OR NOT has_function_privilege('service_role','public.search_global(text,integer,integer)','EXECUTE')
   THEN RAISE EXCEPTION 'post: search_global ACL drift from pre-Phase-2 contract'; END IF;

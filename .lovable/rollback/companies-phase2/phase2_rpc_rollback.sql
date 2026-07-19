@@ -129,5 +129,5 @@ REVOKE ALL ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text
 REVOKE ALL ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)  FROM PUBLIC, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text,uuid)     TO authenticated;
 GRANT EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)  TO authenticated;
--- search_global ACL остаётся идентичным pre-Phase-2 (§2.5): postgres/authenticated/service_role/anon/PUBLIC=EXECUTE
+-- search_global ACL остаётся идентичным фактическому pre-Phase-2: authenticated/service_role=EXECUTE, anon/PUBLIC=none
 COMMIT;

@@ -554,7 +554,7 @@ WHERE NOT EXISTS (
 | `crm_company_upsert_from_billing` (public) | none | EXECUTE | none |
 | `_crm_company_resolve_or_create_internal` (private helper) | none | none | none |
 | `_crm_company_emit_domain_event` (private helper, §10.1) | none | none | none |
-| `search_global` (existing, additive edit §6) | сохраняется исходный ACL (authenticated, service_role, anon, PUBLIC = EXECUTE) — Phase 2 ACL не сужает во избежание регрессий | — | — |
+| `search_global` (existing, additive edit §6) | сохраняется фактический исходный ACL: authenticated/service_role = EXECUTE; anon/PUBLIC = none | — | — |
 
 Role matrix (в теле RPC): read — `super_admin, admin, menedzher, support`; write/link/create — `super_admin, admin, menedzher`; archive/merge — `super_admin, admin`; deny — `admin_gost, editor, user`. Global default privileges не меняются.
 
@@ -2115,8 +2115,9 @@ BEGIN
      OR has_function_privilege('service_role','public._crm_company_emit_domain_event(text,uuid,text,jsonb)','EXECUTE')
   THEN RAISE EXCEPTION 'post: private helper ACL drift'; END IF;
 
-  -- search_global ACL must stay executable for anon/authenticated/service_role per pre-Phase-2 contract.
-  IF NOT has_function_privilege('anon','public.search_global(text,integer,integer)','EXECUTE')
+  -- search_global ACL must preserve the observed pre-Phase-2 contract:
+  -- authenticated/service_role may execute; anon (including privileges inherited from PUBLIC) may not.
+  IF has_function_privilege('anon','public.search_global(text,integer,integer)','EXECUTE')
      OR NOT has_function_privilege('authenticated','public.search_global(text,integer,integer)','EXECUTE')
      OR NOT has_function_privilege('service_role','public.search_global(text,integer,integer)','EXECUTE')
   THEN RAISE EXCEPTION 'post: search_global ACL drift from pre-Phase-2 contract'; END IF;
@@ -2280,7 +2281,7 @@ REVOKE ALL ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text
 REVOKE ALL ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)  FROM PUBLIC, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text,uuid)     TO authenticated;
 GRANT EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)  TO authenticated;
--- search_global ACL остаётся идентичным pre-Phase-2 (§2.5): postgres/authenticated/service_role/anon/PUBLIC=EXECUTE
+-- search_global ACL остаётся идентичным фактическому pre-Phase-2: authenticated/service_role=EXECUTE, anon/PUBLIC=none
 COMMIT;
 <!-- PHASE2_ROLLBACK_SQL_END -->
 
