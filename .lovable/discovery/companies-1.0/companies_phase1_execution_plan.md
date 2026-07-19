@@ -267,7 +267,73 @@ CREATE POLICY "companies delete for super_admin"
   ON public.companies FOR DELETE TO authenticated
   USING (has_role_v2(auth.uid(),'super_admin'));
 
--- client_legal_details_company_map, company_contacts — аналогичный набор из 4 политик.
+-- client_legal_details_company_map
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.client_legal_details_company_map TO authenticated;
+GRANT ALL ON public.client_legal_details_company_map TO service_role;
+ALTER TABLE public.client_legal_details_company_map ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "client_legal_details_company_map read for CRM staff"
+  ON public.client_legal_details_company_map FOR SELECT TO authenticated
+  USING (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher') OR
+    has_role_v2(auth.uid(),'support')
+  );
+
+CREATE POLICY "client_legal_details_company_map insert for admin+manager"
+  ON public.client_legal_details_company_map FOR INSERT TO authenticated
+  WITH CHECK (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher')
+  );
+
+CREATE POLICY "client_legal_details_company_map update for admin+manager"
+  ON public.client_legal_details_company_map FOR UPDATE TO authenticated
+  USING (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher')
+  );
+
+CREATE POLICY "client_legal_details_company_map delete for super_admin"
+  ON public.client_legal_details_company_map FOR DELETE TO authenticated
+  USING (has_role_v2(auth.uid(),'super_admin'));
+
+-- company_contacts
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.company_contacts TO authenticated;
+GRANT ALL ON public.company_contacts TO service_role;
+ALTER TABLE public.company_contacts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "company_contacts read for CRM staff"
+  ON public.company_contacts FOR SELECT TO authenticated
+  USING (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher') OR
+    has_role_v2(auth.uid(),'support')
+  );
+
+CREATE POLICY "company_contacts insert for admin+manager"
+  ON public.company_contacts FOR INSERT TO authenticated
+  WITH CHECK (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher')
+  );
+
+CREATE POLICY "company_contacts update for admin+manager"
+  ON public.company_contacts FOR UPDATE TO authenticated
+  USING (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher')
+  );
+
+CREATE POLICY "company_contacts delete for super_admin"
+  ON public.company_contacts FOR DELETE TO authenticated
+  USING (has_role_v2(auth.uid(),'super_admin'));
 
 -- company_sync_queue — только service_role.
 GRANT ALL ON public.company_sync_queue TO service_role;
