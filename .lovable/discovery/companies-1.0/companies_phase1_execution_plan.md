@@ -446,8 +446,14 @@ GRANT EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean
    - `DROP POLICY IF EXISTS "companies insert for admin+manager" ON public.companies;`
    - `DROP POLICY IF EXISTS "companies update for admin+manager" ON public.companies;`
    - `DROP POLICY IF EXISTS "companies delete for super_admin" ON public.companies;`
-   - Аналогичные 4 политики для `public.company_contacts` (имена: `"company_contacts read for CRM staff"`, `... insert for admin+manager"`, `... update for admin+manager"`, `... delete for super_admin"`).
-   - Аналогичные 4 политики для `public.client_legal_details_company_map`.
+   - `DROP POLICY IF EXISTS "company_contacts read for CRM staff" ON public.company_contacts;`
+   - `DROP POLICY IF EXISTS "company_contacts insert for admin+manager" ON public.company_contacts;`
+   - `DROP POLICY IF EXISTS "company_contacts update for admin+manager" ON public.company_contacts;`
+   - `DROP POLICY IF EXISTS "company_contacts delete for super_admin" ON public.company_contacts;`
+   - `DROP POLICY IF EXISTS "client_legal_details_company_map read for CRM staff" ON public.client_legal_details_company_map;`
+   - `DROP POLICY IF EXISTS "client_legal_details_company_map insert for admin+manager" ON public.client_legal_details_company_map;`
+   - `DROP POLICY IF EXISTS "client_legal_details_company_map update for admin+manager" ON public.client_legal_details_company_map;`
+   - `DROP POLICY IF EXISTS "client_legal_details_company_map delete for super_admin" ON public.client_legal_details_company_map;`
    - `DROP POLICY IF EXISTS "company_sync_queue service only" ON public.company_sync_queue;`
 5. Helper-функции создаются вне Phase 1 (`update_updated_at_column`, `has_role_v2`, `next_public_id`) — **не удаляются** rollback'ом Phase 1.
 6. Таблицы, строго в этом порядке (обратно созданию, с учётом FK):
