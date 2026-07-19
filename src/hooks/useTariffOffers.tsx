@@ -436,3 +436,32 @@ export function useSetPrimaryOffer() {
     },
   });
 }
+
+// Reorder offers within a tariff via atomic RPC (Phase 1.1).
+// Всегда передаёт ПОЛНЫЙ список id кнопок тарифа в желаемом порядке.
+export function useReorderTariffOffers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      tariffId,
+      orderedIds,
+    }: {
+      tariffId: string;
+      orderedIds: string[];
+    }) => {
+      const { error } = await supabase.rpc("reorder_tariff_offers", {
+        p_tariff_id: tariffId,
+        p_ordered_ids: orderedIds,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tariff_offers"] });
+      queryClient.invalidateQueries({ queryKey: ["product_offers"] });
+    },
+    onError: (error) => {
+      toast.error(`Ошибка сортировки кнопок: ${error.message}`);
+    },
+  });
+}
+
