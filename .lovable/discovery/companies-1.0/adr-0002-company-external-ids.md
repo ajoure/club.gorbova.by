@@ -1,72 +1,111 @@
 # ADR-0002: External Company IDs — storage strategy
 
 **Status:** `DRAFT / NOT APPROVED / DO NOT EXECUTE`
-**Date:** 2026-07-19
+**Date:** 2026-07-19 (patch v2)
 **Phase:** CRM Companies — Phase 2 (Canonical RPC Layer)
 **Related:** `.lovable/discovery/companies-1.0/companies_phase2_runnable_plan.md`
 
 ## 1. Контекст
 
-Архитектурный freeze Phase 1 запрещает автоматически выводить canonical `public.companies` из AmoCRM. До принятия этого ADR запрещено также добавлять колонку `companies.external_ids` (jsonb или массив), а external ID компаний должны быть сопоставимы с существующей инфраструктурой маппингов интеграций.
+Архитектурный freeze Phase 1 запрещает автоматически выводить canonical `public.companies` из AmoCRM. До принятия этого ADR запрещено также добавлять колонку `companies.external_ids`, а external ID компаний должны быть сопоставимы с существующей инфраструктурой маппингов интеграций.
 
 Вопрос ADR: **должна ли Phase 2 добавлять новую колонку/таблицу для external company IDs, или достаточно существующей `integration_field_mappings`?**
 
-## 2. Read-only discovery
+## 2. Read-only discovery (фактические outputs)
 
-Все запросы — только `SELECT`. Никакой DDL/DML.
+### 2.1 Точная схема `public.integration_field_mappings`
 
-### 2.1 Схема `public.integration_field_mappings`
+Query:
 
-| column | type | nullable |
-|---|---|---|
-| `id` | uuid | NO |
-| `instance_id` | uuid | ? (references `integration_instances`) |
-| `entity_type` | text | ? |
-| `project_field` | text | ? |
-| `external_field` | text | ? |
-| `field_type` | text | ? |
-| `is_required` | boolean | ? |
-| `is_key_field` | boolean | ? |
-| `transform_rules` | jsonb | ? |
-| `created_at` | timestamptz | ? |
-| `updated_at` | timestamptz | ? |
-
-### 2.2 Индексы
-
-```
-integration_field_mappings_pkey                                  UNIQUE (id)
-integration_field_mappings_instance_id_entity_type_project__key  UNIQUE (instance_id, entity_type, project_field)
-idx_integration_field_mappings_instance                          btree  (instance_id)
+```sql
+SELECT column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema='public' AND table_name='integration_field_mappings'
+ORDER BY ordinal_position;
 ```
 
-Ключевое наблюдение: unique-constraint покрывает `(instance_id, entity_type, project_field)`. Нет уникальности по `(instance_id, entity_type, external_field)`.
+Actual output:
 
-### 2.3 Семантика
+| column_name | data_type | is_nullable | default |
+|---|---|---|---|
+| `id` | uuid | NO | `gen_random_uuid()` |
+| `instance_id` | uuid | NO | — |
+| `entity_type` | text | NO | — |
+| `project_field` | text | NO | — |
+| `external_field` | text | NO | — |
+| `field_type` | text | YES | `'text'` |
+| `is_required` | boolean | YES | `false` |
+| `is_key_field` | boolean | YES | `false` |
+| `transform_rules` | jsonb | YES | `'{}'` |
+| `created_at` | timestamptz | NO | `now()` |
+| `updated_at` | timestamptz | NO | `now()` |
 
-`integration_field_mappings` — это **словарь маппинга полей** между внешней системой (Amo/GetCourse/ManyChat) и project-полями. Он **не является** таблицей хранения пар `(external_id → companies.id)`.
+### 2.2 Индексы и уникальные ограничения
+
+Query: `pg_indexes` для `integration_field_mappings`.
+
+Actual output:
+
+```
+integration_field_mappings_pkey
+  UNIQUE (id)
+
+integration_field_mappings_instance_id_entity_type_project__key
+  UNIQUE (instance_id, entity_type, project_field)
+
+idx_integration_field_mappings_instance
+  btree  (instance_id)
+```
+
+Уникальность — на связке `(instance_id, entity_type, project_field)`. Уникальности по `(instance_id, entity_type, external_field)` нет; уникальности по `(external_field, external_id)` нет **по определению**, так как `external_id` в таблице отсутствует.
+
+### 2.3 Фактическое содержимое
+
+Query:
+
+```sql
+SELECT count(*) FROM public.integration_field_mappings;
+SELECT DISTINCT entity_type FROM public.integration_field_mappings;
+```
+
+Actual output:
+
+```
+count = 0
+distinct entity_type = (empty)
+```
+
+Таблица **пуста** на момент discovery. Никаких строк `entity_type='company'` (или иных) не существует. Provider-scope через связь `instance_id → integration_instances(provider)`; на пустой таблице конкретные provider-значения (Amo/GetCourse/ManyChat) не наблюдаются, что подтверждает: `integration_field_mappings` не является активным lookup идентификаторов.
+
+### 2.4 Семантика
+
+Столбцы `project_field` и `external_field` — это **имена полей**, не значения идентификаторов. Столбец `external_id` отсутствует. Таблица описывает, как поле проекта отображается в поле внешней системы (тип, обязательность, ключевое ли поле, transform-правила).
+
+Writers/readers Amo/GetCourse/ManyChat в текущем состоянии таблицы отсутствуют (0 строк, 0 distinct entity_type). Merge-поведение существующих mappings в отношении companies не наблюдаемо, потому что данных нет; при появлении данных merge-модель мапится на `instance_id`, а не на пару `(canonical company, external company)` — то есть перенос lookup при `crm_company_merge` невозможно выразить через эту таблицу.
 
 ## 3. Требования Phase 2 к external IDs
 
-Phase 2 RPC (`crm_company_get_or_create`, `crm_company_upsert_from_billing`, `crm_company_merge`, `crm_company_link_contact`, `search_companies`, `crm_company_archive`, `crm_company_grp_refetch`) **не читают и не пишут** external ID: canonical resolve выполняется исключительно по `(country, unp_normalized)`.
-
-Список RPC Phase 2, зависящих от external IDs: **пустой**.
+Phase 2 RPC — `crm_company_get_or_create`, `crm_company_upsert_from_billing`, `crm_company_merge`, `crm_company_link_contact`, `search_companies`, `crm_company_archive`, `crm_company_grp_refetch` — canonical resolve выполняют исключительно по `(country, unp_normalized)`. Список RPC Phase 2, зависящих от external IDs: **пустой**.
 
 ## 4. Решение
 
 ```
 ADR-0002 (DRAFT): external company IDs НЕ хранятся в companies.
-Колонка companies.external_ids не добавляется в Phase 2.
-integration_field_mappings — это словарь маппинга полей, а не lookup-таблица идентификаторов.
-Отдельная lookup-таблица `company_external_ids(company_id, provider, external_id, ...)`
-BLOCKED / NEEDS SEPARATE DDL APPROVAL и относится к Phase 9 (external contacts/companies import).
+- Колонка companies.external_ids не добавляется в Phase 2.
+- integration_field_mappings — словарь маппинга полей (field-name → field-name),
+  а не lookup-таблица идентификаторов; в ней нет external_id и уникальности,
+  необходимой для (provider, external_id) → canonical company_id.
+- Отдельная lookup-таблица company_external_ids(company_id, provider, external_id, ...)
+  BLOCKED / NEEDS SEPARATE DDL APPROVAL и относится к Phase 9
+  (external contacts/companies import) с собственным ADR.
 ```
 
 ## 5. Последствия
 
-- Phase 2 не добавляет DDL к таблице `companies`.
-- Phase 2 RPC остаются исполнимыми и не зависят от нерешённого external mapping (правка 14 плана).
+- Phase 2 не добавляет DDL к `companies`.
+- Core RPC Phase 2 остаются исполнимыми и не зависят от нерешённого external mapping (правка 14).
 - Backfill/ingest из Amo (Phase 9) должен принести отдельный ADR со схемой lookup-таблицы, unique-ограничением `(provider, external_id, workspace_id)` и merge-поведением (перенос lookup-строк на target при `crm_company_merge`).
 
 ## 6. Rollback / reversal
 
-Никакой миграции этот ADR не порождает — reversal не требуется. Изменение решения — новый ADR-000X.
+Миграции этот ADR не порождает — reversal не требуется. Изменение решения — новый ADR-000X.
