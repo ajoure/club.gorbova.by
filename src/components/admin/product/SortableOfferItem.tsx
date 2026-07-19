@@ -5,14 +5,17 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { OfferRowCompact } from "./OfferRowCompact";
 import { cn } from "@/lib/utils";
 import type { MouseEvent } from "react";
+import type { TariffOffer } from "@/hooks/useTariffOffers";
 
 interface SortableOfferItemProps {
-  offer: any;
+  offer: TariffOffer;
   positionNumber: number; // 1-based visual order (#N)
   isSelected: boolean;
   onToggleSelect: () => void;
   onRowClick: (e: MouseEvent) => void;
   registerRef: (el: HTMLDivElement | null) => void;
+  /** When true, drag is blocked (e.g. a reorder RPC is in flight for this tariff). */
+  disabled?: boolean;
   // OfferRowCompact passthrough
   onToggleActive: (id: string, isActive: boolean) => void;
   onUpdateLabel: (id: string, label: string) => void;
@@ -30,6 +33,7 @@ export function SortableOfferItem({
   onToggleSelect,
   onRowClick,
   registerRef,
+  disabled,
   onToggleActive,
   onUpdateLabel,
   onSetPrimary,
@@ -45,7 +49,13 @@ export function SortableOfferItem({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: offer.id });
+  } = useSortable({
+    id: offer.id,
+    // Attach the parent tariff so cross-tariff drops can be rejected at the
+    // handler level without relying on separate DndContext boundaries alone.
+    data: { tariffId: offer.tariff_id },
+    disabled: disabled === true,
+  });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -54,9 +64,9 @@ export function SortableOfferItem({
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const slotRoleRaw = ((offer.meta as any)?.slot_role as string | undefined) ?? "";
+  const slotRoleRaw = (offer.meta?.slot_role ?? "").toString().trim();
   const slotLabel = (() => {
-    if (!slotRoleRaw) return "Слот: не задан";
+    if (!slotRoleRaw) return "Не размещается на сайте";
     const match = /^button_(\d+)$/.exec(slotRoleRaw);
     if (match) return `Слот: Кнопка ${match[1]}`;
     return `Слот: ${slotRoleRaw}`;
@@ -69,7 +79,8 @@ export function SortableOfferItem({
       className={cn(
         "flex items-start gap-2 group cursor-pointer",
         isSelected && "ring-2 ring-primary/30 rounded-lg",
-        isDragging && "shadow-lg"
+        isDragging && "shadow-lg",
+        disabled && "opacity-70"
       )}
       onClick={onRowClick}
     >
@@ -81,7 +92,11 @@ export function SortableOfferItem({
         <button
           type="button"
           aria-label="Перетащить кнопку"
-          className="p-1 rounded cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground transition-colors touch-none"
+          className={cn(
+            "p-1 rounded text-muted-foreground hover:text-foreground transition-colors touch-none",
+            disabled ? "cursor-not-allowed" : "cursor-grab active:cursor-grabbing"
+          )}
+          disabled={disabled === true}
           {...attributes}
           {...listeners}
         >
@@ -96,7 +111,7 @@ export function SortableOfferItem({
           <span>{slotLabel}</span>
         </div>
         <OfferRowCompact
-          offer={offer}
+          offer={offer as any}
           onToggleActive={onToggleActive}
           onUpdateLabel={onUpdateLabel}
           onSetPrimary={onSetPrimary}
