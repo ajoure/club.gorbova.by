@@ -2230,7 +2230,67 @@ SELECT (SELECT count(*) FROM public.companies) c,
 SELECT last_value FROM public.public_id_sequences WHERE entity_type='company';
 ```
 
+### 13.8 Placeholder scan (static, applied to canonical SQL blocks §11 и §12)
+
+Область: только текст внутри `sql` code fences между `<!-- PHASE2_FORWARD_SQL_BEGIN -->` / `<!-- PHASE2_FORWARD_SQL_END -->` и `<!-- PHASE2_ROLLBACK_SQL_BEGIN -->` / `<!-- PHASE2_ROLLBACK_SQL_END -->`. Описательная markdown-проза не сканируется — ссылки вида `см. §` вне canonical blocks допустимы.
+
+Патерны (case-insensitive):
+
+```
+\.\.\.        …
+сокращено     см\. body      см\. helpers
+при\s+финализации   в\s+фактической\s+миграции
+аналогично    остальные\s+поля
+TODO          FIXME
+<\.\.\.>      \{\{\.\.\.\}\}       \bTBD\b
+см\.\s*§
+```
+
+Фактический результат (`python3` extractor, только SQL внутри canonical blocks):
+
+```
+--- forward:  0 hits
+--- rollback: 0 hits
+```
+
+Ожидание: 0. Совпало.
+
+### 13.9 Счётчики canonical SQL blocks
+
+| Метрика | Область | Ожидание | Факт |
+|---|---|---|---|
+| `CREATE OR REPLACE FUNCTION` | §11 canonical | 10 (7 public RPC + 2 private helper + `search_global`) | 10 |
+| `PERFORM public._crm_company_emit_domain_event(` | §11 canonical (caller bodies + resolve helper) | 7 | 7 |
+| `CREATE OR REPLACE FUNCTION public._crm_company_emit_domain_event` | §11 canonical | 1 | 1 |
+| `INSERT INTO public.domain_events` | §11 canonical | 1 (только внутри emit helper) | 1 |
+| `ON CONFLICT ((payload->>'idempotency_key'))` | §11 canonical | 0 | 0 |
+| `DROP FUNCTION` | §12 canonical | 7 (5 новых RPC + 2 private helper) | 7 |
+| `CREATE OR REPLACE FUNCTION` | §12 canonical | 3 (2 Phase 1 skeleton + 1 `search_global` restore) | 3 |
+
+### 13.10 Schema whitelist
+
+Проверенные таблицы: `public.companies`, `public.company_contacts`, `public.client_legal_details_company_map`, `public.company_sync_queue`, `public.client_legal_details`. Все ссылки на колонки в canonical SQL §11 и §12 сверены с фактическим `information_schema.columns`.
+
+- `companies`: `id`, `public_id`, `workspace_id`, `company_kind`, `country`, `unp_normalized`, `full_name`, `short_name`, `legal_form`, `legal_address`, `email`, `phone`, `director_name`, `director_position`, `acts_on_basis`, `bank_account`, `bank_name`, `bank_code`, `status`, `merged_into_company_id`, `archived_at`, `metadata`, `created_at`, `created_by`, `updated_at`, `updated_by` — все существуют.
+- `company_contacts`: `id`, `company_id`, `profile_id`, `relationship_type`, `is_billing_contact`, `is_primary`, `source`, `source_client_legal_details_map_id`, `metadata`, `updated_at`, `updated_by` — все существуют.
+- `client_legal_details_company_map`: `id`, `client_legal_details_id`, `company_id`, `updated_at`, `updated_by` — все существуют. Unique constraint = `client_legal_details_id`; `UPDATE ... SET company_id = v_target_leaf` не создаёт конфликта.
+- `company_sync_queue`: `entity_type`, `entity_id`, `run_reason`, `status`, `idempotency_key`, `next_run_at`, `payload`, `created_by`, `updated_by` — все существуют.
+- `client_legal_details`: `id`, `client_type`, `purpose`, `leg_unp`, `ent_unp`, `leg_org_form`, `leg_name`, `ent_name`, `leg_address`, `ent_address`, `leg_director_name`, `leg_director_position`, `leg_acts_on_basis`, `ent_acts_on_basis`, `bank_account`, `bank_name`, `bank_code`, `email`, `phone`, `updated_at` — все существуют.
+
+Неизвестных колонок: **0**.
+
+### 13.11 FINALIZED gate
+
+Все три gate-check пройдены:
+
+- placeholder scan: 0 hits;
+- counter matrix (§13.9): все строки совпали;
+- schema whitelist (§13.10): 0 неизвестных колонок.
+
+Phase 2 runnable plan: **FINALIZED (documentation)**. Execution — по-прежнему **NOT APPROVED** до отдельного approve; admin fixture blocker сохранён.
+
 ---
+
 
 ## 14. Runtime proof (последовательность, правки 11 и 17)
 
