@@ -2256,22 +2256,28 @@ export default function AdminProductDetailV2() {
 
             {/* Размещение кнопки на публичной странице */}
             {(() => {
+              // Слот — это якорь для Tilda HTML: data-lovable-slot="button_N".
+              // #N в списке — визуальный порядок; Кнопка N — стабильный якорь.
               const PURPOSE_OPTIONS: { value: string; label: string }[] = [
                 { value: "", label: "Не размещать автоматически" },
-                { value: "payment_card", label: "Оплата картой" },
-                { value: "payment_invoice", label: "Счёт для юридического лица" },
-                { value: "installment_2", label: "Рассрочка — вариант 1" },
-                { value: "installment_3", label: "Рассрочка — вариант 2" },
-                { value: "installment_bank", label: "Банковская рассрочка" },
-                { value: "lead", label: "Оставить заявку" },
+                { value: "button_1", label: "Кнопка 1" },
+                { value: "button_2", label: "Кнопка 2" },
+                { value: "button_3", label: "Кнопка 3" },
+                { value: "button_4", label: "Кнопка 4" },
+                { value: "button_5", label: "Кнопка 5" },
+                { value: "button_6", label: "Кнопка 6" },
+                { value: "button_7", label: "Кнопка 7" },
+                { value: "button_8", label: "Кнопка 8" },
+                { value: "button_9", label: "Кнопка 9" },
+                { value: "button_10", label: "Кнопка 10" },
               ];
               const VARIANT_OPTIONS: { value: string; label: string }[] = [
-                { value: "", label: "Не задан" },
-                { value: "primary", label: "Основная кнопка" },
-                { value: "outline", label: "Дополнительная, с контуром" },
-                { value: "installment", label: "Кнопка рассрочки" },
-                { value: "legal_entity", label: "Для юридического лица" },
-                { value: "lead", label: "Кнопка заявки" },
+                { value: "", label: "По умолчанию" },
+                { value: "primary", label: "Синяя (основная)" },
+                { value: "outline", label: "С контуром" },
+                { value: "installment", label: "Оранжевая (рассрочка)" },
+                { value: "legal_entity", label: "Тёмная (для юрлица)" },
+                { value: "lead", label: "Светлая (заявка)" },
               ];
               const currentRole = (((offerForm.meta as any)?.slot_role as string) || "").trim();
               const currentVariant = ((offerForm.meta as any)?.site_button_variant as string) || "";
@@ -2311,14 +2317,13 @@ export default function AdminProductDetailV2() {
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>Назначение кнопки</Label>
+                        <Label>Слот на странице</Label>
                         <select
                           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                           value={purposeSelectValue}
                           onChange={(e) => {
                             const v = e.target.value;
                             if (v === "__custom__") {
-                              // keep existing custom value or start empty for the user to fill in
                               if (!isCustomRole) setRole("");
                             } else {
                               setRole(v);
@@ -2330,26 +2335,26 @@ export default function AdminProductDetailV2() {
                               {o.label}
                             </option>
                           ))}
-                          <option value="__custom__">Другое назначение</option>
+                          <option value="__custom__">Другой (свой код)</option>
                         </select>
                         {purposeSelectValue === "__custom__" && (
                           <div className="space-y-1">
                             <Label className="text-xs text-muted-foreground">
-                              Технический код назначения
+                              Технический код слота
                             </Label>
                             <Input
-                              placeholder="например: payment_card_promo"
+                              placeholder="например: button_special"
                               value={currentRole}
                               onChange={(e) => setRole(e.target.value)}
                             />
                           </div>
                         )}
                         <p className="text-xs text-muted-foreground">
-                          Назначение определяет, в каком месте карточки тарифа показывается кнопка.
+                          «Кнопка N» — это якорь в HTML Tilda (<code>data-lovable-slot="button_N"</code>). Визуальный порядок в списке (#1, #2 …) настраивается отдельно перетаскиванием.
                         </p>
                       </div>
                       <div className="space-y-2">
-                        <Label>Внешний вид кнопки</Label>
+                        <Label>Цвет кнопки</Label>
                         <select
                           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                           value={currentVariant}
@@ -2362,7 +2367,7 @@ export default function AdminProductDetailV2() {
                           ))}
                         </select>
                         <p className="text-xs text-muted-foreground">
-                          Внешний вид определяет оформление, но не способ оплаты.
+                          Цвет влияет только на оформление, но не на способ оплаты.
                         </p>
                       </div>
                     </div>
