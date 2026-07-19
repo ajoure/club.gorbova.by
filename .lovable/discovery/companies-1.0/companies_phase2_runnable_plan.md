@@ -1991,6 +1991,8 @@ COMMIT;
 
 Файл: `.lovable/rollback/companies-phase2/phase2_rpc_rollback.sql`. Не выполняется без отдельного решения.
 
+<!-- PHASE2_ROLLBACK_SQL_BEGIN -->
+
 ### 12.1 Транзакция
 
 ```sql
