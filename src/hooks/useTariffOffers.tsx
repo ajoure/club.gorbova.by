@@ -517,6 +517,18 @@ export function useReorderTariffOffers() {
     setPendingTariffIds(new Set(pendingRef.current));
   }, []);
 
+  // Atomic check+claim: returns false if a reorder is already in flight for
+  // this tariff, otherwise synchronously marks it as pending. Callers MUST
+  // invoke this before `mutate()` so a second fast drop cannot slip past the
+  // async React state update and start a competing mutation with stale
+  // snapshots.
+  const tryStartReorder = useCallback((tariffId: string): boolean => {
+    if (pendingRef.current.has(tariffId)) return false;
+    pendingRef.current.add(tariffId);
+    setPendingTariffIds(new Set(pendingRef.current));
+    return true;
+  }, []);
+
   const mutation = useMutation<void, Error, ReorderVars, ReorderContext>({
     mutationFn: async ({ tariffId, orderedIds }) => {
       const { error } = await supabase.rpc("reorder_tariff_offers", {
@@ -526,6 +538,7 @@ export function useReorderTariffOffers() {
       if (error) throw error;
     },
     onMutate: async ({ tariffId, orderedIds }) => {
+      // Guard was claimed by tryStartReorder; defensive add for direct mutate() callers.
       addPending(tariffId);
       // Cancel any in-flight fetches that could clobber our optimistic write.
       await Promise.all(
@@ -548,7 +561,6 @@ export function useReorderTariffOffers() {
       return { snapshots };
     },
     onError: (error, vars, context) => {
-      // Stale-safe rollback — restore exactly what we snapshotted.
       if (context?.snapshots) {
         for (const [key, data] of context.snapshots) {
           queryClient.setQueryData(key, data);
@@ -558,7 +570,6 @@ export function useReorderTariffOffers() {
     },
     onSettled: (_data, _err, vars) => {
       removePending(vars.tariffId);
-      // Invalidate all offer-derived caches (admin) + all public/preview caches.
       for (const prefix of OFFER_CACHE_PREFIXES) {
         queryClient.invalidateQueries({ queryKey: [prefix] });
       }
@@ -568,12 +579,18 @@ export function useReorderTariffOffers() {
     },
   });
 
+  // Ref-based read — never stale relative to pendingRef, safe between renders.
   const isTariffReordering = useCallback(
-    (tariffId: string) => pendingTariffIds.has(tariffId),
-    [pendingTariffIds],
+    (tariffId: string) => pendingRef.current.has(tariffId),
+    [],
   );
 
-  return Object.assign(mutation, { isTariffReordering, pendingTariffIds });
+  return Object.assign(mutation, {
+    isTariffReordering,
+    tryStartReorder,
+    pendingTariffIds,
+  });
 }
+
 
 
