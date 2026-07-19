@@ -9,16 +9,33 @@
 - Backfill / production fixtures: **НЕ ЗАПУСКАЛИСЬ** (4 таблицы пусты).
 - Phase 2: **НЕ НАЧАТ**.
 
-## 2. Файловый scope спринта
+## 2. Файловый scope — три точных списка
 
-Изменённые файлы (фактический совокупный diff ACL-hardening спринта):
+Ниже разделены три различных scope, чтобы устранить смешение, отмеченное в сверке остатка 12.
 
-- `supabase/migrations/20260719165300_1370ed2d-374b-42d8-bfb2-4ba1100878d9.sql` — corrective migration (REVOKE/GRANT + DO-guards). SHA-256 текущего файла: `0196525ab0bdc1466525eae01cb8156127dc16e6f1cc56e976f34755f5556a3c`.
+### 2.1 Documentation patch (текущая редакционная правка и предыдущий closure-патч)
+
+- `.lovable/plan.md`
+- `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md`
+
+`src/integrations/supabase/types.ts` в этот scope НЕ входит.
+
+### 2.2 ACL-hardening sprint (от `0abff5b` до `7341ea8`)
+
+- `.lovable/plan.md`
+- `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md`
+- `supabase/migrations/20260719165300_1370ed2d-374b-42d8-bfb2-4ba1100878d9.sql` — corrective migration (REVOKE/GRANT + DO-guards). SHA-256: `0196525ab0bdc1466525eae01cb8156127dc16e6f1cc56e976f34755f5556a3c`.
+
+`src/integrations/supabase/types.ts` в этот scope НЕ входит: ACL-изменения не меняют PostgREST-контракт, регенерация types.ts данным спринтом не выполнялась.
+
+### 2.3 Полный Phase 1 production sequence (совокупный diff)
+
+- `supabase/migrations/20260719162721_d83567e6-e8a4-4beb-8e97-3cfad083da9b.sql` — Phase 1 forward migration. SHA-256: `c15be4e3860be9a149cb11ac9103c8c384838d5ea270868121e44bcda2dd5e6b`.
+- `.lovable/rollback/companies-phase1/phase1_rollback.sql` — rollback SQL (артефакт, не применялся).
+- `src/integrations/supabase/types.ts` — авто-регенерация после Phase 1 forward (schema diff в момент создания 4 таблиц).
+- `supabase/migrations/20260719165300_1370ed2d-374b-42d8-bfb2-4ba1100878d9.sql` — ACL-hardening migration.
+- `.lovable/plan.md` — план ACL hardening.
 - `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md` — настоящий отчёт.
-- `.lovable/plan.md` — план ACL hardening (в отдельном документационном патче восстановлен в формате «План:»).
-- `src/integrations/supabase/types.ts` — авто-регенерируемый файл; содержательного schema diff нет (ACL не меняет PostgREST-контракт).
-
-Ссылка на Phase 1 forward migration: `supabase/migrations/20260719162721_d83567e6-e8a4-4beb-8e97-3cfad083da9b.sql`, SHA-256 `c15be4e3860be9a149cb11ac9103c8c384838d5ea270868121e44bcda2dd5e6b`.
 
 Другие файлы, UI, edge functions и `config.toml` не изменялись.
 
