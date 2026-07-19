@@ -618,7 +618,7 @@ _crm_company_emit_domain_event(
 
 **ACL:** `REVOKE ALL ON FUNCTION public._crm_company_emit_domain_event(text,uuid,text,jsonb) FROM PUBLIC, anon, authenticated, service_role`. Никаких GRANT. Вызов возможен только из другой функции owner `postgres`.
 
-**Callers (полный список Phase 2):** `crm_company_get_or_create`, `crm_company_link_contact`, `crm_company_upsert_from_billing`, `crm_company_merge`, `crm_company_archive`, `crm_company_grp_refetch`, а также `_crm_company_resolve_or_create_internal` (для `company.created.v1`). Все прямые `INSERT INTO public.domain_events (...)` из тел Phase 2 RPC заменены на `PERFORM public._crm_company_emit_domain_event(...)`; sample-фрагменты в §11.2–§11.9, где остался «сырой» INSERT (например §11.2 строки для `company.created.v1`), при финализации SQL заменяются на вызов helper — контракт §10.1 является нормативным.
+**Callers (полный список Phase 2):** `crm_company_get_or_create`, `crm_company_link_contact`, `crm_company_upsert_from_billing`, `crm_company_merge`, `crm_company_archive`, `crm_company_grp_refetch`, а также `_crm_company_resolve_or_create_internal` (для `company.created.v1`). Все Phase 2 RPC в §11 вызывают helper напрямую; прямых `INSERT INTO public.domain_events` в §11 не осталось (единственное вхождение — в теле самого helper в §10.1 / §11.11).
 
 **Rollback order:** DROP выполняется **после** `_crm_company_resolve_or_create_internal` (§12.5).
 
