@@ -551,7 +551,8 @@ export default function AdminProductDetailV2() {
         installment_interval_days: 30,
         first_payment_delay_days: 0,
         installment_max_charge_attempts: 3,
-        meta: {},
+        meta: { site_button_variant: "primary" } as OfferMetaConfig,
+
         // Preregistration defaults
         preregistration_first_charge_date: "",
         preregistration_charge_offer_id: "",
