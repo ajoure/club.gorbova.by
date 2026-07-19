@@ -2,9 +2,9 @@
 
 Статус: **DRAFT / NOT APPROVED / DO NOT EXECUTE**
 
-Документ фиксирует Phase 1 в границах утверждённого Master Plan v2. Ни одна миграция не запускается до отдельного approval после проверки всех discovery-документов.
+Документ фиксирует Phase 1 в границах утверждённого Master Plan v2 и APPROVED / FROZEN architecture freeze (commit `04f85026c3458cdd3c8398c1841c1e4371e3dbfa`). Ни одна миграция не запускается до отдельного approval после проверки всех discovery-документов.
 
-История: v2 — коррекция по итогам ревью Discovery 1.0. Расширения scope (trigger на billing, feature flag, registry inserts, enqueue существующих строк) отозваны и перенесены в Phase 4. Восстановлены минимальные RPC-скелеты согласно Master Plan v2.
+История: v2 — коррекция по итогам ревью Discovery 1.0. Расширения scope (trigger на billing, feature flag, registry inserts, enqueue существующих строк) отозваны и перенесены в Phase 4. Восстановлены минимальные RPC-скелеты согласно Master Plan v2. v3 (правки после approval architecture freeze): `company_contacts.source_client_legal_details_map_id` переведён на `ON DELETE RESTRICT` (согласование с CHECK `company_contacts_billing_requires_source`); полностью раскрыты `CREATE POLICY` и `DROP POLICY` для `client_legal_details_company_map` и `company_contacts` — формулировка «аналогичный набор» устранена.
 
 ## 1. Scope Phase 1 (core, не расширять)
 
@@ -161,8 +161,11 @@ CREATE TABLE public.company_contacts (
   -- Machine-checkable source lineage для source='billing_requisites'.
   -- FK на map-запись даёт детерминированный путь client_legal_details → company_contacts.
   -- Требует, чтобы client_legal_details_company_map была создана раньше (см. §2.2).
+  -- ON DELETE RESTRICT: billing lineage нельзя удалить, пока существует billing-contact.
+  -- SET NULL здесь недопустим — нарушил бы CHECK company_contacts_billing_requires_source
+  -- (для is_billing_contact=true source_client_legal_details_map_id IS NOT NULL).
   source_client_legal_details_map_id uuid
-    REFERENCES public.client_legal_details_company_map(id) ON DELETE SET NULL,
+    REFERENCES public.client_legal_details_company_map(id) ON DELETE RESTRICT,
 
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -264,7 +267,73 @@ CREATE POLICY "companies delete for super_admin"
   ON public.companies FOR DELETE TO authenticated
   USING (has_role_v2(auth.uid(),'super_admin'));
 
--- client_legal_details_company_map, company_contacts — аналогичный набор из 4 политик.
+-- client_legal_details_company_map
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.client_legal_details_company_map TO authenticated;
+GRANT ALL ON public.client_legal_details_company_map TO service_role;
+ALTER TABLE public.client_legal_details_company_map ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "client_legal_details_company_map read for CRM staff"
+  ON public.client_legal_details_company_map FOR SELECT TO authenticated
+  USING (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher') OR
+    has_role_v2(auth.uid(),'support')
+  );
+
+CREATE POLICY "client_legal_details_company_map insert for admin+manager"
+  ON public.client_legal_details_company_map FOR INSERT TO authenticated
+  WITH CHECK (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher')
+  );
+
+CREATE POLICY "client_legal_details_company_map update for admin+manager"
+  ON public.client_legal_details_company_map FOR UPDATE TO authenticated
+  USING (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher')
+  );
+
+CREATE POLICY "client_legal_details_company_map delete for super_admin"
+  ON public.client_legal_details_company_map FOR DELETE TO authenticated
+  USING (has_role_v2(auth.uid(),'super_admin'));
+
+-- company_contacts
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.company_contacts TO authenticated;
+GRANT ALL ON public.company_contacts TO service_role;
+ALTER TABLE public.company_contacts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "company_contacts read for CRM staff"
+  ON public.company_contacts FOR SELECT TO authenticated
+  USING (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher') OR
+    has_role_v2(auth.uid(),'support')
+  );
+
+CREATE POLICY "company_contacts insert for admin+manager"
+  ON public.company_contacts FOR INSERT TO authenticated
+  WITH CHECK (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher')
+  );
+
+CREATE POLICY "company_contacts update for admin+manager"
+  ON public.company_contacts FOR UPDATE TO authenticated
+  USING (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher')
+  );
+
+CREATE POLICY "company_contacts delete for super_admin"
+  ON public.company_contacts FOR DELETE TO authenticated
+  USING (has_role_v2(auth.uid(),'super_admin'));
 
 -- company_sync_queue — только service_role.
 GRANT ALL ON public.company_sync_queue TO service_role;
@@ -377,8 +446,14 @@ GRANT EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean
    - `DROP POLICY IF EXISTS "companies insert for admin+manager" ON public.companies;`
    - `DROP POLICY IF EXISTS "companies update for admin+manager" ON public.companies;`
    - `DROP POLICY IF EXISTS "companies delete for super_admin" ON public.companies;`
-   - Аналогичные 4 политики для `public.company_contacts` (имена: `"company_contacts read for CRM staff"`, `... insert for admin+manager"`, `... update for admin+manager"`, `... delete for super_admin"`).
-   - Аналогичные 4 политики для `public.client_legal_details_company_map`.
+   - `DROP POLICY IF EXISTS "company_contacts read for CRM staff" ON public.company_contacts;`
+   - `DROP POLICY IF EXISTS "company_contacts insert for admin+manager" ON public.company_contacts;`
+   - `DROP POLICY IF EXISTS "company_contacts update for admin+manager" ON public.company_contacts;`
+   - `DROP POLICY IF EXISTS "company_contacts delete for super_admin" ON public.company_contacts;`
+   - `DROP POLICY IF EXISTS "client_legal_details_company_map read for CRM staff" ON public.client_legal_details_company_map;`
+   - `DROP POLICY IF EXISTS "client_legal_details_company_map insert for admin+manager" ON public.client_legal_details_company_map;`
+   - `DROP POLICY IF EXISTS "client_legal_details_company_map update for admin+manager" ON public.client_legal_details_company_map;`
+   - `DROP POLICY IF EXISTS "client_legal_details_company_map delete for super_admin" ON public.client_legal_details_company_map;`
    - `DROP POLICY IF EXISTS "company_sync_queue service only" ON public.company_sync_queue;`
 5. Helper-функции создаются вне Phase 1 (`update_updated_at_column`, `has_role_v2`, `next_public_id`) — **не удаляются** rollback'ом Phase 1.
 6. Таблицы, строго в этом порядке (обратно созданию, с учётом FK):
