@@ -35,8 +35,8 @@ const SANDBOX_POLICY =
 const MAX_IFRAME_HEIGHT = 100000;
 
 /** Unique marker to prevent double injection of bridge script (versioned). */
-const BRIDGE_MARKER = "data-lovable-resize-v8";
-const BRIDGE_VERSION = 8;
+const BRIDGE_MARKER = "data-lovable-resize-v9";
+const BRIDGE_VERSION = 9;
 
 /**
  * Single injected bridge script: resize + anchor intercept + scrollIntoView intercept
@@ -550,41 +550,32 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     var tariffId = tariffEntry ? tariffEntry.tariff_id : '';
     var used = new Array(offers.length);
 
-    // Pass 1: exact-variant matches. Preserve authored slot ↔ variant pairing.
-    for (var oi = 0; oi < offers.length; oi++) {
-      var off = offers[oi];
-      for (var pj = 0; pj < positioned.length; pj++) {
-        var pw = positioned[pj];
-        if (pw.assigned) continue;
-        if (!pw.variant || pw.variant !== off.variant) continue;
+    // Bridge v9 — strict index-based assignment.
+    // Offers arrive pre-sorted by sort_order ASC, offer_id ASC (see
+    // buildSlotManifest). Position i is claimed by offer i regardless of
+    // authored slot ↔ variant pairing. When the offer's variant differs
+    // from the wrapper's authored variant, we swap the inner template.
+    for (var i = 0; i < positioned.length; i++) {
+      var pw = positioned[i];
+      var off = offers[i];
+      if (!off) { deactivateWrapper(pw.el); continue; }
+      if (pw.variant && pw.variant !== off.variant) {
+        if (!swapWrapperFromTemplate(pw.el, group, off.variant)) {
+          // No template for the required variant — hide wrapper rather than
+          // rendering a mismatched button.
+          deactivateWrapper(pw.el);
+          continue;
+        }
+      } else if (pw.variant) {
         // Restore authored inner if this wrapper was previously swapped.
         swapWrapperFromTemplate(pw.el, group, pw.variant);
-        pw.assigned = true;
-        used[oi] = true;
-        assignOfferToWrapper(pw.el, off, tariffId);
-        break;
       }
+      pw.assigned = true;
+      used[i] = true;
+      assignOfferToWrapper(pw.el, off, tariffId);
     }
-    // Pass 2: swap-fill remaining offers into remaining positions. A position
-    // with declared variant gets its inner template swapped; a blank-variant
-    // position accepts any offer as-is (legacy generic slot).
-    for (var oi2 = 0; oi2 < offers.length; oi2++) {
-      if (used[oi2]) continue;
-      var off2 = offers[oi2];
-      for (var pj2 = 0; pj2 < positioned.length; pj2++) {
-        var pw2 = positioned[pj2];
-        if (pw2.assigned) continue;
-        if (pw2.variant && pw2.variant !== off2.variant) {
-          if (!swapWrapperFromTemplate(pw2.el, group, off2.variant)) continue;
-        }
-        pw2.assigned = true;
-        used[oi2] = true;
-        assignOfferToWrapper(pw2.el, off2, tariffId);
-        break;
-      }
-    }
-    for (var q = 0; q < positioned.length; q++) {
-      if (!positioned[q].assigned) deactivateWrapper(positioned[q].el);
+    for (var q = positioned.length; q < offers.length; q++) {
+      // Extra offers past fixed positions handled by overflow section below.
     }
 
 
