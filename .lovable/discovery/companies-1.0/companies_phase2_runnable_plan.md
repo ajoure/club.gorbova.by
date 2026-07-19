@@ -530,19 +530,20 @@ WHERE NOT EXISTS (
 
 ## 9. Security matrix
 
-Все Phase 2 RPC: `SECURITY DEFINER`, `SET search_path=public`, owner=`postgres`, `REVOKE ALL FROM PUBLIC, anon`.
+Всего Phase 2 предоставляет **7 public RPC + 2 private helper** (см. §1 п.1–9). Все `SECURITY DEFINER`, `SET search_path=public`, owner=`postgres`, `REVOKE ALL FROM PUBLIC, anon`. Из 7 public RPC — **6** получают `GRANT EXECUTE TO authenticated`, **1** (`crm_company_upsert_from_billing`) — `TO service_role`.
 
-| RPC | authenticated | service_role |
-|---|---|---|
-| `crm_company_get_or_create` | EXECUTE | none |
-| `crm_company_link_contact` | EXECUTE | none |
-| `search_companies` | EXECUTE | none |
-| `crm_company_merge` | EXECUTE | none |
-| `crm_company_archive` | EXECUTE | none |
-| `crm_company_grp_refetch` | EXECUTE | none |
-| `crm_company_upsert_from_billing` | none | EXECUTE |
-| `_crm_company_resolve_or_create_internal` (private helper) | none | none |
-| `search_global` | сохраняется исходный ACL (authenticated, service_role, anon, PUBLIC = EXECUTE) — Phase 2 ACL не сужает во избежание регрессий | — |
+| RPC / helper | authenticated | service_role | anon / PUBLIC |
+|---|---|---|---|
+| `crm_company_get_or_create` (public) | EXECUTE | none | none |
+| `crm_company_link_contact` (public) | EXECUTE | none | none |
+| `search_companies` (public) | EXECUTE | none | none |
+| `crm_company_merge` (public) | EXECUTE | none | none |
+| `crm_company_archive` (public) | EXECUTE | none | none |
+| `crm_company_grp_refetch` (public) | EXECUTE | none | none |
+| `crm_company_upsert_from_billing` (public) | none | EXECUTE | none |
+| `_crm_company_resolve_or_create_internal` (private helper) | none | none | none |
+| `_crm_company_emit_domain_event` (private helper, §10.1) | none | none | none |
+| `search_global` (existing, additive edit §6) | сохраняется исходный ACL (authenticated, service_role, anon, PUBLIC = EXECUTE) — Phase 2 ACL не сужает во избежание регрессий | — | — |
 
 Role matrix (в теле RPC): read — `super_admin, admin, menedzher, support`; write/link/create — `super_admin, admin, menedzher`; archive/merge — `super_admin, admin`; deny — `admin_gost, editor, user`. Global default privileges не меняются.
 
