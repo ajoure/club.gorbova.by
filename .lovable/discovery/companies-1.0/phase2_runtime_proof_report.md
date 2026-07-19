@@ -14,10 +14,12 @@
 | `supabase/migrations/20260719214544_9aa2edb0-c9dc-4636-a1b4-711accf867c5.sql` | Lovable-managed applied forward history | 68,450 | `3943ea306a2c296d4717b7e3b833f7869666b47fc081e7fcb28fe4c72d351aeb` |
 | `supabase/migrations/20260719235959_crm_company_billing_array_append_fix.sql` | canonical corrective source | 22,198 | `11719a8db96444e3fb5ebd2af582637a6a9df12ed9f31751dd35e604374ee24d` |
 | `supabase/migrations/20260719221105_7ba01396-e921-4be5-b180-2a770a98d708.sql` | Lovable-managed applied corrective history | 20,548 | `63c8f6561aa934dd951cfacafb7afaebd79b2a70c0bf8705ae6db6f2528dbfc6` |
+| `supabase/migrations/20260719222532_d0f06e76-14dd-4829-beed-594b39d4fa54.sql` | Lovable-managed exact-ID proof cleanup history | 1,606 | `38389e1dd0e6076007f4433e187f5c1657dc989f1f627c25531e0f042c2ecdc8` |
 | `.lovable/rollback/companies-phase2/phase2_rpc_rollback.sql` | full Phase 2 rollback | 5,320 | `6038be4d205bcd78750247ebee4e807db109ca038d7bb1a376654a7f1e2f56f0` |
 
-The managed migrations are retained as immutable deployment history. The canonical
-files remain the reviewed source for fresh environments and future maintenance.
+The managed migrations are retained as deployment history. The exact-ID cleanup file
+is made replay-safe as documented in §5; canonical files remain the reviewed source for
+fresh environments and future maintenance.
 
 ## 2. Apply and corrective history
 
@@ -110,6 +112,11 @@ two CRM activity rows and one company-create audit row. Manual source produced n
 Cleanup removed only captured IDs in FK-safe order inside one transaction. The CMP
 sequence was restored from `1` to `0` only after guards confirmed `companies=0` and the
 current sequence value was exactly the proof allocation. No broad pattern delete was used.
+
+Lovable recorded this cleanup as a managed migration. Its historical file is retained,
+but its sequence guard is replay-safe: exact-ID deletes are idempotent and CMP is reset
+only when the proof company existed before this cleanup. A fresh database or a database
+without that proof UUID is therefore left unchanged.
 
 Independent final post-check:
 

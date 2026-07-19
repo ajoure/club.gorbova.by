@@ -2501,6 +2501,8 @@ migration, повторного billing-proof и реального двухсе
   22,198 bytes, SHA-256 `11719a8db96444e3fb5ebd2af582637a6a9df12ed9f31751dd35e604374ee24d`;
 - managed applied corrective `20260719221105_7ba01396-e921-4be5-b180-2a770a98d708.sql` —
   20,548 bytes, SHA-256 `63c8f6561aa934dd951cfacafb7afaebd79b2a70c0bf8705ae6db6f2528dbfc6`;
+- managed exact-ID proof cleanup `20260719222532_d0f06e76-14dd-4829-beed-594b39d4fa54.sql` —
+  1,606 bytes, SHA-256 `38389e1dd0e6076007f4433e187f5c1657dc989f1f627c25531e0f042c2ecdc8`;
 - full rollback `phase2_rpc_rollback.sql` — 5,320 bytes,
   SHA-256 `6038be4d205bcd78750247ebee4e807db109ca038d7bb1a376654a7f1e2f56f0`.
 
