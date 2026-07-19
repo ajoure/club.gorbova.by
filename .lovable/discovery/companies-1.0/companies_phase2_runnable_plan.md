@@ -1226,15 +1226,19 @@ BEGIN
   -- §7.6 metadata union и переключение source status
   -- ... (см. §7.6 body)
 
-  -- domain_events + audit_logs (guarded by idempotency_key)
-  INSERT INTO public.domain_events (event_type, source, entity_id, payload)
-  SELECT 'company.merged.v1','crm', _source_id, jsonb_build_object(
-    'version',1,'source_id',_source_id,'source_public_id',v_src.public_id,
-    'target_id',v_target_leaf,'target_public_id',v_tgt.public_id,
-    'moved_map_rows',v_moved_map,'moved_contact_rows',v_moved_contacts,
-    'merged_contact_rows',v_merged_contacts,'occurred_at',now(),'actor_user_id',auth.uid(),
-    'idempotency_key','company.merged:'||_source_id::text||':'||v_target_leaf::text)
-  ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING;
+  -- domain_events через private emit helper (§10.1)
+  PERFORM public._crm_company_emit_domain_event(
+    'company.merged.v1',
+    _source_id,
+    'company.merged:'||_source_id::text||':'||v_target_leaf::text,
+    jsonb_build_object(
+      'version',1,'source_id',_source_id,'source_public_id',v_src.public_id,
+      'target_id',v_target_leaf,'target_public_id',v_tgt.public_id,
+      'moved_map_rows',v_moved_map,'moved_contact_rows',v_moved_contacts,
+      'merged_contact_rows',v_merged_contacts,'occurred_at',now(),'actor_user_id',auth.uid(),
+      'idempotency_key','company.merged:'||_source_id::text||':'||v_target_leaf::text
+    )
+  );
 
   INSERT INTO public.audit_logs (actor_user_id, action, actor_type, entity_type, entity_id, meta)
   SELECT auth.uid(),'company.merge','user','company',_source_id::text,
