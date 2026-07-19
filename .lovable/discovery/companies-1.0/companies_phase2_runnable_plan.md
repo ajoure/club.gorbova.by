@@ -1396,6 +1396,13 @@ BEGIN
   v_event_key := 'company.upserted_from_billing:' || v_id::text || ':' || _client_legal_details_id::text || ':' ||
                  COALESCE(v_cld.updated_at::text, 'no-source-version') || ':' || v_values_hash;
 
+  IF array_length(v_changed,1) IS NULL AND array_length(v_conflicts,1) IS NULL
+     AND NOT v_first_billing_sync
+     AND v_prev_src IS NOT NULL
+     AND v_cld.updated_at IS NOT DISTINCT FROM v_prev_src THEN
+    RETURN v_id;
+  END IF;
+
   -- Единый UPDATE: значения полей + обновление metadata (snapshot + timestamps).
   UPDATE public.companies SET
     full_name         = new_full_name,
@@ -1710,6 +1717,8 @@ BEGIN
                     jsonb_build_array(jsonb_build_object(
                       'source_id',        _source_id,
                       'source_public_id', v_src_public_id,
+                       'source_status',    v_src.status,
+                       'source_metadata',  COALESCE(v_src.metadata,'{}'::jsonb),
                       'at',               now(),
                       'by',               auth.uid()
                     ))
@@ -2013,7 +2022,7 @@ BEGIN
     RAISE EXCEPTION 'post: baseline hash drift %', v_hash;
   END IF;
 
-  -- ACL matrix: 6 authenticated public RPC, 1 service-only RPC, 2 private helpers, preserved search_global.
+  -- ACL matrix: expected 6 authenticated RPC, 1 service-only RPC, 2 private helpers, preserved search_global.
   IF NOT has_function_privilege('authenticated','public.crm_company_get_or_create(text,text,text,text,text,uuid)','EXECUTE')
      OR NOT has_function_privilege('authenticated','public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)','EXECUTE')
      OR NOT has_function_privilege('authenticated','public.search_companies(jsonb)','EXECUTE')
@@ -2049,6 +2058,7 @@ BEGIN
      OR has_function_privilege('service_role','public._crm_company_emit_domain_event(text,uuid,text,jsonb)','EXECUTE')
   THEN RAISE EXCEPTION 'post: private helper ACL drift'; END IF;
 
+  -- search_global ACL must stay executable for anon/authenticated/service_role per pre-Phase-2 contract.
   IF NOT has_function_privilege('anon','public.search_global(text,integer,integer)','EXECUTE')
      OR NOT has_function_privilege('authenticated','public.search_global(text,integer,integer)','EXECUTE')
      OR NOT has_function_privilege('service_role','public.search_global(text,integer,integer)','EXECUTE')
