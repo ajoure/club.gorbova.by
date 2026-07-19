@@ -706,7 +706,52 @@ $preflight$;
 
 Примечание: если `sha256`/`convert_to` недоступны в целевой БД (напр., отсутствие `pgcrypto` в default search_path), проверка выполняется через `md5(pg_get_functiondef(...))='7641d12fc0bea802a93935a384e7e349'` как fallback (значение приведено в §2.5).
 
-### 11.2 Private helper
+### 11.2 Private helpers (emit → resolve)
+
+Порядок создания обязателен: сначала `_crm_company_emit_domain_event`, затем `_crm_company_resolve_or_create_internal` (последний уже вызывает emit при `company.created.v1`).
+
+```sql
+-- 11.2.a Private emit helper — дедуплицированная запись в domain_events (§10.1)
+CREATE OR REPLACE FUNCTION public._crm_company_emit_domain_event(
+  _event_type      text,
+  _entity_id       uuid,
+  _idempotency_key text,
+  _payload         jsonb
+) RETURNS uuid
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $$
+DECLARE v_existing uuid; v_new uuid;
+BEGIN
+  IF _event_type IS NULL OR _event_type NOT LIKE 'company.%' THEN
+    RAISE EXCEPTION 'emit: bad event_type %', _event_type;
+  END IF;
+  IF _idempotency_key IS NULL OR length(_idempotency_key) < 8 THEN
+    RAISE EXCEPTION 'emit: bad idempotency_key';
+  END IF;
+  IF NOT (_payload ? 'version') OR (_payload->>'version') <> '1' THEN
+    RAISE EXCEPTION 'emit: payload version must be 1';
+  END IF;
+  IF coalesce(_payload->>'idempotency_key','') <> _idempotency_key THEN
+    RAISE EXCEPTION 'emit: payload/key mismatch';
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtextextended('crm_company_emit:' || _idempotency_key, 0));
+
+  SELECT id INTO v_existing FROM public.domain_events
+   WHERE event_type = _event_type
+     AND payload->>'idempotency_key' = _idempotency_key
+   LIMIT 1;
+  IF v_existing IS NOT NULL THEN
+    RETURN NULL;  -- дубль подавлен
+  END IF;
+
+  INSERT INTO public.domain_events(event_type, source, entity_id, payload)
+  VALUES (_event_type, 'crm', _entity_id, _payload)
+  RETURNING id INTO v_new;
+  RETURN v_new;
+END $$;
+
+-- 11.2.b Private resolve/create helper
 
 ```sql
 CREATE OR REPLACE FUNCTION public._crm_company_resolve_or_create_internal(
