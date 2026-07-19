@@ -495,7 +495,9 @@ Hard delete запрещён.
 
 ## 8. Event/audit matrix (правка 10, полный контракт)
 
-Payload version — v1 у всех событий Phase 2. `domain_events` получает **партиционный уникальный индекс** для дедупликации (см. §11), поэтому `payload->>'idempotency_key'` гарантирует единственность события.
+Payload version — v1 у всех событий Phase 2. Все Phase 2 события пишутся в `domain_events` **исключительно** через private helper `public._crm_company_emit_domain_event` (см. §10.1). Никаких DDL на shared-таблице `domain_events` (индексов, constraints, колонок) Phase 2 не создаёт — дедупликация выполнена на write-side.
+
+Сводка (7 public RPC + 1 private write helper + 1 private emit helper):
 
 | Операция | `domain_events.event_type` | `payload` version=1 обязательные поля | `payload.idempotency_key` (формат) | `crm_activity_log.activity_type` / `crm_activity_log.idempotency_key` | `audit_logs.action` |
 |---|---|---|---|---|---|
@@ -508,17 +510,7 @@ Payload version — v1 у всех событий Phase 2. `domain_events` по�
 
 **Материальное изменение** (для `company.linked_to_contact.v1`): `is_billing_contact` перешёл false→true; `source_client_legal_details_map_id` установлен впервые; `source` изменился на более высокий приоритет. Простой no-op ON CONFLICT (все поля идентичны) события не создаёт.
 
-**Механизм подавления дублей в `domain_events`:**
-
-Миграция создаёт частичный уникальный индекс:
-
-```sql
-CREATE UNIQUE INDEX IF NOT EXISTS domain_events_company_idem_uniq
-  ON public.domain_events ((payload->>'idempotency_key'))
-  WHERE event_type LIKE 'company.%';
-```
-
-Все writes в `domain_events` для company-event выполняются через `INSERT ... ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING`.
+**Механизм подавления дублей в `domain_events`:** реализован в helper `_crm_company_emit_domain_event` (§10.1) через `pg_advisory_xact_lock(hashtextextended(_idempotency_key,0))` + `INSERT ... WHERE NOT EXISTS`. Внешнего EXECUTE у helper нет. DDL на `domain_events` не выполняется. Прямых `INSERT INTO public.domain_events` из тел Phase 2 RPC нет — весь трафик идёт через helper.
 
 **Подавление дублей в `crm_activity_log`:**
 
