@@ -18327,6 +18327,27 @@ export type Database = {
       }
     }
     Functions: {
+      _crm_company_emit_domain_event: {
+        Args: {
+          _entity_id: string
+          _event_type: string
+          _idempotency_key: string
+          _payload: Json
+        }
+        Returns: string
+      }
+      _crm_company_resolve_or_create_internal: {
+        Args: {
+          _actor_user_id: string
+          _company_kind: string
+          _country: string
+          _full_name: string
+          _source: string
+          _source_cld_id: string
+          _unp_normalized: string
+        }
+        Returns: string
+      }
       _crm_tasks_assert_staff: { Args: never; Returns: undefined }
       _payment_delete_checksum: {
         Args: { p_order_id: string; p_payment_ids: string[]; p_version: number }
@@ -18980,6 +19001,10 @@ export type Database = {
             }
             Returns: Json
           }
+      crm_company_archive: {
+        Args: { _id: string; _reason: string }
+        Returns: string
+      }
       crm_company_get_or_create: {
         Args: {
           _company_kind: string
@@ -18991,6 +19016,7 @@ export type Database = {
         }
         Returns: string
       }
+      crm_company_grp_refetch: { Args: { _id: string }; Returns: string }
       crm_company_link_contact: {
         Args: {
           _company_id: string
@@ -19000,6 +19026,14 @@ export type Database = {
           _source: string
           _source_client_legal_details_map_id?: string
         }
+        Returns: string
+      }
+      crm_company_merge: {
+        Args: { _source_id: string; _target_id: string }
+        Returns: string
+      }
+      crm_company_upsert_from_billing: {
+        Args: { _client_legal_details_id: string }
         Returns: string
       }
       crm_task_apply_automation: {
@@ -20293,6 +20327,7 @@ export type Database = {
           updated_at: string
         }[]
       }
+      search_companies: { Args: { _filters: Json }; Returns: Json }
       search_deal_rows: {
         Args: {
           p_date_from?: string
