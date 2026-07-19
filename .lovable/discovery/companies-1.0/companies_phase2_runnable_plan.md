@@ -1406,29 +1406,82 @@ END $$;
 
 ### 11.7 `crm_company_merge`
 
-Полный SQL реализует §7 буквально. Ключевые фрагменты приведены в §7.1–§7.7; wrapping:
+Полный SQL реализует §7 буквально.
 
 ```sql
 CREATE OR REPLACE FUNCTION public.crm_company_merge(_source_id uuid, _target_id uuid)
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
 AS $$
-DECLARE v_target_leaf uuid; v_src public.companies%ROWTYPE;
-        v_tgt public.companies%ROWTYPE; v_moved_map int; v_moved_contacts int; v_merged_contacts int;
+DECLARE
+  v_target_leaf       uuid;
+  v_src               public.companies%ROWTYPE;
+  v_tgt               public.companies%ROWTYPE;
+  v_src_public_id     text;
+  v_tgt_public_id     text;
+  v_moved_map         int := 0;
+  v_moved_contacts    int := 0;
+  v_merged_contacts   int := 0;
+  v_cycle             int;
+  v_src_row           public.company_contacts%ROWTYPE;
+  v_tgt_row           public.company_contacts%ROWTYPE;
 BEGIN
   IF NOT (has_role_v2(auth.uid(),'admin') OR has_role_v2(auth.uid(),'super_admin')) THEN
     RAISE EXCEPTION 'forbidden' USING ERRCODE='42501';
   END IF;
   IF _source_id = _target_id THEN RAISE EXCEPTION 'source=target' USING ERRCODE='22023'; END IF;
 
-  -- §7.1 chain resolution
-  -- ... (см. §7.1 outline)
+  -- §7.1 разрешение цепочки merged_into для target до листа
+  WITH RECURSIVE chain AS (
+    SELECT id, merged_into_company_id, status, 1 AS depth
+      FROM public.companies WHERE id = _target_id
+    UNION ALL
+    SELECT c.id, c.merged_into_company_id, c.status, chain.depth + 1
+      FROM public.companies c
+      JOIN chain ON c.id = chain.merged_into_company_id
+      WHERE chain.depth < 32
+  )
+  SELECT id INTO v_target_leaf FROM chain
+   WHERE merged_into_company_id IS NULL AND status <> 'merged'
+   LIMIT 1;
+  IF v_target_leaf IS NULL THEN
+    RAISE EXCEPTION 'target chain broken or cyclic' USING ERRCODE='22023';
+  END IF;
+  IF v_target_leaf = _source_id THEN
+    RAISE EXCEPTION 'target leaf equals source' USING ERRCODE='22023';
+  END IF;
 
-  -- §7.2 cycle detection
-  -- ...
+  -- §7.2 detection циклов: source не должен лежать в цепочке target
+  WITH RECURSIVE chk AS (
+    SELECT id, merged_into_company_id, 1 AS depth
+      FROM public.companies WHERE id = v_target_leaf
+    UNION ALL
+    SELECT c.id, c.merged_into_company_id, chk.depth + 1
+      FROM public.companies c
+      JOIN chk ON c.id = chk.merged_into_company_id
+      WHERE chk.depth < 32
+  )
+  SELECT count(*) INTO v_cycle FROM chk WHERE id = _source_id;
+  IF v_cycle > 0 THEN
+    RAISE EXCEPTION 'cycle detected: source is ancestor of target' USING ERRCODE='22023';
+  END IF;
 
-  -- §7.3 locking (LEAST/GREATEST + FOR UPDATE)
-  -- ...
+  -- §7.3 locking — детерминированный порядок LEAST/GREATEST + FOR UPDATE
+  PERFORM 1 FROM public.companies
+    WHERE id = LEAST(_source_id, v_target_leaf) FOR UPDATE;
+  PERFORM 1 FROM public.companies
+    WHERE id = GREATEST(_source_id, v_target_leaf) FOR UPDATE;
+  PERFORM 1 FROM public.client_legal_details_company_map
+    WHERE company_id = _source_id FOR UPDATE;
+  PERFORM 1 FROM public.company_contacts
+    WHERE company_id = _source_id FOR UPDATE;
+  PERFORM 1 FROM public.company_contacts
+    WHERE company_id = v_target_leaf FOR UPDATE;
+
+  SELECT * INTO v_src FROM public.companies WHERE id = _source_id;
+  SELECT * INTO v_tgt FROM public.companies WHERE id = v_target_leaf;
+  v_src_public_id := v_src.public_id;
+  v_tgt_public_id := v_tgt.public_id;
 
   -- workspace check
   IF v_src.workspace_id <> v_tgt.workspace_id THEN
@@ -1445,27 +1498,109 @@ BEGIN
     RAISE EXCEPTION 'target is merged' USING ERRCODE='22023';
   END IF;
 
-  -- §7.4 map move
+  -- §7.4 перенос map (уникальный ключ = client_legal_details_id; конфликтов не создаёт).
   WITH m AS (
     UPDATE public.client_legal_details_company_map
-       SET company_id = v_target_leaf, updated_at=now(), updated_by=auth.uid()
-     WHERE company_id = _source_id RETURNING 1)
+       SET company_id = v_target_leaf, updated_at = now(), updated_by = auth.uid()
+     WHERE company_id = _source_id
+     RETURNING 1)
   SELECT count(*) INTO v_moved_map FROM m;
 
-  -- §7.5 contacts move+merge (loop, см. §7.5 body)
-  -- ... v_moved_contacts / v_merged_contacts заполняются
+  -- §7.5 перенос contacts — строгий row-by-row алгоритм.
+  FOR v_src_row IN
+    SELECT * FROM public.company_contacts
+     WHERE company_id = _source_id
+     ORDER BY id
+  LOOP
+    SELECT * INTO v_tgt_row FROM public.company_contacts
+     WHERE company_id = v_target_leaf
+       AND profile_id = v_src_row.profile_id
+       AND relationship_type = v_src_row.relationship_type
+     FOR UPDATE;
 
-  -- §7.6 metadata union и переключение source status
-  -- ... (см. §7.6 body)
+    IF NOT FOUND THEN
+      -- Целевой строки нет → простой перенос.
+      UPDATE public.company_contacts
+         SET company_id = v_target_leaf,
+             updated_at = now(),
+             updated_by = auth.uid()
+       WHERE id = v_src_row.id;
+      v_moved_contacts := v_moved_contacts + 1;
+      CONTINUE;
+    END IF;
 
-  -- domain_events через private emit helper (§10.1)
+    -- Обе строки существуют → детерминированное объединение.
+    UPDATE public.company_contacts SET
+      is_billing_contact = v_tgt_row.is_billing_contact OR v_src_row.is_billing_contact,
+      is_primary         = v_tgt_row.is_primary         OR v_src_row.is_primary,
+      source_client_legal_details_map_id = CASE
+        WHEN v_tgt_row.source_client_legal_details_map_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM public.client_legal_details_company_map m
+           WHERE m.id = v_tgt_row.source_client_legal_details_map_id
+             AND m.company_id = v_target_leaf)
+          THEN v_tgt_row.source_client_legal_details_map_id
+        WHEN v_src_row.source_client_legal_details_map_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM public.client_legal_details_company_map m
+           WHERE m.id = v_src_row.source_client_legal_details_map_id
+             AND m.company_id = v_target_leaf)
+          THEN v_src_row.source_client_legal_details_map_id
+        ELSE NULL END,
+      source = CASE
+        WHEN v_tgt_row.source = 'billing_requisites' OR v_src_row.source = 'billing_requisites'
+          THEN 'billing_requisites'
+        WHEN v_tgt_row.source = 'manual' OR v_src_row.source = 'manual'
+          THEN 'manual'
+        ELSE COALESCE(v_tgt_row.source, v_src_row.source) END,
+      metadata = COALESCE(v_src_row.metadata,'{}'::jsonb)
+              || COALESCE(v_tgt_row.metadata,'{}'::jsonb),
+      updated_at = now(),
+      updated_by = auth.uid()
+    WHERE id = v_tgt_row.id;
+
+    DELETE FROM public.company_contacts WHERE id = v_src_row.id;
+    v_merged_contacts := v_merged_contacts + 1;
+  END LOOP;
+
+  -- §7.6 объединение metadata на уровне компании и переключение status source.
+  UPDATE public.companies SET
+    metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object(
+      'merge', jsonb_build_object(
+        'consumed', COALESCE(metadata->'merge'->'consumed','[]'::jsonb) ||
+                    jsonb_build_array(jsonb_build_object(
+                      'source_id',        _source_id,
+                      'source_public_id', v_src_public_id,
+                      'at',               now(),
+                      'by',               auth.uid()
+                    ))
+      )
+    ),
+    updated_at = now(),
+    updated_by = auth.uid()
+  WHERE id = v_target_leaf;
+
+  UPDATE public.companies SET
+    status = 'merged',
+    merged_into_company_id = v_target_leaf,
+    metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object(
+      'merged', jsonb_build_object(
+        'at',   now(),
+        'by',   auth.uid(),
+        'from', v_src_public_id,
+        'into', v_tgt_public_id
+      )
+    ),
+    updated_at = now(),
+    updated_by = auth.uid()
+  WHERE id = _source_id AND status <> 'merged';
+
+  -- domain_events через private emit helper
   PERFORM public._crm_company_emit_domain_event(
     'company.merged.v1',
     _source_id,
     'company.merged:'||_source_id::text||':'||v_target_leaf::text,
     jsonb_build_object(
-      'version',1,'source_id',_source_id,'source_public_id',v_src.public_id,
-      'target_id',v_target_leaf,'target_public_id',v_tgt.public_id,
+      'version',1,'source_id',_source_id,'source_public_id',v_src_public_id,
+      'target_id',v_target_leaf,'target_public_id',v_tgt_public_id,
       'moved_map_rows',v_moved_map,'moved_contact_rows',v_moved_contacts,
       'merged_contact_rows',v_merged_contacts,'occurred_at',now(),'actor_user_id',auth.uid(),
       'idempotency_key','company.merged:'||_source_id::text||':'||v_target_leaf::text
@@ -1494,6 +1629,7 @@ BEGIN
   RETURN v_target_leaf;
 END $$;
 ```
+
 
 ### 11.8 `crm_company_archive`
 
