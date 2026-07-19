@@ -1361,11 +1361,16 @@ BEGIN
   VALUES ('company', _id, 'grp_refetch', 'queued', v_key, now(), '{}'::jsonb, auth.uid(), auth.uid())
   RETURNING id INTO v_new;
 
-  INSERT INTO public.domain_events(event_type, source, entity_id, payload)
-  VALUES ('company.grp_refetch_requested.v1','crm', _id, jsonb_build_object(
-    'version',1,'company_id',_id,'queue_id',v_new,'idempotency_key','company.grp_refetch_requested:'||v_new::text,
-    'occurred_at',now(),'actor_user_id',auth.uid()))
-  ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING;
+  PERFORM public._crm_company_emit_domain_event(
+    'company.grp_refetch_requested.v1',
+    _id,
+    'company.grp_refetch_requested:'||v_new::text,
+    jsonb_build_object(
+      'version',1,'company_id',_id,'queue_id',v_new,
+      'idempotency_key','company.grp_refetch_requested:'||v_new::text,
+      'occurred_at',now(),'actor_user_id',auth.uid()
+    )
+  );
 
   RETURN v_new;
 END $$;
