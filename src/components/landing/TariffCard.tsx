@@ -262,75 +262,43 @@ export function TariffCard({
         </ul>
       )}
 
-      {showButtons && hasAnyActionableOffer && (
-        <div className="space-y-2 mt-auto">
-          {trialOffers.map((offer) => (
-            <Button
-              key={offer.id}
-              onClick={() => onSelectOffer?.(offer, tariff)}
-              variant="outline"
-              className="w-full"
-            >
-              {offer.button_label || `Пробный период ${offer.trial_days} дней`}
-            </Button>
-          ))}
-          {payNowOffers.map((offer, index) => (
-            <Button
-              key={offer.id}
-              onClick={() => onSelectOffer?.(offer, tariff)}
-              variant={isHighlighted && index === 0 ? "default" : "outline"}
-              className="w-full"
-            >
-              {cc?.cta_text && index === 0 ? cc.cta_text : (offer.button_label || "Оплатить")}
-              <ChevronRight className="ml-2 h-4 w-4" />
-            </Button>
-          ))}
-          {preregOffers.map((offer) => (
-            <Button
-              key={offer.id}
-              onClick={() => onSelectOffer?.(offer, tariff)}
-              variant={!hasActivePayOffers ? "default" : "outline"}
-              className="w-full"
-            >
-              {offer.button_label || "Оставить заявку"}
-              <ChevronRight className="ml-2 h-4 w-4" />
-            </Button>
-          ))}
-          {leadOffers.map((offer) => (
-            <Button
-              key={offer.id}
-              onClick={() => onSelectOffer?.(offer, tariff)}
-              variant={!hasActivePayOffers && preregOffers.length === 0 ? "default" : "outline"}
-              className="w-full"
-            >
-              {offer.button_label || "Оставить заявку"}
-              <ChevronRight className="ml-2 h-4 w-4" />
-            </Button>
-          ))}
-          {bankInstallmentOffers.map((offer) => (
-            <Button
-              key={offer.id}
-              onClick={() => onSelectOffer?.(offer, tariff)}
-              variant="outline"
-              className="w-full"
-            >
-              {offer.button_label || "Заявка на рассрочку от банка"}
-              <ChevronRight className="ml-2 h-4 w-4" />
-            </Button>
-          ))}
-          {invoiceOffers.map((offer) => (
-            <Button
-              key={offer.id}
-              onClick={() => onSelectOffer?.(offer, tariff)}
-              variant="outline"
-              className="w-full"
-            >
-              {offer.button_label || "Сформировать счёт"}
-              <ChevronRight className="ml-2 h-4 w-4" />
-            </Button>
-          ))}
-        </div>
-      )}
+      {showButtons && hasAnyActionableOffer && (() => {
+        // SINGLE SOURCE OF ORDER: sort_order ASC, id ASC across ALL actionable offers.
+        // Groups by offer_type are NOT used for positioning — only for label defaults
+        // and downstream dialog routing (handled by onSelectOffer consumer).
+        const actionableOffers = resolvedOffers
+          .filter((o) => o.is_active !== false && ACTIONABLE_TYPES.has(o.offer_type))
+          .slice()
+          .sort(
+            (a, b) =>
+              ((a.sort_order ?? 0) - (b.sort_order ?? 0)) ||
+              a.id.localeCompare(b.id),
+          );
+        return (
+          <div className="space-y-2 mt-auto">
+            {actionableOffers.map((offer, index) => {
+              const rawVariant = (offer.meta?.site_button_variant ?? "").toString().trim();
+              const style = VARIANT_STYLE[rawVariant] ?? { variant: "outline" as const };
+              const label =
+                cc?.cta_text && offer.offer_type === "pay_now" && index === 0 && !rawVariant
+                  ? cc.cta_text
+                  : defaultLabelFor(offer);
+              const showChevron = offer.offer_type !== "trial";
+              return (
+                <Button
+                  key={offer.id}
+                  onClick={() => onSelectOffer?.(offer, tariff)}
+                  variant={style.variant}
+                  className={cn("w-full", style.className)}
+                >
+                  {label}
+                  {showChevron && <ChevronRight className="ml-2 h-4 w-4" />}
+                </Button>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {footnote && (
         <p className="text-xs text-muted-foreground text-center mt-3">{footnote}</p>
