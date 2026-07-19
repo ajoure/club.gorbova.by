@@ -1071,12 +1071,25 @@ export default function AdminProductDetailV2() {
     (offers || [])
       .filter((o: any) => o.tariff_id === tariffId)
       .slice()
-      .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+      .sort((a: any, b: any) => {
+        const so = (a.sort_order ?? 0) - (b.sort_order ?? 0);
+        if (so !== 0) return so;
+        // Stable tie-break by id ASC — mirrors the DB canonical order.
+        return String(a.id).localeCompare(String(b.id));
+      });
 
   // DnD reorder handler for offers within a single tariff.
+  // Guards: identity no-op, cross-tariff drop, and per-tariff in-flight RPC.
   const handleOfferDragEnd = (tariffId: string) => (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
+    // Cross-tariff guard — reject drops that landed on another tariff's list.
+    const activeTariffId = (active.data.current as { tariffId?: string } | undefined)?.tariffId;
+    const overTariffId = (over.data.current as { tariffId?: string } | undefined)?.tariffId;
+    if (activeTariffId && overTariffId && activeTariffId !== overTariffId) return;
+    if (activeTariffId && activeTariffId !== tariffId) return;
+    // Per-tariff in-flight guard — block a second drag until the RPC settles.
+    if (reorderOffers.isTariffReordering(tariffId)) return;
     const list = getOffersForTariff(tariffId);
     const oldIndex = list.findIndex((o: any) => o.id === active.id);
     const newIndex = list.findIndex((o: any) => o.id === over.id);
@@ -1089,6 +1102,7 @@ export default function AdminProductDetailV2() {
       orderedIds: reordered.map((o: any) => o.id),
     });
   };
+
 
   // Get features by tariff
   const getFeaturesForTariff = (tariffId: string) =>
