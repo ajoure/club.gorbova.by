@@ -2375,13 +2375,13 @@ export default function AdminProductDetailV2() {
                       <div className="rounded-md bg-muted/40 p-3 text-xs space-y-1">
                         {purposeLabel && (
                           <div>
-                            <span className="text-muted-foreground">На странице: </span>
+                            <span className="text-muted-foreground">Слот в HTML: </span>
                             <span className="font-medium">{purposeLabel}</span>
                           </div>
                         )}
                         {variantLabel && (
                           <div>
-                            <span className="text-muted-foreground">Оформление: </span>
+                            <span className="text-muted-foreground">Цвет: </span>
                             <span className="font-medium">{variantLabel}</span>
                           </div>
                         )}
