@@ -19005,6 +19005,10 @@ export type Database = {
         Args: { _id: string; _reason: string }
         Returns: string
       }
+      crm_company_backfill_billing_cld: {
+        Args: { _client_legal_details_id: string }
+        Returns: Json
+      }
       crm_company_get_or_create: {
         Args: {
           _company_kind: string
