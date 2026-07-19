@@ -570,7 +570,7 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
     var tariffId = tariffEntry ? tariffEntry.tariff_id : '';
     var used = new Array(offers.length);
 
-    // Bridge v10 — strict index-based assignment after visual-position sorting.
+    // Bridge v11 — strict index-based assignment after visual-position sorting.
     // Offers arrive pre-sorted by sort_order ASC, offer_id ASC (see
     // buildSlotManifest). Position i is claimed by offer i regardless of
     // authored slot ↔ variant pairing. When the offer's variant differs
