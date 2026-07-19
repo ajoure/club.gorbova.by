@@ -1060,8 +1060,6 @@ export default function AdminProductDetailV2() {
     const overTariffId = (over.data.current as { tariffId?: string } | undefined)?.tariffId;
     if (activeTariffId && overTariffId && activeTariffId !== overTariffId) return;
     if (activeTariffId && activeTariffId !== tariffId) return;
-    // Per-tariff in-flight guard — block a second drag until the RPC settles.
-    if (reorderOffers.isTariffReordering(tariffId)) return;
     const list = getOffersForTariff(tariffId);
     const oldIndex = list.findIndex((o: any) => o.id === active.id);
     const newIndex = list.findIndex((o: any) => o.id === over.id);
@@ -1069,6 +1067,9 @@ export default function AdminProductDetailV2() {
     const reordered = [...list];
     const [moved] = reordered.splice(oldIndex, 1);
     reordered.splice(newIndex, 0, moved);
+    // Atomic per-tariff claim — must happen BEFORE mutate() so a second fast
+    // drop cannot slip past the async React state update.
+    if (!reorderOffers.tryStartReorder(tariffId)) return;
     reorderOffers.mutate({
       tariffId,
       orderedIds: reordered.map((o: any) => o.id),
