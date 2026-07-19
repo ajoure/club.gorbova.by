@@ -99,38 +99,85 @@ Rollback-миграция подготавливается заранее и х�
 ```sql
 BEGIN;
 
--- 3.0 Assertions, дублирующие preflight (stop-guard)
+-- 3.0 Assertions, дублирующие preflight (HARD STOP внутри транзакции)
 DO $$
+DECLARE
+  v_roles text[] := ARRAY['admin','admin_gost','editor','menedzher','super_admin','support','user'];
+  v_missing_role text;
+  v_tenant_row record;
 BEGIN
+  -- 3.0.1 Ни одна из целевых таблиц не существует
   IF to_regclass('public.companies') IS NOT NULL
      OR to_regclass('public.client_legal_details_company_map') IS NOT NULL
      OR to_regclass('public.company_contacts') IS NOT NULL
      OR to_regclass('public.company_sync_queue') IS NOT NULL THEN
     RAISE EXCEPTION 'Phase 1 assertion failed: one of target tables already exists';
   END IF;
+
+  -- 3.0.2 Ни одна из целевых функций не существует
   IF EXISTS (SELECT 1 FROM pg_proc WHERE proname IN (
       'crm_company_get_or_create','crm_company_link_contact','set_companies_public_id'
   )) THEN
     RAISE EXCEPTION 'Phase 1 assertion failed: target function already exists';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname='next_public_id') THEN
-    RAISE EXCEPTION 'Phase 1 assertion failed: helper next_public_id missing';
+
+  -- 3.0.3 Точные сигнатуры helper-функций (не просто naming)
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE proname='next_public_id'
+      AND pg_get_function_identity_arguments(oid)='p_entity_type text'
+  ) THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: helper next_public_id(p_entity_type text) missing or has drifted signature';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname='update_updated_at_column') THEN
-    RAISE EXCEPTION 'Phase 1 assertion failed: helper update_updated_at_column missing';
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE proname='update_updated_at_column'
+      AND pg_get_function_identity_arguments(oid)=''
+  ) THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: helper update_updated_at_column() missing or has drifted signature';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname='has_role_v2') THEN
-    RAISE EXCEPTION 'Phase 1 assertion failed: helper has_role_v2 missing';
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE proname='has_role_v2'
+      AND pg_get_function_identity_arguments(oid)='_user_id uuid, _role_code text'
+  ) THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: helper has_role_v2(_user_id uuid, _role_code text) missing or has drifted signature';
   END IF;
-  IF EXISTS (SELECT 1 FROM public.public_id_sequences WHERE prefix='CMP' AND entity_type<>'company') THEN
+
+  -- 3.0.4 public_id namespace: обе коллизии — HARD STOP, никакого silent skip
+  IF EXISTS (SELECT 1 FROM public.public_id_sequences
+             WHERE prefix='CMP' AND entity_type<>'company') THEN
     RAISE EXCEPTION 'Phase 1 assertion failed: prefix CMP already reserved by another entity_type';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.public_id_sequences
+             WHERE entity_type='company' AND prefix<>'CMP') THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: entity_type=company already exists with prefix<>CMP';
+  END IF;
+
+  -- 3.0.5 Все 7 канонических ролей присутствуют
+  SELECT r INTO v_missing_role
+  FROM unnest(v_roles) AS r
+  WHERE NOT EXISTS (SELECT 1 FROM public.roles WHERE code=r)
+  LIMIT 1;
+  IF v_missing_role IS NOT NULL THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: canonical role missing: %', v_missing_role;
+  END IF;
+
+  -- 3.0.6 SYSTEM tenant: id + name + is_personal одновременно
+  SELECT id, name, is_personal INTO v_tenant_row
+  FROM public.tenants WHERE id='00000000-0000-0000-0000-000000000001';
+  IF v_tenant_row.id IS NULL THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: SYSTEM tenant 00000000-0000-0000-0000-000000000001 missing';
+  END IF;
+  IF v_tenant_row.name <> 'system' OR v_tenant_row.is_personal <> false THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: SYSTEM tenant contract mismatch (expected name=system, is_personal=false)';
   END IF;
 END $$;
 
--- 3.1 Регистрация public_id namespace
+-- 3.1 Регистрация public_id namespace (без ON CONFLICT — коллизия уже отсечена в §3.0)
 INSERT INTO public.public_id_sequences (entity_type, prefix, last_value)
-VALUES ('company', 'CMP', 0)
-ON CONFLICT (entity_type) DO NOTHING;
+VALUES ('company', 'CMP', 0);
+
 
 -- 3.2 companies (approved DDL)
 CREATE TABLE public.companies (
