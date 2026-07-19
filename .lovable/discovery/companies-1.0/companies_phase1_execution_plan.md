@@ -10,8 +10,13 @@
 
 Внутри Phase 1:
 
-- Таблицы: `companies`, `company_contacts`, `client_legal_details_company_map`, `company_sync_queue` (только структура, без enqueue).
-- Триггеры `updated_at` на 3 таблицы (map-таблица включается только после добавления в неё столбца `updated_at`, см. §2.3).
+- Таблицы (создавать строго в этом порядке из-за FK `company_contacts.source_client_legal_details_map_id → client_legal_details_company_map(id)`):
+  1. `companies`
+  2. `client_legal_details_company_map`
+  3. `company_contacts`
+  4. `company_sync_queue`
+  (только структура, без enqueue). Альтернатива при желании инвертировать: создать `company_contacts` без FK и добавить FK на map отдельным `ALTER TABLE ... ADD CONSTRAINT` после создания map — в Phase 1 не используется, зафиксировано как опция.
+- Триггеры `updated_at` на все 4 таблицы (у всех есть `updated_at`, см. §2.2–§2.4).
 - Триггер `trg_set_companies_public_id` через `next_public_id('company')`.
 - Регистрация entity_type в `public_id_sequences` (`entity_type='company'`, `prefix='CMP'`).
 - RLS + policies (см. `companies_permissions_matrix.md`).
@@ -89,9 +94,33 @@ CREATE INDEX companies_created_at_idx ON public.companies(created_at DESC);
 
 `company_kind` — canonical различие, сохраняет исходный `client_legal_details.client_type` без потери сведений об ИП / юрлице / foreign.
 
-### 2.2. `company_contacts` — утверждённый контракт
+### 2.2. `client_legal_details_company_map`
 
-Возвращён утверждённый Master Plan v2 контракт: связь `profile ↔ company` описывается через `relationship_type`, `source` и `is_billing_contact`. `role` **не используется** и удалён из DDL. Внешний импортированный контакт из Phase 9 поддерживается через nullable `profile_id` и внешние поля.
+Создаётся **до** `company_contacts`, поскольку `company_contacts.source_client_legal_details_map_id` содержит FK на эту таблицу.
+
+```sql
+CREATE TABLE public.client_legal_details_company_map (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_legal_details_id uuid NOT NULL UNIQUE
+    REFERENCES public.client_legal_details(id) ON DELETE CASCADE,
+  company_id uuid NOT NULL REFERENCES public.companies(id) ON DELETE RESTRICT,
+  linked_at timestamptz NOT NULL DEFAULT now(),
+  linked_by uuid,
+  -- Полный audit-набор (правка B9 review): created_by/updated_by выравнены с companies/company_contacts.
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  created_by uuid,
+  updated_by uuid,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX cld_company_map_company_idx ON public.client_legal_details_company_map(company_id);
+```
+
+Правка ревью: `updated_at` присутствует → триггер `update_updated_at_column` исполним; `meta` → `metadata`; полный audit-набор совпадает с DoD §9.
+
+### 2.3. `company_contacts` — утверждённый контракт
+
+Возвращён утверждённый Master Plan v2 контракт: связь `profile ↔ company` описывается через `relationship_type`, `source` и `is_billing_contact`. `role` **не используется** и удалён из DDL. Внешний импортированный контакт из Phase 9 поддерживается через nullable `profile_id` и внешние поля. Создаётся **после** `client_legal_details_company_map` (FK ниже).
 
 ```sql
 CREATE TABLE public.company_contacts (
@@ -131,6 +160,7 @@ CREATE TABLE public.company_contacts (
 
   -- Machine-checkable source lineage для source='billing_requisites'.
   -- FK на map-запись даёт детерминированный путь client_legal_details → company_contacts.
+  -- Требует, чтобы client_legal_details_company_map была создана раньше (см. §2.2).
   source_client_legal_details_map_id uuid
     REFERENCES public.client_legal_details_company_map(id) ON DELETE SET NULL,
 
@@ -162,26 +192,6 @@ CREATE INDEX company_contacts_billing_idx
 
 Правило импорта Phase 9 (внешний контакт): импорт-worker сначала пытается найти/создать `profiles` по (email/phone). Только если совпадений нет и профиль намеренно не создаётся — вставляет запись `relationship_type='external_contact'` с `profile_id=NULL`. Для `is_billing_contact=true` `profile_id` обязателен (CHECK выше).
 
-### 2.3. `client_legal_details_company_map`
-
-```sql
-CREATE TABLE public.client_legal_details_company_map (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  client_legal_details_id uuid NOT NULL UNIQUE
-    REFERENCES public.client_legal_details(id) ON DELETE CASCADE,
-  company_id uuid NOT NULL REFERENCES public.companies(id) ON DELETE RESTRICT,
-  linked_at timestamptz NOT NULL DEFAULT now(),
-  linked_by uuid,
-  -- Полный audit-набор + updated_at, чтобы update_updated_at_column был исполняем
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  metadata jsonb NOT NULL DEFAULT '{}'::jsonb
-);
-CREATE INDEX cld_company_map_company_idx ON public.client_legal_details_company_map(company_id);
-```
-
-Правка ревью: `updated_at` добавлен, поэтому назначенный ниже триггер `update_updated_at_column` теперь исполним. `meta` → `metadata`.
-
 ### 2.4. `company_sync_queue`
 
 Создаётся структурно, но **enqueue в Phase 1 не выполняется** (нет trigger'а на `client_legal_details`, нет backfill). Первая запись появится в Phase 3 (backfill) / Phase 4 (sync trigger).
@@ -203,8 +213,11 @@ CREATE TABLE public.company_sync_queue (
   locked_at timestamptz,
   idempotency_key text UNIQUE,    -- канонический формат см. companies_migration_strategy.md §5
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  -- Полный audit-набор (правка B9 review): created_by/updated_by выравнены с остальными Phase 1 таблицами.
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  created_by uuid,
+  updated_by uuid
 );
 CREATE INDEX csq_status_next_idx
   ON public.company_sync_queue(status, next_run_at)
@@ -251,7 +264,7 @@ CREATE POLICY "companies delete for super_admin"
   ON public.companies FOR DELETE TO authenticated
   USING (has_role_v2(auth.uid(),'super_admin'));
 
--- company_contacts, client_legal_details_company_map — аналогично.
+-- client_legal_details_company_map, company_contacts — аналогичный набор из 4 политик.
 
 -- company_sync_queue — только service_role.
 GRANT ALL ON public.company_sync_queue TO service_role;
@@ -263,6 +276,7 @@ CREATE POLICY "company_sync_queue service only"
 ```
 
 Единый контракт queue permissions зафиксирован здесь и в `companies_migration_strategy.md` §8 (правка B8 review).
+
 
 ## 4. Минимальные RPC-скелеты Phase 1
 
@@ -348,18 +362,31 @@ GRANT EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean
 
 ## 8. Rollback
 
-Порядок обратный созданию (каждый объект — явно):
+Порядок строго обратный созданию (без CASCADE). `company_contacts.source_client_legal_details_map_id → client_legal_details_company_map(id)`, поэтому `company_contacts` удаляется раньше `client_legal_details_company_map`.
 
-1. `DROP FUNCTION IF EXISTS crm_company_link_contact(uuid,uuid,text,boolean,text,uuid);`
-2. `DROP FUNCTION IF EXISTS crm_company_get_or_create(text,text,text,text,text,uuid);`
-3. `DROP TRIGGER IF EXISTS trg_set_companies_public_id ON public.companies;`
-4. `DROP TRIGGER IF EXISTS update_companies_updated_at ON public.companies;` (и аналоги для остальных таблиц).
-5. `DROP POLICY ... ON public.companies;` (все 4 политики, аналогично для `company_contacts`, `client_legal_details_company_map`, `company_sync_queue`).
-6. `DROP TABLE public.company_sync_queue;`
-7. `DROP TABLE public.client_legal_details_company_map;`
-8. `DROP TABLE public.company_contacts;`
-9. `DROP TABLE public.companies;`
-10. `DELETE FROM public.public_id_sequences WHERE entity_type='company';`
+1. `DROP FUNCTION IF EXISTS public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid);`
+2. `DROP FUNCTION IF EXISTS public.crm_company_get_or_create(text,text,text,text,text,uuid);`
+3. Триггеры (точные имена):
+   - `DROP TRIGGER IF EXISTS trg_set_companies_public_id ON public.companies;`
+   - `DROP TRIGGER IF EXISTS update_companies_updated_at ON public.companies;`
+   - `DROP TRIGGER IF EXISTS update_company_contacts_updated_at ON public.company_contacts;`
+   - `DROP TRIGGER IF EXISTS update_client_legal_details_company_map_updated_at ON public.client_legal_details_company_map;`
+   - `DROP TRIGGER IF EXISTS update_company_sync_queue_updated_at ON public.company_sync_queue;`
+4. Policies (точные имена, по таблицам):
+   - `DROP POLICY IF EXISTS "companies read for CRM staff" ON public.companies;`
+   - `DROP POLICY IF EXISTS "companies insert for admin+manager" ON public.companies;`
+   - `DROP POLICY IF EXISTS "companies update for admin+manager" ON public.companies;`
+   - `DROP POLICY IF EXISTS "companies delete for super_admin" ON public.companies;`
+   - Аналогичные 4 политики для `public.company_contacts` (имена: `"company_contacts read for CRM staff"`, `... insert for admin+manager"`, `... update for admin+manager"`, `... delete for super_admin"`).
+   - Аналогичные 4 политики для `public.client_legal_details_company_map`.
+   - `DROP POLICY IF EXISTS "company_sync_queue service only" ON public.company_sync_queue;`
+5. Helper-функции создаются вне Phase 1 (`update_updated_at_column`, `has_role_v2`, `next_public_id`) — **не удаляются** rollback'ом Phase 1.
+6. Таблицы, строго в этом порядке (обратно созданию, с учётом FK):
+   1. `DROP TABLE public.company_sync_queue;`
+   2. `DROP TABLE public.company_contacts;`  — удаляется раньше map (FK на map).
+   3. `DROP TABLE public.client_legal_details_company_map;`
+   4. `DROP TABLE public.companies;`
+7. `DELETE FROM public.public_id_sequences WHERE entity_type='company';`
 
 CASCADE **не** использовать. `client_legal_details` не затронут (в Phase 1 нет FK и триггеров на него). `admin_section`, `admin_resource`, `role_admin_*`, `app_settings` не затронуты (записи не создавались в Phase 1). `orders_v2`, `crm_tasks`, `profiles`, `crm_activity_log`, `domain_events`, `audit_logs` — без изменений схемы, откат не требуется.
 
