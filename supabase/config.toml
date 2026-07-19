@@ -54,5 +54,30 @@ verify_jwt = true
 [functions.grant-access-for-order]
 verify_jwt = true
 
+# External providers call these endpoints directly. Each function performs
+# its own provider-specific validation before processing a request.
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.bepaid-webhook]
+verify_jwt = false
+
+[functions.telegram-webhook]
+verify_jwt = false
+
+[functions.instagram-webhook]
+verify_jwt = false
+
+[functions.getcourse-webhook]
+verify_jwt = false
+
+[functions.amocrm-webhook]
+verify_jwt = false
+
+[functions.payment-methods-webhook]
+verify_jwt = false
+
+[functions.public-webhook-deploy-probe]
+verify_jwt = false
 
 

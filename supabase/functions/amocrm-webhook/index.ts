@@ -267,9 +267,10 @@ async function verifyWebhookSecret(req: Request, supabase: any): Promise<{ valid
   const webhookSecret = instances?.[0]?.config?.webhook_secret || Deno.env.get('AMOCRM_WEBHOOK_SECRET');
   
   if (!webhookSecret) {
-    // If no secret configured, allow but log warning
-    console.warn('No amoCRM webhook secret configured - verification skipped');
-    return { valid: true, reason: 'no_secret_configured' };
+    // This endpoint is intentionally public at the Supabase gateway. Without
+    // an application secret, fail closed instead of processing forged events.
+    console.error('No amoCRM webhook secret configured - request rejected');
+    return { valid: false, reason: 'secret_not_configured' };
   }
   
   // Check for secret in query params or headers
@@ -307,11 +308,7 @@ Deno.serve(async (req) => {
       );
     }
     
-    if (verification.reason === 'no_secret_configured') {
-      console.log('Webhook processed without secret verification');
-    } else {
-      console.log('amoCRM webhook verified successfully');
-    }
+    console.log('amoCRM webhook verified successfully');
 
     // Parse the webhook payload
     let payload: AmoCRMWebhookPayload;
