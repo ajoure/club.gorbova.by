@@ -81,7 +81,52 @@ distinct entity_type = (empty)
 
 Столбцы `project_field` и `external_field` — это **имена полей**, не значения идентификаторов. Столбец `external_id` отсутствует. Таблица описывает, как поле проекта отображается в поле внешней системы (тип, обязательность, ключевое ли поле, transform-правила).
 
-Writers/readers Amo/GetCourse/ManyChat в текущем состоянии таблицы отсутствуют (0 строк, 0 distinct entity_type). Merge-поведение существующих mappings в отношении companies не наблюдаемо, потому что данных нет; при появлении данных merge-модель мапится на `instance_id`, а не на пару `(canonical company, external company)` — то есть перенос lookup при `crm_company_merge` невозможно выразить через эту таблицу.
+### 2.5 Writers/readers по code search (patch v3)
+
+Утверждение «writers/readers отсутствуют, потому что таблица пуста» логически некорректно: пустая таблица не значит, что нет кода, читающего/пишущего в неё. Ниже — фактический вывод code search.
+
+Запрос:
+
+```bash
+rg -n "integration_field_mappings" src supabase
+```
+
+Actual output (агрегировано, полный список):
+
+**Readers (SELECT):**
+
+- `src/hooks/useIntegrationSync.tsx:127` — `.from("integration_field_mappings").select(...)` (админский UI настройки маппингов).
+- `src/hooks/useIntegrationSync.tsx:234` — read перед upsert.
+- `src/components/integrations/FieldMappingDialog.tsx:141` — read списка маппингов для диалога.
+- `supabase/functions/amocrm-webhook/index.ts:125` — `.from('integration_field_mappings').select(...)` — edge function читает маппинги AmoCRM при обработке webhook.
+- `supabase/functions/integration-sync/index.ts:49` — edge function читает маппинги при синхронизации.
+- `supabase/functions/getcourse-sync/index.ts:96` — edge function читает маппинги при синхронизации GetCourse.
+- `src/pages/admin/AdminSystemAudit.tsx:29, 85` — таблица включена в whitelist аудита (read-only каталог).
+
+**Writers (INSERT/UPDATE/DELETE):**
+
+- `src/hooks/useIntegrationSync.tsx:209` — upsert из UI (админский сохранитель маппингов).
+- `src/components/integrations/FieldMappingDialog.tsx:185` — write из диалога маппингов.
+
+**SQL-функции public schema:** отсутствуют. Query:
+
+```sql
+SELECT n.nspname, p.proname
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname='public'
+  AND pg_get_functiondef(p.oid) ILIKE '%integration_field_mappings%';
+```
+
+Actual output: `0 rows`. Никакая RPC или триггер не обращается к таблице.
+
+**Вывод:** readers/writers существуют (админский UI-настройщик маппингов + три integration edge functions), но:
+
+1. они оперируют **именами полей**, а не значениями внешних ID;
+2. ни один reader/writer не использует таблицу как lookup `(provider, external_id) → canonical company_id`;
+3. отсутствие данных на момент discovery отражает состояние, что даже настройщик ещё не заполнялся, но код готов писать/читать имена полей.
+
+Это подтверждает основное решение ADR-0002: `integration_field_mappings` **не является** таблицей внешних идентификаторов и не пригодна как lookup для company external IDs — независимо от того, есть в ней данные или нет.
+
 
 ## 3. Требования Phase 2 к external IDs
 

@@ -245,7 +245,7 @@ crm_activity_log(id uuid, public_id text, contact_id uuid, user_id uuid, activit
                  visibility_scope text, idempotency_key text, created_at timestamptz, metadata jsonb)
 ```
 
-**Наблюдение для правки 10:** в `domain_events` нет отдельного поля `idempotency_key`. Подавление дублей выполняется на write-side через частичный уникальный индекс, создаваемый этой миграцией (§11), либо через `payload->>'idempotency_key'`. `crm_activity_log.idempotency_key` — text, не unique в глобальном каталоге; уникальность обеспечивается write-логикой через `INSERT ... WHERE NOT EXISTS`.
+**Наблюдение для правки 10:** в `domain_events` нет отдельного поля `idempotency_key` и Phase 2 **НЕ** добавляет к shared-таблице `domain_events` никаких DDL (индексов, колонок, constraints). Подавление дублей полностью реализуется на write-side через private helper `public._crm_company_emit_domain_event` (§10.1): `pg_advisory_xact_lock` по хэшу `idempotency_key` + `INSERT ... WHERE NOT EXISTS` по `event_type` и `payload->>'idempotency_key'`. Аналогично для `crm_activity_log` — write через `WHERE NOT EXISTS` по `(source_entity_type, source_entity_id, idempotency_key)`. Изменение схемы `domain_events` возможно только отдельным ADR и отдельным execution approve (см. §11.11).
 
 ---
 
@@ -495,7 +495,9 @@ Hard delete запрещён.
 
 ## 8. Event/audit matrix (правка 10, полный контракт)
 
-Payload version — v1 у всех событий Phase 2. `domain_events` получает **партиционный уникальный индекс** для дедупликации (см. §11), поэтому `payload->>'idempotency_key'` гарантирует единственность события.
+Payload version — v1 у всех событий Phase 2. Все Phase 2 события пишутся в `domain_events` **исключительно** через private helper `public._crm_company_emit_domain_event` (см. §10.1). Никаких DDL на shared-таблице `domain_events` (индексов, constraints, колонок) Phase 2 не создаёт — дедупликация выполнена на write-side.
+
+Сводка (7 public RPC + 1 private write helper + 1 private emit helper):
 
 | Операция | `domain_events.event_type` | `payload` version=1 обязательные поля | `payload.idempotency_key` (формат) | `crm_activity_log.activity_type` / `crm_activity_log.idempotency_key` | `audit_logs.action` |
 |---|---|---|---|---|---|
@@ -508,17 +510,7 @@ Payload version — v1 у всех событий Phase 2. `domain_events` по�
 
 **Материальное изменение** (для `company.linked_to_contact.v1`): `is_billing_contact` перешёл false→true; `source_client_legal_details_map_id` установлен впервые; `source` изменился на более высокий приоритет. Простой no-op ON CONFLICT (все поля идентичны) события не создаёт.
 
-**Механизм подавления дублей в `domain_events`:**
-
-Миграция создаёт частичный уникальный индекс:
-
-```sql
-CREATE UNIQUE INDEX IF NOT EXISTS domain_events_company_idem_uniq
-  ON public.domain_events ((payload->>'idempotency_key'))
-  WHERE event_type LIKE 'company.%';
-```
-
-Все writes в `domain_events` для company-event выполняются через `INSERT ... ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING`.
+**Механизм подавления дублей в `domain_events`:** реализован в helper `_crm_company_emit_domain_event` (§10.1) через `pg_advisory_xact_lock(hashtextextended(_idempotency_key,0))` + `INSERT ... WHERE NOT EXISTS`. Внешнего EXECUTE у helper нет. DDL на `domain_events` не выполняется. Прямых `INSERT INTO public.domain_events` из тел Phase 2 RPC нет — весь трафик идёт через helper.
 
 **Подавление дублей в `crm_activity_log`:**
 
@@ -538,19 +530,20 @@ WHERE NOT EXISTS (
 
 ## 9. Security matrix
 
-Все Phase 2 RPC: `SECURITY DEFINER`, `SET search_path=public`, owner=`postgres`, `REVOKE ALL FROM PUBLIC, anon`.
+Всего Phase 2 предоставляет **7 public RPC + 2 private helper** (см. §1 п.1–9). Все `SECURITY DEFINER`, `SET search_path=public`, owner=`postgres`, `REVOKE ALL FROM PUBLIC, anon`. Из 7 public RPC — **6** получают `GRANT EXECUTE TO authenticated`, **1** (`crm_company_upsert_from_billing`) — `TO service_role`.
 
-| RPC | authenticated | service_role |
-|---|---|---|
-| `crm_company_get_or_create` | EXECUTE | none |
-| `crm_company_link_contact` | EXECUTE | none |
-| `search_companies` | EXECUTE | none |
-| `crm_company_merge` | EXECUTE | none |
-| `crm_company_archive` | EXECUTE | none |
-| `crm_company_grp_refetch` | EXECUTE | none |
-| `crm_company_upsert_from_billing` | none | EXECUTE |
-| `_crm_company_resolve_or_create_internal` (private helper) | none | none |
-| `search_global` | сохраняется исходный ACL (authenticated, service_role, anon, PUBLIC = EXECUTE) — Phase 2 ACL не сужает во избежание регрессий | — |
+| RPC / helper | authenticated | service_role | anon / PUBLIC |
+|---|---|---|---|
+| `crm_company_get_or_create` (public) | EXECUTE | none | none |
+| `crm_company_link_contact` (public) | EXECUTE | none | none |
+| `search_companies` (public) | EXECUTE | none | none |
+| `crm_company_merge` (public) | EXECUTE | none | none |
+| `crm_company_archive` (public) | EXECUTE | none | none |
+| `crm_company_grp_refetch` (public) | EXECUTE | none | none |
+| `crm_company_upsert_from_billing` (public) | none | EXECUTE | none |
+| `_crm_company_resolve_or_create_internal` (private helper) | none | none | none |
+| `_crm_company_emit_domain_event` (private helper, §10.1) | none | none | none |
+| `search_global` (existing, additive edit §6) | сохраняется исходный ACL (authenticated, service_role, anon, PUBLIC = EXECUTE) — Phase 2 ACL не сужает во избежание регрессий | — | — |
 
 Role matrix (в теле RPC): read — `super_admin, admin, menedzher, support`; write/link/create — `super_admin, admin, menedzher`; archive/merge — `super_admin, admin`; deny — `admin_gost, editor, user`. Global default privileges не меняются.
 
@@ -581,13 +574,57 @@ _crm_company_resolve_or_create_internal(
 ```
 crm_company_get_or_create        ──┐
 crm_company_upsert_from_billing  ──┴──> _crm_company_resolve_or_create_internal
+                                              │
+                                              ▼
+                              _crm_company_emit_domain_event (§10.1)
+crm_company_link_contact        ──────────────▲
+crm_company_merge               ──────────────┤
+crm_company_archive             ──────────────┤
+crm_company_grp_refetch         ──────────────┘
 ```
 
-Никто больше эту функцию не вызывает.
+Никто вне Phase 2 эти два private helper не вызывает.
 
-**Rollback order (§12):** `_crm_company_resolve_or_create_internal` дропается **после** `crm_company_get_or_create` и `crm_company_upsert_from_billing`, чтобы не сломать зависимости.
+**Rollback order (§12):** сначала DROP public RPC (§12.2), затем `_crm_company_resolve_or_create_internal`, затем `_crm_company_emit_domain_event` — оба helper без CASCADE, после того как их callers удалены.
 
-**Полный CREATE — см. §11.2.**
+**Полный CREATE — см. §11.2 (resolve) и §10.1 / §11.11 (emit).**
+
+### 10.1 Private helper `_crm_company_emit_domain_event` (правка 10)
+
+Специальный helper для дедуплицированной записи в shared-таблицу `public.domain_events`. Введён взамен ранее предполагавшегося `CREATE UNIQUE INDEX` на `domain_events` (правка 10) — DDL на shared-таблице Phase 2 не производит.
+
+**Имя:** `public._crm_company_emit_domain_event`.
+**Owner:** `postgres`. **Security:** `SECURITY DEFINER`. **search_path:** `public`. **Language:** `plpgsql`. **volatility:** `VOLATILE`.
+
+**Сигнатура:**
+
+```
+_crm_company_emit_domain_event(
+  _event_type      text,   -- 'company.*.v1'
+  _entity_id       uuid,   -- companies.id
+  _idempotency_key text,   -- см. §8, формат company.<op>:<...>
+  _payload         jsonb   -- полный payload v1 (без source, без event_type — источник фиксирован)
+) RETURNS uuid              -- domain_events.id (существующего или нового) либо NULL если запись подавлена
+```
+
+**Алгоритм (строгий):**
+
+1. Валидация: `_event_type LIKE 'company.%'` и не NULL; `_idempotency_key` не NULL и длиной ≥ 8; `_payload ? 'version'` и `_payload->>'version' = '1'`; `_payload->>'idempotency_key' = _idempotency_key` (иначе `RAISE EXCEPTION 'emit: payload/key mismatch'`).
+2. `PERFORM pg_advisory_xact_lock(hashtextextended('crm_company_emit:' || _idempotency_key, 0));` — блокировка только в рамках текущей транзакции, авто-освобождение на COMMIT/ROLLBACK.
+3. `SELECT id INTO v_existing FROM public.domain_events WHERE event_type=_event_type AND payload->>'idempotency_key'=_idempotency_key LIMIT 1;` — если найдено, вернуть NULL (запись подавлена, вызывающий RPC не считает это ошибкой).
+4. `INSERT INTO public.domain_events(event_type, source, entity_id, payload) VALUES (_event_type, 'crm', _entity_id, _payload) RETURNING id INTO v_new;` — `source` жёстко зафиксирован (`'crm'`).
+5. `RETURN v_new;`.
+6. При любом исключении внутри helper — `RAISE`, без swallow.
+
+**ACL:** `REVOKE ALL ON FUNCTION public._crm_company_emit_domain_event(text,uuid,text,jsonb) FROM PUBLIC, anon, authenticated, service_role`. Никаких GRANT. Вызов возможен только из другой функции owner `postgres`.
+
+**Callers (полный список Phase 2):** `crm_company_get_or_create`, `crm_company_link_contact`, `crm_company_upsert_from_billing`, `crm_company_merge`, `crm_company_archive`, `crm_company_grp_refetch`, а также `_crm_company_resolve_or_create_internal` (для `company.created.v1`). Все прямые `INSERT INTO public.domain_events (...)` из тел Phase 2 RPC заменены на `PERFORM public._crm_company_emit_domain_event(...)`; sample-фрагменты в §11.2–§11.9, где остался «сырой» INSERT (например §11.2 строки для `company.created.v1`), при финализации SQL заменяются на вызов helper — контракт §10.1 является нормативным.
+
+**Rollback order:** DROP выполняется **после** `_crm_company_resolve_or_create_internal` (§12.5).
+
+**Инварианты пост-миграции (§11.12):** функция существует, ACL пуста, `pg_proc.prosecdef=true`, `proowner=postgres`.
+
+**Явно вне scope:** любые DDL на `public.domain_events`, любые тригерры, любые indexes на `domain_events`, любой EXECUTE GRANT external ролям. Ослабление любого из этих ограничений требует отдельного ADR.
 
 ---
 
@@ -1318,15 +1355,52 @@ END $$;
 
 Полное тело — pre-Phase-2 body из §12.4 + additive блок §6, размещённый непосредственно перед `RETURN jsonb_build_object(...)` (в блок возвращаемого объекта добавляется ключ `'companies'`). Для совместимости с existing callers ветки `contacts/deals/messages` остаются идентичны.
 
-### 11.11 ACL и `domain_events` дедуп-индекс
+### 11.11 Private emit helper и ACL
+
+Phase 2 **не создаёт** индексов, constraints или колонок на shared-таблице `public.domain_events`. Дедупликация делается в helper (§10.1).
 
 ```sql
--- Дедуп-индекс для company-events
-CREATE UNIQUE INDEX IF NOT EXISTS domain_events_company_idem_uniq
-  ON public.domain_events ((payload->>'idempotency_key'))
-  WHERE event_type LIKE 'company.%';
+-- Private emit helper (§10.1) — дедуплицированная запись в domain_events
+CREATE OR REPLACE FUNCTION public._crm_company_emit_domain_event(
+  _event_type      text,
+  _entity_id       uuid,
+  _idempotency_key text,
+  _payload         jsonb
+) RETURNS uuid
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $$
+DECLARE v_existing uuid; v_new uuid;
+BEGIN
+  IF _event_type IS NULL OR _event_type NOT LIKE 'company.%' THEN
+    RAISE EXCEPTION 'emit: bad event_type %', _event_type;
+  END IF;
+  IF _idempotency_key IS NULL OR length(_idempotency_key) < 8 THEN
+    RAISE EXCEPTION 'emit: bad idempotency_key';
+  END IF;
+  IF NOT (_payload ? 'version') OR (_payload->>'version') <> '1' THEN
+    RAISE EXCEPTION 'emit: payload version must be 1';
+  END IF;
+  IF coalesce(_payload->>'idempotency_key','') <> _idempotency_key THEN
+    RAISE EXCEPTION 'emit: payload/key mismatch';
+  END IF;
 
--- ACL для новых RPC
+  PERFORM pg_advisory_xact_lock(hashtextextended('crm_company_emit:' || _idempotency_key, 0));
+
+  SELECT id INTO v_existing FROM public.domain_events
+   WHERE event_type = _event_type
+     AND payload->>'idempotency_key' = _idempotency_key
+   LIMIT 1;
+  IF v_existing IS NOT NULL THEN
+    RETURN NULL;  -- дубль подавлен
+  END IF;
+
+  INSERT INTO public.domain_events(event_type, source, entity_id, payload)
+  VALUES (_event_type, 'crm', _entity_id, _payload)
+  RETURNING id INTO v_new;
+  RETURN v_new;
+END $$;
+
+-- ACL для новых RPC (правка 3 — семь public RPC + два private helper)
 REVOKE ALL ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text,uuid)     FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)  FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.search_companies(jsonb)                                     FROM PUBLIC, anon, service_role;
@@ -1343,8 +1417,10 @@ GRANT EXECUTE ON FUNCTION public.crm_company_archive(uuid,text)                 
 GRANT EXECUTE ON FUNCTION public.crm_company_grp_refetch(uuid)                               TO authenticated;
 GRANT EXECUTE ON FUNCTION public.crm_company_upsert_from_billing(uuid)                       TO service_role;
 
--- helper — никаких GRANT
+-- Оба private helper — никаких GRANT
 REVOKE ALL ON FUNCTION public._crm_company_resolve_or_create_internal(text,text,text,text,uuid,text,uuid)
+  FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public._crm_company_emit_domain_event(text,uuid,text,jsonb)
   FROM PUBLIC, anon, authenticated, service_role;
 ```
 
@@ -1371,11 +1447,20 @@ BEGIN
      OR has_function_privilege('anon',     'public.search_companies(jsonb)','EXECUTE')
      OR has_function_privilege('authenticated','public.crm_company_upsert_from_billing(uuid)','EXECUTE')
      OR has_function_privilege('authenticated','public._crm_company_resolve_or_create_internal(text,text,text,text,uuid,text,uuid)','EXECUTE')
+     OR has_function_privilege('authenticated','public._crm_company_emit_domain_event(text,uuid,text,jsonb)','EXECUTE')
+     OR has_function_privilege('service_role','public._crm_company_emit_domain_event(text,uuid,text,jsonb)','EXECUTE')
   THEN RAISE EXCEPTION 'post: ACL matrix drift'; END IF;
 
-  -- unique dedup index exists
-  PERFORM 1 FROM pg_class WHERE relname='domain_events_company_idem_uniq';
-  IF NOT FOUND THEN RAISE EXCEPTION 'post: dedup index missing'; END IF;
+  -- emit helper exists и SECURITY DEFINER
+  PERFORM 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+   WHERE n.nspname='public' AND p.proname='_crm_company_emit_domain_event' AND p.prosecdef;
+  IF NOT FOUND THEN RAISE EXCEPTION 'post: emit helper missing or not SECURITY DEFINER'; END IF;
+
+  -- shared-таблица domain_events НЕ должна иметь Phase 2 индексов
+  PERFORM 1 FROM pg_indexes
+   WHERE schemaname='public' AND tablename='domain_events'
+     AND indexname LIKE '%company_idem%';
+  IF FOUND THEN RAISE EXCEPTION 'post: unexpected Phase 2 index on domain_events'; END IF;
 END $post$;
 
 COMMIT;
@@ -1529,12 +1614,16 @@ END;
 $function$;
 ```
 
-### 12.5 DROP helper и dedup-индекса (последними)
+### 12.5 DROP private helpers (последними, порядок обязателен)
 
 ```sql
+-- сначала resolve helper (его вызывали удалённые в §12.2 RPC)
 DROP FUNCTION IF EXISTS public._crm_company_resolve_or_create_internal(
   text, text, text, text, uuid, text, uuid);
-DROP INDEX IF EXISTS public.domain_events_company_idem_uniq;
+-- затем emit helper (его вызывали все Phase 2 RPC и resolve helper)
+DROP FUNCTION IF EXISTS public._crm_company_emit_domain_event(
+  text, uuid, text, jsonb);
+-- shared-таблица domain_events не трогается — DDL не создавался
 ```
 
 ### 12.6 Восстановление Phase 1 ACL
@@ -1555,22 +1644,29 @@ Rollback не изменяет таблицы и данные. Не исполь
 ## 13. Verification SQL (post-apply, read-only)
 
 ```sql
--- 13.1 catalog: 7 новых объектов
+-- 13.1 catalog: 7 public RPC + 2 private helper + search_global
 SELECT proname, pg_get_function_identity_arguments(oid) FROM pg_proc
  WHERE pronamespace='public'::regnamespace
    AND proname IN ('crm_company_get_or_create','crm_company_link_contact','search_companies',
                    'crm_company_merge','crm_company_archive','crm_company_grp_refetch',
-                   'crm_company_upsert_from_billing','_crm_company_resolve_or_create_internal',
+                   'crm_company_upsert_from_billing',
+                   '_crm_company_resolve_or_create_internal',
+                   '_crm_company_emit_domain_event',
                    'search_global') ORDER BY proname;
 
--- 13.2 ACL матрица
+-- 13.2 ACL матрица (7 public + 2 private helper)
 SELECT p.proname, pg_get_function_identity_arguments(p.oid) args,
        has_function_privilege('anon',           p.oid,'EXECUTE') AS anon_exec,
        has_function_privilege('authenticated',  p.oid,'EXECUTE') AS auth_exec,
        has_function_privilege('service_role',   p.oid,'EXECUTE') AS srv_exec
 FROM pg_proc p
 WHERE p.pronamespace='public'::regnamespace
-  AND p.proname LIKE 'crm_company_%' OR p.proname='search_companies' OR p.proname='_crm_company_resolve_or_create_internal';
+  AND (p.proname LIKE 'crm_company_%'
+       OR p.proname = 'search_companies'
+       OR p.proname = '_crm_company_resolve_or_create_internal'
+       OR p.proname = '_crm_company_emit_domain_event');
+-- expected: 6 из 7 public RPC — auth_exec=true (upsert_from_billing только srv_exec);
+--           оба _crm_company_* helper — все три false.
 
 -- 13.3 policies count = 13, RLS enabled
 SELECT c.relname, c.relrowsecurity, count(pl.*) FROM pg_class c
@@ -1588,9 +1684,11 @@ WHERE table_schema='public'
                      'role_admin_resource_access','role_admin_section_access','admin_section');
 -- expected: c41160b83c8e15c3d3c41a13028700d5
 
--- 13.5 dedup index
+-- 13.5 shared-таблица domain_events НЕ должна иметь Phase 2 индексов
 SELECT indexname, indexdef FROM pg_indexes
-WHERE schemaname='public' AND indexname='domain_events_company_idem_uniq';
+WHERE schemaname='public' AND tablename='domain_events'
+  AND indexname LIKE '%company%';
+-- expected: 0 rows
 
 -- 13.6 4 таблицы пусты (после apply, до runtime proof)
 SELECT (SELECT count(*) FROM public.companies) c,
