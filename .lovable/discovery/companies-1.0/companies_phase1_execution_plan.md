@@ -362,18 +362,31 @@ GRANT EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean
 
 ## 8. Rollback
 
-Порядок обратный созданию (каждый объект — явно):
+Порядок строго обратный созданию (без CASCADE). `company_contacts.source_client_legal_details_map_id → client_legal_details_company_map(id)`, поэтому `company_contacts` удаляется раньше `client_legal_details_company_map`.
 
-1. `DROP FUNCTION IF EXISTS crm_company_link_contact(uuid,uuid,text,boolean,text,uuid);`
-2. `DROP FUNCTION IF EXISTS crm_company_get_or_create(text,text,text,text,text,uuid);`
-3. `DROP TRIGGER IF EXISTS trg_set_companies_public_id ON public.companies;`
-4. `DROP TRIGGER IF EXISTS update_companies_updated_at ON public.companies;` (и аналоги для остальных таблиц).
-5. `DROP POLICY ... ON public.companies;` (все 4 политики, аналогично для `company_contacts`, `client_legal_details_company_map`, `company_sync_queue`).
-6. `DROP TABLE public.company_sync_queue;`
-7. `DROP TABLE public.client_legal_details_company_map;`
-8. `DROP TABLE public.company_contacts;`
-9. `DROP TABLE public.companies;`
-10. `DELETE FROM public.public_id_sequences WHERE entity_type='company';`
+1. `DROP FUNCTION IF EXISTS public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid);`
+2. `DROP FUNCTION IF EXISTS public.crm_company_get_or_create(text,text,text,text,text,uuid);`
+3. Триггеры (точные имена):
+   - `DROP TRIGGER IF EXISTS trg_set_companies_public_id ON public.companies;`
+   - `DROP TRIGGER IF EXISTS update_companies_updated_at ON public.companies;`
+   - `DROP TRIGGER IF EXISTS update_company_contacts_updated_at ON public.company_contacts;`
+   - `DROP TRIGGER IF EXISTS update_client_legal_details_company_map_updated_at ON public.client_legal_details_company_map;`
+   - `DROP TRIGGER IF EXISTS update_company_sync_queue_updated_at ON public.company_sync_queue;`
+4. Policies (точные имена, по таблицам):
+   - `DROP POLICY IF EXISTS "companies read for CRM staff" ON public.companies;`
+   - `DROP POLICY IF EXISTS "companies insert for admin+manager" ON public.companies;`
+   - `DROP POLICY IF EXISTS "companies update for admin+manager" ON public.companies;`
+   - `DROP POLICY IF EXISTS "companies delete for super_admin" ON public.companies;`
+   - Аналогичные 4 политики для `public.company_contacts` (имена: `"company_contacts read for CRM staff"`, `... insert for admin+manager"`, `... update for admin+manager"`, `... delete for super_admin"`).
+   - Аналогичные 4 политики для `public.client_legal_details_company_map`.
+   - `DROP POLICY IF EXISTS "company_sync_queue service only" ON public.company_sync_queue;`
+5. Helper-функции создаются вне Phase 1 (`update_updated_at_column`, `has_role_v2`, `next_public_id`) — **не удаляются** rollback'ом Phase 1.
+6. Таблицы, строго в этом порядке (обратно созданию, с учётом FK):
+   1. `DROP TABLE public.company_sync_queue;`
+   2. `DROP TABLE public.company_contacts;`  — удаляется раньше map (FK на map).
+   3. `DROP TABLE public.client_legal_details_company_map;`
+   4. `DROP TABLE public.companies;`
+7. `DELETE FROM public.public_id_sequences WHERE entity_type='company';`
 
 CASCADE **не** использовать. `client_legal_details` не затронут (в Phase 1 нет FK и триггеров на него). `admin_section`, `admin_resource`, `role_admin_*`, `app_settings` не затронуты (записи не создавались в Phase 1). `orders_v2`, `crm_tasks`, `profiles`, `crm_activity_log`, `domain_events`, `audit_logs` — без изменений схемы, откат не требуется.
 
