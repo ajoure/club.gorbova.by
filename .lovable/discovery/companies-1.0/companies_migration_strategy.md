@@ -7,112 +7,141 @@ Paper-only. Никакой SQL в этом Discovery не исполняется
 - **Main implementation:** schema → RPC → backfill → sync → integration → UI.
 - **Follow-up validation:** runtime smoke → regression → performance → cleanup → deferred debt.
 
-Некритичные proof gaps не блокируют основной scope, фиксируются в `companies_phase1_execution_plan.md §Deferred`.
+Некритичные proof gaps не блокируют основной scope, фиксируются в `companies_phase1_execution_plan.md` §Deferred.
 
 ## 2. Последовательность DDL (Phase 1, DRAFT)
 
 ```
-1. CREATE EXTENSION IF NOT EXISTS pg_trgm  -- уже есть
-2. CREATE TABLE public.companies (...)
-3. GRANT SELECT, INSERT, UPDATE, DELETE ON public.companies TO authenticated;
-   GRANT ALL ON public.companies TO service_role;
-4. ALTER TABLE public.companies ENABLE ROW LEVEL SECURITY;
-5. CREATE POLICY (super_admin/admin/menedzher/support) — см. permissions matrix.
-6. CREATE TABLE public.company_contacts (...);
-   GRANT ...; ENABLE RLS; POLICY.
-7. CREATE TABLE public.client_legal_details_company_map (...);
-   GRANT ...; ENABLE RLS; POLICY.
-8. CREATE TABLE public.company_sync_queue (...);
-   GRANT SELECT ON ... TO authenticated (readonly);
-   GRANT ALL TO service_role;
-   ENABLE RLS; POLICY service_role only.
+1. EXTENSION pg_trgm — уже установлен.
+2. INSERT INTO public_id_sequences ('company','CMP',0) ON CONFLICT DO NOTHING.
+3. CREATE TABLE public.companies (см. execution_plan §2.1).
+4. GRANT SELECT/INSERT/UPDATE/DELETE ON companies TO authenticated;
+   GRANT ALL ON companies TO service_role.
+5. ALTER TABLE companies ENABLE ROW LEVEL SECURITY + 4 policies.
+6. CREATE TABLE company_contacts (утверждённый контракт: relationship_type/source/is_billing_contact,
+   без role='billing'; profile_id nullable для внешнего импорта; source_client_legal_details_map_id
+   для machine-checkable lineage) → GRANT → RLS → policies.
+7. CREATE TABLE client_legal_details_company_map (с полным audit-набором, включая updated_at)
+   → GRANT → RLS → policies.
+8. CREATE TABLE company_sync_queue → GRANT только service_role (никакого authenticated SELECT)
+   → RLS → single policy service_role.
 9. Индексы (см. performance_notes §4-7).
-10. Триггер updated_at (public.update_updated_at_column) на 4 таблицы.
-11. Триггер `trg_set_companies_public_id` через `public_id_sequences` (prefix='co').
-12. Функция validate_unp(country, unp) — normalize + checksum.
+10. Триггер update_updated_at_column на 4 таблицы (все имеют updated_at).
+11. Триггер trg_set_companies_public_id, вызывающий next_public_id('company').
+12. RPC-скелеты crm_company_get_or_create и crm_company_link_contact (см. execution_plan §4).
 ```
 
-## 3. RPC (Phase 2)
+Вне Phase 1: trigger на `client_legal_details` (Phase 4), feature flag / admin_section / admin_resource (Phase 7), backfill (Phase 3), sync worker (Phase 4), UI (Phase 7+).
 
-```
-- search_companies(_filters jsonb)
-- company_upsert_from_billing(_client_legal_details_id uuid)
-- company_link_contact(_company_id, _profile_id, _role)
-- company_unlink_contact(_link_id)
-- company_merge(_source_id, _target_id)
-- company_archive(_id, _reason)
-- company_grp_refetch(_id)
-```
+## 3. Phase 2 RPC (создание)
 
-Все — SECURITY DEFINER, `SET search_path = public`, guard `has_role_v2`.
+Полная согласованная matrix — в `companies_rpc_inventory.md` §7. Резюме:
+
+- `crm_company_upsert_from_billing(_client_legal_details_id uuid)`
+- `search_companies(_filters jsonb)`
+- `crm_company_merge(_source_id, _target_id)`
+- `crm_company_archive(_id, _reason)`
+- `crm_company_grp_refetch(_id)`
+- Полная реализация `crm_company_get_or_create` / `crm_company_link_contact` (в Phase 1 — только скелеты).
+
+Все — SECURITY DEFINER, `SET search_path=public`, guard `has_role_v2`.
 
 ## 4. Backfill (Phase 3)
 
+Backfill выполняется через edge function `company-backfill-run`, вызывающую RPC Phase 2. Триггера на `client_legal_details` **нет** — enqueue делается явно скриптом backfill.
+
 ```
-1. Feature flag OFF.
-2. Idempotent script (edge function `company-backfill-run`):
-   FOR each client_legal_details WHERE purpose='billing'
-     AND client_type IN ('legal_entity','entrepreneur')
-   LOOP
-     upsert into companies matching (country, unp_normalized).
-     upsert into company_contacts (company, profile_id, role='billing').
-     upsert into client_legal_details_company_map.
-     emit domain_events lineage.
-   END.
-3. Verification:
-   - COUNT(companies) == distinct(unp_normalized)
-   - COUNT(company_contacts) >= COUNT(source rows)
-   - 0 orphan mappings.
-4. Idempotency: повторный запуск не создаёт дубликатов.
+FOR each row IN client_legal_details
+    WHERE purpose='billing' AND client_type IN ('legal_entity','entrepreneur')
+LOOP
+  v_company_id := crm_company_upsert_from_billing(row.id);
+  IF row.profile_id IS NOT NULL THEN
+    v_map_id := INSERT INTO client_legal_details_company_map(...) ON CONFLICT DO NOTHING RETURNING id;
+    PERFORM crm_company_link_contact(
+      v_company_id, row.profile_id,
+      'billing_contact', true,
+      'billing_requisites', v_map_id
+    );
+  END IF;
+END LOOP;
 ```
 
-## 5. Sync (Phase 4)
+## 5. Verification (после Phase 3 backfill) — исправленные проверки
 
-- Trigger AFTER INSERT/UPDATE на `client_legal_details` (только billing legal_entity/entrepreneur) → INSERT в `company_sync_queue`.
+Исходное количество source rows (проверено read-only на текущий момент):
+
+```
+SELECT count(*) FROM client_legal_details
+  WHERE purpose='billing' AND client_type IN ('legal_entity','entrepreneur');
+-- 17
+
+SELECT count(DISTINCT COALESCE(leg_unp, ent_unp)) FROM client_legal_details
+  WHERE purpose='billing' AND client_type IN ('legal_entity','entrepreneur');
+-- 16
+
+SELECT count(DISTINCT profile_id) FROM ...;
+-- 16
+```
+
+Ожидаемые проверки после backfill:
+
+- `COUNT(companies)` = **distinct (country, unp_normalized)** билинговых источников (сейчас 16).
+- `COUNT(client_legal_details_company_map)` = **COUNT(source rows)** (сейчас 17). Каждой billing-строке — ровно одна запись map.
+- `COUNT(company_contacts WHERE is_billing_contact=true)` = **distinct (company_id, profile_id)** билинг-пар (≤ COUNT(source rows), т.к. несколько billing-строк одного profile для одной компании могут дать одну company_contacts-связь).
+- `SELECT count(*) FROM companies WHERE company_kind IN ('legal_entity','entrepreneur','foreign','unknown')` = `COUNT(companies)` (100% покрытие CHECK). Никаких проверок на `client_type` — такой колонки в `companies` **нет** (правка B8 review).
+- 0 orphan `company_contacts.profile_id` где `relationship_type <> 'external_contact'`.
+- 0 orphan `client_legal_details_company_map`.
+- `company_sync_queue.status='failed'` = 0 через 5 минут после старта воркера (Phase 4).
+
+Идемпотентность:
+
+- Повторный запуск backfill не создаёт дубликатов (проверка через ON CONFLICT в RPC).
+
+## 6. Sync (Phase 4)
+
+- Trigger AFTER INSERT/UPDATE на `client_legal_details` WHERE `purpose='billing' AND client_type IN ('legal_entity','entrepreneur')` → INSERT в `company_sync_queue`.
+- Единый канонический `idempotency_key`: **`cld:{client_legal_details_id}:{updated_at_epoch_ms}`**. Формат `(entity_id, run_reason)` из ранней версии отозван (может навсегда заблокировать re-sync той же записи).
 - Cron `company-sync-worker` каждую минуту.
-- Idempotency: `(entity_id, run_reason)`.
 
-## 6. Integration (Phase 5-6)
+## 7. Integration (Phase 5-6)
 
-- Phase 5: `orders_v2.company_id` (nullable) + FK RESTRICT + trigger emit event.
-- Phase 6: `crm_tasks.company_id` (nullable, необязательно в Phase 1 core).
+- Phase 5: `orders_v2.company_id` (nullable) + FK RESTRICT + trigger emit `company.linked_to_deal.v1`.
+- Phase 6: `crm_tasks.company_id` (nullable).
 
-## 7. UI (Phase 7-8)
+## 8. Feature flag / registry inserts
 
-- Phase 7: `/admin/companies` + `CompanyDetailSheet`.
-- Phase 8: вкладка «Компании» в `ContactDetailSheet`.
+- `app_settings.feature_companies_enabled` (boolean) — **добавляется в Phase 7**, не в Phase 1. Единственное каноническое имя — `feature_companies_enabled` (SQL-совместимо, без точек). Формы `feature.companies.enabled` в других документах отозваны.
+- `admin_section` / `admin_resource` / `role_admin_*_access` inserts — тоже Phase 7.
 
-## 8. Feature flag
+## 9. Queue permissions — единый контракт
 
-- `app_settings.feature_companies_enabled` (boolean) — гейт для UI-точек входа.
-- RPC/tables создаются сразу, но UI не показывается до включения флага.
+`company_sync_queue`:
 
-## 9. Production switch
+- GRANT ALL TO service_role.
+- **Никакого GRANT для authenticated** (в том числе SELECT). Форма «GRANT SELECT TO authenticated (readonly)» из ранней версии отозвана.
+- RLS enabled, single policy для service_role. Клиенты не должны знать о задачах синхронизации.
 
-1. Проверить backfill в staging (реплика).
-2. Включить сначала для `super_admin`.
+## 10. Production switch (Phase 7)
+
+1. Backfill проверен в staging (реплика).
+2. Включить `feature_companies_enabled=true` сначала для `super_admin` (через `role_admin_section_access.access_level` scope или явную client-side проверку).
 3. Через 24 часа — для `admin`/`menedzher`.
 4. `support` — через 72 часа.
+5. `admin_gost` — не включается (см. permissions matrix §3).
 
-## 10. Rollback
+## 11. Rollback
 
-- Все таблицы новые → drop-safe.
-- `orders_v2.company_id` — nullable, `DROP COLUMN` не ломает существующие сделки (Phase 5 rollback).
-- Feature flag OFF — мгновенный откат UI.
+Полный порядок — в `companies_phase1_execution_plan.md` §8. Ключевое:
+
+- Все 4 таблицы новые → DROP по одной, **без CASCADE**.
+- `orders_v2.company_id` (Phase 5) — nullable, `DROP COLUMN` не ломает существующие сделки (rollback Phase 5).
 - Backfill идемпотентен → повторный запуск после rollback безопасен.
-
-## 11. Verification checks (после каждой фазы)
-
-- `SELECT count(*) FROM companies` = ожидаемое.
-- 0 записей с NULL `unp_normalized` где `country IS NOT NULL AND client_type <> 'individual'`.
-- 0 orphan `company_contacts.profile_id`.
-- 0 orphan `client_legal_details_company_map`.
-- `company_sync_queue.status='failed'` = 0 через 5 минут после старта воркера.
+- В Phase 1 нет изменений в `client_legal_details`, поэтому rollback не касается billing-домена.
 
 ## 12. Deferred (follow-up)
 
-- pg_trgm GIN индексы (см. performance_notes §4).
-- Table virtualization в admin UI при N>1000.
+- pg_trgm GIN индексы (см. `companies_performance_notes.md` §4).
+- Virtualization в admin UI при N>1000.
 - Merge UI polish.
-- Import CSV/xlsx (Phase 9).
+- Import CSV/xlsx (Phase 9), включая правило создания/поиска profile до вставки `company_contacts` для внешних контактов.
 - Совместимость с Documents (Phase 10).

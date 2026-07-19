@@ -114,44 +114,68 @@
 
 ## 7. AmoCRM companies ≠ canonical companies
 
-`code: supabase/functions/amocrm-webhook/index.ts:L40, L93-L96, L396-L409` и `code: supabase/functions/integration-sync/index.ts:L378, L449-L453` — работают с external AmoCRM company model (webhook payload и импорт). Внутренняя схема из этого **не выводится**. AmoCRM остаётся anti-corruption layer:
+`code: supabase/functions/amocrm-webhook/index.ts:L40, L93-L96, L396-L409` и `code: supabase/functions/integration-sync/index.ts:L378, L449-L453` — работают с external AmoCRM company model. Внутренняя схема из этого **не выводится**. AmoCRM остаётся anti-corruption layer:
 
 - Никаких прямых FK от `companies` к AmoCRM ID.
-- Маппинг external_id хранится в отдельной jsonb-колонке `companies.external_ids` или в `integration_field_mappings` — окончательное решение в Phase 2 (RPC/services).
-- `companies` не создаются автоматически из AmoCRM webhook в Phase 1 (только из billing auto-source).
+- Маппинг external_id **не хранится в `companies` в Phase 1**. Колонка `external_ids jsonb` из ранней версии freeze отозвана. Решение (колонка jsonb на `companies` vs `integration_field_mappings`) принимается отдельным ADR-0002 в Phase 2. До ADR-0002 использовать `integration_field_mappings` (уже существует).
+- `companies` не создаются автоматически из AmoCRM webhook в Phase 1.
 
-## 8. Source / Field Ownership
+## 8. Canonical company_kind
+
+Master Plan v2 требует различения `legal_entity | entrepreneur | foreign | unknown`. В Phase 1 DDL добавляется колонка `company_kind text NOT NULL DEFAULT 'unknown' CHECK (company_kind IN ('legal_entity','entrepreneur','foreign','unknown'))`. Backfill (Phase 3) заполняет `company_kind` из `client_legal_details.client_type` (`legal_entity`/`entrepreneur`); foreign — только через явный admin выбор; unknown — для строк, где `client_type` не в списке.
+
+## 9. Company contacts contract (утверждённый)
+
+Контракт связи `profile ↔ company` в Phase 1:
+
+- `relationship_type text NOT NULL CHECK IN ('billing_contact','signatory','director','representative','external_contact','other')`
+- `source text NOT NULL CHECK IN ('billing_requisites','manual','import','call_center','admin_link','document_review')`
+- `is_billing_contact boolean NOT NULL DEFAULT false`
+- `profile_id uuid NULL` (nullable для внешнего импорта Phase 9). Для `is_billing_contact=true` — обязателен (CHECK).
+- `source_client_legal_details_map_id uuid NULL REFERENCES client_legal_details_company_map(id)` — machine-checkable source lineage. Для `source='billing_requisites'` обязателен (CHECK).
+- Внешние поля `external_full_name`, `external_email`, `external_phone` для `relationship_type='external_contact'`.
+
+`role='billing'` из ранней версии freeze **удалён**. Полный DDL — `companies_phase1_execution_plan.md` §2.2.
+
+## 10. Source / Field Ownership
 
 Правила обновления для полей `companies`:
 
 | Поле | Источник (canonical) | Auto-update | Admin edit | Import (Amo/CSV) | Правило конфликта |
 |---|---|---|---|---|---|
-| `country`, `unp_normalized` | billing (`leg_unp`/`ent_unp` из `client_legal_details`) | ✅ при первом создании | ❌ | ❌ | никогда не перезаписывается автоматически |
+| `country`, `unp_normalized`, `company_kind` | billing (`leg_unp`/`ent_unp`, `client_type`) | ✅ при первом создании | ❌ | ❌ | никогда не перезаписывается автоматически |
 | `full_name` | billing (`leg_name`/`ent_name`) | ✅ первый раз | ✅ | ✅ | admin edit имеет приоритет; conflict log в `crm_activity_log` |
 | `short_name` | billing (`grp_short_name`) | ✅ | ✅ | ✅ | admin edit имеет приоритет |
 | `legal_form` | billing (`leg_org_form`) | ✅ | ✅ | ✅ | admin edit имеет приоритет |
-| `legal_address` | billing (`leg_address` / `ent_address` / structured) | ✅ | ✅ | ✅ | admin edit имеет приоритет |
+| `legal_address` | billing (`leg_address` / `ent_address`) | ✅ | ✅ | ✅ | admin edit имеет приоритет |
 | `email`, `phone` | billing | ✅ | ✅ | ✅ | admin edit имеет приоритет |
 | `director_name`, `director_position`, `acts_on_basis` | billing | ✅ | ✅ | ❌ (Amo не пишет) | admin edit имеет приоритет |
 | `bank_account`, `bank_name`, `bank_code` | billing | ✅ | ✅ | ❌ | admin edit имеет приоритет |
 | `status` (`active`/`archived`/`merged`) | admin | ❌ | ✅ | ❌ | только admin |
-| `grp_*` (гос. реестр) | GRP-lookup (`code: supabase/functions/grp-lookup/index.ts`) | ✅ по TTL | ❌ | ❌ | GRP wins над billing и admin |
-| `external_ids` (Amo, GC, Manychat) | Import/webhook | ✅ | ❌ | ✅ | merge-map, никогда не перезаписывается |
+| `grp_*` (гос. реестр; даты — `date` типа, не text) | GRP-lookup (`code: supabase/functions/grp-lookup/index.ts`) | ✅ по TTL | ❌ | ❌ | GRP wins над billing и admin |
+| external ids (Amo, GC, Manychat) | Import/webhook | ✅ (в `integration_field_mappings`, не в `companies` в Phase 1) | ❌ | ✅ | merge-map; окончательное хранение — ADR-0002 Phase 2 |
 | `archived_at`, `merged_into_company_id` | admin | ❌ | ✅ | ❌ | требует review |
 
 Конфликты фиксируются в `crm_activity_log` (compact) + `audit_logs` (кто разрешил).
 
-## 9. Duplicate storage check
+## 11. Duplicate storage check
 
-`companies` **не** становится третьим SoT. Правила:
+`companies` **не** становится третьим SoT:
 
 - Постоянные реквизиты компании (canonical): `companies`.
 - Данные физлица клиента: `profiles` + `client_legal_details` (individual).
-- Данные конкретной процедуры/сделки: `client_legal_details` (`purpose='document'`) — compat SoT, не трогаем.
+- Данные конкретной процедуры/сделки: `client_legal_details` (`purpose='document'`).
 - Link между profile и company: `company_contacts` (Phase 1).
-- Legacy-совместимость: `client_legal_details_company_map` — маппит billing-записи `client_legal_details.id → companies.id`. `client_legal_details` остаётся writable до Phase 11.
+- Legacy-совместимость: `client_legal_details_company_map`. `client_legal_details` остаётся writable до Phase 11.
 
-## 10. Ссылки
+## 12. Public ID canonical
+
+- Generator: `next_public_id('company')` (см. `companies_rpc_inventory.md` §2).
+- `public_id_sequences` row: `(entity_type='company', prefix='CMP', last_value=0)`.
+- Формат: `CMP-000001`.
+- Prefix `co` и функция `generate_public_id('co')` из ранней версии freeze/plan отозваны.
+
+## 13. Ссылки
 
 - `companies_reuse_matrix.md`
 - `companies_component_inventory.md`
