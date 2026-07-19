@@ -1,7 +1,7 @@
 # Runnable plan: CRM Companies — Phase 2 Canonical RPC Layer
 
-**Status:** `EXECUTION APPROVED / PRE-APPLY CORRECTION VALIDATED / NOT YET APPLIED`
-**Date:** 2026-07-19 (patch v3 — fixes mandatory `crm_activity_log.user_id` for service-role billing and restores link/billing-created CRM activity events)
+**Status:** `CLOSED PASS — APPLIED, CORRECTED, RUNTIME + CONCURRENCY PROVED, CLEAN BASELINE RESTORED`
+**Date:** 2026-07-19 (final closure — Phase 2 complete; Phase 3/backfill not started)
 **Phase 1 closure commit:** `ab2d4b05321938c01cf7ada07dda40c9a3e7de86`
 **Database ref:** `hdjgkjceownmmnrqqtuz`
 **Baseline schema hash:** `c41160b83c8e15c3d3c41a13028700d5` (подтверждён §2)
@@ -2461,6 +2461,24 @@ Corrective migration заменяет все 24 добавления элеме�
 дефектное тело, не создаётся; при решении откатить весь Phase 2 используется полный
 rollback §12.
 
+### 14.2 Closure result
+
+Phase 2 закрыта после успешного применения forward migration и отдельной corrective
+migration, повторного billing-proof и реального двухсессионного concurrency-proof.
+
+- billing create/update/stale/no-op/NULL/admin-override: `PASS`;
+- два одновременных `crm_company_get_or_create`: один company UUID, одна строка, без ошибок;
+- два одновременных `crm_company_link_contact`: один contact UUID, одна строка, без ошибок;
+- side effects дедуплицированы по idempotency keys;
+- cleanup выполнен по точным ID; `companies`, `company_contacts`,
+  `client_legal_details_company_map`, `company_sync_queue` снова пусты;
+- `public_id_sequences('company','CMP').last_value=0`;
+- RLS, 13 Phase 1 policies и роли admin fixture не изменились;
+- Phase 3/backfill не запускались.
+
+Полные timestamps двухсессионного proof, UUID, hashes, rollback-проверки и история
+коррекций зафиксированы в `phase2_runtime_proof_report.md`.
+
 ---
 
 ## 15. SHA / diff / commit workflow
@@ -2473,12 +2491,20 @@ rollback §12.
 4. Указывается exact filename миграции.
 5. Migration history после apply — read-only query to migration history; результат = `VERIFIED` либо `NOT VERIFIED — permission denied` (не блокирует, если post-apply catalog state подтверждает применение — §13).
 
-**Pre-apply patch v3 fingerprint:**
+**Final closure fingerprints:**
 
-- forward: `supabase/migrations/20260719210633_crm_companies_phase2_rpc_layer.sql`;
-- bytes: `68385`;
-- SHA-256: `7b8e23ae222be63b2d2a4d5968c73d9e1db37006cd51970bdba843202eff4cc8`;
-- rollback SHA-256 остаётся `62862ba5a0c529bab0e5182d72bb01343c8728b71e201876259ed7ff725e2fa4`.
+- canonical forward `20260719210633_crm_companies_phase2_rpc_layer.sql` — 68,739 bytes,
+  SHA-256 `990fa56df274cd75a6509647e540cfd4858e46730df11d179167d36c21caf2de`;
+- managed applied forward `20260719214544_9aa2edb0-c9dc-4636-a1b4-711accf867c5.sql` —
+  68,450 bytes, SHA-256 `3943ea306a2c296d4717b7e3b833f7869666b47fc081e7fcb28fe4c72d351aeb`;
+- canonical corrective `20260719235959_crm_company_billing_array_append_fix.sql` —
+  22,198 bytes, SHA-256 `11719a8db96444e3fb5ebd2af582637a6a9df12ed9f31751dd35e604374ee24d`;
+- managed applied corrective `20260719221105_7ba01396-e921-4be5-b180-2a770a98d708.sql` —
+  20,548 bytes, SHA-256 `63c8f6561aa934dd951cfacafb7afaebd79b2a70c0bf8705ae6db6f2528dbfc6`;
+- managed exact-ID proof cleanup `20260719222532_d0f06e76-14dd-4829-beed-594b39d4fa54.sql` —
+  1,606 bytes, SHA-256 `38389e1dd0e6076007f4433e187f5c1657dc989f1f627c25531e0f042c2ecdc8`;
+- full rollback `phase2_rpc_rollback.sql` — 5,320 bytes,
+  SHA-256 `6038be4d205bcd78750247ebee4e807db109ca038d7bb1a376654a7f1e2f56f0`.
 
 ---
 
