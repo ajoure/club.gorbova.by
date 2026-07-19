@@ -220,21 +220,24 @@ export function useTariffOffers(tariffId?: string) {
   return useQuery({
     queryKey: ["tariff_offers", tariffId],
     queryFn: async () => {
+      // Canonical order: sort_order ASC, then id ASC (stable tie-break).
       let query = supabase
         .from("tariff_offers")
         .select("*")
-        .order("sort_order", { ascending: true });
-      
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true });
+
       if (tariffId) {
         query = query.eq("tariff_id", tariffId);
       }
-      
+
       const { data, error } = await query;
       if (error) throw error;
       return data as TariffOffer[];
     },
   });
 }
+
 
 export function useProductOffers(productId?: string) {
   return useQuery({
