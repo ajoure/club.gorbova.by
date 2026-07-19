@@ -1643,22 +1643,29 @@ Rollback не изменяет таблицы и данные. Не исполь
 ## 13. Verification SQL (post-apply, read-only)
 
 ```sql
--- 13.1 catalog: 7 новых объектов
+-- 13.1 catalog: 7 public RPC + 2 private helper + search_global
 SELECT proname, pg_get_function_identity_arguments(oid) FROM pg_proc
  WHERE pronamespace='public'::regnamespace
    AND proname IN ('crm_company_get_or_create','crm_company_link_contact','search_companies',
                    'crm_company_merge','crm_company_archive','crm_company_grp_refetch',
-                   'crm_company_upsert_from_billing','_crm_company_resolve_or_create_internal',
+                   'crm_company_upsert_from_billing',
+                   '_crm_company_resolve_or_create_internal',
+                   '_crm_company_emit_domain_event',
                    'search_global') ORDER BY proname;
 
--- 13.2 ACL матрица
+-- 13.2 ACL матрица (7 public + 2 private helper)
 SELECT p.proname, pg_get_function_identity_arguments(p.oid) args,
        has_function_privilege('anon',           p.oid,'EXECUTE') AS anon_exec,
        has_function_privilege('authenticated',  p.oid,'EXECUTE') AS auth_exec,
        has_function_privilege('service_role',   p.oid,'EXECUTE') AS srv_exec
 FROM pg_proc p
 WHERE p.pronamespace='public'::regnamespace
-  AND p.proname LIKE 'crm_company_%' OR p.proname='search_companies' OR p.proname='_crm_company_resolve_or_create_internal';
+  AND (p.proname LIKE 'crm_company_%'
+       OR p.proname = 'search_companies'
+       OR p.proname = '_crm_company_resolve_or_create_internal'
+       OR p.proname = '_crm_company_emit_domain_event');
+-- expected: 6 из 7 public RPC — auth_exec=true (upsert_from_billing только srv_exec);
+--           оба _crm_company_* helper — все три false.
 
 -- 13.3 policies count = 13, RLS enabled
 SELECT c.relname, c.relrowsecurity, count(pl.*) FROM pg_class c
@@ -1676,9 +1683,11 @@ WHERE table_schema='public'
                      'role_admin_resource_access','role_admin_section_access','admin_section');
 -- expected: c41160b83c8e15c3d3c41a13028700d5
 
--- 13.5 dedup index
+-- 13.5 shared-таблица domain_events НЕ должна иметь Phase 2 индексов
 SELECT indexname, indexdef FROM pg_indexes
-WHERE schemaname='public' AND indexname='domain_events_company_idem_uniq';
+WHERE schemaname='public' AND tablename='domain_events'
+  AND indexname LIKE '%company%';
+-- expected: 0 rows
 
 -- 13.6 4 таблицы пусты (после apply, до runtime proof)
 SELECT (SELECT count(*) FROM public.companies) c,
