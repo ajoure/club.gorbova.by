@@ -940,3 +940,13 @@ Helper-функции (`update_updated_at_column`, `has_role_v2`, `next_public_i
 | 6 | Verification проверяла counts | §7: перешла на именные проверки колонок, defaults, constraints, FK actions, индексов, policies, grants, function signatures. |
 | 7 | RLS proof на пустой таблице | §8: fixture-based в BEGIN/ROLLBACK, real `user_roles_v2` (подтверждено `pg_get_functiondef(has_role_v2)`); проверяется видимость конкретного ID; service_role убран из RPC-matrix. |
 | 8 | Изменён `.lovable/plan.md` | §0: `.lovable/plan.md` возвращён к состоянию commit 8649e2ba; итоговый diff содержит только этот файл. |
+
+## 12. Три остатка после consolidated review v3 (закрытие)
+
+| # | Остаток | Как закрыт в v3 |
+|---|---|---|
+| 1 | `INSERT ... ON CONFLICT (entity_type) DO NOTHING` при регистрации namespace company/CMP скрывал коллизию. | §3.1: `ON CONFLICT DO NOTHING` удалён — INSERT падает с unique-violation, если строка уже существует; предварительно §3.0.4 явно проверяет обе стороны коллизии. |
+| 2 | Forward DO-guard не покрывал все HARD STOP условия. | §3.0 расширен: §3.0.3 — точные сигнатуры трёх helper-функций; §3.0.4 — обе коллизии `company`/`CMP`; §3.0.5 — все 7 канонических ролей; §3.0.6 — SYSTEM tenant по id + name + is_personal одновременно. |
+| 3 | Schema hash в preflight/verification/rollback считался другой SQL. | §1.1 и §9.7 переведены на точный SQL из `companies_read_only_proof.md §7`: `information_schema.columns`, `table_name:column_name:data_type`, зафиксированный список из 7 таблиц. Ожидаемое значение `c41160b83c8e15c3d3c41a13028700d5` сохраняется как единственный baseline. |
+
+DDL, RLS, RPC skeleton, runtime proof (§8) и файловый scope (§0) в v3 не менялись.
