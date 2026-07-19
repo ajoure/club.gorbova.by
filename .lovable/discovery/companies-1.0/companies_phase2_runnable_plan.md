@@ -1298,11 +1298,15 @@ BEGIN
     updated_at=now(), updated_by=auth.uid()
   WHERE id=_id;
 
-  INSERT INTO public.domain_events(event_type, source, entity_id, payload)
-  SELECT 'company.archived.v1','crm', _id, jsonb_build_object(
-    'version',1,'company_id',_id,'reason',v_reason,'occurred_at',now(),'actor_user_id',auth.uid(),
-    'idempotency_key','company.archived:'||_id::text||':'||md5(v_reason))
-  ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING;
+  PERFORM public._crm_company_emit_domain_event(
+    'company.archived.v1',
+    _id,
+    'company.archived:'||_id::text||':'||md5(v_reason),
+    jsonb_build_object(
+      'version',1,'company_id',_id,'reason',v_reason,'occurred_at',now(),'actor_user_id',auth.uid(),
+      'idempotency_key','company.archived:'||_id::text||':'||md5(v_reason)
+    )
+  );
 
   INSERT INTO public.audit_logs(actor_user_id, action, actor_type, entity_type, entity_id, meta)
   SELECT auth.uid(),'company.archive','user','company',_id::text,
