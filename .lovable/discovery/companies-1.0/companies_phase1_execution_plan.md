@@ -230,6 +230,53 @@ CREATE INDEX csq_status_next_idx
 -- companies
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.companies TO authenticated;
 GRANT ALL ON public.companies TO service_role;
+-- НЕ грантим anon.
+ALTER TABLE public.companies ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "companies read for CRM staff"
+  ON public.companies FOR SELECT TO authenticated
+  USING (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher') OR
+    has_role_v2(auth.uid(),'support')
+  );
+-- admin_gost исключён из CRM RLS: у роли нет row в role_admin_resource_access
+-- и role_admin_section_access для CRM (см. companies_permissions_matrix.md §2).
+
+CREATE POLICY "companies insert for admin+manager"
+  ON public.companies FOR INSERT TO authenticated
+  WITH CHECK (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher')
+  );
+
+CREATE POLICY "companies update for admin+manager"
+  ON public.companies FOR UPDATE TO authenticated
+  USING (
+    has_role_v2(auth.uid(),'super_admin') OR
+    has_role_v2(auth.uid(),'admin') OR
+    has_role_v2(auth.uid(),'menedzher')
+  );
+
+CREATE POLICY "companies delete for super_admin"
+  ON public.companies FOR DELETE TO authenticated
+  USING (has_role_v2(auth.uid(),'super_admin'));
+
+-- client_legal_details_company_map, company_contacts — аналогичный набор из 4 политик.
+
+-- company_sync_queue — только service_role.
+GRANT ALL ON public.company_sync_queue TO service_role;
+-- authenticated НЕ имеет никаких прав (deny by default + отсутствие GRANT).
+ALTER TABLE public.company_sync_queue ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "company_sync_queue service only"
+  ON public.company_sync_queue FOR ALL TO service_role
+  USING (true) WITH CHECK (true);
+```
+
+Единый контракт queue permissions зафиксирован здесь и в `companies_migration_strategy.md` §8 (правка B8 review).
+
 
 ## 4. Минимальные RPC-скелеты Phase 1
 
