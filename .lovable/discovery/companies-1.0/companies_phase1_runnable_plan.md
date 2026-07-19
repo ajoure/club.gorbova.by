@@ -17,11 +17,24 @@ Runnable-план Phase 1. Восстановлен строго по approved `
 Все запросы — только `SELECT`. Выполняются оператором до forward migration и прикладываются к отчёту исполнения. Критические ассертации продублированы в §3 forward migration через `DO $$ … RAISE EXCEPTION … $$` — pass/fail preflight не является stop-guard самим по себе.
 
 ```sql
--- 1.1 Baseline schema hash discovery
-SELECT md5(string_agg(table_name, ',' ORDER BY table_name))
-FROM information_schema.tables
-WHERE table_schema='public';
--- Ожидается: c41160b83c8e15c3d3c41a13028700d5 (companies_read_only_proof.md §schema_hash).
+-- 1.1 Baseline schema hash (SQL идентичен companies_read_only_proof.md §7)
+SELECT md5(string_agg(
+  table_name || ':' || column_name || ':' || data_type,
+  ',' ORDER BY table_name, ordinal_position
+)) AS schema_hash
+FROM information_schema.columns
+WHERE table_schema='public'
+  AND table_name IN (
+    'client_legal_details',
+    'profiles',
+    'public_id_sequences',
+    'roles',
+    'role_admin_resource_access',
+    'role_admin_section_access',
+    'admin_section'
+  );
+-- Ожидается ровно: c41160b83c8e15c3d3c41a13028700d5
+-- (companies_read_only_proof.md §7). Любое другое значение — HARD STOP.
 
 -- 1.2 Объекты, обязанные отсутствовать
 SELECT to_regclass('public.companies'),
@@ -39,21 +52,35 @@ WHERE proname IN (
 );
 -- Ожидается: пустой результат.
 
--- 1.3 Обязательные helpers
-SELECT proname FROM pg_proc
-WHERE proname IN ('next_public_id','update_updated_at_column','has_role_v2');
--- Ожидается: все три.
+-- 1.3 Обязательные helpers — точные сигнатуры
+SELECT proname, pg_get_function_identity_arguments(oid) AS args
+FROM pg_proc
+WHERE proname IN ('next_public_id','update_updated_at_column','has_role_v2')
+ORDER BY proname, args;
+-- Ожидается ровно:
+--   has_role_v2              | _user_id uuid, _role_code text
+--   next_public_id           | p_entity_type text
+--   update_updated_at_column | (пустая строка аргументов)
 
-SELECT prefix, last_value FROM public.public_id_sequences WHERE entity_type='company';
--- Ожидается: 0 rows (регистрация в §3).
+-- 1.4 public_id namespace: ни одна из двух коллизий не должна существовать
+SELECT entity_type, prefix, last_value
+FROM public.public_id_sequences
+WHERE entity_type='company' OR prefix='CMP';
+-- Ожидается: 0 rows.
 
--- 1.4 CMP prefix свободен
-SELECT count(*) FROM public.public_id_sequences WHERE prefix='CMP';
--- Ожидается: 0.
+-- 1.5 SYSTEM tenant соответствует контракту (id + name + is_personal)
+SELECT id::text, name, is_personal
+FROM public.tenants
+WHERE id = '00000000-0000-0000-0000-000000000001';
+-- Ожидается ровно: 00000000-0000-0000-0000-000000000001 | system | false.
 
--- 1.5 SYSTEM workspace default
-SELECT id FROM public.tenants WHERE id = '00000000-0000-0000-0000-000000000001';
--- Ожидается: одна строка (используется как DEFAULT для companies.workspace_id).
+-- 1.6 Все 7 канонических ролей присутствуют
+SELECT array_agg(code ORDER BY code) FROM public.roles
+WHERE code IN ('admin','admin_gost','editor','menedzher','super_admin','support','user');
+-- Ожидается: {admin,admin_gost,editor,menedzher,super_admin,support,user}.
+
+-- 1.7 Schema hash (та же формула) обязан вернуть baseline и после rollback
+-- (см. §9 верификация). Дрейф значения = блокер release.
 ```
 
 ## 2. Файлы миграций
@@ -72,38 +99,85 @@ Rollback-миграция подготавливается заранее и х�
 ```sql
 BEGIN;
 
--- 3.0 Assertions, дублирующие preflight (stop-guard)
+-- 3.0 Assertions, дублирующие preflight (HARD STOP внутри транзакции)
 DO $$
+DECLARE
+  v_roles text[] := ARRAY['admin','admin_gost','editor','menedzher','super_admin','support','user'];
+  v_missing_role text;
+  v_tenant_row record;
 BEGIN
+  -- 3.0.1 Ни одна из целевых таблиц не существует
   IF to_regclass('public.companies') IS NOT NULL
      OR to_regclass('public.client_legal_details_company_map') IS NOT NULL
      OR to_regclass('public.company_contacts') IS NOT NULL
      OR to_regclass('public.company_sync_queue') IS NOT NULL THEN
     RAISE EXCEPTION 'Phase 1 assertion failed: one of target tables already exists';
   END IF;
+
+  -- 3.0.2 Ни одна из целевых функций не существует
   IF EXISTS (SELECT 1 FROM pg_proc WHERE proname IN (
       'crm_company_get_or_create','crm_company_link_contact','set_companies_public_id'
   )) THEN
     RAISE EXCEPTION 'Phase 1 assertion failed: target function already exists';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname='next_public_id') THEN
-    RAISE EXCEPTION 'Phase 1 assertion failed: helper next_public_id missing';
+
+  -- 3.0.3 Точные сигнатуры helper-функций (не просто naming)
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE proname='next_public_id'
+      AND pg_get_function_identity_arguments(oid)='p_entity_type text'
+  ) THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: helper next_public_id(p_entity_type text) missing or has drifted signature';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname='update_updated_at_column') THEN
-    RAISE EXCEPTION 'Phase 1 assertion failed: helper update_updated_at_column missing';
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE proname='update_updated_at_column'
+      AND pg_get_function_identity_arguments(oid)=''
+  ) THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: helper update_updated_at_column() missing or has drifted signature';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname='has_role_v2') THEN
-    RAISE EXCEPTION 'Phase 1 assertion failed: helper has_role_v2 missing';
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+    WHERE proname='has_role_v2'
+      AND pg_get_function_identity_arguments(oid)='_user_id uuid, _role_code text'
+  ) THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: helper has_role_v2(_user_id uuid, _role_code text) missing or has drifted signature';
   END IF;
-  IF EXISTS (SELECT 1 FROM public.public_id_sequences WHERE prefix='CMP' AND entity_type<>'company') THEN
+
+  -- 3.0.4 public_id namespace: обе коллизии — HARD STOP, никакого silent skip
+  IF EXISTS (SELECT 1 FROM public.public_id_sequences
+             WHERE prefix='CMP' AND entity_type<>'company') THEN
     RAISE EXCEPTION 'Phase 1 assertion failed: prefix CMP already reserved by another entity_type';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.public_id_sequences
+             WHERE entity_type='company' AND prefix<>'CMP') THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: entity_type=company already exists with prefix<>CMP';
+  END IF;
+
+  -- 3.0.5 Все 7 канонических ролей присутствуют
+  SELECT r INTO v_missing_role
+  FROM unnest(v_roles) AS r
+  WHERE NOT EXISTS (SELECT 1 FROM public.roles WHERE code=r)
+  LIMIT 1;
+  IF v_missing_role IS NOT NULL THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: canonical role missing: %', v_missing_role;
+  END IF;
+
+  -- 3.0.6 SYSTEM tenant: id + name + is_personal одновременно
+  SELECT id, name, is_personal INTO v_tenant_row
+  FROM public.tenants WHERE id='00000000-0000-0000-0000-000000000001';
+  IF v_tenant_row.id IS NULL THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: SYSTEM tenant 00000000-0000-0000-0000-000000000001 missing';
+  END IF;
+  IF v_tenant_row.name <> 'system' OR v_tenant_row.is_personal <> false THEN
+    RAISE EXCEPTION 'Phase 1 assertion failed: SYSTEM tenant contract mismatch (expected name=system, is_personal=false)';
   END IF;
 END $$;
 
--- 3.1 Регистрация public_id namespace
+-- 3.1 Регистрация public_id namespace (без ON CONFLICT — коллизия уже отсечена в §3.0)
 INSERT INTO public.public_id_sequences (entity_type, prefix, last_value)
-VALUES ('company', 'CMP', 0)
-ON CONFLICT (entity_type) DO NOTHING;
+VALUES ('company', 'CMP', 0);
+
 
 -- 3.2 companies (approved DDL)
 CREATE TABLE public.companies (
@@ -822,6 +896,25 @@ DROP TABLE public.companies;
 DELETE FROM public.public_id_sequences WHERE entity_type='company';
 
 COMMIT;
+
+-- 9.7 Post-rollback verification: baseline schema hash обязан вернуться
+-- к значению до Phase 1 (companies_read_only_proof.md §7).
+SELECT md5(string_agg(
+  table_name || ':' || column_name || ':' || data_type,
+  ',' ORDER BY table_name, ordinal_position
+)) AS schema_hash
+FROM information_schema.columns
+WHERE table_schema='public'
+  AND table_name IN (
+    'client_legal_details',
+    'profiles',
+    'public_id_sequences',
+    'roles',
+    'role_admin_resource_access',
+    'role_admin_section_access',
+    'admin_section'
+  );
+-- Ожидается ровно: c41160b83c8e15c3d3c41a13028700d5. Иначе — rollback неполный.
 ```
 
 Helper-функции (`update_updated_at_column`, `has_role_v2`, `next_public_id`) созданы вне Phase 1 и rollback не затрагивает. `client_legal_details` не тронут. `admin_section`/`admin_resource`/`role_admin_*`/`app_settings` в Phase 1 не изменялись.
@@ -847,3 +940,13 @@ Helper-функции (`update_updated_at_column`, `has_role_v2`, `next_public_i
 | 6 | Verification проверяла counts | §7: перешла на именные проверки колонок, defaults, constraints, FK actions, индексов, policies, grants, function signatures. |
 | 7 | RLS proof на пустой таблице | §8: fixture-based в BEGIN/ROLLBACK, real `user_roles_v2` (подтверждено `pg_get_functiondef(has_role_v2)`); проверяется видимость конкретного ID; service_role убран из RPC-matrix. |
 | 8 | Изменён `.lovable/plan.md` | §0: `.lovable/plan.md` возвращён к состоянию commit 8649e2ba; итоговый diff содержит только этот файл. |
+
+## 12. Три остатка после consolidated review v3 (закрытие)
+
+| # | Остаток | Как закрыт в v3 |
+|---|---|---|
+| 1 | `INSERT ... ON CONFLICT (entity_type) DO NOTHING` при регистрации namespace company/CMP скрывал коллизию. | §3.1: `ON CONFLICT DO NOTHING` удалён — INSERT падает с unique-violation, если строка уже существует; предварительно §3.0.4 явно проверяет обе стороны коллизии. |
+| 2 | Forward DO-guard не покрывал все HARD STOP условия. | §3.0 расширен: §3.0.3 — точные сигнатуры трёх helper-функций; §3.0.4 — обе коллизии `company`/`CMP`; §3.0.5 — все 7 канонических ролей; §3.0.6 — SYSTEM tenant по id + name + is_personal одновременно. |
+| 3 | Schema hash в preflight/verification/rollback считался другой SQL. | §1.1 и §9.7 переведены на точный SQL из `companies_read_only_proof.md §7`: `information_schema.columns`, `table_name:column_name:data_type`, зафиксированный список из 7 таблиц. Ожидаемое значение `c41160b83c8e15c3d3c41a13028700d5` сохраняется как единственный baseline. |
+
+DDL, RLS, RPC skeleton, runtime proof (§8) и файловый scope (§0) в v3 не менялись.
