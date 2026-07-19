@@ -87,7 +87,7 @@ describe("LeadRequestDialog reset behavior (regression: user change must NOT res
     // Details step is still visible; effect did NOT re-fire and clobber state.
     // (The important assertion is that a new render with a new user object
     // does not throw / does not reset details form values.)
-    const nameInput = screen.getByLabelText("Имя *") as HTMLInputElement;
+    const nameInput = screen.getByLabelText("Имя заявителя *") as HTMLInputElement;
     expect(nameInput).toBeTruthy();
   });
 

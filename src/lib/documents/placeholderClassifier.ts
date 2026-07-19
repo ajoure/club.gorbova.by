@@ -65,19 +65,18 @@ export type PlaceholderClassification =
   | {
       // PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: ln-XXXXXX.<sub_field>
       kind: 'package_role_subfield';
-      public_id: string;
-      sub_field: string;
-      format: PlaceholderFormat | string | null;
+      public_id: string;          // ln-XXXXXX
+      sub_field: string;          // whitelist на резолвере (LN_SUB_FIELD_SPECS)
+      format: PlaceholderFormat | string | null;  // 'dotted'|'short'|'full' для date или name-format
       case_modifier: PlaceholderCase | null;
     }
   | {
       // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a:
       //   {{ln-XXXXXX.custom.<key>}} — scalar custom assignment field.
-      //   Резолв только в package-tokens-dry-run (Stage E.1a);
-      //   реальная DOCX-подстановка переносится в Stage E.4.
+      //   Резолв только в package-tokens-dry-run; реальная DOCX-подстановка → Stage E.4.
       kind: 'package_role_custom_field';
-      public_id: string;        // ln-XXXXXX
-      custom_key: string;       // ^[a-z][a-z0-9_]{0,49}$
+      public_id: string;
+      custom_key: string;
       case_modifier: PlaceholderCase | null;
     }
   | {
@@ -103,8 +102,12 @@ export type PlaceholderClassification =
 
 // FORMATS_BILLING расширен под ФИО-модификаторы: `full|short|signature_short`
 // разрешены syntax-wise для field:FLD-* (per-FLD семантика — на резолвере,
-// см. PERSON_NAME_FIELD_KEYS в canonical-document-generate-strict).
-const FORMATS_BILLING = new Set<PlaceholderFormat>(['words', 'text', 'full', 'short', 'signature_short']);
+// см. PERSON_NAME_FIELD_KEYS в canonical-document-generate-strict). Это зеркалит
+// поведение package_requisite и нужно для полей «Руководитель ФИО» (Исполнитель ЮЛ,
+// Заказчик ЮЛ, Заказчик ИП).
+const FORMATS_BILLING = new Set<PlaceholderFormat>([
+  'words', 'text', 'full', 'short', 'signature_short',
+]);
 const FORMATS_LN = new Set<PlaceholderFormat>(['full', 'short', 'signature_short']);
 // package_requisite держит и биллинговые (суммы/даты: words|text), и
 // персоналии/орг-форму (full|short|signature_short|long). Per-FLD семантика
@@ -123,9 +126,11 @@ const RE_PACKAGE_REQ    = /^package\.(ul|ip|fl)\.(FLD-\d{6})((?:\|[a-z_]+=[a-z_]
 // пойдёт в `invalid` (см. evaluatePlaceholderInScope → legacy_placeholder_format_detected).
 const RE_PACKAGE_TABLE_REPEAT = /^tableRepeat:(TR-\d{6,})$/;
 const RE_PACKAGE_ROLE   = /^(ln-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
-// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a — должен проверяться ДО
-// RE_PACKAGE_ROLE_SUB, чтобы `ln-XXXXXX.custom.<key>` не попадал в sub-field branch.
+// PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a — проверять ДО RE_PACKAGE_ROLE_SUB.
 const RE_PACKAGE_ROLE_CUSTOM = /^(ln-\d{6})\.custom\.([a-z][a-z0-9_]{0,49})((?:\|[a-z_]+=[a-z_]+)*)$/;
+// PATCH-ROLE-SCOPED-PERSON-PLACEHOLDERS-V1: {{ln-XXXXXX.<sub_field>[|...]}}.
+// Sub-field whitelist валидируется backend-резолвером (LN_SUB_FIELD_SPECS);
+// классификатор остаётся pure-синтаксическим.
 const RE_PACKAGE_ROLE_SUB = /^(ln-\d{6})\.([a-z_]+)((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_FIELD  = /^(pf-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_LEGACY_PKR     = /^package\.role\.PKR-\d{6}(?:\|[^}]*)?$/;
@@ -209,13 +214,8 @@ export function classifyPlaceholder(inside: string): PlaceholderClassification {
 
 
   // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.1a: {{ln-XXXXXX.custom.<key>}}.
-  // Должен проверяться ДО RE_PACKAGE_ROLE_SUB (regex sub allows arbitrary <word>,
-  // и сам по себе не подберёт `custom.<key>` из-за второй точки, но порядок
-  // явный для defence-in-depth).
   const mRoleCustom = raw.match(RE_PACKAGE_ROLE_CUSTOM);
   if (mRoleCustom) {
-    // v1: формат-модификаторы запрещены; case разрешён для forward-compat
-    // (текущий резолвер `scalar_text` возвращает строку как есть).
     const FORMATS_LN_CUSTOM = new Set<PlaceholderFormat>();
     const mods = parseModifiers(mRoleCustom[3] || '', FORMATS_LN_CUSTOM);
     if (mods.error) return mods.error;
@@ -229,6 +229,9 @@ export function classifyPlaceholder(inside: string): PlaceholderClassification {
 
   const mRoleSub = raw.match(RE_PACKAGE_ROLE_SUB);
   if (mRoleSub) {
+    // Допустимый набор format-значений для sub-field шире обычного name-формата
+    // (включая 'dotted' для дат). Полная валидация по whitelist sub_field —
+    // на резолвере; здесь принимаем любой синтаксически валидный модификатор.
     const FORMATS_LN_SUB = new Set<PlaceholderFormat | string>([
       'full', 'short', 'signature_short', 'dotted',
     ]);

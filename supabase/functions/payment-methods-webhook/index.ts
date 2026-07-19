@@ -1,8 +1,10 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { getBepaidCredsStrict, isBepaidCredsError } from "../_shared/bepaid-credentials.ts";
+import { authenticateBepaidWebhookRequest } from "../_shared/bepaid-webhook-auth.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Headers': 'authorization, content-signature, x-signature, x-webhook-signature, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -58,7 +60,7 @@ function translateTokenizationError(error: string): string {
 
 // Send Telegram notification for card tokenization failure
 async function sendTokenizationFailureNotification(
-  supabase: any,
+  supabase: SupabaseClient,
   customerEmail: string,
   errorMessage: string
 ): Promise<void> {
@@ -129,7 +131,39 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const body = await req.json();
+    const rawBody = await req.text();
+    const bepaidCreds = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(bepaidCreds)) {
+      console.error('[payment-methods-webhook] bePaid credentials unavailable:', bepaidCreds.code);
+      return new Response(JSON.stringify({ error: 'Webhook authentication is not configured' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const webhookAuth = await authenticateBepaidWebhookRequest(req, rawBody, {
+      shopId: bepaidCreds.shop_id,
+      secretKey: bepaidCreds.secret_key,
+      publicKey: bepaidCreds.public_key,
+    });
+    if (!webhookAuth.ok) {
+      const isMisconfigured = webhookAuth.reason === 'missing_public_key';
+      console.error('[payment-methods-webhook] Webhook authentication rejected:', webhookAuth.reason);
+      return new Response(JSON.stringify({ error: 'Invalid webhook authentication' }), {
+        status: isMisconfigured ? 500 : 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    let body: ReturnType<typeof JSON.parse>;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     const receivedTransaction = body?.transaction;
     console.log('Payment methods webhook received:', JSON.stringify({
       transaction_uid: receivedTransaction?.uid ?? null,
@@ -547,7 +581,14 @@ Deno.serve(async (req) => {
     
     // ========== AUTO-LINK historical payments ==========
     // Call payments-autolink-by-card to link historical unlinked payments to this profile
-    let autolinkResult: any = null;
+    let autolinkResult: {
+      stats?: {
+        updated_payments_profile?: number;
+        updated_queue_profile?: number;
+      };
+      status?: string;
+      stop_reason?: string | null;
+    } | null = null;
     try {
       // Get profile_id for the user
       const { data: profileData } = await supabase
