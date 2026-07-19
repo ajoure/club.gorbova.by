@@ -2158,7 +2158,16 @@ GRANT EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean
 COMMIT;
 ```
 
+<!-- PHASE2_ROLLBACK_SQL_END -->
+
 Rollback не изменяет таблицы и данные. Не использует `CASCADE`. `company_sync_queue` очищается отдельным решением при необходимости.
+
+**Copy-paste readiness §12 checklist:**
+
+- [x] Весь SQL §12 заключён в непрерывную последовательность fence-блоков (§12.1–§12.6), без прозы между DDL-стейтментами внутри блоков.
+- [x] В canonical SQL нет переменных вида `<...>`, `{{...}}`, `TBD`.
+- [x] Порядок стейтментов соответствует зависимостям: BEGIN → DROP 5 новых RPC (§12.2) → `CREATE OR REPLACE` двух Phase 1 skeletons (§12.3) → `CREATE OR REPLACE` pre-Phase-2 `search_global` (§12.4) → DROP двух private helper (resolve, затем emit — §12.5) → восстановление Phase 1 ACL (§12.6) → `COMMIT`.
+- [x] Итог: 5 DROP + 2 DROP = **7 DROP FUNCTION**; 2 + 1 = **3 CREATE OR REPLACE FUNCTION**. `search_global` восстанавливается через `CREATE OR REPLACE` (без промежуточного DROP).
 
 ---
 
