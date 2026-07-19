@@ -1,488 +1,419 @@
-## GO EXECUTE
+# да, согласен, с учетом правок:
 
-План в целом корректен. Выполнять можно, но с обязательными уточнениями ниже.
+1. **Зафиксировать неизменяемые инварианты Master Plan v2.** Discovery 1.0 проверяет способы реализации и переиспользование, но не открывает заново уже принятые архитектурные решения:
 
 ```text
-DIAGNOSE                 : PASS
-DB MIGRATION             : GO
-ATOMIC REORDER RPC       : GO
-ADMIN DND                : GO
-SLOT/COLOR UI            : GO
-LEGACY ROLE MIGRATION    : GO
-CHECKOUT/WEBHOOK/RLS     : HOLD / НЕ ТРОГАТЬ
+- companies — standalone canonical CRM-сущность;
+- profiles остаётся сущностью физлица/контакта;
+- access, entitlements и Telegram всегда привязаны только к profile_id;
+- auto-source только:
+  client_legal_details.purpose='billing'
+  AND client_type IN ('legal_entity','entrepreneur');
+- purpose='document', legal_details_persons,
+  legal_details_entity_person_links не участвуют в CRM auto-source;
+- client_legal_details остаётся compat SOT;
+- company_contact_person_map не входит в Phase 1 и остаётся deferred для Phase 10+;
+- Phase 1 core ограничен:
+  companies,
+  company_contacts,
+  client_legal_details_company_map,
+  company_sync_queue либо доказанным переиспользованием существующей очереди.
 
 ```
 
-## Обязательные условия реализации
+Discovery может уточнить детали реализации этих решений, но отменить их можно только отдельным ADR с явным approval пользователя.
 
-### 1. RPC должна отклонять дублированные ID
-
-Одного сравнения длины массива и количества строк недостаточно. Массив вида:
+2. **Phase C не должна реально выбирать Entity-абстракцию как равноправный путь текущего спринта.** ADR-0001 должен фиксировать:
 
 ```text
-[id1, id1, id3]
+Решение текущего спринта:
+companies + company_contacts как standalone-модель.
+
+Entity abstraction:
+только потенциальное эволюционное направление после Phase 11,
+не часть текущего DDL и не основание для рефакторинга CRM сейчас.
 
 ```
 
-может иметь правильную длину, но не соответствовать множеству офферов.
+Иначе Discovery может снова вернуть проект к уже закрытой архитектурной дискуссии.
 
-В RPC проверить одновременно:
+3. **Phase J не должна автоматически требовать добавления `parent_company_id` и `hierarchy_type` в Phase 1.** Это пока speculative future scope. Правильная формулировка:
+
+```text
+Discovery документирует будущие требования к hierarchy.
+Добавление parent_company_id / hierarchy_type в Phase 1 допускается
+только если подтвержден реальный ближайший use case и принято отдельное
+решение в Phase 1 плане. Иначе поля остаются deferred.
+
+```
+
+Не нужно добавлять поля «на всякий случай».
+
+4. `**companies_phase1_execution_[plan.md](http://plan.md)` должен быть явно нерunnable.** Поскольку Final Discovery ещё не утверждён, документ необходимо маркировать:
+
+```text
+Статус: DRAFT / NOT APPROVED / DO NOT EXECUTE
+
+```
+
+Он должен содержать предполагаемые DDL/RLS/rollback/verification, но никакая миграция не запускается до отдельного approval после проверки всех discovery-документов.
+
+5. **В Final Discovery нужно закрыть вопрос очереди.** Сейчас в Master Plan остаётся развилка:
+
+```text
+company_sync_queue
+vs
+переиспользование notification_outbox / другой существующей queue
+
+```
+
+Discovery обязан:
+
+- проинвентаризировать существующие outbox/queue/worker-паттерны;
+- проверить payload, retry, locking, status, attempts, observability;
+- дать однозначную рекомендацию;
+- запретить создание `company_sync_queue`, если существующая очередь семантически подходит;
+- либо обосновать отдельную очередь, если notification-outbox предназначен только для уведомлений.
+
+Решение зафиксировать в `companies_architecture_[freeze.md](http://freeze.md)` и Phase 1 draft.
+
+6. **Разделить activity, domain events и audit по назначению.** Discovery не должен выбирать одну таблицу как универсальную. Нужно отдельно определить:
+
+```text
+crm_activity_log
+— бизнес-лента CRM;
+
+domain_events / domain_executions
+— междоменная доставка, lineage, retries;
+
+audit_logs
+— аудит критических действий пользователя/администратора.
+
+```
+
+Для каждого будущего события Companies указать, куда оно должно попадать. Это соответствует принципам событийности, аудита, ID-driven связей и запрета дублирования.
+
+7. **Все упоминания `entity_type='company'` считать гипотезой до проверки schema constraints.** Нужно проверить:
+
+- тип колонки;
+- CHECK constraint;
+- PostgreSQL ENUM;
+- FK;
+- nullable;
+- используемые RPC;
+- TypeScript-типы;
+- hardcoded switch/case.
+
+Недостаточно увидеть текстовую колонку `entity_type`. В deliverable должен быть вердикт:
+
+```text
+работает без DDL;
+требует расширения CHECK;
+требует изменения enum;
+не поддерживается текущей моделью.
+
+```
+
+8. **Permissions matrix строить только по реально существующим ролям.** Если `crm_manager`, `readonly` или другая роль отсутствует, не создавать её концептуально и не утверждать, что она существует. Указать:
+
+```text
+existing;
+alias;
+not found;
+future role — outside scope.
+
+```
+
+Также проверить не только таблицы ролей, но и:
+
+- sidebar/navigation guards;
+- route guards;
+- RPC authorization;
+- RLS;
+- resource/section registry;
+- hidden UI actions.
+
+9. **AmoCRM `companies` не считать внутренней CRM-моделью без доказательств.** В Discovery нужно различить:
+
+```text
+external AmoCRM company model
+≠
+canonical internal companies
+
+```
+
+Интеграции должны оставаться anti-corruption layer/adapters. Нельзя автоматически сделать структуру AmoCRM источником внутренней схемы или канонических полей. Это также должно быть отражено в dependency/reuse matrix.
+
+10. **Добавить явную проверку duplicate storage.** Для каждого предполагаемого поля `companies` нужно указать:
+
+
+| Поле | Текущий источник | Canonical в Companies | Mirror/compat | Правило обновления |
+| ---- | ---------------- | --------------------- | ------------- | ------------------ |
+
+
+Особенно:
+
+- УНП;
+- полное и краткое наименование;
+- legal form;
+- адрес;
+- email;
+- телефон;
+- директор;
+- банковские реквизиты;
+- статус;
+- регистрационные данные.
+
+Discovery должен не просто перечислить таблицы реквизитов, а доказать, что Phase 1 не создаёт третий независимый SoT. Корпоративный модуль также требует разделения постоянных данных компании, данных физлица, link-данных и данных конкретной процедуры.
+
+11. **Phase H — только агрегированные данные.** В markdown запрещено переносить персональные данные, телефоны, email, ФИО и реальные реквизиты клиентов. Разрешено фиксировать:
+
+- counts;
+- distinct counts;
+- null rates;
+- duplicate counts;
+- распределение по типам;
+- обезличенные примеры структуры.
+
+SQL может читать данные, но deliverables не должны становиться выгрузкой production PII.
+
+12. **Оценку `companies` считать только по утверждённому billing-source guard.** Не по всей таблице `client_legal_details`, не по `legal_entities_requisites` самостоятельно и не по document-реквизитам:
 
 ```sql
-cardinality(p_ordered_ids) = offer_count
-count(DISTINCT id из p_ordered_ids) = offer_count
-все переданные id принадлежат p_tariff_id
-все офферы p_tariff_id присутствуют в массиве
+WHERE purpose = 'billing'
+  AND client_type IN ('legal_entity', 'entrepreneur')
 
 ```
 
-Пустой тариф обрабатывать через `cardinality()`, а не `array_length()`, который возвращает `NULL` для пустого массива.
+Отдельно посчитать:
 
-### 2. Блокировка должна быть детерминированной
+- строки billing-source;
+- строки с нормализуемым УНП;
+- уникальные `country + normalized_unp`;
+- строки без УНП;
+- коллизии одного УНП с разными именами/legal form;
+- несколько billing-карточек разных profiles на одну компанию.
 
-При `FOR UPDATE` блокировать строки в стабильном порядке, например по `id`, чтобы снизить риск взаимных блокировок при параллельных reorder:
+13. **В Phase D проверить не только RPC с префиксами `search_*`/`list_*`.** Также искать:
 
-```sql
-SELECT id
-FROM public.tariff_offers
-WHERE tariff_id = p_tariff_id
-ORDER BY id
-FOR UPDATE;
+- PostgREST queries;
+- hooks с `.from(...).select(...)`;
+- shared search services;
+- command palette/global search;
+- server-side pagination;
+- SQL views;
+- autocomplete;
+- fuzzy/trigram search.
 
-```
+Иначе inventory поиска будет неполным.
 
-Вся проверка и перенумерация — в одном вызове и одной транзакции функции.
+14. **В Phase B запретить refactor существующих Sheet-компонентов в рамках Discovery и Phase 1.** Результат `Extract shared` или `Refactor first` является только рекомендацией. Такой refactor не должен автоматически становиться blocker для создания Companies, если UI можно безопасно реализовать с существующими primitives.
 
-### 3. `SECURITY INVOKER` оставить
+Некритичный shared-shell refactor нужно вынести в deferred list, а не тормозить основной scope.
 
-Это правильный выбор. RLS текущего пользователя должна продолжать действовать.
-
-Но до применения подтвердить runtime:
+15. **Phase I должна разделять основной implementation sprint и follow-up validation sprint.** Paper strategy должна включать:
 
 ```text
-admin с правом редактирования продукта → RPC success
-обычный authenticated               → denied
-anonymous                            → function unavailable/denied
+Main implementation:
+schema → RPC → backfill → sync → integration → UI.
+
+Follow-up validation:
+runtime smoke → regression → performance → proof gaps →
+cleanup → deferred technical debt.
 
 ```
 
-Не переводить RPC на `SECURITY DEFINER`.
+Некритичные proof gaps не должны бесконечно блокировать основной безопасный scope, но должны сохраняться в deferred list.
 
-### 4. Обновить Supabase TypeScript types
-
-После добавления RPC обновить тип функции в generated database types, иначе вызов:
-
-```ts
-supabase.rpc("reorder_tariff_offers", ...)
-
-```
-
-может не пройти typecheck.
-
-В scope добавить соответствующий generated-файл, вероятно:
+16. **Добавить обязательный реестр unresolved decisions.** В `companies_architecture_[freeze.md](http://freeze.md)` должен быть раздел:
 
 ```text
-src/integrations/supabase/types.ts
+Resolved decisions
+Deferred decisions
+Explicitly rejected options
+Blockers before Phase 1
+Non-blocking follow-up
 
 ```
 
-Не обходить типизацию через `as any`.
+Architecture freeze нельзя подписывать, если в нём скрыто остаются формулировки «решить позже» по критическим вопросам DDL, SoT, dedupe, queue, RLS или audit.
 
-### 5. Миграция `slot_role` должна быть транзакционно проверяемой
-
-Использовать:
-
-```sql
-jsonb_set(
-  COALESCE(meta, '{}'::jsonb),
-  '{slot_role}',
-  to_jsonb('button_N'::text),
-  true
-)
-
-```
-
-После UPDATE внутри той же миграции выполнить assertions:
+17. **Каждая ссылка на текущее состояние должна быть точной.** Требовать формат:
 
 ```text
-legacy slot_role count = 0
-duplicate non-null slot_role per tariff = 0
-активные dynamic-slot офферы проходят trigger contract
+DB:
+public.crm_tasks.column_name
+constraint/function/policy name
+
+Code:
+src/path/File.tsx:Lx-Ly
+supabase/functions/name/index.ts:Lx-Ly
+
+RPC:
+public.function_name(signature)
 
 ```
 
-Если assertion не проходит — миграция должна завершиться ошибкой, а не частично примениться.
+Недостаточно общих фраз вроде «в проекте есть поиск» или «Sheet можно переиспользовать».
 
-### 6. «Не размещать автоматически» — ключ должен отсутствовать
-
-Не сохранять:
-
-```json
-{"slot_role": null}
-
-```
-
-и не сохранять:
-
-```json
-{"slot_role": ""}
-
-```
-
-При выборе этого пункта удалять ключ из `meta`:
-
-```ts
-const { slot_role: _removed, ...nextMeta } = currentMeta;
-
-```
-
-Либо использовать эквивалентную безопасную операцию.
-
-Это важно для unique index, trigger и manifest logic.
-
-### 7. Конфигурация sensors должна использовать API dnd-kit
-
-Точная форма:
-
-```ts
-useSensor(MouseSensor, {
-  activationConstraint: { distance: 5 },
-});
-
-useSensor(TouchSensor, {
-  activationConstraint: {
-    delay: 250,
-    tolerance: 6,
-  },
-});
-
-useSensor(KeyboardSensor, {
-  coordinateGetter: sortableKeyboardCoordinates,
-});
-
-```
-
-На drag handle передать и `attributes`, и `listeners`.
-
-### 8. Optimistic rollback должен охватывать оба кэша
-
-До optimistic update:
+18. **Добавить отдельный раздел source/field ownership.** Для будущих обновлений компании определить:
 
 ```text
-cancelQueries product_offers
-cancelQueries tariffs-with-offers
-snapshot обоих кэшей
+Какие поля может обновлять billing sync;
+какие поля редактирует администратор;
+какие поля импортируются;
+какие поля никогда не перезаписываются автоматически;
+как обрабатываются расхождения;
+что происходит с archived/merged company.
 
 ```
 
-При ошибке RPC:
+Это должно согласовываться с ранее принятым правилом: совпадение УНП создаёт map + billing contact, но не перезаписывает критичные поля без review.
+
+19. **В DoD добавить проверку отсутствия изменений репозитория и БД.**
 
 ```text
-restore product_offers snapshot
-restore tariffs-with-offers snapshot
-toast.error
+- git diff по application/schema/migrations = пусто;
+- нет новых migration files;
+- нет изменённых SQL/RPC/edge/UI файлов;
+- изменены только markdown-файлы в approved discovery paths;
+- DB schema до и после Discovery идентична.
 
 ```
 
-Не восстанавливать только один источник, иначе UI может остаться в рассинхронизированном состоянии.
-
-При нескольких быстрых drop не допустить, чтобы поздний rollback старой мутации перетёр более новый успешный порядок. Допустимые решения:
-
-- блокировать повторный drag на время mutation;
-- сериализовать reorder по `tariff_id`;
-- использовать mutation context/version guard.
-
-Предпочтительно блокировать новый reorder конкретного тарифа до завершения RPC.
-
-### 9. Invalidate preview queries без псевдо-wildcard
-
-React Query не понимает строковый wildcard вида:
+20. **Во все документы и в запрос Lovable добавить языковой контракт:**
 
 ```text
-site-page-*
+План должен быть составлен на русском языке.
+Отчёт о выполненной работе должен быть составлен на русском языке.
+Вся переписка, пояснения, результаты и deliverables —
+только на русском языке.
 
 ```
 
-Использовать реальный prefix query key либо predicate:
-
-```ts
-queryClient.invalidateQueries({
-  predicate: query =>
-    Array.isArray(query.queryKey) &&
-    String(query.queryKey[0]).startsWith("site-page"),
-});
-
-```
-
-Точные действующие query keys сначала взять из кода.
-
-### 10. Сортировка должна иметь стабильный fallback
-
-Во всех местах:
-
-```ts
-sort_order ASC
-id ASC
-
-```
-
-`NULL sort_order` перед DnD нормализовать предсказуемо. После первого reorder БД должна хранить строго:
+Сообщение Lovable должно начинаться с обязательной маркировки:
 
 ```text
-0, 1, 2, ... N-1
+План: CRM Companies — Final Discovery 1.0
 
 ```
 
-### 11. Удаление invoice-autoset
-
-Удалить оба автоматических присваивания, но не потерять существующий `meta` при редактировании.
-
-Проверить матрицу:
+А после выполнения:
 
 ```text
-смена offer_type       → slot_role не меняется
-смена offer_type       → site_button_variant не меняется
-смена slot_role        → offer_type/payment_method не меняются
-смена цвета            → offer_type/payment_method не меняются
-редактирование суммы   → slot/color сохраняются
+Отчет о выполненной работе:
+CRM Companies — Final Discovery 1.0
 
 ```
 
-## Runtime DoD
+Это обязательное правило оформления проекта.
 
-Кроме указанного плана, отчёт должен содержать реальные ID одного тарифа и его офферов:
+После внесения этих правок план готов к передаче Lovable. Это один consolidated-пакет замечаний; повторная проверка должна быть только сверкой: **внесено / частично внесено / не внесено**.
 
-```text
-BEFORE:
-offer A sort_order = ...
-offer B sort_order = ...
-offer C sort_order = ...
+&nbsp;
 
-AFTER DND:
-offer C sort_order = 0
-offer A sort_order = 1
-offer B sort_order = 2
+План: CRM Companies — Final Discovery 1.0 (Architecture Freeze)
 
-```
+Цель — до старта Phase 1 полностью зафиксировать архитектуру Companies поверх существующего CRM, максимально переиспользуя таблицы, RPC, hooks и UI. Работа строго read-only: без миграций, без правок кода, без edge functions. Результат — набор markdown-документов, после которого архитектура считается замороженной; любое отклонение — только через ADR.
 
-Проверить:
+## Границы
 
-1. Desktop mouse DnD.
-2. Mobile long-press.
-3. Keyboard reorder.
-4. Reload админки — порядок сохранён.
-5. Новый запрос публичной страницы — порядок новый.
-6. Ошибка RPC — UI откатился.
-7. Drag между тарифами не меняет данные.
-8. `slot_role` после миграции содержит только `button_1…button_5` среди ранее размеченных строк.
-9. Новый оффер создаётся без `slot_role`, с `primary`.
-10. «Не размещать автоматически» реально удаляет JSON-ключ.
-11. Typecheck и production build проходят.
-12. Миграция применена ровно один раз.
-13. Frontend не публиковать до отдельного отчёта.
+- Только discovery: чтение БД (schema, sample counts), чтение исходников, статический анализ.
+- Ничего не создаём: ни таблиц, ни RPC, ни компонентов, ни feature flag'ов.
+- Все выводы фиксируем как deliverables ниже. Никаких «попутных фиксов».
 
-## Команда исполнителю
+## Что уже подтверждено чтением проекта (нужно для точности плана)
 
-```text
-GO EXECUTE.
+- CRM SoT (см. `.lovable/discovery/crm-tasks-diagnose.md`): сделка = `orders_v2`, контакт = `profiles`, воронки = `crm_pipelines` / `crm_pipeline_stages`, задачи = `crm_tasks` + `crm_task_types` + `crm_task_automation_rules` + `crm_task_notifications`, активность = `crm_activity_log`, события = `domain_events` / `domain_executions`, аудит = `audit_logs`.
+- Реквизиты юрлиц (billing SoT) уже существуют: `legal_entities_requisites`, `individual_requisites`, `client_legal_details`, `legal_details_persons`, `legal_details_entity_person_links`, `legal_details_positions_catalog`, `legal_details_roles_catalog`. Отдельной таблицы `companies` / `company_contacts` в БД пока нет.
+- Sheet-шеллы уже существуют: `src/components/admin/ContactDetailSheet.tsx`, `DealDetailSheet.tsx`, `PreregistrationDetailSheet.tsx`, `ConsentDetailSheet.tsx`, `diagnostics/BillingDetailSheet.tsx`, `payments/links/LinkDetailsDrawer.tsx`, `payments/PaymentDocumentsDrawer.tsx`.
+- Табы контакта: `src/components/admin/contact/ContactDealsTab.tsx`, `ContactFeedTab.tsx`, `ContactArtifactsTab.tsx`, `ContactWebinarsTab.tsx`, плюс `ContactChannelsSection.tsx`, `ContactTelegramChat.tsx`, `bepaid/ContactDealsDialog.tsx`.
+- Задачи: `src/components/admin/tasks/*` (Create/Edit/View/List/Board/Filters/Stats), hooks `useCrmTasks`, `useCrmTaskAutomationRules`, `useCrmTaskStats`, `useDealTaskSummary`, `useTaskRelations`.
+- Звонки: `src/components/admin/calls/*` (CallButton, CallRecordingPlayer, CallsHistorySection).
+- Amo/интеграции уже упоминают companies: `supabase/functions/amocrm-webhook`, `integration-sync`, `IntegrationSyncSettingsDialog`, `FieldMappingDialog`, `AmoCRMFieldMappingInfo`, `useIntegrationSync` — их нужно проверить на предмет уже существующей модели «компания».
+- Страницы: `AdminContacts`, `AdminDeals`, `AdminTasks`, `AdminCalls`, `AdminUnresolvedCalls` — отдельной `AdminCompanies` нет.
 
-Выполнить Phase 1–5 по представленному плану с обязательными поправками:
+Всё остальное про «Companies как Entity», backfill, permissions и т.д. — гипотезы, которые Discovery должен подтвердить или опровергнуть чтениями.
 
-- RPC проверяет cardinality, distinct IDs и полное совпадение множества;
-- deterministic FOR UPDATE;
-- SECURITY INVOKER;
-- обновить generated Supabase RPC types, без as any;
-- миграция с транзакционными assertions;
-- «Не размещать» удаляет slot_role key;
-- dnd-kit activationConstraint;
-- rollback обоих query caches;
-- исключить stale rollback при быстрых reorder;
-- invalidate реальных preview query keys, без wildcard-строки;
-- стабильная сортировка sort_order ASC, id ASC;
-- invoice autoset удалить в обоих местах без потери meta.
+## Phase A. Инвентаризация текущего CRM
 
-После выполнения предоставить:
-commit, migration name, SQL proof, typecheck/build,
-desktop/mobile/keyboard DnD proof, rollback proof,
-public fresh-fetch proof и список реально изменённых файлов.
+Для каждой сущности из списка ниже собрать таблицу: **таблицы БД → RPC/edge → hooks → UI-компоненты → страницы → политика переиспользования (reuse / partial / avoid duplicating)**.
 
-FRONTEND PUBLISH: HOLD.
+Сущности: Contacts, Deals, Tasks, Calls, Pipelines/Stages, Activity/Timeline, Documents, Invoices, Payments, Offers, Products, Tags, Legal requisites, Integrations (Amo/GC/Manychat).
 
-```
+Метод:
 
-```text
-PLAN VERDICT     : PASS WITH REQUIRED AMENDMENTS
-EXECUTION        : GO
-FRONTEND PUBLISH : HOLD
+- `rg` по именам таблиц/hook'ов/RPC.
+- Чтение `supabase/functions/*/index.ts` и `src/hooks/*` без исполнения.
+- Проверка `crm_activity_log`, `domain_events`, `audit_logs` на предмет полей `entity_type`/`entity_id` (чтобы понять, можно ли туда добавить `company` без alter).
 
+## Phase B. Разбор ContactDetailSheet и DealDetailSheet
 
-Diagnose checkpoint — результаты
-```
+Разложить оба sheet'а поблочно (Header, Profile, Timeline, Deals, Tasks, Calls, Documents, Notes, Actions, Permissions, Toolbar, Dialogs; для Deal — Participants, Products, Payments, Automation, Activity Feed). Для каждого блока — вердикт: **Reusable as-is / Reusable with props / Extract shared / Refactor first / Company-specific**.
 
-**1. Фактические значения `meta.slot_role**` (`tariff_offers`, все строки):
+Дополнительно: определить, есть ли уже общий shell (общий Sheet/Drawer wrapper) — если нет, зафиксировать это как отдельный технический долг, но **не решать в этом Discovery**.
 
-```
-NULL/''            63   (49 активных)
-payment_card        3   (3 активных)
-payment_invoice     3   (3 активных)
-installment_bank    3   (3 активных)
-installment_2       2   (2 активных)
-installment_3       1   (1 активный)
-```
+## Phase C. Модель Companies: Entity vs Standalone
 
-Legacy-имён `installment_variant_1/2`, `bank_installment_variant_1`, `lead`, `other` в БД нет. Маппинг сокращается до 5 живых значений.
+Не принимаем решение до фактов. Discovery должен ответить, есть ли в проекте фактические предпосылки к абстракции Entity (общие поля `entity_type`+`entity_id` в timeline/activity/tasks/notes и т.п.). Итог фазы — рекомендация с аргументами:
 
-**2. Коллизии после маппинга.** Запрос по target-роли внутри `tariff_id` — 0 конфликтов.
+- Вариант 1 (default): `companies` + `company_contacts` как отдельные таблицы, интеграция через FK и `entity_type='company'` в существующих логах.
+- Вариант 2: Entity-абстракция.
 
-**3. Тарифы с > 5 офферов.** Один тариф `a18df7a7-…` содержит 6 офферов → допустимый диапазон слотов расширяем до **button_1…button_10** (regex `^[a-z0-9_]{2,64}$` уже покрывает).
+Согласно указанию пользователя, дефолтная рекомендация — Вариант 1 с эволюционным переходом позже. Discovery фиксирует это как ADR-0001.
 
-**4. Constraints и trigger:**
+## Phase D. Инвентаризация RPC/поиска
 
-- `tariff_offers_meta_slot_role_format`: regex `^[a-z0-9_]{2,64}$` — новые имена проходят.
-- `tariff_offers_meta_site_button_variant_allowlist`: `primary|outline|installment|legal_entity|lead` — не меняем.
-- `tariff_offers_slot_role_per_tariff_uidx`: unique `(tariff_id, meta->>'slot_role')` where slot_role IS NOT NULL — сохраняем.
-- `enforce_tariff_offer_slot_role` (trigger): для активного оффера slot_role обязателен **только если продукт уже opt-in в dynamic-slots** (хотя бы один сосед несёт slot_role). Для остальных продуктов «Не размещать автоматически» валиден.
+Собрать список существующих `search_*` / `list_*` RPC (contacts, deals, tasks) и оценить: расширять их через `entity_type` или добавить отдельный `search_companies`. Решение фиксируем в reuse-matrix.
 
-**5. Tilda-маркеры в `site_pages.blocks`:**
+## Phase E. Permissions
 
-- Всего блоков с `data-lovable-slot*`: **1** (страница slug=`cb`).
-- Этот блок использует только `data-lovable-slot-group="tariff:buh"` (grouping-контейнер по tariff.code).
-- Отдельных offer-level маркеров `data-lovable-slot="tariff:...|offer:<role>"` в DB **нет вообще** (0 совпадений).
+Пройтись по `has_role_v2`, `user_roles_v2`, `role_admin_resource_access`, `role_admin_section_access`, `admin_resource`, `admin_section`. Составить матрицу видимости Companies для ролей: super_admin, admin, employee, crm_manager, support, readonly. Без изменений — только карта.
 
-**Вывод:** миграция `slot_role` для `tariff_offers` **не ломает** ни одну HTML-разметку в `site_pages`. Внешняя Tilda-разметка вне DB — под ответственностью пользователя; фиксируем это в отчёте, но блокером не считаем.
+## Phase F. Automation
 
----
+Проверить `crm_task_automation_rules`, `tariff_offers.meta.auto_tasks`, триггеры на `orders_v2`. Ответ: покрывают ли существующие правила события Companies (create/update/link_contact/link_deal), или потребуется новый триггерный источник. Никаких изменений — только вывод.
 
-## Исправленный план
+## Phase G. UI consistency
 
-### Phase 1 — DB migration (одна миграция)
+Каталогизировать текущие паттерны: ширина Sheet, tabs, toolbar, bulk actions, pagination, empty state, filters, search input. Задача — чтобы будущая `CompanyDetailSheet` и `AdminCompanies` шли по тем же паттернам. Deliverable — чек-лист.
 
-**1.1. RPC атомарной сортировки.**
+## Phase H. Performance baseline
 
-```
-CREATE OR REPLACE FUNCTION public.reorder_tariff_offers(
-  p_tariff_id       uuid,
-  p_ordered_ids     uuid[]
-) RETURNS SETOF public.tariff_offers
-LANGUAGE plpgsql
-SECURITY INVOKER
-SET search_path = public
-```
+Через `supabase--read_query` снять cardinality: `profiles`, `orders_v2`, `legal_entities_requisites`, `individual_requisites`, `client_legal_details`. Оценить ожидаемый размер `companies` (по уникальным ИНН/УНП в billing). Зафиксировать требуемые индексы (btree на FK, trigram/GIN на name/ИНН) как рекомендации к Phase 1 — **без создания**.
 
-Логика: `SELECT … FOR UPDATE` всех офферов тарифа; проверка что `array_length(p_ordered_ids) = count(offers)` и что множества совпадают (никаких переносов между тарифами, никаких лишних id); запись `sort_order = ord - 1` через `UPDATE … FROM unnest() WITH ORDINALITY`; `RETURN QUERY SELECT * FROM tariff_offers WHERE tariff_id = p_tariff_id ORDER BY sort_order`.
+## Phase I. Migration strategy (paper only)
 
-`GRANT EXECUTE ON FUNCTION public.reorder_tariff_offers(uuid, uuid[]) TO authenticated;`
+На бумаге: последовательность DDL → GRANT → RLS → policies → backfill из billing → verification → feature flag → production switch → rollback. Никакого SQL к запуску — только описание порядка.
 
-**1.2. Data-migration `slot_role**` (в той же миграции, идемпотентно):
+## Phase J. Future extensions
 
-```
-payment_card     → button_1
-payment_invoice  → button_2
-installment_2    → button_3
-installment_3    → button_4
-installment_bank → button_5
-```
+Кратко зафиксировать требования к будущим Holding / Parent / Subsidiary / Branches / Company Hierarchy: минимальные поля (`parent_company_id`, `hierarchy_type`), чтобы Phase 1 их учитывал на уровне схемы (nullable), но не реализовывал.
 
-Update-обходит все строки (active + inactive), сохраняет остальные ключи `meta`, `jsonb_set` + фильтр по текущему значению. После — assertion: `SELECT COUNT(*)` по легаси-именам должен быть 0.
+## Deliverables
 
-**1.3. Trigger — не меняем.** Существующий контракт (slot_role обязателен только для dynamic-slot продуктов на активных офферах) полностью совместим с новыми `button_N`.
+Все документы кладём в `.lovable/discovery/companies-1.0/`:
 
-### Phase 2 — UI сортировки DnD
+- `companies_architecture_freeze.md` — итоговое архитектурное решение и ADR-0001 (standalone + эволюция к Entity).
+- `companies_reuse_matrix.md` — таблица «блок → существующее → вердикт reuse».
+- `companies_component_inventory.md` — UI-компоненты и sheets.
+- `companies_rpc_inventory.md` — RPC/edge и решение по `search_*`.
+- `companies_ui_inventory.md` — UI-паттерны и чек-лист consistency.
+- `companies_permissions_matrix.md` — Phase E.
+- `companies_automation_map.md` — Phase F.
+- `companies_performance_notes.md` — Phase H.
+- `companies_migration_strategy.md` — Phase I.
+- `companies_future_extensions.md` — Phase J.
+- `companies_phase1_execution_plan.md` — детальный план Phase 1 (DDL/RLS/audit/public_id/очереди) уже с опорой на freeze.
 
-Файл `src/pages/admin/AdminProductDetailV2.tsx`:
+## Definition of Done
 
-- Убрать SortPill «Сумма / Тип» из секции офферов тарифа (сортировка тарифов и другие вкладки не затрагиваются).
-- Список офферов внутри каждого тарифа — отдельный `DndContext + SortableContext` с sensors:
-  - `MouseSensor { distance: 5 }`
-  - `TouchSensor { delay: 250, tolerance: 6 }`
-  - `KeyboardSensor { coordinateGetter: sortableKeyboardCoordinates }`
-- `SortableContext` получает офферы отсортированные строго `sort_order ASC, id ASC`.
-- `onDragEnd`: guard `active.data.current.tariffId === over.data.current.tariffId`; `arrayMove`; optimistic update кэшей `["product_offers", productId]` и `["tariffs-with-offers", productId]`; RPC `reorder_tariff_offers`; при ошибке — snapshot rollback + toast; при success — инвалидировать `product_offers`, `tariffs-with-offers`, `public-product`, `public-product-by-slug`, а также query-ключ preview-manifest (`site-page-*`).
+- Все 11 файлов созданы и связаны между собой.
+- Каждое утверждение о текущем состоянии проекта имеет ссылку на файл/таблицу/RPC.
+- Для каждого будущего блока Companies указано, что переиспользуется и что создаётся.
+- Ни одной новой таблицы, RPC, edge function, миграции, компонента — Discovery только читает.
+- В `companies_architecture_freeze.md` явно записано: «архитектура заморожена, изменения только через ADR».
 
-Новый хук `useReorderTariffOffers` в `src/hooks/useTariffOffers.tsx`.
+## Что дальше
 
-### Phase 3 — `OfferRowCompact`
-
-- Новые props: `position: number`, `slotLabel?: string`, `dragHandleProps`, `isDragging?: boolean`.
-- Слева — drag-handle `GripVertical` с `touch-action: none`, `stopPropagation`, `aria-label="Изменить порядок кнопки"`.
-- В строке рядом с бейджем типа выводить два независимых индикатора:
-  - `#1` — порядковый номер в списке (только визуальный).
-  - `Слот: Кнопка 3` — если задан `meta.slot_role = button_N`.
-  - `Не размещается на сайте` — если slot_role пустой.
-- Никаких утверждений «#N всегда = Кнопка N».
-
-### Phase 4 — Селекты диалога редактирования оффера
-
-`AdminProductDetailV2.tsx`, диалог offer:
-
-**«Слот на сайте»** (управляет `meta.slot_role`):
-
-```
-Не размещать автоматически  → ключ отсутствует
-Кнопка 1                    → button_1
-Кнопка 2                    → button_2
-Кнопка 3                    → button_3
-Кнопка 4                    → button_4
-Кнопка 5                    → button_5
-Кнопка 6                    → button_6
-Кнопка 7                    → button_7
-Кнопка 8                    → button_8
-Кнопка 9                    → button_9
-Кнопка 10                   → button_10
-```
-
-Удалить: custom-ввод роли, «Другое назначение», legacy-технические значения из UI.
-
-**«Цвет кнопки»** (управляет `meta.site_button_variant`):
-
-```
-primary       → «Синяя (основная)»
-outline       → «С контуром»
-installment   → «Оранжевая (рассрочка)»
-legal_entity  → «Зелёная (юрлицо)»
-lead          → «Серая (заявка)»
-```
-
-Подпись: «Цвет кнопки не влияет на способ оплаты — только на внешний вид на публичной странице».
-
-Дефолты нового оффера: `slot_role` отсутствует, `site_button_variant = 'primary'`.
-
-Расширить `OfferMetaConfig` типами `slot_role?: string; site_button_variant?: SlotVariant` — убрать `as any`.
-
-### Phase 5 — Убрать автоподстановки
-
-В `AdminProductDetailV2.tsx` удалить оба места (строки ~791–792 и ~2134–2135), где для `offer_type='invoice'` принудительно проставляются `site_button_variant = 'legal_entity'` и `slot_role = 'payment_invoice'`. Смена `offer_type` не должна менять slot/color; смена slot/color не должна менять `offer_type` или `payment_method`.
-
-### Что НЕ трогаем
-
-- `siteSlotManifest.ts` — алгоритм не меняем; правим только docstring (примеры значений).
-- `usePublicProduct`, `useTariffOffers` (публичные хуки) — уже читают `sort_order`.
-- `bepaid-webhook`, checkout, RLS, edge functions, Telegram-уведомления.
-- Realtime — в этот спринт не добавляем.
-
-### DoD
-
-```
-DESKTOP DND                    : PASS (mouse)
-MOBILE LONG-PRESS DND          : PASS (touch, 250ms)
-KEYBOARD DND                   : PASS
-CROSS-TARIFF DRAG BLOCKED      : PASS (guard)
-ONE ATOMIC RPC                 : reorder_tariff_offers
-OPTIMISTIC UPDATE + ROLLBACK   : PASS
-DB sort_order                  : 0..N-1 после каждого drop
-ADMIN PREVIEW REFRESH          : PASS (invalidate manifest queries)
-PUBLIC FRESH FETCH ORDER       : PASS (уже включено через sort_order)
-LEGACY slot_role VALUES        : 0 после миграции
-TILDA HTML MARKERS             : 0 в site_pages — миграция HTML не требуется
-                                 (внешняя Tilda вне DB — вне scope)
-SLOT/COLOR AUTOSET             : удалены
-CHECKOUT/WEBHOOK/RLS           : UNCHANGED
-```
-
-Формулировка обновления: admin-preview в текущей сессии — без ручной перезагрузки; новая загрузка публичной страницы — сразу новый порядок; уже открытая страница у другого пользователя без Realtime не обновится.
-
----
-
-## Требуется подтверждение
-
-Diagnose закрыт: коллизий нет, HTML-маркеров в `site_pages` нет, диапазон слотов расширен до `button_10` под тариф с 6 офферами. Подтвердите **GO EXECUTE** — тогда переключусь в build mode и выполню миграцию, RPC и UI-правки одним циклом.
+После утверждения Discovery 1.0 идём строго по фазам 1–11 из твоего сообщения. Ни одна фаза не стартует до подписания freeze-документа.
