@@ -1288,7 +1288,7 @@ export default function AdminProductDetailV2() {
               </GlassCard>
             ) : (
               <>
-                {/* Select All + Sort Pills */}
+                {/* Select All — ручной порядок теперь единственный канонический режим (SortPills убраны). */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <Checkbox
                     checked={offerSelect.selectedCount > 0 && offerSelect.selectedCount === allOffers.length}
@@ -1300,19 +1300,18 @@ export default function AdminProductDetailV2() {
                   {offerSelect.hasSelection && (
                     <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={offerSelect.clearSelection}>Сбросить</Button>
                   )}
-                  <div className="ml-auto flex items-center gap-1">
-                    <SortPill label="Сумма" sortKey="amount" currentSortKey={offerSort.sortKey} currentSortDirection={offerSort.sortDirection} onSort={offerSort.handleSort} />
-                    <SortPill label="Тип" sortKey="offer_type" currentSortKey={offerSort.sortKey} currentSortDirection={offerSort.sortDirection} onSort={offerSort.handleSort} />
-                  </div>
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    Перетащите <GripVertical className="inline h-3 w-3 -mt-0.5" />, чтобы изменить порядок кнопок.
+                  </span>
                 </div>
 
                 <div className="relative space-y-6" onMouseDown={offerSelect.handleMouseDown}>
                   {tariffs?.map((tariff) => {
-                    const tariffOffers = clientSort(getOffersForTariff(tariff.id), offerSort.sortKey, offerSort.sortDirection);
+                    const tariffOffers = getOffersForTariff(tariff.id);
                     if (!tariffOffers.length) return null;
-                    
+
                     const hasActivePayOffer = tariffOffers.some((o: any) => o.offer_type === 'pay_now' && o.is_active);
-                    
+
                     return (
                       <GlassCard key={tariff.id} className="p-4">
                         {/* Tariff group header — NOT selectable */}
@@ -1327,30 +1326,29 @@ export default function AdminProductDetailV2() {
                             </Badge>
                           )}
                         </div>
-                        <div className="space-y-2">
-                          {tariffOffers.map((offer: any) => (
-                            <div
-                              key={offer.id}
-                              ref={(el) => offerSelect.registerItemRef(offer.id, el)}
-                              className={cn(
-                                "flex items-start gap-2 cursor-pointer",
-                                offerSelect.selectedIds.has(offer.id) && "ring-2 ring-primary/30 rounded-lg"
-                              )}
-                              onClick={(e) => {
-                                if (e.shiftKey) { offerSelect.handleRangeSelect(offer.id, true); }
-                                else if (e.ctrlKey || e.metaKey) { offerSelect.toggleSelection(offer.id, true); }
-                                else { openOfferDialog(offer); }
-                              }}
-                            >
-                              <div className="pt-2 pl-1" onClick={(e) => e.stopPropagation()}>
-                                <Checkbox
-                                  checked={offerSelect.selectedIds.has(offer.id)}
-                                  onCheckedChange={() => offerSelect.toggleSelection(offer.id, true)}
-                                />
-                              </div>
-                              <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
-                                <OfferRowCompact
+                        <DndContext
+                          sensors={dndSensors}
+                          collisionDetection={closestCenter}
+                          onDragEnd={handleOfferDragEnd(tariff.id)}
+                        >
+                          <SortableContext
+                            items={tariffOffers.map((o: any) => o.id)}
+                            strategy={verticalListSortingStrategy}
+                          >
+                            <div className="space-y-2">
+                              {tariffOffers.map((offer: any, idx: number) => (
+                                <SortableOfferItem
+                                  key={offer.id}
                                   offer={offer}
+                                  positionNumber={idx + 1}
+                                  isSelected={offerSelect.selectedIds.has(offer.id)}
+                                  onToggleSelect={() => offerSelect.toggleSelection(offer.id, true)}
+                                  registerRef={(el) => offerSelect.registerItemRef(offer.id, el)}
+                                  onRowClick={(e) => {
+                                    if (e.shiftKey) { offerSelect.handleRangeSelect(offer.id, true); }
+                                    else if (e.ctrlKey || e.metaKey) { offerSelect.toggleSelection(offer.id, true); }
+                                    else { openOfferDialog(offer); }
+                                  }}
                                   onToggleActive={handleToggleOfferActive}
                                   onUpdateLabel={handleUpdateOfferLabel}
                                   onSetPrimary={(offerId) => setPrimaryOffer.mutate({ offerId, tariffId: tariff.id })}
@@ -1359,10 +1357,10 @@ export default function AdminProductDetailV2() {
                                   onDelete={() => setDeleteConfirm({ type: "offer", id: offer.id })}
                                   hasPrimaryInTariff={hasActivePayOffer}
                                 />
-                              </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
+                          </SortableContext>
+                        </DndContext>
                       </GlassCard>
                     );
                   })}
