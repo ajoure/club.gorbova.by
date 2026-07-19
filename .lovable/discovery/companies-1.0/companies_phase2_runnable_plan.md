@@ -423,7 +423,7 @@ FOR v_src IN SELECT * FROM public.company_contacts WHERE company_id = _source_id
   --    - иначе если у source lineage валиден и ссылается на map, перенесённый на target → берём source
   --    - иначе NULL
   -- 3) source (text): 'billing_requisites' > 'manual' > прочие; ordered priority
-  -- 4) metadata: jsonb_deep_merge(target_meta, source_meta)   -- target ключи "побеждают" при коллизии
+  -- 4) metadata: COALESCE(source,{}) || COALESCE(target,{}) — при коллизии top-level ключей target побеждает; отдельный deep-merge helper не вводится
   UPDATE public.company_contacts SET
     is_billing_contact = v_tgt.is_billing_contact OR v_src.is_billing_contact,
     is_primary         = v_tgt.is_primary         OR v_src.is_primary,
