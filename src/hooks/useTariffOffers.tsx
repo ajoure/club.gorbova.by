@@ -1,6 +1,15 @@
+import { useCallback, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import type { SlotVariant } from "@/lib/siteSlotManifest";
+
+/** Canonical site slot roles emitted by the admin UI. */
+export type SiteSlotRole =
+  | "button_1" | "button_2" | "button_3" | "button_4" | "button_5"
+  | "button_6" | "button_7" | "button_8" | "button_9" | "button_10";
+
+
 
 export type PaymentMethod = "full_payment" | "internal_installment" | "bank_installment" | "bank_transfer";
 
@@ -114,7 +123,12 @@ export interface OfferMetaConfig {
     comment_placeholder?: string;
     success_message?: string;
   };
+  /** Anchor slot in Tilda HTML: `data-lovable-slot="<slot_role>"`. Absent = not placed. */
+  slot_role?: SiteSlotRole;
+  /** Visual variant of the CTA button, independent of offer_type / slot. */
+  site_button_variant?: SlotVariant;
 }
+
 
 export type DocumentScenarioPayerType = 'individual' | 'legal_entity';
 export type DocumentScenarioChannel =
@@ -206,21 +220,24 @@ export function useTariffOffers(tariffId?: string) {
   return useQuery({
     queryKey: ["tariff_offers", tariffId],
     queryFn: async () => {
+      // Canonical order: sort_order ASC, then id ASC (stable tie-break).
       let query = supabase
         .from("tariff_offers")
         .select("*")
-        .order("sort_order", { ascending: true });
-      
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true });
+
       if (tariffId) {
         query = query.eq("tariff_id", tariffId);
       }
-      
+
       const { data, error } = await query;
       if (error) throw error;
       return data as TariffOffer[];
     },
   });
 }
+
 
 export function useProductOffers(productId?: string) {
   return useQuery({
@@ -239,12 +256,14 @@ export function useProductOffers(productId?: string) {
       
       const tariffIds = tariffs.map(t => t.id);
       
-      // Then get all offers for these tariffs
+      // Then get all offers for these tariffs (canonical order: sort_order, id)
       const { data, error } = await supabase
         .from("tariff_offers")
         .select("*, tariffs(id, name, code)")
         .in("tariff_id", tariffIds)
-        .order("sort_order", { ascending: true });
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true });
+
       
       if (error) throw error;
       return data as (TariffOffer & { tariffs: { id: string; name: string; code: string } })[];
@@ -437,31 +456,124 @@ export function useSetPrimaryOffer() {
   });
 }
 
-// Reorder offers within a tariff via atomic RPC (Phase 1.1).
-// Всегда передаёт ПОЛНЫЙ список id кнопок тарифа в желаемом порядке.
+/**
+ * Reorder offers within a tariff via atomic RPC (Phase 1.1) with optimistic
+ * update, snapshot-based rollback, per-tariff in-flight guard, and broad
+ * invalidation of every offer-derived cache (admin + preview + public).
+ *
+ * Contract:
+ *   - onMutate: cancel matching queries, snapshot them, patch sort_order for
+ *     the reordered tariff's offers in-place.
+ *   - onError: restore snapshots exactly (stale-safe — snapshot is per-call).
+ *   - onSettled: invalidate all offer-derived + public caches.
+ *   - `isTariffReordering(tariffId)` blocks a second drag of the same tariff.
+ */
+type OfferLike = TariffOffer & Record<string, unknown>;
+type ReorderVars = { tariffId: string; orderedIds: string[] };
+type ReorderContext = { snapshots: Array<[readonly unknown[], unknown]> };
+
+function applyReorderToOffers(
+  list: OfferLike[] | undefined,
+  tariffId: string,
+  orderedIds: string[],
+): OfferLike[] | undefined {
+  if (!Array.isArray(list)) return list;
+  const positionByOfferId = new Map<string, number>();
+  orderedIds.forEach((id, idx) => positionByOfferId.set(id, idx));
+  return list.map((o) => {
+    if (o.tariff_id !== tariffId) return o;
+    const pos = positionByOfferId.get(o.id);
+    if (pos === undefined) return o;
+    return { ...o, sort_order: pos };
+  });
+}
+
+const OFFER_CACHE_PREFIXES: ReadonlyArray<string> = [
+  "tariff_offers",
+  "product_offers",
+];
+
+const PUBLIC_CACHE_PREFIXES: ReadonlyArray<string> = [
+  "public-product",
+  "public-product-by-slug",
+  "public-product-by-id",
+  "public-tariff-by-public-id",
+  "site-page-public",
+];
+
 export function useReorderTariffOffers() {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({
-      tariffId,
-      orderedIds,
-    }: {
-      tariffId: string;
-      orderedIds: string[];
-    }) => {
+  const [pendingTariffIds, setPendingTariffIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const pendingRef = useRef<Set<string>>(new Set());
+
+  const addPending = useCallback((tariffId: string) => {
+    pendingRef.current.add(tariffId);
+    setPendingTariffIds(new Set(pendingRef.current));
+  }, []);
+  const removePending = useCallback((tariffId: string) => {
+    pendingRef.current.delete(tariffId);
+    setPendingTariffIds(new Set(pendingRef.current));
+  }, []);
+
+  const mutation = useMutation<void, Error, ReorderVars, ReorderContext>({
+    mutationFn: async ({ tariffId, orderedIds }) => {
       const { error } = await supabase.rpc("reorder_tariff_offers", {
         p_tariff_id: tariffId,
         p_ordered_ids: orderedIds,
       });
       if (error) throw error;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tariff_offers"] });
-      queryClient.invalidateQueries({ queryKey: ["product_offers"] });
+    onMutate: async ({ tariffId, orderedIds }) => {
+      addPending(tariffId);
+      // Cancel any in-flight fetches that could clobber our optimistic write.
+      await Promise.all(
+        OFFER_CACHE_PREFIXES.map((prefix) =>
+          queryClient.cancelQueries({ queryKey: [prefix] }),
+        ),
+      );
+      // Snapshot every matching cache entry BEFORE mutating.
+      const snapshots: Array<[readonly unknown[], unknown]> = [];
+      for (const prefix of OFFER_CACHE_PREFIXES) {
+        const entries = queryClient.getQueriesData<OfferLike[]>({ queryKey: [prefix] });
+        for (const [key, data] of entries) {
+          snapshots.push([key, data]);
+          queryClient.setQueryData<OfferLike[]>(
+            key,
+            applyReorderToOffers(data, tariffId, orderedIds),
+          );
+        }
+      }
+      return { snapshots };
     },
-    onError: (error) => {
+    onError: (error, vars, context) => {
+      // Stale-safe rollback — restore exactly what we snapshotted.
+      if (context?.snapshots) {
+        for (const [key, data] of context.snapshots) {
+          queryClient.setQueryData(key, data);
+        }
+      }
       toast.error(`Ошибка сортировки кнопок: ${error.message}`);
     },
+    onSettled: (_data, _err, vars) => {
+      removePending(vars.tariffId);
+      // Invalidate all offer-derived caches (admin) + all public/preview caches.
+      for (const prefix of OFFER_CACHE_PREFIXES) {
+        queryClient.invalidateQueries({ queryKey: [prefix] });
+      }
+      for (const prefix of PUBLIC_CACHE_PREFIXES) {
+        queryClient.invalidateQueries({ queryKey: [prefix] });
+      }
+    },
   });
+
+  const isTariffReordering = useCallback(
+    (tariffId: string) => pendingTariffIds.has(tariffId),
+    [pendingTariffIds],
+  );
+
+  return Object.assign(mutation, { isTariffReordering, pendingTariffIds });
 }
+
 

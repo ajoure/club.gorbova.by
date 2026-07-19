@@ -149,12 +149,13 @@ export default function AdminProductDetailV2() {
   const reorderTariffs = useReorderTariffs();
   const reorderOffers = useReorderTariffOffers();
 
-  // DnD sensors — Mouse (distance=5), Touch (long-press 250ms), Keyboard.
+  // DnD sensors — Mouse (distance=5), Touch (long-press 250ms, tolerance 6), Keyboard.
   const dndSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+
 
   const handleTariffDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
@@ -550,7 +551,8 @@ export default function AdminProductDetailV2() {
         installment_interval_days: 30,
         first_payment_delay_days: 0,
         installment_max_charge_attempts: 3,
-        meta: {},
+        meta: { site_button_variant: "primary" } as OfferMetaConfig,
+
         // Preregistration defaults
         preregistration_first_charge_date: "",
         preregistration_charge_offer_id: "",
@@ -593,75 +595,37 @@ export default function AdminProductDetailV2() {
       return;
     }
 
-    // Phase B — dynamic-slot validation (UI mirrors DB CHECK + trigger).
-    // slot_role: [a-z][a-z0-9_]{1,63}; site_button_variant: allowlist.
-    // Both required together for active offers on dynamic-slot products; DB trigger
-    // still enforces the invariant on the write path. Warn on stable-role rename.
+    // Phase B — dynamic-slot validation. UI now allows ONLY canonical values:
+    //   slot_role ∈ { button_1..button_10 }  (absent = «Не размещается на сайте»)
+    //   site_button_variant ∈ SLOT_VARIANTS
+    // Custom slot codes are not user-editable anymore — the DB trigger still
+    // enforces the invariant on write.
     const SLOT_VARIANTS = ["primary", "outline", "installment", "legal_entity", "lead"] as const;
-    const SLOT_ROLE_RE = /^[a-z][a-z0-9_]{1,63}$/;
-    let rawSlotRole = ((offerForm.meta as any)?.slot_role as string | undefined) || "";
-    const rawVariant = ((offerForm.meta as any)?.site_button_variant as string | undefined) || "";
-    if (rawSlotRole && !SLOT_ROLE_RE.test(rawSlotRole)) {
-      toast.error("Технический код назначения: только латиница a–z, цифры и «_», 2–64 символа, должен начинаться с буквы");
+    const ALLOWED_SLOT_ROLES = new Set<string>([
+      "button_1", "button_2", "button_3", "button_4", "button_5",
+      "button_6", "button_7", "button_8", "button_9", "button_10",
+    ]);
+    const rawSlotRole = (offerForm.meta?.slot_role ?? "").toString().trim();
+    const rawVariant = (offerForm.meta?.site_button_variant ?? "").toString().trim();
+    if (rawSlotRole && !ALLOWED_SLOT_ROLES.has(rawSlotRole)) {
+      toast.error("Слот на странице: разрешены только «Кнопка 1»…«Кнопка 10» либо «Не размещается на сайте».");
       return;
     }
-    if (rawVariant && !(SLOT_VARIANTS as readonly string[]).includes(rawVariant)) {
-      toast.error("Выбран недопустимый внешний вид кнопки. Выберите значение из списка.");
+    if (!rawVariant || !(SLOT_VARIANTS as readonly string[]).includes(rawVariant)) {
+      toast.error("Выберите цвет кнопки в блоке «Размещение кнопки на публичной странице».");
       return;
     }
-    // Product is opted into dynamic slots when ANY other offer on the product
-    // already carries meta.slot_role — mirrors the DB trigger's product-scope
-    // detection. On such products, active offers MUST declare both fields.
-    const productUsesSlots = (offers || []).some((o: any) => {
-      if (offerDialog.editing && o.id === offerDialog.editing.id) return false;
-      const r = ((o.meta as any)?.slot_role as string | undefined) || "";
-      return !!r;
-    });
-    if (offerForm.is_active && productUsesSlots) {
-      // Автогенерация уникального slot_role для скопированных/legacy офферов,
-      // когда variant задан, а роль пустая — админ может переименовать позже.
-      if (!rawSlotRole && rawVariant) {
-        const base = rawVariant === "installment"
-          ? `installment_${offerForm.installment_count || "n"}`
-          : rawVariant === "legal_entity"
-            ? "payment_invoice"
-            : rawVariant === "lead"
-              ? "lead"
-              : rawVariant === "outline"
-                ? "payment_outline"
-                : "payment_card";
-        const usedRoles = new Set<string>(
-          (offers || [])
-            .filter((o: any) => o.tariff_id === offerForm.tariff_id && (!offerDialog.editing || o.id !== offerDialog.editing.id))
-            .map((o: any) => String((o.meta as any)?.slot_role || ""))
-            .filter(Boolean),
-        );
-        let candidate = base;
-        let n = 2;
-        while (usedRoles.has(candidate)) candidate = `${base}_${n++}`;
-        if (candidate.length > 64) candidate = candidate.slice(0, 64);
-        rawSlotRole = candidate;
-        (offerForm.meta as any) = { ...(offerForm.meta as any), slot_role: candidate };
-      }
-      if (!rawSlotRole || !rawVariant) {
-        toast.error("Для активного оффера этого продукта укажите назначение и внешний вид кнопки — блок «Размещение кнопки на публичной странице».");
-        return;
-      }
-    } else if (offerForm.is_active && (rawSlotRole || rawVariant)) {
-      if (!rawSlotRole || !rawVariant) {
-        toast.error("Заполните оба поля в блоке «Размещение кнопки на публичной странице»: назначение и внешний вид.");
-        return;
-      }
-    }
+    // Rename warning — public HTML anchors bound to the old slot will lose this offer.
     if (offerDialog.editing) {
-      const prevRole = ((offerDialog.editing as any).meta?.slot_role as string | undefined) || "";
+      const prevRole = ((offerDialog.editing.meta as OfferMetaConfig | null | undefined)?.slot_role ?? "").toString().trim();
       if (prevRole && rawSlotRole && prevRole !== rawSlotRole) {
         const ok = window.confirm(
-          `Технический код назначения меняется: «${prevRole}» → «${rawSlotRole}». Кнопки на публичной странице, привязанные к прежнему коду, перестанут находить этот оффер. Продолжить?`,
+          `Слот меняется: «${prevRole}» → «${rawSlotRole}». Кнопки на публичной странице, привязанные к прежнему слоту, перестанут находить этот оффер. Продолжить?`,
         );
         if (!ok) return;
       }
     }
+
 
     const isInstallment = offerForm.payment_method === "internal_installment";
     const isPreregistration = offerForm.offer_type === "preregistration";
@@ -682,6 +646,15 @@ export default function AdminProductDetailV2() {
     
     // Build meta object with preregistration and recurring settings if applicable
     let metaToSave: OfferMetaConfig = { ...offerForm.meta };
+    // Canonical slot_role handling — physically remove the JSON key when
+    // «Не размещается на сайте» is selected. Never persist null / "" / undefined.
+    if (rawSlotRole && ALLOWED_SLOT_ROLES.has(rawSlotRole)) {
+      metaToSave.slot_role = rawSlotRole as OfferMetaConfig["slot_role"];
+    } else {
+      delete metaToSave.slot_role;
+    }
+    metaToSave.site_button_variant = rawVariant as OfferMetaConfig["site_button_variant"];
+
     
     if (isPreregistration) {
       metaToSave.preregistration = {
@@ -1070,12 +1043,25 @@ export default function AdminProductDetailV2() {
     (offers || [])
       .filter((o: any) => o.tariff_id === tariffId)
       .slice()
-      .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+      .sort((a: any, b: any) => {
+        const so = (a.sort_order ?? 0) - (b.sort_order ?? 0);
+        if (so !== 0) return so;
+        // Stable tie-break by id ASC — mirrors the DB canonical order.
+        return String(a.id).localeCompare(String(b.id));
+      });
 
   // DnD reorder handler for offers within a single tariff.
+  // Guards: identity no-op, cross-tariff drop, and per-tariff in-flight RPC.
   const handleOfferDragEnd = (tariffId: string) => (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
+    // Cross-tariff guard — reject drops that landed on another tariff's list.
+    const activeTariffId = (active.data.current as { tariffId?: string } | undefined)?.tariffId;
+    const overTariffId = (over.data.current as { tariffId?: string } | undefined)?.tariffId;
+    if (activeTariffId && overTariffId && activeTariffId !== overTariffId) return;
+    if (activeTariffId && activeTariffId !== tariffId) return;
+    // Per-tariff in-flight guard — block a second drag until the RPC settles.
+    if (reorderOffers.isTariffReordering(tariffId)) return;
     const list = getOffersForTariff(tariffId);
     const oldIndex = list.findIndex((o: any) => o.id === active.id);
     const newIndex = list.findIndex((o: any) => o.id === over.id);
@@ -1088,6 +1074,7 @@ export default function AdminProductDetailV2() {
       orderedIds: reordered.map((o: any) => o.id),
     });
   };
+
 
   // Get features by tariff
   const getFeaturesForTariff = (tariffId: string) =>
@@ -1344,6 +1331,7 @@ export default function AdminProductDetailV2() {
                                   isSelected={offerSelect.selectedIds.has(offer.id)}
                                   onToggleSelect={() => offerSelect.toggleSelection(offer.id, true)}
                                   registerRef={(el) => offerSelect.registerItemRef(offer.id, el)}
+                                  disabled={reorderOffers.isTariffReordering(tariff.id)}
                                   onRowClick={(e) => {
                                     if (e.shiftKey) { offerSelect.handleRangeSelect(offer.id, true); }
                                     else if (e.ctrlKey || e.metaKey) { offerSelect.toggleSelection(offer.id, true); }
@@ -1361,6 +1349,7 @@ export default function AdminProductDetailV2() {
                             </div>
                           </SortableContext>
                         </DndContext>
+
                       </GlassCard>
                     );
                   })}
@@ -2271,41 +2260,35 @@ export default function AdminProductDetailV2() {
                 { value: "button_9", label: "Кнопка 9" },
                 { value: "button_10", label: "Кнопка 10" },
               ];
-              const VARIANT_OPTIONS: { value: string; label: string }[] = [
-                { value: "", label: "По умолчанию" },
+              const VARIANT_OPTIONS: { value: "primary" | "outline" | "installment" | "legal_entity" | "lead"; label: string }[] = [
                 { value: "primary", label: "Синяя (основная)" },
                 { value: "outline", label: "С контуром" },
                 { value: "installment", label: "Оранжевая (рассрочка)" },
-                { value: "legal_entity", label: "Тёмная (для юрлица)" },
-                { value: "lead", label: "Светлая (заявка)" },
+                { value: "legal_entity", label: "Зелёная (юрлицо)" },
+                { value: "lead", label: "Серая (заявка)" },
               ];
-              const currentRole = (((offerForm.meta as any)?.slot_role as string) || "").trim();
-              const currentVariant = ((offerForm.meta as any)?.site_button_variant as string) || "";
-              const knownRoleValues = PURPOSE_OPTIONS.map((o) => o.value);
-              const isCustomRole = currentRole !== "" && !knownRoleValues.includes(currentRole);
-              const purposeSelectValue = isCustomRole ? "__custom__" : currentRole;
-              const setRole = (val: string | undefined) => {
-                setOfferForm({
-                  ...offerForm,
-                  meta: {
-                    ...offerForm.meta,
-                    slot_role: val && val.trim() ? val.trim() : undefined,
-                  } as any,
-                });
+              const currentRole = (offerForm.meta?.slot_role ?? "").toString().trim();
+              const currentVariant = (offerForm.meta?.site_button_variant ?? "").toString().trim();
+              const purposeSelectValue = currentRole;
+              const setRole = (val: string) => {
+                const next: OfferMetaConfig = { ...offerForm.meta };
+                if (val && val.trim()) {
+                  next.slot_role = val.trim() as OfferMetaConfig["slot_role"];
+                } else {
+                  delete next.slot_role;
+                }
+                setOfferForm({ ...offerForm, meta: next });
               };
-              const setVariant = (val: string | undefined) => {
-                setOfferForm({
-                  ...offerForm,
-                  meta: {
-                    ...offerForm.meta,
-                    site_button_variant: val || undefined,
-                  } as any,
-                });
+              const setVariant = (val: string) => {
+                const next: OfferMetaConfig = { ...offerForm.meta };
+                if (val) {
+                  next.site_button_variant = val as OfferMetaConfig["site_button_variant"];
+                } else {
+                  delete next.site_button_variant;
+                }
+                setOfferForm({ ...offerForm, meta: next });
               };
-              const purposeLabel =
-                purposeSelectValue === "__custom__"
-                  ? `Другое назначение (${currentRole})`
-                  : PURPOSE_OPTIONS.find((o) => o.value === currentRole)?.label;
+              const purposeLabel = PURPOSE_OPTIONS.find((o) => o.value === currentRole)?.label;
               const variantLabel = VARIANT_OPTIONS.find((o) => o.value === currentVariant)?.label;
               return (
                 <Card>
@@ -2321,34 +2304,14 @@ export default function AdminProductDetailV2() {
                         <select
                           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                           value={purposeSelectValue}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (v === "__custom__") {
-                              if (!isCustomRole) setRole("");
-                            } else {
-                              setRole(v);
-                            }
-                          }}
+                          onChange={(e) => setRole(e.target.value)}
                         >
                           {PURPOSE_OPTIONS.map((o) => (
                             <option key={o.value || "empty"} value={o.value}>
                               {o.label}
                             </option>
                           ))}
-                          <option value="__custom__">Другой (свой код)</option>
                         </select>
-                        {purposeSelectValue === "__custom__" && (
-                          <div className="space-y-1">
-                            <Label className="text-xs text-muted-foreground">
-                              Технический код слота
-                            </Label>
-                            <Input
-                              placeholder="например: button_special"
-                              value={currentRole}
-                              onChange={(e) => setRole(e.target.value)}
-                            />
-                          </div>
-                        )}
                         <p className="text-xs text-muted-foreground">
                           «Кнопка N» — это якорь в HTML Tilda (<code>data-lovable-slot="button_N"</code>). Визуальный порядок в списке (#1, #2 …) настраивается отдельно перетаскиванием.
                         </p>
@@ -2361,7 +2324,7 @@ export default function AdminProductDetailV2() {
                           onChange={(e) => setVariant(e.target.value)}
                         >
                           {VARIANT_OPTIONS.map((o) => (
-                            <option key={o.value || "empty"} value={o.value}>
+                            <option key={o.value} value={o.value}>
                               {o.label}
                             </option>
                           ))}
@@ -2371,26 +2334,23 @@ export default function AdminProductDetailV2() {
                         </p>
                       </div>
                     </div>
-                    {(purposeLabel || variantLabel) && (
-                      <div className="rounded-md bg-muted/40 p-3 text-xs space-y-1">
-                        {purposeLabel && (
-                          <div>
-                            <span className="text-muted-foreground">Слот в HTML: </span>
-                            <span className="font-medium">{purposeLabel}</span>
-                          </div>
-                        )}
-                        {variantLabel && (
-                          <div>
-                            <span className="text-muted-foreground">Цвет: </span>
-                            <span className="font-medium">{variantLabel}</span>
-                          </div>
-                        )}
+                    <div className="rounded-md bg-muted/40 p-3 text-xs space-y-1">
+                      <div>
+                        <span className="text-muted-foreground">Слот в HTML: </span>
+                        <span className="font-medium">{purposeLabel ?? "Не размещается на сайте"}</span>
                       </div>
-                    )}
+                      {variantLabel && (
+                        <div>
+                          <span className="text-muted-foreground">Цвет: </span>
+                          <span className="font-medium">{variantLabel}</span>
+                        </div>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               );
             })()}
+
 
             {/* Повторное вступление */}
 
