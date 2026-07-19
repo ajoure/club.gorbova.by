@@ -300,6 +300,7 @@ AS $$
 DECLARE v_id uuid; v_existing public.company_contacts%ROWTYPE;
         v_material boolean := false; v_first_insert boolean := false;
         v_company public.companies%ROWTYPE;
+        v_activity_key text;
 BEGIN
   IF NOT (has_role_v2(auth.uid(),'admin')
        OR has_role_v2(auth.uid(),'super_admin')
@@ -393,32 +394,55 @@ BEGIN
   END IF;
 
   IF v_first_insert THEN
+    v_activity_key := 'company.linked_to_contact:' || v_id::text;
     PERFORM public._crm_company_emit_domain_event(
       'company.linked_to_contact.v1',
       _company_id,
-      'company.linked_to_contact:' || v_id::text,
+      v_activity_key,
       jsonb_build_object(
         'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'profile_id', _profile_id,
         'relationship_type', _relationship_type, 'is_billing_contact', COALESCE(_is_billing_contact,false),
         'source', _source, 'source_map_id', _source_client_legal_details_map_id,
         'occurred_at', now(),
-        'idempotency_key', 'company.linked_to_contact:' || v_id::text
+        'idempotency_key', v_activity_key
       )
     );
   ELSIF v_material THEN
+    v_activity_key := 'company.linked_to_contact.updated:' || v_id::text || ':' ||
+      md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
+          coalesce(_source_client_legal_details_map_id::text,''));
     PERFORM public._crm_company_emit_domain_event(
       'company.linked_to_contact.v1',
       _company_id,
-      'company.linked_to_contact.updated:' || v_id::text || ':' ||
-        md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
-            coalesce(_source_client_legal_details_map_id::text,'')),
+      v_activity_key,
       jsonb_build_object(
         'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'update', true,
         'occurred_at', now(),
-        'idempotency_key', 'company.linked_to_contact.updated:' || v_id::text || ':' ||
-                           md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
-                               coalesce(_source_client_legal_details_map_id::text,''))
+        'idempotency_key', v_activity_key
       )
+    );
+  END IF;
+
+  IF v_activity_key IS NOT NULL THEN
+    INSERT INTO public.crm_activity_log (
+      activity_type, source_entity_id, source_entity_type,
+      user_id, idempotency_key, metadata
+    )
+    SELECT 'company.linked_to_contact', _company_id, 'company', auth.uid(),
+           v_activity_key,
+           jsonb_build_object(
+             'contact_id', v_id,
+             'profile_id', _profile_id,
+             'relationship_type', _relationship_type,
+             'is_billing_contact', COALESCE(_is_billing_contact,false),
+             'source', _source,
+             'source_map_id', _source_client_legal_details_map_id,
+             'update', NOT v_first_insert
+           )
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.crm_activity_log
+       WHERE source_entity_type='company' AND source_entity_id=_company_id
+         AND idempotency_key=v_activity_key
     );
   END IF;
 
@@ -441,6 +465,7 @@ DECLARE
   v_changed   text[] := '{}';
   v_conflicts text[] := '{}';
   v_first_billing_sync boolean := false;
+  v_activity_user_id uuid;
   v_values_hash text;
   v_event_key text;
   -- Нормализованные значения per §4 (последний non-null billing wins; NULL = не трогать)
@@ -477,6 +502,14 @@ BEGIN
   IF v_cld.client_type NOT IN ('legal_entity','entrepreneur') THEN
     RAISE EXCEPTION 'cld.client_type must be legal_entity or entrepreneur' USING ERRCODE='22023'; END IF;
 
+  SELECT COALESCE(p.user_id, p.id)
+    INTO v_activity_user_id
+    FROM public.profiles p
+   WHERE p.id = v_cld.profile_id;
+  IF v_activity_user_id IS NULL THEN
+    RAISE EXCEPTION 'billing profile not found' USING ERRCODE='23503';
+  END IF;
+
   v_kind := v_cld.client_type;
   IF v_kind = 'legal_entity' THEN
     v_unp  := regexp_replace(coalesce(v_cld.leg_unp,''),'\D','','g');
@@ -495,6 +528,23 @@ BEGIN
     v_country, v_unp, v_full, v_kind, NULL::uuid, 'billing_requisites', _client_legal_details_id);
 
   SELECT * INTO v_company FROM public.companies WHERE id=v_id FOR UPDATE;
+
+  -- Auto-created billing companies must appear in the CRM timeline. The source
+  -- profile supplies the mandatory crm_activity_log.user_id for service-role calls.
+  IF v_company.metadata->>'created_source' = 'billing_requisites' THEN
+    INSERT INTO public.crm_activity_log (
+      activity_type, source_entity_id, source_entity_type,
+      user_id, idempotency_key, metadata
+    )
+    SELECT 'company.created', v_id, 'company', v_activity_user_id,
+           'company.created:' || v_id::text,
+           jsonb_build_object('source', 'billing_requisites', 'source_cld_id', _client_legal_details_id)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.crm_activity_log
+       WHERE source_entity_type='company' AND source_entity_id=v_id
+         AND idempotency_key='company.created:' || v_id::text
+    );
+  END IF;
 
   -- stale detection: если source updated_at раньше зафиксированного — идемпотентный no-op
   v_prev_src := (v_company.metadata->'company_sync'->>'last_billing_source_updated_at')::timestamptz;
@@ -793,8 +843,8 @@ BEGIN
   -- override conflicts → crm_activity_log (idempotent per (company, field, cld))
   IF array_length(v_conflicts,1) IS NOT NULL THEN
     INSERT INTO public.crm_activity_log (activity_type, source_entity_id, source_entity_type,
-                                         idempotency_key, metadata)
-    SELECT 'company.field.override_conflict', v_id, 'company',
+                                         user_id, idempotency_key, metadata)
+    SELECT 'company.field.override_conflict', v_id, 'company', v_activity_user_id,
            'company.field.override_conflict:' || v_id::text || ':' || f || ':' || _client_legal_details_id::text,
            jsonb_build_object('field', f, 'cld_id', _client_legal_details_id)
       FROM unnest(v_conflicts) AS f
