@@ -1,238 +1,360 @@
-План: CRM Companies — Phase 1 production execution в Lovable Cloud (v2, с внесёнными правками 1–17)
+да, согласен, с учетом правок:
 
-Статус: PLAN ONLY / DO NOT EXECUTE. Ожидает отдельного согласования перед применением миграции.
-Язык: план, отчёт о выполненной работе и вся переписка ведутся только на русском языке.
+1. **Исправить EXECUTE-матрицу RPC.**  
+В плане ошибочно добавлен прямой `GRANT EXECUTE ... TO service_role`. Утверждённая матрица для двух Phase 1 RPC — `authenticated + guard has_role_v2`; `service_role` для этих скелетов не предусмотрен. Исходная forward-миграция также явно выдавала EXECUTE только `authenticated`.
+  Corrective SQL должен быть:
+  ```sql
+  REVOKE ALL ON FUNCTION
+    public.crm_company_get_or_create(text,text,text,text,text,uuid)
+  FROM PUBLIC, anon, service_role;
 
-## 1. Цель
+  REVOKE ALL ON FUNCTION
+    public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)
+  FROM PUBLIC, anon, service_role;
 
-Однократно применить утверждённый Phase 1 forward migration (runnable plan, commit `5c86f46511548a8fd4586838a2af67cbf19f6bd9`) через штатный механизм миграций Lovable Cloud в подключённую managed-БД (`hdjgkjceownmmnrqqtuz`). Никакого rollback rehearsal, никакого повторного forward, никакого backfill.
+  GRANT EXECUTE ON FUNCTION
+    public.crm_company_get_or_create(text,text,text,text,text,uuid)
+  TO authenticated;
 
-## 2. Scope (что войдёт в единственную миграцию)
+  GRANT EXECUTE ON FUNCTION
+    public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)
+  TO authenticated;
 
-Ровно то, что заморожено в `.lovable/discovery/companies-1.0/companies_phase1_runnable_plan.md`:
-
-- Регистрация namespace в `public_id_sequences`: `('company','CMP',0)` (без `ON CONFLICT DO NOTHING`).
-- Таблица `public.companies` + GRANT + RLS + policies.
-- Таблица `public.client_legal_details_company_map` (создаётся до `company_contacts`, т.к. FK) + GRANT + RLS + policies.
-- Таблица `public.company_contacts` (`source_client_legal_details_map_id` → map(id) `ON DELETE RESTRICT`) + GRANT + RLS + policies.
-- Таблица `public.company_sync_queue` (`service_role` only, никакого `authenticated` GRANT) + RLS + policy.
-- Индексы согласно `companies_performance_notes.md` §4–7.
-- Триггер `update_updated_at_column` на все 4 таблицы.
-- Функция `public.set_companies_public_id()` и триггер `trg_set_companies_public_id` на `public.companies` (правка №1: функция и триггер — разные объекты).
-- RPC-скелеты `crm_company_get_or_create(...)` и `crm_company_link_contact(...)` (SECURITY DEFINER, `SET search_path=public`, guard `has_role_v2`, тела — skeleton).
-- 13 утверждённых RLS policies суммарно по 4 таблицам.
-- Все `DO … RAISE EXCEPTION` guards из §3.0 runnable plan.
-
-## 3. Что запрещено в этой миграции
-
-- Backfill данных, тестовые/фикстурные строки в новых таблицах.
-- Триггер на `client_legal_details` (Phase 4).
-- Изменения `orders_v2`, `crm_tasks`, UI, edge functions.
-- Feature flag, admin_section, admin_resource inserts (Phase 7).
-- Rollback как тест, повторный forward, DROP+CREATE cycle.
-- Правки approved DDL/RLS/RPC.
-
-## 4. Порядок выполнения
-
-### 4.1 Preflight (read-only, без изменений)
-
-Через `supabase--read_query`:
-
-- Пересчитать `schema_hash` по формуле из `companies_read_only_proof.md §7` и сравнить с baseline `c41160b83c8e15c3d3c41a13028700d5`.
-- Проверить отсутствие в `pg_proc` (правка №1): `crm_company_get_or_create`, `crm_company_link_contact`, `set_companies_public_id`.
-- Проверить отсутствие в `pg_trigger` (правка №1): `trg_set_companies_public_id` на `public.companies`.
-- Проверить отсутствие таблиц: `companies`, `client_legal_details_company_map`, `company_contacts`, `company_sync_queue`.
-- Namespace guard (правка №3): `SELECT 1 FROM public_id_sequences WHERE entity_type='company' OR prefix='CMP'` → должно быть 0 строк. Запрещены все три ситуации (company/CMP занят; company с другим prefix; CMP с другим entity_type).
-- Точные сигнатуры helpers (правка №2) через `pg_get_function_identity_arguments`:
-  - `public.next_public_id(p_entity_type text)`
-  - `public.update_updated_at_column()`
-  - `public.has_role_v2(_user_id uuid, _role_code text)`
-  Тип `app_role_v2` в контракте НЕ используется.
-- 7 канонических ролей в `public.roles`.
-- SYSTEM tenant (правка №4) — полный контракт одновременно:
-  - `id = '00000000-0000-0000-0000-000000000001'`
-  - `name = 'system'`
-  - `is_personal = false`
-- Отсутствие companies-related триггеров на `client_legal_details`.
-
-### 4.2 Атомарность выполнения (правка №5)
-
-Перед применением подтвердить фактический контракт `supabase--migration`:
-- либо документально доказано, что одна миграция выполняется атомарно (Lovable оборачивает в транзакцию);
-- либо SQL должен содержать собственные `BEGIN;` / `COMMIT;`.
-
-При отсутствии подтверждённого контракта — HARD STOP. Частично применённый DDL недопустим.
-
-### 4.3 Единственная forward migration
-
-Одна `supabase--migration` строго из approved runnable plan, содержащая:
-
-- `SET LOCAL lock_timeout = '3s'` и `SET LOCAL statement_timeout = '30s'` (внутри транзакции — либо гарантированной Lovable, либо явной);
-- все approved `DO … RAISE EXCEPTION` guards §3.0 первым блоком, до DDL, включая namespace guard в форме правки №3;
-- DDL в порядке: namespace INSERT (без `ON CONFLICT`) → companies → client_legal_details_company_map → company_contacts → company_sync_queue → индексы → `update_updated_at_column` триггеры → `set_companies_public_id()` + `trg_set_companies_public_id` → RPC-скелеты;
-- для каждой таблицы: `CREATE TABLE` → `GRANT` → `ENABLE ROW LEVEL SECURITY` → `CREATE POLICY`;
-- никаких `ON CONFLICT DO NOTHING` для namespace.
-
-Diff-контроль (правка №6): миграция НЕ обязана побайтово совпадать с runnable plan. Требуется:
-- содержательное и дословное совпадение DDL, constraints, FK actions, indexes, triggers, RLS и RPC-блоков с approved SQL;
-- допускаются только заранее перечисленные execution-wrapper дополнения: `SET LOCAL lock_timeout`, `SET LOCAL statement_timeout`, опциональные `BEGIN`/`COMMIT`;
-- до применения к отчёту прикладывается нормализованный diff между runnable plan §3–§6 и migration SQL.
-
-Порядок фиксации SHA (правка №7):
-1. создать migration-файл в `supabase/migrations/`;
-2. зафиксировать в commit, зафиксировать commit SHA;
-3. рассчитать SHA-256 файла миграции;
-4. приложить нормализованный diff;
-5. применить именно этот файл;
-6. после применения повторно подтвердить тот же commit SHA и SHA-256 файла;
-7. проверить наличие ровно одной новой записи в таблице истории миграций Supabase (`supabase_migrations.schema_migrations`).
-
-### 4.4 Post-migration verification (read-only)
-
-Через `supabase--read_query`:
-
-**Схема и данные:**
-- 4 таблицы существуют, все пустые (`count(*) = 0`).
-- Поля, `NOT NULL`, `DEFAULT`, `CHECK`, `UNIQUE`, FK actions совпадают с runnable plan (проверка по `information_schema` и `pg_constraint` по именам ограничений).
-
-**Baseline существующей схемы (правка №9):**
-- Повторно рассчитать schema_hash семи исходных таблиц по формуле §7 read-only proof.
-- Ожидание: `c41160b83c8e15c3d3c41a13028700d5`.
-- Это доказательство, что существующие таблицы и контракты не изменены.
-
-**RLS (правка №11):**
-- Для 4 таблиц: `pg_class.relrowsecurity = true`.
-- 13 policies в `pg_policies` с точными `cmd`, `roles`, `qual`, `with_check` (прикладываются полностью, а не только количество).
-
-**GRANT-матрица:**
-- `authenticated` имеет CRUD на 3 публичные таблицы.
-- `company_sync_queue` доступна только `service_role`.
-- `anon` не имеет доступа ни к одной из 4 таблиц.
-
-**Security-контракт трёх функций (правка №10) — `crm_company_get_or_create`, `crm_company_link_contact`, `set_companies_public_id`:**
-- `pg_get_functiondef` — полные тела приложить;
-- `prosecdef = true` для SECURITY DEFINER функций;
-- `proconfig` содержит `search_path=public`;
-- отсутствие EXECUTE у `PUBLIC`;
-- точные EXECUTE grants по approved matrix;
-- guard-роли внутри тел соответствуют approved matrix;
-- `crm_company_link_contact` skeleton не содержит DML;
-- `crm_company_get_or_create` skeleton не содержит INSERT в `companies`.
-
-**Дополнительно:**
-- Namespace `('company','CMP',0)` присутствует ровно один раз.
-- Триггеры `update_updated_at_column` на 4 таблицах и `trg_set_companies_public_id` на `companies` активны.
-- На `client_legal_details` не появилось companies-related триггеров.
-
-**Linter (правка №12):** запуск `supabase--linter`. Блокируют закрытие спринта:
-- ошибки RLS;
-- небезопасный `SECURITY DEFINER` (missing `search_path`, доступ `PUBLIC`);
-- неверный `search_path`;
-- лишние grants;
-- доступ `anon` к новым таблицам;
-- доступ `authenticated` к `company_sync_queue`;
-- ошибки функций, constraints, FK.
-
-Некритичные performance/info findings — перенос в follow-up с явным обоснованием, не блокируют.
-
-### 4.5 Static verification vs runtime proof vs API smoke (правка №13)
-
-Разделены три разных вида доказательств:
-
-1. **Static / catalog verification** — §4.4 выше. Выполняется в этом спринте.
-2. **Database RLS runtime proof** — фактический `SET LOCAL ROLE authenticated` с JWT-контекстом реального пользователя каждой из 7 ролей и проверкой SELECT/INSERT/UPDATE/DELETE. Вызов `SELECT has_role_v2(...)` НЕ является доказательством того, что RLS разрешает пользователю SELECT. Если реальный JWT-контекст под sandbox-ролью недоступен — статус:
-   `DEFERRED TO FOLLOW-UP — не блокирует основной additive scope`.
-3. **PostgREST / API smoke** — реальные HTTP-запросы к Data API под `anon` и `authenticated` JWT. Если недоступно — статус:
-   `DEFERRED TO FOLLOW-UP — не блокирует основной additive scope`.
-
-В отчёте запрещено писать, что доступ `admin`/`super_admin` подтверждён на основании одного лишь вызова `has_role_v2`.
-
-### 4.6 Deferred proofs (правка №14)
-
-В этом спринте НЕ доказывается и явно перечисляется в deferred:
-
-- public ID trigger runtime (нужен INSERT);
-- INSERT/UPDATE/DELETE по всем ролям;
-- billing lineage через `client_legal_details_company_map`;
-- runtime-ветки RPC (`crm_company_get_or_create`, `crm_company_link_contact`);
-- performance-замеры индексов (правка №17: неинформативны на пустых таблицах, выполняются после backfill).
-
-### 4.7 Rollback артефакт (правка №8)
-
-Rollback SQL из §9 runnable plan сохраняется в репозитории, вне `supabase/migrations/` (например, `.lovable/rollback/companies-phase1/phase1_rollback.sql`), с расчётом SHA-256. **Не применяется.**
-
-Разрешённый diff PR включает ровно три позиции:
-1. один forward migration в `supabase/migrations/`;
-2. один неисполняемый rollback SQL в `.lovable/rollback/companies-phase1/`;
-3. один отчёт о выполненной работе (markdown).
-
-## 5. Stop-guards (до применения миграции)
-
-Остановиться и вернуться с отчётом-блокером, если:
-
-- `schema_hash` отличается от `c41160b83c8e15c3d3c41a13028700d5`;
-- любой из 4 объектов уже существует;
-- namespace guard §4.1 нашёл строку с `entity_type='company'` ИЛИ `prefix='CMP'`;
-- отсутствует SYSTEM tenant по полному контракту (правка №4);
-- отсутствует любой helper с точной сигнатурой (правка №2) или любая из 7 канонических ролей;
-- атомарность миграции не подтверждена (правка №5);
-- diff миграции не соответствует approved runnable plan §3–§6 по правилам правки №6;
-- в diff PR появились файлы вне трёх разрешённых позиций (правка №8).
-
-## 6. Порядок действий при ошибке после commit (правка №15)
-
-- **Миграция не применилась атомарно** → блокер-отчёт, повторный запуск запрещён, ждать отдельного решения.
-- **Миграция применилась, но critical verification / linter check не прошёл**:
-  - остановить спринт;
-  - не переходить к Phase 2;
-  - НЕ выполнять rollback автоматически;
-  - представить blocker-отчёт с фактическими outputs;
-  - запросить отдельное решение на применение сохранённого rollback SQL.
-
-## 7. Deliverable
-
-`Отчет о выполненной работе: CRM Companies — Phase 1 production execution` (на русском), содержащий:
-
-- pre-migration `schema_hash` и подтверждение baseline;
-- commit SHA и SHA-256 файла миграции (зафиксированные до применения, подтверждённые после);
-- нормализованный diff runnable plan §3–§6 vs migration SQL;
-- полный текст всех verification-запросов и фактические outputs (не только количества);
-- post-migration schema_hash семи исходных таблиц с подтверждением равенства baseline (правка №9);
-- полный security-контракт трёх функций (правка №10);
-- полные `qual`/`with_check` для 13 policies и `relrowsecurity=true` для 4 таблиц (правка №11);
-- linter findings с классификацией «блокирует / не блокирует» по правке №12;
-- SHA-256 сохранённого rollback SQL и его путь в репозитории;
-- запись в `supabase_migrations.schema_migrations` — подтверждение ровно одной новой строки (правка №7);
-- явный deferred-список (правки №13, №14, №17);
-- финальный статус (правка №16):
   ```
-  Phase 1 forward:        APPLIED
-  Static verification:    PASSED
-  Rollback:               NOT EXECUTED
-  RLS runtime proof:      DEFERRED
-  PostgREST smoke:        DEFERRED
-  Follow-up validation:   RECORDED / NOT EXECUTED
+  `authenticated` сохраняется, потому что доступ дополнительно ограничивается внутренним role guard.
+2. **Не выдавать прямой EXECUTE на trigger function ни одной внешней роли.**  
+Для `set_companies_public_id()` убрать `GRANT EXECUTE ... TO service_role`. Эта функция вызывается триггером и не является публичным RPC. В approved forward для неё отдельный GRANT отсутствовал.
+  Требуется:
+  ```sql
+  REVOKE ALL ON FUNCTION public.set_companies_public_id()
+  FROM PUBLIC, anon, authenticated, service_role;
+
   ```
-  Формулировка `Follow-up validation: SCHEDULED` запрещена, если запуск фактически не назначен.
+  Владельцу функции права сохраняются. Прямой клиентский или service-role вызов не требуется.
+3. **Зафиксировать точные ожидания `SECURITY DEFINER`.**
+  В verification должно быть не общее «проверить `prosecdef`», а точная матрица:
 
-## 8. Follow-up (отдельный спринт, вне scope)
+  | Функция                          | `prosecdef` | `proconfig`          |
+  | -------------------------------- | ----------- | -------------------- |
+  | `set_companies_public_id()`      | `false`     | `search_path=public` |
+  | `crm_company_get_or_create(...)` | `true`      | `search_path=public` |
+  | `crm_company_link_contact(...)`  | `true`      | `search_path=public` |
 
-- Rollback rehearsal и повторный forward — только на выделенной staging-БД, когда она появится.
-- Полная RLS runtime matrix под всеми 7 ролями с реальным JWT.
-- Реальный PostgREST/API smoke.
-- Runtime-ветки RPC, public ID trigger runtime, billing lineage.
-- Performance-замеры индексов — после backfill / на репрезентативных объёмах (правка №17).
-- Phase 2 (полные RPC), Phase 3 (backfill), далее по roadmap.
+  Trigger function создана без `SECURITY DEFINER`, а два RPC — с ним.
+4. **Исправить диагностику ACL, чтобы она действительно показывала `PUBLIC`.**  
+`information_schema.role_table_grants` может не дать полной картины для `PUBLIC` и ролей вне текущего enabled-role context. Нужна machine-check проверка через `aclexplode` либо дополнительно через `has_table_privilege` и `has_function_privilege`.
+  После hardening обязательно приложить матрицу:
+  ```sql
+  SELECT role_name, object_name, privilege_name, has_privilege
+  FROM (
+    VALUES
+      ('anon'), ('authenticated'), ('service_role')
+  ) AS roles(role_name)
+  CROSS JOIN (
+    VALUES
+      ('companies'),
+      ('client_legal_details_company_map'),
+      ('company_contacts'),
+      ('company_sync_queue')
+  ) AS objects(object_name)
+  CROSS JOIN (
+    VALUES
+      ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'),
+      ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')
+  ) AS privileges(privilege_name)
+  CROSS JOIN LATERAL (
+    SELECT has_table_privilege(
+      role_name,
+      format('public.%I', object_name),
+      privilege_name
+    )
+  ) AS result(has_privilege);
 
-## 9. Требование к языку
+  ```
+  Для функций — аналогичная матрица через `has_function_privilege(..., 'EXECUTE')`. Проверку `PUBLIC` сделать отдельно через разбор `proacl`/`relacl` с `aclexplode`.
+5. **Вернуть pre-apply контроль целостности corrective migration.**  
+До применения:
+  1. создать migration-файл;
+  2. зафиксировать его в Git;
+  3. указать полный commit SHA;
+  4. вычислить SHA-256 файла;
+  5. приложить diff, доказывающий, что внутри только `REVOKE`, `GRANT`, timeout и guards;
+  6. применить именно этот файл;
+  7. после применения повторно подтвердить тот же SHA-256.
+  Сейчас план требует commit SHA только в итоговом отчёте, но не фиксирует неизменяемый артефакт до production execution.
+6. **Добавить атомарность и timeout corrective migration.**
+  Corrective migration должна содержать:
+  ```sql
+  SET LOCAL lock_timeout = '3s';
+  SET LOCAL statement_timeout = '30s';
 
+  ```
+  и выполняться одной транзакцией через тот же подтверждённый атомарный механизм `supabase--migration`.
+  Формулировку `без auto-rollback` исправить:
+  - автоматический транзакционный rollback **обязателен**, если corrective migration падает;
+  - запрещён только автоматический запуск сохранённого **Phase 1 rollback SQL**, удаляющего таблицы.
+7. **Данные в таблицах не должны останавливать security hardening.**
+  Текущий stop-guard опасен: если обнаружатся строки, план оставляет избыточные ACL открытыми.
+  Правильный порядок:
+  - зафиксировать counts и минимальные безопасные метаданные найденных строк;
+  - не изменять и не удалять данные;
+  - применить ACL hardening, поскольку он только сокращает доступ;
+  - после hardening пометить Phase 1 closure как `BLOCKED` и представить отдельный incident/blocker report.
+  Наличие данных блокирует **закрытие Phase 1**, но не блокирует отзыв лишних прав.
+8. **Добавить внутренние guards перед REVOKE/GRANT.**
+  В начале corrective migration проверить через `DO … RAISE EXCEPTION`:
+  - существуют все четыре таблицы;
+  - существуют три функции с точными identity arguments;
+  - у четырёх таблиц включён RLS;
+  - существуют ровно 13 ожидаемых policies;
+  - определения `polqual`/`polwithcheck` не дрейфовали;
+  - Phase 1 forward присутствует в migration history.
+  При несовпадении — транзакция откатывается до изменения ACL.
+9. **Post-commit linter нельзя “исправить в этой же миграции”.**
+  После применения migration-файл неизменяем. Формулировку:
+  > «либо PASSED, либо адресный fix в этой же миграции»
+  заменить на:
+  - если свежий post-commit linter показывает критическую проблему — остановить закрытие;
+  - не изменять уже применённый migration-файл;
+  - не запускать Phase 1 rollback;
+  - представить blocker-отчёт;
+  - подготовить отдельный план и отдельную corrective migration.
+10. **Разделить ожидаемые ACL по объектам дословно.**
+
+Итоговая матрица должна быть:
+
+
+| Объект                             | PUBLIC | anon | authenticated               | service_role |
+| ---------------------------------- | ------ | ---- | --------------------------- | ------------ |
+| `companies`                        | none   | none | SELECT/INSERT/UPDATE/DELETE | ALL          |
+| `client_legal_details_company_map` | none   | none | SELECT/INSERT/UPDATE/DELETE | ALL          |
+| `company_contacts`                 | none   | none | SELECT/INSERT/UPDATE/DELETE | ALL          |
+| `company_sync_queue`               | none   | none | none                        | ALL          |
+| `crm_company_get_or_create`        | none   | none | EXECUTE                     | none         |
+| `crm_company_link_contact`         | none   | none | EXECUTE                     | none         |
+| `set_companies_public_id`          | none   | none | none                        | none         |
+
+
+Права владельца объектов показываются отдельно и не считаются внешним grant.
+
+11. **Generated types не должны содержательно измениться из-за ACL.**
+
+ACL migration не меняет схему PostgREST-типов. Поэтому:
+
+- нормальное ожидание — `src/integrations/supabase/types.ts` без изменений;
+- если Lovable его перегенерировал, приложить diff;
+- разрешены только технические/форматные изменения без новых таблиц, колонок, RPC или изменения сигнатур;
+- любой содержательный schema diff — HARD STOP.
+
+12. **Уточнить файловый и commit scope.**
+
+Допустимы два последовательных commit:
+
+1. corrective migration;
+2. итоговый markdown-отчёт и, только при автоматической регенерации, `types.ts`.
+
+Итоговый отчёт не обязан существовать до применения migration, поэтому требование «ровно три файла» нужно оценивать по совокупному diff спринта, а не требовать появления отчёта в pre-apply commit.
+
+13. **Добавить отдельный контроль владельцев функций.**
+
+В verification вывести `proowner` и подтвердить, что владельцем трёх функций не являются:
+
+```text
+anon
+authenticated
+service_role
+
+```
+
+Владелец должен быть доверенной migration/database ролью.
+
+14. **Диагностировать, но не менять в этом патче `next_public_id`.**
+
+`next_public_id(p_entity_type text)` — существующий `SECURITY DEFINER` helper, который теперь обслуживает namespace `company/CMP`.
+
+В read-only proof добавить:
+
+- `prosecdef`;
+- `proconfig`;
+- `proacl`;
+- наличие прямых вызовов из клиентского кода/RPC.
+
+Изменять его ACL в этом спринте запрещено без отдельного impact analysis, потому что он обслуживает и другие public ID namespaces. Возможный публичный EXECUTE зафиксировать в follow-up, не смешивая с текущими тремя функциями.
+
+15. **Глобальные default privileges вынести в явный follow-up.**
+
+Текущий патч корректно не должен менять глобальные default privileges. Но нужно записать отдельный deferred-пункт:
+
+```text
+Проверить и нормализовать default privileges для будущих таблиц и функций,
+чтобы новые объекты автоматически не получали права anon/authenticated.
+Отложено на отдельный security follow-up; текущий ACL hardening не блокирует.
+
+```
+
+16. **Добавить точные языковые требования из правил проекта.**
+
+В конец плана включить дословно:
+
+```text
 План должен быть составлен на русском языке.
-Отчёт о выполненной работе должен быть составлен на русском языке.
+Отчет о выполненной работе должен быть составлен на русском языке.
 Вся переписка, все пояснения и все результаты должны предоставляться только на русском языке.
 
-## 10. Текущий статус
+```
 
-- Runnable plan: APPROVED (commit `5c86f46511548a8fd4586838a2af67cbf19f6bd9`).
-- Отдельный Supabase staging: НЕ ТРЕБУЕТСЯ.
-- Production execution plan v2 (с правками 1–17): ОЖИДАЕТ СВЕРКИ СТАТУСОВ (внесено / частично внесено / не внесено).
-- Production migration: НЕ ЗАПУСКАТЬ до отдельного approve.
+## Решение
+
+План по сути правильный и решает обнаруженный ACL blocker, но **пока не готов к execution** из-за неверной EXECUTE-матрицы `service_role`, неполной ACL-диагностики и неоднозначного порядка обработки ошибок.
+
+```text
+План: СОГЛАСОВАН С УЧЕТОМ ПРАВОК 1–16
+Corrective migration: DO NOT EXECUTE
+Phase 1 rollback: НЕ ПРИМЕНЯТЬ
+Phase 2: НЕ НАЧИНАТЬ
+
+```
+
+После внесения правок следующий проход — только статусы **«внесено / частично внесено / не внесено»**.
+
+&nbsp;
+
+План: CRM Companies — Phase 1 ACL hardening и финальная static verification
+
+Статус: PLAN ONLY / DO NOT EXECUTE. Ожидается явный approve перед применением corrective migration.
+
+## 1. Контекст и границы
+
+Phase 1 forward-миграция уже APPLIED (commit `0abff5b`). Rollback не применяется. Настоящий план закрывает только два открытых пункта:
+
+- Приведение ACL к утверждённому security-контракту (blocker).
+- Полный набор доказательств static verification (deliverable).
+
+Явные запреты:
+
+- Не откатывать Phase 1.
+- Не менять DDL таблиц, constraints, FK, индексы, RLS-политики, тела RPC/trigger-функций.
+- Не запускать backfill, не создавать production-фикстуры.
+- Не начинать Phase 2.
+- Не менять глобальные default privileges проекта.
+- Не трогать `.lovable/rollback/companies-phase1/phase1_rollback.sql`.
+
+## 2. Read-only диагностика (перед corrective migration)
+
+Собрать фактическое состояние ACL и зафиксировать в отчёте одним блоком:
+
+Таблицы (`companies`, `client_legal_details_company_map`, `company_contacts`, `company_sync_queue`):
+
+```
+SELECT n.nspname, c.relname, c.relrowsecurity, c.relacl
+FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+WHERE n.nspname='public'
+  AND c.relname IN ('companies','client_legal_details_company_map','company_contacts','company_sync_queue');
+
+SELECT grantee, privilege_type
+FROM information_schema.role_table_grants
+WHERE table_schema='public'
+  AND table_name IN ('companies','client_legal_details_company_map','company_contacts','company_sync_queue')
+ORDER BY table_name, grantee, privilege_type;
+```
+
+Функции (`set_companies_public_id()`, `crm_company_get_or_create(text,text,text,text,text,uuid)`, `crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)`):
+
+```
+SELECT p.proname, pg_get_function_identity_arguments(p.oid) AS args,
+       p.prosecdef, p.proconfig, p.proacl
+FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+WHERE n.nspname='public'
+  AND p.proname IN ('set_companies_public_id','crm_company_get_or_create','crm_company_link_contact');
+```
+
+В отчёте развернуть ACL по ролям отдельно: `PUBLIC`, `anon`, `authenticated`, `service_role`.
+
+## 3. Corrective migration (одна, атомарная)
+
+Файл: `supabase/migrations/<ts>_crm_companies_phase1_acl_hardening.sql`.
+
+Содержит только REVOKE/GRANT, никакого DDL. Порядок:
+
+1. Таблицы — сначала полный REVOKE у клиентских ролей, затем точечный GRANT:
+
+```
+REVOKE ALL ON public.companies, public.client_legal_details_company_map,
+              public.company_contacts, public.company_sync_queue
+  FROM PUBLIC, anon, authenticated;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  public.companies,
+  public.client_legal_details_company_map,
+  public.company_contacts
+TO authenticated;
+
+GRANT ALL ON
+  public.companies,
+  public.client_legal_details_company_map,
+  public.company_contacts,
+  public.company_sync_queue
+TO service_role;
+-- company_sync_queue: НИКАКИХ прав anon/authenticated (в т.ч. SELECT).
+```
+
+2. Функции — REVOKE у PUBLIC/anon, GRANT согласно `companies_rpc_inventory.md §7`:
+
+```
+REVOKE ALL ON FUNCTION public.set_companies_public_id()               FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text,uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid) FROM PUBLIC, anon;
+
+GRANT EXECUTE ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text,uuid) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid) TO authenticated, service_role;
+-- set_companies_public_id() — trigger function, EXECUTE клиентским ролям не выдаётся;
+-- оставляем только владельцу/service_role.
+GRANT EXECUTE ON FUNCTION public.set_companies_public_id() TO service_role;
+```
+
+Global default privileges не трогаем.
+
+## 4. Post-migration static verification (обязательный deliverable)
+
+После применения приложить в отчёте фактические outputs (не галочки):
+
+1. Git commit SHA corrective migration и список изменённых файлов (включая авто-обновление `src/integrations/supabase/types.ts`, если Lovable его перегенерирует).
+2. Нормализованный diff runnable plan vs фактическая forward migration (для протокола, one-off).
+3. Baseline schema hash до/после — должны совпасть с `c41160b83c8e15c3d3c41a13028700d5` по контракту (хэш считается по объектам вне ACL; ACL-изменения baseline не сдвигают — зафиксировать это отдельно).
+4. `relrowsecurity=true` для всех 4 таблиц (вывод запроса из §2).
+5. Полная таблица GRANT после hardening (PUBLIC/anon/authenticated/service_role × 4 таблицы).
+6. Полная EXECUTE-матрица трёх функций с `prosecdef`, `proconfig`, `proacl`.
+7. Все 13 policies: `polname`, `polcmd`, `polroles`, `pg_get_expr(polqual)`, `pg_get_expr(polwithcheck)`.
+8. Подтверждение пустоты таблиц: `SELECT count(*)` по 4 таблицам = 0.
+9. Подтверждение отсутствия backfill/фикстур (нет INSERT в 4 таблицы и в `company_sync_queue`).
+10. Записи из `supabase_migrations.schema_migrations` для обеих миграций (forward + hardening).
+11. Свежий post-commit `supabase--linter` с явным разбором находок по 4 таблицам и 3 функциям (RLS-without-policy, mutable search_path, SECURITY DEFINER public EXECUTE) — либо PASSED, либо адресный fix в этой же миграции.
+
+## 5. Файловый scope (жёсткий)
+
+Разрешено ровно:
+
+- `supabase/migrations/<ts>_crm_companies_phase1_acl_hardening.sql` — corrective migration.
+- `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md` — итоговый отчёт.
+- `src/integrations/supabase/types.ts` — только если Lovable перегенерирует автоматически; изменение отдельно указывается в отчёте и не редактируется вручную.
+
+Запрещено любое иное изменение файлов, UI, edge functions, `config.toml`.
+
+## 6. Stop-guards
+
+Немедленная остановка (без auto-rollback) при:
+
+- Расхождении baseline schema hash по non-ACL объектам.
+- Обнаружении данных в любой из 4 таблиц.
+- Присутствии grants на `company_sync_queue` для anon/authenticated после hardening.
+- Присутствии EXECUTE у PUBLIC/anon на любой из 3 функций после hardening.
+- Изменении polqual/polwithcheck хотя бы одной из 13 policies относительно forward-миграции.
+
+При срабатывании — blocker-отчёт, без Phase 2, без применения rollback.
+
+## 7. Итоговый отчёт
+
+Заголовок дословно:
+`Отчет о выполненной работе: CRM Companies — Phase 1 ACL hardening и финальная static verification`
+
+Язык — русский. Deferred: runtime RLS matrix под 7 каноническими ролями и PostgREST smoke — фиксируются в follow-up и не блокируют закрытие Phase 1 после успешного hardening.
