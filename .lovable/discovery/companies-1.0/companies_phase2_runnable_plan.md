@@ -618,7 +618,7 @@ _crm_company_emit_domain_event(
 
 **ACL:** `REVOKE ALL ON FUNCTION public._crm_company_emit_domain_event(text,uuid,text,jsonb) FROM PUBLIC, anon, authenticated, service_role`. Никаких GRANT. Вызов возможен только из другой функции owner `postgres`.
 
-**Callers (полный список Phase 2):** `crm_company_get_or_create`, `crm_company_link_contact`, `crm_company_upsert_from_billing`, `crm_company_merge`, `crm_company_archive`, `crm_company_grp_refetch`, а также `_crm_company_resolve_or_create_internal` (для `company.created.v1`). Все прямые `INSERT INTO public.domain_events (...)` из тел Phase 2 RPC заменены на `PERFORM public._crm_company_emit_domain_event(...)`; sample-фрагменты в §11.2–§11.9, где остался «сырой» INSERT (например §11.2 строки для `company.created.v1`), при финализации SQL заменяются на вызов helper — контракт §10.1 является нормативным.
+**Callers (полный список Phase 2):** `crm_company_get_or_create`, `crm_company_link_contact`, `crm_company_upsert_from_billing`, `crm_company_merge`, `crm_company_archive`, `crm_company_grp_refetch`, а также `_crm_company_resolve_or_create_internal` (для `company.created.v1`). Все Phase 2 RPC в §11 вызывают helper напрямую; прямых `INSERT INTO public.domain_events` в §11 не осталось (единственное вхождение — в теле самого helper в §10.1 / §11.11).
 
 **Rollback order:** DROP выполняется **после** `_crm_company_resolve_or_create_internal` (§12.5).
 
@@ -763,25 +763,24 @@ BEGIN
 
   -- trigger set_companies_public_id проставляет public_id
 
-  -- domain_events: company.created.v1 (dedup via idempotency_key)
-  INSERT INTO public.domain_events (event_type, source, entity_id, payload)
-  SELECT 'company.created.v1', 'crm', v_id,
-         jsonb_build_object(
-           'version', 1,
-           'company_id', v_id,
-           'public_id', (SELECT public_id FROM public.companies WHERE id=v_id),
-           'country', v_country,
-           'unp_normalized', _unp_normalized,
-           'company_kind', _company_kind,
-           'source', _source,
-           'source_cld_id', _source_cld_id,
-           'actor_user_id', _actor_user_id,
-           'occurred_at', now(),
-           'idempotency_key', 'company.created:' || v_id::text
-         )
-  WHERE NOT EXISTS (
-    SELECT 1 FROM public.domain_events
-     WHERE payload->>'idempotency_key' = 'company.created:' || v_id::text
+  -- domain_events: company.created.v1 через private emit helper (§10.1)
+  PERFORM public._crm_company_emit_domain_event(
+    'company.created.v1',
+    v_id,
+    'company.created:' || v_id::text,
+    jsonb_build_object(
+      'version', 1,
+      'company_id', v_id,
+      'public_id', (SELECT public_id FROM public.companies WHERE id=v_id),
+      'country', v_country,
+      'unp_normalized', _unp_normalized,
+      'company_kind', _company_kind,
+      'source', _source,
+      'source_cld_id', _source_cld_id,
+      'actor_user_id', _actor_user_id,
+      'occurred_at', now(),
+      'idempotency_key', 'company.created:' || v_id::text
+    )
   );
 
   RETURN v_id;
@@ -940,25 +939,33 @@ BEGIN
   END IF;
 
   IF v_first_insert THEN
-    INSERT INTO public.domain_events (event_type, source, entity_id, payload)
-    SELECT 'company.linked_to_contact.v1', 'crm', _company_id, jsonb_build_object(
-      'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'profile_id', _profile_id,
-      'relationship_type', _relationship_type, 'is_billing_contact', COALESCE(_is_billing_contact,false),
-      'source', _source, 'source_map_id', _source_client_legal_details_map_id,
-      'occurred_at', now(),
-      'idempotency_key', 'company.linked_to_contact:' || v_id::text)
-    WHERE NOT EXISTS (
-      SELECT 1 FROM public.domain_events
-       WHERE payload->>'idempotency_key' = 'company.linked_to_contact:' || v_id::text);
+    PERFORM public._crm_company_emit_domain_event(
+      'company.linked_to_contact.v1',
+      _company_id,
+      'company.linked_to_contact:' || v_id::text,
+      jsonb_build_object(
+        'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'profile_id', _profile_id,
+        'relationship_type', _relationship_type, 'is_billing_contact', COALESCE(_is_billing_contact,false),
+        'source', _source, 'source_map_id', _source_client_legal_details_map_id,
+        'occurred_at', now(),
+        'idempotency_key', 'company.linked_to_contact:' || v_id::text
+      )
+    );
   ELSIF v_material THEN
-    INSERT INTO public.domain_events (event_type, source, entity_id, payload)
-    SELECT 'company.linked_to_contact.v1', 'crm', _company_id, jsonb_build_object(
-      'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'update', true,
-      'occurred_at', now(),
-      'idempotency_key', 'company.linked_to_contact.updated:' || v_id::text || ':' ||
-                         md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
-                             coalesce(_source_client_legal_details_map_id::text,'')))
-    ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING;
+    PERFORM public._crm_company_emit_domain_event(
+      'company.linked_to_contact.v1',
+      _company_id,
+      'company.linked_to_contact.updated:' || v_id::text || ':' ||
+        md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
+            coalesce(_source_client_legal_details_map_id::text,'')),
+      jsonb_build_object(
+        'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'update', true,
+        'occurred_at', now(),
+        'idempotency_key', 'company.linked_to_contact.updated:' || v_id::text || ':' ||
+                           md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
+                               coalesce(_source_client_legal_details_map_id::text,''))
+      )
+    );
   END IF;
 
   RETURN v_id;
@@ -1055,16 +1062,21 @@ BEGIN
           AND idempotency_key='company.field.override_conflict:' || v_id::text || ':' || f || ':' || _client_legal_details_id::text);
   END IF;
 
-  -- domain_events (material change only)
+  -- domain_events (material change only) через private emit helper (§10.1)
   IF array_length(v_changed,1) IS NOT NULL OR array_length(v_conflicts,1) IS NOT NULL THEN
-    INSERT INTO public.domain_events (event_type, source, entity_id, payload)
-    SELECT 'company.upserted_from_billing.v1', 'crm', v_id, jsonb_build_object(
-      'version', 1, 'company_id', v_id, 'cld_id', _client_legal_details_id,
-      'changed_fields', to_jsonb(v_changed), 'override_conflict_fields', to_jsonb(v_conflicts),
-      'source_updated_at', v_cld.updated_at, 'occurred_at', now(),
-      'idempotency_key', 'company.upserted_from_billing:' || v_id::text || ':' || _client_legal_details_id::text || ':' ||
-                         md5(array_to_string(v_changed,',')))
-    ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING;
+    PERFORM public._crm_company_emit_domain_event(
+      'company.upserted_from_billing.v1',
+      v_id,
+      'company.upserted_from_billing:' || v_id::text || ':' || _client_legal_details_id::text || ':' ||
+        md5(array_to_string(v_changed,',')),
+      jsonb_build_object(
+        'version', 1, 'company_id', v_id, 'cld_id', _client_legal_details_id,
+        'changed_fields', to_jsonb(v_changed), 'override_conflict_fields', to_jsonb(v_conflicts),
+        'source_updated_at', v_cld.updated_at, 'occurred_at', now(),
+        'idempotency_key', 'company.upserted_from_billing:' || v_id::text || ':' || _client_legal_details_id::text || ':' ||
+                           md5(array_to_string(v_changed,','))
+      )
+    );
   END IF;
 
   RETURN v_id;
@@ -1214,15 +1226,19 @@ BEGIN
   -- §7.6 metadata union и переключение source status
   -- ... (см. §7.6 body)
 
-  -- domain_events + audit_logs (guarded by idempotency_key)
-  INSERT INTO public.domain_events (event_type, source, entity_id, payload)
-  SELECT 'company.merged.v1','crm', _source_id, jsonb_build_object(
-    'version',1,'source_id',_source_id,'source_public_id',v_src.public_id,
-    'target_id',v_target_leaf,'target_public_id',v_tgt.public_id,
-    'moved_map_rows',v_moved_map,'moved_contact_rows',v_moved_contacts,
-    'merged_contact_rows',v_merged_contacts,'occurred_at',now(),'actor_user_id',auth.uid(),
-    'idempotency_key','company.merged:'||_source_id::text||':'||v_target_leaf::text)
-  ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING;
+  -- domain_events через private emit helper (§10.1)
+  PERFORM public._crm_company_emit_domain_event(
+    'company.merged.v1',
+    _source_id,
+    'company.merged:'||_source_id::text||':'||v_target_leaf::text,
+    jsonb_build_object(
+      'version',1,'source_id',_source_id,'source_public_id',v_src.public_id,
+      'target_id',v_target_leaf,'target_public_id',v_tgt.public_id,
+      'moved_map_rows',v_moved_map,'moved_contact_rows',v_moved_contacts,
+      'merged_contact_rows',v_merged_contacts,'occurred_at',now(),'actor_user_id',auth.uid(),
+      'idempotency_key','company.merged:'||_source_id::text||':'||v_target_leaf::text
+    )
+  );
 
   INSERT INTO public.audit_logs (actor_user_id, action, actor_type, entity_type, entity_id, meta)
   SELECT auth.uid(),'company.merge','user','company',_source_id::text,
@@ -1282,11 +1298,15 @@ BEGIN
     updated_at=now(), updated_by=auth.uid()
   WHERE id=_id;
 
-  INSERT INTO public.domain_events(event_type, source, entity_id, payload)
-  SELECT 'company.archived.v1','crm', _id, jsonb_build_object(
-    'version',1,'company_id',_id,'reason',v_reason,'occurred_at',now(),'actor_user_id',auth.uid(),
-    'idempotency_key','company.archived:'||_id::text||':'||md5(v_reason))
-  ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING;
+  PERFORM public._crm_company_emit_domain_event(
+    'company.archived.v1',
+    _id,
+    'company.archived:'||_id::text||':'||md5(v_reason),
+    jsonb_build_object(
+      'version',1,'company_id',_id,'reason',v_reason,'occurred_at',now(),'actor_user_id',auth.uid(),
+      'idempotency_key','company.archived:'||_id::text||':'||md5(v_reason)
+    )
+  );
 
   INSERT INTO public.audit_logs(actor_user_id, action, actor_type, entity_type, entity_id, meta)
   SELECT auth.uid(),'company.archive','user','company',_id::text,
@@ -1341,11 +1361,16 @@ BEGIN
   VALUES ('company', _id, 'grp_refetch', 'queued', v_key, now(), '{}'::jsonb, auth.uid(), auth.uid())
   RETURNING id INTO v_new;
 
-  INSERT INTO public.domain_events(event_type, source, entity_id, payload)
-  VALUES ('company.grp_refetch_requested.v1','crm', _id, jsonb_build_object(
-    'version',1,'company_id',_id,'queue_id',v_new,'idempotency_key','company.grp_refetch_requested:'||v_new::text,
-    'occurred_at',now(),'actor_user_id',auth.uid()))
-  ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING;
+  PERFORM public._crm_company_emit_domain_event(
+    'company.grp_refetch_requested.v1',
+    _id,
+    'company.grp_refetch_requested:'||v_new::text,
+    jsonb_build_object(
+      'version',1,'company_id',_id,'queue_id',v_new,
+      'idempotency_key','company.grp_refetch_requested:'||v_new::text,
+      'occurred_at',now(),'actor_user_id',auth.uid()
+    )
+  );
 
   RETURN v_new;
 END $$;
