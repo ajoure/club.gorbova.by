@@ -161,8 +161,11 @@ CREATE TABLE public.company_contacts (
   -- Machine-checkable source lineage для source='billing_requisites'.
   -- FK на map-запись даёт детерминированный путь client_legal_details → company_contacts.
   -- Требует, чтобы client_legal_details_company_map была создана раньше (см. §2.2).
+  -- ON DELETE RESTRICT: billing lineage нельзя удалить, пока существует billing-contact.
+  -- SET NULL здесь недопустим — нарушил бы CHECK company_contacts_billing_requires_source
+  -- (для is_billing_contact=true source_client_legal_details_map_id IS NOT NULL).
   source_client_legal_details_map_id uuid
-    REFERENCES public.client_legal_details_company_map(id) ON DELETE SET NULL,
+    REFERENCES public.client_legal_details_company_map(id) ON DELETE RESTRICT,
 
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
