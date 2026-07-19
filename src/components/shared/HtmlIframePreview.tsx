@@ -1743,7 +1743,7 @@ export function HtmlIframePreview({
 
       if (data.type === 'lovable-bridge-ready') {
         // Handshake — only reply to the exact bridge version we produced.
-        if (data.version !== 8) return;
+        if (data.version !== BRIDGE_VERSION) return;
         postSlotManifest();
         return;
       }
