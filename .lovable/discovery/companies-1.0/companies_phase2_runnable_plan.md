@@ -1249,10 +1249,10 @@ BEGIN
        OR v_company.full_name IS NOT DISTINCT FROM (v_snap->>'full_name') THEN
       new_full_name := n_full_name;
       v_snap := jsonb_set(v_snap, '{full_name}', to_jsonb(n_full_name));
-      v_changed := v_changed || 'full_name';
+      v_changed := array_append(v_changed, 'full_name');
     ELSE
       v_snap := jsonb_set(v_snap, '{full_name}', to_jsonb(n_full_name));
-      v_conflicts := v_conflicts || 'full_name';
+      v_conflicts := array_append(v_conflicts, 'full_name');
     END IF;
   END IF;
 
@@ -1262,10 +1262,10 @@ BEGIN
        OR v_company.short_name IS NOT DISTINCT FROM (v_snap->>'short_name') THEN
       new_short_name := n_short_name;
       v_snap := jsonb_set(v_snap, '{short_name}', to_jsonb(n_short_name));
-      v_changed := v_changed || 'short_name';
+      v_changed := array_append(v_changed, 'short_name');
     ELSE
       v_snap := jsonb_set(v_snap, '{short_name}', to_jsonb(n_short_name));
-      v_conflicts := v_conflicts || 'short_name';
+      v_conflicts := array_append(v_conflicts, 'short_name');
     END IF;
   END IF;
 
@@ -1275,10 +1275,10 @@ BEGIN
        OR v_company.legal_form IS NOT DISTINCT FROM (v_snap->>'legal_form') THEN
       new_legal_form := n_legal_form;
       v_snap := jsonb_set(v_snap, '{legal_form}', to_jsonb(n_legal_form));
-      v_changed := v_changed || 'legal_form';
+      v_changed := array_append(v_changed, 'legal_form');
     ELSE
       v_snap := jsonb_set(v_snap, '{legal_form}', to_jsonb(n_legal_form));
-      v_conflicts := v_conflicts || 'legal_form';
+      v_conflicts := array_append(v_conflicts, 'legal_form');
     END IF;
   END IF;
 
@@ -1288,10 +1288,10 @@ BEGIN
        OR v_company.legal_address IS NOT DISTINCT FROM (v_snap->>'legal_address') THEN
       new_legal_address := n_legal_address;
       v_snap := jsonb_set(v_snap, '{legal_address}', to_jsonb(n_legal_address));
-      v_changed := v_changed || 'legal_address';
+      v_changed := array_append(v_changed, 'legal_address');
     ELSE
       v_snap := jsonb_set(v_snap, '{legal_address}', to_jsonb(n_legal_address));
-      v_conflicts := v_conflicts || 'legal_address';
+      v_conflicts := array_append(v_conflicts, 'legal_address');
     END IF;
   END IF;
 
@@ -1301,10 +1301,10 @@ BEGIN
        OR v_company.director_name IS NOT DISTINCT FROM (v_snap->>'director_name') THEN
       new_director_name := n_director_name;
       v_snap := jsonb_set(v_snap, '{director_name}', to_jsonb(n_director_name));
-      v_changed := v_changed || 'director_name';
+      v_changed := array_append(v_changed, 'director_name');
     ELSE
       v_snap := jsonb_set(v_snap, '{director_name}', to_jsonb(n_director_name));
-      v_conflicts := v_conflicts || 'director_name';
+      v_conflicts := array_append(v_conflicts, 'director_name');
     END IF;
   END IF;
 
@@ -1314,10 +1314,10 @@ BEGIN
        OR v_company.director_position IS NOT DISTINCT FROM (v_snap->>'director_position') THEN
       new_director_position := n_director_position;
       v_snap := jsonb_set(v_snap, '{director_position}', to_jsonb(n_director_position));
-      v_changed := v_changed || 'director_position';
+      v_changed := array_append(v_changed, 'director_position');
     ELSE
       v_snap := jsonb_set(v_snap, '{director_position}', to_jsonb(n_director_position));
-      v_conflicts := v_conflicts || 'director_position';
+      v_conflicts := array_append(v_conflicts, 'director_position');
     END IF;
   END IF;
 
@@ -1327,10 +1327,10 @@ BEGIN
        OR v_company.acts_on_basis IS NOT DISTINCT FROM (v_snap->>'acts_on_basis') THEN
       new_acts_on_basis := n_acts_on_basis;
       v_snap := jsonb_set(v_snap, '{acts_on_basis}', to_jsonb(n_acts_on_basis));
-      v_changed := v_changed || 'acts_on_basis';
+      v_changed := array_append(v_changed, 'acts_on_basis');
     ELSE
       v_snap := jsonb_set(v_snap, '{acts_on_basis}', to_jsonb(n_acts_on_basis));
-      v_conflicts := v_conflicts || 'acts_on_basis';
+      v_conflicts := array_append(v_conflicts, 'acts_on_basis');
     END IF;
   END IF;
 
@@ -1340,10 +1340,10 @@ BEGIN
        OR v_company.bank_account IS NOT DISTINCT FROM (v_snap->>'bank_account') THEN
       new_bank_account := n_bank_account;
       v_snap := jsonb_set(v_snap, '{bank_account}', to_jsonb(n_bank_account));
-      v_changed := v_changed || 'bank_account';
+      v_changed := array_append(v_changed, 'bank_account');
     ELSE
       v_snap := jsonb_set(v_snap, '{bank_account}', to_jsonb(n_bank_account));
-      v_conflicts := v_conflicts || 'bank_account';
+      v_conflicts := array_append(v_conflicts, 'bank_account');
     END IF;
   END IF;
 
@@ -1353,10 +1353,10 @@ BEGIN
        OR v_company.bank_name IS NOT DISTINCT FROM (v_snap->>'bank_name') THEN
       new_bank_name := n_bank_name;
       v_snap := jsonb_set(v_snap, '{bank_name}', to_jsonb(n_bank_name));
-      v_changed := v_changed || 'bank_name';
+      v_changed := array_append(v_changed, 'bank_name');
     ELSE
       v_snap := jsonb_set(v_snap, '{bank_name}', to_jsonb(n_bank_name));
-      v_conflicts := v_conflicts || 'bank_name';
+      v_conflicts := array_append(v_conflicts, 'bank_name');
     END IF;
   END IF;
 
@@ -1366,10 +1366,10 @@ BEGIN
        OR v_company.bank_code IS NOT DISTINCT FROM (v_snap->>'bank_code') THEN
       new_bank_code := n_bank_code;
       v_snap := jsonb_set(v_snap, '{bank_code}', to_jsonb(n_bank_code));
-      v_changed := v_changed || 'bank_code';
+      v_changed := array_append(v_changed, 'bank_code');
     ELSE
       v_snap := jsonb_set(v_snap, '{bank_code}', to_jsonb(n_bank_code));
-      v_conflicts := v_conflicts || 'bank_code';
+      v_conflicts := array_append(v_conflicts, 'bank_code');
     END IF;
   END IF;
 
@@ -1379,10 +1379,10 @@ BEGIN
        OR v_company.email IS NOT DISTINCT FROM (v_snap->>'email') THEN
       new_email := n_email;
       v_snap := jsonb_set(v_snap, '{email}', to_jsonb(n_email));
-      v_changed := v_changed || 'email';
+      v_changed := array_append(v_changed, 'email');
     ELSE
       v_snap := jsonb_set(v_snap, '{email}', to_jsonb(n_email));
-      v_conflicts := v_conflicts || 'email';
+      v_conflicts := array_append(v_conflicts, 'email');
     END IF;
   END IF;
 
@@ -1392,10 +1392,10 @@ BEGIN
        OR v_company.phone IS NOT DISTINCT FROM (v_snap->>'phone') THEN
       new_phone := n_phone;
       v_snap := jsonb_set(v_snap, '{phone}', to_jsonb(n_phone));
-      v_changed := v_changed || 'phone';
+      v_changed := array_append(v_changed, 'phone');
     ELSE
       v_snap := jsonb_set(v_snap, '{phone}', to_jsonb(n_phone));
-      v_conflicts := v_conflicts || 'phone';
+      v_conflicts := array_append(v_conflicts, 'phone');
     END IF;
   END IF;
 
@@ -2411,7 +2411,10 @@ SELECT last_value FROM public.public_id_sequences WHERE entity_type='company';
 
 Phase 2 runnable plan: **FINALIZED**. Execution одобрен пользователем 2026-07-19;
 admin fixture для `1@ajoure.by` создан commit `3e813d07b` и blocker снят.
-Перед apply пакет скорректирован patch v3 и повторно проходит §13 gate.
+Перед apply пакет скорректирован patch v4 и повторно проходит §13 gate. После первого
+runtime-прогона неоднозначные scalar-array concatenations в billing RPC заменены на
+`array_append`; для уже применённой Phase 2 migration подготовлена отдельная corrective
+migration `20260719235959_crm_company_billing_array_append_fix.sql`.
 
 ---
 
@@ -2443,6 +2446,20 @@ admin fixture для `1@ajoure.by` создан commit `3e813d07b` и blocker с
 **Admin fixture:** `1@ajoure.by` имеет роли `admin + menedzher`; admin-only proof разблокирован.
 
 **Failure handling:** если post-commit runtime proof не прошёл — Phase 2 closure блокируется, Phase 3 не начинается, migration не редактируется, автоматический rollback не запускается; составляется blocker-отчёт и принимается отдельное решение о corrective migration или rollback.
+
+### 14.1 Runtime corrective patch
+
+Первый rollback-only proof прошёл для create/idempotency, search, link-contact,
+grp-refetch, archive и merge, но billing RPC остановился с `SQLSTATE 22P02` на выражении
+`text[] || 'scalar'`. Все proof-транзакции были откатаны; committed fixtures и residue
+отсутствуют, company sequence сохранил `last_value=0`.
+
+Corrective migration заменяет все 24 добавления элементов в `v_changed`/`v_conflicts`
+на однозначный `array_append(text[], text)`, повторно нормализует service-role-only ACL и
+проверяет отсутствие старой формы в `pg_get_functiondef`. Она не меняет таблицы,
+данные, policies или другие функции. Отдельный rollback, возвращающий заведомо
+дефектное тело, не создаётся; при решении откатить весь Phase 2 используется полный
+rollback §12.
 
 ---
 
