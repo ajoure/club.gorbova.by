@@ -11,11 +11,14 @@
 
 ## 2. Файловый scope спринта
 
-Изменённые файлы (совокупный diff):
+Изменённые файлы (фактический совокупный diff ACL-hardening спринта):
 
-- `supabase/migrations/<ts>_crm_companies_phase1_acl_hardening.sql` — новая corrective migration (только REVOKE/GRANT и DO-guards).
+- `supabase/migrations/20260719165300_1370ed2d-374b-42d8-bfb2-4ba1100878d9.sql` — corrective migration (REVOKE/GRANT + DO-guards). SHA-256 текущего файла: `0196525ab0bdc1466525eae01cb8156127dc16e6f1cc56e976f34755f5556a3c`.
 - `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md` — настоящий отчёт.
-- `src/integrations/supabase/types.ts` — если Lovable перегенерирует автоматически. ACL-миграция не меняет схему PostgREST-типов, поэтому содержательного schema diff быть не должно; при появлении такого diff — HARD STOP.
+- `.lovable/plan.md` — план ACL hardening (в отдельном документационном патче восстановлен в формате «План:»).
+- `src/integrations/supabase/types.ts` — авто-регенерируемый файл; содержательного schema diff нет (ACL не меняет PostgREST-контракт).
+
+Ссылка на Phase 1 forward migration: `supabase/migrations/20260719162721_d83567e6-e8a4-4beb-8e97-3cfad083da9b.sql`, SHA-256 `c15be4e3860be9a149cb11ac9103c8c384838d5ea270868121e44bcda2dd5e6b`.
 
 Другие файлы, UI, edge functions и `config.toml` не изменялись.
 
