@@ -763,25 +763,24 @@ BEGIN
 
   -- trigger set_companies_public_id проставляет public_id
 
-  -- domain_events: company.created.v1 (dedup via idempotency_key)
-  INSERT INTO public.domain_events (event_type, source, entity_id, payload)
-  SELECT 'company.created.v1', 'crm', v_id,
-         jsonb_build_object(
-           'version', 1,
-           'company_id', v_id,
-           'public_id', (SELECT public_id FROM public.companies WHERE id=v_id),
-           'country', v_country,
-           'unp_normalized', _unp_normalized,
-           'company_kind', _company_kind,
-           'source', _source,
-           'source_cld_id', _source_cld_id,
-           'actor_user_id', _actor_user_id,
-           'occurred_at', now(),
-           'idempotency_key', 'company.created:' || v_id::text
-         )
-  WHERE NOT EXISTS (
-    SELECT 1 FROM public.domain_events
-     WHERE payload->>'idempotency_key' = 'company.created:' || v_id::text
+  -- domain_events: company.created.v1 через private emit helper (§10.1)
+  PERFORM public._crm_company_emit_domain_event(
+    'company.created.v1',
+    v_id,
+    'company.created:' || v_id::text,
+    jsonb_build_object(
+      'version', 1,
+      'company_id', v_id,
+      'public_id', (SELECT public_id FROM public.companies WHERE id=v_id),
+      'country', v_country,
+      'unp_normalized', _unp_normalized,
+      'company_kind', _company_kind,
+      'source', _source,
+      'source_cld_id', _source_cld_id,
+      'actor_user_id', _actor_user_id,
+      'occurred_at', now(),
+      'idempotency_key', 'company.created:' || v_id::text
+    )
   );
 
   RETURN v_id;
