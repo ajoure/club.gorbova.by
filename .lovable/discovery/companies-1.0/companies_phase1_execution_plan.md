@@ -2,9 +2,9 @@
 
 Статус: **DRAFT / NOT APPROVED / DO NOT EXECUTE**
 
-Документ фиксирует Phase 1 в границах утверждённого Master Plan v2. Ни одна миграция не запускается до отдельного approval после проверки всех discovery-документов.
+Документ фиксирует Phase 1 в границах утверждённого Master Plan v2 и APPROVED / FROZEN architecture freeze (commit `04f85026c3458cdd3c8398c1841c1e4371e3dbfa`). Ни одна миграция не запускается до отдельного approval после проверки всех discovery-документов.
 
-История: v2 — коррекция по итогам ревью Discovery 1.0. Расширения scope (trigger на billing, feature flag, registry inserts, enqueue существующих строк) отозваны и перенесены в Phase 4. Восстановлены минимальные RPC-скелеты согласно Master Plan v2.
+История: v2 — коррекция по итогам ревью Discovery 1.0. Расширения scope (trigger на billing, feature flag, registry inserts, enqueue существующих строк) отозваны и перенесены в Phase 4. Восстановлены минимальные RPC-скелеты согласно Master Plan v2. v3 (правки после approval architecture freeze): `company_contacts.source_client_legal_details_map_id` переведён на `ON DELETE RESTRICT` (согласование с CHECK `company_contacts_billing_requires_source`); полностью раскрыты `CREATE POLICY` и `DROP POLICY` для `client_legal_details_company_map` и `company_contacts` — формулировка «аналогичный набор» устранена.
 
 ## 1. Scope Phase 1 (core, не расширять)
 
