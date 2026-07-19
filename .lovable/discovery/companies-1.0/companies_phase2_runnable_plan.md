@@ -939,25 +939,33 @@ BEGIN
   END IF;
 
   IF v_first_insert THEN
-    INSERT INTO public.domain_events (event_type, source, entity_id, payload)
-    SELECT 'company.linked_to_contact.v1', 'crm', _company_id, jsonb_build_object(
-      'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'profile_id', _profile_id,
-      'relationship_type', _relationship_type, 'is_billing_contact', COALESCE(_is_billing_contact,false),
-      'source', _source, 'source_map_id', _source_client_legal_details_map_id,
-      'occurred_at', now(),
-      'idempotency_key', 'company.linked_to_contact:' || v_id::text)
-    WHERE NOT EXISTS (
-      SELECT 1 FROM public.domain_events
-       WHERE payload->>'idempotency_key' = 'company.linked_to_contact:' || v_id::text);
+    PERFORM public._crm_company_emit_domain_event(
+      'company.linked_to_contact.v1',
+      _company_id,
+      'company.linked_to_contact:' || v_id::text,
+      jsonb_build_object(
+        'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'profile_id', _profile_id,
+        'relationship_type', _relationship_type, 'is_billing_contact', COALESCE(_is_billing_contact,false),
+        'source', _source, 'source_map_id', _source_client_legal_details_map_id,
+        'occurred_at', now(),
+        'idempotency_key', 'company.linked_to_contact:' || v_id::text
+      )
+    );
   ELSIF v_material THEN
-    INSERT INTO public.domain_events (event_type, source, entity_id, payload)
-    SELECT 'company.linked_to_contact.v1', 'crm', _company_id, jsonb_build_object(
-      'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'update', true,
-      'occurred_at', now(),
-      'idempotency_key', 'company.linked_to_contact.updated:' || v_id::text || ':' ||
-                         md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
-                             coalesce(_source_client_legal_details_map_id::text,'')))
-    ON CONFLICT ((payload->>'idempotency_key')) DO NOTHING;
+    PERFORM public._crm_company_emit_domain_event(
+      'company.linked_to_contact.v1',
+      _company_id,
+      'company.linked_to_contact.updated:' || v_id::text || ':' ||
+        md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
+            coalesce(_source_client_legal_details_map_id::text,'')),
+      jsonb_build_object(
+        'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'update', true,
+        'occurred_at', now(),
+        'idempotency_key', 'company.linked_to_contact.updated:' || v_id::text || ':' ||
+                           md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
+                               coalesce(_source_client_legal_details_map_id::text,''))
+      )
+    );
   END IF;
 
   RETURN v_id;
