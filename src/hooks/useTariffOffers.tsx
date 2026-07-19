@@ -256,12 +256,14 @@ export function useProductOffers(productId?: string) {
       
       const tariffIds = tariffs.map(t => t.id);
       
-      // Then get all offers for these tariffs
+      // Then get all offers for these tariffs (canonical order: sort_order, id)
       const { data, error } = await supabase
         .from("tariff_offers")
         .select("*, tariffs(id, name, code)")
         .in("tariff_id", tariffIds)
-        .order("sort_order", { ascending: true });
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true });
+
       
       if (error) throw error;
       return data as (TariffOffer & { tariffs: { id: string; name: string; code: string } })[];
