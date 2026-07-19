@@ -18,13 +18,14 @@ Paper-only. Никакой SQL в этом Discovery не исполняется
 4. GRANT SELECT/INSERT/UPDATE/DELETE ON companies TO authenticated;
    GRANT ALL ON companies TO service_role.
 5. ALTER TABLE companies ENABLE ROW LEVEL SECURITY + 4 policies.
-6. CREATE TABLE company_contacts (утверждённый контракт: relationship_type/source/is_billing_contact,
+6. CREATE TABLE client_legal_details_company_map (полный audit-набор:
+   created_at/updated_at/created_by/updated_by/metadata) → GRANT → RLS → policies.
+   Создаётся ДО company_contacts, т.к. company_contacts.source_client_legal_details_map_id → map(id).
+7. CREATE TABLE company_contacts (утверждённый контракт: relationship_type/source/is_billing_contact,
    без role='billing'; profile_id nullable для внешнего импорта; source_client_legal_details_map_id
-   для machine-checkable lineage) → GRANT → RLS → policies.
-7. CREATE TABLE client_legal_details_company_map (с полным audit-набором, включая updated_at)
-   → GRANT → RLS → policies.
-8. CREATE TABLE company_sync_queue → GRANT только service_role (никакого authenticated SELECT)
-   → RLS → single policy service_role.
+   FK на map, созданную в шаге 6) → GRANT → RLS → policies.
+8. CREATE TABLE company_sync_queue (полный audit-набор, включая created_by/updated_by)
+   → GRANT только service_role (никакого authenticated SELECT) → RLS → single policy service_role.
 9. Индексы (см. performance_notes §4-7).
 10. Триггер update_updated_at_column на 4 таблицы (все имеют updated_at).
 11. Триггер trg_set_companies_public_id, вызывающий next_public_id('company').
