@@ -1,12 +1,19 @@
 # Phase 3B — Identity Remediation Report
 
-- **Version:** 1.0
+- **Version:** 1.1
 - **Дата:** 2026-07-19
-- **Скоуп:** только schema-only миграция для устранения identity blocker'а из
-  `companies_phase3b_rollback_rehearsal_report.md`.
+- **История:** v1.0 (2026-07-19) — первичная schema-only миграция; v1.1
+  (2026-07-19) — corrective schema-only миграция для NOT NULL actor blocker
+  в `crm_company_link_contact` (см. §6).
+- **Скоуп:** только schema-only миграции для устранения identity blocker'а из
+  `companies_phase3b_rollback_rehearsal_report.md` и последующего NOT NULL
+  actor blocker'а, обнаруженного независимым static review.
 - **Backfill не выполнялся.** Никакие 17 CLD не обрабатывались; никаких DML,
   очередей, воркеров, UI, edge-функций или Phase 4+ изменений не вносилось.
 - **Phase 3C НЕ выполнялся и остаётся запрещён до отдельного admin approval.**
+- **Phase 3B rehearsal не запускался** — заблокирован до применения corrective
+  миграции v1.1; после её apply — по-прежнему требует rehearsal под реальной
+  service-role identity в approved окружении.
 
 ---
 
