@@ -1,419 +1,238 @@
-# да, согласен, с учетом правок:
+План: CRM Companies — Phase 1 production execution в Lovable Cloud (v2, с внесёнными правками 1–17)
+
+Статус: PLAN ONLY / DO NOT EXECUTE. Ожидает отдельного согласования перед применением миграции.
+Язык: план, отчёт о выполненной работе и вся переписка ведутся только на русском языке.
+
+## 1. Цель
+
+Однократно применить утверждённый Phase 1 forward migration (runnable plan, commit `5c86f46511548a8fd4586838a2af67cbf19f6bd9`) через штатный механизм миграций Lovable Cloud в подключённую managed-БД (`hdjgkjceownmmnrqqtuz`). Никакого rollback rehearsal, никакого повторного forward, никакого backfill.
+
+## 2. Scope (что войдёт в единственную миграцию)
+
+Ровно то, что заморожено в `.lovable/discovery/companies-1.0/companies_phase1_runnable_plan.md`:
+
+- Регистрация namespace в `public_id_sequences`: `('company','CMP',0)` (без `ON CONFLICT DO NOTHING`).
+- Таблица `public.companies` + GRANT + RLS + policies.
+- Таблица `public.client_legal_details_company_map` (создаётся до `company_contacts`, т.к. FK) + GRANT + RLS + policies.
+- Таблица `public.company_contacts` (`source_client_legal_details_map_id` → map(id) `ON DELETE RESTRICT`) + GRANT + RLS + policies.
+- Таблица `public.company_sync_queue` (`service_role` only, никакого `authenticated` GRANT) + RLS + policy.
+- Индексы согласно `companies_performance_notes.md` §4–7.
+- Триггер `update_updated_at_column` на все 4 таблицы.
+- Функция `public.set_companies_public_id()` и триггер `trg_set_companies_public_id` на `public.companies` (правка №1: функция и триггер — разные объекты).
+- RPC-скелеты `crm_company_get_or_create(...)` и `crm_company_link_contact(...)` (SECURITY DEFINER, `SET search_path=public`, guard `has_role_v2`, тела — skeleton).
+- 13 утверждённых RLS policies суммарно по 4 таблицам.
+- Все `DO … RAISE EXCEPTION` guards из §3.0 runnable plan.
+
+## 3. Что запрещено в этой миграции
+
+- Backfill данных, тестовые/фикстурные строки в новых таблицах.
+- Триггер на `client_legal_details` (Phase 4).
+- Изменения `orders_v2`, `crm_tasks`, UI, edge functions.
+- Feature flag, admin_section, admin_resource inserts (Phase 7).
+- Rollback как тест, повторный forward, DROP+CREATE cycle.
+- Правки approved DDL/RLS/RPC.
+
+## 4. Порядок выполнения
+
+### 4.1 Preflight (read-only, без изменений)
+
+Через `supabase--read_query`:
+
+- Пересчитать `schema_hash` по формуле из `companies_read_only_proof.md §7` и сравнить с baseline `c41160b83c8e15c3d3c41a13028700d5`.
+- Проверить отсутствие в `pg_proc` (правка №1): `crm_company_get_or_create`, `crm_company_link_contact`, `set_companies_public_id`.
+- Проверить отсутствие в `pg_trigger` (правка №1): `trg_set_companies_public_id` на `public.companies`.
+- Проверить отсутствие таблиц: `companies`, `client_legal_details_company_map`, `company_contacts`, `company_sync_queue`.
+- Namespace guard (правка №3): `SELECT 1 FROM public_id_sequences WHERE entity_type='company' OR prefix='CMP'` → должно быть 0 строк. Запрещены все три ситуации (company/CMP занят; company с другим prefix; CMP с другим entity_type).
+- Точные сигнатуры helpers (правка №2) через `pg_get_function_identity_arguments`:
+  - `public.next_public_id(p_entity_type text)`
+  - `public.update_updated_at_column()`
+  - `public.has_role_v2(_user_id uuid, _role_code text)`
+  Тип `app_role_v2` в контракте НЕ используется.
+- 7 канонических ролей в `public.roles`.
+- SYSTEM tenant (правка №4) — полный контракт одновременно:
+  - `id = '00000000-0000-0000-0000-000000000001'`
+  - `name = 'system'`
+  - `is_personal = false`
+- Отсутствие companies-related триггеров на `client_legal_details`.
+
+### 4.2 Атомарность выполнения (правка №5)
+
+Перед применением подтвердить фактический контракт `supabase--migration`:
+- либо документально доказано, что одна миграция выполняется атомарно (Lovable оборачивает в транзакцию);
+- либо SQL должен содержать собственные `BEGIN;` / `COMMIT;`.
+
+При отсутствии подтверждённого контракта — HARD STOP. Частично применённый DDL недопустим.
+
+### 4.3 Единственная forward migration
+
+Одна `supabase--migration` строго из approved runnable plan, содержащая:
+
+- `SET LOCAL lock_timeout = '3s'` и `SET LOCAL statement_timeout = '30s'` (внутри транзакции — либо гарантированной Lovable, либо явной);
+- все approved `DO … RAISE EXCEPTION` guards §3.0 первым блоком, до DDL, включая namespace guard в форме правки №3;
+- DDL в порядке: namespace INSERT (без `ON CONFLICT`) → companies → client_legal_details_company_map → company_contacts → company_sync_queue → индексы → `update_updated_at_column` триггеры → `set_companies_public_id()` + `trg_set_companies_public_id` → RPC-скелеты;
+- для каждой таблицы: `CREATE TABLE` → `GRANT` → `ENABLE ROW LEVEL SECURITY` → `CREATE POLICY`;
+- никаких `ON CONFLICT DO NOTHING` для namespace.
+
+Diff-контроль (правка №6): миграция НЕ обязана побайтово совпадать с runnable plan. Требуется:
+- содержательное и дословное совпадение DDL, constraints, FK actions, indexes, triggers, RLS и RPC-блоков с approved SQL;
+- допускаются только заранее перечисленные execution-wrapper дополнения: `SET LOCAL lock_timeout`, `SET LOCAL statement_timeout`, опциональные `BEGIN`/`COMMIT`;
+- до применения к отчёту прикладывается нормализованный diff между runnable plan §3–§6 и migration SQL.
+
+Порядок фиксации SHA (правка №7):
+1. создать migration-файл в `supabase/migrations/`;
+2. зафиксировать в commit, зафиксировать commit SHA;
+3. рассчитать SHA-256 файла миграции;
+4. приложить нормализованный diff;
+5. применить именно этот файл;
+6. после применения повторно подтвердить тот же commit SHA и SHA-256 файла;
+7. проверить наличие ровно одной новой записи в таблице истории миграций Supabase (`supabase_migrations.schema_migrations`).
+
+### 4.4 Post-migration verification (read-only)
+
+Через `supabase--read_query`:
+
+**Схема и данные:**
+- 4 таблицы существуют, все пустые (`count(*) = 0`).
+- Поля, `NOT NULL`, `DEFAULT`, `CHECK`, `UNIQUE`, FK actions совпадают с runnable plan (проверка по `information_schema` и `pg_constraint` по именам ограничений).
+
+**Baseline существующей схемы (правка №9):**
+- Повторно рассчитать schema_hash семи исходных таблиц по формуле §7 read-only proof.
+- Ожидание: `c41160b83c8e15c3d3c41a13028700d5`.
+- Это доказательство, что существующие таблицы и контракты не изменены.
+
+**RLS (правка №11):**
+- Для 4 таблиц: `pg_class.relrowsecurity = true`.
+- 13 policies в `pg_policies` с точными `cmd`, `roles`, `qual`, `with_check` (прикладываются полностью, а не только количество).
+
+**GRANT-матрица:**
+- `authenticated` имеет CRUD на 3 публичные таблицы.
+- `company_sync_queue` доступна только `service_role`.
+- `anon` не имеет доступа ни к одной из 4 таблиц.
+
+**Security-контракт трёх функций (правка №10) — `crm_company_get_or_create`, `crm_company_link_contact`, `set_companies_public_id`:**
+- `pg_get_functiondef` — полные тела приложить;
+- `prosecdef = true` для SECURITY DEFINER функций;
+- `proconfig` содержит `search_path=public`;
+- отсутствие EXECUTE у `PUBLIC`;
+- точные EXECUTE grants по approved matrix;
+- guard-роли внутри тел соответствуют approved matrix;
+- `crm_company_link_contact` skeleton не содержит DML;
+- `crm_company_get_or_create` skeleton не содержит INSERT в `companies`.
+
+**Дополнительно:**
+- Namespace `('company','CMP',0)` присутствует ровно один раз.
+- Триггеры `update_updated_at_column` на 4 таблицах и `trg_set_companies_public_id` на `companies` активны.
+- На `client_legal_details` не появилось companies-related триггеров.
+
+**Linter (правка №12):** запуск `supabase--linter`. Блокируют закрытие спринта:
+- ошибки RLS;
+- небезопасный `SECURITY DEFINER` (missing `search_path`, доступ `PUBLIC`);
+- неверный `search_path`;
+- лишние grants;
+- доступ `anon` к новым таблицам;
+- доступ `authenticated` к `company_sync_queue`;
+- ошибки функций, constraints, FK.
+
+Некритичные performance/info findings — перенос в follow-up с явным обоснованием, не блокируют.
+
+### 4.5 Static verification vs runtime proof vs API smoke (правка №13)
+
+Разделены три разных вида доказательств:
+
+1. **Static / catalog verification** — §4.4 выше. Выполняется в этом спринте.
+2. **Database RLS runtime proof** — фактический `SET LOCAL ROLE authenticated` с JWT-контекстом реального пользователя каждой из 7 ролей и проверкой SELECT/INSERT/UPDATE/DELETE. Вызов `SELECT has_role_v2(...)` НЕ является доказательством того, что RLS разрешает пользователю SELECT. Если реальный JWT-контекст под sandbox-ролью недоступен — статус:
+   `DEFERRED TO FOLLOW-UP — не блокирует основной additive scope`.
+3. **PostgREST / API smoke** — реальные HTTP-запросы к Data API под `anon` и `authenticated` JWT. Если недоступно — статус:
+   `DEFERRED TO FOLLOW-UP — не блокирует основной additive scope`.
+
+В отчёте запрещено писать, что доступ `admin`/`super_admin` подтверждён на основании одного лишь вызова `has_role_v2`.
+
+### 4.6 Deferred proofs (правка №14)
+
+В этом спринте НЕ доказывается и явно перечисляется в deferred:
+
+- public ID trigger runtime (нужен INSERT);
+- INSERT/UPDATE/DELETE по всем ролям;
+- billing lineage через `client_legal_details_company_map`;
+- runtime-ветки RPC (`crm_company_get_or_create`, `crm_company_link_contact`);
+- performance-замеры индексов (правка №17: неинформативны на пустых таблицах, выполняются после backfill).
+
+### 4.7 Rollback артефакт (правка №8)
+
+Rollback SQL из §9 runnable plan сохраняется в репозитории, вне `supabase/migrations/` (например, `.lovable/rollback/companies-phase1/phase1_rollback.sql`), с расчётом SHA-256. **Не применяется.**
+
+Разрешённый diff PR включает ровно три позиции:
+1. один forward migration в `supabase/migrations/`;
+2. один неисполняемый rollback SQL в `.lovable/rollback/companies-phase1/`;
+3. один отчёт о выполненной работе (markdown).
+
+## 5. Stop-guards (до применения миграции)
+
+Остановиться и вернуться с отчётом-блокером, если:
+
+- `schema_hash` отличается от `c41160b83c8e15c3d3c41a13028700d5`;
+- любой из 4 объектов уже существует;
+- namespace guard §4.1 нашёл строку с `entity_type='company'` ИЛИ `prefix='CMP'`;
+- отсутствует SYSTEM tenant по полному контракту (правка №4);
+- отсутствует любой helper с точной сигнатурой (правка №2) или любая из 7 канонических ролей;
+- атомарность миграции не подтверждена (правка №5);
+- diff миграции не соответствует approved runnable plan §3–§6 по правилам правки №6;
+- в diff PR появились файлы вне трёх разрешённых позиций (правка №8).
+
+## 6. Порядок действий при ошибке после commit (правка №15)
+
+- **Миграция не применилась атомарно** → блокер-отчёт, повторный запуск запрещён, ждать отдельного решения.
+- **Миграция применилась, но critical verification / linter check не прошёл**:
+  - остановить спринт;
+  - не переходить к Phase 2;
+  - НЕ выполнять rollback автоматически;
+  - представить blocker-отчёт с фактическими outputs;
+  - запросить отдельное решение на применение сохранённого rollback SQL.
+
+## 7. Deliverable
+
+`Отчет о выполненной работе: CRM Companies — Phase 1 production execution` (на русском), содержащий:
+
+- pre-migration `schema_hash` и подтверждение baseline;
+- commit SHA и SHA-256 файла миграции (зафиксированные до применения, подтверждённые после);
+- нормализованный diff runnable plan §3–§6 vs migration SQL;
+- полный текст всех verification-запросов и фактические outputs (не только количества);
+- post-migration schema_hash семи исходных таблиц с подтверждением равенства baseline (правка №9);
+- полный security-контракт трёх функций (правка №10);
+- полные `qual`/`with_check` для 13 policies и `relrowsecurity=true` для 4 таблиц (правка №11);
+- linter findings с классификацией «блокирует / не блокирует» по правке №12;
+- SHA-256 сохранённого rollback SQL и его путь в репозитории;
+- запись в `supabase_migrations.schema_migrations` — подтверждение ровно одной новой строки (правка №7);
+- явный deferred-список (правки №13, №14, №17);
+- финальный статус (правка №16):
+  ```
+  Phase 1 forward:        APPLIED
+  Static verification:    PASSED
+  Rollback:               NOT EXECUTED
+  RLS runtime proof:      DEFERRED
+  PostgREST smoke:        DEFERRED
+  Follow-up validation:   RECORDED / NOT EXECUTED
+  ```
+  Формулировка `Follow-up validation: SCHEDULED` запрещена, если запуск фактически не назначен.
+
+## 8. Follow-up (отдельный спринт, вне scope)
+
+- Rollback rehearsal и повторный forward — только на выделенной staging-БД, когда она появится.
+- Полная RLS runtime matrix под всеми 7 ролями с реальным JWT.
+- Реальный PostgREST/API smoke.
+- Runtime-ветки RPC, public ID trigger runtime, billing lineage.
+- Performance-замеры индексов — после backfill / на репрезентативных объёмах (правка №17).
+- Phase 2 (полные RPC), Phase 3 (backfill), далее по roadmap.
+
+## 9. Требование к языку
 
-1. **Зафиксировать неизменяемые инварианты Master Plan v2.** Discovery 1.0 проверяет способы реализации и переиспользование, но не открывает заново уже принятые архитектурные решения:
-
-```text
-- companies — standalone canonical CRM-сущность;
-- profiles остаётся сущностью физлица/контакта;
-- access, entitlements и Telegram всегда привязаны только к profile_id;
-- auto-source только:
-  client_legal_details.purpose='billing'
-  AND client_type IN ('legal_entity','entrepreneur');
-- purpose='document', legal_details_persons,
-  legal_details_entity_person_links не участвуют в CRM auto-source;
-- client_legal_details остаётся compat SOT;
-- company_contact_person_map не входит в Phase 1 и остаётся deferred для Phase 10+;
-- Phase 1 core ограничен:
-  companies,
-  company_contacts,
-  client_legal_details_company_map,
-  company_sync_queue либо доказанным переиспользованием существующей очереди.
-
-```
-
-Discovery может уточнить детали реализации этих решений, но отменить их можно только отдельным ADR с явным approval пользователя.
-
-2. **Phase C не должна реально выбирать Entity-абстракцию как равноправный путь текущего спринта.** ADR-0001 должен фиксировать:
-
-```text
-Решение текущего спринта:
-companies + company_contacts как standalone-модель.
-
-Entity abstraction:
-только потенциальное эволюционное направление после Phase 11,
-не часть текущего DDL и не основание для рефакторинга CRM сейчас.
-
-```
-
-Иначе Discovery может снова вернуть проект к уже закрытой архитектурной дискуссии.
-
-3. **Phase J не должна автоматически требовать добавления `parent_company_id` и `hierarchy_type` в Phase 1.** Это пока speculative future scope. Правильная формулировка:
-
-```text
-Discovery документирует будущие требования к hierarchy.
-Добавление parent_company_id / hierarchy_type в Phase 1 допускается
-только если подтвержден реальный ближайший use case и принято отдельное
-решение в Phase 1 плане. Иначе поля остаются deferred.
-
-```
-
-Не нужно добавлять поля «на всякий случай».
-
-4. `**companies_phase1_execution_[plan.md](http://plan.md)` должен быть явно нерunnable.** Поскольку Final Discovery ещё не утверждён, документ необходимо маркировать:
-
-```text
-Статус: DRAFT / NOT APPROVED / DO NOT EXECUTE
-
-```
-
-Он должен содержать предполагаемые DDL/RLS/rollback/verification, но никакая миграция не запускается до отдельного approval после проверки всех discovery-документов.
-
-5. **В Final Discovery нужно закрыть вопрос очереди.** Сейчас в Master Plan остаётся развилка:
-
-```text
-company_sync_queue
-vs
-переиспользование notification_outbox / другой существующей queue
-
-```
-
-Discovery обязан:
-
-- проинвентаризировать существующие outbox/queue/worker-паттерны;
-- проверить payload, retry, locking, status, attempts, observability;
-- дать однозначную рекомендацию;
-- запретить создание `company_sync_queue`, если существующая очередь семантически подходит;
-- либо обосновать отдельную очередь, если notification-outbox предназначен только для уведомлений.
-
-Решение зафиксировать в `companies_architecture_[freeze.md](http://freeze.md)` и Phase 1 draft.
-
-6. **Разделить activity, domain events и audit по назначению.** Discovery не должен выбирать одну таблицу как универсальную. Нужно отдельно определить:
-
-```text
-crm_activity_log
-— бизнес-лента CRM;
-
-domain_events / domain_executions
-— междоменная доставка, lineage, retries;
-
-audit_logs
-— аудит критических действий пользователя/администратора.
-
-```
-
-Для каждого будущего события Companies указать, куда оно должно попадать. Это соответствует принципам событийности, аудита, ID-driven связей и запрета дублирования.
-
-7. **Все упоминания `entity_type='company'` считать гипотезой до проверки schema constraints.** Нужно проверить:
-
-- тип колонки;
-- CHECK constraint;
-- PostgreSQL ENUM;
-- FK;
-- nullable;
-- используемые RPC;
-- TypeScript-типы;
-- hardcoded switch/case.
-
-Недостаточно увидеть текстовую колонку `entity_type`. В deliverable должен быть вердикт:
-
-```text
-работает без DDL;
-требует расширения CHECK;
-требует изменения enum;
-не поддерживается текущей моделью.
-
-```
-
-8. **Permissions matrix строить только по реально существующим ролям.** Если `crm_manager`, `readonly` или другая роль отсутствует, не создавать её концептуально и не утверждать, что она существует. Указать:
-
-```text
-existing;
-alias;
-not found;
-future role — outside scope.
-
-```
-
-Также проверить не только таблицы ролей, но и:
-
-- sidebar/navigation guards;
-- route guards;
-- RPC authorization;
-- RLS;
-- resource/section registry;
-- hidden UI actions.
-
-9. **AmoCRM `companies` не считать внутренней CRM-моделью без доказательств.** В Discovery нужно различить:
-
-```text
-external AmoCRM company model
-≠
-canonical internal companies
-
-```
-
-Интеграции должны оставаться anti-corruption layer/adapters. Нельзя автоматически сделать структуру AmoCRM источником внутренней схемы или канонических полей. Это также должно быть отражено в dependency/reuse matrix.
-
-10. **Добавить явную проверку duplicate storage.** Для каждого предполагаемого поля `companies` нужно указать:
-
-
-| Поле | Текущий источник | Canonical в Companies | Mirror/compat | Правило обновления |
-| ---- | ---------------- | --------------------- | ------------- | ------------------ |
-
-
-Особенно:
-
-- УНП;
-- полное и краткое наименование;
-- legal form;
-- адрес;
-- email;
-- телефон;
-- директор;
-- банковские реквизиты;
-- статус;
-- регистрационные данные.
-
-Discovery должен не просто перечислить таблицы реквизитов, а доказать, что Phase 1 не создаёт третий независимый SoT. Корпоративный модуль также требует разделения постоянных данных компании, данных физлица, link-данных и данных конкретной процедуры.
-
-11. **Phase H — только агрегированные данные.** В markdown запрещено переносить персональные данные, телефоны, email, ФИО и реальные реквизиты клиентов. Разрешено фиксировать:
-
-- counts;
-- distinct counts;
-- null rates;
-- duplicate counts;
-- распределение по типам;
-- обезличенные примеры структуры.
-
-SQL может читать данные, но deliverables не должны становиться выгрузкой production PII.
-
-12. **Оценку `companies` считать только по утверждённому billing-source guard.** Не по всей таблице `client_legal_details`, не по `legal_entities_requisites` самостоятельно и не по document-реквизитам:
-
-```sql
-WHERE purpose = 'billing'
-  AND client_type IN ('legal_entity', 'entrepreneur')
-
-```
-
-Отдельно посчитать:
-
-- строки billing-source;
-- строки с нормализуемым УНП;
-- уникальные `country + normalized_unp`;
-- строки без УНП;
-- коллизии одного УНП с разными именами/legal form;
-- несколько billing-карточек разных profiles на одну компанию.
-
-13. **В Phase D проверить не только RPC с префиксами `search_*`/`list_*`.** Также искать:
-
-- PostgREST queries;
-- hooks с `.from(...).select(...)`;
-- shared search services;
-- command palette/global search;
-- server-side pagination;
-- SQL views;
-- autocomplete;
-- fuzzy/trigram search.
-
-Иначе inventory поиска будет неполным.
-
-14. **В Phase B запретить refactor существующих Sheet-компонентов в рамках Discovery и Phase 1.** Результат `Extract shared` или `Refactor first` является только рекомендацией. Такой refactor не должен автоматически становиться blocker для создания Companies, если UI можно безопасно реализовать с существующими primitives.
-
-Некритичный shared-shell refactor нужно вынести в deferred list, а не тормозить основной scope.
-
-15. **Phase I должна разделять основной implementation sprint и follow-up validation sprint.** Paper strategy должна включать:
-
-```text
-Main implementation:
-schema → RPC → backfill → sync → integration → UI.
-
-Follow-up validation:
-runtime smoke → regression → performance → proof gaps →
-cleanup → deferred technical debt.
-
-```
-
-Некритичные proof gaps не должны бесконечно блокировать основной безопасный scope, но должны сохраняться в deferred list.
-
-16. **Добавить обязательный реестр unresolved decisions.** В `companies_architecture_[freeze.md](http://freeze.md)` должен быть раздел:
-
-```text
-Resolved decisions
-Deferred decisions
-Explicitly rejected options
-Blockers before Phase 1
-Non-blocking follow-up
-
-```
-
-Architecture freeze нельзя подписывать, если в нём скрыто остаются формулировки «решить позже» по критическим вопросам DDL, SoT, dedupe, queue, RLS или audit.
-
-17. **Каждая ссылка на текущее состояние должна быть точной.** Требовать формат:
-
-```text
-DB:
-public.crm_tasks.column_name
-constraint/function/policy name
-
-Code:
-src/path/File.tsx:Lx-Ly
-supabase/functions/name/index.ts:Lx-Ly
-
-RPC:
-public.function_name(signature)
-
-```
-
-Недостаточно общих фраз вроде «в проекте есть поиск» или «Sheet можно переиспользовать».
-
-18. **Добавить отдельный раздел source/field ownership.** Для будущих обновлений компании определить:
-
-```text
-Какие поля может обновлять billing sync;
-какие поля редактирует администратор;
-какие поля импортируются;
-какие поля никогда не перезаписываются автоматически;
-как обрабатываются расхождения;
-что происходит с archived/merged company.
-
-```
-
-Это должно согласовываться с ранее принятым правилом: совпадение УНП создаёт map + billing contact, но не перезаписывает критичные поля без review.
-
-19. **В DoD добавить проверку отсутствия изменений репозитория и БД.**
-
-```text
-- git diff по application/schema/migrations = пусто;
-- нет новых migration files;
-- нет изменённых SQL/RPC/edge/UI файлов;
-- изменены только markdown-файлы в approved discovery paths;
-- DB schema до и после Discovery идентична.
-
-```
-
-20. **Во все документы и в запрос Lovable добавить языковой контракт:**
-
-```text
 План должен быть составлен на русском языке.
 Отчёт о выполненной работе должен быть составлен на русском языке.
-Вся переписка, пояснения, результаты и deliverables —
-только на русском языке.
+Вся переписка, все пояснения и все результаты должны предоставляться только на русском языке.
 
-```
+## 10. Текущий статус
 
-Сообщение Lovable должно начинаться с обязательной маркировки:
-
-```text
-План: CRM Companies — Final Discovery 1.0
-
-```
-
-А после выполнения:
-
-```text
-Отчет о выполненной работе:
-CRM Companies — Final Discovery 1.0
-
-```
-
-Это обязательное правило оформления проекта.
-
-После внесения этих правок план готов к передаче Lovable. Это один consolidated-пакет замечаний; повторная проверка должна быть только сверкой: **внесено / частично внесено / не внесено**.
-
-&nbsp;
-
-План: CRM Companies — Final Discovery 1.0 (Architecture Freeze)
-
-Цель — до старта Phase 1 полностью зафиксировать архитектуру Companies поверх существующего CRM, максимально переиспользуя таблицы, RPC, hooks и UI. Работа строго read-only: без миграций, без правок кода, без edge functions. Результат — набор markdown-документов, после которого архитектура считается замороженной; любое отклонение — только через ADR.
-
-## Границы
-
-- Только discovery: чтение БД (schema, sample counts), чтение исходников, статический анализ.
-- Ничего не создаём: ни таблиц, ни RPC, ни компонентов, ни feature flag'ов.
-- Все выводы фиксируем как deliverables ниже. Никаких «попутных фиксов».
-
-## Что уже подтверждено чтением проекта (нужно для точности плана)
-
-- CRM SoT (см. `.lovable/discovery/crm-tasks-diagnose.md`): сделка = `orders_v2`, контакт = `profiles`, воронки = `crm_pipelines` / `crm_pipeline_stages`, задачи = `crm_tasks` + `crm_task_types` + `crm_task_automation_rules` + `crm_task_notifications`, активность = `crm_activity_log`, события = `domain_events` / `domain_executions`, аудит = `audit_logs`.
-- Реквизиты юрлиц (billing SoT) уже существуют: `legal_entities_requisites`, `individual_requisites`, `client_legal_details`, `legal_details_persons`, `legal_details_entity_person_links`, `legal_details_positions_catalog`, `legal_details_roles_catalog`. Отдельной таблицы `companies` / `company_contacts` в БД пока нет.
-- Sheet-шеллы уже существуют: `src/components/admin/ContactDetailSheet.tsx`, `DealDetailSheet.tsx`, `PreregistrationDetailSheet.tsx`, `ConsentDetailSheet.tsx`, `diagnostics/BillingDetailSheet.tsx`, `payments/links/LinkDetailsDrawer.tsx`, `payments/PaymentDocumentsDrawer.tsx`.
-- Табы контакта: `src/components/admin/contact/ContactDealsTab.tsx`, `ContactFeedTab.tsx`, `ContactArtifactsTab.tsx`, `ContactWebinarsTab.tsx`, плюс `ContactChannelsSection.tsx`, `ContactTelegramChat.tsx`, `bepaid/ContactDealsDialog.tsx`.
-- Задачи: `src/components/admin/tasks/*` (Create/Edit/View/List/Board/Filters/Stats), hooks `useCrmTasks`, `useCrmTaskAutomationRules`, `useCrmTaskStats`, `useDealTaskSummary`, `useTaskRelations`.
-- Звонки: `src/components/admin/calls/*` (CallButton, CallRecordingPlayer, CallsHistorySection).
-- Amo/интеграции уже упоминают companies: `supabase/functions/amocrm-webhook`, `integration-sync`, `IntegrationSyncSettingsDialog`, `FieldMappingDialog`, `AmoCRMFieldMappingInfo`, `useIntegrationSync` — их нужно проверить на предмет уже существующей модели «компания».
-- Страницы: `AdminContacts`, `AdminDeals`, `AdminTasks`, `AdminCalls`, `AdminUnresolvedCalls` — отдельной `AdminCompanies` нет.
-
-Всё остальное про «Companies как Entity», backfill, permissions и т.д. — гипотезы, которые Discovery должен подтвердить или опровергнуть чтениями.
-
-## Phase A. Инвентаризация текущего CRM
-
-Для каждой сущности из списка ниже собрать таблицу: **таблицы БД → RPC/edge → hooks → UI-компоненты → страницы → политика переиспользования (reuse / partial / avoid duplicating)**.
-
-Сущности: Contacts, Deals, Tasks, Calls, Pipelines/Stages, Activity/Timeline, Documents, Invoices, Payments, Offers, Products, Tags, Legal requisites, Integrations (Amo/GC/Manychat).
-
-Метод:
-
-- `rg` по именам таблиц/hook'ов/RPC.
-- Чтение `supabase/functions/*/index.ts` и `src/hooks/*` без исполнения.
-- Проверка `crm_activity_log`, `domain_events`, `audit_logs` на предмет полей `entity_type`/`entity_id` (чтобы понять, можно ли туда добавить `company` без alter).
-
-## Phase B. Разбор ContactDetailSheet и DealDetailSheet
-
-Разложить оба sheet'а поблочно (Header, Profile, Timeline, Deals, Tasks, Calls, Documents, Notes, Actions, Permissions, Toolbar, Dialogs; для Deal — Participants, Products, Payments, Automation, Activity Feed). Для каждого блока — вердикт: **Reusable as-is / Reusable with props / Extract shared / Refactor first / Company-specific**.
-
-Дополнительно: определить, есть ли уже общий shell (общий Sheet/Drawer wrapper) — если нет, зафиксировать это как отдельный технический долг, но **не решать в этом Discovery**.
-
-## Phase C. Модель Companies: Entity vs Standalone
-
-Не принимаем решение до фактов. Discovery должен ответить, есть ли в проекте фактические предпосылки к абстракции Entity (общие поля `entity_type`+`entity_id` в timeline/activity/tasks/notes и т.п.). Итог фазы — рекомендация с аргументами:
-
-- Вариант 1 (default): `companies` + `company_contacts` как отдельные таблицы, интеграция через FK и `entity_type='company'` в существующих логах.
-- Вариант 2: Entity-абстракция.
-
-Согласно указанию пользователя, дефолтная рекомендация — Вариант 1 с эволюционным переходом позже. Discovery фиксирует это как ADR-0001.
-
-## Phase D. Инвентаризация RPC/поиска
-
-Собрать список существующих `search_*` / `list_*` RPC (contacts, deals, tasks) и оценить: расширять их через `entity_type` или добавить отдельный `search_companies`. Решение фиксируем в reuse-matrix.
-
-## Phase E. Permissions
-
-Пройтись по `has_role_v2`, `user_roles_v2`, `role_admin_resource_access`, `role_admin_section_access`, `admin_resource`, `admin_section`. Составить матрицу видимости Companies для ролей: super_admin, admin, employee, crm_manager, support, readonly. Без изменений — только карта.
-
-## Phase F. Automation
-
-Проверить `crm_task_automation_rules`, `tariff_offers.meta.auto_tasks`, триггеры на `orders_v2`. Ответ: покрывают ли существующие правила события Companies (create/update/link_contact/link_deal), или потребуется новый триггерный источник. Никаких изменений — только вывод.
-
-## Phase G. UI consistency
-
-Каталогизировать текущие паттерны: ширина Sheet, tabs, toolbar, bulk actions, pagination, empty state, filters, search input. Задача — чтобы будущая `CompanyDetailSheet` и `AdminCompanies` шли по тем же паттернам. Deliverable — чек-лист.
-
-## Phase H. Performance baseline
-
-Через `supabase--read_query` снять cardinality: `profiles`, `orders_v2`, `legal_entities_requisites`, `individual_requisites`, `client_legal_details`. Оценить ожидаемый размер `companies` (по уникальным ИНН/УНП в billing). Зафиксировать требуемые индексы (btree на FK, trigram/GIN на name/ИНН) как рекомендации к Phase 1 — **без создания**.
-
-## Phase I. Migration strategy (paper only)
-
-На бумаге: последовательность DDL → GRANT → RLS → policies → backfill из billing → verification → feature flag → production switch → rollback. Никакого SQL к запуску — только описание порядка.
-
-## Phase J. Future extensions
-
-Кратко зафиксировать требования к будущим Holding / Parent / Subsidiary / Branches / Company Hierarchy: минимальные поля (`parent_company_id`, `hierarchy_type`), чтобы Phase 1 их учитывал на уровне схемы (nullable), но не реализовывал.
-
-## Deliverables
-
-Все документы кладём в `.lovable/discovery/companies-1.0/`:
-
-- `companies_architecture_freeze.md` — итоговое архитектурное решение и ADR-0001 (standalone + эволюция к Entity).
-- `companies_reuse_matrix.md` — таблица «блок → существующее → вердикт reuse».
-- `companies_component_inventory.md` — UI-компоненты и sheets.
-- `companies_rpc_inventory.md` — RPC/edge и решение по `search_*`.
-- `companies_ui_inventory.md` — UI-паттерны и чек-лист consistency.
-- `companies_permissions_matrix.md` — Phase E.
-- `companies_automation_map.md` — Phase F.
-- `companies_performance_notes.md` — Phase H.
-- `companies_migration_strategy.md` — Phase I.
-- `companies_future_extensions.md` — Phase J.
-- `companies_phase1_execution_plan.md` — детальный план Phase 1 (DDL/RLS/audit/public_id/очереди) уже с опорой на freeze.
-
-## Definition of Done
-
-- Все 11 файлов созданы и связаны между собой.
-- Каждое утверждение о текущем состоянии проекта имеет ссылку на файл/таблицу/RPC.
-- Для каждого будущего блока Companies указано, что переиспользуется и что создаётся.
-- Ни одной новой таблицы, RPC, edge function, миграции, компонента — Discovery только читает.
-- В `companies_architecture_freeze.md` явно записано: «архитектура заморожена, изменения только через ADR».
-
-## Что дальше
-
-После утверждения Discovery 1.0 идём строго по фазам 1–11 из твоего сообщения. Ни одна фаза не стартует до подписания freeze-документа.
+- Runnable plan: APPROVED (commit `5c86f46511548a8fd4586838a2af67cbf19f6bd9`).
+- Отдельный Supabase staging: НЕ ТРЕБУЕТСЯ.
+- Production execution plan v2 (с правками 1–17): ОЖИДАЕТ СВЕРКИ СТАТУСОВ (внесено / частично внесено / не внесено).
+- Production migration: НЕ ЗАПУСКАТЬ до отдельного approve.
