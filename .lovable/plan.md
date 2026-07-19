@@ -1,243 +1,80 @@
-План: CRM Companies — Phase 2 фактический closure-patch runnable SQL
+# План: CRM Companies — Phase 1 ACL hardening и финальная static verification
 
-## 1. Проблема
+Статус: **APPROVED и APPLIED** (см. отчёт `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md`, §9 — документационный closure-патч).
+Файл восстановлен в формате «План:» вместо ранее ошибочно закоммиченного текста review.
 
-Повторный отчёт был отклонён, потому что в репозитории фактически сохранились незакрытые остатки:
+## 1. Scope
 
-- `.lovable/plan.md` не восстановлен и начинается с review-текста `# да, согласен, с учетом правок:`;
-- canonical forward/rollback markers охватывают markdown-прозу, заголовки и несколько code fences, поэтому диапазон между маркерами не является самостоятельным SQL-файлом;
-- в §11.2 есть незакрытый/вложенный SQL fence: после `END $$;` открыт второй ```sql без закрытия первого;
-- в Phase 2 runnable SQL остаются логические пробелы по deterministic resolve, billing no-op/idempotency, race-safe link_contact, merge guards/metadata, hash fallback и ACL matrix.
+- Одна corrective migration через `supabase--migration`: только `REVOKE` / `GRANT` и DO-guards. Никаких DDL, никаких изменений схем, RLS-политик, RPC-тел, триггеров.
+- Один отчёт: `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md`.
+- Авто-регенерация `src/integrations/supabase/types.ts` допустима только как no-op (schema PostgREST не меняется).
+- UI, edge functions, `supabase/config.toml`, cron, storage — не трогать.
+- Phase 2 — не начинать.
 
-## 2. Диагностика текущего состояния
+## 2. Read-only диагностика ДО правок
 
-Read-only проверка в этом turn подтвердила:
+1. `pg_class.relacl` и `has_table_privilege` для 4 таблиц Phase 1 (`companies`, `client_legal_details_company_map`, `company_contacts`, `company_sync_queue`).
+2. `pg_proc.proacl`, `prosecdef`, `proconfig` для 3 функций (`set_companies_public_id`, `crm_company_get_or_create`, `crm_company_link_contact`).
+3. `pg_policy` — 13 строк, полный вывод `polname/polcmd/polroles/polqual/polwithcheck` без сокращений.
+4. Baseline schema hash по discovery-запросу (`information_schema.columns` семи исходных таблиц, поля `table_name, column_name, data_type`); ожидание `c41160b83c8e15c3d3c41a13028700d5`.
+5. Наличие данных в 4 таблицах (4 × 0 rows подтвердить, но пустота **не** является предпосылкой hardening).
 
-- `docs/ENGINEERING_RULES.md` требует формат `План:` / `Отчет о выполнении:` и последовательность Diagnose → Plan → Dry run → Execute → Verify.
-- `.lovable/plan.md` действительно содержит review-текст и начинается с `# да, согласен, с учетом правок:`.
-- В `.lovable/discovery/companies-1.0/companies_phase2_runnable_plan.md`:
-  - `<!-- PHASE2_FORWARD_SQL_BEGIN -->` стоит перед строкой `Файл: ...`, заголовками `### 11.x` и markdown fences;
-  - §11.2 содержит открытый ```sql на строке 716 и второй открытый ```sql на строке 759 без закрытия первого;
-  - rollback marker также охватывает markdown-заголовки и fences;
-  - §13.8 заявляет `forward: 0 hits / rollback: 0 hits`, но этот результат неприменим как доказательство автономного SQL-файла, потому что canonical range не является чистым SQL.
+## 3. Corrective migration
 
-## 3. Предлагаемое решение
+Внутри одной транзакции с `SET LOCAL lock_timeout='3s'`, `statement_timeout='30s'`.
 
-Выполнить фактический новый документационный patch, без изменений БД, migration-файлов и `src/**`.
+1. **Preflight DO-guards**: 4 таблицы существуют, `relrowsecurity=true` на каждой, ровно 13 policies, 3 функции с точными identity args (`public.set_companies_public_id()`, `public.crm_company_get_or_create(text,text,text,text,text,uuid)`, `public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)`).
+2. **Таблицы**:
+   - `REVOKE ALL ON <table> FROM PUBLIC, anon, authenticated` для всех 4.
+   - `GRANT SELECT, INSERT, UPDATE, DELETE ON <table> TO authenticated` для `companies`, `client_legal_details_company_map`, `company_contacts`.
+   - `GRANT ALL ON <table> TO service_role` для всех 4.
+   - `company_sync_queue`: никаких прав anon/authenticated.
+3. **Функции**:
+   - `set_companies_public_id()` — `REVOKE ALL FROM PUBLIC, anon, authenticated, service_role`. Никакого GRANT.
+   - `crm_company_get_or_create(...)` и `crm_company_link_contact(...)` — `REVOKE ALL FROM PUBLIC, anon, service_role`, затем `GRANT EXECUTE ... TO authenticated`. `service_role` явный EXECUTE не получает (использует superuser bypass при необходимости; matrix утверждена).
+4. **Post-apply invariants (DO-block)** через `has_table_privilege` / `has_function_privilege`:
+   - anon и authenticated не имеют доступа к `company_sync_queue`.
+   - anon не имеет EXECUTE на 3 функциях.
+   - authenticated не имеет EXECUTE на `set_companies_public_id()`.
+   - authenticated имеет CRUD на 3 CRM-таблицах и EXECUTE на 2 RPC.
+   - Любое расхождение → `RAISE EXCEPTION` → транзакционный rollback.
 
-### 3.1 Восстановить `.lovable/plan.md`
+Global default privileges (`ALTER DEFAULT PRIVILEGES`) не трогать: вынесено в security follow-up.
 
-- Восстановить `.lovable/plan.md` дословно из commit `aa14bdaaa0de8fc0fbad99cb31e7f0df99ae51f7`.
-- После восстановления проверить, что первая строка больше не равна `# да, согласен, с учетом правок:`.
+## 4. Финальная static verification
 
-### 3.2 Сделать clean canonical forward SQL block
+Все проверки — read-only, машинные outputs без прозы:
 
-В `companies_phase2_runnable_plan.md`:
+1. Матрицы `has_table_privilege` (4 таблицы × 3 роли × 4 действия) и `has_function_privilege` (3 функции × 3 роли × EXECUTE).
+2. `pg_class.relacl` для 4 таблиц; `pg_proc.proacl` для 3 функций.
+3. Полный `pg_policy` вывод для 13 строк.
+4. Владельцы 3 функций (`postgres`).
+5. Повторный baseline hash — обязан совпасть с `c41160b83c8e15c3d3c41a13028700d5`.
+6. Пустота 4 таблиц.
+7. Свежий `supabase--linter` — без новых findings по Phase 1 объектам.
+8. Поиск прямых вызовов `next_public_id` в `src/**` и `supabase/**` (ожидание: только wrapper-функции в public-схеме, никаких клиентских вызовов).
+9. Migration history: попытка чтения `supabase_migrations.schema_migrations`; при отказе доступа — статус `NOT VERIFIED — permission denied`.
+10. Фиксация фактического SHA-256 файла corrective migration после применения и точного пути миграции; pre-apply SHA/commit — permanent gap.
 
-- оставить markdown-описание §11 вне canonical markers;
-- поместить `<!-- PHASE2_FORWARD_SQL_BEGIN -->` непосредственно перед единым SQL fence;
-- внутри marker-range оставить только один самостоятельный SQL-файл:
-  - `BEGIN;`
-  - preflight DO-block;
-  - private helper `_crm_company_emit_domain_event`;
-  - private helper `_crm_company_resolve_or_create_internal`;
-  - 7 public RPC;
-  - `CREATE OR REPLACE FUNCTION search_global(...)`;
-  - ACL `REVOKE/GRANT`;
-  - post-apply invariant DO-block;
-  - `COMMIT;`
-- закрыть единый SQL fence до `<!-- PHASE2_FORWARD_SQL_END -->`;
-- удалить/перенести из canonical range markdown-заголовки, prose, `<ts>`, отдельные code fences и checklist.
+## 5. Файловый scope патча
 
-### 3.3 Исправить §11.2 SQL fence
+- `supabase/migrations/<ts>_crm_companies_phase1_acl_hardening.sql` (создаётся `supabase--migration`, точный `<ts>` фиксируется в отчёте).
+- `.lovable/reports/companies-phase1/phase1-acl-hardening-report.md`.
+- `.lovable/plan.md` (этот файл).
+- `src/integrations/supabase/types.ts` — только как no-op auto-regeneration.
 
-- Убрать вложенный второй ```sql между emit-helper и resolve-helper.
-- В canonical SQL оставить оба helper в одной непрерывной SQL-секции.
+Любой другой diff — HARD STOP.
 
-### 3.4 Уточнить deterministic resolve active/merged компаний
+## 6. Stop-guards
 
-В `_crm_company_resolve_or_create_internal`:
+- Preflight DO-guard провалился → миграция не выполняется, транзакция откатывается.
+- Post-apply invariant нарушен → миграция откатывается, отчёт фиксирует SQLSTATE.
+- Baseline hash после применения ≠ `c41160b83c8e15c3d3c41a13028700d5` → HARD STOP, разбор до продолжения.
+- Появился schema-diff в `types.ts` → HARD STOP.
 
-- искать активную canonical company детерминированно:
-  - `status <> 'merged'` предпочтительно;
-  - `ORDER BY created_at ASC, id ASC`;
-  - `FOR UPDATE`;
-- если найдены только merged-кандидаты — рекурсивно разрешать `merged_into_company_id` до активного leaf с depth guard;
-- если chain broken/cyclic или leaf отсутствует — `RAISE EXCEPTION`;
-- не возвращать произвольную merged target без проверки активного leaf.
+## 7. Deferred (не входит в этот спринт)
 
-### 3.5 Исправить корректную первую billing-синхронизацию и no-op
-
-В `crm_company_upsert_from_billing`:
-
-- после resolve/create определить, является ли это первой billing-синхронизацией по отсутствию `last_billing_source_updated_at`/snapshot;
-- не считать неизменившееся поле changed, если target уже равен normalized billing value;
-- добавлять поле в `v_changed` только при реальном изменении target;
-- при первой синхронизации корректно заполнить snapshot без ложных material changes, если helper уже создал company с тем же `full_name`;
-- повторный billing с теми же значениями/source version должен быть no-op: без ложного `changed_fields`, без нового event/activity.
-
-### 3.6 Усилить billing event idempotency
-
-- Сделать idempotency key для `company.upserted_from_billing.v1` зависящим не только от списка changed fields, но и от material values/source version:
-  - company id;
-  - client legal details id;
-  - `source_updated_at` или нормализованный values hash;
-  - hash changed/conflict fields и normalized values.
-- При отсутствии material changes и conflicts event не писать.
-
-### 3.7 Сделать `crm_company_link_contact` race-safe
-
-- Добавить advisory lock по ключу `company_id/profile_id/relationship_type` перед SELECT/INSERT.
-- Использовать conflict-safe insert/update pattern для уникального `(company_id, profile_id, relationship_type)`:
-  - сначала lock;
-  - затем SELECT FOR UPDATE;
-  - затем INSERT;
-  - при `unique_violation` повторно SELECT FOR UPDATE и применить update merge-logic.
-- Сохранить lineage guard для billing map.
-
-### 3.8 Исправить merge: source existence guard и metadata перенос
-
-В `crm_company_merge`:
-
-- после deterministic locks явно проверить, что source и target rows найдены;
-- если source отсутствует — `RAISE EXCEPTION 'source not found'`;
-- если target leaf отсутствует — `RAISE EXCEPTION`;
-- при merge контактов переносить source metadata без потери:
-  - target metadata сохранить;
-  - source metadata вложить/объединить в `merged_from`/`sources`, чтобы ключи source не затирали target;
-- при company-level merge добавить в target metadata сведения о source metadata/public_id/status и consumed chain.
-
-### 3.9 Сделать hash guard исполняемым с fallback
-
-В preflight SQL:
-
-- не использовать несуществующую/неподключенную функцию `sha256()` без guard;
-- реализовать исполняемый fallback:
-  - сначала попробовать `digest(..., 'sha256')`, если доступна `pgcrypto.digest`;
-  - иначе использовать `md5(pg_get_functiondef(...))` и сверять с зафиксированным md5 `7641d12fc0bea802a93935a384e7e349`;
-- если ни SHA, ни md5 fallback не совпали — HARD STOP.
-
-### 3.10 Расширить post-apply ACL matrix
-
-В §11.12 и §13:
-
-- проверить все 7 public RPC:
-  - 6 authenticated RPC: `authenticated=true`, `anon=false`, `service_role=false`;
-  - `crm_company_upsert_from_billing`: `service_role=true`, `authenticated=false`, `anon=false`;
-- проверить оба private helper: `anon=false`, `authenticated=false`, `service_role=false`;
-- проверить `search_global` ACL как сохранённый pre-Phase-2 contract, если он не должен меняться;
-- добавить explicit failure messages по каждой группе.
-
-### 3.11 Сделать clean canonical rollback SQL block
-
-- Переместить `<!-- PHASE2_ROLLBACK_SQL_BEGIN -->` непосредственно перед единым rollback SQL fence.
-- В marker-range оставить только самостоятельный SQL-файл:
-  - `BEGIN;`
-  - `DROP FUNCTION` для 5 новых public RPC;
-  - восстановление Phase 1 skeletons для 2 RPC;
-  - восстановление pre-Phase-2 `search_global`;
-  - `DROP FUNCTION` resolve helper;
-  - `DROP FUNCTION` emit helper;
-  - восстановление Phase 1 ACL;
-  - `COMMIT;`
-- Убрать из rollback canonical range markdown-заголовки/prose/fences.
-
-### 3.12 Обновить static verification (§13)
-
-- Заменить недостоверные утверждения `forward: 0 hits` / `rollback: 0 hits` на фактические результаты нового сканирования.
-- Добавить команды/описание extractor, который сканирует именно содержимое SQL внутри canonical markers.
-- Проверить и отразить:
-  - forbidden placeholders отсутствуют;
-  - marker-ranges являются чистым SQL;
-  - нет markdown headers внутри canonical SQL;
-  - нет nested fences внутри canonical SQL;
-  - counts функций соответствуют 10 forward / 7 drop + 3 restore rollback;
-  - прямой `INSERT INTO public.domain_events` есть только в emit helper.
-
-## 4. Изменяемые компоненты
-
-Будут изменены только:
-
-1. `.lovable/plan.md` — восстановление из указанного commit.
-2. `.lovable/discovery/companies-1.0/companies_phase2_runnable_plan.md` — документационная материализация clean canonical SQL blocks и static verification.
-
-## 5. Что не будет изменено
-
-Не трогать:
-
-- БД / backend state;
-- `supabase/migrations/**`;
-- `src/**`;
-- `supabase/functions/**`;
-- `supabase/config.toml`;
-- ADR-0002, если по ходу не будет обнаружена прямая зависимость от исправляемого runnable SQL;
-- admin fixture и execution package — остаются следующими этапами.
-
-## 6. Dry-run
-
-Перед patch:
-
-- зафиксировать текущие проблемные места read-only:
-  - первая строка `.lovable/plan.md`;
-  - диапазоны forward/rollback markers;
-  - наличие nested SQL fence в §11.2.
-
-После patch, до отчёта:
-
-- выполнить read-only static scan по `companies_phase2_runnable_plan.md`:
-  - extract forward canonical SQL;
-  - extract rollback canonical SQL;
-  - проверить отсутствие markdown-заголовков и prose внутри marker ranges;
-  - проверить отсутствие запрещённых placeholders: `...`, `сокращено`, `см. body`, `см. helpers`, `при финализации`, `в фактической миграции`, `аналогично`, `остальные поля`, `TODO`, `FIXME`, `<...>`, `{{...}}`, `TBD`;
-  - проверить баланс SQL fences;
-  - посчитать функции/GRANT/REVOKE/INSERT domain_events.
-
-## 7. Execute
-
-После approve плана:
-
-1. Прочитать точное содержимое `.lovable/plan.md` из commit `aa14bdaaa0de8fc0fbad99cb31e7f0df99ae51f7` и заменить текущий файл.
-2. Отредактировать только `companies_phase2_runnable_plan.md`:
-   - перестроить §11 canonical forward block в единый SQL file;
-   - исправить helper order/fence;
-   - внести SQL-логические исправления по пунктам 3.4–3.10;
-   - перестроить §12 canonical rollback block в единый SQL file;
-   - обновить §13 verification и checklist.
-3. Не создавать migration-файл и не применять SQL.
-
-## 8. STOP-guards
-
-Остановиться и не выдавать closure, если:
-
-- восстановление `.lovable/plan.md` из указанного commit невозможно;
-- требуется изменение БД/migrations/src для закрытия документационного patch;
-- extractor показывает markdown/prose/fences внутри canonical SQL marker ranges;
-- placeholder scan даёт >0 hits внутри canonical SQL;
-- обнаружен прямой `INSERT INTO public.domain_events` вне emit helper;
-- count matrix не совпадает;
-- rollback использует `CASCADE`;
-- patch затрагивает файлы вне двух разрешённых.
-
-## 9. DoD
-
-Patch считается выполненным только если отчёт сможет подтвердить фактами:
-
-- `.lovable/plan.md` восстановлен из `aa14bdaaa0de8fc0fbad99cb31e7f0df99ae51f7`, первая строка больше не review-текст;
-- changed files ровно два указанных файла;
-- forward marker range — самостоятельный SQL-файл без markdown-прозы и без nested fences;
-- rollback marker range — самостоятельный SQL-файл без markdown-прозы и без nested fences;
-- §11.2 fence исправлен;
-- deterministic resolve, billing no-op/idempotency, race-safe link_contact, merge metadata/source guard, executable hash fallback и full ACL matrix внесены в SQL;
-- static scan результатов обновлён и показывает 0 запрещённых placeholders в canonical SQL;
-- БД, migrations и `src/**` не изменялись;
-- Phase 2 execution остаётся `NOT APPROVED`, admin fixture blocker сохранён.
-
-## 10. Риски и зависимости
-
-- Большой markdown-файл требует аккуратной замены блоков, чтобы не потерять ранее согласованные discovery/ADR sections.
-- SQL не будет применяться, поэтому проверка ограничена static review и syntactic/readability controls.
-- Без отдельного admin fixture runtime proof остаётся заблокированным; этот patch не снимает blocker execution.
-
-## 11. Требуется дополнительная информация
-
-Дополнительная информация от пользователя не требуется. Нужен approve этого плана для перехода к фактическому документационному patch.
+- Затягивание default privileges на public-схеме (project-wide security follow-up).
+- Runtime API proof (staging execution с реальными вызовами `crm_company_get_or_create` / `crm_company_link_contact`).
+- Фиксация pre-apply SHA/commit процесса для будущих спринтов (process fix, не data fix).
+- Backfill, sync worker, UI, Phase 2 RPC — по roadmap Discovery 1.0.

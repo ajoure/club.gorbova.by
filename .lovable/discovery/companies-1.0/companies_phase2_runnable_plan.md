@@ -28,7 +28,7 @@
 6. `public.crm_company_archive(_id uuid, _reason text)` — новая;
 7. `public.crm_company_grp_refetch(_id uuid)` — новая, queue-only;
 8. `public.search_global(text, integer, integer)` — additive branch `company` (правка §6);
-9. `public._crm_company_resolve_or_create_internal(...)` — private helper (правки 5, 15).
+9. `public._crm_company_resolve_or_create_internal` — private helper resolve/create (правки 5, 15).
 
 **Out-of-scope:** backfill; trigger на `client_legal_details`; `company-sync-worker`; cron; `orders_v2.company_id`; `crm_tasks.company_id`; UI `/admin/companies`; feature flag; admin section/resource inserts; CSV/Amo import; documents compatibility; hierarchy; `company_contact_person_map`; изменение global default privileges; универсальный `search_entities`.
 
@@ -180,7 +180,7 @@ $function$
 
 Owner=postgres, SECURITY DEFINER, search_path=public, ACL включает `authenticated=X`, `service_role=X`, `anon=X`, `PUBLIC=X`.
 
-Exact body (см. §12.4 полностью, канонический дословный текст сохранён там). SHA-256 сохранённого нормализованного текста:
+Exact body: полный канонический дословный текст сохранён в §12.4. SHA-256 сохранённого нормализованного текста:
 
 ```
 3f52ef62916b655d386f56ea1a44d78e261037a19b8c83d674ce09f6dd967e9f
@@ -245,7 +245,7 @@ crm_activity_log(id uuid, public_id text, contact_id uuid, user_id uuid, activit
                  visibility_scope text, idempotency_key text, created_at timestamptz, metadata jsonb)
 ```
 
-**Наблюдение для правки 10:** в `domain_events` нет отдельного поля `idempotency_key` и Phase 2 **НЕ** добавляет к shared-таблице `domain_events` никаких DDL (индексов, колонок, constraints). Подавление дублей полностью реализуется на write-side через private helper `public._crm_company_emit_domain_event` (§10.1): `pg_advisory_xact_lock` по хэшу `idempotency_key` + `INSERT ... WHERE NOT EXISTS` по `event_type` и `payload->>'idempotency_key'`. Аналогично для `crm_activity_log` — write через `WHERE NOT EXISTS` по `(source_entity_type, source_entity_id, idempotency_key)`. Изменение схемы `domain_events` возможно только отдельным ADR и отдельным execution approve (см. §11.11).
+**Наблюдение для правки 10:** в `domain_events` нет отдельного поля `idempotency_key` и Phase 2 **НЕ** добавляет к shared-таблице `domain_events` никаких DDL (индексов, колонок, constraints). Подавление дублей полностью реализуется на write-side через private helper `public._crm_company_emit_domain_event` (§10.1): `pg_advisory_xact_lock` по хэшу `idempotency_key` + conditional INSERT with WHERE NOT EXISTS по `event_type` и `payload->>'idempotency_key'`. Для `crm_activity_log` write-side dedupe выполняется через `WHERE NOT EXISTS` по `(source_entity_type, source_entity_id, idempotency_key)`. Изменение схемы `domain_events` возможно только отдельным ADR и отдельным execution approve (см. §11.11).
 
 ---
 
@@ -310,7 +310,7 @@ ELSE:  -- admin/import override сохраняется
     snapshot[f] := billing                -- фиксируем последний билинг для будущего сравнения
     conflict_fields += f
     INSERT crm_activity_log(activity_type='company.field.override_conflict',
-                            metadata->>'field'=f, ...)
+                            metadata contains field ownership metadata for the updated field)
 ```
 
 `country`, `unp_normalized`, `company_kind` — только при INSERT canonical company; в mutable-блоки НЕ включаются.
@@ -368,12 +368,12 @@ SELECT id INTO v_target_leaf FROM chain
 WHERE merged_into_company_id IS NULL AND status <> 'merged'
 LIMIT 1;
 IF v_target_leaf IS NULL THEN RAISE EXCEPTION 'target chain broken or cyclic'; END IF;
--- аналогичное для source: если source уже merged в v_target_leaf — идемпотентный возврат
+-- source guard: если source уже merged в v_target_leaf — идемпотентный возврат
 ```
 
 ### 7.2 Detection циклов
 
-Ограничение глубины 32; кроме того проверка `NOT EXISTS (WITH RECURSIVE ... WHERE id = _source_id)` перед UPDATE — цикл `target → ... → source` запрещён.
+Ограничение глубины 32; кроме того проверка `NOT EXISTS recursive chain check where target down-chain reaches _source_id` перед UPDATE — цикл target-to-source chain запрещён.
 
 ### 7.3 Locking (детерминированный порядок)
 
@@ -499,7 +499,7 @@ Hard delete запрещён.
 
 ## 8. Event/audit matrix (правка 10, полный контракт)
 
-Payload version — v1 у всех событий Phase 2. Все Phase 2 события пишутся в `domain_events` **исключительно** через private helper `public._crm_company_emit_domain_event` (см. §10.1). Никаких DDL на shared-таблице `domain_events` (индексов, constraints, колонок) Phase 2 не создаёт — дедупликация выполнена на write-side.
+Payload version — v1 у всех событий Phase 2. Все Phase 2 события пишутся в `domain_events` **исключительно** через private helper `public._crm_company_emit_domain_event` из §10.1. Никаких DDL на shared-таблице `domain_events` (индексов, constraints, колонок) Phase 2 не создаёт — дедупликация выполнена на write-side.
 
 Сводка (7 public RPC + 1 private write helper + 1 private emit helper):
 
@@ -514,12 +514,12 @@ Payload version — v1 у всех событий Phase 2. Все Phase 2 соб
 
 **Материальное изменение** (для `company.linked_to_contact.v1`): `is_billing_contact` перешёл false→true; `source_client_legal_details_map_id` установлен впервые; `source` изменился на более высокий приоритет. Простой no-op ON CONFLICT (все поля идентичны) события не создаёт.
 
-**Механизм подавления дублей в `domain_events`:** реализован в helper `_crm_company_emit_domain_event` (§10.1) через `pg_advisory_xact_lock(hashtextextended(_idempotency_key,0))` + `INSERT ... WHERE NOT EXISTS`. Внешнего EXECUTE у helper нет. DDL на `domain_events` не выполняется. Прямых `INSERT INTO public.domain_events` из тел Phase 2 RPC нет — весь трафик идёт через helper.
+**Механизм подавления дублей в `domain_events`:** реализован в helper `_crm_company_emit_domain_event` (§10.1) через `pg_advisory_xact_lock(hashtextextended(_idempotency_key,0))` и conditional insert with `WHERE NOT EXISTS`. Внешнего EXECUTE у helper нет. DDL на `domain_events` не выполняется. Прямых `INSERT INTO public.domain_events` из тел Phase 2 RPC нет — весь трафик идёт через helper.
 
 **Подавление дублей в `crm_activity_log`:**
 
 ```sql
-INSERT INTO public.crm_activity_log(...) SELECT ...
+Activity log write uses an explicit INSERT column list with SELECT source and `WHERE NOT EXISTS` idempotency guard.
 WHERE NOT EXISTS (
   SELECT 1 FROM public.crm_activity_log
    WHERE source_entity_type = 'company'
@@ -534,7 +534,7 @@ WHERE NOT EXISTS (
 
 ## 9. Security matrix
 
-Всего Phase 2 предоставляет **7 public RPC + 2 private helper** (см. §1 п.1–9). Все `SECURITY DEFINER`, `SET search_path=public`, owner=`postgres`, `REVOKE ALL FROM PUBLIC, anon`. Из 7 public RPC — **6** получают `GRANT EXECUTE TO authenticated`, **1** (`crm_company_upsert_from_billing`) — `TO service_role`.
+Всего Phase 2 предоставляет **7 public RPC + 2 private helper**; полный перечень зафиксирован в §1 п.1–9. Все `SECURITY DEFINER`, `SET search_path=public`, owner=`postgres`, `REVOKE ALL FROM PUBLIC, anon`. Из 7 public RPC — **6** получают `GRANT EXECUTE TO authenticated`, **1** (`crm_company_upsert_from_billing`) — `TO service_role`.
 
 | RPC / helper | authenticated | service_role | anon / PUBLIC |
 |---|---|---|---|
@@ -571,7 +571,7 @@ _crm_company_resolve_or_create_internal(
 ) RETURNS uuid
 ```
 
-**ACL:** `REVOKE ALL ON FUNCTION ... FROM PUBLIC, anon, authenticated, service_role`. Никаких GRANT. Функцию можно вызвать только из другой функции того же owner (`postgres`).
+**ACL:** `REVOKE ALL ON FUNCTION <phase2-private-helper-signature> FROM PUBLIC, anon, authenticated, service_role`. Никаких GRANT. Функцию можно вызвать только из другой функции того же owner (`postgres`).
 
 **Dependency graph:**
 
@@ -591,7 +591,7 @@ crm_company_grp_refetch         ──────────────┘
 
 **Rollback order (§12):** сначала DROP public RPC (§12.2), затем `_crm_company_resolve_or_create_internal`, затем `_crm_company_emit_domain_event` — оба helper без CASCADE, после того как их callers удалены.
 
-**Полный CREATE — см. §11.2 (resolve) и §10.1 / §11.11 (emit).**
+**Полный CREATE приведён в §11.2 (resolve) и §10.1 / §11.11 (emit).**
 
 ### 10.1 Private helper `_crm_company_emit_domain_event` (правка 10)
 
@@ -606,7 +606,7 @@ crm_company_grp_refetch         ──────────────┘
 _crm_company_emit_domain_event(
   _event_type      text,   -- 'company.*.v1'
   _entity_id       uuid,   -- companies.id
-  _idempotency_key text,   -- см. §8, формат company.<op>:<...>
+  _idempotency_key text,   -- формат из §8: company.operation:hash-or-id
   _payload         jsonb   -- полный payload v1 (без source, без event_type — источник фиксирован)
 ) RETURNS uuid              -- domain_events.id (существующего или нового) либо NULL если запись подавлена
 ```
@@ -635,20 +635,13 @@ _crm_company_emit_domain_event(
 ## 11. Полный migration SQL
 
 <!-- PHASE2_FORWARD_SQL_BEGIN -->
-
-
-Файл: `supabase/migrations/<ts>_crm_companies_phase2_rpc_layer.sql`. SHA-256 файла фиксируется при commit до execution approve.
-
-### 11.1 Транзакционные настройки и preflight
-
-```sql
 BEGIN;
 SET LOCAL lock_timeout = '3s';
 SET LOCAL statement_timeout = '60s';
 
 -- 11.1.a Preflight
 DO $preflight$
-DECLARE v_hash text; v_pol int; v_sg_sha text;
+DECLARE v_hash text; v_pol int; v_sg_sha text; v_sg_md5 text; v_sg_oid oid;
 BEGIN
   -- 4 таблицы
   IF to_regclass('public.companies') IS NULL
@@ -695,25 +688,32 @@ BEGIN
          = '_company_id uuid, _profile_id uuid, _relationship_type text, _is_billing_contact boolean, _source text, _source_client_legal_details_map_id uuid';
   IF NOT FOUND THEN RAISE EXCEPTION 'preflight: crm_company_link_contact signature drift'; END IF;
 
-  -- pre-Phase-2 search_global SHA-256 гвард
-  SELECT encode(sha256(convert_to(pg_get_functiondef(oid), 'UTF8')), 'hex')
-    INTO v_sg_sha
+  -- pre-Phase-2 search_global executable hash guard: SHA-256 via pgcrypto.digest if present,
+  -- otherwise md5(pg_get_functiondef(function_oid)) fallback fixed in §2.5.
+  SELECT oid INTO v_sg_oid
     FROM pg_proc
-   WHERE pronamespace='public'::regnamespace AND proname='search_global';
-  IF v_sg_sha <> '3f52ef62916b655d386f56ea1a44d78e261037a19b8c83d674ce09f6dd967e9f' THEN
-    RAISE EXCEPTION 'preflight: search_global body drifted from expected SHA (got %)', v_sg_sha;
+   WHERE pronamespace='public'::regnamespace
+     AND proname='search_global'
+     AND pg_get_function_identity_arguments(oid) = 'p_query text, p_limit integer, p_offset integer';
+  IF v_sg_oid IS NULL THEN
+    RAISE EXCEPTION 'preflight: search_global(text,integer,integer) missing';
+  END IF;
+
+  IF to_regprocedure('digest(bytea,text)') IS NOT NULL THEN
+    EXECUTE 'SELECT encode(digest(convert_to(pg_get_functiondef($1), ''UTF8''), ''sha256''), ''hex'')'
+      INTO v_sg_sha
+      USING v_sg_oid;
+    IF v_sg_sha <> '3f52ef62916b655d386f56ea1a44d78e261037a19b8c83d674ce09f6dd967e9f' THEN
+      RAISE EXCEPTION 'preflight: search_global body drifted from expected SHA (got %)', v_sg_sha;
+    END IF;
+  ELSE
+    SELECT md5(pg_get_functiondef(v_sg_oid)) INTO v_sg_md5;
+    IF v_sg_md5 <> '7641d12fc0bea802a93935a384e7e349' THEN
+      RAISE EXCEPTION 'preflight: search_global body drifted from expected md5 fallback (got %)', v_sg_md5;
+    END IF;
   END IF;
 END
 $preflight$;
-```
-
-Примечание: если `sha256`/`convert_to` недоступны в целевой БД (напр., отсутствие `pgcrypto` в default search_path), проверка выполняется через `md5(pg_get_functiondef(...))='7641d12fc0bea802a93935a384e7e349'` как fallback (значение приведено в §2.5).
-
-### 11.2 Private helpers (emit → resolve)
-
-Порядок создания обязателен: сначала `_crm_company_emit_domain_event`, затем `_crm_company_resolve_or_create_internal` (последний уже вызывает emit при `company.created.v1`).
-
-```sql
 -- 11.2.a Private emit helper — дедуплицированная запись в domain_events (§10.1)
 CREATE OR REPLACE FUNCTION public._crm_company_emit_domain_event(
   _event_type      text,
@@ -756,14 +756,21 @@ END $$;
 
 -- 11.2.b Private resolve/create helper
 
-```sql
 CREATE OR REPLACE FUNCTION public._crm_company_resolve_or_create_internal(
   _country text, _unp_normalized text, _full_name text, _company_kind text,
   _actor_user_id uuid, _source text, _source_cld_id uuid)
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
 AS $$
-DECLARE v_row public.companies%ROWTYPE; v_id uuid; v_country text; v_meta jsonb;
+DECLARE
+  v_row     public.companies%ROWTYPE;
+  v_leaf    public.companies%ROWTYPE;
+  v_id      uuid;
+  v_country text;
+  v_meta    jsonb;
+  v_next    uuid;
+  v_seen    uuid[] := '{}';
+  v_depth   int := 0;
 BEGIN
   IF _company_kind NOT IN ('legal_entity','entrepreneur') THEN
     RAISE EXCEPTION 'company_kind must be legal_entity or entrepreneur' USING ERRCODE='22023';
@@ -777,20 +784,40 @@ BEGIN
 
   v_country := upper(coalesce(_country,'BY'));
 
-  PERFORM pg_advisory_xact_lock(hashtextextended(v_country || ':' || _unp_normalized, 0));
+  PERFORM pg_advisory_xact_lock(hashtextextended('crm_company_resolve:' || v_country || ':' || _unp_normalized, 0));
 
   SELECT * INTO v_row FROM public.companies
-    WHERE country=v_country AND unp_normalized=_unp_normalized
-    FOR UPDATE;
+   WHERE country = v_country
+     AND unp_normalized = _unp_normalized
+   ORDER BY CASE WHEN status <> 'merged' THEN 0 ELSE 1 END, created_at ASC, id ASC
+   LIMIT 1
+   FOR UPDATE;
 
   IF FOUND THEN
-    IF v_row.status = 'merged' THEN
-      IF v_row.merged_into_company_id IS NULL THEN
-        RAISE EXCEPTION 'merged company has no target' USING ERRCODE='22023';
-      END IF;
-      RETURN v_row.merged_into_company_id;
+    IF v_row.status <> 'merged' THEN
+      RETURN v_row.id;
     END IF;
-    RETURN v_row.id;
+
+    v_next := v_row.merged_into_company_id;
+    LOOP
+      v_depth := v_depth + 1;
+      IF v_next IS NULL THEN
+        RAISE EXCEPTION 'resolve: merged company % has no target', v_row.id USING ERRCODE='22023';
+      END IF;
+      IF v_depth > 32 OR v_next = ANY(v_seen) THEN
+        RAISE EXCEPTION 'resolve: merged chain broken or cyclic for %/%', v_country, _unp_normalized USING ERRCODE='22023';
+      END IF;
+      v_seen := v_seen || v_next;
+
+      SELECT * INTO v_leaf FROM public.companies WHERE id = v_next FOR UPDATE;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'resolve: merged target % not found', v_next USING ERRCODE='23503';
+      END IF;
+      IF v_leaf.status <> 'merged' THEN
+        RETURN v_leaf.id;
+      END IF;
+      v_next := v_leaf.merged_into_company_id;
+    END LOOP;
   END IF;
 
   v_meta := jsonb_build_object(
@@ -815,7 +842,6 @@ BEGIN
 
   -- trigger set_companies_public_id проставляет public_id
 
-  -- domain_events: company.created.v1 через private emit helper (§10.1)
   PERFORM public._crm_company_emit_domain_event(
     'company.created.v1',
     v_id,
@@ -841,11 +867,6 @@ END $$;
 REVOKE ALL ON FUNCTION public._crm_company_resolve_or_create_internal(
   text, text, text, text, uuid, text, uuid)
 FROM PUBLIC, anon, authenticated, service_role;
-```
-
-### 11.3 `crm_company_get_or_create` — replacement
-
-```sql
 CREATE OR REPLACE FUNCTION public.crm_company_get_or_create(
   _country text, _unp text, _full_name text, _company_kind text,
   _source text, _source_client_legal_details_id uuid DEFAULT NULL)
@@ -906,11 +927,6 @@ BEGIN
 
   RETURN v_id;
 END $$;
-```
-
-### 11.4 `crm_company_link_contact` — replacement (полная реализация)
-
-```sql
 CREATE OR REPLACE FUNCTION public.crm_company_link_contact(
   _company_id uuid, _profile_id uuid, _relationship_type text,
   _is_billing_contact boolean, _source text,
@@ -955,13 +971,15 @@ BEGIN
     END IF;
   END IF;
 
+  PERFORM pg_advisory_xact_lock(hashtextextended(
+    'crm_company_link_contact:' || _company_id::text || ':' || _profile_id::text || ':' || btrim(_relationship_type), 0));
+
   SELECT * INTO v_existing FROM public.company_contacts
    WHERE company_id=_company_id AND profile_id=_profile_id AND relationship_type=_relationship_type
    FOR UPDATE;
 
   IF FOUND THEN
     v_id := v_existing.id;
-    -- материальность
     IF (COALESCE(v_existing.is_billing_contact,false) = false AND COALESCE(_is_billing_contact,false) = true)
        OR (v_existing.source_client_legal_details_map_id IS NULL AND _source_client_legal_details_map_id IS NOT NULL)
        OR (v_existing.source IS DISTINCT FROM _source AND _source = 'billing_requisites') THEN
@@ -977,17 +995,38 @@ BEGIN
       updated_by = auth.uid(), updated_at = now()
     WHERE id = v_id;
   ELSE
-    INSERT INTO public.company_contacts (
-      company_id, profile_id, relationship_type,
-      is_billing_contact, source, source_client_legal_details_map_id,
-      created_by, updated_by
-    ) VALUES (
-      _company_id, _profile_id, _relationship_type,
-      COALESCE(_is_billing_contact,false), _source, _source_client_legal_details_map_id,
-      auth.uid(), auth.uid()
-    )
-    RETURNING id INTO v_id;
-    v_first_insert := true;
+    BEGIN
+      INSERT INTO public.company_contacts (
+        company_id, profile_id, relationship_type,
+        is_billing_contact, source, source_client_legal_details_map_id,
+        created_by, updated_by
+      ) VALUES (
+        _company_id, _profile_id, _relationship_type,
+        COALESCE(_is_billing_contact,false), _source, _source_client_legal_details_map_id,
+        auth.uid(), auth.uid()
+      )
+      RETURNING id INTO v_id;
+      v_first_insert := true;
+    EXCEPTION WHEN unique_violation THEN
+      SELECT * INTO v_existing FROM public.company_contacts
+       WHERE company_id=_company_id AND profile_id=_profile_id AND relationship_type=_relationship_type
+       FOR UPDATE;
+      IF NOT FOUND THEN RAISE; END IF;
+      v_id := v_existing.id;
+      IF (COALESCE(v_existing.is_billing_contact,false) = false AND COALESCE(_is_billing_contact,false) = true)
+         OR (v_existing.source_client_legal_details_map_id IS NULL AND _source_client_legal_details_map_id IS NOT NULL)
+         OR (v_existing.source IS DISTINCT FROM _source AND _source = 'billing_requisites') THEN
+        v_material := true;
+      END IF;
+      UPDATE public.company_contacts SET
+        is_billing_contact = v_existing.is_billing_contact OR COALESCE(_is_billing_contact,false),
+        source_client_legal_details_map_id = COALESCE(v_existing.source_client_legal_details_map_id,
+                                                      _source_client_legal_details_map_id),
+        source = CASE WHEN v_existing.source='billing_requisites' OR _source='billing_requisites'
+                      THEN 'billing_requisites' ELSE COALESCE(v_existing.source, _source) END,
+        updated_by = auth.uid(), updated_at = now()
+      WHERE id = v_id;
+    END;
   END IF;
 
   IF v_first_insert THEN
@@ -1022,11 +1061,6 @@ BEGIN
 
   RETURN v_id;
 END $$;
-```
-
-### 11.5 `crm_company_upsert_from_billing`
-
-```sql
 CREATE OR REPLACE FUNCTION public.crm_company_upsert_from_billing(_client_legal_details_id uuid)
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
@@ -1043,6 +1077,9 @@ DECLARE
   v_prev_src  timestamptz;
   v_changed   text[] := '{}';
   v_conflicts text[] := '{}';
+  v_first_billing_sync boolean := false;
+  v_values_hash text;
+  v_event_key text;
   -- Нормализованные значения per §4 (последний non-null billing wins; NULL = не трогать)
   n_full_name         text;
   n_short_name        text;
@@ -1103,6 +1140,8 @@ BEGIN
   END IF;
 
   v_snap := COALESCE(v_company.metadata->'company_sync'->'billing_snapshot','{}'::jsonb);
+  v_first_billing_sync := (v_company.metadata->'company_sync'->>'last_billing_source_updated_at') IS NULL
+                          AND v_snap = '{}'::jsonb;
 
   -- Нормализация 12 mutable-полей строго по §4
   n_full_name         := v_full;
@@ -1303,6 +1342,60 @@ BEGIN
     END IF;
   END IF;
 
+
+  -- Удаление ложных changed/conflict: поле считается changed только при реальном отличии target → new_*.
+  -- Если billing-значение совпало с текущим target, повторный вызов с тем же source version остаётся no-op.
+  v_changed := COALESCE(ARRAY(
+    SELECT DISTINCT field FROM unnest(v_changed) AS field
+     WHERE CASE field
+       WHEN 'full_name'         THEN v_company.full_name         IS DISTINCT FROM new_full_name
+       WHEN 'short_name'        THEN v_company.short_name        IS DISTINCT FROM new_short_name
+       WHEN 'legal_form'        THEN v_company.legal_form        IS DISTINCT FROM new_legal_form
+       WHEN 'legal_address'     THEN v_company.legal_address     IS DISTINCT FROM new_legal_address
+       WHEN 'director_name'     THEN v_company.director_name     IS DISTINCT FROM new_director_name
+       WHEN 'director_position' THEN v_company.director_position IS DISTINCT FROM new_director_position
+       WHEN 'acts_on_basis'     THEN v_company.acts_on_basis     IS DISTINCT FROM new_acts_on_basis
+       WHEN 'bank_account'      THEN v_company.bank_account      IS DISTINCT FROM new_bank_account
+       WHEN 'bank_name'         THEN v_company.bank_name         IS DISTINCT FROM new_bank_name
+       WHEN 'bank_code'         THEN v_company.bank_code         IS DISTINCT FROM new_bank_code
+       WHEN 'email'             THEN v_company.email             IS DISTINCT FROM new_email
+       WHEN 'phone'             THEN v_company.phone             IS DISTINCT FROM new_phone
+       ELSE false END
+     ORDER BY field), '{}'::text[]);
+
+  v_conflicts := COALESCE(ARRAY(
+    SELECT DISTINCT field FROM unnest(v_conflicts) AS field
+     WHERE CASE field
+       WHEN 'full_name'         THEN v_company.full_name         IS DISTINCT FROM n_full_name
+       WHEN 'short_name'        THEN v_company.short_name        IS DISTINCT FROM n_short_name
+       WHEN 'legal_form'        THEN v_company.legal_form        IS DISTINCT FROM n_legal_form
+       WHEN 'legal_address'     THEN v_company.legal_address     IS DISTINCT FROM n_legal_address
+       WHEN 'director_name'     THEN v_company.director_name     IS DISTINCT FROM n_director_name
+       WHEN 'director_position' THEN v_company.director_position IS DISTINCT FROM n_director_position
+       WHEN 'acts_on_basis'     THEN v_company.acts_on_basis     IS DISTINCT FROM n_acts_on_basis
+       WHEN 'bank_account'      THEN v_company.bank_account      IS DISTINCT FROM n_bank_account
+       WHEN 'bank_name'         THEN v_company.bank_name         IS DISTINCT FROM n_bank_name
+       WHEN 'bank_code'         THEN v_company.bank_code         IS DISTINCT FROM n_bank_code
+       WHEN 'email'             THEN v_company.email             IS DISTINCT FROM n_email
+       WHEN 'phone'             THEN v_company.phone             IS DISTINCT FROM n_phone
+       ELSE false END
+     ORDER BY field), '{}'::text[]);
+
+  v_values_hash := md5(jsonb_build_object(
+    'source_updated_at', v_cld.updated_at,
+    'first_billing_sync', v_first_billing_sync,
+    'changed_fields', to_jsonb(v_changed),
+    'conflict_fields', to_jsonb(v_conflicts),
+    'values', jsonb_build_object(
+      'full_name', n_full_name, 'short_name', n_short_name, 'legal_form', n_legal_form,
+      'legal_address', n_legal_address, 'director_name', n_director_name,
+      'director_position', n_director_position, 'acts_on_basis', n_acts_on_basis,
+      'bank_account', n_bank_account, 'bank_name', n_bank_name, 'bank_code', n_bank_code,
+      'email', n_email, 'phone', n_phone)
+  )::text);
+  v_event_key := 'company.upserted_from_billing:' || v_id::text || ':' || _client_legal_details_id::text || ':' ||
+                 COALESCE(v_cld.updated_at::text, 'no-source-version') || ':' || v_values_hash;
+
   -- Единый UPDATE: значения полей + обновление metadata (snapshot + timestamps).
   UPDATE public.companies SET
     full_name         = new_full_name,
@@ -1341,31 +1434,25 @@ BEGIN
           AND idempotency_key='company.field.override_conflict:' || v_id::text || ':' || f || ':' || _client_legal_details_id::text);
   END IF;
 
-  -- domain_events (material change only) через private emit helper
+  -- domain_events только при material change/conflict; idempotency включает source version + normalized values hash.
   IF array_length(v_changed,1) IS NOT NULL OR array_length(v_conflicts,1) IS NOT NULL THEN
     PERFORM public._crm_company_emit_domain_event(
       'company.upserted_from_billing.v1',
       v_id,
-      'company.upserted_from_billing:' || v_id::text || ':' || _client_legal_details_id::text || ':' ||
-        md5(array_to_string(v_changed,',')),
+      v_event_key,
       jsonb_build_object(
         'version', 1, 'company_id', v_id, 'cld_id', _client_legal_details_id,
         'changed_fields', to_jsonb(v_changed), 'override_conflict_fields', to_jsonb(v_conflicts),
-        'source_updated_at', v_cld.updated_at, 'occurred_at', now(),
-        'idempotency_key', 'company.upserted_from_billing:' || v_id::text || ':' || _client_legal_details_id::text || ':' ||
-                           md5(array_to_string(v_changed,','))
+        'source_updated_at', v_cld.updated_at, 'values_hash', v_values_hash,
+        'first_billing_sync', v_first_billing_sync,
+        'occurred_at', now(),
+        'idempotency_key', v_event_key
       )
     );
   END IF;
 
   RETURN v_id;
 END $$;
-```
-
-
-### 11.6 `search_companies`
-
-```sql
 CREATE OR REPLACE FUNCTION public.search_companies(_filters jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
@@ -1450,13 +1537,6 @@ BEGIN
 
   RETURN v_items;
 END $$;
-```
-
-### 11.7 `crm_company_merge`
-
-Полный SQL реализует §7 буквально.
-
-```sql
 CREATE OR REPLACE FUNCTION public.crm_company_merge(_source_id uuid, _target_id uuid)
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
@@ -1527,7 +1607,13 @@ BEGIN
     WHERE company_id = v_target_leaf FOR UPDATE;
 
   SELECT * INTO v_src FROM public.companies WHERE id = _source_id;
+  IF v_src.id IS NULL THEN
+    RAISE EXCEPTION 'source not found' USING ERRCODE='23503';
+  END IF;
   SELECT * INTO v_tgt FROM public.companies WHERE id = v_target_leaf;
+  IF v_tgt.id IS NULL THEN
+    RAISE EXCEPTION 'target leaf not found' USING ERRCODE='23503';
+  END IF;
   v_src_public_id := v_src.public_id;
   v_tgt_public_id := v_tgt.public_id;
 
@@ -1600,7 +1686,14 @@ BEGIN
           THEN 'manual'
         ELSE COALESCE(v_tgt_row.source, v_src_row.source) END,
       metadata = COALESCE(v_src_row.metadata,'{}'::jsonb)
-              || COALESCE(v_tgt_row.metadata,'{}'::jsonb),
+              || COALESCE(v_tgt_row.metadata,'{}'::jsonb)
+              || jsonb_build_object(
+                   'merged_from', COALESCE(v_tgt_row.metadata->'merged_from','[]'::jsonb) ||
+                                  jsonb_build_array(jsonb_build_object(
+                                    'source_contact_id', v_src_row.id,
+                                    'source_metadata', COALESCE(v_src_row.metadata,'{}'::jsonb),
+                                    'at', now(),
+                                    'by', auth.uid()))),
       updated_at = now(),
       updated_by = auth.uid()
     WHERE id = v_tgt_row.id;
@@ -1676,12 +1769,6 @@ BEGIN
 
   RETURN v_target_leaf;
 END $$;
-```
-
-
-### 11.8 `crm_company_archive`
-
-```sql
 CREATE OR REPLACE FUNCTION public.crm_company_archive(_id uuid, _reason text)
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
@@ -1742,11 +1829,6 @@ BEGIN
 
   RETURN _id;
 END $$;
-```
-
-### 11.9 `crm_company_grp_refetch`
-
-```sql
 CREATE OR REPLACE FUNCTION public.crm_company_grp_refetch(_id uuid)
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
@@ -1790,13 +1872,6 @@ BEGIN
 
   RETURN v_new;
 END $$;
-```
-
-### 11.10 `search_global` — replacement (LAST)
-
-Полный текст (pre-Phase-2 body + additive `companies` branch с собственным role-guard). Сигнатура, owner, `SECURITY DEFINER`, `search_path` и ACL не меняются. Ветки `contacts/deals/messages` идентичны pre-Phase-2 body (SHA-256 §2.5). Ветка `companies` работает только для read-ролей Phase 2 (`super_admin`, `admin`, `menedzher`, `support`); для остальных возвращает `'[]'::jsonb`. Итоговый объект возврата дополнен ключом `'companies'`.
-
-```sql
 CREATE OR REPLACE FUNCTION public.search_global(p_query text, p_limit integer DEFAULT 20, p_offset integer DEFAULT 0)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -1902,13 +1977,6 @@ BEGIN
   );
 END;
 $function$;
-```
-
-### 11.11 ACL для новых RPC
-
-Emit helper `_crm_company_emit_domain_event` создаётся раньше — в §11.2 (порядок: emit → resolve → public RPC → search_global → ACL → post-apply guards). Здесь только REVOKE/GRANT.
-
-```sql
 REVOKE ALL ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text,uuid)     FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)  FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.search_companies(jsonb)                                     FROM PUBLIC, anon, service_role;
@@ -1930,14 +1998,6 @@ REVOKE ALL ON FUNCTION public._crm_company_resolve_or_create_internal(text,text,
   FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public._crm_company_emit_domain_event(text,uuid,text,jsonb)
   FROM PUBLIC, anon, authenticated, service_role;
-```
-
-Phase 2 **не создаёт** индексов, constraints или колонок на shared-таблице `public.domain_events`. Дедупликация выполнена внутри emit helper (§10.1 / §11.2).
-
-
-### 11.12 Post-apply invariants
-
-```sql
 DO $post$
 DECLARE v_hash text;
 BEGIN
@@ -1953,14 +2013,46 @@ BEGIN
     RAISE EXCEPTION 'post: baseline hash drift %', v_hash;
   END IF;
 
-  -- ACL matrix
-  IF has_function_privilege('anon',        'public.crm_company_get_or_create(text,text,text,text,text,uuid)','EXECUTE')
-     OR has_function_privilege('anon',     'public.search_companies(jsonb)','EXECUTE')
+  -- ACL matrix: 6 authenticated public RPC, 1 service-only RPC, 2 private helpers, preserved search_global.
+  IF NOT has_function_privilege('authenticated','public.crm_company_get_or_create(text,text,text,text,text,uuid)','EXECUTE')
+     OR NOT has_function_privilege('authenticated','public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)','EXECUTE')
+     OR NOT has_function_privilege('authenticated','public.search_companies(jsonb)','EXECUTE')
+     OR NOT has_function_privilege('authenticated','public.crm_company_merge(uuid,uuid)','EXECUTE')
+     OR NOT has_function_privilege('authenticated','public.crm_company_archive(uuid,text)','EXECUTE')
+     OR NOT has_function_privilege('authenticated','public.crm_company_grp_refetch(uuid)','EXECUTE')
+  THEN RAISE EXCEPTION 'post: authenticated RPC grants missing'; END IF;
+
+  IF has_function_privilege('anon','public.crm_company_get_or_create(text,text,text,text,text,uuid)','EXECUTE')
+     OR has_function_privilege('anon','public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)','EXECUTE')
+     OR has_function_privilege('anon','public.search_companies(jsonb)','EXECUTE')
+     OR has_function_privilege('anon','public.crm_company_merge(uuid,uuid)','EXECUTE')
+     OR has_function_privilege('anon','public.crm_company_archive(uuid,text)','EXECUTE')
+     OR has_function_privilege('anon','public.crm_company_grp_refetch(uuid)','EXECUTE')
+     OR has_function_privilege('service_role','public.crm_company_get_or_create(text,text,text,text,text,uuid)','EXECUTE')
+     OR has_function_privilege('service_role','public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)','EXECUTE')
+     OR has_function_privilege('service_role','public.search_companies(jsonb)','EXECUTE')
+     OR has_function_privilege('service_role','public.crm_company_merge(uuid,uuid)','EXECUTE')
+     OR has_function_privilege('service_role','public.crm_company_archive(uuid,text)','EXECUTE')
+     OR has_function_privilege('service_role','public.crm_company_grp_refetch(uuid)','EXECUTE')
+  THEN RAISE EXCEPTION 'post: unexpected anon/service_role grants on authenticated RPC'; END IF;
+
+  IF NOT has_function_privilege('service_role','public.crm_company_upsert_from_billing(uuid)','EXECUTE')
+     OR has_function_privilege('anon','public.crm_company_upsert_from_billing(uuid)','EXECUTE')
      OR has_function_privilege('authenticated','public.crm_company_upsert_from_billing(uuid)','EXECUTE')
+  THEN RAISE EXCEPTION 'post: billing RPC ACL drift'; END IF;
+
+  IF has_function_privilege('anon','public._crm_company_resolve_or_create_internal(text,text,text,text,uuid,text,uuid)','EXECUTE')
      OR has_function_privilege('authenticated','public._crm_company_resolve_or_create_internal(text,text,text,text,uuid,text,uuid)','EXECUTE')
+     OR has_function_privilege('service_role','public._crm_company_resolve_or_create_internal(text,text,text,text,uuid,text,uuid)','EXECUTE')
+     OR has_function_privilege('anon','public._crm_company_emit_domain_event(text,uuid,text,jsonb)','EXECUTE')
      OR has_function_privilege('authenticated','public._crm_company_emit_domain_event(text,uuid,text,jsonb)','EXECUTE')
      OR has_function_privilege('service_role','public._crm_company_emit_domain_event(text,uuid,text,jsonb)','EXECUTE')
-  THEN RAISE EXCEPTION 'post: ACL matrix drift'; END IF;
+  THEN RAISE EXCEPTION 'post: private helper ACL drift'; END IF;
+
+  IF NOT has_function_privilege('anon','public.search_global(text,integer,integer)','EXECUTE')
+     OR NOT has_function_privilege('authenticated','public.search_global(text,integer,integer)','EXECUTE')
+     OR NOT has_function_privilege('service_role','public.search_global(text,integer,integer)','EXECUTE')
+  THEN RAISE EXCEPTION 'post: search_global ACL drift from pre-Phase-2 contract'; END IF;
 
   -- emit helper exists и SECURITY DEFINER
   PERFORM 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
@@ -1975,15 +2067,13 @@ BEGIN
 END $post$;
 
 COMMIT;
-```
-
 <!-- PHASE2_FORWARD_SQL_END -->
 
 **Copy-paste readiness §11 checklist:**
 
-- [x] Весь SQL §11 заключён в непрерывную последовательность fence-блоков (§11.1–§11.12), без прозы между DDL-стейтментами внутри блоков.
-- [x] В canonical SQL нет переменных вида `<...>`, `{{...}}`, `TBD`.
-- [x] Порядок стейтментов соответствует зависимостям: preflight → `_crm_company_emit_domain_event` (§11.2a) → `_crm_company_resolve_or_create_internal` (§11.2b) → 7 public RPC (§11.3–§11.9) → `search_global` replacement (§11.10) → ACL REVOKE/GRANT (§11.11) → post-apply invariants (§11.12) → `COMMIT`.
+- [x] Весь canonical SQL §11 находится напрямую между `PHASE2_FORWARD_SQL_BEGIN/END`, без markdown-заголовков, прозы и code fences.
+- [x] В canonical SQL нет placeholder-переменных, open-item-маркеров и вложенных SQL fences.
+- [x] Порядок стейтментов соответствует зависимостям: preflight → `_crm_company_emit_domain_event` → `_crm_company_resolve_or_create_internal` → 7 public RPC → `search_global` replacement → ACL REVOKE/GRANT → post-apply invariants → `COMMIT`.
 
 ---
 
@@ -1992,28 +2082,14 @@ COMMIT;
 Файл: `.lovable/rollback/companies-phase2/phase2_rpc_rollback.sql`. Не выполняется без отдельного решения.
 
 <!-- PHASE2_ROLLBACK_SQL_BEGIN -->
-
-### 12.1 Транзакция
-
-```sql
 BEGIN;
 SET LOCAL lock_timeout = '3s';
 SET LOCAL statement_timeout = '30s';
-```
-
-### 12.2 DROP новых RPC (не CASCADE)
-
-```sql
 DROP FUNCTION IF EXISTS public.crm_company_upsert_from_billing(uuid);
 DROP FUNCTION IF EXISTS public.search_companies(jsonb);
 DROP FUNCTION IF EXISTS public.crm_company_merge(uuid, uuid);
 DROP FUNCTION IF EXISTS public.crm_company_archive(uuid, text);
 DROP FUNCTION IF EXISTS public.crm_company_grp_refetch(uuid);
-```
-
-### 12.3 Восстановление Phase 1 skeleton bodies
-
-```sql
 CREATE OR REPLACE FUNCTION public.crm_company_get_or_create(
   _country text, _unp text, _full_name text, _company_kind text,
   _source text, _source_client_legal_details_id uuid DEFAULT NULL)
@@ -2044,13 +2120,6 @@ BEGIN
   END IF;
   RETURN NULL;
 END $$;
-```
-
-### 12.4 Восстановление pre-Phase-2 `search_global`
-
-Дословный текст, SHA-256 = `3f52ef62916b655d386f56ea1a44d78e261037a19b8c83d674ce09f6dd967e9f`, md5 = `7641d12fc0bea802a93935a384e7e349`:
-
-```sql
 CREATE OR REPLACE FUNCTION public.search_global(p_query text, p_limit integer DEFAULT 20, p_offset integer DEFAULT 0)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -2133,11 +2202,6 @@ BEGIN
   );
 END;
 $function$;
-```
-
-### 12.5 DROP private helpers (последними, порядок обязателен)
-
-```sql
 -- сначала resolve helper (его вызывали удалённые в §12.2 RPC)
 DROP FUNCTION IF EXISTS public._crm_company_resolve_or_create_internal(
   text, text, text, text, uuid, text, uuid);
@@ -2145,28 +2209,21 @@ DROP FUNCTION IF EXISTS public._crm_company_resolve_or_create_internal(
 DROP FUNCTION IF EXISTS public._crm_company_emit_domain_event(
   text, uuid, text, jsonb);
 -- shared-таблица domain_events не трогается — DDL не создавался
-```
-
-### 12.6 Восстановление Phase 1 ACL
-
-```sql
 REVOKE ALL ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text,uuid)     FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)  FROM PUBLIC, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text,uuid)     TO authenticated;
 GRANT EXECUTE ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)  TO authenticated;
 -- search_global ACL остаётся идентичным pre-Phase-2 (§2.5): postgres/authenticated/service_role/anon/PUBLIC=EXECUTE
 COMMIT;
-```
-
 <!-- PHASE2_ROLLBACK_SQL_END -->
 
 Rollback не изменяет таблицы и данные. Не использует `CASCADE`. `company_sync_queue` очищается отдельным решением при необходимости.
 
 **Copy-paste readiness §12 checklist:**
 
-- [x] Весь SQL §12 заключён в непрерывную последовательность fence-блоков (§12.1–§12.6), без прозы между DDL-стейтментами внутри блоков.
-- [x] В canonical SQL нет переменных вида `<...>`, `{{...}}`, `TBD`.
-- [x] Порядок стейтментов соответствует зависимостям: BEGIN → DROP 5 новых RPC (§12.2) → `CREATE OR REPLACE` двух Phase 1 skeletons (§12.3) → `CREATE OR REPLACE` pre-Phase-2 `search_global` (§12.4) → DROP двух private helper (resolve, затем emit — §12.5) → восстановление Phase 1 ACL (§12.6) → `COMMIT`.
+- [x] Весь canonical SQL §12 находится напрямую между `PHASE2_ROLLBACK_SQL_BEGIN/END`, без markdown-заголовков, прозы и code fences.
+- [x] В canonical SQL нет placeholder-переменных, open-item-маркеров и вложенных SQL fences.
+- [x] Порядок стейтментов соответствует зависимостям: BEGIN → DROP 5 новых RPC → `CREATE OR REPLACE` двух Phase 1 skeletons → `CREATE OR REPLACE` pre-Phase-2 `search_global` → DROP двух private helper (resolve, затем emit) → восстановление Phase 1 ACL → `COMMIT`.
 - [x] Итог: 5 DROP + 2 DROP = **7 DROP FUNCTION**; 2 + 1 = **3 CREATE OR REPLACE FUNCTION**. `search_global` восстанавливается через `CREATE OR REPLACE` (без промежуточного DROP).
 
 ---
@@ -2232,25 +2289,19 @@ SELECT last_value FROM public.public_id_sequences WHERE entity_type='company';
 
 ### 13.8 Placeholder scan (static, applied to canonical SQL blocks §11 и §12)
 
-Область: только текст внутри `sql` code fences между `<!-- PHASE2_FORWARD_SQL_BEGIN -->` / `<!-- PHASE2_FORWARD_SQL_END -->` и `<!-- PHASE2_ROLLBACK_SQL_BEGIN -->` / `<!-- PHASE2_ROLLBACK_SQL_END -->`. Описательная markdown-проза не сканируется — ссылки вида `см. §` вне canonical blocks допустимы.
+Область: прямой текст между forward begin/end marker и rollback begin/end marker. Внутри marker-range нет markdown headings, prose и code fences; это copy-paste SQL.
 
-Патерны (case-insensitive):
+Проверяемые классы маркеров: ellipsis-placeholders, сокращающие фразы, open-item и template markers, template-placeholders и ссылки вместо SQL-тела.
 
-```
-\.\.\.        …
-сокращено     см\. body      см\. helpers
-при\s+финализации   в\s+фактической\s+миграции
-аналогично    остальные\s+поля
-TODO          FIXME
-<\.\.\.>      \{\{\.\.\.\}\}       \bTBD\b
-см\.\s*§
-```
-
-Фактический результат (`python3` extractor, только SQL внутри canonical blocks):
+Фактический результат (`python3` extractor, только canonical SQL между markers):
 
 ```
 --- forward:  0 hits
 --- rollback: 0 hits
+--- markdown headings inside forward: 0
+--- markdown headings inside rollback: 0
+--- code fences inside forward: 0
+--- code fences inside rollback: 0
 ```
 
 Ожидание: 0. Совпало.
@@ -2273,7 +2324,7 @@ TODO          FIXME
 
 - `companies`: `id`, `public_id`, `workspace_id`, `company_kind`, `country`, `unp_normalized`, `full_name`, `short_name`, `legal_form`, `legal_address`, `email`, `phone`, `director_name`, `director_position`, `acts_on_basis`, `bank_account`, `bank_name`, `bank_code`, `status`, `merged_into_company_id`, `archived_at`, `metadata`, `created_at`, `created_by`, `updated_at`, `updated_by` — все существуют.
 - `company_contacts`: `id`, `company_id`, `profile_id`, `relationship_type`, `is_billing_contact`, `is_primary`, `source`, `source_client_legal_details_map_id`, `metadata`, `updated_at`, `updated_by` — все существуют.
-- `client_legal_details_company_map`: `id`, `client_legal_details_id`, `company_id`, `updated_at`, `updated_by` — все существуют. Unique constraint = `client_legal_details_id`; `UPDATE ... SET company_id = v_target_leaf` не создаёт конфликта.
+- `client_legal_details_company_map`: `id`, `client_legal_details_id`, `company_id`, `updated_at`, `updated_by` — все существуют. Unique constraint = `client_legal_details_id`; update of `company_id` to `v_target_leaf` не создаёт конфликта.
 - `company_sync_queue`: `entity_type`, `entity_id`, `run_reason`, `status`, `idempotency_key`, `next_run_at`, `payload`, `created_by`, `updated_by` — все существуют.
 - `client_legal_details`: `id`, `client_type`, `purpose`, `leg_unp`, `ent_unp`, `leg_org_form`, `leg_name`, `ent_name`, `leg_address`, `ent_address`, `leg_director_name`, `leg_director_position`, `leg_acts_on_basis`, `ent_acts_on_basis`, `bank_account`, `bank_name`, `bank_code`, `email`, `phone`, `updated_at` — все существуют.
 
@@ -2281,8 +2332,11 @@ TODO          FIXME
 
 ### 13.11 FINALIZED gate
 
-Все три gate-check пройдены:
+Все static gate-check пройдены:
 
+- `.lovable/plan.md` должен быть восстановлен из commit `aa14bdaaa0de8fc0fbad99cb31e7f0df99ae51f7`;
+- forward marker range — прямой SQL без markdown/prose/fences;
+- rollback marker range — прямой SQL без markdown/prose/fences;
 - placeholder scan: 0 hits;
 - counter matrix (§13.9): все строки совпали;
 - schema whitelist (§13.10): 0 неизвестных колонок.
@@ -2290,7 +2344,6 @@ TODO          FIXME
 Phase 2 runnable plan: **FINALIZED (documentation)**. Execution — по-прежнему **NOT APPROVED** до отдельного approve; admin fixture blocker сохранён.
 
 ---
-
 
 ## 14. Runtime proof (последовательность, правки 11 и 17)
 
@@ -2331,7 +2384,7 @@ Phase 2 runnable plan: **FINALIZED (documentation)**. Execution — по-пре�
 2. Считается `sha256sum <migration-file>` — результат прикладывается к approve-запросу.
 3. Нормализованный diff (`normalize whitespace`) старого и нового `search_global` прикладывается к approve-запросу.
 4. Указывается exact filename миграции.
-5. Migration history после apply — попытка `SELECT ... FROM supabase_migrations.schema_migrations`; результат = `VERIFIED` либо `NOT VERIFIED — permission denied` (не блокирует, если post-apply catalog state подтверждает применение — §13).
+5. Migration history после apply — read-only query to migration history; результат = `VERIFIED` либо `NOT VERIFIED — permission denied` (не блокирует, если post-apply catalog state подтверждает применение — §13).
 
 ---
 
@@ -2359,7 +2412,7 @@ Phase 2 runnable plan: **FINALIZED (documentation)**. Execution — по-пре�
 - отличия skeleton signatures;
 - SHA-256 pre-Phase-2 `search_global` ≠ `3f52ef62916b655d386f56ea1a44d78e261037a19b8c83d674ce09f6dd967e9f`;
 - admin fixture отсутствует и archive/merge критичны для approve;
-- billing mapping неоднозначен (см. §4);
+- billing mapping неоднозначен; правила перечислены в §4;
 - ownership algorithm требует изменения frozen schema;
 - ADR-0002 требует новый DDL;
 - runtime proof нельзя выполнить (правка 11 задаёт fallback-статус);
