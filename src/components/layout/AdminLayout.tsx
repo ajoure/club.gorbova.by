@@ -23,6 +23,7 @@ interface AdminLayoutProps {
 const routeToTitle: Record<string, string> = {
   '/admin/communication': 'Контакт-центр',
   '/admin/contacts': 'Контакты',
+  '/admin/companies': 'Компании',
   '/admin/deals': 'Сделки',
   '/admin/orders': 'Заказы',
   '/admin/orders-v2': 'Заказы',
@@ -66,6 +67,7 @@ const routeToHelpAnchor: Record<string, string> = {
   '/admin/users': 'admin-impersonate',
   '/admin/deals': 'orders',
   '/admin/contacts': 'admin',
+  '/admin/companies': 'admin',
   '/admin/orders': 'orders',
   '/admin/orders-v2': 'orders',
   '/admin/payments': 'orders',

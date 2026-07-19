@@ -93,6 +93,7 @@ const Banned = lazy(() => import("./pages/Banned"));
 // Admin pages - lazy loaded (heavy components)
 const AdminLayout = lazy(() => import("./components/layout/AdminLayout").then(m => ({ default: m.AdminLayout })));
 const AdminContacts = lazy(() => import("./pages/admin/AdminContacts"));
+const AdminCompanies = lazy(() => import("./pages/admin/AdminCompanies"));
 const AdminDeals = lazy(() => import("./pages/admin/AdminDeals"));
 const AdminTasks = lazy(() => import("./pages/admin/AdminTasks"));
 const AdminTaskTypes = lazy(() => import("./pages/admin/AdminTaskTypes"));
@@ -282,6 +283,7 @@ const App = () => {
               <Route path="/admin/broadcasts" element={<Navigate to="/admin/communication?tab=broadcasts" replace />} />
               <Route path="/admin/contacts" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminContacts /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/contacts/duplicates" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminDuplicates /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/companies" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminCompanies /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/deals" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminDeals /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/tasks" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminTasks /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/tasks/types" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminTaskTypes /></AdminLayout></LazyRoute></ProtectedRoute>} />
