@@ -24,9 +24,10 @@ import {
   ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X, EyeOff, Power, PowerOff, GripVertical, Shield
 } from "lucide-react";
 import { ProductAccessRulesTab } from "@/components/admin/product/ProductAccessRulesTab";
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
-import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { DndContext, closestCenter, PointerSensor, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { SortableTariffItem } from "@/components/admin/product/SortableTariffItem";
+import { SortableOfferItem } from "@/components/admin/product/SortableOfferItem";
 import { ProductCustomFields } from "@/components/products/ProductCustomFields";
 import { ProductDocumentsOverview } from "@/components/admin/product/ProductDocumentsOverview";
 import { ProductCompositionTab } from "@/components/products/ProductCompositionTab";
@@ -70,6 +71,7 @@ import {
   useUpdateTariffOffer,
   useDeleteTariffOffer,
   useSetPrimaryOffer,
+  useReorderTariffOffers,
   type TariffOffer,
   type TariffOfferInsert,
   type PaymentMethod,
