@@ -1354,15 +1354,52 @@ END $$;
 
 Полное тело — pre-Phase-2 body из §12.4 + additive блок §6, размещённый непосредственно перед `RETURN jsonb_build_object(...)` (в блок возвращаемого объекта добавляется ключ `'companies'`). Для совместимости с existing callers ветки `contacts/deals/messages` остаются идентичны.
 
-### 11.11 ACL и `domain_events` дедуп-индекс
+### 11.11 Private emit helper и ACL
+
+Phase 2 **не создаёт** индексов, constraints или колонок на shared-таблице `public.domain_events`. Дедупликация делается в helper (§10.1).
 
 ```sql
--- Дедуп-индекс для company-events
-CREATE UNIQUE INDEX IF NOT EXISTS domain_events_company_idem_uniq
-  ON public.domain_events ((payload->>'idempotency_key'))
-  WHERE event_type LIKE 'company.%';
+-- Private emit helper (§10.1) — дедуплицированная запись в domain_events
+CREATE OR REPLACE FUNCTION public._crm_company_emit_domain_event(
+  _event_type      text,
+  _entity_id       uuid,
+  _idempotency_key text,
+  _payload         jsonb
+) RETURNS uuid
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $$
+DECLARE v_existing uuid; v_new uuid;
+BEGIN
+  IF _event_type IS NULL OR _event_type NOT LIKE 'company.%' THEN
+    RAISE EXCEPTION 'emit: bad event_type %', _event_type;
+  END IF;
+  IF _idempotency_key IS NULL OR length(_idempotency_key) < 8 THEN
+    RAISE EXCEPTION 'emit: bad idempotency_key';
+  END IF;
+  IF NOT (_payload ? 'version') OR (_payload->>'version') <> '1' THEN
+    RAISE EXCEPTION 'emit: payload version must be 1';
+  END IF;
+  IF coalesce(_payload->>'idempotency_key','') <> _idempotency_key THEN
+    RAISE EXCEPTION 'emit: payload/key mismatch';
+  END IF;
 
--- ACL для новых RPC
+  PERFORM pg_advisory_xact_lock(hashtextextended('crm_company_emit:' || _idempotency_key, 0));
+
+  SELECT id INTO v_existing FROM public.domain_events
+   WHERE event_type = _event_type
+     AND payload->>'idempotency_key' = _idempotency_key
+   LIMIT 1;
+  IF v_existing IS NOT NULL THEN
+    RETURN NULL;  -- дубль подавлен
+  END IF;
+
+  INSERT INTO public.domain_events(event_type, source, entity_id, payload)
+  VALUES (_event_type, 'crm', _entity_id, _payload)
+  RETURNING id INTO v_new;
+  RETURN v_new;
+END $$;
+
+-- ACL для новых RPC (правка 3 — семь public RPC + два private helper)
 REVOKE ALL ON FUNCTION public.crm_company_get_or_create(text,text,text,text,text,uuid)     FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.crm_company_link_contact(uuid,uuid,text,boolean,text,uuid)  FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.search_companies(jsonb)                                     FROM PUBLIC, anon, service_role;
@@ -1379,8 +1416,10 @@ GRANT EXECUTE ON FUNCTION public.crm_company_archive(uuid,text)                 
 GRANT EXECUTE ON FUNCTION public.crm_company_grp_refetch(uuid)                               TO authenticated;
 GRANT EXECUTE ON FUNCTION public.crm_company_upsert_from_billing(uuid)                       TO service_role;
 
--- helper — никаких GRANT
+-- Оба private helper — никаких GRANT
 REVOKE ALL ON FUNCTION public._crm_company_resolve_or_create_internal(text,text,text,text,uuid,text,uuid)
+  FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public._crm_company_emit_domain_event(text,uuid,text,jsonb)
   FROM PUBLIC, anon, authenticated, service_role;
 ```
 
@@ -1407,11 +1446,20 @@ BEGIN
      OR has_function_privilege('anon',     'public.search_companies(jsonb)','EXECUTE')
      OR has_function_privilege('authenticated','public.crm_company_upsert_from_billing(uuid)','EXECUTE')
      OR has_function_privilege('authenticated','public._crm_company_resolve_or_create_internal(text,text,text,text,uuid,text,uuid)','EXECUTE')
+     OR has_function_privilege('authenticated','public._crm_company_emit_domain_event(text,uuid,text,jsonb)','EXECUTE')
+     OR has_function_privilege('service_role','public._crm_company_emit_domain_event(text,uuid,text,jsonb)','EXECUTE')
   THEN RAISE EXCEPTION 'post: ACL matrix drift'; END IF;
 
-  -- unique dedup index exists
-  PERFORM 1 FROM pg_class WHERE relname='domain_events_company_idem_uniq';
-  IF NOT FOUND THEN RAISE EXCEPTION 'post: dedup index missing'; END IF;
+  -- emit helper exists и SECURITY DEFINER
+  PERFORM 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+   WHERE n.nspname='public' AND p.proname='_crm_company_emit_domain_event' AND p.prosecdef;
+  IF NOT FOUND THEN RAISE EXCEPTION 'post: emit helper missing or not SECURITY DEFINER'; END IF;
+
+  -- shared-таблица domain_events НЕ должна иметь Phase 2 индексов
+  PERFORM 1 FROM pg_indexes
+   WHERE schemaname='public' AND tablename='domain_events'
+     AND indexname LIKE '%company_idem%';
+  IF FOUND THEN RAISE EXCEPTION 'post: unexpected Phase 2 index on domain_events'; END IF;
 END $post$;
 
 COMMIT;
