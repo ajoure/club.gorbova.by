@@ -1,7 +1,7 @@
 # Runnable plan: CRM Companies — Phase 2 Canonical RPC Layer
 
-**Status:** `DRAFT / NOT APPROVED / DO NOT EXECUTE`
-**Date:** 2026-07-19 (patch v2 — addresses gaps 7/10/15, missing full SQL, incomplete discovery)
+**Status:** `EXECUTION APPROVED / PRE-APPLY CORRECTION VALIDATED / NOT YET APPLIED`
+**Date:** 2026-07-19 (patch v3 — fixes mandatory `crm_activity_log.user_id` for service-role billing and restores link/billing-created CRM activity events)
 **Phase 1 closure commit:** `ab2d4b05321938c01cf7ada07dda40c9a3e7de86`
 **Database ref:** `hdjgkjceownmmnrqqtuz`
 **Baseline schema hash:** `c41160b83c8e15c3d3c41a13028700d5` (подтверждён §2)
@@ -314,6 +314,13 @@ ELSE:  -- admin/import override сохраняется
 ```
 
 `country`, `unp_normalized`, `company_kind` — только при INSERT canonical company; в mutable-блоки НЕ включаются.
+
+Для service-role billing-вызова обязательный `crm_activity_log.user_id` определяется как
+`COALESCE(profiles.user_id, profiles.id)` по `client_legal_details.profile_id`: реальный auth-user
+используется при наличии, а для ghost-profile сохраняется стабильный UUID профиля. Это не меняет
+схему shared-таблицы. Auto-created billing company получает guarded `company.created`, а каждый
+override conflict — guarded `company.field.override_conflict`. `crm_company_link_contact` пишет
+guarded activity с тем же idempotency key, что и соответствующий domain event.
 
 ---
 
@@ -937,6 +944,7 @@ AS $$
 DECLARE v_id uuid; v_existing public.company_contacts%ROWTYPE;
         v_material boolean := false; v_first_insert boolean := false;
         v_company public.companies%ROWTYPE;
+        v_activity_key text;
 BEGIN
   IF NOT (has_role_v2(auth.uid(),'admin')
        OR has_role_v2(auth.uid(),'super_admin')
@@ -1030,32 +1038,55 @@ BEGIN
   END IF;
 
   IF v_first_insert THEN
+    v_activity_key := 'company.linked_to_contact:' || v_id::text;
     PERFORM public._crm_company_emit_domain_event(
       'company.linked_to_contact.v1',
       _company_id,
-      'company.linked_to_contact:' || v_id::text,
+      v_activity_key,
       jsonb_build_object(
         'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'profile_id', _profile_id,
         'relationship_type', _relationship_type, 'is_billing_contact', COALESCE(_is_billing_contact,false),
         'source', _source, 'source_map_id', _source_client_legal_details_map_id,
         'occurred_at', now(),
-        'idempotency_key', 'company.linked_to_contact:' || v_id::text
+        'idempotency_key', v_activity_key
       )
     );
   ELSIF v_material THEN
+    v_activity_key := 'company.linked_to_contact.updated:' || v_id::text || ':' ||
+      md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
+          coalesce(_source_client_legal_details_map_id::text,''));
     PERFORM public._crm_company_emit_domain_event(
       'company.linked_to_contact.v1',
       _company_id,
-      'company.linked_to_contact.updated:' || v_id::text || ':' ||
-        md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
-            coalesce(_source_client_legal_details_map_id::text,'')),
+      v_activity_key,
       jsonb_build_object(
         'version', 1, 'company_id', _company_id, 'contact_id', v_id, 'update', true,
         'occurred_at', now(),
-        'idempotency_key', 'company.linked_to_contact.updated:' || v_id::text || ':' ||
-                           md5(coalesce(_source,'') || ':' || coalesce(_is_billing_contact::text,'') || ':' ||
-                               coalesce(_source_client_legal_details_map_id::text,''))
+        'idempotency_key', v_activity_key
       )
+    );
+  END IF;
+
+  IF v_activity_key IS NOT NULL THEN
+    INSERT INTO public.crm_activity_log (
+      activity_type, source_entity_id, source_entity_type,
+      user_id, idempotency_key, metadata
+    )
+    SELECT 'company.linked_to_contact', _company_id, 'company', auth.uid(),
+           v_activity_key,
+           jsonb_build_object(
+             'contact_id', v_id,
+             'profile_id', _profile_id,
+             'relationship_type', _relationship_type,
+             'is_billing_contact', COALESCE(_is_billing_contact,false),
+             'source', _source,
+             'source_map_id', _source_client_legal_details_map_id,
+             'update', NOT v_first_insert
+           )
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.crm_activity_log
+       WHERE source_entity_type='company' AND source_entity_id=_company_id
+         AND idempotency_key=v_activity_key
     );
   END IF;
 
@@ -1078,6 +1109,7 @@ DECLARE
   v_changed   text[] := '{}';
   v_conflicts text[] := '{}';
   v_first_billing_sync boolean := false;
+  v_activity_user_id uuid;
   v_values_hash text;
   v_event_key text;
   -- Нормализованные значения per §4 (последний non-null billing wins; NULL = не трогать)
@@ -1114,6 +1146,14 @@ BEGIN
   IF v_cld.client_type NOT IN ('legal_entity','entrepreneur') THEN
     RAISE EXCEPTION 'cld.client_type must be legal_entity or entrepreneur' USING ERRCODE='22023'; END IF;
 
+  SELECT COALESCE(p.user_id, p.id)
+    INTO v_activity_user_id
+    FROM public.profiles p
+   WHERE p.id = v_cld.profile_id;
+  IF v_activity_user_id IS NULL THEN
+    RAISE EXCEPTION 'billing profile not found' USING ERRCODE='23503';
+  END IF;
+
   v_kind := v_cld.client_type;
   IF v_kind = 'legal_entity' THEN
     v_unp  := regexp_replace(coalesce(v_cld.leg_unp,''),'\D','','g');
@@ -1132,6 +1172,23 @@ BEGIN
     v_country, v_unp, v_full, v_kind, NULL::uuid, 'billing_requisites', _client_legal_details_id);
 
   SELECT * INTO v_company FROM public.companies WHERE id=v_id FOR UPDATE;
+
+  -- Auto-created billing companies must appear in the CRM timeline. The source
+  -- profile supplies the mandatory crm_activity_log.user_id for service-role calls.
+  IF v_company.metadata->>'created_source' = 'billing_requisites' THEN
+    INSERT INTO public.crm_activity_log (
+      activity_type, source_entity_id, source_entity_type,
+      user_id, idempotency_key, metadata
+    )
+    SELECT 'company.created', v_id, 'company', v_activity_user_id,
+           'company.created:' || v_id::text,
+           jsonb_build_object('source', 'billing_requisites', 'source_cld_id', _client_legal_details_id)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.crm_activity_log
+       WHERE source_entity_type='company' AND source_entity_id=v_id
+         AND idempotency_key='company.created:' || v_id::text
+    );
+  END IF;
 
   -- stale detection: если source updated_at раньше зафиксированного — идемпотентный no-op
   v_prev_src := (v_company.metadata->'company_sync'->>'last_billing_source_updated_at')::timestamptz;
@@ -1430,8 +1487,8 @@ BEGIN
   -- override conflicts → crm_activity_log (idempotent per (company, field, cld))
   IF array_length(v_conflicts,1) IS NOT NULL THEN
     INSERT INTO public.crm_activity_log (activity_type, source_entity_id, source_entity_type,
-                                         idempotency_key, metadata)
-    SELECT 'company.field.override_conflict', v_id, 'company',
+                                         user_id, idempotency_key, metadata)
+    SELECT 'company.field.override_conflict', v_id, 'company', v_activity_user_id,
            'company.field.override_conflict:' || v_id::text || ':' || f || ':' || _client_legal_details_id::text,
            jsonb_build_object('field', f, 'cld_id', _client_legal_details_id)
       FROM unnest(v_conflicts) AS f
@@ -2351,7 +2408,9 @@ SELECT last_value FROM public.public_id_sequences WHERE entity_type='company';
 - counter matrix (§13.9): все строки совпали;
 - schema whitelist (§13.10): 0 неизвестных колонок.
 
-Phase 2 runnable plan: **FINALIZED (documentation)**. Execution — по-прежнему **NOT APPROVED** до отдельного approve; admin fixture blocker сохранён.
+Phase 2 runnable plan: **FINALIZED**. Execution одобрен пользователем 2026-07-19;
+admin fixture для `1@ajoure.by` создан commit `3e813d07b` и blocker снят.
+Перед apply пакет скорректирован patch v3 и повторно проходит §13 gate.
 
 ---
 
@@ -2373,14 +2432,14 @@ Phase 2 runnable plan: **FINALIZED (documentation)**. Execution — по-пре�
    --   archive/merge → deny для menedzher (правильно);
    -- service_role:
    --   crm_company_upsert_from_billing create/update/stale/no-op/admin-override preservation;
-   -- admin fixture (когда появится):
+   -- admin fixture 1@ajoure.by (admin + menedzher):
    --   crm_company_archive; crm_company_merge с конфликтующими links; чейн merge;
    -- verify: company branch в search_global.
    ROLLBACK TO SAVEPOINT proof; ROLLBACK;
 6. Read-only §13.6/§13.7 — 4 таблицы пусты, sequence=0, тестовые строки activity/events/audit/queue отсутствуют.
 ```
 
-**Blocker `admin fixture required`:** `1@ajoure.by` = `menedzher`. Полный proof для admin-only case откладывается до появления admin-fixture. Migration не применяется до появления fixture или отдельного решения.
+**Admin fixture:** `1@ajoure.by` имеет роли `admin + menedzher`; admin-only proof разблокирован.
 
 **Failure handling:** если post-commit runtime proof не прошёл — Phase 2 closure блокируется, Phase 3 не начинается, migration не редактируется, автоматический rollback не запускается; составляется blocker-отчёт и принимается отдельное решение о corrective migration или rollback.
 
@@ -2395,6 +2454,13 @@ Phase 2 runnable plan: **FINALIZED (documentation)**. Execution — по-пре�
 3. Нормализованный diff (`normalize whitespace`) старого и нового `search_global` прикладывается к approve-запросу.
 4. Указывается exact filename миграции.
 5. Migration history после apply — read-only query to migration history; результат = `VERIFIED` либо `NOT VERIFIED — permission denied` (не блокирует, если post-apply catalog state подтверждает применение — §13).
+
+**Pre-apply patch v3 fingerprint:**
+
+- forward: `supabase/migrations/20260719210633_crm_companies_phase2_rpc_layer.sql`;
+- bytes: `68385`;
+- SHA-256: `7b8e23ae222be63b2d2a4d5968c73d9e1db37006cd51970bdba843202eff4cc8`;
+- rollback SHA-256 остаётся `62862ba5a0c529bab0e5182d72bb01343c8728b71e201876259ed7ff725e2fa4`.
 
 ---
 
@@ -2440,4 +2506,4 @@ Phase 2 runnable plan: **FINALIZED (documentation)**. Execution — по-пре�
 - Runnable-план содержит: RPC signatures, ACL matrix, полное billing mapping, ownership algorithm, event/audit contracts с полными idempotency keys и версиями payload, **полный migration SQL** (§11) и **полный rollback SQL** (§12), verification SQL (§13), runtime proof последовательность (§14), stop-guards (§17).
 - Полный merge-контракт (§7) — с разрешением цепочек, запретом циклов, детерминированным locking, объединением contacts и metadata компании.
 - Полный контракт private helper (§10) — сигнатура, ACL, dependency graph, order rollback, полный CREATE (§11.2).
-- Phase 2 миграция **не запускается** до отдельного execution approve, до фиксации SHA-256/commit артефактов и до появления admin-fixture (либо отдельного решения о частичном proof).
+- Условия запуска выполнены: execution approve получен, SHA-256 зафиксирован, admin fixture создан; apply выполняется только после успешного preflight.
