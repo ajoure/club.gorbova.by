@@ -1613,12 +1613,16 @@ END;
 $function$;
 ```
 
-### 12.5 DROP helper и dedup-индекса (последними)
+### 12.5 DROP private helpers (последними, порядок обязателен)
 
 ```sql
+-- сначала resolve helper (его вызывали удалённые в §12.2 RPC)
 DROP FUNCTION IF EXISTS public._crm_company_resolve_or_create_internal(
   text, text, text, text, uuid, text, uuid);
-DROP INDEX IF EXISTS public.domain_events_company_idem_uniq;
+-- затем emit helper (его вызывали все Phase 2 RPC и resolve helper)
+DROP FUNCTION IF EXISTS public._crm_company_emit_domain_event(
+  text, uuid, text, jsonb);
+-- shared-таблица domain_events не трогается — DDL не создавался
 ```
 
 ### 12.6 Восстановление Phase 1 ACL
