@@ -896,6 +896,25 @@ DROP TABLE public.companies;
 DELETE FROM public.public_id_sequences WHERE entity_type='company';
 
 COMMIT;
+
+-- 9.7 Post-rollback verification: baseline schema hash обязан вернуться
+-- к значению до Phase 1 (companies_read_only_proof.md §7).
+SELECT md5(string_agg(
+  table_name || ':' || column_name || ':' || data_type,
+  ',' ORDER BY table_name, ordinal_position
+)) AS schema_hash
+FROM information_schema.columns
+WHERE table_schema='public'
+  AND table_name IN (
+    'client_legal_details',
+    'profiles',
+    'public_id_sequences',
+    'roles',
+    'role_admin_resource_access',
+    'role_admin_section_access',
+    'admin_section'
+  );
+-- Ожидается ровно: c41160b83c8e15c3d3c41a13028700d5. Иначе — rollback неполный.
 ```
 
 Helper-функции (`update_updated_at_column`, `has_role_v2`, `next_public_id`) созданы вне Phase 1 и rollback не затрагивает. `client_legal_details` не тронут. `admin_section`/`admin_resource`/`role_admin_*`/`app_settings` в Phase 1 не изменялись.
