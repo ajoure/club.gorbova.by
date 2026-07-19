@@ -792,9 +792,9 @@ export default function AdminProductDetailV2() {
           },
         ];
       }
-      // Каноничные слот-маркеры для «Сформировать счёт».
-      (metaToSave as any).site_button_variant = (metaToSave as any).site_button_variant || "legal_entity";
-      (metaToSave as any).slot_role = (metaToSave as any).slot_role || "payment_invoice";
+      // NOTE: слот и оформление больше НЕ проставляются автоматически по offer_type.
+      // Администратор выбирает «Слот» (Кнопка 1…10) и «Цвет» вручную в разделе
+      // «Размещение кнопки». Пустой слот = «Не размещать автоматически».
       // Удаляем чужие блоки эквайринга/подписки/рассрочки.
       delete (metaToSave as any).acquiring;
       delete (metaToSave as any).recurring;
@@ -2154,8 +2154,8 @@ export default function AdminProductDetailV2() {
                           first_payment_delay_days: null as any,
                           meta: {
                             ...cleanMeta,
-                            site_button_variant: cleanMeta.site_button_variant || "legal_entity",
-                            slot_role: cleanMeta.slot_role || "payment_invoice",
+                            // Слот и цвет кнопки задаются вручную в разделе
+                            // «Размещение кнопки», а не по типу оффера.
                           },
                         });
                       } else {
