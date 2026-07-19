@@ -25,10 +25,12 @@ Automation, activity, domain events, audit для Companies.
 
 **Проверка покрытия для Companies:**
 
-- `company.created` → создать задачу «Проверить реквизиты новой компании» (assign to CRM manager) — **требуется расширение** `crm_task_automation_rules` набором триггерных источников. В текущей модели правил источник — event bus (см. `applier: crm_task_apply_automation`). Расширение: добавить в `trigger_event` набор `company.*` (data-only, без DDL, если это jsonb-поле).
-- `company.linked_to_deal` → пере-назначить существующие задачи сделки на company-scope (Phase 6).
+Read-only проверка: `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='crm_task_automation_rules' AND column_name='trigger_event'` — `trigger_event` имеет тип `text` (не jsonb). Формулировка «если это jsonb-поле» из ранней версии отозвана.
 
-**Вердикт:** существующая инфраструктура правил переиспользуется. В Phase 6 добавить в `crm_task_apply_automation` обработку `company.*` событий. Новых таблиц не нужно.
+- `company.created` → задача «Проверить реквизиты новой компании» (assign to CRM manager). Расширение — Phase 6: добавить строки в `crm_task_automation_rules` с `trigger_event='company.created.v1'` (без DDL, `text` не имеет CHECK constraint).
+- `company.linked_to_deal` → Phase 6: правила company-scope.
+
+**Вердикт:** существующая инфраструктура правил переиспользуется. В Phase 6 `crm_task_apply_automation` расширяется обработкой `company.*`. Новых таблиц не нужно.
 
 ## 3. `tariff_offers.meta.auto_tasks[]` (compatibility layer)
 
@@ -36,14 +38,22 @@ Automation, activity, domain events, audit для Companies.
 
 ## 4. Триггеры на `orders_v2`
 
-`orders_v2` — SoT сделок. Компания фигурирует как FK `orders_v2.company_id` (nullable, Phase 5). Триггер на UPDATE `company_id` эмитит `domain_event company.linked_to_deal.v1`.
+`orders_v2.company_id` — Phase 5. Триггер на UPDATE `company_id` эмитит `domain_event company.linked_to_deal.v1`.
 
-## 5. Sync events
+## 5. Sync events (Phase 4, не Phase 1)
 
-Собственная очередь `company_sync_queue` (см. freeze §5). Воркер `company-sync-worker`:
+Trigger `AFTER INSERT/UPDATE ON client_legal_details` **отсутствует в Phase 1** — прямая cross-domain связь Billing → CRM запрещена платформенным правилом «междоменные действия — через события». Поток:
 
-- pull batch → apply → emit `crm_activity_log` (compact) + `domain_events` (`company.synced.v1`, `company.grp_refetched.v1`).
-- Ретраи: `attempts`, `next_run_at`, `last_error`, `locked_by`.
+```
+save billing details in client_legal_details
+  → guarded RPC crm_company_upsert_from_billing (Phase 2)
+  → domain_event company.upserted_from_billing.v1
+  → safety-net trigger enqueue в company_sync_queue (Phase 4)
+  → company-sync-worker (Phase 4)
+  → emit crm_activity_log (compact) + domain_events
+```
+
+Ретраи: `attempts`, `next_run_at`, `last_error`, `locked_by`. Canonical `idempotency_key` — см. `companies_migration_strategy.md` §6.
 
 ## 6. Notifications
 

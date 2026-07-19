@@ -22,7 +22,7 @@
 | Activity | `crm_activity_log` | `db: public.crm_activity_log` | REUSE, `source_entity_type='company'` |
 | Domain events | `domain_events` / `domain_executions` | `db: public.domain_events` | REUSE, `event_type='company.*.v1'` |
 | Audit | `audit_logs` | `db: public.audit_logs` | REUSE, `entity_type='company'` |
-| Public ID | `public_id_sequences` + `generate_admin_catalog_public_id` | `db: public.public_id_sequences` | REUSE (`prefix='co'` для company) |
+| Public ID | `public_id_sequences` + `next_public_id(p_entity_type)` | `rpc: public.next_public_id`, `db: public.public_id_sequences` | REUSE: INSERT `(entity_type='company', prefix='CMP', last_value=0)`; формат `CMP-000001`. **Не** использовать `generate_admin_catalog_public_id` (случайный hex — не подходит). Prefix `co` из ранней версии freeze отозван. |
 | RLS helper | `has_role_v2(uuid,text)` | `db: public.has_role_v2` | REUSE |
 | Ownership tenants | `tenants` (single-deployment SYSTEM) | см. `.lovable/discovery/crm-tasks-diagnose.md` | REUSE (`workspace_id` DEFAULT SYSTEM) |
 
@@ -30,7 +30,7 @@
 
 | Блок | Существующее | Ссылка | Вердикт |
 |---|---|---|---|
-| Глобальный поиск | `search_global`, `search_deal_rows`, `search_club_members_enriched` | `rpc: public.search_global`, `search_deal_rows` | REUSE + extend: добавить companies в `search_global`; отдельный `search_companies` для admin-таблицы |
+| Глобальный поиск | `search_global`, `search_deal_rows`, `search_club_members_enriched` | `rpc: public.search_global`, `search_deal_rows` | REUSE + extend в **Phase 2** (не Phase 1). Отдельный `search_companies` — Phase 2, первое использование Phase 7. См. `companies_rpc_inventory.md` §7 (canonical phase matrix). |
 | Task list | `crm_task_list` | `code: src/hooks/useCrmTasks.ts:L60-L83` | REUSE (в Phase 1 задачи компании не создаются; в Phase 6 добавить фильтр `company_id`) |
 
 ## UI
@@ -40,7 +40,7 @@
 | Sheet primitive | shadcn `SheetContent` | `code: src/components/admin/DealDetailSheet.tsx:L17,L539` | REUSE |
 | Tabs primitive | shadcn `Tabs`/`TabsList`/`TabsTrigger` | `code: src/components/admin/ContactDetailSheet.tsx:L26,L1754-L1787` | REUSE |
 | DetailSheet shell (Contact/Deal) | `ContactDetailSheet.tsx` (4074 строки), `DealDetailSheet.tsx` (1371 строки) | те же | EXTRACT (deferred) — паттерн копируется, но общий wrapper не извлекать в этот спринт |
-| Timeline | `crm_activity_log` → `ContactFeedTab.tsx` | `code: src/components/admin/contact/ContactFeedTab.tsx` | REUSE+PROPS (передать `entity_type/entity_id`) |
+| Timeline | `crm_activity_log` → `ContactFeedTab.tsx` | `code: src/components/admin/contact/ContactFeedTab.tsx` | **REFACTOR-FIRST / EXTRACT** (deferred). Компонент contact-specific: принимает только `contactId`, вызывает `contact_feed_list(_contact_id)`, query key `contact_feed`, загружает заказы/уведомления/доступы конкретного контакта, создаёт `contact_note_*`, содержит Telegram/file/voice-note composer. **Не** «REUSE+PROPS». Reusable как есть — только отдельные визуальные рендереры карточек. Company timeline требует shared extract (generic activity adapter) либо отдельный `company_feed_list` RPC. Shared refactor может оставаться deferred и не блокирует Phase 1, но текущий reuse-вывод «передать entity_type/entity_id» отозван. |
 | Tasks section | `CrmTasksSection.tsx`, `TasksListView.tsx` | `code: src/components/admin/tasks/CrmTasksSection.tsx` | REUSE+PROPS (Phase 6, не Phase 1) |
 | Calls section | `CallsHistorySection.tsx` | `code: src/components/admin/calls/CallsHistorySection.tsx` | REUSE+PROPS (Phase 6) |
 | Documents | `admin_docs`, `document_package_sessions` + UI | — | REUSE как есть; в Phase 10 — совместимость |

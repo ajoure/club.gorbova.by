@@ -22,7 +22,7 @@
 |---|---|---|
 | Header (аватар, имя, статус) | `ContactDetailSheet.tsx` header-часть | REUSE+PROPS (компания: логотип, name, УНП, badge статуса) |
 | Profile (форма полей) | внутри Tabs `value="profile"` L1758 | Company-specific: свои поля (`companies_architecture_freeze.md` §8) |
-| Feed (Timeline) | Tab `value="feed"` L1759-L1762 → `ContactFeedTab.tsx` | REUSE+PROPS (`entity_type='company'`, `entity_id`) |
+| Feed (Timeline) | Tab `value="feed"` L1759-L1762 → `ContactFeedTab.tsx` | **REFACTOR-FIRST / EXTRACT** (deferred). Компонент contact-specific: `contactId` prop, RPC `contact_feed_list(_contact_id)`, query key `contact_feed`, contact-specific composer (Telegram/файлы/voice). Простой prop `entity_type/entity_id` не покрывает. Вывод «REUSE+PROPS» из ранней версии отозван. Company timeline — либо shared extract (generic activity adapter), либо новый `company_feed_list` RPC. Не блокирует Phase 1. |
 | Telegram chat | Tab `telegram` L1763-L1766 → `ContactTelegramChat.tsx` | Company-specific / N/A (Telegram привязан к profile) |
 | Calls | Tab `calls` L1767-L1770 → `CallsHistorySection.tsx` | REUSE+PROPS (Phase 6) |
 | SMS | Tab `sms` L1771-L1774 | Deferred (не в Phase 1/7) |
