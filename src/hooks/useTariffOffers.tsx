@@ -123,7 +123,12 @@ export interface OfferMetaConfig {
     comment_placeholder?: string;
     success_message?: string;
   };
+  /** Anchor slot in Tilda HTML: `data-lovable-slot="<slot_role>"`. Absent = not placed. */
+  slot_role?: SiteSlotRole;
+  /** Visual variant of the CTA button, independent of offer_type / slot. */
+  site_button_variant?: SlotVariant;
 }
+
 
 export type DocumentScenarioPayerType = 'individual' | 'legal_entity';
 export type DocumentScenarioChannel =
