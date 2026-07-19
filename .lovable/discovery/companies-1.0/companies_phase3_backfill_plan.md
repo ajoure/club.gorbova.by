@@ -1,140 +1,166 @@
-# План: CRM Companies — Phase 3B Backfill Plan (PLAN ONLY)
+# План: CRM Companies — Phase 3B Backfill Plan + Rollback-only Rehearsal
 
-**Версия:** 1.0
-**Статус:** PLAN ONLY / DO NOT EXECUTE
-**Основано на:** `companies_phase3_backfill_discovery.md` (Phase 3A PASS).
-**Запуск Phase 3C:** запрещён без отдельного явного admin approval.
+**Версия:** 1.1
+**Статус:** Phase 3B = подготовка runnable-плана **и** rollback-only rehearsal.
+**Phase 3C:** запрещён без отдельного явного admin approval.
+**Основано на:** `companies_phase3_backfill_discovery.md` v1.1 (Phase 3A PASS).
 
 ---
 
 ## 1. Required scope
 
-Однократный backfill данных из `public.client_legal_details` в canonical слой CRM Companies 1.0.
+Однократный backfill из `public.client_legal_details` в canonical слой CRM Companies 1.0.
 
 **В scope:**
-- Создание canonical `companies` (16 unique UNP).
-- Создание `maps` (17 записей CLD → company).
-- Создание `contacts` роли `billing_contact` (17 записей).
-- Установка `country = 'BY'` через resolver `inferred_by_domain`.
+- Создание записей в `public.companies` (16 unique UNP).
+- Создание записей в `public.client_legal_details_company_map` (17).
+- Создание записей в `public.company_contacts` с `relationship_type='billing_contact'` и `is_billing_contact=true` (17).
+- Фиксация факта инференса `country='BY'` в execution ledger/report (в canonical метаданных `country_source` не пишется, если в Phase 3B не одобрен отдельный writer).
 
 **Вне scope:**
 - Любые изменения схемы (DDL).
-- Новые RPC/функции/триггеры/enum.
+- Новые RPC/функции/триггеры/enum (кроме случая явно одобренного internal service writer, см. §4).
 - Изменения UI, types, зависимостей.
-- Backfill сущностей вне CRM Companies (deals, orders, invoices и т.п.).
-- Изменения production до отдельного approval.
+- Backfill сущностей вне CRM Companies.
+- Любые действия на production до отдельного approval Phase 3C.
 
 ---
 
 ## 2. Source of truth
 
-- **Источник:** `public.client_legal_details` (48 строк, из них 17 eligible).
-- **Фильтр eligibility:** валидный UNP (9 цифр), не пустой профиль-владелец.
+- **Источник:** `public.client_legal_details` (48 строк, 17 eligible).
+- **Eligibility:** валидный UNP (9 цифр), не пустой профиль-владелец.
 - **Правила резолюции:**
-  - `unp` → канонический ключ дедупликации.
-  - `kind` ∈ {`legal_entity`, `entrepreneur`} → маппинг в `company_kind`.
-  - `country` отсутствует → `BY` (`inferred_by_domain`).
-  - Профиль CLD → `billing_contact` с `profile_id` из источника.
+  - `unp` — ключ дедупликации в `public.companies`.
+  - `kind` ∈ {`legal_entity`, `entrepreneur`} → `company_kind`.
+  - `country` — отсутствует в источнике; жёстко `'BY'` внутри `crm_company_upsert_from_billing`.
+  - Профиль CLD → `public.company_contacts` с `relationship_type='billing_contact'`, `is_billing_contact=true`, `profile_id` из источника.
+  - `country_source='inferred_by_domain'` — **не** postcondition текущего RPC; фиксируется только в execution ledger/report.
 
 ---
 
 ## 3. Permission / service-role model
 
-- Выполнение backfill — только через `service_role` в рамках миграции Lovable Cloud (`supabase--migration`) либо через SECURITY DEFINER RPC из Phase 2.
-- `anon` и `authenticated` — доступа к операции нет.
-- Все canonical write-операции проходят через Phase 2 контракт (`crm_company_get_or_create`, `crm_company_link_contact`, billing upsert), никаких прямых `INSERT` в canonical таблицы.
-- ACL-контракт Phase 1 (REVOKE у `anon/PUBLIC`) не изменяется.
+- Прямые ad-hoc записи в canonical таблицы запрещены; все write-операции проходят через один согласованный контракт (см. §4).
+- ACL Phase 1 (REVOKE у `anon/PUBLIC` на `companies`, `client_legal_details_company_map`, `company_contacts`) не изменяется.
+- Admin fixture `1@ajoure.by` (роль `admin`) используется только как identity для вызова `crm_company_link_contact` в варианте (a); данные fixture не модифицируются.
 
 ---
 
-## 4. Idempotency
+## 4. Execution-identity gate (обязателен до rehearsal)
 
-- Основа: `crm_company_get_or_create` дедуплицирует по `(country, unp)` и возвращает существующий `company_id` без побочных side-effects при повторном вызове.
-- `crm_company_link_contact` идемпотентен по `(company_id, profile_id, role)`.
-- Billing upsert использует `array_append` (пост-фикс Phase 2) — повторный прогон не создаёт дублей значений.
-- Повторный запуск полного backfill не должен создавать новых строк и не должен генерировать дополнительных доменных событий/логов.
+Существующие Phase 2 RPC имеют разные identity-требования, поэтому один service-role вызов **не** покрывает все три действия:
 
-**Проверка идемпотентности:** второй проход в rehearsal обязан вернуть `inserted=0`, `updated=0`, `noop=17`.
+| Действие | Механизм | Identity |
+|---|---|---|
+| `public.companies` upsert | `crm_company_upsert_from_billing` | `service_role` |
+| `public.client_legal_details_company_map` insert | RPC отсутствует | требуется controlled SQL или отдельный internal writer |
+| `public.company_contacts` insert (billing) | `crm_company_link_contact` | `authenticated` + role guard `admin` / `super_admin` / `menedzher` |
+
+**До rehearsal Phase 3B обязан выбрать и доказать один способ оркестрации в rollback-only режиме:**
+
+- **Вариант (a) — controlled SQL с проверяемым admin JWT:**
+  - `crm_company_upsert_from_billing` вызывается под `service_role`.
+  - `crm_company_link_contact` вызывается под admin JWT (fixture `1@ajoure.by`), с проверкой role guard.
+  - Вставка в `client_legal_details_company_map` — прямой SQL под `service_role` в той же транзакции.
+- **Вариант (b) — новый узкий internal service writer:**
+  - Покрывает все три действия одним контрактом.
+  - Создаётся **только после отдельного approval** (в текущем Phase 3B по умолчанию не создаётся).
+
+Выбранный вариант фиксируется в отчёте rehearsal.
 
 ---
 
-## 5. Concurrency
+## 5. Idempotency
 
-- Backfill выполняется в одной транзакции, однопоточно.
-- Внутри `crm_company_get_or_create` уже используются advisory locks (Phase 2, concurrency proof PASS) — параллельный runtime-траффик не приведёт к дублированию.
-- На время исполнения запрещено параллельно запускать любые административные скрипты, затрагивающие `companies/maps/contacts`.
+- `crm_company_upsert_from_billing` — идемпотентен по UNP (дедупликация в `public.companies`).
+- `crm_company_link_contact` — идемпотентен по `(company_id, profile_id, relationship_type)` в `public.company_contacts`.
+- Вставка в `public.client_legal_details_company_map` — идемпотентна по `(client_legal_detail_id, company_id)` (или эквивалентному уникальному ключу; уточняется в rehearsal чтением схемы).
+- **Проверка:** повторный проход в rehearsal обязан вернуть `inserted=0`, `updated=0`, `noop=17` по всем трём таблицам.
 
 ---
 
-## 6. Rollback
+## 6. Concurrency
+
+- Backfill — однопоточно, в одной транзакции.
+- Advisory locks внутри Phase 2 RPC (concurrency proof PASS) защищают от гонок с runtime-траффиком.
+- На время исполнения запрещены параллельные административные скрипты, затрагивающие `companies`, `client_legal_details_company_map`, `company_contacts`.
+
+---
+
+## 7. Rollback
 
 - **Обязательный rollback-артефакт** формируется до Phase 3C и сохраняется вне каталога миграций.
-- Rollback описывает удаление ровно тех canonical id, которые созданы backfill-ом (никаких `TRUNCATE`, никакого воздействия на пользовательские данные вне scope).
-- Восстановление sequences (`companies`, `maps`) до baseline значений (0/0), зафиксированных в discovery.
-- Rollback тестируется в rollback-only rehearsal перед Phase 3C.
+- Rollback точечно удаляет ровно те id, которые созданы backfill-ом в `company_contacts`, `client_legal_details_company_map`, `companies` (в обратном порядке зависимостей). Никаких `TRUNCATE`; никакого воздействия на пользовательские данные вне scope.
+- Восстановление sequences (`companies`, `client_legal_details_company_map`) до baseline (0/0).
+- Rollback проходит обязательный **rollback-only rehearsal** до Phase 3C.
 
 ---
 
-## 7. Verification
+## 8. Verification
 
 **Pre-flight (read-only):**
-- Baseline canonical пуст (`companies=0`, `maps=0`, `contacts.role=billing_contact=0`).
+- Baseline canonical пуст: `companies=0`, `client_legal_details_company_map=0`, `company_contacts` (billing) = 0.
 - Sequences = 0.
 - CLD inventory совпадает с discovery (48/17, 7/10 по kind).
+- ACL Phase 1 в силе; линтер чист.
 
 **Post-run:**
-- `companies count = 16`, все с `country='BY'`, `country_source='inferred_by_domain'`.
-- `maps count = 17`, покрывают все eligible CLD.
-- `contacts` роли `billing_contact` count = 17.
+- `public.companies count = 16`; все с `country='BY'`.
+- `public.client_legal_details_company_map count = 17`; покрывают все eligible CLD.
+- `public.company_contacts` с `relationship_type='billing_contact'` и `is_billing_contact=true` count = 17.
 - UNP `193405000` → 1 company, 2 billing contact.
-- Профиль с двумя CLD → 2 company через 2 map.
-- Повторный прогон backfill не изменяет счётчиков (идемпотентность).
-- Линтер (`supabase--linter`) — чист, без новых warnings.
+- Профиль с двумя UNP → 2 company через 2 map (штатный сценарий).
+- Повторный прогон backfill не меняет счётчиков (идемпотентность).
+- Факт инференса `country='BY'` зафиксирован в execution ledger/report.
+- Линтер (`supabase--linter`) — чист.
 
 ---
 
-## 8. Fixtures cleanup
+## 9. Fixtures cleanup
 
-- Тестовые вставки rehearsal-а выполняются в транзакции с `ROLLBACK`; никаких данных в БД не остаётся.
-- Если для rehearsal создаются временные run-tag'и — они удаляются в том же блоке и явно проверяются post-check-ом.
-- Admin fixture `1@ajoure.by` (роль `admin`) — не изменяется, не удаляется, не переиспользуется как источник данных.
+- Все вставки rehearsal выполняются в транзакции с `ROLLBACK`; данные в БД не остаются.
+- Временные run-tag'и удаляются в том же блоке и проверяются post-check-ом.
+- Admin fixture `1@ajoure.by` не изменяется, не удаляется, не переиспользуется как источник данных.
 
 ---
 
-## 9. Stop-guards
+## 10. Stop-guards
 
-Выполнение Phase 3C немедленно останавливается и откатывается, если:
+Rehearsal и (после approval) Phase 3C немедленно останавливаются и откатываются, если:
 
-1. Baseline canonical не пуст (появились строки между discovery и execution).
-2. CLD inventory отличается от зафиксированного в discovery (кол-во eligible ≠ 17, unique UNP ≠ 16).
-3. Обнаружен новый hard blocker (например, третий профиль на UNP `193405000` или невалидный UNP среди eligible).
+1. Baseline canonical не пуст.
+2. CLD inventory отличается от зафиксированного в discovery (eligible ≠ 17, unique UNP ≠ 16).
+3. Появился новый hard blocker (например, третий профиль на UNP `193405000` или невалидный UNP среди eligible).
 4. ACL-контракт Phase 1 нарушен (появились grants у `anon/PUBLIC`).
 5. Линтер выдаёт новые ошибки/warnings.
-6. Rollback-only rehearsal не прошёл PASS.
-7. Второй проход backfill в rehearsal создаёт новые строки (нарушение идемпотентности).
-8. Отсутствует явный admin approval на Phase 3C.
+6. Не выбран или не доказан execution-identity вариант (§4).
+7. Повторный проход backfill в rehearsal создаёт новые строки (нарушение идемпотентности).
+8. Rollback-only rehearsal не прошёл PASS.
+9. Отсутствует явный admin approval на Phase 3C.
 
 ---
 
-## 10. DoD плана
+## 11. DoD Phase 3B
 
-- [x] Scope зафиксирован (in/out).
-- [x] Source of truth и eligibility правила описаны.
-- [x] Permission model — только service_role / SECURITY DEFINER RPC.
+- [x] Scope зафиксирован (in/out) на реальных именах таблиц.
+- [x] Source of truth и eligibility описаны.
+- [x] Permission model и execution-identity gate явно зафиксированы.
 - [x] Идемпотентность, concurrency, rollback описаны.
 - [x] Верификация pre/post зафиксирована.
 - [x] Fixtures cleanup описан.
-- [x] Stop-guards перечислены (8 пунктов).
-- [x] Явно указан запрет на Phase 3C без approval и обязательный rollback-only rehearsal перед ним.
+- [x] Stop-guards перечислены (9 пунктов).
+- [x] Rollback-only rehearsal — обязательная часть Phase 3B.
+- [x] Явный запрет Phase 3C без отдельного admin approval.
 
 ---
 
-## 11. Порядок последующих шагов
+## 12. Порядок последующих шагов
 
-1. Approve плана (этот документ).
-2. Подготовка rollback-only rehearsal (отдельный артефакт, без исполнения на реальных данных).
-3. Rollback-only rehearsal — обязательный PASS.
+1. Approve этого плана.
+2. Выбор и доказательство execution-identity варианта (§4) в rollback-only режиме.
+3. Rollback-only rehearsal backfill — обязательный PASS.
 4. Отдельный admin approval на Phase 3C.
 5. Phase 3C execution (однократно, строго по плану) + verification.
 
-**До получения approval на Phase 3C никаких действий с данными не производится.**
+**До получения approval на Phase 3C никаких действий с реальными данными не производится.**
