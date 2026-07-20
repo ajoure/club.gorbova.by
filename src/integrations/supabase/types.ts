@@ -1773,6 +1773,7 @@ export type Database = {
       }
       ai_generated_documents: {
         Row: {
+          company_id: string | null
           context_id: string | null
           context_type: string | null
           created_at: string
@@ -1819,6 +1820,7 @@ export type Database = {
           warnings_snapshot: Json | null
         }
         Insert: {
+          company_id?: string | null
           context_id?: string | null
           context_type?: string | null
           created_at?: string
@@ -1865,6 +1867,7 @@ export type Database = {
           warnings_snapshot?: Json | null
         }
         Update: {
+          company_id?: string | null
           context_id?: string | null
           context_type?: string | null
           created_at?: string
@@ -7348,6 +7351,7 @@ export type Database = {
       }
       generated_documents: {
         Row: {
+          company_id: string | null
           client_details_id: string | null
           client_snapshot: Json
           contract_date: string | null
@@ -7388,6 +7392,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          company_id?: string | null
           client_details_id?: string | null
           client_snapshot: Json
           contract_date?: string | null
@@ -7428,6 +7433,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          company_id?: string | null
           client_details_id?: string | null
           client_snapshot?: Json
           contract_date?: string | null
