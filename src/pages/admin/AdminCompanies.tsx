@@ -7,6 +7,10 @@ import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Building2,
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -30,6 +34,7 @@ import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
+import { ContactFeedTab } from "@/components/admin/contact/ContactFeedTab";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +49,6 @@ import {
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -188,17 +192,6 @@ interface CompanyActivity {
   created_at: string;
 }
 
-interface CompanyCommunication {
-  id: string;
-  kind: string;
-  at: string | null;
-  title: string | null;
-  body: string | null;
-  meta: Record<string, unknown> | null;
-  author: string | null;
-  source: "contact" | "company";
-}
-
 interface CompanyExternalId {
   id: string;
   provider: string;
@@ -250,6 +243,8 @@ interface ProfileSummary {
 }
 
 const PAGE_SIZE = 25;
+type CompanySortKey = "created_at" | "full_name" | "public_id";
+type SortDirection = "asc" | "desc";
 
 const DEFAULT_COMPANY_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 48, order: 0 },
@@ -333,6 +328,8 @@ export default function AdminCompanies() {
   const [status, setStatus] = useState<"all" | CompanyStatus>("active");
   const [kind, setKind] = useState<"all" | CompanyKind>("all");
   const [createdRange, setCreatedRange] = useState<DateRange | undefined>();
+  const [sortKey, setSortKey] = useState<CompanySortKey>("created_at");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -363,9 +360,9 @@ export default function AdminCompanies() {
     created_to: createdRange?.to ? format(createdRange.to, "yyyy-MM-dd") : undefined,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
-    sort_by: "created_at",
-    sort_dir: "desc",
-  }), [createdRange, debouncedQuery, kind, page, status]);
+    sort_by: sortKey,
+    sort_dir: sortDirection,
+  }), [createdRange, debouncedQuery, kind, page, sortDirection, sortKey, status]);
 
   const companiesQuery = useQuery({
     queryKey: ["admin-companies", filters],
@@ -494,9 +491,30 @@ export default function AdminCompanies() {
   };
 
   const resetPage = () => setPage(0);
+  const handleSort = (nextKey: CompanySortKey) => {
+    if (sortKey === nextKey) setSortDirection((currentDirection) => currentDirection === "asc" ? "desc" : "asc");
+    else {
+      setSortKey(nextKey);
+      setSortDirection(nextKey === "created_at" ? "desc" : "asc");
+    }
+    resetPage();
+  };
+
+  const sortableLabel = (label: string, key: CompanySortKey) => (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1 text-left hover:text-foreground"
+      onClick={(event) => { event.stopPropagation(); handleSort(key); }}
+    >
+      {label}
+      {sortKey === key
+        ? sortDirection === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />
+        : <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />}
+    </button>
+  );
 
   return (
-    <div className="flex-1 min-h-0 h-full flex flex-col gap-4 overflow-y-auto overflow-x-hidden overscroll-y-contain py-4 md:py-6">
+    <div className="flex-1 min-h-0 h-full flex flex-col gap-4 overflow-y-auto overflow-x-hidden overscroll-y-contain py-4 pb-24 md:py-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -634,7 +652,10 @@ export default function AdminCompanies() {
                 <SortableContext items={draggableColumnIds} strategy={horizontalListSortingStrategy}>
                   {visibleColumns.filter((column) => column.key !== "checkbox").map((column) => (
                     <SortableResizableTableHead key={column.key} id={column.key} column={column} onResize={handleColumnResize}>
-                      {column.label}
+                      {column.key === "company" ? sortableLabel(column.label, "full_name")
+                        : column.key === "created" ? sortableLabel(column.label, "created_at")
+                          : column.key === "unp" ? sortableLabel(column.label, "public_id")
+                            : column.label}
                     </SortableResizableTableHead>
                   ))}
                 </SortableContext>
@@ -1003,40 +1024,6 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
     },
   });
 
-  const communicationsQuery = useQuery({
-    queryKey: ["admin-company-communications", companyId],
-    enabled: !!companyId,
-    queryFn: async (): Promise<CompanyCommunication[]> => {
-      const { data, error } = await supabase.rpc("company_feed_list", {
-        _company_id: companyId!,
-        _limit: 100,
-        _offset: 0,
-      });
-      if (error) throw error;
-      return (Array.isArray(data) ? data : []) as unknown as CompanyCommunication[];
-    },
-  });
-  const [noteBody, setNoteBody] = useState("");
-  const createCompanyNote = useMutation({
-    mutationFn: async () => {
-      const { error } = await supabase.rpc("company_note_create", {
-        _company_id: companyId!,
-        _body: noteBody,
-        _source: "manual",
-        _source_key: null,
-        _metadata: {},
-      });
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      setNoteBody("");
-      toast.success("Заметка добавлена");
-      queryClient.invalidateQueries({ queryKey: ["admin-company-communications", companyId] });
-      queryClient.invalidateQueries({ queryKey: ["admin-company-activity", companyId] });
-    },
-    onError: (error: Error) => toast.error(error.message || "Не удалось добавить заметку"),
-  });
-
   const externalIdsQuery = useQuery({
     queryKey: ["admin-company-external-ids", companyId],
     enabled: !!companyId,
@@ -1232,12 +1219,12 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                   {!documentsQuery.isLoading && !aiDocumentsQuery.isLoading && !documentsQuery.isError && !aiDocumentsQuery.isError && ((documentsQuery.data?.length ?? 0) + (aiDocumentsQuery.data?.length ?? 0) === 0) && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Документов по заказам компании пока нет.</div>}
                   {[...(documentsQuery.data ?? []), ...(aiDocumentsQuery.data ?? [])].map((document) => <div key={`${document.source}-${document.id}`} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{document.document_number}</span><div className="flex gap-1"><Badge variant="outline">{document.status}</Badge>{document.source === "ai" && <Badge variant="secondary">AI</Badge>}</div></div><div className="mt-1 text-xs text-muted-foreground">{document.document_type} · {formatDate(document.document_date)} · заказ {ordersById.get(document.order_id)?.order_number ?? document.order_id}</div>{document.file_url && <a className="mt-2 inline-block text-xs text-primary underline-offset-4 hover:underline" href={document.file_url} target="_blank" rel="noreferrer">Открыть файл</a>}</div>)}
                 </TabsContent>
-                <TabsContent value="communications" className="mt-0 space-y-2">
-                  {canEdit && <form className="space-y-2 rounded-lg border bg-muted/30 p-3" onSubmit={(event) => { event.preventDefault(); if (noteBody.trim()) createCompanyNote.mutate(); }}><div className="text-sm font-medium">Добавить заметку</div><Textarea value={noteBody} onChange={(event) => setNoteBody(event.target.value)} placeholder="Напишите заметку по компании…" rows={3} /><div className="flex justify-end"><Button type="submit" size="sm" disabled={createCompanyNote.isPending || !noteBody.trim()}>{createCompanyNote.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Добавить заметку</Button></div></form>}
-                  {communicationsQuery.isLoading && <Skeleton className="h-16 w-full" />}
-                  {communicationsQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Коммуникационная лента временно недоступна.</div>}
-                  {!communicationsQuery.isLoading && !communicationsQuery.isError && communicationsQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Коммуникаций по компании пока нет.</div>}
-                  {(communicationsQuery.data ?? []).map((item) => <div key={`${item.source}-${item.id}`} className="rounded-lg border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-medium">{item.title || item.kind}</span><Badge variant="outline">{communicationKindLabels[item.kind] || item.kind}</Badge>{item.source === "company" && <Badge variant="secondary">Компания</Badge>}</div>{item.body && <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{item.body}</p>}{item.author && <p className="mt-1 text-xs text-muted-foreground">{item.author}</p>}</div><span className="shrink-0 text-xs text-muted-foreground">{item.at ? format(new Date(item.at), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}</span></div></div>)}
+                <TabsContent value="communications" className="m-0 flex min-h-0 flex-1 flex-col">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                    <Activity className="h-4 w-4 text-primary" />
+                    Лента компании
+                  </div>
+                  <ContactFeedTab companyId={company.id} embedded readOnly={!canEdit} />
                 </TabsContent>
                 <TabsContent value="history" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История доступна во вкладке «Активность».</div></TabsContent>
                 <TabsContent value="integrations" className="mt-0 space-y-3">
