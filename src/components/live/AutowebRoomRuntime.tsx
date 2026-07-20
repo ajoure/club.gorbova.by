@@ -104,7 +104,10 @@ function AutowebKinescopePlayer({
     onPlay: () => onPlayerStateChange?.("playing"),
     onPause: () => onPlayerStateChange?.("paused"),
     onEnded: () => onPlayerStateChange?.("ended"),
-    onError: () => setSourceError(true),
+    onError: () => {
+      setSourceError(true);
+      onPlayerStateChange?.("error");
+    },
     onTimeUpdate: (seconds) => onTimeUpdate(seconds),
   });
 
@@ -196,19 +199,20 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
   const { role } = useAuth();
   const isStaff = role === "admin" || role === "superadmin" || role === "employee";
 
-  // Playback time для timed-replay ленты. Обновляется постом от Kinescope-плеера
-  // и/или fallback-интервалом (см. AutowebKinescopePlayer).
+  // Playback time для timed-replay ленты. Единственный источник — Kinescope SDK.
   const [playbackSeconds, setPlaybackSeconds] = useState<number>(0);
   const handleTimeUpdate = useCallback((seconds: number) => {
     setPlaybackSeconds((prev) => (Math.abs(prev - seconds) >= 0.5 ? seconds : prev));
   }, []);
 
   // Phase A: минимальный player-state bridge для heartbeat guard'а.
-  // idle → ready → playing → paused/ended. autoplay_blocked ставим отдельно,
+  // idle → ready → playing → paused/ended/error. autoplay_blocked ставим отдельно,
   // если через 6s после mount плеер так и не сообщил playing/ready.
   const [playerState, setPlayerState] = useState<AutowebPlayerState>("idle");
+  const playerStateRef = useRef<AutowebPlayerState>("idle");
   const playbackStartedRef = useRef(false);
   const handlePlayerStateChange = useCallback((next: AutowebPlayerState) => {
+    playerStateRef.current = next;
     setPlayerState((prev) => (prev === next ? prev : next));
     if (next === "playing") playbackStartedRef.current = true;
   }, []);
@@ -217,7 +221,8 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
     if (!(state?.phase === "live" || state?.phase === "replay")) return;
     if (!state?.kinescope_video_id) return;
     const id = window.setTimeout(() => {
-      if (!playbackStartedRef.current && playerState !== "ready" && playerState !== "playing") {
+      if (!playbackStartedRef.current && !["ready", "playing", "error"].includes(playerStateRef.current)) {
+        playerStateRef.current = "autoplay_blocked";
         setPlayerState("autoplay_blocked");
       }
     }, 6000);

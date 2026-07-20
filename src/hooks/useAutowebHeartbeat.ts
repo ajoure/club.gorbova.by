@@ -18,6 +18,7 @@ export type AutowebPlayerState =
   | "playing"
   | "paused"
   | "ended"
+  | "error"
   | "autoplay_blocked";
 
 interface Args {

@@ -47,8 +47,8 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-type PlayerState = 'idle' | 'ready' | 'playing' | 'paused' | 'ended' | 'autoplay_blocked';
-const VALID_STATES: PlayerState[] = ['idle', 'ready', 'playing', 'paused', 'ended', 'autoplay_blocked'];
+type PlayerState = 'idle' | 'ready' | 'playing' | 'paused' | 'ended' | 'error' | 'autoplay_blocked';
+const VALID_STATES: PlayerState[] = ['idle', 'ready', 'playing', 'paused', 'ended', 'error', 'autoplay_blocked'];
 
 function jsonRes(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -191,6 +191,26 @@ Deno.serve(async (req) => {
       noopReason = 'autoplay_blocked_no_start';
     }
 
+    // Ошибка источника не имеет права переводить комнату в live. Сохраняем
+    // диагностику и аудит один раз, чтобы staff видел причину в журнале.
+    if (player_state === 'error' && !meta.source_unavailable_at) {
+      const { data: casSourceError } = await admin
+        .from('live_event_sessions')
+        .update({
+          metadata: { ...meta, source_unavailable_at: nowIso },
+          updated_at: nowIso,
+        })
+        .eq('id', session.id)
+        .filter('metadata->>source_unavailable_at', 'is', null)
+        .select('metadata')
+        .maybeSingle();
+      if (casSourceError) {
+        meta.source_unavailable_at = nowIso;
+        audits.push({ ...auditBase, action: 'autoweb_source_unavailable', meta: { at: nowIso } });
+      }
+      noopReason = 'source_unavailable_no_start';
+    }
+
     // --- 3. auto_started_at + status='live' — ТОЛЬКО при подтверждённом playback ---
     const canStart =
       player_state === 'playing' &&
@@ -222,7 +242,7 @@ Deno.serve(async (req) => {
           },
         });
       }
-    } else if (!meta.auto_started_at && player_state !== 'autoplay_blocked') {
+    } else if (!meta.auto_started_at && player_state !== 'autoplay_blocked' && player_state !== 'error') {
       // Guard-noop: player ещё не готов → сценарий/старт заблокированы.
       if (player_state === 'paused' || player_state === 'idle' || player_state === 'ready') {
         noopReason = `guard_scenario_needs_playback:${player_state}`;
