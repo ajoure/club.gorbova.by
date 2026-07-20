@@ -713,12 +713,12 @@ export default function AdminCompanies() {
         </div>
       </section>
 
-      <div className="min-h-0 min-w-0 flex-none overflow-hidden rounded-xl border bg-card">
+      <div className="min-h-0 min-w-0 flex-none rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between border-b px-4 py-3 text-sm text-muted-foreground">
           <span>{companiesQuery.isLoading ? "Загрузка…" : `Найдено: ${total}`}</span>
           <span>Кликните по строке, чтобы открыть карточку</span>
         </div>
-        <div ref={containerRef} onMouseDown={handleMouseDown} data-table-scroll-x="true" className="table-scroll-x select-none">
+        <div ref={containerRef} onMouseDown={handleMouseDown} data-table-scroll-x="true" className="table-scroll-x select-none w-full overflow-x-auto overflow-y-visible">
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <Table wrapperClassName="contents" style={{ minWidth: 1200 }}>
             <TableHeader>
