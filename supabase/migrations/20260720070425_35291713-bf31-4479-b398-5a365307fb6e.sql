@@ -1,0 +1,1 @@
+DROP FUNCTION IF EXISTS public.crm_phase4d_rehearsal_replay(text);
