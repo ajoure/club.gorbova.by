@@ -130,21 +130,8 @@ function AutowebKinescopePlayer({
     return () => window.removeEventListener("message", handler);
   }, [onTimeUpdate, onPlayerStateChange]);
 
-  // Fallback-таймер прогресса — на случай если Kinescope не шлёт postMessage.
-  // Player-state НЕ угадываем: heartbeat guard требует явного playing от плеера.
-  useEffect(() => {
-    let mounted = true;
-    const startedAt = Date.now();
-    const base = Math.max(0, Math.floor(startSeconds));
-    const id = window.setInterval(() => {
-      if (!mounted) return;
-      onTimeUpdate(base + (Date.now() - startedAt) / 1000);
-    }, 1000);
-    return () => {
-      mounted = false;
-      window.clearInterval(id);
-    };
-  }, [videoId, startSeconds, onTimeUpdate]);
+  // Не синтезируем playback-time wall-clock таймером: сценарий, timed-chat и
+  // heartbeat принимают только позицию, подтверждённую bridge/SDK плеера.
 
   return (
     <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
