@@ -391,6 +391,13 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+type UnlistedRpcResponse<T> = { data: T; error: { message: string } | null };
+
+async function invokeUnlistedRpc<T>(functionName: string, args: Record<string, unknown>): Promise<UnlistedRpcResponse<T>> {
+  const rpc = supabase.rpc as unknown as (name: string, params: Record<string, unknown>) => Promise<UnlistedRpcResponse<T>>;
+  return rpc(functionName, args);
+}
+
 function StatusBadge({ status }: { status: CompanyStatus }) {
   const className = status === "active"
     ? "bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/10"
@@ -975,7 +982,7 @@ function CreateCompanyDialog({ open, onOpenChange, onCreated }: {
     mutationFn: async (details: Partial<ClientLegalDetails>) => {
       const unp = details.client_type === "entrepreneur" ? details.ent_unp : details.leg_unp;
       if (!unp) {
-        const { data, error } = await supabase.rpc("crm_company_create_manual", {
+        const { data, error } = await invokeUnlistedRpc<string>("crm_company_create_manual", {
           _company_kind: details.client_type === "entrepreneur" ? "entrepreneur" : "legal_entity",
           _full_name: details.client_type === "entrepreneur" ? details.ent_name : details.leg_name,
           _short_name: details.client_type === "entrepreneur" ? details.ent_name : details.leg_name,
@@ -1432,7 +1439,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
       const result = GrpLookupAdapter.mapResponse(data);
       if (!result.found || !result.data) throw new Error(result.message || "Плательщик не найден в реестре МНС");
       const d = result.data;
-      const { error: updateError } = await supabase.rpc("crm_company_registry_refresh", {
+      const { error: updateError } = await invokeUnlistedRpc<null>("crm_company_registry_refresh", {
         _id: company.id,
         _full_name: normalizeCompanyName(d.full_name),
         _short_name: d.short_name,

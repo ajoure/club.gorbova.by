@@ -19,6 +19,13 @@ import { normalizeCompanyPhone } from "@/lib/companies/normalizeCompanyPhone";
 const DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1CeLOojDIEF_pVb0OJLOHuCwFIJcevNl0wt3T3MFsfg0/edit?usp=sharing";
 const DEFAULT_SOURCE_REFERENCE = "1CeLOojDIEF_pVb0OJLOHuCwFIJcevNl0wt3T3MFsfg0:База для обзвона";
 
+type CompanyImportRpcResult = { data: Record<string, unknown> | null; error: { message: string } | null };
+
+async function invokeCompanyImportRpc(functionName: string, args: Record<string, unknown>): Promise<CompanyImportRpcResult> {
+  const rpc = supabase.rpc as unknown as (name: string, params: Record<string, unknown>) => Promise<CompanyImportRpcResult>;
+  return rpc(functionName, args);
+}
+
 type ImportStep = "source" | "preview" | "applying" | "done";
 
 interface NormalizedCompanyImportRow {
@@ -230,13 +237,13 @@ export function CompanySheetImportDialog({ open, onOpenChange, onComplete }: { o
     setLoading(true);
     setError(null);
     try {
-      const { data, error: rpcError } = await (supabase as any).rpc("crm_company_sheet_import_batch_start", {
+      const { data, error: rpcError } = await invokeCompanyImportRpc("crm_company_sheet_import_batch_start", {
         _source: "google_sheet",
         _source_reference: sourceReference.trim(),
         _rows: rows,
       });
       if (rpcError) throw rpcError;
-      setBatchId(data?.batch_id ?? null);
+      setBatchId(typeof data?.batch_id === "string" ? data.batch_id : null);
       setProgress({ current: 0, total: rows.length });
       setConfirm(false);
       toast.success("Предпросмотр импорта сохранён; CRM ещё не изменена");
@@ -256,7 +263,7 @@ export function CompanySheetImportDialog({ open, onOpenChange, onComplete }: { o
       let cursor = progress.current;
       let status = "running";
       while (status === "running" || status === "preview") {
-        const { data, error: rpcError } = await (supabase as any).rpc("crm_company_sheet_import_batch_apply", {
+        const { data, error: rpcError } = await invokeCompanyImportRpc("crm_company_sheet_import_batch_apply", {
           _batch_id: batchId,
           _assignee_name: "Полина Асманта",
           _max_rows: 100,
@@ -264,9 +271,9 @@ export function CompanySheetImportDialog({ open, onOpenChange, onComplete }: { o
         });
         if (rpcError) throw rpcError;
         cursor = Number(data?.cursor_position ?? cursor);
-        status = String(data?.status ?? "completed");
+        status = typeof data?.status === "string" ? data.status : "completed";
         setProgress({ current: Math.min(cursor, rows.length), total: rows.length });
-        if (!data?.processed && status === "running") throw new Error("Импорт не продвинулся; остановлен защитным контуром");
+        if (data?.processed !== true && status === "running") throw new Error("Импорт не продвинулся; остановлен защитным контуром");
       }
       setStep("done");
       toast.success("Импорт компаний завершён контролируемыми пачками");
@@ -280,7 +287,7 @@ export function CompanySheetImportDialog({ open, onOpenChange, onComplete }: { o
     } finally {
       setLoading(false);
     }
-  }, [batchId, confirm, onComplete, progress.current, rows.length]);
+  }, [batchId, confirm, onComplete, progress, queryClient, rows.length]);
 
   const sample = useMemo(() => rows.slice(0, 5), [rows]);
 
