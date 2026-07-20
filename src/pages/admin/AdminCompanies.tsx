@@ -28,6 +28,7 @@ import {
   Sparkles,
   BookOpen,
   Copy,
+  Link2,
   MapPin,
   Phone,
   Pencil,
@@ -67,6 +68,7 @@ import { normalizeCompanyName, inferCompanyLegalForm } from "@/lib/companies/nor
 import { normalizeCompanyPhone } from "@/lib/companies/normalizeCompanyPhone";
 import { getContactDisplayName, isLikelyContactName } from "@/lib/companies/normalizeCompanyContactName";
 import { GrpLookupAdapter } from "@/lib/legal-entities/adapters/GrpLookupAdapter";
+import { copyToClipboard, getCompanyUrl } from "@/utils/clipboardUtils";
 import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
 import { CompanySheetImportDialog } from "@/components/admin/CompanySheetImportDialog";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
@@ -356,7 +358,7 @@ const kindLabels: Record<CompanyKind, string> = {
   unknown: "Не определён",
 };
 
-const COMPANY_LEGAL_FORMS = ["ООО", "ОДО", "ЗАО", "ОАО", "СООО", "ИООО", "УП", "ЧУП", "КУП", "РУП", "ТУП", "ПК", "ГП"];
+const COMPANY_LEGAL_FORMS = ["ООО", "ОДО", "ЗАО", "ОАО", "ПАО", "АО", "СООО", "ИООО", "СЗАО", "УП", "ЧУП", "КУП", "РУП", "ТУП", "ПК", "ТДО", "ТОО", "МУП", "ФГУП", "ГП"];
 
 const contactPersonRoleLabels: Record<string, string> = {
   director: "Директор",
@@ -910,7 +912,19 @@ export default function AdminCompanies() {
                     else selectCompany(company.id);
                   }}
                 >
-                  <TableCell onClick={(event) => event.stopPropagation()}><Checkbox checked={selectedCompanyIds.has(company.id)} onCheckedChange={() => toggleSelection(company.id, true)} /></TableCell>
+                  <TableCell onClick={(event) => event.stopPropagation()}>
+                    <div className="flex items-center gap-1">
+                      <Checkbox checked={selectedCompanyIds.has(company.id)} onCheckedChange={() => toggleSelection(company.id, true)} />
+                      <button
+                        type="button"
+                        className="rounded p-1 opacity-50 transition-opacity hover:bg-muted hover:opacity-100"
+                        aria-label="Скопировать ссылку на компанию"
+                        onClick={() => copyToClipboard(getCompanyUrl(company.id), "Ссылка на компанию скопирована")}
+                      >
+                        <Link2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </TableCell>
                   {visibleColumns.filter((column) => column.key !== "checkbox").map((column) => {
                     if (column.key === "company") return <TableCell key={column.key}><div className="font-medium">{normalizeCompanyName(company.full_name)}</div><div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${normalizeCompanyName(company.short_name)}` : ""}</div></TableCell>;
                     if (column.key === "unp") return <TableCell key={column.key} className="font-mono text-xs">{company.unp_normalized || "—"}</TableCell>;

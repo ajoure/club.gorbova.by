@@ -17,6 +17,13 @@ describe("normalizeCompanyName", () => {
     expect(inferCompanyLegalForm("РУП «Ромашка»")).toBe("РУП");
     expect(normalizeCompanyName("Ромашка, СЗАО")).toBe("Ромашка");
     expect(inferCompanyLegalForm("Ромашка, СЗАО")).toBe("СЗАО");
+    expect(normalizeCompanyName("ПАО «Ромашка»")).toBe("Ромашка");
+    expect(inferCompanyLegalForm("ПАО «Ромашка»")).toBe("ПАО");
+  });
+
+  it("removes apostrophe and backtick quote noise too", () => {
+    expect(normalizeCompanyName("ООО `Ромашка`")).toBe("Ромашка");
+    expect(normalizeCompanyName("‘Ромашка’ ООО")).toBe("Ромашка");
   });
 
   it("removes duplicated quotes and an OPF embedded in an imported branch name", () => {
