@@ -19418,12 +19418,32 @@ export type Database = {
         }
         Returns: undefined
       }
+      assert_autoweb_session_write: {
+        Args: {
+          _actor_user_id: string
+          _live_event_id: string
+          _session_id: string
+        }
+        Returns: undefined
+      }
       autoweb_scenario_apply: {
         Args: { _live_event_id: string }
         Returns: Json
       }
       autoweb_scenario_bulk_shift: {
-        Args: { _delta_seconds: number; _live_event_id: string }
+        Args: {
+          _delta_seconds: number
+          _live_event_id: string
+          _scope?: string
+        }
+        Returns: Json
+      }
+      autoweb_scenario_bulk_shift_preview: {
+        Args: {
+          _delta_seconds: number
+          _live_event_id: string
+          _scope?: string
+        }
         Returns: Json
       }
       autoweb_scenario_cancel: {
@@ -19463,9 +19483,38 @@ export type Database = {
         Args: { _live_event_id: string }
         Returns: Json
       }
+      autoweb_scenario_runtime_list: {
+        Args: { _live_event_id: string; _session_id: string }
+        Returns: {
+          actor_display_name: string
+          content_text: string
+          entry_type: string
+          id: string
+          offset_seconds: number
+        }[]
+      }
+      autoweb_scenario_runtime_list_v2: {
+        Args: { _live_event_id: string; _session_id: string }
+        Returns: {
+          actor_display_name: string
+          content_text: string
+          entry_type: string
+          id: string
+          metadata: Json
+          offset_seconds: number
+        }[]
+      }
+      autoweb_scenario_test_mode_audit: {
+        Args: { _active: boolean; _live_event_id: string }
+        Returns: Json
+      }
       autoweb_scenario_upsert: {
         Args: { _entries: Json; _live_event_id: string }
         Returns: Json
+      }
+      autoweb_session_real_viewer_count: {
+        Args: { _session_id: string }
+        Returns: number
       }
       backfill_card_stamps_from_queue: { Args: never; Returns: Json }
       backfill_payments_by_card: {
@@ -19641,6 +19690,7 @@ export type Database = {
           grants_count: number
         }[]
       }
+      close_stale_autoweb_sessions: { Args: never; Returns: number }
       company_feed_list: {
         Args: {
           _company_id: string
@@ -20240,6 +20290,19 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      get_autoweb_session_participants: {
+        Args: { _session_id: string }
+        Returns: {
+          avatar_url: string
+          display_name: string
+          last_seen_at: string
+          nickname_color: string
+          real_name_for_staff: string
+          role_in_room: string
+          show_avatar: boolean
+          user_id: string
+        }[]
       }
       get_bepaid_statement_stats: {
         Args: { from_date: string; to_date: string }

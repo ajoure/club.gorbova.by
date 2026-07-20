@@ -26,6 +26,7 @@ import {
   Copy,
   MapPin,
   Phone,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -812,7 +813,12 @@ export default function AdminCompanies() {
         </DialogContent>
       </Dialog>
       <EditCompanyDialog company={editCompany} onOpenChange={(open) => { if (!open) setEditCompany(null); }} onSaved={() => { setEditCompany(null); queryClient.invalidateQueries({ queryKey: ["admin-companies"] }); }} />
-      <CompanyDetailsSheet companyId={selectedCompanyId} canEdit={canCreate} onClose={() => selectCompany(null)} />
+      <CompanyDetailsSheet
+        companyId={selectedCompanyId}
+        canEdit={canCreate}
+        onClose={() => selectCompany(null)}
+        onOpenCompany={selectCompany}
+      />
     </div>
   );
 }
@@ -865,8 +871,9 @@ function CreateCompanyDialog({ open, onOpenChange, onCreated }: {
   );
 }
 
-function EditCompanyDialog({ company, onOpenChange, onSaved }: {
+function EditCompanyDialog({ company, open, onOpenChange, onSaved }: {
   company: CompanyListItem | null;
+  open?: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
 }) {
@@ -900,7 +907,7 @@ function EditCompanyDialog({ company, onOpenChange, onSaved }: {
   });
 
   return (
-    <Dialog open={!!company} onOpenChange={onOpenChange}>
+    <Dialog open={open ?? !!company} onOpenChange={onOpenChange}>
       <DialogContent>
         <form onSubmit={(event) => { event.preventDefault(); if (!fullName.trim()) return toast.error("Укажите название"); updateCompany.mutate(); }}>
           <DialogHeader><DialogTitle>Редактировать компанию</DialogTitle><DialogDescription>Изменения сохраняются в канонической записи компании.</DialogDescription></DialogHeader>
@@ -920,9 +927,15 @@ function EditCompanyDialog({ company, onOpenChange, onSaved }: {
   );
 }
 
-export function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: string | null; canEdit: boolean; onClose: () => void }) {
+export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany }: {
+  companyId: string | null;
+  canEdit: boolean;
+  onClose: () => void;
+  onOpenCompany?: (companyId: string) => void;
+}) {
   const queryClient = useQueryClient();
   const [selectedLinkedContactId, setSelectedLinkedContactId] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const detailQuery = useQuery({
     queryKey: ["admin-company", companyId],
     enabled: !!companyId,
@@ -1200,32 +1213,49 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId
 
   return (
     <Sheet open={!!companyId} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" className={`${SHEET_SHELL_CLASS} overflow-y-auto`}>
+      <SheetContent side="right" className={SHEET_SHELL_CLASS}>
         {detailQuery.isLoading && <div className="space-y-4 pt-8"><Skeleton className="h-8 w-2/3" />{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>}
         {!detailQuery.isLoading && !company && <div className="pt-12 text-center text-muted-foreground">Компания не найдена или недоступна.</div>}
         {company && (
-          <div className="flex min-h-0 flex-col gap-5 pt-4">
-            <SheetHeader className="pr-10">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <SheetHeader className="shrink-0 space-y-1.5 px-4 pb-0 pt-4 pr-14 sm:px-6 sm:pt-6 sm:pr-16">
               <div className="flex items-start gap-3">
-                <div className="rounded-lg bg-primary/10 p-2 text-primary"><Building2 className="h-5 w-5" /></div>
-                <div>
-                  <SheetTitle>{company.full_name}</SheetTitle>
-                  <SheetDescription className="mt-1">{company.public_id} · создана {formatDate(company.created_at)}</SheetDescription>
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Building2 className="h-6 w-6" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <SheetTitle className="break-words text-lg font-bold leading-tight sm:text-xl">{company.full_name}</SheetTitle>
+                  <SheetDescription className="mt-0.5 break-all text-xs">{company.email || `${company.public_id} · создана ${formatDate(company.created_at)}`}</SheetDescription>
                 </div>
               </div>
-            </SheetHeader>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={company.status} />
-              <Badge variant="outline">{kindLabels[company.company_kind]}</Badge>
-              <div className="ml-auto flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className="h-7 cursor-pointer gap-1 px-2.5 text-xs hover:bg-accent"
+                  onClick={() => { navigator.clipboard.writeText(company.public_id); toast.success("ID компании скопирован"); }}
+                >
+                  <Copy className="h-3 w-3" /> {company.public_id}
+                </Badge>
+                {canEdit && (
+                  <Badge
+                    variant="outline"
+                    className="h-7 cursor-pointer gap-1 border-primary/30 px-2.5 text-xs text-primary hover:bg-primary/10"
+                    onClick={() => setEditOpen(true)}
+                  >
+                    <Pencil className="h-3 w-3" /> редактировать
+                  </Badge>
+                )}
+                <StatusBadge status={company.status} />
+                <Badge variant="outline" className="h-7 px-2.5 text-xs">{kindLabels[company.company_kind]}</Badge>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
                 <CallButton phone={company.phone} companyId={company.id} />
                 <SmsButton phone={company.phone} companyId={company.id} />
                 <Button size="sm" variant="outline" disabled={!company.email} onClick={() => setComposeEmailOpen(true)}>
                   <Mail className="mr-1 h-3.5 w-3.5" /> Письмо
                 </Button>
               </div>
-            </div>
+            </SheetHeader>
             <Tabs defaultValue="profile" className="flex min-h-0 flex-1 flex-col">
               <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
                 <TabsList className="mx-0 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
@@ -1358,7 +1388,21 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId
               contact={selectedLinkedContact as any}
               open={!!selectedLinkedContact}
               onOpenChange={(open) => { if (!open) setSelectedLinkedContactId(null); }}
-              returnTo="/admin/companies"
+              onOpenCompany={(nextCompanyId) => {
+                setSelectedLinkedContactId(null);
+                onOpenCompany?.(nextCompanyId);
+              }}
+              returnTo="companies"
+            />
+            <EditCompanyDialog
+              company={company}
+              open={editOpen}
+              onOpenChange={setEditOpen}
+              onSaved={() => {
+                setEditOpen(false);
+                detailQuery.refetch();
+                queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
+              }}
             />
           </div>
         )}

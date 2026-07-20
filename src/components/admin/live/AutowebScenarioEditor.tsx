@@ -49,6 +49,7 @@ interface DraftRow {
   offset_seconds: number;
   actor_display_name: string;
   content_text: string;
+  cta_url: string;
   visibility_scope: "public" | "private";
   _dirty?: boolean;
   _new?: boolean;
@@ -212,7 +213,7 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
         _scope: shiftScope,
       });
       if (error) throw error;
-      return data as ShiftPreview;
+      return data as unknown as ShiftPreview;
     },
     onSuccess: (res) => setShiftPreview(res),
     onError: (e: any) => toast.error(e?.message ?? "Ошибка preview сдвига"),

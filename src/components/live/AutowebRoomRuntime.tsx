@@ -70,7 +70,7 @@ function AutowebKinescopePlayer({
   onPlayerStateChange?: (state: AutowebPlayerState) => void;
   viewerControls: AutowebViewerControls;
 }) {
-  const containerId = useId().replaceAll(":", "");
+  const containerId = useId().replace(/:/g, "");
   const [sourceError, setSourceError] = useState(false);
   // Резолвер поллится каждые 10 секунд и обновляет resume. Этот стартовый
   // таймкод применяем только один раз: работающий плеер не должен получать
