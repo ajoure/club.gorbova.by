@@ -122,16 +122,15 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
     // Historical (исходный live_stream) — read-only, timed-replay.
     const historyEnabled = !!historySourceEventId && !!historySourceStartedAt;
     const { data: historyQuestions } = useQuery({
-      queryKey: ["live-event-questions-history", historySourceEventId],
+      queryKey: ["live-event-questions-history", historySourceEventId, autowebSessionId ?? "none"],
       enabled: historyEnabled,
       staleTime: 5 * 60_000,
       queryFn: async () => {
-        const { data, error } = await supabase
-          .from("live_event_questions")
-          .select("id, user_id, content, is_answered, answered_at, answered_by, created_at, author_display_name, author_role, author_avatar_url, author_nickname_color")
-          .eq("live_event_id", historySourceEventId!)
-          .order("created_at", { ascending: true })
-          .limit(1000);
+        if (!autowebSessionId) return [] as Question[];
+        const { data, error } = await supabase.rpc("autoweb_history_questions_list", {
+          _session_id: autowebSessionId,
+          _source_event_id: historySourceEventId!,
+        });
         if (error) throw error;
         const needsAvatarFallback = (data || []).filter(q => !q.author_avatar_url);
         let profiles: Record<string, { avatar_url: string | null }> = {};

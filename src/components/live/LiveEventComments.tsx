@@ -124,16 +124,15 @@ export function LiveEventComments({
   // Historical (исходный live_stream) — read-only, для timed-replay.
   const historyEnabled = !!historySourceEventId && !!historySourceStartedAt;
   const { data: historyComments } = useQuery({
-    queryKey: ["live-event-comments-history", historySourceEventId],
+    queryKey: ["live-event-comments-history", historySourceEventId, autowebSessionId ?? "none"],
     enabled: historyEnabled,
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("live_event_comments")
-        .select("id, user_id, content, created_at, author_display_name, author_role, author_avatar_url, author_nickname_color")
-        .eq("live_event_id", historySourceEventId!)
-        .order("created_at", { ascending: true })
-        .limit(1000);
+      if (!autowebSessionId) return [] as Comment[];
+      const { data, error } = await supabase.rpc("autoweb_history_comments_list", {
+        _session_id: autowebSessionId,
+        _source_event_id: historySourceEventId!,
+      });
       if (error) throw error;
 
       const needsAvatarFallback = (data || []).filter(c => !c.author_avatar_url);
