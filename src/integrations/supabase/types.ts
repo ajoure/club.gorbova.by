@@ -19204,6 +19204,41 @@ export type Database = {
             }
             Returns: Json
           }
+          crm_company_contact_person_upsert: {
+            Args: {
+              _person_id?: string | null
+              _full_name?: string | null
+              _job_title?: string | null
+              _email?: string | null
+              _phone?: string | null
+              _source?: string
+              _profile_id?: string | null
+              _consent_status?: string
+              _external_ids?: Json
+              _metadata?: Json
+            }
+            Returns: string
+          }
+          crm_company_contact_person_link: {
+            Args: {
+              _company_id: string
+              _person_id: string
+              _role: string
+              _valid_from?: string
+              _valid_to?: string | null
+              _is_current?: boolean
+              _source?: string
+              _evidence?: Json
+              _metadata?: Json
+            }
+            Returns: string
+          }
+          crm_company_contact_persons_list: {
+            Args: {
+              _company_id: string
+            }
+            Returns: Json
+          }
       crm_company_grp_refetch: { Args: { _id: string }; Returns: string }
       crm_company_link_contact: {
         Args: {
