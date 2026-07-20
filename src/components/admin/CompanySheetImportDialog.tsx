@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { normalizeCompanyPhone } from "@/lib/companies/normalizeCompanyPhone";
 
 const DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1CeLOojDIEF_pVb0OJLOHuCwFIJcevNl0wt3T3MFsfg0/edit?usp=sharing";
 const DEFAULT_SOURCE_REFERENCE = "1CeLOojDIEF_pVb0OJLOHuCwFIJcevNl0wt3T3MFsfg0:База для обзвона";
@@ -81,7 +82,7 @@ function parseLprContacts(value: string): { contacts: Array<{ full_name: string;
     .map((chunk) => {
       const email = chunk.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/)?.[0]?.toLowerCase();
       const phoneMatch = chunk.match(/(?:\+?375|80)[\s()-]*\d{2,3}[\s()-]*\d{2,3}[\s()-]*\d{2,4}|\b0\d{8,9}\b|\b\d{9}\b/);
-      const phone = phoneMatch?.[0]?.replace(/\D/g, "");
+      const phone = normalizeCompanyPhone(phoneMatch?.[0], "BY") ?? undefined;
       const roleMatch = chunk.match(/\b(директор|бухгалтер|главбух|глабух|секретарь|иной|иное|ГБ)\b/i);
       const jobTitle = roleMatch?.[0];
       const role = /директор/i.test(jobTitle ?? "") ? "director" : /бухгалтер|главбух|глабух|гб/i.test(jobTitle ?? "") ? "accountant" : undefined;
@@ -106,7 +107,11 @@ function parseCompanyRows(csvText: string): NormalizedCompanyImportRow[] {
   // header and all subsequent rows are data.
   return parsed.slice(1).map((row, index) => {
     const rowNumber = Number(clean(row[0])) || index + 4;
-    const phones = splitValues(clean(row[2]));
+    const phones = Array.from(new Set(
+      splitValues(clean(row[2]))
+        .map((value) => normalizeCompanyPhone(value, "BY"))
+        .filter((value): value is string => Boolean(value)),
+    ));
     const emails = splitValues(clean(row[3]).toLowerCase());
     const organizationForm = clean(row[4]);
     const lpr = parseLprContacts(clean(row[11]));
