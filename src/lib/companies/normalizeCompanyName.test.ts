@@ -11,4 +11,11 @@ describe("normalizeCompanyName", () => {
     expect(normalizeCompanyName(raw)).toBe(expectedName);
     expect(inferCompanyLegalForm(raw)).toBe(expectedForm);
   });
+
+  it("supports the full shared OPF dictionary", () => {
+    expect(normalizeCompanyName("РУП «Ромашка»")).toBe("Ромашка");
+    expect(inferCompanyLegalForm("РУП «Ромашка»")).toBe("РУП");
+    expect(normalizeCompanyName("Ромашка, СЗАО")).toBe("Ромашка");
+    expect(inferCompanyLegalForm("Ромашка, СЗАО")).toBe("СЗАО");
+  });
 });

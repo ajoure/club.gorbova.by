@@ -38,17 +38,21 @@ BEGIN
     '\s+', ' ', 'g'
   )), '');
   v_full_name := btrim(regexp_replace(v_full_name, '^[,;:\-\s]+|[,;:\-\s]+$', '', 'g'));
-  IF v_full_name ~* '^(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)([[:space:]]|$)' THEN
-    IF v_form IS NULL THEN v_form := upper((regexp_match(v_full_name, '^(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)([[:space:]]|$)', 'i'))[1]); END IF;
-    v_full_name := btrim(regexp_replace(v_full_name, '^(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*[,;:\-]?\s*', '', 'i'));
-  ELSIF v_full_name ~* ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*$' THEN
-    IF v_form IS NULL THEN v_form := upper((regexp_match(v_full_name, ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*$', 'i'))[1]); END IF;
-    v_full_name := btrim(regexp_replace(v_full_name, ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*$', '', 'i'));
+  IF v_full_name ~* '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)([[:space:]]|$)' THEN
+    IF v_form IS NULL THEN v_form := upper((regexp_match(v_full_name, '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)([[:space:]]|$)', 'i'))[1]); END IF;
+    v_full_name := btrim(regexp_replace(v_full_name, '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)\s*[,;:\-]?\s*', '', 'i'));
+  ELSIF v_full_name ~* ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)\s*$' THEN
+    IF v_form IS NULL THEN v_form := upper((regexp_match(v_full_name, ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)\s*$', 'i'))[1]); END IF;
+    v_full_name := btrim(regexp_replace(v_full_name, ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)\s*$', '', 'i'));
   END IF;
   v_short_name := NULLIF(btrim(regexp_replace(
     regexp_replace(btrim(coalesce(_short_name, '')), '[«»“”„‟"]', '', 'g'),
     '\s+', ' ', 'g'
   )), '');
+  IF v_short_name IS NOT NULL THEN
+    v_short_name := btrim(regexp_replace(v_short_name,
+      ',?[[:space:]]*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)[[:space:]]*$', '', 'i'));
+  END IF;
   IF v_full_name IS NULL THEN RAISE EXCEPTION 'full_name required' USING ERRCODE='22023'; END IF;
 
   -- Reuse the already guarded/audited five-field edit path for the canonical

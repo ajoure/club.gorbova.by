@@ -22,12 +22,12 @@ BEGIN
   );
   v_clean := btrim(regexp_replace(v_clean, '^[,;:\-\s]+|[,;:\-\s]+$', '', 'g'));
 
-  IF v_clean ~* '^(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)([[:space:]]|$)' THEN
-    v_form := upper((regexp_match(v_clean, '^(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)([[:space:]]|$)', 'i'))[1]);
-    v_clean := btrim(regexp_replace(v_clean, '^(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*[,;:\-]?\s*', '', 'i'));
-  ELSIF v_clean ~* ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*$' THEN
-    v_form := upper((regexp_match(v_clean, ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*$', 'i'))[1]);
-    v_clean := btrim(regexp_replace(v_clean, ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*$', '', 'i'));
+  IF v_clean ~* '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)([[:space:]]|$)' THEN
+    v_form := upper((regexp_match(v_clean, '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)([[:space:]]|$)', 'i'))[1]);
+    v_clean := btrim(regexp_replace(v_clean, '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)\s*[,;:\-]?\s*', '', 'i'));
+  ELSIF v_clean ~* ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)\s*$' THEN
+    v_form := upper((regexp_match(v_clean, ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)\s*$', 'i'))[1]);
+    v_clean := btrim(regexp_replace(v_clean, ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)\s*$', '', 'i'));
   END IF;
 
   IF v_clean <> '' THEN NEW.full_name := v_clean; END IF;
@@ -36,6 +36,7 @@ BEGIN
   END IF;
   IF nullif(btrim(coalesce(NEW.short_name, '')), '') IS NOT NULL THEN
     NEW.short_name := btrim(regexp_replace(regexp_replace(NEW.short_name, '[«»“”„‟"]', '', 'g'), '\s+', ' ', 'g'));
+    NEW.short_name := btrim(regexp_replace(NEW.short_name, ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)\s*$', '', 'i'));
   END IF;
   RETURN NEW;
 END;

@@ -50,16 +50,16 @@ BEGIN
 
   -- Keep the CRM name free of legal-form prefixes/suffixes. The form remains
   -- in legal_form so list and profile views stay consistent with registry data.
-  IF v_full_name ~* '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|УП|ЧУП|КУП|РУП|ТУП|ИП)([[:space:]]|$)' THEN
+  IF v_full_name ~* '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)([[:space:]]|$)' THEN
     IF v_legal_form IS NULL THEN
-      v_legal_form := upper((regexp_match(v_full_name, '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|УП|ЧУП|КУП|РУП|ТУП|ИП)'))[1]);
+      v_legal_form := upper((regexp_match(v_full_name, '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)'))[1]);
     END IF;
-    v_full_name := btrim(regexp_replace(v_full_name, '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|УП|ЧУП|КУП|РУП|ТУП|ИП)([[:space:]]+)', '', 'i'));
-  ELSIF v_full_name ~* ',?[[:space:]]*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|УП|ЧУП|КУП|РУП|ТУП|ИП)[[:space:]]*$' THEN
+    v_full_name := btrim(regexp_replace(v_full_name, '^(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)([[:space:]]+)', '', 'i'));
+  ELSIF v_full_name ~* ',?[[:space:]]*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)[[:space:]]*$' THEN
     IF v_legal_form IS NULL THEN
-      v_legal_form := upper((regexp_match(v_full_name, '(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|УП|ЧУП|КУП|РУП|ТУП|ИП)[[:space:]]*$'))[1]);
+      v_legal_form := upper((regexp_match(v_full_name, '(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)[[:space:]]*$'))[1]);
     END IF;
-    v_full_name := btrim(regexp_replace(v_full_name, ',?[[:space:]]*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|УП|ЧУП|КУП|РУП|ТУП|ИП)[[:space:]]*$', '', 'i'));
+    v_full_name := btrim(regexp_replace(v_full_name, ',?[[:space:]]*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)[[:space:]]*$', '', 'i'));
   END IF;
   IF v_full_name = '' THEN
     RAISE EXCEPTION 'full_name is required' USING ERRCODE = '23514';
@@ -68,6 +68,10 @@ BEGIN
     regexp_replace(btrim(coalesce(_short_name, '')), '[«»“”„‟"]', '', 'g'),
     '[[:space:]]+', ' ', 'g'
   )), '');
+  IF v_short_name IS NOT NULL THEN
+    v_short_name := btrim(regexp_replace(v_short_name,
+      ',?[[:space:]]*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)[[:space:]]*$', '', 'i'));
+  END IF;
   v_unp := NULLIF(regexp_replace(coalesce(_unp, ''), '[^0-9]', '', 'g'), '');
   IF v_unp IS NOT NULL AND length(v_unp) <> 9 THEN
     RAISE EXCEPTION 'invalid unp' USING ERRCODE = '22023';
