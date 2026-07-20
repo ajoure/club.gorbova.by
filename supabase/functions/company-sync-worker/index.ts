@@ -56,6 +56,27 @@ function classifyError(err: any): "retry" | "dead_letter" {
   return RETRYABLE_DEFAULT ? "retry" : "dead_letter";
 }
 
+// Vault-fetched worker secret is cached in-process to avoid a DB round-trip
+// on every invocation. Cold-start / TTL expiry falls back to a fresh fetch.
+let VAULT_SECRET_CACHE: { value: string; loadedAt: number } | null = null;
+const VAULT_SECRET_TTL_MS = 5 * 60 * 1000;
+
+async function fetchVaultSecret(url: string, srk: string): Promise<string> {
+  const now = Date.now();
+  if (VAULT_SECRET_CACHE && now - VAULT_SECRET_CACHE.loadedAt < VAULT_SECRET_TTL_MS) {
+    return VAULT_SECRET_CACHE.value;
+  }
+  try {
+    const sb = createClient(url, srk, { auth: { autoRefreshToken: false, persistSession: false } });
+    const { data, error } = await sb.rpc("crm_phase4_worker_secret");
+    if (!error && typeof data === "string" && data.length > 0) {
+      VAULT_SECRET_CACHE = { value: data, loadedAt: now };
+      return data;
+    }
+  } catch (_e) { /* swallow — falls back to env secret */ }
+  return "";
+}
+
 Deno.serve(async (req: Request) => {
   const startedAt = Date.now();
 
@@ -66,30 +87,29 @@ Deno.serve(async (req: Request) => {
     return new Response("method not allowed", { status: 405 });
   }
 
-  const expected = Deno.env.get("PHASE4_WORKER_SHARED_SECRET") ?? "";
-  const provided = req.headers.get("x-worker-secret") ?? "";
-  if (!expected || !provided || !timingSafeEqual(expected, provided)) {
-    // Do NOT reveal which side was empty; do NOT log header values.
-    console.warn(JSON.stringify({
-      evt: "company-sync-worker.auth_denied",
-      has_expected: expected.length > 0,
-      has_provided: provided.length > 0,
-    }));
-    return new Response(JSON.stringify({ error: "unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   if (!supabaseUrl || !serviceRoleKey) {
-    console.error(JSON.stringify({
-      evt: "company-sync-worker.config_missing",
-    }));
+    console.error(JSON.stringify({ evt: "company-sync-worker.config_missing" }));
     return new Response(JSON.stringify({ error: "config_missing" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
+      status: 500, headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const envSecret = Deno.env.get("PHASE4_WORKER_SHARED_SECRET") ?? "";
+  const vaultSecret = await fetchVaultSecret(supabaseUrl, serviceRoleKey);
+  const provided = req.headers.get("x-worker-secret") ?? "";
+  const okEnv = envSecret.length > 0 && provided.length > 0 && timingSafeEqual(envSecret, provided);
+  const okVault = vaultSecret.length > 0 && provided.length > 0 && timingSafeEqual(vaultSecret, provided);
+  if (!okEnv && !okVault) {
+    console.warn(JSON.stringify({
+      evt: "company-sync-worker.auth_denied",
+      has_env: envSecret.length > 0,
+      has_vault: vaultSecret.length > 0,
+      has_provided: provided.length > 0,
+    }));
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401, headers: { "Content-Type": "application/json" },
     });
   }
 
@@ -207,12 +227,22 @@ Deno.serve(async (req: Request) => {
     if (writerErr) {
       nextStatus = classifyError(writerErr);
       nextError = trunc(writerErr.message);
-    } else if (writerResult && (writerResult as any).status !== "ok") {
-      // Writer returned a structured non-ok payload (guard-abort etc.).
-      nextStatus = "dead_letter";
-      nextError = trunc(writerResult);
     } else {
-      nextStatus = "done";
+      // Success contract of crm_company_backfill_billing_cld: returns a jsonb
+      // object that ALWAYS includes company_id, map_id, contact_id and the
+      // writer marker fields. Any structural violation (missing company_id,
+      // explicit error field, or missing writer marker) is treated as a
+      // non-retryable guard failure.
+      const wr = (writerResult ?? {}) as Record<string, unknown>;
+      const hasWriterMarker = wr.writer === "crm_company_backfill_billing_cld";
+      const hasCompanyId = typeof wr.company_id === "string" && wr.company_id.length > 0;
+      const hasError = typeof wr.error === "string" || wr.ok === false;
+      if (!writerResult || !hasWriterMarker || !hasCompanyId || hasError) {
+        nextStatus = "dead_letter";
+        nextError = trunc(writerResult ?? "writer returned no payload");
+      } else {
+        nextStatus = "done";
+      }
     }
 
     const { error: cErr } = await supabase.rpc(

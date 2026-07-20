@@ -19093,6 +19093,11 @@ export type Database = {
         Args: { _client_legal_details_id: string }
         Returns: string
       }
+      crm_enqueue_from_source_change: {
+        Args: { _cld_id: string; _reason: string }
+        Returns: string
+      }
+      crm_phase4_worker_secret: { Args: never; Returns: string }
       crm_task_apply_automation: {
         Args: { _context?: Json; _deal_id: string; _offer_id: string }
         Returns: string[]
