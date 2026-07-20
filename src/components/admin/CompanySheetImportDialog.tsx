@@ -271,6 +271,8 @@ export function CompanySheetImportDialog({ open, onOpenChange, onComplete }: { o
       setStep("done");
       toast.success("Импорт компаний завершён контролируемыми пачками");
       queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-company-quality"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-company-invariants"] });
       onComplete?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Импорт остановлен с ошибкой");
