@@ -383,8 +383,12 @@ export default function AdminCompanies() {
   const [editCompany, setEditCompany] = useState<CompanyListItem | null>(null);
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
     try {
-      const saved = localStorage.getItem("admin_companies_columns_v1");
-      if (!saved) return DEFAULT_COMPANY_COLUMNS;
+      const saved = localStorage.getItem("admin_companies_columns_v2");
+      if (!saved) {
+        // Миграция: одноразовый сброс старого ключа v1, где «Тип» был visible=true.
+        localStorage.removeItem("admin_companies_columns_v1");
+        return DEFAULT_COMPANY_COLUMNS;
+      }
       const parsed = JSON.parse(saved) as ColumnConfig[];
       return DEFAULT_COMPANY_COLUMNS.map((column) => ({
         ...column,
