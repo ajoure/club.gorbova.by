@@ -1163,7 +1163,12 @@ async function chargeSubscription(
     });
 
     const chargeResult = await chargeResponse.json();
-    console.log('bePaid charge result:', chargeResult);
+    // Provider responses can echo card/payment credentials; keep logs metadata-only.
+    console.log('bePaid charge result received', {
+      status: chargeResponse.status,
+      transactionStatus: chargeResult?.transaction?.status ?? null,
+      transactionCode: chargeResult?.transaction?.status_code ?? null,
+    });
 
     const chargeAttemptAt = new Date().toISOString();
 

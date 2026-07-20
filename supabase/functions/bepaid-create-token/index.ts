@@ -1254,7 +1254,11 @@ Deno.serve(async (req) => {
     });
 
     const bepaidData = await bepaidResponse.json();
-    console.log('bePaid subscription response:', JSON.stringify(bepaidData, null, 2));
+    // Do not log the provider response: it may include subscription/card tokens.
+    console.log('bePaid subscription response received', {
+      status: bepaidResponse.status,
+      topLevelKeys: Object.keys(bepaidData || {}).slice(0, 20),
+    });
 
     const subscriptionId = bepaidData?.id as string | undefined;
     const subscriptionToken = bepaidData?.token as string | undefined;
@@ -1262,7 +1266,10 @@ Deno.serve(async (req) => {
 
     if (!bepaidResponse.ok || !subscriptionId || !redirectUrl) {
       const errMsg = bepaidData?.message || bepaidData?.error || 'Payment service error';
-      console.error('bePaid subscription API error:', errMsg, bepaidData);
+      console.error('bePaid subscription API error:', errMsg, {
+        status: bepaidResponse.status,
+        topLevelKeys: Object.keys(bepaidData || {}).slice(0, 20),
+      });
 
       await supabase
         .from('orders')

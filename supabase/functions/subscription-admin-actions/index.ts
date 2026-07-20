@@ -484,7 +484,11 @@ Deno.serve(async (req) => {
             });
 
             bepaidRefundResult = await bepaidResponse.json();
-            console.log('bePaid refund response:', JSON.stringify(bepaidRefundResult));
+            // Refund responses may include payment identifiers; avoid logging the full body.
+            console.log('bePaid refund response received', {
+              status: bepaidResponse.status,
+              topLevelKeys: Object.keys(bepaidRefundResult || {}).slice(0, 20),
+            });
 
             // Detect nested error envelope: { response: { message, errors: { base: [...] } } }
             const nestedResp = (bepaidRefundResult as any)?.response;

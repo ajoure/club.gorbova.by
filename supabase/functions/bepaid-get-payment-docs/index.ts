@@ -255,7 +255,11 @@ Deno.serve(async (req) => {
     console.log(`Working endpoint: ${workingEndpoint}`);
 
     const txData = await apiResponse.json();
-    console.log('bePaid transaction response:', JSON.stringify(txData, null, 2));
+    // Provider responses may contain card/payment data; keep logs metadata-only.
+    console.log('bePaid transaction response received', {
+      topLevelKeys: Object.keys(txData || {}).slice(0, 20),
+      status: txData?.transaction?.status ?? txData?.status ?? null,
+    });
 
     // Extract receipt URL from various possible locations
     const transaction = txData.transaction || txData;
