@@ -122,7 +122,7 @@ BEGIN
     SELECT 1 FROM jsonb_array_elements(v_batch.rows) r
      WHERE nullif(btrim(r->>'callback_at'), '') IS NOT NULL
   ) THEN
-    SELECT count(*), min(p.user_id) INTO v_assignee_count, v_assignee
+    SELECT count(*), (array_agg(p.user_id ORDER BY p.user_id))[1] INTO v_assignee_count, v_assignee
       FROM public.profiles p
      WHERE lower(btrim(coalesce(p.full_name, ''))) = lower(btrim(coalesce(_assignee_name, '')))
        AND p.user_id IS NOT NULL;
