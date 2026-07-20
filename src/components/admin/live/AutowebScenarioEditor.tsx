@@ -10,7 +10,7 @@
  * Workflow: draft → preview → apply (или cancel = archive drafts).
  * Bulk shift двигает offset всех драфтов на N секунд (clamped 0..86400).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,7 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Plus, Save, Trash2, Undo2, PlayCircle, Eye, Clock } from "lucide-react";
+import { Loader2, Plus, Save, Trash2, Undo2, PlayCircle, Pause, Eye, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 type EntryType = "chat" | "question" | "host_message" | "reaction" | "cta";
@@ -83,6 +83,10 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
   const qc = useQueryClient();
   const [rows, setRows] = useState<Record<string, DraftRow>>({});
   const [shiftDelta, setShiftDelta] = useState<string>("30");
+  // Local-only test mode. It intentionally has no session/player/heartbeat path.
+  const [previewSeconds, setPreviewSeconds] = useState(0);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [previewSpeed, setPreviewSpeed] = useState(1);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["autoweb-scenario-entries", liveEventId],
@@ -112,6 +116,12 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
   }, [data, rows]);
 
   const dirtyCount = Object.values(rows).filter((r) => r._dirty || r._new).length;
+  const previewEntries = merged.filter((entry) => entry.offset_seconds <= previewSeconds);
+  useEffect(() => {
+    if (!previewPlaying) return;
+    const id = window.setInterval(() => setPreviewSeconds((value) => value + previewSpeed), 1000);
+    return () => window.clearInterval(id);
+  }, [previewPlaying, previewSpeed]);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["autoweb-scenario-entries", liveEventId] });
@@ -274,6 +284,26 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
               Apply
             </Button>
           </div>
+        </div>
+
+        <div className="rounded-md border border-dashed bg-muted/30 p-3 space-y-2" data-autoweb-test-mode>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-medium">Test mode · локальный preview</span>
+            <Button size="sm" variant="outline" onClick={() => setPreviewPlaying((value) => !value)}>
+              {previewPlaying ? <Pause className="h-3.5 w-3.5 mr-1" /> : <PlayCircle className="h-3.5 w-3.5 mr-1" />}
+              {previewPlaying ? "Пауза" : "Play"}
+            </Button>
+            <Input className="h-8 w-24" type="number" min={0} value={previewSeconds} onChange={(e) => setPreviewSeconds(Math.max(0, Number(e.target.value) || 0))} />
+            <Select value={String(previewSpeed)} onValueChange={(value) => setPreviewSpeed(Number(value))}>
+              <SelectTrigger className="h-8 w-20"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[0.5, 1, 1.5, 2].map((speed) => <SelectItem key={speed} value={String(speed)}>{speed}×</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <span className="text-muted-foreground">{previewEntries.length} событий к {fmtOffset(Math.floor(previewSeconds))}</span>
+          </div>
+          <p className="text-[11px] text-muted-foreground">Не создаёт session, heartbeat, реальные сообщения, viewers, уведомления или интеграции.</p>
+          {previewEntries.length > 0 && <div className="text-xs space-y-1">{previewEntries.map((entry) => <div key={entry.id ?? `${entry.offset_seconds}-${entry.content_text}`}><Badge variant="outline" className="mr-1 text-[9px]">{TYPE_LABEL[entry.entry_type]}</Badge>{entry.content_text}</div>)}</div>}
         </div>
 
         {isLoading ? (
