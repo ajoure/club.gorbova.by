@@ -318,6 +318,9 @@ function getImportedCompanyPhones(company: { phone?: string | null; country?: st
 }
 
 const PAGE_SIZE = 25;
+const COMPANY_COLUMNS_STORAGE_KEY = "admin_companies_columns_v1";
+const COMPANY_COLUMNS_CONFIG_VERSION_KEY = "admin_companies_columns_config_version";
+const COMPANY_COLUMNS_CONFIG_VERSION = "2";
 type CompanySortKey = "created_at" | "full_name" | "public_id";
 type SortDirection = "asc" | "desc";
 
@@ -433,13 +436,20 @@ export default function AdminCompanies() {
   const [editCompany, setEditCompany] = useState<CompanyListItem | null>(null);
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
     try {
-      const saved = localStorage.getItem("admin_companies_columns_v1");
+      const saved = localStorage.getItem(COMPANY_COLUMNS_STORAGE_KEY);
       if (!saved) return DEFAULT_COMPANY_COLUMNS;
       const parsed = JSON.parse(saved) as ColumnConfig[];
-      return DEFAULT_COMPANY_COLUMNS.map((column) => ({
+      const merged = DEFAULT_COMPANY_COLUMNS.map((column) => ({
         ...column,
         ...(parsed.find((item) => item.key === column.key) ?? {}),
       }));
+      // v1 stored the former default with the ownership-form column visible.
+      // Migrate that one-time default so existing admins see the same canonical
+      // list as a fresh session; ColumnSettings can still re-enable it explicitly.
+      if (localStorage.getItem(COMPANY_COLUMNS_CONFIG_VERSION_KEY) !== COMPANY_COLUMNS_CONFIG_VERSION) {
+        return merged.map((column) => column.key === "kind" ? { ...column, visible: false } : column);
+      }
+      return merged;
     } catch {
       return DEFAULT_COMPANY_COLUMNS;
     }
@@ -529,7 +539,8 @@ export default function AdminCompanies() {
   const draggableColumnIds = visibleColumns.filter((column) => column.key !== "checkbox").map((column) => column.key);
 
   useEffect(() => {
-    localStorage.setItem("admin_companies_columns_v1", JSON.stringify(columns));
+    localStorage.setItem(COMPANY_COLUMNS_STORAGE_KEY, JSON.stringify(columns));
+    localStorage.setItem(COMPANY_COLUMNS_CONFIG_VERSION_KEY, COMPANY_COLUMNS_CONFIG_VERSION);
   }, [columns]);
 
   const handleColumnResize = useCallback((key: string, width: number) => {
