@@ -20021,6 +20021,7 @@ export type Database = {
         Args: { _cld_id: string; _reason: string }
         Returns: string
       }
+      crm_normalize_company_phone: { Args: { _raw: string }; Returns: string }
       crm_phase4_worker_secret: { Args: never; Returns: string }
       crm_task_apply_automation: {
         Args: { _context?: Json; _deal_id: string; _offer_id: string }
