@@ -24,6 +24,7 @@ import {
   Sparkles,
   BookOpen,
   Copy,
+  Link2,
   MapPin,
   Phone,
   Pencil,
@@ -56,6 +57,7 @@ import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
 import { CompanySheetImportDialog } from "@/components/admin/CompanySheetImportDialog";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
+import { copyToClipboard, getCompanyUrl } from "@/utils/clipboardUtils";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -761,7 +763,20 @@ export default function AdminCompanies() {
                     else selectCompany(company.id);
                   }}
                 >
-                  <TableCell onClick={(event) => event.stopPropagation()}><Checkbox checked={selectedCompanyIds.has(company.id)} onCheckedChange={() => toggleSelection(company.id, true)} /></TableCell>
+                  <TableCell onClick={(event) => event.stopPropagation()}>
+                    <div className="flex items-center gap-1">
+                      <Checkbox checked={selectedCompanyIds.has(company.id)} onCheckedChange={() => toggleSelection(company.id, true)} />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                        title="Скопировать ссылку на компанию"
+                        onClick={() => copyToClipboard(getCompanyUrl(company.id), "Ссылка на компанию скопирована")}
+                      >
+                        <Link2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
                   {visibleColumns.filter((column) => column.key !== "checkbox").map((column) => {
                     if (column.key === "company") return <TableCell key={column.key}><div className="font-medium">{formatCompanyDisplayName(company.full_name) || company.full_name}</div><div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${formatCompanyDisplayName(company.short_name) || company.short_name}` : ""}</div></TableCell>;
                     if (column.key === "unp") return <TableCell key={column.key} className="font-mono text-xs">{company.unp_normalized || "—"}</TableCell>;
