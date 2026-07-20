@@ -82,14 +82,18 @@ export function LiveEventComments({
 
   // Live (текущий автовеб) — новые комментарии зрителей идут сюда.
   const { data: liveComments, isLoading } = useQuery({
-    queryKey: ["live-event-comments", liveEventId],
+    queryKey: ["live-event-comments", liveEventId, autowebSessionId ?? "legacy"],
     queryFn: async () => {
-      const { data: rawDesc, error } = await supabase
+      let commentsQuery = supabase
         .from("live_event_comments")
         .select("id, user_id, content, created_at, author_display_name, author_role, author_avatar_url, author_nickname_color")
         .eq("live_event_id", liveEventId)
         .order("created_at", { ascending: false })
         .limit(200);
+      if (autowebSessionId) {
+        commentsQuery = commentsQuery.eq("metadata->>session_id", autowebSessionId);
+      }
+      const { data: rawDesc, error } = await commentsQuery;
       if (error) throw error;
       const data = (rawDesc || []).slice().reverse();
 
@@ -181,7 +185,7 @@ export function LiveEventComments({
           filter: `live_event_id=eq.${liveEventId}`,
         },
         () => {
-          queryClient.invalidateQueries({ queryKey: ["live-event-comments", liveEventId] });
+          queryClient.invalidateQueries({ queryKey: ["live-event-comments", liveEventId, autowebSessionId ?? "legacy"] });
         }
       )
       .subscribe();
@@ -189,7 +193,7 @@ export function LiveEventComments({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [liveEventId, queryClient]);
+  }, [liveEventId, autowebSessionId, queryClient]);
 
   // M1.1: smart auto-scroll — only follow if user is already near bottom; otherwise show pill.
   const [hasNewBelow, setHasNewBelow] = useState(false);
@@ -264,7 +268,7 @@ export function LiveEventComments({
     },
     onSuccess: () => {
       setNewComment("");
-      queryClient.invalidateQueries({ queryKey: ["live-event-comments", liveEventId] });
+      queryClient.invalidateQueries({ queryKey: ["live-event-comments", liveEventId, autowebSessionId ?? "legacy"] });
     },
     onError: (err: any) => {
       // Server-side RLS will reject if user is muted/removed; surface a clear message.

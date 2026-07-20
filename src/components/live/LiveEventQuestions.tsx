@@ -81,14 +81,18 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
 
     // Live (текущий автовеб).
     const { data: liveQuestions, isLoading } = useQuery({
-      queryKey: ["live-event-questions", liveEventId],
+      queryKey: ["live-event-questions", liveEventId, autowebSessionId ?? "legacy"],
       queryFn: async () => {
-        const { data, error } = await supabase
+        let questionsQuery = supabase
           .from("live_event_questions")
           .select("id, user_id, content, is_answered, answered_at, answered_by, created_at, author_display_name, author_role, author_avatar_url, author_nickname_color")
           .eq("live_event_id", liveEventId)
           .order("created_at", { ascending: true })
           .limit(200);
+        if (autowebSessionId) {
+          questionsQuery = questionsQuery.eq("metadata->>session_id", autowebSessionId);
+        }
+        const { data, error } = await questionsQuery;
         if (error) throw error;
 
         const needsAvatarFallback = (data || []).filter(q => !q.author_avatar_url);
@@ -167,11 +171,11 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "live_event_questions", filter: `live_event_id=eq.${liveEventId}` },
-          () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId] })
+          () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId, autowebSessionId ?? "legacy"] })
         )
         .subscribe();
       return () => { supabase.removeChannel(channel); };
-    }, [liveEventId, queryClient]);
+    }, [liveEventId, autowebSessionId, queryClient]);
 
     // M1.1: smart auto-scroll for questions list (same pattern as comments).
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -244,7 +248,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
       },
       onSuccess: () => {
         setNewQuestion("");
-        queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId] });
+        queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId, autowebSessionId ?? "legacy"] });
       },
       onError: (err: any) => {
         const msg = String(err?.message || "");
@@ -276,7 +280,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
         const { error } = await supabase.from("live_event_questions").update(patch as any).eq("id", id);
         if (error) throw error;
       },
-      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId] }),
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId, autowebSessionId ?? "legacy"] }),
     });
 
     const handleSend = () => {
