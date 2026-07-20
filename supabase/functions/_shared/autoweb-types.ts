@@ -46,6 +46,8 @@ export interface AutowebRoomStateResponse {
   timeline_enabled: boolean;
   chat_enabled: boolean;
   questions_enabled: boolean;
+  /** Source history is disabled for replay unless replay.show_chat_history is enabled. */
+  history_enabled: boolean;
   /**
    * Точка позднего входа, вычисленная сервером для текущей live-фазы.
    * Для replay/pre_show это 0; сохранённая пользовательская позиция остаётся

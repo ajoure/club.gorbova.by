@@ -322,6 +322,7 @@ Deno.serve(async (req) => {
       timeline_enabled: cfg?.timeline?.enabled !== false,
       chat_enabled: cfg?.chat?.enabled !== false,
       questions_enabled: cfg?.questions?.enabled !== false,
+      history_enabled: computed.phase !== 'replay' || cfg?.replay?.show_chat_history === true,
       session_playback_position_seconds: computed.session_playback_position_seconds,
       resume: computed.resume,
       viewer_count,

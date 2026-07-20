@@ -270,7 +270,7 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
 
   // Единый режим для чат/вопросов: если у автовеба привязан source_live_event_id
   // и известен его starts_at — включаем timed-replay слой исторической ленты.
-  const historyEnabled = !!state.source_live_event_id && !!state.source_started_at;
+  const historyEnabled = state.history_enabled && !!state.source_live_event_id && !!state.source_started_at;
   const historyEventId = historyEnabled ? state.source_live_event_id! : undefined;
   const historyStartedAt = historyEnabled ? state.source_started_at! : undefined;
 

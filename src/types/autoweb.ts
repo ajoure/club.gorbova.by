@@ -42,6 +42,7 @@ export interface AutowebRoomStateResponse {
   timeline_enabled: boolean;
   chat_enabled: boolean;
   questions_enabled: boolean;
+  history_enabled: boolean;
   session_playback_position_seconds: number;
   resume: AutowebResumeContract;
   viewer_count: AutowebViewerCount;
