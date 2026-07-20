@@ -85,6 +85,32 @@ Deno.serve(async (req) => {
     if (!event) return jsonRes({ status: 'not_found' }, 404);
     if (!event.is_published) return jsonRes({ status: 'unpublished' }, 403);
 
+    // Phase D-slice-2 gate: replay_enabled=false + event уже завершён →
+    // селектор не отдаёт слоты обычным пользователям (admin сохраняет видимость
+    // через прямой access-path, эта функция публичная и admin-bypass не имеет).
+    // Проверяем `metadata.platform_status` (SoT), т.к. поле не в select — читаем добавочно.
+    // Add-only: без изменения существующего контракта payload.
+    try {
+      const { data: ev2 } = await supabase
+        .from('live_events')
+        .select('platform_status, status, replay_enabled')
+        .eq('id', event.id)
+        .maybeSingle();
+      const ps = (ev2 as any)?.platform_status ?? null;
+      const st = (ev2 as any)?.status ?? null;
+      const replay = Boolean((ev2 as any)?.replay_enabled ?? event.replay_enabled);
+      const isTerminal = ps === 'ended' || ps === 'archived' || st === 'ended';
+      if (isTerminal && !replay) {
+        return jsonRes({
+          status: 'ended',
+          reason: 'replay_disabled',
+          replay_enabled: false,
+        }, 410);
+      }
+    } catch (e) {
+      console.warn('[autoweb-resolve-sessions] terminal gate check failed:', e);
+    }
+
     // Phase D gate: launches_end_at (мягкий дедлайн). После него — селектор ничего не отдаёт
     // (уже активные сессии завершатся своим порядком, gate только на НОВЫЕ входы).
     // NULL = дедлайна нет.
@@ -98,6 +124,7 @@ Deno.serve(async (req) => {
         }, 410);
       }
     }
+
 
     const cfg = (event.autoweb_config ?? {}) as Record<string, any>;
     const tz = cfg?.schedule?.timezone ?? event.event_timezone ?? 'Europe/Minsk';
