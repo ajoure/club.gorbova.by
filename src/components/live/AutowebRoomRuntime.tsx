@@ -349,7 +349,12 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
           )}
 
           {state.timeline_enabled && isPlaying && (
-            <AutowebTimelineOverlay sessionId={state.session_id} enabled={true} />
+            <AutowebTimelineOverlay
+              sessionId={state.session_id}
+              liveEventId={state.live_event_id}
+              playbackSeconds={playbackSeconds}
+              enabled={true}
+            />
           )}
 
           {/* Блоки редакторского контента прошедшего эфира (под видео). */}
