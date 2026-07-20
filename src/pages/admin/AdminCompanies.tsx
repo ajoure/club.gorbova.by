@@ -199,6 +199,13 @@ interface CompanyListContact {
   external_full_name: string | null;
 }
 
+interface CompanyListPersonLink {
+  company_id: string;
+  person: { full_name: string | null } | null;
+  is_current: boolean;
+  valid_from: string;
+}
+
 interface CompanyOrderLink {
   id: string;
   order_id: string;
@@ -508,12 +515,25 @@ export default function AdminCompanies() {
     queryKey: ["admin-company-list-contacts", companyIds],
     enabled: companyIds.length > 0,
     queryFn: async (): Promise<Record<string, string[]>> => {
-      const { data, error } = await supabase
-        .from("company_contacts")
-        .select("company_id, profile_id, external_full_name")
-        .in("company_id", companyIds);
-      if (error) throw error;
-      const rows = (data ?? []) as CompanyListContact[];
+      // Imported LPRs live in the canonical company-contact-person registry;
+      // legacy billing links remain a fallback for older companies.
+      const [registryResult, legacyResult] = await Promise.all([
+        supabase
+          .from("company_contact_person_links")
+          .select("company_id, is_current, valid_from, person:company_contact_persons(full_name)")
+          .in("company_id", companyIds)
+          .eq("is_current", true)
+          .order("valid_from", { ascending: false })
+          .limit(500),
+        supabase
+          .from("company_contacts")
+          .select("company_id, profile_id, external_full_name")
+          .in("company_id", companyIds),
+      ]);
+      if (registryResult.error && legacyResult.error) throw registryResult.error;
+
+      const registryRows = (registryResult.data ?? []) as unknown as CompanyListPersonLink[];
+      const rows = (legacyResult.data ?? []) as CompanyListContact[];
       const profileIds = Array.from(new Set(rows.map((row) => row.profile_id).filter((id): id is string => Boolean(id))));
       const profilesById = new Map<string, string>();
       if (profileIds.length > 0) {
@@ -523,13 +543,16 @@ export default function AdminCompanies() {
           if (profile.full_name) profilesById.set(profile.id, profile.full_name);
         }
       }
-      return rows.reduce<Record<string, string[]>>((result, row) => {
-        const name = (row.profile_id ? profilesById.get(row.profile_id) : null) || row.external_full_name || "";
-        if (!name.trim()) return result;
-        const names = result[row.company_id] ?? [];
-        if (!names.includes(name.trim())) result[row.company_id] = [...names, name.trim()];
-        return result;
-      }, {});
+      const result: Record<string, string[]> = {};
+      const addName = (companyId: string, rawName: string | null | undefined) => {
+        const name = rawName?.trim();
+        if (!name) return;
+        const names = result[companyId] ?? [];
+        if (!names.includes(name)) result[companyId] = [...names, name];
+      };
+      for (const row of registryRows) addName(row.company_id, row.person?.full_name);
+      for (const row of rows) addName(row.company_id, (row.profile_id ? profilesById.get(row.profile_id) : null) || row.external_full_name);
+      return result;
     },
   });
   const listContactsByCompanyId = listContactsQuery.data ?? {};
