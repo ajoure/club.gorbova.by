@@ -49,6 +49,7 @@ import { SmsButton } from "@/components/admin/sms/SmsButton";
 import { SmsHistorySection } from "@/components/admin/sms/SmsHistorySection";
 import { ComposeEmailDialog } from "@/components/admin/ComposeEmailDialog";
 import { ContactEmailHistory } from "@/components/admin/ContactEmailHistory";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
 import { useDragSelect } from "@/hooks/useDragSelect";
@@ -246,10 +247,26 @@ interface ProfileSummary {
   id: string;
   user_id: string | null;
   full_name: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
   email: string | null;
   phone: string | null;
+  telegram_username?: string | null;
+  telegram_user_id?: number | null;
+  avatar_url?: string | null;
+  status?: string | null;
+  created_at?: string;
+  last_seen_at?: string | null;
+  duplicate_flag?: string | null;
+  deals_count?: number;
+  last_deal_at?: string | null;
   loyalty_score?: number | null;
+  loyalty_ai_summary?: string | null;
   loyalty_status_reason?: string | null;
+  loyalty_proofs?: unknown[] | null;
+  loyalty_analyzed_messages_count?: number | null;
+  loyalty_updated_at?: string | null;
+  communication_style?: Record<string, unknown> | null;
 }
 
 const PAGE_SIZE = 25;
@@ -891,6 +908,7 @@ function EditCompanyDialog({ company, onOpenChange, onSaved }: {
 }
 
 function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: string | null; canEdit: boolean; onClose: () => void }) {
+  const [selectedLinkedContactId, setSelectedLinkedContactId] = useState<string | null>(null);
   const detailQuery = useQuery({
     queryKey: ["admin-company", companyId],
     enabled: !!companyId,
@@ -922,7 +940,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
     queryKey: ["admin-company-contact-profiles", profileIds],
     enabled: profileIds.length > 0,
     queryFn: async (): Promise<ProfileSummary[]> => {
-      const { data, error } = await supabase.from("profiles").select("id, user_id, full_name, email, phone, loyalty_score, loyalty_status_reason").in("id", profileIds);
+      const { data, error } = await supabase.from("profiles").select("*").in("id", profileIds);
       if (error) throw error;
       return data as ProfileSummary[];
     },
@@ -1128,6 +1146,32 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
   });
 
   const company = detailQuery.data;
+  const selectedLinkedProfile = selectedLinkedContactId ? profilesById.get(selectedLinkedContactId) : null;
+  const selectedLinkedContact = selectedLinkedProfile ? {
+    id: selectedLinkedProfile.id,
+    user_id: selectedLinkedProfile.user_id ?? null,
+    email: selectedLinkedProfile.email ?? null,
+    full_name: selectedLinkedProfile.full_name ?? null,
+    first_name: selectedLinkedProfile.first_name ?? null,
+    last_name: selectedLinkedProfile.last_name ?? null,
+    phone: selectedLinkedProfile.phone ?? null,
+    telegram_username: selectedLinkedProfile.telegram_username ?? null,
+    telegram_user_id: selectedLinkedProfile.telegram_user_id ?? null,
+    avatar_url: selectedLinkedProfile.avatar_url ?? null,
+    status: selectedLinkedProfile.status ?? "active",
+    created_at: selectedLinkedProfile.created_at ?? new Date().toISOString(),
+    last_seen_at: selectedLinkedProfile.last_seen_at ?? null,
+    duplicate_flag: selectedLinkedProfile.duplicate_flag ?? null,
+    deals_count: selectedLinkedProfile.deals_count ?? 0,
+    last_deal_at: selectedLinkedProfile.last_deal_at ?? null,
+    loyalty_score: selectedLinkedProfile.loyalty_score ?? null,
+    loyalty_ai_summary: selectedLinkedProfile.loyalty_ai_summary ?? null,
+    loyalty_status_reason: selectedLinkedProfile.loyalty_status_reason ?? null,
+    loyalty_proofs: selectedLinkedProfile.loyalty_proofs ?? null,
+    loyalty_analyzed_messages_count: selectedLinkedProfile.loyalty_analyzed_messages_count ?? null,
+    loyalty_updated_at: selectedLinkedProfile.loyalty_updated_at ?? null,
+    communication_style: selectedLinkedProfile.communication_style ?? null,
+  } : null;
   const [composeEmailOpen, setComposeEmailOpen] = useState(false);
   const detailRows = company ? [
     ["УНП", company.unp_normalized],
@@ -1202,7 +1246,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                 <TabsContent value="contacts" className="mt-0 space-y-3">
                   {contactsQuery.isLoading && <Skeleton className="h-16 w-full" />}
                   {!contactsQuery.isLoading && (contactsQuery.data?.length ?? 0) === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанных контактов пока нет.</p>}
-                  {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = profile?.full_name || contact.external_full_name || "Контакт без имени"; const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="font-medium">{name}</div><div className="mt-0.5 text-xs text-muted-foreground">{contact.relationship_type}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Billing</Badge>}</div></div></div>; })}
+                  {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = profile?.full_name || contact.external_full_name || "Контакт без имени"; const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><div className="font-medium">{name}</div>{profile?.id && <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedLinkedContactId(profile.id)}>Открыть карточку</Button>}</div><div className="mt-0.5 text-xs text-muted-foreground">{contact.relationship_type}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Billing</Badge>}</div></div></div>; })}
                 </TabsContent>
                 <TabsContent value="persons" className="mt-0 space-y-3">
                   <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">Персоны без подтверждённого профиля хранятся отдельно. Профиль не создаётся автоматически, а связь роли сохраняется с датами и источником.</div>
@@ -1241,22 +1285,22 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                   <ContactFeedTab companyId={company.id} embedded readOnly={!canEdit} />
                 </TabsContent>
                 <TabsContent value="telegram" className="mt-0 space-y-3">
-                  <CompanyTelegramSummary profiles={profilesQuery.data ?? []} contacts={contactsQuery.data ?? []} />
+                  <CompanyTelegramSummary profiles={profilesQuery.data ?? []} contacts={contactsQuery.data ?? []} onOpenContact={setSelectedLinkedContactId} />
                 </TabsContent>
                 <TabsContent value="access" className="mt-0">
-                  <CompanyAccessSummary userIds={linkedUserIds} />
+                  <CompanyAccessSummary userIds={linkedUserIds} profiles={profilesQuery.data ?? []} onOpenContact={setSelectedLinkedContactId} />
                 </TabsContent>
                 <TabsContent value="payments" className="mt-0">
-                  <CompanyPaymentsSummary profileIds={profileIds} userIds={linkedUserIds} orderIds={orderIds} />
+                  <CompanyPaymentsSummary profileIds={profileIds} userIds={linkedUserIds} orderIds={orderIds} profiles={profilesQuery.data ?? []} onOpenContact={setSelectedLinkedContactId} />
                 </TabsContent>
                 <TabsContent value="consent" className="mt-0">
-                  <CompanyConsentSummary profileIds={profileIds} userIds={linkedUserIds} />
+                  <CompanyConsentSummary profileIds={profileIds} userIds={linkedUserIds} profiles={profilesQuery.data ?? []} onOpenContact={setSelectedLinkedContactId} />
                 </TabsContent>
                 <TabsContent value="installments" className="mt-0">
-                  <CompanyInstallmentsSummary userIds={linkedUserIds} orderIds={orderIds} />
+                  <CompanyInstallmentsSummary userIds={linkedUserIds} orderIds={orderIds} profiles={profilesQuery.data ?? []} onOpenContact={setSelectedLinkedContactId} />
                 </TabsContent>
                 <TabsContent value="loyalty" className="mt-0">
-                  <CompanyLoyaltySummary profiles={profilesQuery.data ?? []} />
+                  <CompanyLoyaltySummary profiles={profilesQuery.data ?? []} onOpenContact={setSelectedLinkedContactId} />
                 </TabsContent>
                 <TabsContent value="artifacts" className="mt-0 space-y-3">
                   <CompanyArtifactsSummary documents={[...(documentsQuery.data ?? []), ...(aiDocumentsQuery.data ?? [])]} ordersById={ordersById} />
@@ -1294,6 +1338,12 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
               onOpenChange={setComposeEmailOpen}
               onSuccess={() => queryClient.invalidateQueries({ queryKey: ["contact_feed", company.id] })}
             />
+            <ContactDetailSheet
+              contact={selectedLinkedContact as any}
+              open={!!selectedLinkedContact}
+              onOpenChange={(open) => { if (!open) setSelectedLinkedContactId(null); }}
+              returnTo="/admin/companies"
+            />
           </div>
         )}
       </SheetContent>
@@ -1305,20 +1355,26 @@ function CompanySummaryEmpty({ children }: { children: ReactNode }) {
   return <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">{children}</div>;
 }
 
-function CompanyTelegramSummary({ profiles, contacts }: { profiles: ProfileSummary[]; contacts: CompanyContact[] }) {
+function LinkedContactButton({ profileId, userId, profiles, onOpenContact }: { profileId?: string | null; userId?: string | null; profiles: ProfileSummary[]; onOpenContact: (profileId: string) => void }) {
+  const profile = profiles.find((item) => item.id === profileId || item.user_id === userId || item.id === userId);
+  if (!profile) return null;
+  return <Button type="button" variant="link" size="sm" className="h-auto shrink-0 p-0 text-xs" onClick={() => onOpenContact(profile.id)}>Открыть контакт</Button>;
+}
+
+function CompanyTelegramSummary({ profiles, contacts, onOpenContact }: { profiles: ProfileSummary[]; contacts: CompanyContact[]; onOpenContact: (profileId: string) => void }) {
   if (contacts.length === 0) return <CompanySummaryEmpty><MessageCircle className="mx-auto mb-2 h-8 w-8 opacity-40" />У компании пока нет связанных контактов для Telegram.</CompanySummaryEmpty>;
   return (
     <div className="space-y-3">
       <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">Telegram принадлежит профилям людей. Компания не получает фиктивный Telegram-аккаунт: ниже показаны связанные контакты, с которыми можно работать из их канонических карточек.</div>
       {contacts.map((contact) => {
         const profile = profiles.find((item) => item.id === contact.profile_id);
-        return <div key={contact.id} className="flex items-center gap-3 rounded-lg border p-3"><MessageCircle className="h-4 w-4 text-sky-600" /><div className="min-w-0 flex-1"><div className="font-medium">{profile?.full_name || contact.external_full_name || "Контакт без имени"}</div><div className="text-xs text-muted-foreground">{profile?.email || contact.external_email || profile?.phone || contact.external_phone || "Telegram-идентификатор не указан"}</div></div><Badge variant="outline">Связанный контакт</Badge></div>;
+        return <div key={contact.id} className="flex items-center gap-3 rounded-lg border p-3"><MessageCircle className="h-4 w-4 text-sky-600" /><div className="min-w-0 flex-1"><div className="font-medium">{profile?.full_name || contact.external_full_name || "Контакт без имени"}</div><div className="text-xs text-muted-foreground">{profile?.email || contact.external_email || profile?.phone || contact.external_phone || "Telegram-идентификатор не указан"}</div></div>{profile?.id ? <Button type="button" variant="link" size="sm" className="shrink-0 text-xs" onClick={() => onOpenContact(profile.id)}>Открыть контакт</Button> : <Badge variant="outline">Внешняя персона</Badge>}</div>;
       })}
     </div>
   );
 }
 
-function CompanyAccessSummary({ userIds }: { userIds: string[] }) {
+function CompanyAccessSummary({ userIds, profiles, onOpenContact }: { userIds: string[]; profiles: ProfileSummary[]; onOpenContact: (profileId: string) => void }) {
   const subscriptionsQuery = useQuery({
     queryKey: ["admin-company-access-subscriptions", userIds],
     enabled: userIds.length > 0,
@@ -1342,10 +1398,10 @@ function CompanyAccessSummary({ userIds }: { userIds: string[] }) {
   if (subscriptionsQuery.isError || entitlementsQuery.isError) return <CompanySummaryEmpty>Данные доступов связанных контактов временно недоступны.</CompanySummaryEmpty>;
   const rows = [...(subscriptionsQuery.data ?? []).map((row: any) => ({ ...row, source: "Подписка", label: row.status })), ...(entitlementsQuery.data ?? []).map((row: any) => ({ ...row, source: "Доступ по продукту", label: row.product_code || row.status }))];
   if (rows.length === 0) return <CompanySummaryEmpty><Shield className="mx-auto mb-2 h-8 w-8 opacity-40" />Активных доступов у связанных контактов нет.</CompanySummaryEmpty>;
-  return <div className="space-y-2"><div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">Доступы хранятся у связанных профилей людей и отображаются здесь агрегировано. Управление доступом выполняется из карточки конкретного контакта, чтобы не менять владельца доступа.</div>{rows.map((row: any) => <div key={`${row.source}-${row.id}`} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{row.label}</div><div className="text-xs text-muted-foreground">{row.source} · профиль {row.user_id}</div></div><Badge variant={row.status === "active" ? "default" : "outline"}>{row.status || "—"}</Badge></div>)}</div>;
+  return <div className="space-y-2"><div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">Доступы хранятся у связанных профилей людей и отображаются здесь агрегировано. Управление доступом выполняется из карточки конкретного контакта, чтобы не менять владельца доступа.</div>{rows.map((row: any) => <div key={`${row.source}-${row.id}`} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{row.label}</div><div className="text-xs text-muted-foreground">{row.source} · профиль {row.user_id}</div></div><div className="flex items-center gap-3"><LinkedContactButton userId={row.user_id} profiles={profiles} onOpenContact={onOpenContact} /><Badge variant={row.status === "active" ? "default" : "outline"}>{row.status || "—"}</Badge></div></div>)}</div>;
 }
 
-function CompanyPaymentsSummary({ profileIds, userIds, orderIds }: { profileIds: string[]; userIds: string[]; orderIds: string[] }) {
+function CompanyPaymentsSummary({ profileIds, userIds, orderIds, profiles, onOpenContact }: { profileIds: string[]; userIds: string[]; orderIds: string[]; profiles: ProfileSummary[]; onOpenContact: (profileId: string) => void }) {
   const query = useQuery({
     queryKey: ["admin-company-payments", profileIds, userIds, orderIds],
     enabled: profileIds.length > 0 || userIds.length > 0 || orderIds.length > 0,
@@ -1364,10 +1420,10 @@ function CompanyPaymentsSummary({ profileIds, userIds, orderIds }: { profileIds:
   if (query.isLoading) return <Skeleton className="h-24 w-full" />;
   if (query.isError) return <CompanySummaryEmpty>История платежей компании временно недоступна.</CompanySummaryEmpty>;
   if (!query.data?.length) return <CompanySummaryEmpty><CreditCard className="mx-auto mb-2 h-8 w-8 opacity-40" />Платежей по компании пока нет.</CompanySummaryEmpty>;
-  return <div className="space-y-2">{query.data.map((payment: any) => <div key={payment.id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{payment.amount ?? "—"} {payment.currency ?? ""}</div><div className="text-xs text-muted-foreground">{payment.provider || "Платёж"} · {payment.paid_at ? format(new Date(payment.paid_at), "dd.MM.yyyy HH:mm", { locale: ru }) : format(new Date(payment.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}</div></div><Badge variant={payment.status === "succeeded" ? "default" : payment.status === "failed" ? "destructive" : "outline"}>{payment.status || "—"}</Badge></div>)}</div>;
+  return <div className="space-y-2">{query.data.map((payment: any) => <div key={payment.id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{payment.amount ?? "—"} {payment.currency ?? ""}</div><div className="text-xs text-muted-foreground">{payment.provider || "Платёж"} · {payment.paid_at ? format(new Date(payment.paid_at), "dd.MM.yyyy HH:mm", { locale: ru }) : format(new Date(payment.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}</div></div><div className="flex items-center gap-3"><LinkedContactButton profileId={payment.profile_id} userId={payment.user_id} profiles={profiles} onOpenContact={onOpenContact} /><Badge variant={payment.status === "succeeded" ? "default" : payment.status === "failed" ? "destructive" : "outline"}>{payment.status || "—"}</Badge></div></div>)}</div>;
 }
 
-function CompanyConsentSummary({ profileIds, userIds }: { profileIds: string[]; userIds: string[] }) {
+function CompanyConsentSummary({ profileIds, userIds, profiles, onOpenContact }: { profileIds: string[]; userIds: string[]; profiles: ProfileSummary[]; onOpenContact: (profileId: string) => void }) {
   const query = useQuery({
     queryKey: ["admin-company-consents", profileIds, userIds],
     enabled: profileIds.length > 0 || userIds.length > 0,
@@ -1384,10 +1440,10 @@ function CompanyConsentSummary({ profileIds, userIds }: { profileIds: string[]; 
   if (query.isError) return <CompanySummaryEmpty>История согласий временно недоступна.</CompanySummaryEmpty>;
   const rows = [...(query.data?.profiles ?? []).map((row: any) => ({ ...row, kind: "Профиль", label: row.consent_version ? `Политика ${row.consent_version}` : "Согласие не дано", granted: Boolean(row.consent_version) })), ...(query.data?.logs ?? []).map((row: any) => ({ ...row, kind: row.consent_type, label: row.policy_version, granted: row.granted }))];
   if (!rows.length) return <CompanySummaryEmpty><ShieldCheck className="mx-auto mb-2 h-8 w-8 opacity-40" />Согласий у связанных контактов пока нет.</CompanySummaryEmpty>;
-  return <div className="space-y-2">{rows.map((row: any, index) => <div key={`${row.id}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{row.kind}</div><div className="text-xs text-muted-foreground">{row.label}{row.created_at ? ` · ${format(new Date(row.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}` : ""}</div></div><Badge variant={row.granted ? "default" : "secondary"}>{row.granted ? "Дано" : "Нет"}</Badge></div>)}</div>;
+  return <div className="space-y-2">{rows.map((row: any, index) => <div key={`${row.id}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{row.kind}</div><div className="text-xs text-muted-foreground">{row.label}{row.created_at ? ` · ${format(new Date(row.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}` : ""}</div></div><div className="flex items-center gap-3"><LinkedContactButton profileId={row.kind === "Профиль" ? row.id : null} userId={row.kind !== "Профиль" ? row.user_id : null} profiles={profiles} onOpenContact={onOpenContact} /><Badge variant={row.granted ? "default" : "secondary"}>{row.granted ? "Дано" : "Нет"}</Badge></div></div>)}</div>;
 }
 
-function CompanyInstallmentsSummary({ userIds, orderIds }: { userIds: string[]; orderIds: string[] }) {
+function CompanyInstallmentsSummary({ userIds, orderIds, profiles, onOpenContact }: { userIds: string[]; orderIds: string[]; profiles: ProfileSummary[]; onOpenContact: (profileId: string) => void }) {
   const query = useQuery({
     queryKey: ["admin-company-installments", userIds, orderIds],
     enabled: userIds.length > 0 || orderIds.length > 0,
@@ -1402,13 +1458,13 @@ function CompanyInstallmentsSummary({ userIds, orderIds }: { userIds: string[]; 
   if (query.isLoading) return <Skeleton className="h-24 w-full" />;
   if (query.isError) return <CompanySummaryEmpty>График рассрочек временно недоступен.</CompanySummaryEmpty>;
   if (!query.data?.length) return <CompanySummaryEmpty><Wallet className="mx-auto mb-2 h-8 w-8 opacity-40" />Рассрочек по компании пока нет.</CompanySummaryEmpty>;
-  return <div className="space-y-2">{query.data.map((row: any) => <div key={row.id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">Платёж {row.payment_number} из {row.total_payments} · {row.amount} {row.currency}</div><div className="text-xs text-muted-foreground">Срок {format(new Date(row.due_date), "dd.MM.yyyy", { locale: ru })}{row.paid_at ? ` · оплачен ${format(new Date(row.paid_at), "dd.MM.yyyy", { locale: ru })}` : ""}</div></div><Badge variant={row.status === "succeeded" ? "default" : row.status === "failed" ? "destructive" : "outline"}>{row.status}</Badge></div>)}</div>;
+  return <div className="space-y-2">{query.data.map((row: any) => <div key={row.id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">Платёж {row.payment_number} из {row.total_payments} · {row.amount} {row.currency}</div><div className="text-xs text-muted-foreground">Срок {format(new Date(row.due_date), "dd.MM.yyyy", { locale: ru })}{row.paid_at ? ` · оплачен ${format(new Date(row.paid_at), "dd.MM.yyyy", { locale: ru })}` : ""}</div></div><div className="flex items-center gap-3"><LinkedContactButton userId={row.user_id} profiles={profiles} onOpenContact={onOpenContact} /><Badge variant={row.status === "succeeded" ? "default" : row.status === "failed" ? "destructive" : "outline"}>{row.status}</Badge></div></div>)}</div>;
 }
 
-function CompanyLoyaltySummary({ profiles }: { profiles: ProfileSummary[] }) {
+function CompanyLoyaltySummary({ profiles, onOpenContact }: { profiles: ProfileSummary[]; onOpenContact: (profileId: string) => void }) {
   const withScore = profiles.filter((profile) => profile.loyalty_score != null);
   if (!withScore.length) return <CompanySummaryEmpty><Sparkles className="mx-auto mb-2 h-8 w-8 opacity-40" />Оценка лояльности ведётся по контактам, но пока не рассчитана.</CompanySummaryEmpty>;
-  return <div className="space-y-2">{withScore.map((profile) => <div key={profile.id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{profile.full_name || profile.email || "Контакт"}</div><div className="text-xs text-muted-foreground">{profile.loyalty_status_reason || "Расчёт по истории контакта"}</div></div><Badge variant="secondary">{profile.loyalty_score}</Badge></div>)}</div>;
+  return <div className="space-y-2">{withScore.map((profile) => <div key={profile.id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{profile.full_name || profile.email || "Контакт"}</div><div className="text-xs text-muted-foreground">{profile.loyalty_status_reason || "Расчёт по истории контакта"}</div></div><div className="flex items-center gap-3"><LinkedContactButton profileId={profile.id} profiles={profiles} onOpenContact={onOpenContact} /><Badge variant="secondary">{profile.loyalty_score}</Badge></div></div>)}</div>;
 }
 
 function CompanyArtifactsSummary({ documents, ordersById }: { documents: CompanyDocument[]; ordersById: Map<string, CompanyOrder> }) {
