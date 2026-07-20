@@ -1852,13 +1852,17 @@ export default function AdminContacts() {
             }
           }
         }}
-        onOpenCompany={(companyId) => setSelectedCompanyId(companyId)}
+        onOpenCompany={(companyId) => {
+          setSelectedContactId(null);
+          setSelectedCompanyId(companyId);
+        }}
         returnTo={fromPage || undefined}
       />
       <CompanyDetailsSheet
         companyId={selectedCompanyId}
         canEdit={canWrite("companies") || isSuperAdmin()}
         onClose={() => setSelectedCompanyId(null)}
+        onOpenCompany={setSelectedCompanyId}
       />
 
       {/* Selection Box for drag select */}
