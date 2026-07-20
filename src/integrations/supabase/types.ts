@@ -19171,6 +19171,10 @@ export type Database = {
         }
         Returns: string
       }
+      crm_company_create_from_billing: {
+        Args: { _client_legal_details_id: string }
+        Returns: string
+      }
       crm_company_grp_refetch: { Args: { _id: string }; Returns: string }
       crm_company_link_contact: {
         Args: {
