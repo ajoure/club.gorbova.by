@@ -19040,6 +19040,7 @@ export type Database = {
         Args: { _client_legal_details_id: string }
         Returns: string
       }
+      crm_phase3b_rehearsal_replay: { Args: never; Returns: undefined }
       crm_task_apply_automation: {
         Args: { _context?: Json; _deal_id: string; _offer_id: string }
         Returns: string[]
