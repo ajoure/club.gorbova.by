@@ -280,7 +280,7 @@ export default function AdminCompanies() {
   const resetPage = () => setPage(0);
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto overflow-x-hidden py-4 md:py-6">
+    <div className="flex-1 min-h-0 h-full flex flex-col gap-4 overflow-y-auto overflow-x-hidden overscroll-y-contain py-4 md:py-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -341,7 +341,7 @@ export default function AdminCompanies() {
         <ColumnSettings columns={columns} onChange={setColumns} />
       </div>
 
-      <div className="min-h-0 flex-none overflow-hidden rounded-xl border bg-card">
+      <div className="min-h-0 min-w-0 flex-none overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center justify-between border-b px-4 py-3 text-sm text-muted-foreground">
           <span>{companiesQuery.isLoading ? "Загрузка…" : `Найдено: ${total}`}</span>
           <span>Кликните по строке, чтобы открыть карточку</span>
