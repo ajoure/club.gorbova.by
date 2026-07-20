@@ -722,7 +722,7 @@ export default function AdminCompanies() {
                     if (column.key === "company") return <TableCell key={column.key}><div className="font-medium">{company.full_name}</div><div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${company.short_name}` : ""}</div></TableCell>;
                     if (column.key === "unp") return <TableCell key={column.key} className="font-mono text-xs">{company.unp_normalized || "—"}</TableCell>;
                     if (column.key === "kind") return <TableCell key={column.key}>{kindLabels[company.company_kind]}</TableCell>;
-                    if (column.key === "contacts") return <TableCell key={column.key}><div className="space-y-1 text-xs text-muted-foreground">{company.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" />{company.email}</div>}{company.phone && <div className="flex items-center gap-1"><Phone className="h-3 w-3" />{company.phone}</div>}{!company.email && !company.phone && "—"}</div></TableCell>;
+                    if (column.key === "contacts") return <TableCell key={column.key} onClick={(event) => event.stopPropagation()}><div className="space-y-1 text-xs text-muted-foreground">{company.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" /><a href={`mailto:${company.email}`} className="hover:underline">{company.email}</a></div>}{company.phone && <div className="flex items-center gap-1"><Phone className="h-3 w-3" /><a href={`tel:${company.phone}`} className="hover:underline">{company.phone}</a></div>}{!company.email && !company.phone && "—"}</div></TableCell>;
                     if (column.key === "status") return <TableCell key={column.key}><StatusBadge status={company.status} /></TableCell>;
                     if (column.key === "created") return <TableCell key={column.key} className="text-right text-sm text-muted-foreground">{formatDate(company.created_at)}</TableCell>;
                     return null;
@@ -1287,7 +1287,28 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
               <div className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
                 <TabsContent value="profile" className="mt-0 space-y-4">
                   <section className="space-y-3"><h3 className="text-sm font-semibold">Реквизиты</h3><div className="divide-y rounded-lg border">{detailRows.map(([label, value]) => <div key={label as string} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 px-3 py-2.5 text-sm"><span className="text-muted-foreground">{label}</span><span className="break-words">{value || "—"}</span></div>)}</div></section>
-                  <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">{company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" />{company.email}</div>}{company.phone && <div className="flex items-center gap-2"><Phone className="h-4 w-4" />{company.phone}</div>}{company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}{!company.email && !company.phone && !company.legal_address && "Контактные данные не заполнены."}</section>
+                  <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">{company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" /><a href={`mailto:${company.email}`} className="hover:underline">{company.email}</a></div>}{company.phone && <div className="flex items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${company.phone}`} className="hover:underline">{company.phone}</a></div>}{company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}{!company.email && !company.phone && !company.legal_address && "Контактные данные не заполнены."}</section>
+                  {(() => {
+                    const meta = (company as any)?.metadata?.google_sheet_import?.phones;
+                    const extras: string[] = Array.isArray(meta)
+                      ? Array.from(new Set(meta.filter((p: unknown): p is string => typeof p === "string" && p.startsWith("+")).filter((p) => p !== company.phone)))
+                      : [];
+                    if (extras.length === 0) return null;
+                    return (
+                      <section className="space-y-2 rounded-lg border p-3">
+                        <div className="text-xs font-medium text-muted-foreground">Дополнительные телефоны</div>
+                        <div className="space-y-2">
+                          {extras.map((p) => (
+                            <div key={p} className="flex flex-wrap items-center gap-2">
+                              <a href={`tel:${p}`} className="flex items-center gap-1 text-sm hover:underline"><Phone className="h-3.5 w-3.5" />{p}</a>
+                              <CallButton phone={p} companyId={company.id} />
+                              <SmsButton phone={p} companyId={company.id} />
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })()}
                 </TabsContent>
                 <TabsContent value="contacts" className="mt-0 space-y-3">
                   {contactsQuery.isLoading && <Skeleton className="h-16 w-full" />}
