@@ -10,16 +10,18 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-const signInWithOtp = vi.fn().mockResolvedValue({ error: null });
-const functionsInvoke = vi.fn();
+const { signInWithOtp, functionsInvoke } = vi.hoisted(() => ({
+  signInWithOtp: vi.fn().mockResolvedValue({ error: null }),
+  functionsInvoke: vi.fn(),
+}));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     auth: {
-      signInWithOtp: (...a: any[]) => signInWithOtp(...a),
+      signInWithOtp,
       verifyOtp: vi.fn(),
       updateUser: vi.fn(),
     },
-    functions: { invoke: (...a: any[]) => functionsInvoke(...a) },
+    functions: { invoke: functionsInvoke },
   },
 }));
 
@@ -36,6 +38,10 @@ describe("InlineEmailOtpForm", () => {
   it("existing profile → OTP step directly, one-time-code AutoFill contract present", async () => {
     functionsInvoke.mockResolvedValueOnce({
       data: { exists: true, hasPassword: true, profile_name: "Existing User" },
+      error: null,
+    });
+    functionsInvoke.mockResolvedValueOnce({
+      data: { success: true },
       error: null,
     });
     signInWithOtp.mockClear();
