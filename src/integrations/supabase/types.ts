@@ -2396,6 +2396,92 @@ export type Database = {
         }
         Relationships: []
       }
+      autoweb_scenario_audit: {
+        Row: {
+          action: string
+          actor_user_id: string | null
+          created_at: string
+          id: string
+          live_event_id: string
+          payload: Json
+        }
+        Insert: {
+          action: string
+          actor_user_id?: string | null
+          created_at?: string
+          id?: string
+          live_event_id: string
+          payload?: Json
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string | null
+          created_at?: string
+          id?: string
+          live_event_id?: string
+          payload?: Json
+        }
+        Relationships: []
+      }
+      autoweb_scenario_entries: {
+        Row: {
+          actor_avatar_url: string | null
+          actor_display_name: string | null
+          applied_at: string | null
+          content_text: string
+          created_at: string
+          created_by: string | null
+          entry_type: string
+          id: string
+          live_event_id: string
+          metadata: Json
+          offset_seconds: number
+          state: string
+          updated_at: string
+          visibility_scope: string
+        }
+        Insert: {
+          actor_avatar_url?: string | null
+          actor_display_name?: string | null
+          applied_at?: string | null
+          content_text: string
+          created_at?: string
+          created_by?: string | null
+          entry_type: string
+          id?: string
+          live_event_id: string
+          metadata?: Json
+          offset_seconds: number
+          state?: string
+          updated_at?: string
+          visibility_scope?: string
+        }
+        Update: {
+          actor_avatar_url?: string | null
+          actor_display_name?: string | null
+          applied_at?: string | null
+          content_text?: string
+          created_at?: string
+          created_by?: string | null
+          entry_type?: string
+          id?: string
+          live_event_id?: string
+          metadata?: Json
+          offset_seconds?: number
+          state?: string
+          updated_at?: string
+          visibility_scope?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "autoweb_scenario_entries_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       balance_wheel_data: {
         Row: {
           created_at: string
@@ -18333,6 +18419,7 @@ export type Database = {
       }
     }
     Functions: {
+      _autoweb_scenario_require_admin: { Args: never; Returns: undefined }
       _crm_company_emit_domain_event: {
         Args: {
           _entity_id: string
@@ -18732,6 +18819,55 @@ export type Database = {
           _section_code: string
         }
         Returns: undefined
+      }
+      autoweb_scenario_apply: {
+        Args: { _live_event_id: string }
+        Returns: Json
+      }
+      autoweb_scenario_bulk_shift: {
+        Args: { _delta_seconds: number; _live_event_id: string }
+        Returns: Json
+      }
+      autoweb_scenario_cancel: {
+        Args: { _live_event_id: string }
+        Returns: Json
+      }
+      autoweb_scenario_delete: {
+        Args: { _entry_ids: string[]; _live_event_id: string }
+        Returns: Json
+      }
+      autoweb_scenario_list: {
+        Args: { _include_applied?: boolean; _live_event_id: string }
+        Returns: {
+          actor_avatar_url: string | null
+          actor_display_name: string | null
+          applied_at: string | null
+          content_text: string
+          created_at: string
+          created_by: string | null
+          entry_type: string
+          id: string
+          live_event_id: string
+          metadata: Json
+          offset_seconds: number
+          state: string
+          updated_at: string
+          visibility_scope: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "autoweb_scenario_entries"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      autoweb_scenario_preview: {
+        Args: { _live_event_id: string }
+        Returns: Json
+      }
+      autoweb_scenario_upsert: {
+        Args: { _entries: Json; _live_event_id: string }
+        Returns: Json
       }
       backfill_card_stamps_from_queue: { Args: never; Returns: Json }
       backfill_payments_by_card: {
