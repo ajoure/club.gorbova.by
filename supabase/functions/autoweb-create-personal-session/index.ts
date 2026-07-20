@@ -71,13 +71,23 @@ Deno.serve(async (req) => {
 
     const { data: event, error: eErr } = await admin
       .from('live_events')
-      .select('id, event_type, autoweb_mode, autoweb_config, is_published, scheduled_at')
+      .select('id, event_type, autoweb_mode, autoweb_config, is_published, scheduled_at, launches_end_at')
       .eq('id', liveEventId)
       .maybeSingle();
     if (eErr || !event) return jsonRes({ status: 'not_found' }, 404);
     if (!event.is_published) return jsonRes({ status: 'unpublished' }, 403);
     if (event.event_type !== 'autowebinar') {
       return jsonRes({ status: 'unsupported_event_type' }, 400);
+    }
+
+    // Phase D gate: launches_end_at. Новые персональные сессии не создаются после дедлайна.
+    // Активные сессии не трогаем — они завершатся штатно через autoweb-session-heartbeat.
+    if (event.launches_end_at && Date.now() >= new Date(event.launches_end_at as string).getTime()) {
+      return jsonRes({
+        status: 'launches_closed',
+        reason: 'launches_end_at_passed',
+        launches_end_at: event.launches_end_at,
+      }, 410);
     }
 
     const mode = event.autoweb_mode as string;

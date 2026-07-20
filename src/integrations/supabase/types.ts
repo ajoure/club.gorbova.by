@@ -10146,6 +10146,7 @@ export type Database = {
           kinescope_project_id: string | null
           kinescope_stream_id: string | null
           kinescope_video_id: string | null
+          launches_end_at: string | null
           live_started_at: string | null
           metadata: Json | null
           platform_status: string
@@ -10179,6 +10180,7 @@ export type Database = {
           kinescope_project_id?: string | null
           kinescope_stream_id?: string | null
           kinescope_video_id?: string | null
+          launches_end_at?: string | null
           live_started_at?: string | null
           metadata?: Json | null
           platform_status?: string
@@ -10212,6 +10214,7 @@ export type Database = {
           kinescope_project_id?: string | null
           kinescope_stream_id?: string | null
           kinescope_video_id?: string | null
+          launches_end_at?: string | null
           live_started_at?: string | null
           metadata?: Json | null
           platform_status?: string
