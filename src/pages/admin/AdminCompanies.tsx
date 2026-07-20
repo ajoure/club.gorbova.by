@@ -977,7 +977,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
         .is("unlinked_at", null)
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as CompanyOrderLink[];
+      return ((data ?? []) as unknown) as CompanyOrderLink[];
     },
   });
 
