@@ -43,6 +43,7 @@ import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { ContactFeedTab } from "@/components/admin/contact/ContactFeedTab";
 import { CallButton } from "@/components/admin/calls/CallButton";
 import { CallsHistorySection } from "@/components/admin/calls/CallsHistorySection";
@@ -919,7 +920,7 @@ function EditCompanyDialog({ company, onOpenChange, onSaved }: {
   );
 }
 
-function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: string | null; canEdit: boolean; onClose: () => void }) {
+export function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: string | null; canEdit: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [selectedLinkedContactId, setSelectedLinkedContactId] = useState<string | null>(null);
   const detailQuery = useQuery({
@@ -1199,7 +1200,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
 
   return (
     <Sheet open={!!companyId} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+      <SheetContent side="right" className={`${SHEET_SHELL_CLASS} overflow-y-auto`}>
         {detailQuery.isLoading && <div className="space-y-4 pt-8"><Skeleton className="h-8 w-2/3" />{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>}
         {!detailQuery.isLoading && !company && <div className="pt-12 text-center text-muted-foreground">Компания не найдена или недоступна.</div>}
         {company && (
@@ -1226,31 +1227,33 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
               </div>
             </div>
             <Tabs defaultValue="profile" className="flex min-h-0 flex-1 flex-col">
-              <TabsList className="w-full justify-start overflow-x-auto rounded-lg bg-muted/60 p-1">
-                <TabsTrigger value="profile">Профиль</TabsTrigger>
-                <TabsTrigger value="feed"><Activity className="mr-1 h-3.5 w-3.5" />Лента</TabsTrigger>
-                <TabsTrigger value="telegram"><MessageCircle className="mr-1 h-3.5 w-3.5" />Telegram</TabsTrigger>
-                <TabsTrigger value="deals">Сделки</TabsTrigger>
-                <TabsTrigger value="tasks">Задачи</TabsTrigger>
-                <TabsTrigger value="calls">Звонки</TabsTrigger>
-                <TabsTrigger value="sms">SMS</TabsTrigger>
-                <TabsTrigger value="email"><Mail className="mr-1 h-3.5 w-3.5" />Письма</TabsTrigger>
-                <TabsTrigger value="access"><Shield className="mr-1 h-3.5 w-3.5" />Доступы</TabsTrigger>
-                <TabsTrigger value="payments"><CreditCard className="mr-1 h-3.5 w-3.5" />Платежи</TabsTrigger>
-                <TabsTrigger value="consent"><ShieldCheck className="mr-1 h-3.5 w-3.5" />Согласия</TabsTrigger>
-                <TabsTrigger value="installments"><Wallet className="mr-1 h-3.5 w-3.5" />Рассрочки</TabsTrigger>
-                <TabsTrigger value="loyalty"><Sparkles className="mr-1 h-3.5 w-3.5" />Лояльность</TabsTrigger>
-                <TabsTrigger value="artifacts"><BookOpen className="mr-1 h-3.5 w-3.5" />Анкеты</TabsTrigger>
-                <TabsTrigger value="duplicates"><Copy className="mr-1 h-3.5 w-3.5" />Дубли</TabsTrigger>
-                <TabsTrigger value="contacts">Контакты</TabsTrigger>
-                <TabsTrigger value="persons">Персоны</TabsTrigger>
-                <TabsTrigger value="structure">Структура</TabsTrigger>
-                <TabsTrigger value="activity">Активность</TabsTrigger>
-                <TabsTrigger value="documents">Документы</TabsTrigger>
-                <TabsTrigger value="history">История</TabsTrigger>
-                <TabsTrigger value="integrations">Интеграции</TabsTrigger>
-                <TabsTrigger value="system">Система</TabsTrigger>
-              </TabsList>
+              <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
+                <TabsList className="mx-0 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
+                  <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
+                  <TabsTrigger value="feed" className="text-xs sm:text-sm px-2.5 sm:px-3"><Activity className="mr-1 h-3.5 w-3.5" />Лента</TabsTrigger>
+                  <TabsTrigger value="telegram" className="text-xs sm:text-sm px-2.5 sm:px-3"><MessageCircle className="mr-1 h-3.5 w-3.5" />Telegram</TabsTrigger>
+                  <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">Сделки</TabsTrigger>
+                  <TabsTrigger value="tasks" className="text-xs sm:text-sm px-2.5 sm:px-3">Задачи</TabsTrigger>
+                  <TabsTrigger value="calls" className="text-xs sm:text-sm px-2.5 sm:px-3">Звонки</TabsTrigger>
+                  <TabsTrigger value="sms" className="text-xs sm:text-sm px-2.5 sm:px-3">SMS</TabsTrigger>
+                  <TabsTrigger value="email" className="text-xs sm:text-sm px-2.5 sm:px-3"><Mail className="mr-1 h-3.5 w-3.5" />Письма</TabsTrigger>
+                  <TabsTrigger value="access" className="text-xs sm:text-sm px-2.5 sm:px-3"><Shield className="mr-1 h-3.5 w-3.5" />Доступы</TabsTrigger>
+                  <TabsTrigger value="payments" className="text-xs sm:text-sm px-2.5 sm:px-3"><CreditCard className="mr-1 h-3.5 w-3.5" />Платежи</TabsTrigger>
+                  <TabsTrigger value="consent" className="text-xs sm:text-sm px-2.5 sm:px-3"><ShieldCheck className="mr-1 h-3.5 w-3.5" />Согласия</TabsTrigger>
+                  <TabsTrigger value="installments" className="text-xs sm:text-sm px-2.5 sm:px-3"><Wallet className="mr-1 h-3.5 w-3.5" />Рассрочки</TabsTrigger>
+                  <TabsTrigger value="loyalty" className="text-xs sm:text-sm px-2.5 sm:px-3"><Sparkles className="mr-1 h-3.5 w-3.5" />Лояльность</TabsTrigger>
+                  <TabsTrigger value="artifacts" className="text-xs sm:text-sm px-2.5 sm:px-3"><BookOpen className="mr-1 h-3.5 w-3.5" />Анкеты</TabsTrigger>
+                  <TabsTrigger value="duplicates" className="text-xs sm:text-sm px-2.5 sm:px-3"><Copy className="mr-1 h-3.5 w-3.5" />Дубли</TabsTrigger>
+                  <TabsTrigger value="contacts" className="text-xs sm:text-sm px-2.5 sm:px-3">Контакты</TabsTrigger>
+                  <TabsTrigger value="persons" className="text-xs sm:text-sm px-2.5 sm:px-3">Персоны</TabsTrigger>
+                  <TabsTrigger value="structure" className="text-xs sm:text-sm px-2.5 sm:px-3">Структура</TabsTrigger>
+                  <TabsTrigger value="activity" className="text-xs sm:text-sm px-2.5 sm:px-3">Активность</TabsTrigger>
+                  <TabsTrigger value="documents" className="text-xs sm:text-sm px-2.5 sm:px-3">Документы</TabsTrigger>
+                  <TabsTrigger value="history" className="text-xs sm:text-sm px-2.5 sm:px-3">История</TabsTrigger>
+                  <TabsTrigger value="integrations" className="text-xs sm:text-sm px-2.5 sm:px-3">Интеграции</TabsTrigger>
+                  <TabsTrigger value="system" className="text-xs sm:text-sm px-2.5 sm:px-3">Система</TabsTrigger>
+                </TabsList>
+              </div>
               <div className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
                 <TabsContent value="profile" className="mt-0 space-y-4">
                   <section className="space-y-3"><h3 className="text-sm font-semibold">Реквизиты</h3><div className="divide-y rounded-lg border">{detailRows.map(([label, value]) => <div key={label as string} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 px-3 py-2.5 text-sm"><span className="text-muted-foreground">{label}</span><span className="break-words">{value || "—"}</span></div>)}</div></section>
