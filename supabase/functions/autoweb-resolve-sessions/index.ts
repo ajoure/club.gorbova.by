@@ -70,7 +70,7 @@ Deno.serve(async (req) => {
     // 1) Resolve event
     const eventQuery = supabase
       .from('live_events')
-      .select('id, slug, title, event_type, autoweb_mode, autoweb_config, scheduled_at, is_published, event_timezone')
+      .select('id, slug, title, event_type, autoweb_mode, autoweb_config, scheduled_at, is_published, event_timezone, launches_end_at, replay_enabled')
       .limit(1);
 
     const { data: events, error: eventErr } = liveEventId
@@ -84,6 +84,20 @@ Deno.serve(async (req) => {
     const event = events?.[0];
     if (!event) return jsonRes({ status: 'not_found' }, 404);
     if (!event.is_published) return jsonRes({ status: 'unpublished' }, 403);
+
+    // Phase D gate: launches_end_at (мягкий дедлайн). После него — селектор ничего не отдаёт
+    // (уже активные сессии завершатся своим порядком, gate только на НОВЫЕ входы).
+    // NULL = дедлайна нет.
+    if (event.launches_end_at) {
+      const deadline = new Date(event.launches_end_at as string).getTime();
+      if (Date.now() >= deadline) {
+        return jsonRes({
+          status: 'launches_closed',
+          reason: 'launches_end_at_passed',
+          launches_end_at: event.launches_end_at,
+        }, 410);
+      }
+    }
 
     const cfg = (event.autoweb_config ?? {}) as Record<string, any>;
     const tz = cfg?.schedule?.timezone ?? event.event_timezone ?? 'Europe/Minsk';
