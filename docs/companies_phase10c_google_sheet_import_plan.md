@@ -1,7 +1,7 @@
 # Companies Phase 10C — импорт базы обзвона
 
-Статус: добавлено в Companies-only спринт; перед записью требуется dry-run и
-reconciliation-отчёт.
+Статус: dry-run завершён; controlled apply-контур добавлен в Phase 10E. Перед
+первой записью по-прежнему требуется отдельное подтверждение batch.
 
 ## Источник
 
@@ -63,6 +63,22 @@ reconciliation-отчёт.
 6. Отдельная пачка задач callback после проверки точного assignee ID.
 7. Reconciliation: число строк, компаний, заметок, external IDs, задач,
    конфликтов и пропусков.
+
+## Phase 10E — controlled apply
+
+- `crm_company_sheet_import_batch_start` принимает только нормализованный JSON-массив,
+  сохраняет preview-batch и гарантирует, что этот вызов ничего не пишет в CRM.
+- `crm_company_sheet_import_batch_apply` требует `_confirm=true`, выполняет не
+  более 100 строк за вызов и продолжает с cursor после любого следующего вызова.
+- `company_import_ledger` уникален по `source + source_key`: повторная строка
+  получает `skipped`, а не вторую компанию/заметку/задачу.
+- Руководитель записывается в canonical-реквизиты и `company_notes`; LPR
+  структурированный массив — только в `company_contact_persons`, строковое поле
+  без структуры — заметкой.
+- Если в batch есть callback-даты, пользователь «Полина Асманта» должен
+  разрешиться ровно в один профиль; иначе apply останавливается до любых записей.
+- Нормализованный `callback_at` должен быть ISO-датой или ISO timestamp; дата без
+  времени трактуется как 09:00 в `Europe/Minsk`.
 
 ## Rollback
 
