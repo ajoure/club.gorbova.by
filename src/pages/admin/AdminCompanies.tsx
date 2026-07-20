@@ -124,6 +124,39 @@ interface CompanyContact {
   external_phone: string | null;
 }
 
+interface CompanyOrderLink {
+  id: string;
+  order_id: string;
+  relationship_role: string;
+  source: string;
+  created_at: string;
+}
+
+interface CompanyOrder {
+  id: string;
+  order_number: string;
+  status: string;
+  final_price: number;
+  currency: string;
+  created_at: string;
+}
+
+interface CompanyTask {
+  id: string;
+  public_id: string | null;
+  title: string;
+  status: string;
+  due_at: string | null;
+}
+
+interface CompanyActivity {
+  id: string;
+  activity_type: string;
+  title_snapshot: string | null;
+  text_snapshot: string | null;
+  created_at: string;
+}
+
 interface ProfileSummary {
   id: string;
   full_name: string | null;
@@ -671,6 +704,67 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
     [profilesQuery.data],
   );
 
+  const orderLinksQuery = useQuery({
+    queryKey: ["admin-company-order-links", companyId],
+    enabled: !!companyId,
+    queryFn: async (): Promise<CompanyOrderLink[]> => {
+      const { data, error } = await supabase
+        .from("company_order_links" as any)
+        .select("id, order_id, relationship_role, source, created_at")
+        .eq("company_id", companyId!)
+        .is("unlinked_at", null)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as CompanyOrderLink[];
+    },
+  });
+
+  const orderIds = useMemo(() => (orderLinksQuery.data ?? []).map((link) => link.order_id), [orderLinksQuery.data]);
+  const ordersQuery = useQuery({
+    queryKey: ["admin-company-orders", orderIds],
+    enabled: orderIds.length > 0,
+    queryFn: async (): Promise<CompanyOrder[]> => {
+      const { data, error } = await supabase
+        .from("orders_v2")
+        .select("id, order_number, status, final_price, currency, created_at")
+        .in("id", orderIds);
+      if (error) throw error;
+      return (data ?? []) as CompanyOrder[];
+    },
+  });
+  const ordersById = useMemo(() => new Map((ordersQuery.data ?? []).map((order) => [order.id, order])), [ordersQuery.data]);
+
+  const tasksQuery = useQuery({
+    queryKey: ["admin-company-tasks", companyId],
+    enabled: !!companyId,
+    queryFn: async (): Promise<CompanyTask[]> => {
+      const { data, error } = await supabase
+        .from("crm_tasks")
+        .select("id, public_id, title, status, due_at")
+        .eq("company_id", companyId!)
+        .order("due_at", { ascending: true, nullsFirst: false })
+        .limit(50);
+      if (error) throw error;
+      return (data ?? []) as CompanyTask[];
+    },
+  });
+
+  const activityQuery = useQuery({
+    queryKey: ["admin-company-activity", companyId],
+    enabled: !!companyId,
+    queryFn: async (): Promise<CompanyActivity[]> => {
+      const { data, error } = await supabase
+        .from("crm_activity_log")
+        .select("id, activity_type, title_snapshot, text_snapshot, created_at")
+        .eq("source_entity_type", "company")
+        .eq("source_entity_id", companyId!)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      return (data ?? []) as CompanyActivity[];
+    },
+  });
+
   const company = detailQuery.data;
   const detailRows = company ? [
     ["УНП", company.unp_normalized],
@@ -708,6 +802,11 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
                 <TabsTrigger value="deals">Сделки</TabsTrigger>
                 <TabsTrigger value="tasks">Задачи</TabsTrigger>
                 <TabsTrigger value="activity">Активность</TabsTrigger>
+                <TabsTrigger value="documents">Документы</TabsTrigger>
+                <TabsTrigger value="communications">Коммуникации</TabsTrigger>
+                <TabsTrigger value="history">История</TabsTrigger>
+                <TabsTrigger value="integrations">Интеграции</TabsTrigger>
+                <TabsTrigger value="system">Система</TabsTrigger>
               </TabsList>
               <div className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
                 <TabsContent value="overview" className="mt-0 space-y-4">
@@ -719,9 +818,26 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
                   {!contactsQuery.isLoading && (contactsQuery.data?.length ?? 0) === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанных контактов пока нет.</p>}
                   {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = profile?.full_name || contact.external_full_name || "Контакт без имени"; const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="font-medium">{name}</div><div className="mt-0.5 text-xs text-muted-foreground">{contact.relationship_type}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Billing</Badge>}</div></div></div>; })}
                 </TabsContent>
-                <TabsContent value="deals" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Сделки компании появятся здесь после связывания с заказами.</div></TabsContent>
-                <TabsContent value="tasks" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Задачи компании появятся здесь.</div></TabsContent>
-                <TabsContent value="activity" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История изменений компании будет отображаться здесь.</div></TabsContent>
+                <TabsContent value="deals" className="mt-0 space-y-2">
+                  {orderLinksQuery.isLoading && <Skeleton className="h-16 w-full" />}
+                  {!orderLinksQuery.isLoading && orderLinksQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Сделок и заказов компании пока нет.</div>}
+                  {(orderLinksQuery.data ?? []).map((link) => { const order = ordersById.get(link.order_id); return <div key={link.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{order?.order_number ?? link.order_id}</span><Badge variant="outline">{link.relationship_role}</Badge></div><div className="mt-1 text-xs text-muted-foreground">{order ? `${order.status} · ${order.final_price} ${order.currency}` : "Заказ недоступен"}</div></div>; })}
+                </TabsContent>
+                <TabsContent value="tasks" className="mt-0 space-y-2">
+                  {tasksQuery.isLoading && <Skeleton className="h-16 w-full" />}
+                  {!tasksQuery.isLoading && tasksQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Задач компании пока нет.</div>}
+                  {(tasksQuery.data ?? []).map((task) => <div key={task.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{task.title}</span><Badge variant="outline">{task.status}</Badge></div><div className="mt-1 text-xs text-muted-foreground">{task.public_id ?? task.id}{task.due_at ? ` · срок ${format(new Date(task.due_at), "dd.MM.yyyy HH:mm", { locale: ru })}` : ""}</div></div>)}
+                </TabsContent>
+                <TabsContent value="activity" className="mt-0 space-y-2">
+                  {activityQuery.isLoading && <Skeleton className="h-16 w-full" />}
+                  {!activityQuery.isLoading && activityQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История изменений компании пока пуста.</div>}
+                  {(activityQuery.data ?? []).map((activity) => <div key={activity.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{activity.title_snapshot || activity.activity_type}</span><span className="text-xs text-muted-foreground">{format(new Date(activity.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}</span></div>{activity.text_snapshot && <p className="mt-1 text-sm text-muted-foreground">{activity.text_snapshot}</p>}</div>)}
+                </TabsContent>
+                <TabsContent value="documents" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Документы компании подключаются через общий документооборот.</div></TabsContent>
+                <TabsContent value="communications" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Коммуникации компании отображаются в контакт-центре после привязки контакта.</div></TabsContent>
+                <TabsContent value="history" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История доступна во вкладке «Активность».</div></TabsContent>
+                <TabsContent value="integrations" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Внешние идентификаторы компании пока не настроены.</div></TabsContent>
+                <TabsContent value="system" className="mt-0 space-y-2"><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">UUID:</span> {company.id}</div><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">Создано:</span> {formatDate(company.created_at)}</div><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">Изменено:</span> {formatDate(company.updated_at)}</div></TabsContent>
               </div>
             </Tabs>
           </div>
