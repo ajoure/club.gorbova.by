@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import type { DateRange } from "react-day-picker";
@@ -15,6 +16,13 @@ import {
   ChevronRight,
   Loader2,
   Mail,
+  MessageCircle,
+  CreditCard,
+  Wallet,
+  Shield,
+  Sparkles,
+  BookOpen,
+  Copy,
   MapPin,
   Phone,
   Plus,
@@ -40,6 +48,8 @@ import { CallsHistorySection } from "@/components/admin/calls/CallsHistorySectio
 import { SmsButton } from "@/components/admin/sms/SmsButton";
 import { SmsHistorySection } from "@/components/admin/sms/SmsHistorySection";
 import { ComposeEmailDialog } from "@/components/admin/ComposeEmailDialog";
+import { ContactEmailHistory } from "@/components/admin/ContactEmailHistory";
+import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { Badge } from "@/components/ui/badge";
@@ -181,14 +191,6 @@ interface CompanyDocument {
   source: "legacy" | "ai";
 }
 
-interface CompanyTask {
-  id: string;
-  public_id: string | null;
-  title: string;
-  status: string;
-  due_at: string | null;
-}
-
 interface CompanyActivity {
   id: string;
   activity_type: string;
@@ -242,9 +244,12 @@ interface CompanyRelationship {
 
 interface ProfileSummary {
   id: string;
+  user_id: string | null;
   full_name: string | null;
   email: string | null;
   phone: string | null;
+  loyalty_score?: number | null;
+  loyalty_status_reason?: string | null;
 }
 
 const PAGE_SIZE = 25;
@@ -917,13 +922,17 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
     queryKey: ["admin-company-contact-profiles", profileIds],
     enabled: profileIds.length > 0,
     queryFn: async (): Promise<ProfileSummary[]> => {
-      const { data, error } = await supabase.from("profiles").select("id, full_name, email, phone").in("id", profileIds);
+      const { data, error } = await supabase.from("profiles").select("id, user_id, full_name, email, phone, loyalty_score, loyalty_status_reason").in("id", profileIds);
       if (error) throw error;
       return data as ProfileSummary[];
     },
   });
   const profilesById = useMemo(
     () => new Map((profilesQuery.data ?? []).map((profile) => [profile.id, profile])),
+    [profilesQuery.data],
+  );
+  const linkedUserIds = useMemo(
+    () => Array.from(new Set((profilesQuery.data ?? []).flatMap((profile) => [profile.id, profile.user_id].filter(Boolean) as string[]))),
     [profilesQuery.data],
   );
 
@@ -995,21 +1004,6 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
         file_url: null,
         source: "ai" as const,
       }));
-    },
-  });
-
-  const tasksQuery = useQuery({
-    queryKey: ["admin-company-tasks", companyId],
-    enabled: !!companyId,
-    queryFn: async (): Promise<CompanyTask[]> => {
-      const { data, error } = await supabase
-        .from("crm_tasks")
-        .select("id, public_id, title, status, due_at")
-        .eq("company_id", companyId!)
-        .order("due_at", { ascending: true, nullsFirst: false })
-        .limit(50);
-      if (error) throw error;
-      return (data ?? []) as CompanyTask[];
     },
   });
 
@@ -1174,25 +1168,34 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                 </Button>
               </div>
             </div>
-            <Tabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
+            <Tabs defaultValue="profile" className="flex min-h-0 flex-1 flex-col">
               <TabsList className="w-full justify-start overflow-x-auto rounded-lg bg-muted/60 p-1">
-                <TabsTrigger value="overview">Обзор</TabsTrigger>
-                <TabsTrigger value="contacts">Контакты</TabsTrigger>
-                <TabsTrigger value="persons">Персоны</TabsTrigger>
-                <TabsTrigger value="structure">Структура</TabsTrigger>
+                <TabsTrigger value="profile">Профиль</TabsTrigger>
+                <TabsTrigger value="feed"><Activity className="mr-1 h-3.5 w-3.5" />Лента</TabsTrigger>
+                <TabsTrigger value="telegram"><MessageCircle className="mr-1 h-3.5 w-3.5" />Telegram</TabsTrigger>
                 <TabsTrigger value="deals">Сделки</TabsTrigger>
                 <TabsTrigger value="tasks">Задачи</TabsTrigger>
                 <TabsTrigger value="calls">Звонки</TabsTrigger>
                 <TabsTrigger value="sms">SMS</TabsTrigger>
+                <TabsTrigger value="email"><Mail className="mr-1 h-3.5 w-3.5" />Письма</TabsTrigger>
+                <TabsTrigger value="access"><Shield className="mr-1 h-3.5 w-3.5" />Доступы</TabsTrigger>
+                <TabsTrigger value="payments"><CreditCard className="mr-1 h-3.5 w-3.5" />Платежи</TabsTrigger>
+                <TabsTrigger value="consent"><ShieldCheck className="mr-1 h-3.5 w-3.5" />Согласия</TabsTrigger>
+                <TabsTrigger value="installments"><Wallet className="mr-1 h-3.5 w-3.5" />Рассрочки</TabsTrigger>
+                <TabsTrigger value="loyalty"><Sparkles className="mr-1 h-3.5 w-3.5" />Лояльность</TabsTrigger>
+                <TabsTrigger value="artifacts"><BookOpen className="mr-1 h-3.5 w-3.5" />Анкеты</TabsTrigger>
+                <TabsTrigger value="duplicates"><Copy className="mr-1 h-3.5 w-3.5" />Дубли</TabsTrigger>
+                <TabsTrigger value="contacts">Контакты</TabsTrigger>
+                <TabsTrigger value="persons">Персоны</TabsTrigger>
+                <TabsTrigger value="structure">Структура</TabsTrigger>
                 <TabsTrigger value="activity">Активность</TabsTrigger>
                 <TabsTrigger value="documents">Документы</TabsTrigger>
-                <TabsTrigger value="communications">Лента</TabsTrigger>
                 <TabsTrigger value="history">История</TabsTrigger>
                 <TabsTrigger value="integrations">Интеграции</TabsTrigger>
                 <TabsTrigger value="system">Система</TabsTrigger>
               </TabsList>
               <div className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
-                <TabsContent value="overview" className="mt-0 space-y-4">
+                <TabsContent value="profile" className="mt-0 space-y-4">
                   <section className="space-y-3"><h3 className="text-sm font-semibold">Реквизиты</h3><div className="divide-y rounded-lg border">{detailRows.map(([label, value]) => <div key={label as string} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 px-3 py-2.5 text-sm"><span className="text-muted-foreground">{label}</span><span className="break-words">{value || "—"}</span></div>)}</div></section>
                   <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">{company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" />{company.email}</div>}{company.phone && <div className="flex items-center gap-2"><Phone className="h-4 w-4" />{company.phone}</div>}{company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}{!company.email && !company.phone && !company.legal_address && "Контактные данные не заполнены."}</section>
                 </TabsContent>
@@ -1221,16 +1224,45 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                   {!orderLinksQuery.isLoading && orderLinksQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Сделок и заказов компании пока нет.</div>}
                   {(orderLinksQuery.data ?? []).map((link) => { const order = ordersById.get(link.order_id); return <div key={link.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{order?.order_number ?? link.order_id}</span><Badge variant="outline">{link.relationship_role}</Badge></div><div className="mt-1 text-xs text-muted-foreground">{order ? `${order.status} · ${order.final_price} ${order.currency}` : "Заказ недоступен"}</div></div>; })}
                 </TabsContent>
-                <TabsContent value="tasks" className="mt-0 space-y-2">
-                  {tasksQuery.isLoading && <Skeleton className="h-16 w-full" />}
-                  {!tasksQuery.isLoading && tasksQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Задач компании пока нет.</div>}
-                  {(tasksQuery.data ?? []).map((task) => <div key={task.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{task.title}</span><Badge variant="outline">{task.status}</Badge></div><div className="mt-1 text-xs text-muted-foreground">{task.public_id ?? task.id}{task.due_at ? ` · срок ${format(new Date(task.due_at), "dd.MM.yyyy HH:mm", { locale: ru })}` : ""}</div></div>)}
+                <TabsContent value="tasks" className="mt-0">
+                  <CrmTasksSection companyId={company.id} bare />
                 </TabsContent>
                 <TabsContent value="calls" className="mt-0">
                   <CallsHistorySection companyId={company.id} bare />
                 </TabsContent>
                 <TabsContent value="sms" className="mt-0">
                   <SmsHistorySection companyId={company.id} bare />
+                </TabsContent>
+                <TabsContent value="email" className="mt-0 space-y-4">
+                  <ContactEmailHistory companyId={company.id} userId={null} email={company.email} clientName={company.full_name} />
+                </TabsContent>
+                <TabsContent value="feed" className="m-0 flex min-h-0 flex-1 flex-col">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium"><Activity className="h-4 w-4 text-primary" />Лента компании</div>
+                  <ContactFeedTab companyId={company.id} embedded readOnly={!canEdit} />
+                </TabsContent>
+                <TabsContent value="telegram" className="mt-0 space-y-3">
+                  <CompanyTelegramSummary profiles={profilesQuery.data ?? []} contacts={contactsQuery.data ?? []} />
+                </TabsContent>
+                <TabsContent value="access" className="mt-0">
+                  <CompanyAccessSummary userIds={linkedUserIds} />
+                </TabsContent>
+                <TabsContent value="payments" className="mt-0">
+                  <CompanyPaymentsSummary profileIds={profileIds} userIds={linkedUserIds} orderIds={orderIds} />
+                </TabsContent>
+                <TabsContent value="consent" className="mt-0">
+                  <CompanyConsentSummary profileIds={profileIds} userIds={linkedUserIds} />
+                </TabsContent>
+                <TabsContent value="installments" className="mt-0">
+                  <CompanyInstallmentsSummary userIds={linkedUserIds} orderIds={orderIds} />
+                </TabsContent>
+                <TabsContent value="loyalty" className="mt-0">
+                  <CompanyLoyaltySummary profiles={profilesQuery.data ?? []} />
+                </TabsContent>
+                <TabsContent value="artifacts" className="mt-0 space-y-3">
+                  <CompanyArtifactsSummary documents={[...(documentsQuery.data ?? []), ...(aiDocumentsQuery.data ?? [])]} ordersById={ordersById} />
+                </TabsContent>
+                <TabsContent value="duplicates" className="mt-0">
+                  <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground"><Copy className="mx-auto mb-2 h-8 w-8 opacity-40" />Автоматическое объединение компаний отключено. Кандидаты и объединение доступны из таблицы компаний через выбор нескольких строк.</div>
                 </TabsContent>
                 <TabsContent value="activity" className="mt-0 space-y-2">
                   {activityQuery.isLoading && <Skeleton className="h-16 w-full" />}
@@ -1242,13 +1274,6 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                   {(documentsQuery.isError || aiDocumentsQuery.isError) && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Часть документов временно недоступна. Заказы компании остаются доступны во вкладке «Сделки».</div>}
                   {!documentsQuery.isLoading && !aiDocumentsQuery.isLoading && !documentsQuery.isError && !aiDocumentsQuery.isError && ((documentsQuery.data?.length ?? 0) + (aiDocumentsQuery.data?.length ?? 0) === 0) && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Документов по заказам компании пока нет.</div>}
                   {[...(documentsQuery.data ?? []), ...(aiDocumentsQuery.data ?? [])].map((document) => <div key={`${document.source}-${document.id}`} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{document.document_number}</span><div className="flex gap-1"><Badge variant="outline">{document.status}</Badge>{document.source === "ai" && <Badge variant="secondary">AI</Badge>}</div></div><div className="mt-1 text-xs text-muted-foreground">{document.document_type} · {formatDate(document.document_date)} · заказ {ordersById.get(document.order_id)?.order_number ?? document.order_id}</div>{document.file_url && <a className="mt-2 inline-block text-xs text-primary underline-offset-4 hover:underline" href={document.file_url} target="_blank" rel="noreferrer">Открыть файл</a>}</div>)}
-                </TabsContent>
-                <TabsContent value="communications" className="m-0 flex min-h-0 flex-1 flex-col">
-                  <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-                    <Activity className="h-4 w-4 text-primary" />
-                    Лента компании
-                  </div>
-                  <ContactFeedTab companyId={company.id} embedded readOnly={!canEdit} />
                 </TabsContent>
                 <TabsContent value="history" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История доступна во вкладке «Активность».</div></TabsContent>
                 <TabsContent value="integrations" className="mt-0 space-y-3">
@@ -1274,4 +1299,119 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
       </SheetContent>
     </Sheet>
   );
+}
+
+function CompanySummaryEmpty({ children }: { children: ReactNode }) {
+  return <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">{children}</div>;
+}
+
+function CompanyTelegramSummary({ profiles, contacts }: { profiles: ProfileSummary[]; contacts: CompanyContact[] }) {
+  if (contacts.length === 0) return <CompanySummaryEmpty><MessageCircle className="mx-auto mb-2 h-8 w-8 opacity-40" />У компании пока нет связанных контактов для Telegram.</CompanySummaryEmpty>;
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">Telegram принадлежит профилям людей. Компания не получает фиктивный Telegram-аккаунт: ниже показаны связанные контакты, с которыми можно работать из их канонических карточек.</div>
+      {contacts.map((contact) => {
+        const profile = profiles.find((item) => item.id === contact.profile_id);
+        return <div key={contact.id} className="flex items-center gap-3 rounded-lg border p-3"><MessageCircle className="h-4 w-4 text-sky-600" /><div className="min-w-0 flex-1"><div className="font-medium">{profile?.full_name || contact.external_full_name || "Контакт без имени"}</div><div className="text-xs text-muted-foreground">{profile?.email || contact.external_email || profile?.phone || contact.external_phone || "Telegram-идентификатор не указан"}</div></div><Badge variant="outline">Связанный контакт</Badge></div>;
+      })}
+    </div>
+  );
+}
+
+function CompanyAccessSummary({ userIds }: { userIds: string[] }) {
+  const subscriptionsQuery = useQuery({
+    queryKey: ["admin-company-access-subscriptions", userIds],
+    enabled: userIds.length > 0,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("subscriptions_v2").select("id,user_id,status,access_start_at,access_end_at,created_at").in("user_id", userIds).order("created_at", { ascending: false }).limit(100);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+  const entitlementsQuery = useQuery({
+    queryKey: ["admin-company-access-entitlements", userIds],
+    enabled: userIds.length > 0,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("entitlements").select("id,user_id,status,product_code,expires_at,created_at").in("user_id", userIds).order("created_at", { ascending: false }).limit(100);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+  if (userIds.length === 0) return <CompanySummaryEmpty><Shield className="mx-auto mb-2 h-8 w-8 opacity-40" />У связанных контактов нет подтверждённого профиля с доступами.</CompanySummaryEmpty>;
+  if (subscriptionsQuery.isLoading || entitlementsQuery.isLoading) return <Skeleton className="h-24 w-full" />;
+  if (subscriptionsQuery.isError || entitlementsQuery.isError) return <CompanySummaryEmpty>Данные доступов связанных контактов временно недоступны.</CompanySummaryEmpty>;
+  const rows = [...(subscriptionsQuery.data ?? []).map((row: any) => ({ ...row, source: "Подписка", label: row.status })), ...(entitlementsQuery.data ?? []).map((row: any) => ({ ...row, source: "Доступ по продукту", label: row.product_code || row.status }))];
+  if (rows.length === 0) return <CompanySummaryEmpty><Shield className="mx-auto mb-2 h-8 w-8 opacity-40" />Активных доступов у связанных контактов нет.</CompanySummaryEmpty>;
+  return <div className="space-y-2"><div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">Доступы хранятся у связанных профилей людей и отображаются здесь агрегировано. Управление доступом выполняется из карточки конкретного контакта, чтобы не менять владельца доступа.</div>{rows.map((row: any) => <div key={`${row.source}-${row.id}`} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{row.label}</div><div className="text-xs text-muted-foreground">{row.source} · профиль {row.user_id}</div></div><Badge variant={row.status === "active" ? "default" : "outline"}>{row.status || "—"}</Badge></div>)}</div>;
+}
+
+function CompanyPaymentsSummary({ profileIds, userIds, orderIds }: { profileIds: string[]; userIds: string[]; orderIds: string[] }) {
+  const query = useQuery({
+    queryKey: ["admin-company-payments", profileIds, userIds, orderIds],
+    enabled: profileIds.length > 0 || userIds.length > 0 || orderIds.length > 0,
+    queryFn: async () => {
+      const filters = [
+        profileIds.length ? `profile_id.in.(${profileIds.join(",")})` : null,
+        userIds.length ? `user_id.in.(${userIds.join(",")})` : null,
+        orderIds.length ? `order_id.in.(${orderIds.join(",")})` : null,
+      ].filter(Boolean).join(",");
+      if (!filters) return [];
+      const { data, error } = await (supabase as any).from("payments_v2").select("id,profile_id,user_id,order_id,status,amount,currency,paid_at,created_at,provider").or(filters).order("created_at", { ascending: false }).limit(100);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+  if (query.isLoading) return <Skeleton className="h-24 w-full" />;
+  if (query.isError) return <CompanySummaryEmpty>История платежей компании временно недоступна.</CompanySummaryEmpty>;
+  if (!query.data?.length) return <CompanySummaryEmpty><CreditCard className="mx-auto mb-2 h-8 w-8 opacity-40" />Платежей по компании пока нет.</CompanySummaryEmpty>;
+  return <div className="space-y-2">{query.data.map((payment: any) => <div key={payment.id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{payment.amount ?? "—"} {payment.currency ?? ""}</div><div className="text-xs text-muted-foreground">{payment.provider || "Платёж"} · {payment.paid_at ? format(new Date(payment.paid_at), "dd.MM.yyyy HH:mm", { locale: ru }) : format(new Date(payment.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}</div></div><Badge variant={payment.status === "succeeded" ? "default" : payment.status === "failed" ? "destructive" : "outline"}>{payment.status || "—"}</Badge></div>)}</div>;
+}
+
+function CompanyConsentSummary({ profileIds, userIds }: { profileIds: string[]; userIds: string[] }) {
+  const query = useQuery({
+    queryKey: ["admin-company-consents", profileIds, userIds],
+    enabled: profileIds.length > 0 || userIds.length > 0,
+    queryFn: async () => {
+      const [profilesResult, logsResult] = await Promise.all([
+        profileIds.length ? supabase.from("profiles").select("id,full_name,email,consent_version,consent_given_at,marketing_consent").in("id", profileIds) : Promise.resolve({ data: [], error: null } as any),
+        userIds.length ? supabase.from("consent_logs").select("id,user_id,consent_type,policy_version,granted,source,created_at").in("user_id", userIds).order("created_at", { ascending: false }).limit(100) : Promise.resolve({ data: [], error: null } as any),
+      ]);
+      if (profilesResult.error || logsResult.error) throw profilesResult.error || logsResult.error;
+      return { profiles: profilesResult.data ?? [], logs: logsResult.data ?? [] };
+    },
+  });
+  if (query.isLoading) return <Skeleton className="h-24 w-full" />;
+  if (query.isError) return <CompanySummaryEmpty>История согласий временно недоступна.</CompanySummaryEmpty>;
+  const rows = [...(query.data?.profiles ?? []).map((row: any) => ({ ...row, kind: "Профиль", label: row.consent_version ? `Политика ${row.consent_version}` : "Согласие не дано", granted: Boolean(row.consent_version) })), ...(query.data?.logs ?? []).map((row: any) => ({ ...row, kind: row.consent_type, label: row.policy_version, granted: row.granted }))];
+  if (!rows.length) return <CompanySummaryEmpty><ShieldCheck className="mx-auto mb-2 h-8 w-8 opacity-40" />Согласий у связанных контактов пока нет.</CompanySummaryEmpty>;
+  return <div className="space-y-2">{rows.map((row: any, index) => <div key={`${row.id}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{row.kind}</div><div className="text-xs text-muted-foreground">{row.label}{row.created_at ? ` · ${format(new Date(row.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}` : ""}</div></div><Badge variant={row.granted ? "default" : "secondary"}>{row.granted ? "Дано" : "Нет"}</Badge></div>)}</div>;
+}
+
+function CompanyInstallmentsSummary({ userIds, orderIds }: { userIds: string[]; orderIds: string[] }) {
+  const query = useQuery({
+    queryKey: ["admin-company-installments", userIds, orderIds],
+    enabled: userIds.length > 0 || orderIds.length > 0,
+    queryFn: async () => {
+      const filters = [userIds.length ? `user_id.in.(${userIds.join(",")})` : null, orderIds.length ? `order_id.in.(${orderIds.join(",")})` : null].filter(Boolean).join(",");
+      if (!filters) return [];
+      const { data, error } = await (supabase as any).from("installment_payments").select("id,order_id,user_id,payment_number,total_payments,amount,currency,due_date,paid_at,status").or(filters).order("due_date", { ascending: true }).limit(100);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+  if (query.isLoading) return <Skeleton className="h-24 w-full" />;
+  if (query.isError) return <CompanySummaryEmpty>График рассрочек временно недоступен.</CompanySummaryEmpty>;
+  if (!query.data?.length) return <CompanySummaryEmpty><Wallet className="mx-auto mb-2 h-8 w-8 opacity-40" />Рассрочек по компании пока нет.</CompanySummaryEmpty>;
+  return <div className="space-y-2">{query.data.map((row: any) => <div key={row.id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">Платёж {row.payment_number} из {row.total_payments} · {row.amount} {row.currency}</div><div className="text-xs text-muted-foreground">Срок {format(new Date(row.due_date), "dd.MM.yyyy", { locale: ru })}{row.paid_at ? ` · оплачен ${format(new Date(row.paid_at), "dd.MM.yyyy", { locale: ru })}` : ""}</div></div><Badge variant={row.status === "succeeded" ? "default" : row.status === "failed" ? "destructive" : "outline"}>{row.status}</Badge></div>)}</div>;
+}
+
+function CompanyLoyaltySummary({ profiles }: { profiles: ProfileSummary[] }) {
+  const withScore = profiles.filter((profile) => profile.loyalty_score != null);
+  if (!withScore.length) return <CompanySummaryEmpty><Sparkles className="mx-auto mb-2 h-8 w-8 opacity-40" />Оценка лояльности ведётся по контактам, но пока не рассчитана.</CompanySummaryEmpty>;
+  return <div className="space-y-2">{withScore.map((profile) => <div key={profile.id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div><div className="font-medium">{profile.full_name || profile.email || "Контакт"}</div><div className="text-xs text-muted-foreground">{profile.loyalty_status_reason || "Расчёт по истории контакта"}</div></div><Badge variant="secondary">{profile.loyalty_score}</Badge></div>)}</div>;
+}
+
+function CompanyArtifactsSummary({ documents, ordersById }: { documents: CompanyDocument[]; ordersById: Map<string, CompanyOrder> }) {
+  if (!documents.length) return <CompanySummaryEmpty><BookOpen className="mx-auto mb-2 h-8 w-8 opacity-40" />Анкет и документов компании пока нет.</CompanySummaryEmpty>;
+  return <div className="space-y-2">{documents.map((document) => <div key={`${document.source}-${document.id}`} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{document.document_number}</span><Badge variant="outline">{document.status}</Badge></div><div className="mt-1 text-xs text-muted-foreground">{document.document_type} · {formatDate(document.document_date)} · заказ {ordersById.get(document.order_id)?.order_number ?? document.order_id}</div>{document.file_url && <a className="mt-2 inline-block text-xs text-primary underline-offset-4 hover:underline" href={document.file_url} target="_blank" rel="noreferrer">Открыть файл</a>}</div>)}</div>;
 }
