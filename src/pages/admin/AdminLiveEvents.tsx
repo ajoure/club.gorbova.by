@@ -114,6 +114,7 @@ interface LiveEvent {
   status: string;
   is_published: boolean;
   scheduled_at: string | null;
+  launches_end_at?: string | null;
   replay_enabled: boolean;
   invite_mode: string;
   direct_access_allowed: boolean;
@@ -151,6 +152,8 @@ interface LiveEventForm {
   status: string;
   is_published: boolean;
   scheduled_at: string;
+  /** After this deadline resolver blocks only new personal autoweb sessions. */
+  launches_end_at: string;
   replay_enabled: boolean;
   invite_mode: "none" | "optional_one_time" | "required_one_time";
   direct_access_allowed: boolean;
@@ -192,6 +195,7 @@ const defaultForm: LiveEventForm = {
   status: "draft",
   is_published: false,
   scheduled_at: "",
+  launches_end_at: "",
   replay_enabled: false,
   invite_mode: "none",
   direct_access_allowed: true,
@@ -805,6 +809,7 @@ export default function AdminLiveEvents() {
         access_rule: { mode: "rules", product_id: null, tariff_id: null },
         is_published: data.is_published,
         scheduled_at: data.scheduled_at || null,
+        launches_end_at: data.launches_end_at || null,
         replay_enabled: data.replay_enabled,
         invite_mode: data.invite_mode,
         direct_access_allowed: data.direct_access_allowed,
@@ -960,6 +965,7 @@ export default function AdminLiveEvents() {
       status: event.status,
       is_published: event.is_published,
       scheduled_at: event.scheduled_at || "",
+      launches_end_at: event.launches_end_at || "",
       replay_enabled: event.replay_enabled,
       invite_mode: (event.invite_mode as "none" | "optional_one_time" | "required_one_time") || "none",
       direct_access_allowed: event.direct_access_allowed ?? true,
@@ -1261,6 +1267,23 @@ export default function AdminLiveEvents() {
                         пишутся под id автовебинара.
                       </p>
                     )}
+                  </div>
+                  <div className="space-y-2 pt-3 border-t">
+                    <Label htmlFor="autoweb-launches-end-at">Остановить новые запуски</Label>
+                    <Input
+                      id="autoweb-launches-end-at"
+                      type="datetime-local"
+                      value={form.launches_end_at
+                        ? format(parseISO(form.launches_end_at), "yyyy-MM-dd'T'HH:mm")
+                        : ""}
+                      onChange={(e) => setForm((f) => ({
+                        ...f,
+                        launches_end_at: e.target.value ? new Date(e.target.value).toISOString() : "",
+                      }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      После дедлайна нельзя создать новый personal launch; уже начатые сессии и разрешённый replay не прерываются.
+                    </p>
                   </div>
                 </FormSection>
               )}
