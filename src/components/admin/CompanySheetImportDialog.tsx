@@ -41,7 +41,7 @@ interface NormalizedCompanyImportRow {
   bank_name?: string;
   bank_code?: string;
   comments?: string;
-  lpr_contacts?: string;
+  lpr_contacts?: Array<{ full_name: string; job_title?: string; role?: string; phone?: string; email?: string }>;
   callback_at?: string;
   external_provider: "amocrm";
   external_id?: string;
@@ -67,6 +67,38 @@ function splitValues(value: string): string[] {
   return Array.from(new Set(clean(value).split(/[\n,;/]+/).map((item) => item.replace(/[()]/g, "").trim()).filter(Boolean)));
 }
 
+function isEntrepreneurForm(value: string): boolean {
+  return /^(?:ип|и\.п\.|индивидуальный предприниматель|individual entrepreneur)$/i.test(clean(value));
+}
+
+function parseLprContacts(value: string): { contacts: Array<{ full_name: string; job_title?: string; role?: string; phone?: string; email?: string }>; raw: string } {
+  const raw = clean(value);
+  if (!raw) return { contacts: [], raw: "" };
+  const contacts = raw
+    .split(/[|\n]+/)
+    .map((chunk) => clean(chunk))
+    .filter(Boolean)
+    .map((chunk) => {
+      const email = chunk.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/)?.[0]?.toLowerCase();
+      const phoneMatch = chunk.match(/(?:\+?375|80)[\s()-]*\d{2,3}[\s()-]*\d{2,3}[\s()-]*\d{2,4}|\b0\d{8,9}\b|\b\d{9}\b/);
+      const phone = phoneMatch?.[0]?.replace(/\D/g, "");
+      const roleMatch = chunk.match(/\b(директор|бухгалтер|главбух|глабух|секретарь|иной|иное|ГБ)\b/i);
+      const jobTitle = roleMatch?.[0];
+      const role = /директор/i.test(jobTitle ?? "") ? "director" : /бухгалтер|главбух|глабух|гб/i.test(jobTitle ?? "") ? "accountant" : undefined;
+      const fullName = chunk
+        .replace(email ?? "", "")
+        .replace(phoneMatch?.[0] ?? "", "")
+        .replace(/[-–—:]+/g, " ")
+        .replace(/\b(директор|бухгалтер|главбух|глабух|секретарь|иной|иное|ГБ)\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!fullName || (!phone && !email)) return null;
+      return { full_name: fullName, job_title: jobTitle, role, phone: phone || undefined, email: email || undefined };
+    })
+    .filter((contact): contact is { full_name: string; job_title?: string; role?: string; phone?: string; email?: string } => Boolean(contact));
+  return { contacts, raw };
+}
+
 function parseCompanyRows(csvText: string): NormalizedCompanyImportRow[] {
   const parsed = Papa.parse<string[]>(csvText, { skipEmptyLines: false }).data;
   // The source has two note rows above the header. Google CSV export flattens
@@ -77,15 +109,17 @@ function parseCompanyRows(csvText: string): NormalizedCompanyImportRow[] {
     const phones = splitValues(clean(row[2]));
     const emails = splitValues(clean(row[3]).toLowerCase());
     const organizationForm = clean(row[4]);
+    const lpr = parseLprContacts(clean(row[11]));
     const amoId = clean(row[22]);
     const name = clean(row[1]);
+    const comments = clean(row[10]);
     return {
       source_key: `row:${rowNumber}`,
       row_number: rowNumber,
       name,
       short_name: clean(row[5]) || undefined,
       country: "BY",
-      company_kind: organizationForm.toLowerCase() === "ип" ? "entrepreneur" : "legal_entity",
+      company_kind: isEntrepreneurForm(organizationForm) ? "entrepreneur" : "legal_entity",
       unp: clean(row[6]).replace(/\D/g, "").slice(0, 9) || undefined,
       phone: phones[0],
       phones,
@@ -99,8 +133,8 @@ function parseCompanyRows(csvText: string): NormalizedCompanyImportRow[] {
       bank_account: clean(row[18]) || undefined,
       bank_name: clean(row[19]) || undefined,
       bank_code: clean(row[20]) || undefined,
-      comments: clean(row[10]) || undefined,
-      lpr_contacts: clean(row[11]) || undefined,
+      comments: comments || (!lpr.contacts.length && lpr.raw ? `Контакты ЛПР: ${lpr.raw}` : undefined),
+      lpr_contacts: lpr.contacts.length ? lpr.contacts : undefined,
       callback_at: clean(row[13]) || undefined,
       external_provider: "amocrm",
       external_id: amoId || undefined,
