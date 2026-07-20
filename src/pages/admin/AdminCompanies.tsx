@@ -153,6 +153,16 @@ interface CompanyOrder {
   created_at: string;
 }
 
+interface CompanyDocument {
+  id: string;
+  document_number: string;
+  document_type: string;
+  document_date: string;
+  status: string;
+  order_id: string;
+  file_url: string | null;
+}
+
 interface CompanyTask {
   id: string;
   public_id: string | null;
@@ -854,6 +864,21 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
   });
   const ordersById = useMemo(() => new Map((ordersQuery.data ?? []).map((order) => [order.id, order])), [ordersQuery.data]);
 
+  const documentsQuery = useQuery({
+    queryKey: ["admin-company-documents", orderIds],
+    enabled: orderIds.length > 0,
+    queryFn: async (): Promise<CompanyDocument[]> => {
+      const { data, error } = await supabase
+        .from("generated_documents")
+        .select("id, document_number, document_type, document_date, status, order_id, file_url")
+        .in("order_id", orderIds)
+        .order("document_date", { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      return (data ?? []) as CompanyDocument[];
+    },
+  });
+
   const tasksQuery = useQuery({
     queryKey: ["admin-company-tasks", companyId],
     enabled: !!companyId,
@@ -953,7 +978,12 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
                   {!activityQuery.isLoading && activityQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История изменений компании пока пуста.</div>}
                   {(activityQuery.data ?? []).map((activity) => <div key={activity.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{activity.title_snapshot || activity.activity_type}</span><span className="text-xs text-muted-foreground">{format(new Date(activity.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}</span></div>{activity.text_snapshot && <p className="mt-1 text-sm text-muted-foreground">{activity.text_snapshot}</p>}</div>)}
                 </TabsContent>
-                <TabsContent value="documents" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Документы компании подключаются через общий документооборот.</div></TabsContent>
+                <TabsContent value="documents" className="mt-0 space-y-2">
+                  {documentsQuery.isLoading && <Skeleton className="h-16 w-full" />}
+                  {documentsQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Документы временно недоступны. Заказы компании остаются доступны во вкладке «Сделки».</div>}
+                  {!documentsQuery.isLoading && !documentsQuery.isError && (documentsQuery.data?.length ?? 0) === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Документов по заказам компании пока нет.</div>}
+                  {(documentsQuery.data ?? []).map((document) => <div key={document.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{document.document_number}</span><Badge variant="outline">{document.status}</Badge></div><div className="mt-1 text-xs text-muted-foreground">{document.document_type} · {formatDate(document.document_date)} · заказ {ordersById.get(document.order_id)?.order_number ?? document.order_id}</div>{document.file_url && <a className="mt-2 inline-block text-xs text-primary underline-offset-4 hover:underline" href={document.file_url} target="_blank" rel="noreferrer">Открыть файл</a>}</div>)}
+                </TabsContent>
                 <TabsContent value="communications" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Коммуникации компании отображаются в контакт-центре после привязки контакта.</div></TabsContent>
                 <TabsContent value="history" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История доступна во вкладке «Активность».</div></TabsContent>
                 <TabsContent value="integrations" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Внешние идентификаторы компании пока не настроены.</div></TabsContent>
