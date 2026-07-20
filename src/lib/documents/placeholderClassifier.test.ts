@@ -119,6 +119,12 @@ describe('classifyPlaceholder', () => {
     expect(classifyPlaceholder('document.created_at')).toEqual({ kind: 'legacy_namespace', ns: 'document' });
   });
 
+  it('company.full_name → canonical company field', () => {
+    expect(classifyPlaceholder('company.full_name')).toEqual({
+      kind: 'company_field', key: 'company.full_name', format: null, case_modifier: null,
+    });
+  });
+
   it('xyz → invalid', () => {
     expect(classifyPlaceholder('xyz')).toEqual({ kind: 'invalid' });
   });
@@ -142,6 +148,11 @@ describe('evaluatePlaceholderInScope', () => {
   it('field в любом scope → ok', () => {
     expect(evaluatePlaceholderInScope('field:FLD-000001', 'billing').valid).toBe(true);
     expect(evaluatePlaceholderInScope('field:FLD-000001', 'package').valid).toBe(true);
+  });
+
+  it('company field в любом scope → ok', () => {
+    expect(evaluatePlaceholderInScope('company.director.name|format=short', 'billing').valid).toBe(true);
+    expect(evaluatePlaceholderInScope('company.unp', 'package').valid).toBe(true);
   });
 
   it('ln в billing scope → package_token_outside_package_context', () => {

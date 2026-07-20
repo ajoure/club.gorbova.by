@@ -94,6 +94,12 @@ export type PlaceholderClassification =
       format: PlaceholderFormat | null;
       case_modifier: PlaceholderCase | null;
     }
+  | {
+      kind: 'company_field';
+      key: string;
+      format: PlaceholderFormat | null;
+      case_modifier: PlaceholderCase | null;
+    }
   | { kind: 'legacy_role_format' }       // package.role.PKR-* / package.roles.*
   | { kind: 'legacy_namespace'; ns: string } // document.*/executor.*/customer.*/deal.*/cf.*
   | { kind: 'unknown_modifier'; modifier: string }
@@ -133,6 +139,7 @@ const RE_PACKAGE_ROLE_CUSTOM = /^(ln-\d{6})\.custom\.([a-z][a-z0-9_]{0,49})((?:\
 // классификатор остаётся pure-синтаксическим.
 const RE_PACKAGE_ROLE_SUB = /^(ln-\d{6})\.([a-z_]+)((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_PACKAGE_FIELD  = /^(pf-\d{6})((?:\|[a-z_]+=[a-z_]+)*)$/;
+const RE_COMPANY_FIELD  = /^(company\.(?:full_name|short_name|unp|legal_address|director\.name|director\.position|bank\.account|bank\.name|public_id))((?:\|[a-z_]+=[a-z_]+)*)$/;
 const RE_LEGACY_PKR     = /^package\.role\.PKR-\d{6}(?:\|[^}]*)?$/;
 const RE_LEGACY_ROLES   = /^package\.roles\.[a-z_][a-z0-9_]*\.[a-z_]+(?:\|[^}]*)?$/;
 const RE_LEGACY_NS      = /^(document|executor|customer|deal|cf)\./i;
@@ -203,6 +210,13 @@ export function classifyPlaceholder(inside: string): PlaceholderClassification {
       format: mods.format,
       case_modifier: mods.case_modifier,
     };
+  }
+
+  const mCompany = raw.match(RE_COMPANY_FIELD);
+  if (mCompany) {
+    const mods = parseModifiers(mCompany[2] || '', new Set<PlaceholderFormat>(['text', 'full', 'short', 'signature_short']));
+    if (mods.error) return mods.error;
+    return { kind: 'company_field', key: mCompany[1], format: mods.format, case_modifier: mods.case_modifier };
   }
 
   // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.3: {{tableRepeat:TR-XXXXXX}}.
@@ -316,8 +330,8 @@ export function evaluatePlaceholderInScope(
     return { valid: false, reason: 'legacy_placeholder_format_detected', classification: c };
   }
 
-  // c.kind ∈ {field, package_field, package_role, package_requisite}
-  if (c.kind === 'field') {
+  // c.kind ∈ {field, company_field, package_field, package_role, package_requisite}
+  if (c.kind === 'field' || c.kind === 'company_field') {
     return { valid: true, reason: 'ok', classification: c };
   }
 

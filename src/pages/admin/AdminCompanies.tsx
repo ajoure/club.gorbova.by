@@ -25,9 +25,11 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useLegalDetails, type ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { SelectionBox } from "@/components/admin/SelectionBox";
+import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { Badge } from "@/components/ui/badge";
@@ -653,86 +655,44 @@ function CreateCompanyDialog({ open, onOpenChange, onCreated }: {
   onOpenChange: (open: boolean) => void;
   onCreated: (companyId: string) => void;
 }) {
-  const [fullName, setFullName] = useState("");
-  const [unp, setUnp] = useState("");
-  const [country, setCountry] = useState("BY");
-  const [kind, setKind] = useState<"legal_entity" | "entrepreneur">("legal_entity");
+  const { createDetails, isCreating } = useLegalDetails();
+  const [formKey, setFormKey] = useState(0);
 
   const createCompany = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await supabase.rpc("crm_company_get_or_create", {
-        _country: country,
-        _unp: unp,
-        _full_name: fullName,
-        _company_kind: kind,
-        _source: "manual",
+    mutationFn: async (details: Partial<ClientLegalDetails>) => {
+      const created = await createDetails({
+        ...details,
+      });
+      const { data, error } = await supabase.rpc("crm_company_create_from_billing", {
+        _client_legal_details_id: created.id,
       });
       if (error) throw error;
       return data;
     },
     onSuccess: (companyId) => {
-      toast.success("Компания готова");
+      toast.success("Компания создана из реквизитов");
       onOpenChange(false);
-      setFullName("");
-      setUnp("");
+      setFormKey((value) => value + 1);
       onCreated(companyId);
     },
     onError: (error: Error) => toast.error(error.message || "Не удалось создать компанию"),
   });
 
-  const submit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!fullName.trim() || !unp.trim()) {
-      toast.error("Укажите название и УНП");
-      return;
-    }
-    createCompany.mutate();
-  };
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form onSubmit={submit}>
-          <DialogHeader>
-            <DialogTitle>Создать компанию</DialogTitle>
-            <DialogDescription>
-              Ручное создание использует защищённый CRM RPC. Если компания с таким УНП уже есть, будет открыта существующая запись без дубля.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-5">
-            <label className="grid gap-2 text-sm font-medium">
-              Полное название
-              <Input value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="ООО «Пример»" autoFocus />
-            </label>
-            <label className="grid gap-2 text-sm font-medium">
-              УНП
-              <Input value={unp} onChange={(event) => setUnp(event.target.value)} placeholder="123456789" inputMode="numeric" />
-            </label>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm font-medium">
-                Страна
-                <Input value={country} onChange={(event) => setCountry(event.target.value.toUpperCase().slice(0, 2))} maxLength={2} />
-              </label>
-              <label className="grid gap-2 text-sm font-medium">
-                Тип
-                <Select value={kind} onValueChange={(value: "legal_entity" | "entrepreneur") => setKind(value)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="legal_entity">Юрлицо</SelectItem>
-                    <SelectItem value="entrepreneur">ИП</SelectItem>
-                  </SelectContent>
-                </Select>
-              </label>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
-            <Button type="submit" disabled={createCompany.isPending}>
-              {createCompany.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Создать
-            </Button>
-          </DialogFooter>
-        </form>
+      <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Добавить компанию</DialogTitle>
+          <DialogDescription>
+            Используется то же окно реквизитов, что и в настройках документов: введите УНП, подтвердите данные из реестра и дополните расчётный счёт и руководителя.
+          </DialogDescription>
+        </DialogHeader>
+        <OrganizationDetailsForm
+          key={formKey}
+          isSubmitting={createCompany.isPending || isCreating}
+          showDemoOnEmpty={false}
+          onSubmit={async (details) => { await createCompany.mutateAsync(details); }}
+        />
       </DialogContent>
     </Dialog>
   );
