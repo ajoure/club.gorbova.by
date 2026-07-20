@@ -217,6 +217,8 @@ export default function AdminCompanies() {
   const [createdRange, setCreatedRange] = useState<DateRange | undefined>();
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
   const [editCompany, setEditCompany] = useState<CompanyListItem | null>(null);
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
     try {
@@ -311,6 +313,24 @@ export default function AdminCompanies() {
       queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
     },
     onError: (error: Error) => toast.error(error.message || "Не удалось архивировать компании"),
+  });
+
+  const mergeCompanies = useMutation({
+    mutationFn: async ({ sourceIds, targetId }: { sourceIds: string[]; targetId: string }) => {
+      for (const sourceId of sourceIds.filter((id) => id !== targetId)) {
+        const { error } = await supabase.rpc("crm_company_merge", { _source_id: sourceId, _target_id: targetId });
+        if (error) throw error;
+      }
+      return sourceIds.length - 1;
+    },
+    onSuccess: (count) => {
+      toast.success(`Объединено компаний: ${count}`);
+      setMergeOpen(false);
+      setMergeTargetId(null);
+      clearSelection();
+      queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Не удалось объединить компании"),
   });
 
   const selectCompany = (companyId: string | null) => {
@@ -507,7 +527,31 @@ export default function AdminCompanies() {
         }}
       />
       {isDragging && selectionBox && <SelectionBox startX={selectionBox.startX} startY={selectionBox.startY} endX={selectionBox.endX} endY={selectionBox.endY} />}
-      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkArchive={canCreate && selectedCount > 0 ? () => archiveCompanies.mutate(Array.from(selectedCompanyIds)) : undefined} onBulkEdit={canCreate && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
+      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canCreate && selectedCount >= 2 ? () => { setMergeTargetId(Array.from(selectedCompanyIds)[0] ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canCreate && selectedCount > 0 ? () => archiveCompanies.mutate(Array.from(selectedCompanyIds)) : undefined} onBulkEdit={canCreate && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
+      <Dialog open={mergeOpen} onOpenChange={setMergeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Объединить компании</DialogTitle>
+            <DialogDescription>Выберите каноническую компанию. Остальные выбранные записи будут объединены в неё через защищённый CRM RPC.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 py-4">
+            <label className="text-sm font-medium">Каноническая запись</label>
+            <Select value={mergeTargetId ?? undefined} onValueChange={setMergeTargetId}>
+              <SelectTrigger><SelectValue placeholder="Выберите компанию" /></SelectTrigger>
+              <SelectContent>
+                {items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => <SelectItem key={company.id} value={company.id}>{company.full_name} · {company.public_id}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMergeOpen(false)}>Отмена</Button>
+            <Button disabled={!mergeTargetId || mergeCompanies.isPending} onClick={() => mergeTargetId && mergeCompanies.mutate({ sourceIds: Array.from(selectedCompanyIds), targetId: mergeTargetId })}>
+              {mergeCompanies.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Объединить
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <EditCompanyDialog company={editCompany} onOpenChange={(open) => { if (!open) setEditCompany(null); }} onSaved={() => { setEditCompany(null); queryClient.invalidateQueries({ queryKey: ["admin-companies"] }); }} />
       <CompanyDetailsSheet companyId={selectedCompanyId} onClose={() => selectCompany(null)} />
     </div>
