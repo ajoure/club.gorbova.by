@@ -40,18 +40,17 @@ Deno.serve(async (req) => {
 
     const userId = claimsData.claims.sub;
 
-    // Admin bypass: admin/super_admin видят события даже при закрытом replay/архиве.
-    // Add-only; обычные пользователи проходят прежний фильтр.
-    let isAdmin = false;
-    try {
-      const [adminRes, superRes] = await Promise.all([
-        supabase.rpc('has_role_v2', { _user_id: userId, _role_code: 'admin' }),
-        supabase.rpc('has_role_v2', { _user_id: userId, _role_code: 'super_admin' }),
-      ]);
-      isAdmin = Boolean(adminRes.data) || Boolean(superRes.data);
-    } catch (e) {
-      console.warn('[live-events-list] role check failed, treating as non-admin:', e);
-    }
+    // Admin bypass — admins/super_admins видят все accessible события
+    // без фильтра replay_disabled (visibility в админке).
+    const { data: isAdmin } = await supabase.rpc('has_role_v2', {
+      _user_id: userId,
+      _role_code: 'admin',
+    });
+    const { data: isSuperAdmin } = await supabase.rpc('has_role_v2', {
+      _user_id: userId,
+      _role_code: 'super_admin',
+    });
+    const adminBypass = isAdmin === true || isSuperAdmin === true;
 
     // Fetch all published events
     const { data: events, error: eventsError } = await supabase
@@ -84,19 +83,20 @@ Deno.serve(async (req) => {
         _live_event_id: event.id,
       });
 
-      if (hasAccess || isAdmin) {
+      if (hasAccess) {
         accessibleEvents.push(event);
       }
     }
 
-    // Filter out events in terminal states without replay (admin сохраняет видимость).
-    const visibleEvents = accessibleEvents.filter(e => {
-      if (isAdmin) return true;
-      if (e.platform_status === 'ended' && !e.replay_enabled) return false;
-      if (e.platform_status === 'archived') return false;
+    // Filter out terminal-without-replay events (Phase D canonical gate).
+    // Admin/super_admin bypass — see all accessible events.
+    const visibleEvents = adminBypass ? accessibleEvents : accessibleEvents.filter(e => {
+      const ps = e.platform_status;
+      const st = (e as any).status;
+      const terminal = ps === 'ended' || ps === 'archived' || st === 'ended';
+      if (terminal && !e.replay_enabled) return false;
       return true;
     });
-
 
     return new Response(
       JSON.stringify({
@@ -115,6 +115,7 @@ Deno.serve(async (req) => {
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
+
   } catch (error) {
     console.error('[live-events-list] Error:', error);
     return new Response(

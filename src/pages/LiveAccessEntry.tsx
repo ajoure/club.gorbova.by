@@ -15,8 +15,10 @@ type EntryState =
   | "access_denied"
   | "event_not_found"
   | "event_unpublished"
+  | "replay_disabled"
   | "redirecting"
   | "error";
+
 
 export default function LiveAccessEntry() {
   const { token } = useParams<{ token: string }>();
@@ -91,6 +93,10 @@ export default function LiveAccessEntry() {
           case "event_unpublished":
             setState("event_unpublished");
             break;
+          case "replay_disabled":
+            setState("replay_disabled");
+            break;
+
           case "auth_required":
             setState("auth_required");
             break;
@@ -160,6 +166,12 @@ export default function LiveAccessEntry() {
       title: "Эфир недоступен",
       description: "Этот эфир ещё не опубликован. Пожалуйста, дождитесь анонса.",
     },
+    replay_disabled: {
+      icon: <AlertTriangle className="h-16 w-16 text-muted-foreground" />,
+      title: "Запись эфира недоступна",
+      description: "Эфир завершён, а запись отключена организатором. Обратитесь в поддержку, если нужен доступ.",
+    },
+
     auth_required: {
       icon: <Lock className="h-16 w-16 text-primary" />,
       title: "Необходима авторизация",

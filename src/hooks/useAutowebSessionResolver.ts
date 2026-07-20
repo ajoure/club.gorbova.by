@@ -21,14 +21,21 @@ export interface AutowebJitOption {
 }
 
 export interface AutowebResolveResponse {
-  status: "ok" | "not_found" | "unpublished" | "unsupported_event_type" | "error";
+  status: "ok" | "not_found" | "unpublished" | "unsupported_event_type" | "error" | "replay_disabled" | "launches_closed";
   mode?: AutowebMode;
   timezone?: string;
   one_time?: { starts_at: string };
   scheduled?: { upcoming: AutowebScheduledSlot[] };
   just_in_time?: { options: AutowebJitOption[]; show_countdown: boolean };
   on_demand?: { starts_at: string; min_delay_seconds: number };
+  /** add-only Phase D: terminal+replay_enabled path retains mode contract. */
+  replay_available?: boolean;
+  launches_end_at_bypassed?: boolean;
+  reason?: string;
+  replay_enabled?: boolean;
+  launches_end_at?: string | null;
 }
+
 
 function detectViewerTz(): string {
   try {
