@@ -280,6 +280,21 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
     }));
   }
 
+  function toggleTestMode() {
+    setPreviewPlaying((active) => {
+      const next = !active;
+      // The preview itself remains local. This small audit RPC is deliberately
+      // the only server interaction and cannot create any runtime artefact.
+      void supabase.rpc("autoweb_scenario_test_mode_audit", {
+        _live_event_id: liveEventId,
+        _active: next,
+      }).then(({ error }) => {
+        if (error) console.warn("[autoweb test mode] audit failed", error.message);
+      });
+      return next;
+    });
+  }
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -362,7 +377,7 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
         <div className="rounded-md border border-dashed bg-muted/30 p-3 space-y-2" data-autoweb-test-mode>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="font-medium">Test mode · локальный preview</span>
-            <Button size="sm" variant="outline" onClick={() => setPreviewPlaying((value) => !value)}>
+            <Button size="sm" variant="outline" onClick={toggleTestMode}>
               {previewPlaying ? <Pause className="h-3.5 w-3.5 mr-1" /> : <PlayCircle className="h-3.5 w-3.5 mr-1" />}
               {previewPlaying ? "Пауза" : "Play"}
             </Button>
