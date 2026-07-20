@@ -337,6 +337,22 @@ export default function AdminCompanies() {
     onError: (error: Error) => toast.error(error.message || "Не удалось архивировать компании"),
   });
 
+  const restoreCompanies = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        const { error } = await supabase.rpc("crm_company_restore", { _id: id });
+        if (error) throw error;
+      }
+      return ids.length;
+    },
+    onSuccess: (count) => {
+      toast.success(`Восстановлено компаний: ${count}`);
+      clearSelection();
+      queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Не удалось восстановить компании"),
+  });
+
   const mergeCompanies = useMutation({
     mutationFn: async ({ sourceIds, targetId }: { sourceIds: string[]; targetId: string }) => {
       for (const sourceId of sourceIds.filter((id) => id !== targetId)) {
@@ -578,7 +594,7 @@ export default function AdminCompanies() {
         }}
       />
       {isDragging && selectionBox && <SelectionBox startX={selectionBox.startX} startY={selectionBox.startY} endX={selectionBox.endX} endY={selectionBox.endY} />}
-      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canCreate && selectedCount >= 2 ? () => { setMergeTargetId(Array.from(selectedCompanyIds)[0] ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canCreate && selectedCount > 0 ? () => archiveCompanies.mutate(Array.from(selectedCompanyIds)) : undefined} onBulkEdit={canCreate && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
+      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canCreate && selectedCount >= 2 ? () => { setMergeTargetId(Array.from(selectedCompanyIds)[0] ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "active") ? () => archiveCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "active").map((company) => company.id)) : undefined} onBulkRestore={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "archived") ? () => restoreCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "archived").map((company) => company.id)) : undefined} onBulkEdit={canCreate && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
       <Dialog open={mergeOpen} onOpenChange={setMergeOpen}>
         <DialogContent>
           <DialogHeader>
@@ -594,6 +610,18 @@ export default function AdminCompanies() {
               </SelectContent>
             </Select>
           </div>
+          <div className="rounded-lg border">
+            <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">Предпросмотр сравнения</div>
+            <div className="table-scroll-x">
+              <Table className="min-w-[620px] text-sm">
+                <TableHeader><TableRow><TableHead>Поле</TableHead>{items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => <TableHead key={company.id} className={company.id === mergeTargetId ? "text-primary" : ""}>{company.public_id}{company.id === mergeTargetId ? " · target" : ""}</TableHead>)}</TableRow></TableHeader>
+                <TableBody>
+                  {["Название", "УНП", "Тип", "Статус", "Email", "Телефон"].map((label) => <TableRow key={label}><TableCell className="font-medium text-muted-foreground">{label}</TableCell>{items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => { const value = label === "Название" ? company.full_name : label === "УНП" ? company.unp_normalized : label === "Тип" ? kindLabels[company.company_kind] : label === "Статус" ? statusLabels[company.status] : label === "Email" ? company.email : company.phone; return <TableCell key={company.id} className="max-w-[190px] truncate">{value || "—"}</TableCell>; })}</TableRow>)}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">После подтверждения защищённый RPC перенесёт связанные map, контакты, заказы и задачи в target. Автоматическое объединение по похожему названию не выполняется.</p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setMergeOpen(false)}>Отмена</Button>
             <Button disabled={!mergeTargetId || mergeCompanies.isPending} onClick={() => mergeTargetId && mergeCompanies.mutate({ sourceIds: Array.from(selectedCompanyIds), targetId: mergeTargetId })}>
