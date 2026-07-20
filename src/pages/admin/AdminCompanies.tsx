@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -19,7 +19,11 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { CompanySyncQueuePanel } from "@/components/admin/CompanySyncQueuePanel";
+import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
+import { SelectionBox } from "@/components/admin/SelectionBox";
+import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
+import { useDragSelect } from "@/hooks/useDragSelect";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +34,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -45,6 +50,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -54,6 +60,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import { arrayMove, SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 
 type CompanyStatus = "active" | "archived" | "merged";
 type CompanyKind = "legal_entity" | "entrepreneur" | "foreign" | "unknown";
@@ -111,6 +126,16 @@ interface ProfileSummary {
 
 const PAGE_SIZE = 25;
 
+const DEFAULT_COMPANY_COLUMNS: ColumnConfig[] = [
+  { key: "checkbox", label: "", visible: true, width: 48, order: 0 },
+  { key: "company", label: "Компания", visible: true, width: 290, order: 1 },
+  { key: "unp", label: "УНП", visible: true, width: 130, order: 2 },
+  { key: "kind", label: "Тип", visible: true, width: 130, order: 3 },
+  { key: "contacts", label: "Контакты", visible: true, width: 260, order: 4 },
+  { key: "status", label: "Статус", visible: true, width: 130, order: 5 },
+  { key: "created", label: "Создана", visible: true, width: 150, order: 6 },
+];
+
 const kindLabels: Record<CompanyKind, string> = {
   legal_entity: "Юрлицо",
   entrepreneur: "ИП",
@@ -151,6 +176,20 @@ export default function AdminCompanies() {
   const [kind, setKind] = useState<"all" | CompanyKind>("all");
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editCompany, setEditCompany] = useState<CompanyListItem | null>(null);
+  const [columns, setColumns] = useState<ColumnConfig[]>(() => {
+    try {
+      const saved = localStorage.getItem("admin_companies_columns_v1");
+      if (!saved) return DEFAULT_COMPANY_COLUMNS;
+      const parsed = JSON.parse(saved) as ColumnConfig[];
+      return DEFAULT_COMPANY_COLUMNS.map((column) => ({
+        ...column,
+        ...(parsed.find((item) => item.key === column.key) ?? {}),
+      }));
+    } catch {
+      return DEFAULT_COMPANY_COLUMNS;
+    }
+  });
   const debouncedQuery = useDebouncedValue(query, 250);
   const selectedCompanyId = searchParams.get("company");
   const canCreate = access.canAccessSection("companies", "manage");
@@ -178,6 +217,58 @@ export default function AdminCompanies() {
   const items = companiesQuery.data?.items ?? [];
   const total = companiesQuery.data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.order - b.order), [columns]);
+  const visibleColumns = sortedColumns.filter((column) => column.visible);
+  const draggableColumnIds = visibleColumns.filter((column) => column.key !== "checkbox").map((column) => column.key);
+
+  useEffect(() => {
+    localStorage.setItem("admin_companies_columns_v1", JSON.stringify(columns));
+  }, [columns]);
+
+  const handleColumnResize = useCallback((key: string, width: number) => {
+    setColumns((current) => current.map((column) => column.key === key ? { ...column, width } : column));
+  }, []);
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setColumns((current) => {
+      const oldIndex = current.findIndex((column) => column.key === active.id);
+      const newIndex = current.findIndex((column) => column.key === over.id);
+      return arrayMove(current, oldIndex, newIndex).map((column, index) => ({ ...column, order: index }));
+    });
+  }, []);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const {
+    selectedIds: selectedCompanyIds,
+    isDragging,
+    selectionBox,
+    containerRef,
+    registerItemRef,
+    toggleSelection,
+    handleRangeSelect,
+    selectAll,
+    clearSelection,
+    handleMouseDown,
+    selectedCount,
+  } = useDragSelect({ items, getItemId: (company) => company.id });
+
+  const archiveCompanies = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        const { error } = await supabase.rpc("crm_company_archive", { _id: id, _reason: "Архивирование из списка компаний" });
+        if (error) throw error;
+      }
+      return ids.length;
+    },
+    onSuccess: (count) => {
+      toast.success(`Архивировано компаний: ${count}`);
+      clearSelection();
+      queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Не удалось архивировать компании"),
+  });
 
   const selectCompany = (companyId: string | null) => {
     const next = new URLSearchParams(searchParams);
@@ -189,7 +280,7 @@ export default function AdminCompanies() {
   const resetPage = () => setPage(0);
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col gap-4 py-4 md:py-6">
+    <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto overflow-x-hidden py-4 md:py-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -245,23 +336,31 @@ export default function AdminCompanies() {
         </Select>
       </div>
 
-      <CompanySyncQueuePanel canManage={canCreate} />
+      <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+        <span>Показано: <strong className="text-foreground">{items.length}</strong> · Всего: <strong className="text-foreground">{total}</strong></span>
+        <ColumnSettings columns={columns} onChange={setColumns} />
+      </div>
 
-      <div className="min-h-0 overflow-hidden rounded-xl border bg-card">
+      <div className="min-h-0 flex-none overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center justify-between border-b px-4 py-3 text-sm text-muted-foreground">
           <span>{companiesQuery.isLoading ? "Загрузка…" : `Найдено: ${total}`}</span>
           <span>Кликните по строке, чтобы открыть карточку</span>
         </div>
-        <div className="overflow-x-auto">
-          <Table>
+        <div ref={containerRef} onMouseDown={handleMouseDown} data-table-scroll-x="true" className="table-scroll-x select-none">
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <Table wrapperClassName="contents" style={{ minWidth: 1200 }}>
             <TableHeader>
               <TableRow>
-                <TableHead>Компания</TableHead>
-                <TableHead>УНП</TableHead>
-                <TableHead>Тип</TableHead>
-                <TableHead>Контакты</TableHead>
-                <TableHead>Статус</TableHead>
-                <TableHead className="text-right">Создана</TableHead>
+                <ResizableTableHead column={DEFAULT_COMPANY_COLUMNS[0]} onResize={handleColumnResize}>
+                  <Checkbox checked={items.length > 0 && selectedCompanyIds.size === items.length} onCheckedChange={() => selectedCompanyIds.size === items.length ? clearSelection() : selectAll()} />
+                </ResizableTableHead>
+                <SortableContext items={draggableColumnIds} strategy={horizontalListSortingStrategy}>
+                  {visibleColumns.filter((column) => column.key !== "checkbox").map((column) => (
+                    <SortableResizableTableHead key={column.key} id={column.key} column={column} onResize={handleColumnResize}>
+                      {column.label}
+                    </SortableResizableTableHead>
+                  ))}
+                </SortableContext>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -278,29 +377,30 @@ export default function AdminCompanies() {
               {!companiesQuery.isLoading && items.map((company) => (
                 <TableRow
                   key={company.id}
-                  className="cursor-pointer transition-colors hover:bg-muted/50"
-                  onClick={() => selectCompany(company.id)}
+                  ref={(element) => registerItemRef(company.id, element)}
+                  data-selectable-item
+                  className={`cursor-pointer transition-colors hover:bg-muted/50 ${selectedCompanyIds.has(company.id) ? "bg-primary/10" : ""}`}
+                  onClick={(event) => {
+                    if (event.shiftKey) handleRangeSelect(company.id, true);
+                    else if (event.ctrlKey || event.metaKey) toggleSelection(company.id, true);
+                    else selectCompany(company.id);
+                  }}
                 >
-                  <TableCell>
-                    <div className="font-medium">{company.full_name}</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${company.short_name}` : ""}</div>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{company.unp_normalized || "—"}</TableCell>
-                  <TableCell>{kindLabels[company.company_kind]}</TableCell>
-                  <TableCell>
-                    <div className="space-y-1 text-xs text-muted-foreground">
-                      {company.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" />{company.email}</div>}
-                      {company.phone && <div className="flex items-center gap-1"><Phone className="h-3 w-3" />{company.phone}</div>}
-                      {!company.email && !company.phone && "—"}
-                    </div>
-                  </TableCell>
-                  <TableCell><StatusBadge status={company.status} /></TableCell>
-                  <TableCell className="text-right text-sm text-muted-foreground">{formatDate(company.created_at)}</TableCell>
+                  <TableCell onClick={(event) => event.stopPropagation()}><Checkbox checked={selectedCompanyIds.has(company.id)} onCheckedChange={() => toggleSelection(company.id, true)} /></TableCell>
+                  {visibleColumns.filter((column) => column.key !== "checkbox").map((column) => {
+                    if (column.key === "company") return <TableCell key={column.key}><div className="font-medium">{company.full_name}</div><div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${company.short_name}` : ""}</div></TableCell>;
+                    if (column.key === "unp") return <TableCell key={column.key} className="font-mono text-xs">{company.unp_normalized || "—"}</TableCell>;
+                    if (column.key === "kind") return <TableCell key={column.key}>{kindLabels[company.company_kind]}</TableCell>;
+                    if (column.key === "contacts") return <TableCell key={column.key}><div className="space-y-1 text-xs text-muted-foreground">{company.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" />{company.email}</div>}{company.phone && <div className="flex items-center gap-1"><Phone className="h-3 w-3" />{company.phone}</div>}{!company.email && !company.phone && "—"}</div></TableCell>;
+                    if (column.key === "status") return <TableCell key={column.key}><StatusBadge status={company.status} /></TableCell>;
+                    if (column.key === "created") return <TableCell key={column.key} className="text-right text-sm text-muted-foreground">{formatDate(company.created_at)}</TableCell>;
+                    return null;
+                  })}
                 </TableRow>
               ))}
               {!companiesQuery.isLoading && items.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-14 text-center">
+                  <TableCell colSpan={visibleColumns.length} className="py-14 text-center">
                     <Building2 className="mx-auto mb-3 h-9 w-9 text-muted-foreground/50" />
                     <div className="font-medium">Компаний пока нет</div>
                     <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
@@ -311,6 +411,7 @@ export default function AdminCompanies() {
               )}
             </TableBody>
           </Table>
+          </DndContext>
         </div>
       </div>
 
@@ -334,6 +435,9 @@ export default function AdminCompanies() {
           selectCompany(companyId);
         }}
       />
+      {isDragging && selectionBox && <SelectionBox startX={selectionBox.startX} startY={selectionBox.startY} endX={selectionBox.endX} endY={selectionBox.endY} />}
+      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkArchive={canCreate && selectedCount > 0 ? () => archiveCompanies.mutate(Array.from(selectedCompanyIds)) : undefined} onBulkEdit={canCreate && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
+      <EditCompanyDialog company={editCompany} onOpenChange={(open) => { if (!open) setEditCompany(null); }} onSaved={() => { setEditCompany(null); queryClient.invalidateQueries({ queryKey: ["admin-companies"] }); }} />
       <CompanyDetailsSheet companyId={selectedCompanyId} onClose={() => selectCompany(null)} />
     </div>
   );
@@ -429,6 +533,64 @@ function CreateCompanyDialog({ open, onOpenChange, onCreated }: {
   );
 }
 
+function EditCompanyDialog({ company, onOpenChange, onSaved }: {
+  company: CompanyListItem | null;
+  onOpenChange: (open: boolean) => void;
+  onSaved: () => void;
+}) {
+  const [fullName, setFullName] = useState("");
+  const [shortName, setShortName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [status, setStatus] = useState<CompanyStatus>("active");
+
+  useEffect(() => {
+    if (!company) return;
+    setFullName(company.full_name);
+    setShortName(company.short_name ?? "");
+    setEmail(company.email ?? "");
+    setPhone(company.phone ?? "");
+    setStatus(company.status);
+  }, [company]);
+
+  const updateCompany = useMutation({
+    mutationFn: async () => {
+      if (!company) return;
+      const { error } = await supabase.from("companies").update({
+        full_name: fullName.trim(),
+        short_name: shortName.trim() || null,
+        email: email.trim() || null,
+        phone: phone.trim() || null,
+        status,
+        updated_at: new Date().toISOString(),
+      }).eq("id", company.id);
+      if (error) throw error;
+    },
+    onSuccess: () => { toast.success("Компания обновлена"); onSaved(); },
+    onError: (error: Error) => toast.error(error.message || "Не удалось обновить компанию"),
+  });
+
+  return (
+    <Dialog open={!!company} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <form onSubmit={(event) => { event.preventDefault(); if (!fullName.trim()) return toast.error("Укажите название"); updateCompany.mutate(); }}>
+          <DialogHeader><DialogTitle>Редактировать компанию</DialogTitle><DialogDescription>Изменения сохраняются в канонической записи компании.</DialogDescription></DialogHeader>
+          <div className="grid gap-4 py-5">
+            <label className="grid gap-2 text-sm font-medium">Полное название<Input value={fullName} onChange={(event) => setFullName(event.target.value)} /></label>
+            <label className="grid gap-2 text-sm font-medium">Короткое название<Input value={shortName} onChange={(event) => setShortName(event.target.value)} /></label>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm font-medium">Email<Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" /></label>
+              <label className="grid gap-2 text-sm font-medium">Телефон<Input value={phone} onChange={(event) => setPhone(event.target.value)} /></label>
+            </div>
+            <label className="grid gap-2 text-sm font-medium">Статус<Select value={status} onValueChange={(value: CompanyStatus) => setStatus(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="active">Активна</SelectItem><SelectItem value="archived">В архиве</SelectItem><SelectItem value="merged">Объединена</SelectItem></SelectContent></Select></label>
+          </div>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button><Button type="submit" disabled={updateCompany.isPending}>{updateCompany.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Сохранить</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null; onClose: () => void }) {
   const detailQuery = useQuery({
     queryKey: ["admin-company", companyId],
@@ -489,7 +651,7 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
         {detailQuery.isLoading && <div className="space-y-4 pt-8"><Skeleton className="h-8 w-2/3" />{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>}
         {!detailQuery.isLoading && !company && <div className="pt-12 text-center text-muted-foreground">Компания не найдена или недоступна.</div>}
         {company && (
-          <div className="space-y-7 pt-4">
+          <div className="flex min-h-0 flex-col gap-5 pt-4">
             <SheetHeader className="pr-10">
               <div className="flex items-start gap-3">
                 <div className="rounded-lg bg-primary/10 p-2 text-primary"><Building2 className="h-5 w-5" /></div>
@@ -501,55 +663,29 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
             </SheetHeader>
 
             <div className="flex flex-wrap gap-2"><StatusBadge status={company.status} /><Badge variant="outline">{kindLabels[company.company_kind]}</Badge></div>
-
-            <section className="space-y-3">
-              <h3 className="text-sm font-semibold">Реквизиты</h3>
-              <div className="divide-y rounded-lg border">
-                {detailRows.map(([label, value]) => (
-                  <div key={label as string} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 px-3 py-2.5 text-sm">
-                    <span className="text-muted-foreground">{label}</span>
-                    <span className="break-words">{value || "—"}</span>
-                  </div>
-                ))}
+            <Tabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
+              <TabsList className="w-full justify-start overflow-x-auto rounded-lg bg-muted/60 p-1">
+                <TabsTrigger value="overview">Обзор</TabsTrigger>
+                <TabsTrigger value="contacts">Контакты</TabsTrigger>
+                <TabsTrigger value="deals">Сделки</TabsTrigger>
+                <TabsTrigger value="tasks">Задачи</TabsTrigger>
+                <TabsTrigger value="activity">Активность</TabsTrigger>
+              </TabsList>
+              <div className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
+                <TabsContent value="overview" className="mt-0 space-y-4">
+                  <section className="space-y-3"><h3 className="text-sm font-semibold">Реквизиты</h3><div className="divide-y rounded-lg border">{detailRows.map(([label, value]) => <div key={label as string} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 px-3 py-2.5 text-sm"><span className="text-muted-foreground">{label}</span><span className="break-words">{value || "—"}</span></div>)}</div></section>
+                  <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">{company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" />{company.email}</div>}{company.phone && <div className="flex items-center gap-2"><Phone className="h-4 w-4" />{company.phone}</div>}{company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}{!company.email && !company.phone && !company.legal_address && "Контактные данные не заполнены."}</section>
+                </TabsContent>
+                <TabsContent value="contacts" className="mt-0 space-y-3">
+                  {contactsQuery.isLoading && <Skeleton className="h-16 w-full" />}
+                  {!contactsQuery.isLoading && (contactsQuery.data?.length ?? 0) === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанных контактов пока нет.</p>}
+                  {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = profile?.full_name || contact.external_full_name || "Контакт без имени"; const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="font-medium">{name}</div><div className="mt-0.5 text-xs text-muted-foreground">{contact.relationship_type}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Billing</Badge>}</div></div></div>; })}
+                </TabsContent>
+                <TabsContent value="deals" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Сделки компании появятся здесь после связывания с заказами.</div></TabsContent>
+                <TabsContent value="tasks" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Задачи компании появятся здесь.</div></TabsContent>
+                <TabsContent value="activity" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История изменений компании будет отображаться здесь.</div></TabsContent>
               </div>
-            </section>
-
-            <section className="space-y-3">
-              <h3 className="text-sm font-semibold">Связанные контакты</h3>
-              {contactsQuery.isLoading && <Skeleton className="h-16 w-full" />}
-              {!contactsQuery.isLoading && (contactsQuery.data?.length ?? 0) === 0 && (
-                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанных контактов пока нет.</p>
-              )}
-              <div className="space-y-2">
-                {(contactsQuery.data ?? []).map((contact) => {
-                  const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null;
-                  const name = profile?.full_name || contact.external_full_name || "Контакт без имени";
-                  const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone;
-                  return (
-                    <div key={contact.id} className="rounded-lg border p-3">
-                      <div className="flex items-start gap-2">
-                        <UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" />
-                        <div className="min-w-0 flex-1">
-                          <div className="font-medium">{name}</div>
-                          <div className="mt-0.5 text-xs text-muted-foreground">{contact.relationship_type}{contactValue ? ` · ${contactValue}` : ""}</div>
-                        </div>
-                        <div className="flex gap-1">
-                          {contact.is_primary && <Badge variant="outline">Основной</Badge>}
-                          {contact.is_billing_contact && <Badge variant="outline">Billing</Badge>}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
-              {company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" />{company.email}</div>}
-              {company.phone && <div className="flex items-center gap-2"><Phone className="h-4 w-4" />{company.phone}</div>}
-              {company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}
-              {!company.email && !company.phone && !company.legal_address && "Контактные данные не заполнены."}
-            </section>
+            </Tabs>
           </div>
         )}
       </SheetContent>
