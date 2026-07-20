@@ -8,6 +8,8 @@ import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Building2,
+  Briefcase,
+  ClipboardList,
   FileSpreadsheet,
   Activity,
   ArrowDown,
@@ -17,6 +19,8 @@ import {
   ChevronRight,
   Loader2,
   Mail,
+  Info,
+  Landmark,
   MessageCircle,
   CreditCard,
   Wallet,
@@ -53,6 +57,11 @@ import { SmsHistorySection } from "@/components/admin/sms/SmsHistorySection";
 import { ComposeEmailDialog } from "@/components/admin/ComposeEmailDialog";
 import { ContactEmailHistory } from "@/components/admin/ContactEmailHistory";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { GrpStatusBadge, InfoRow } from "@/components/ai-requisites/EntityRecordSheet";
+import { formatStructuredAddressForView } from "@/lib/address/formatStructuredAddress";
+import type { CanonicalAddressPayload } from "@/lib/address/types";
+import { normalizeCompanyName, inferCompanyLegalForm } from "@/lib/companies/normalizeCompanyName";
+import { GrpLookupAdapter } from "@/lib/legal-entities/adapters/GrpLookupAdapter";
 import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
 import { CompanySheetImportDialog } from "@/components/admin/CompanySheetImportDialog";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
@@ -68,6 +77,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -87,6 +97,7 @@ import {
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
 import {
   Table,
   TableBody,
@@ -719,7 +730,7 @@ export default function AdminCompanies() {
                 >
                   <TableCell onClick={(event) => event.stopPropagation()}><Checkbox checked={selectedCompanyIds.has(company.id)} onCheckedChange={() => toggleSelection(company.id, true)} /></TableCell>
                   {visibleColumns.filter((column) => column.key !== "checkbox").map((column) => {
-                    if (column.key === "company") return <TableCell key={column.key}><div className="font-medium">{company.full_name}</div><div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${company.short_name}` : ""}</div></TableCell>;
+                    if (column.key === "company") return <TableCell key={column.key}><div className="font-medium">{normalizeCompanyName(company.full_name)}</div><div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${normalizeCompanyName(company.short_name)}` : ""}</div></TableCell>;
                     if (column.key === "unp") return <TableCell key={column.key} className="font-mono text-xs">{company.unp_normalized || "—"}</TableCell>;
                     if (column.key === "kind") return <TableCell key={column.key}>{kindLabels[company.company_kind]}</TableCell>;
                     if (column.key === "contacts") return <TableCell key={column.key}><div className="space-y-1 text-xs text-muted-foreground">{company.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" />{company.email}</div>}{company.phone && <div className="flex items-center gap-1"><Phone className="h-3 w-3" />{company.phone}</div>}{!company.email && !company.phone && "—"}</div></TableCell>;
@@ -787,7 +798,7 @@ export default function AdminCompanies() {
             <Select value={mergeTargetId ?? undefined} onValueChange={setMergeTargetId}>
               <SelectTrigger><SelectValue placeholder="Выберите компанию" /></SelectTrigger>
               <SelectContent>
-                {items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => <SelectItem key={company.id} value={company.id}>{company.full_name} · {company.public_id}</SelectItem>)}
+                {items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => <SelectItem key={company.id} value={company.id}>{normalizeCompanyName(company.full_name)} · {company.public_id}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -884,8 +895,8 @@ function EditCompanyDialog({ company, open, onOpenChange, onSaved }: {
 
   useEffect(() => {
     if (!company) return;
-    setFullName(company.full_name);
-    setShortName(company.short_name ?? "");
+    setFullName(normalizeCompanyName(company.full_name));
+    setShortName(normalizeCompanyName(company.short_name ?? ""));
     setEmail(company.email ?? "");
     setPhone(company.phone ?? "");
   }, [company]);
@@ -895,8 +906,8 @@ function EditCompanyDialog({ company, open, onOpenChange, onSaved }: {
       if (!company) return;
       const { error } = await supabase.rpc("crm_company_update", {
         _id: company.id,
-        _full_name: fullName,
-        _short_name: shortName,
+        _full_name: normalizeCompanyName(fullName),
+        _short_name: normalizeCompanyName(shortName) || null,
         _email: email,
         _phone: phone,
       });
@@ -924,6 +935,51 @@ function EditCompanyDialog({ company, open, onOpenChange, onSaved }: {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function CompanyProfileOverview({ company, onRefreshRegistry, isRefreshing }: { company: any; onRefreshRegistry?: () => void; isRefreshing?: boolean }) {
+  const isEntrepreneur = company.company_kind === "entrepreneur";
+  const addressStructured = company.legal_address_structured as CanonicalAddressPayload | null;
+  const addressLines = formatStructuredAddressForView(addressStructured, company.legal_address);
+  const registryRows = [
+    ["Дата регистрации", company.grp_registration_date],
+    ["Статус", company.grp_status_name],
+    ["ИМНС", company.grp_tax_office_name],
+    ["Код ИМНС", company.grp_tax_office_code],
+    ["Краткое название", company.grp_short_name],
+    ["Ликвидация", company.grp_liquidation_date],
+  ].filter(([, value]) => value);
+
+  return (
+    <div className="space-y-4 px-1 pb-6">
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Info className="h-4 w-4" />Основная информация</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <InfoRow label={isEntrepreneur ? "ФИО" : "Полное наименование"} value={normalizeCompanyName(company.full_name)} />
+          {!isEntrepreneur && <><Separator /><InfoRow label="Орг. форма" value={company.legal_form || inferCompanyLegalForm(company.full_name)} /></>}
+          <Separator /><InfoRow label="УНП" value={company.unp_normalized} copyable mono />
+          {company.acts_on_basis && <><Separator /><InfoRow label="Действует на основании" value={company.acts_on_basis} /></>}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2"><div className="flex items-center justify-between gap-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><ClipboardList className="h-4 w-4" />Данные реестра</CardTitle>{company.unp_normalized && onRefreshRegistry && <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" disabled={isRefreshing} onClick={onRefreshRegistry}>{isRefreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}Обновить из реестра</Button>}</div></CardHeader>
+        <CardContent className="space-y-3">
+          {registryRows.length === 0 ? <p className="text-sm text-muted-foreground">{company.unp_normalized ? "Данные реестра ещё не загружены" : "Нет УНП для поиска"}</p> : registryRows.map(([label, value], index) => <div key={label as string}>{index > 0 && <Separator />}{label === "Статус" ? <div className="flex items-center justify-between gap-2"><span className="shrink-0 text-sm text-muted-foreground">Статус</span><GrpStatusBadge status={String(value)} /></div> : <InfoRow label={label as string} value={String(value)} mono={label === "Код ИМНС"} />}</div>)}
+          {company.grp_liquidation_reason && <><Separator /><InfoRow label="Причина ликвидации" value={company.grp_liquidation_reason} /></>}
+          {company.grp_last_fetched_at && <><Separator /><InfoRow label="Обновлено" value={format(new Date(company.grp_last_fetched_at), "dd MMM yyyy HH:mm", { locale: ru })} /></>}
+        </CardContent>
+      </Card>
+
+      {addressLines.length > 0 && <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><MapPin className="h-4 w-4" />Адрес</CardTitle></CardHeader><CardContent><div className="flex items-start justify-between gap-2"><span className="shrink-0 text-sm text-muted-foreground">Юридический адрес</span><div className="text-right text-sm">{addressLines.map((line, index) => <div key={index}>{line}</div>)}</div></div></CardContent></Card>}
+
+      {!isEntrepreneur && (company.director_name || company.director_position) && <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Briefcase className="h-4 w-4" />Руководитель</CardTitle></CardHeader><CardContent className="space-y-3">{company.director_position && <InfoRow label="Должность" value={company.director_position} />}{company.director_position && company.director_name && <Separator />}{company.director_name && <InfoRow label="ФИО" value={company.director_name} />}</CardContent></Card>}
+
+      {(company.bank_account || company.bank_name || company.bank_code) && <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Landmark className="h-4 w-4" />Банковские реквизиты</CardTitle></CardHeader><CardContent className="space-y-3"><InfoRow label="Расчётный счёт" value={company.bank_account} copyable mono />{company.bank_name && <><Separator /><InfoRow label="Банк" value={company.bank_name} /></>}{company.bank_code && <><Separator /><InfoRow label="Код банка" value={company.bank_code} copyable mono /></>}</CardContent></Card>}
+
+      <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Info className="h-4 w-4" />Служебная информация</CardTitle></CardHeader><CardContent className="space-y-3"><InfoRow label="Источник" value={company.metadata?.created_source || (company.metadata?.google_sheet_import ? "Импорт таблицы" : "CRM")} /><Separator /><InfoRow label="Дата создания" value={format(new Date(company.created_at), "dd MMM yyyy HH:mm", { locale: ru })} /><Separator /><InfoRow label="ID" value={company.id} copyable mono /></CardContent></Card>
+    </div>
   );
 }
 
@@ -1200,17 +1256,37 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
     communication_style: selectedLinkedProfile.communication_style ?? null,
   } : null;
   const [composeEmailOpen, setComposeEmailOpen] = useState(false);
-  const detailRows = company ? [
-    ["УНП", company.unp_normalized],
-    ["Страна", company.country],
-    ["Тип", kindLabels[company.company_kind]],
-    ["Орг. форма", company.legal_form],
-    ["Юридический адрес", company.legal_address],
-    ["Руководитель", [company.director_name, company.director_position].filter(Boolean).join(", ") || null],
-    ["Основание", company.acts_on_basis],
-    ["Банк", [company.bank_name, company.bank_code, company.bank_account].filter(Boolean).join(" · ") || null],
-  ] : [];
-
+  const refreshRegistry = useMutation({
+    mutationFn: async () => {
+      if (!company?.unp_normalized) throw new Error("У компании нет УНП для поиска");
+      const { data, error } = await supabase.functions.invoke("grp-lookup", { body: { unp: company.unp_normalized } });
+      if (error) throw error;
+      const result = GrpLookupAdapter.mapResponse(data);
+      if (!result.found || !result.data) throw new Error(result.message || "Плательщик не найден в реестре МНС");
+      const d = result.data;
+      const { error: updateError } = await supabase.rpc("crm_company_registry_refresh", {
+        _id: company.id,
+        _full_name: normalizeCompanyName(d.full_name),
+        _short_name: d.short_name,
+        _legal_form: inferCompanyLegalForm(d.full_name),
+        _legal_address: d.legal_address,
+        _grp_status_code: d.status_code,
+        _grp_status_name: d.status_name,
+        _grp_registration_date: d.registration_date,
+        _grp_tax_office_code: d.tax_office_code,
+        _grp_tax_office_name: d.tax_office_name,
+        _grp_liquidation_date: d.liquidation_date,
+        _grp_liquidation_reason: d.liquidation_reason,
+      });
+      if (updateError) throw updateError;
+    },
+    onSuccess: () => {
+      toast.success("Данные компании обновлены из реестра");
+      detailQuery.refetch();
+      queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Не удалось обновить данные из реестра"),
+  });
   return (
     <Sheet open={!!companyId} onOpenChange={(open) => { if (!open) onClose(); }}>
       <SheetContent side="right" className={SHEET_SHELL_CLASS}>
@@ -1224,7 +1300,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                   <Building2 className="h-6 w-6" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <SheetTitle className="break-words text-lg font-bold leading-tight sm:text-xl">{company.full_name}</SheetTitle>
+                  <SheetTitle className="break-words text-lg font-bold leading-tight sm:text-xl">{normalizeCompanyName(company.full_name)}</SheetTitle>
                   <SheetDescription className="mt-0.5 break-all text-xs">{company.email || `${company.public_id} · создана ${formatDate(company.created_at)}`}</SheetDescription>
                 </div>
               </div>
@@ -1286,7 +1362,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
                 <TabsContent value="profile" className="mt-0 space-y-4">
-                  <section className="space-y-3"><h3 className="text-sm font-semibold">Реквизиты</h3><div className="divide-y rounded-lg border">{detailRows.map(([label, value]) => <div key={label as string} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 px-3 py-2.5 text-sm"><span className="text-muted-foreground">{label}</span><span className="break-words">{value || "—"}</span></div>)}</div></section>
+                  <CompanyProfileOverview company={company} onRefreshRegistry={() => refreshRegistry.mutate()} isRefreshing={refreshRegistry.isPending} />
                   <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">{company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" />{company.email}</div>}{company.phone && <div className="flex items-center gap-2"><Phone className="h-4 w-4" />{company.phone}</div>}{company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}{!company.email && !company.phone && !company.legal_address && "Контактные данные не заполнены."}</section>
                 </TabsContent>
                 <TabsContent value="contacts" className="mt-0 space-y-3">
@@ -1324,7 +1400,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                   <SmsHistorySection companyId={company.id} bare />
                 </TabsContent>
                 <TabsContent value="email" className="mt-0 space-y-4">
-                  <ContactEmailHistory companyId={company.id} userId={null} email={company.email} clientName={company.full_name} />
+                  <ContactEmailHistory companyId={company.id} userId={null} email={company.email} clientName={normalizeCompanyName(company.full_name)} />
                 </TabsContent>
                 <TabsContent value="feed" className="m-0 flex min-h-0 flex-1 flex-col">
                   <div className="mb-2 flex items-center gap-2 text-sm font-medium"><Activity className="h-4 w-4 text-primary" />Лента компании</div>
@@ -1378,7 +1454,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
             </Tabs>
             <ComposeEmailDialog
               recipientEmail={company.email}
-              recipientName={company.full_name}
+              recipientName={normalizeCompanyName(company.full_name)}
               companyId={company.id}
               open={composeEmailOpen}
               onOpenChange={setComposeEmailOpen}
