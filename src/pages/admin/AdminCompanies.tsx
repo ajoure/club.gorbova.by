@@ -1268,7 +1268,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                   <Building2 className="h-6 w-6" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <SheetTitle className="break-words text-lg font-bold leading-tight sm:text-xl">{company.full_name}</SheetTitle>
+                  <SheetTitle className="break-words text-lg font-bold leading-tight sm:text-xl">{formatCompanyDisplayName(company.full_name) || company.full_name}</SheetTitle>
                   <SheetDescription className="mt-0.5 break-all text-xs">{company.email || `${company.public_id} · создана ${formatDate(company.created_at)}`}</SheetDescription>
                 </div>
               </div>
