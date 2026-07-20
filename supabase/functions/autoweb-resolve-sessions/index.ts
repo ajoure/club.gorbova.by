@@ -85,11 +85,18 @@ Deno.serve(async (req) => {
     if (!event) return jsonRes({ status: 'not_found' }, 404);
     if (!event.is_published) return jsonRes({ status: 'unpublished' }, 403);
 
-    // Phase D-slice-2 gate: replay_enabled=false + event уже завершён →
-    // селектор не отдаёт слоты обычным пользователям (admin сохраняет видимость
-    // через прямой access-path, эта функция публичная и admin-bypass не имеет).
-    // Проверяем `metadata.platform_status` (SoT), т.к. поле не в select — читаем добавочно.
-    // Add-only: без изменения существующего контракта payload.
+    // Phase D gates (D-slice-2 hotfix, invariant после ревизии 86e5e337):
+    //   1. Терминальный статус + replay_enabled=false → 410 ended.
+    //   2. Терминальный статус + replay_enabled=true  → 200 replay
+    //      (доступ к завершённой записи НЕ блокируется launches_end_at).
+    //   3. Не-терминальный + launches_end_at в прошлом → 410 launches_closed
+    //      (запрет на создание НОВОЙ personal session/новый вход; уже активные
+    //       сессии продолжают жить через autoweb-room-state и не проходят сюда).
+    // Каноническая последовательность важна: replay path ДОЛЖЕН быть раньше
+    // launches_end_at gate, иначе завершённая запись с replay_enabled=true
+    // ошибочно закроется по дедлайну (см. ревизию commit 86e5e337).
+    let isTerminal = false;
+    let replayEnabled = Boolean(event.replay_enabled);
     try {
       const { data: ev2 } = await supabase
         .from('live_events')
@@ -98,22 +105,30 @@ Deno.serve(async (req) => {
         .maybeSingle();
       const ps = (ev2 as any)?.platform_status ?? null;
       const st = (ev2 as any)?.status ?? null;
-      const replay = Boolean((ev2 as any)?.replay_enabled ?? event.replay_enabled);
-      const isTerminal = ps === 'ended' || ps === 'archived' || st === 'ended';
-      if (isTerminal && !replay) {
-        return jsonRes({
-          status: 'ended',
-          reason: 'replay_disabled',
-          replay_enabled: false,
-        }, 410);
-      }
+      replayEnabled = Boolean((ev2 as any)?.replay_enabled ?? event.replay_enabled);
+      isTerminal = ps === 'ended' || ps === 'archived' || st === 'ended';
     } catch (e) {
-      console.warn('[autoweb-resolve-sessions] terminal gate check failed:', e);
+      console.warn('[autoweb-resolve-sessions] terminal probe failed:', e);
     }
 
-    // Phase D gate: launches_end_at (мягкий дедлайн). После него — селектор ничего не отдаёт
-    // (уже активные сессии завершатся своим порядком, gate только на НОВЫЕ входы).
-    // NULL = дедлайна нет.
+    if (isTerminal && !replayEnabled) {
+      return jsonRes({
+        status: 'ended',
+        reason: 'replay_disabled',
+        replay_enabled: false,
+      }, 410);
+    }
+
+    if (isTerminal && replayEnabled) {
+      // Завершённая запись доступна вне зависимости от launches_end_at.
+      return jsonRes({
+        status: 'replay',
+        replay_enabled: true,
+        launches_end_at: event.launches_end_at ?? null,
+      });
+    }
+
+    // Не-терминальное событие: launches_end_at запрещает только НОВЫЕ входы.
     if (event.launches_end_at) {
       const deadline = new Date(event.launches_end_at as string).getTime();
       if (Date.now() >= deadline) {
@@ -121,9 +136,11 @@ Deno.serve(async (req) => {
           status: 'launches_closed',
           reason: 'launches_end_at_passed',
           launches_end_at: event.launches_end_at,
+          note: 'active_sessions_unaffected',
         }, 410);
       }
     }
+
 
 
     const cfg = (event.autoweb_config ?? {}) as Record<string, any>;
