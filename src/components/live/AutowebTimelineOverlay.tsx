@@ -10,6 +10,7 @@ type ScenarioEntry = {
   offset_seconds: number;
   actor_display_name: string | null;
   content_text: string;
+  metadata: { url?: string };
 };
 
 interface Props {
@@ -25,7 +26,7 @@ export function AutowebTimelineOverlay({ sessionId, liveEventId, playbackSeconds
     enabled,
     staleTime: 30_000,
     queryFn: async () => {
-      const { data, error } = await supabase.rpc("autoweb_scenario_runtime_list", {
+      const { data, error } = await supabase.rpc("autoweb_scenario_runtime_list_v2", {
         _session_id: sessionId,
         _live_event_id: liveEventId,
       });
@@ -51,6 +52,9 @@ export function AutowebTimelineOverlay({ sessionId, liveEventId, playbackSeconds
                 {entry.actor_display_name || (entry.entry_type === "host_message" ? "Ведущий" : "Сообщение из сценария")}
               </div>
               <p className="mt-0.5 whitespace-pre-wrap break-words">{entry.content_text}</p>
+              {entry.entry_type === "cta" && entry.metadata?.url && (
+                <a className="inline-block mt-2 text-xs font-medium text-primary underline" href={entry.metadata.url} target="_blank" rel="noreferrer">Открыть</a>
+              )}
             </div>
           </Card>
         );

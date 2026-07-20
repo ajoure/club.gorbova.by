@@ -23,7 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, Plus, Save, Trash2, Undo2, PlayCircle, Eye, Clock } from "lucide-react";
 import { toast } from "sonner";
 
-type EntryType = "chat" | "question" | "host_message" | "reaction";
+type EntryType = "chat" | "question" | "host_message" | "reaction" | "cta";
 type EntryState = "draft" | "applied" | "archived";
 
 interface Entry {
@@ -34,6 +34,7 @@ interface Entry {
   actor_display_name: string | null;
   actor_avatar_url: string | null;
   content_text: string;
+  cta_url: string;
   visibility_scope: "public" | "private";
   metadata: Record<string, unknown>;
   state: EntryState;
@@ -75,6 +76,7 @@ const TYPE_LABEL: Record<EntryType, string> = {
   question: "Вопрос",
   host_message: "Ведущий",
   reaction: "Реакция",
+  cta: "CTA-кнопка",
 };
 
 export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) {
@@ -101,6 +103,7 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
       offset_seconds: e.offset_seconds,
       actor_display_name: e.actor_display_name ?? "",
       content_text: e.content_text,
+      cta_url: String(e.metadata?.url ?? ""),
       visibility_scope: e.visibility_scope,
     }));
     const withLocal = server.map((r) => rows[r.id!] ?? r);
@@ -125,6 +128,7 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
           offset_seconds: r.offset_seconds,
           actor_display_name: r.actor_display_name || null,
           content_text: r.content_text,
+          metadata: r.entry_type === "cta" && r.cta_url ? { url: r.cta_url } : {},
           visibility_scope: r.visibility_scope,
         }));
       if (payload.length === 0) return { status: "noop" };
@@ -224,6 +228,7 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
         offset_seconds: 60,
         actor_display_name: "",
         content_text: "",
+        cta_url: "",
         visibility_scope: "public",
         _new: true,
       },
@@ -318,6 +323,12 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
                       onChange={(e) => patchRow(key, { content_text: e.target.value })}
                     />
                   </div>
+                  {r.entry_type === "cta" && (
+                    <div className="col-span-11">
+                      <Label className="text-[10px]">URL кнопки</Label>
+                      <Input className="h-7" value={r.cta_url} placeholder="https://…" onChange={(e) => patchRow(key, { cta_url: e.target.value })} />
+                    </div>
+                  )}
                   <div className="col-span-1 flex flex-col items-end gap-1 pt-4">
                     {state && (
                       <Badge variant={state === "applied" ? "default" : "outline"} className="text-[9px] px-1 py-0">
