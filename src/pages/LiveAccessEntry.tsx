@@ -15,8 +15,10 @@ type EntryState =
   | "access_denied"
   | "event_not_found"
   | "event_unpublished"
+  | "replay_disabled"
   | "redirecting"
   | "error";
+
 
 export default function LiveAccessEntry() {
   const { token } = useParams<{ token: string }>();
