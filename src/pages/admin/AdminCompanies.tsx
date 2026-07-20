@@ -8,6 +8,7 @@ import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Building2,
+  FileSpreadsheet,
   Activity,
   ArrowDown,
   ArrowUp,
@@ -51,6 +52,7 @@ import { ComposeEmailDialog } from "@/components/admin/ComposeEmailDialog";
 import { ContactEmailHistory } from "@/components/admin/ContactEmailHistory";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
+import { CompanySheetImportDialog } from "@/components/admin/CompanySheetImportDialog";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { Badge } from "@/components/ui/badge";
@@ -359,6 +361,7 @@ export default function AdminCompanies() {
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
+  const [sheetImportOpen, setSheetImportOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
   const [editCompany, setEditCompany] = useState<CompanyListItem | null>(null);
@@ -557,6 +560,7 @@ export default function AdminCompanies() {
             <RefreshCw className={`mr-2 h-4 w-4 ${companiesQuery.isFetching ? "animate-spin" : ""}`} />
             Обновить
           </Button>
+          {canCreate && <Button variant="outline" size="sm" onClick={() => setSheetImportOpen(true)}><FileSpreadsheet className="mr-2 h-4 w-4" />Импорт таблицы</Button>}
           {canCreate && (
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
@@ -758,6 +762,14 @@ export default function AdminCompanies() {
         onCreated={(companyId) => {
           queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
           selectCompany(companyId);
+        }}
+      />
+      <CompanySheetImportDialog
+        open={sheetImportOpen}
+        onOpenChange={setSheetImportOpen}
+        onComplete={() => {
+          queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
+          setPage(0);
         }}
       />
       {isDragging && selectionBox && <SelectionBox startX={selectionBox.startX} startY={selectionBox.startY} endX={selectionBox.endX} endY={selectionBox.endY} />}
