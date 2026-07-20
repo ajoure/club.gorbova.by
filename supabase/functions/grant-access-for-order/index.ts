@@ -2552,7 +2552,10 @@ async function runGrantEligibilityShadow(params: {
 
     const paymentsQ = supabase
       .from('payments_v2')
-      .select('id, provider, provider_payment_id, transaction_type, status, amount, currency, refunded_amount, meta, deleted_at, order_id, parent_payment_id')
+      // parent_payment_id is stored in meta for refund rows; payments_v2 has no
+      // standalone column. Keep this read schema-aligned so the non-blocking
+      // eligibility shadow cannot fail the request with a missing-column error.
+      .select('id, provider, provider_payment_id, transaction_type, status, amount, currency, refunded_amount, meta, deleted_at, order_id')
       .eq('order_id', orderId);
 
     const entitlementQ = (shadowUserId && shadowProductId)
