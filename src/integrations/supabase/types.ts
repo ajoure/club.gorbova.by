@@ -3968,6 +3968,50 @@ export type Database = {
           },
         ]
       }
+      company_notes: {
+        Row: {
+          author_id: string
+          body: string
+          company_id: string
+          created_at: string
+          id: string
+          metadata: Json
+          source: string
+          source_key: string | null
+          updated_at: string
+        }
+        Insert: {
+          author_id: string
+          body: string
+          company_id: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          source?: string
+          source_key?: string | null
+          updated_at?: string
+        }
+        Update: {
+          author_id?: string
+          body?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          source?: string
+          source_key?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_notes_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       company_sync_queue: {
         Row: {
           attempts: number
@@ -19185,6 +19229,17 @@ export type Database = {
         }
         Returns: Json
       }
+      company_note_create: {
+        Args: {
+          _body: string
+          _company_id: string
+          _metadata?: Json
+          _source?: string
+          _source_key?: string
+        }
+        Returns: string
+      }
+      company_note_delete: { Args: { _note_id: string }; Returns: boolean }
       crm_company_external_ids_list: { Args: { _company_id: string }; Returns: Json }
           crm_company_external_id_upsert: {
         Args: {

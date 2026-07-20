@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -973,6 +974,26 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
       return (Array.isArray(data) ? data : []) as unknown as CompanyCommunication[];
     },
   });
+  const [noteBody, setNoteBody] = useState("");
+  const createCompanyNote = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.rpc("company_note_create", {
+        _company_id: companyId!,
+        _body: noteBody,
+        _source: "manual",
+        _source_key: null,
+        _metadata: {},
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setNoteBody("");
+      toast.success("Заметка добавлена");
+      queryClient.invalidateQueries({ queryKey: ["admin-company-communications", companyId] });
+      queryClient.invalidateQueries({ queryKey: ["admin-company-activity", companyId] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Не удалось добавить заметку"),
+  });
 
   const externalIdsQuery = useQuery({
     queryKey: ["admin-company-external-ids", companyId],
@@ -1097,7 +1118,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                 <TabsTrigger value="tasks">Задачи</TabsTrigger>
                 <TabsTrigger value="activity">Активность</TabsTrigger>
                 <TabsTrigger value="documents">Документы</TabsTrigger>
-                <TabsTrigger value="communications">Коммуникации</TabsTrigger>
+                <TabsTrigger value="communications">Лента</TabsTrigger>
                 <TabsTrigger value="history">История</TabsTrigger>
                 <TabsTrigger value="integrations">Интеграции</TabsTrigger>
                 <TabsTrigger value="system">Система</TabsTrigger>
@@ -1142,6 +1163,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                   {[...(documentsQuery.data ?? []), ...(aiDocumentsQuery.data ?? [])].map((document) => <div key={`${document.source}-${document.id}`} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{document.document_number}</span><div className="flex gap-1"><Badge variant="outline">{document.status}</Badge>{document.source === "ai" && <Badge variant="secondary">AI</Badge>}</div></div><div className="mt-1 text-xs text-muted-foreground">{document.document_type} · {formatDate(document.document_date)} · заказ {ordersById.get(document.order_id)?.order_number ?? document.order_id}</div>{document.file_url && <a className="mt-2 inline-block text-xs text-primary underline-offset-4 hover:underline" href={document.file_url} target="_blank" rel="noreferrer">Открыть файл</a>}</div>)}
                 </TabsContent>
                 <TabsContent value="communications" className="mt-0 space-y-2">
+                  {canEdit && <form className="space-y-2 rounded-lg border bg-muted/30 p-3" onSubmit={(event) => { event.preventDefault(); if (noteBody.trim()) createCompanyNote.mutate(); }}><div className="text-sm font-medium">Добавить заметку</div><Textarea value={noteBody} onChange={(event) => setNoteBody(event.target.value)} placeholder="Напишите заметку по компании…" rows={3} /><div className="flex justify-end"><Button type="submit" size="sm" disabled={createCompanyNote.isPending || !noteBody.trim()}>{createCompanyNote.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Добавить заметку</Button></div></form>}
                   {communicationsQuery.isLoading && <Skeleton className="h-16 w-full" />}
                   {communicationsQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Коммуникационная лента временно недоступна.</div>}
                   {!communicationsQuery.isLoading && !communicationsQuery.isError && communicationsQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Коммуникаций по компании пока нет.</div>}
