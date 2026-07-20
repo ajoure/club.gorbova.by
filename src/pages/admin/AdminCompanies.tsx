@@ -223,6 +223,20 @@ interface CompanyContactPerson {
   updated_at: string;
 }
 
+interface CompanyRelationship {
+  id: string;
+  direction: "incoming" | "outgoing";
+  from_company_id: string;
+  to_company_id: string;
+  related_company_id: string;
+  relationship_type: string;
+  valid_from: string;
+  valid_to: string | null;
+  is_current: boolean;
+  source: string;
+  updated_at: string;
+}
+
 interface ProfileSummary {
   id: string;
   full_name: string | null;
@@ -258,6 +272,16 @@ const contactPersonRoleLabels: Record<string, string> = {
   employee: "Сотрудник",
   billing_contact: "Billing-контакт",
   contract_signatory: "Подписант",
+};
+
+const companyRelationshipLabels: Record<string, string> = {
+  parent: "Материнская",
+  subsidiary: "Дочерняя",
+  branch: "Филиал",
+  representative_office: "Представительство",
+  group_member: "Участник группы",
+  franchisee: "Франчайзи",
+  partner: "Партнёр",
 };
 
 const statusLabels: Record<CompanyStatus, string> = {
@@ -1013,6 +1037,26 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
       return (Array.isArray(data) ? data : []) as unknown as CompanyContactPerson[];
     },
   });
+  const relationshipsQuery = useQuery({
+    queryKey: ["admin-company-relationships", companyId],
+    enabled: !!companyId,
+    queryFn: async (): Promise<CompanyRelationship[]> => {
+      const { data, error } = await supabase.rpc("crm_company_relationships_list", { _company_id: companyId!, _include_history: false });
+      if (error) throw error;
+      return (Array.isArray(data) ? data : []) as unknown as CompanyRelationship[];
+    },
+  });
+  const relatedCompanyIds = useMemo(() => Array.from(new Set((relationshipsQuery.data ?? []).map((relationship) => relationship.related_company_id))), [relationshipsQuery.data]);
+  const relatedCompaniesQuery = useQuery({
+    queryKey: ["admin-company-related-companies", relatedCompanyIds],
+    enabled: relatedCompanyIds.length > 0,
+    queryFn: async (): Promise<CompanyListItem[]> => {
+      const { data, error } = await supabase.from("companies").select("id, public_id, full_name, short_name, unp_normalized, country, company_kind, status, email, phone, created_at").in("id", relatedCompanyIds);
+      if (error) throw error;
+      return (data ?? []) as CompanyListItem[];
+    },
+  });
+  const relatedCompaniesById = useMemo(() => new Map((relatedCompaniesQuery.data ?? []).map((related) => [related.id, related])), [relatedCompaniesQuery.data]);
   const [personFullName, setPersonFullName] = useState("");
   const [personTitle, setPersonTitle] = useState("");
   const [personEmail, setPersonEmail] = useState("");
@@ -1114,6 +1158,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                 <TabsTrigger value="overview">Обзор</TabsTrigger>
                 <TabsTrigger value="contacts">Контакты</TabsTrigger>
                 <TabsTrigger value="persons">Персоны</TabsTrigger>
+                <TabsTrigger value="structure">Структура</TabsTrigger>
                 <TabsTrigger value="deals">Сделки</TabsTrigger>
                 <TabsTrigger value="tasks">Задачи</TabsTrigger>
                 <TabsTrigger value="activity">Активность</TabsTrigger>
@@ -1140,6 +1185,13 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                   {!contactPersonsQuery.isLoading && !contactPersonsQuery.isError && contactPersonsQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">Внешние контактные лица ещё не добавлены.</div>}
                   {(contactPersonsQuery.data ?? []).map((person) => <div key={person.link_id} className="rounded-lg border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><UserRound className="h-4 w-4 text-muted-foreground" /><span className="font-medium">{person.full_name}</span><Badge variant="outline">{contactPersonRoleLabels[person.role] || person.role}</Badge>{person.profile_id ? <Badge variant="secondary">Профиль подтверждён</Badge> : <Badge variant="secondary">Внешняя персона</Badge>}</div>{person.job_title && <div className="mt-1 text-xs text-muted-foreground">{person.job_title}</div>}{(person.email || person.phone) && <div className="mt-1 text-xs text-muted-foreground">{[person.email, person.phone].filter(Boolean).join(" · ")}</div>}</div><span className="shrink-0 text-xs text-muted-foreground">с {formatDate(person.valid_from)}</span></div></div>)}
                   {canEdit && <form className="space-y-2 rounded-lg border bg-muted/30 p-3" onSubmit={(event) => { event.preventDefault(); if (personFullName.trim()) upsertContactPerson.mutate(); }}><div className="text-sm font-medium">Добавить контактное лицо</div><div className="grid gap-2 sm:grid-cols-2"><Input value={personFullName} onChange={(event) => setPersonFullName(event.target.value)} placeholder="Имя и фамилия" /><Input value={personTitle} onChange={(event) => setPersonTitle(event.target.value)} placeholder="Должность (необязательно)" /><Input value={personEmail} onChange={(event) => setPersonEmail(event.target.value)} placeholder="Email (необязательно)" /><Input value={personPhone} onChange={(event) => setPersonPhone(event.target.value)} placeholder="Телефон (необязательно)" /></div><div className="flex gap-2"><Select value={personRole} onValueChange={setPersonRole}><SelectTrigger className="flex-1"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(contactPersonRoleLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Button type="submit" size="sm" disabled={upsertContactPerson.isPending || !personFullName.trim()}>{upsertContactPerson.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Сохранить</Button></div></form>}
+                </TabsContent>
+                <TabsContent value="structure" className="mt-0 space-y-3">
+                  <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">Связи хранятся отдельно от карточки компании, с типом, сроком действия, источником и защитой от циклов.</div>
+                  {relationshipsQuery.isLoading && <Skeleton className="h-16 w-full" />}
+                  {relationshipsQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Структура компании временно недоступна.</div>}
+                  {!relationshipsQuery.isLoading && !relationshipsQuery.isError && relationshipsQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">Связанные компании ещё не добавлены.</div>}
+                  {(relationshipsQuery.data ?? []).map((relationship) => { const related = relatedCompaniesById.get(relationship.related_company_id); return <div key={relationship.id} className="rounded-lg border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="font-medium">{related?.full_name ?? "Компания недоступна"}</div><div className="mt-1 text-xs text-muted-foreground">{related?.public_id ?? relationship.related_company_id}</div></div><Badge variant="outline">{companyRelationshipLabels[relationship.relationship_type] || relationship.relationship_type}</Badge></div><div className="mt-2 text-xs text-muted-foreground">{relationship.direction === "incoming" ? "Входящая связь" : "Исходящая связь"} · с {formatDate(relationship.valid_from)}{relationship.valid_to ? ` по ${formatDate(relationship.valid_to)}` : " · действует"} · {relationship.source}</div></div>; })}
                 </TabsContent>
                 <TabsContent value="deals" className="mt-0 space-y-2">
                   {orderLinksQuery.isLoading && <Skeleton className="h-16 w-full" />}
