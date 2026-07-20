@@ -28,12 +28,15 @@
 
 ## Company phone contract
 
-`companies.phone` is the callable company contact, not a display-only note. The
-phone boundary removes spreadsheet formula prefixes and common Belarusian local
-formats before storing the value; UI reads use the same normalization as a
-backward-compatible fallback. The company list exposes a `tel:` link, while the
-company card must route VOCHI calls and SMS through the existing actions with
-`company_id`, so communication history remains attached to the company.
+`companies.phone` is the callable primary company contact, not a display-only
+note. The phone boundary removes spreadsheet formula prefixes and common
+Belarusian local formats before storing the value; UI reads use the same
+normalization as a backward-compatible fallback. Additional imported numbers
+remain in `metadata.google_sheet_import.phones[]` and are exposed in the
+company card as the same callable `tel:`/Call/SMS actions. The company list
+exposes the primary `tel:` link, while the company card routes every number
+through the existing actions with `company_id`, so communication history remains
+attached to the company.
 
 ## Stop conditions
 
