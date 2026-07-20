@@ -72,7 +72,6 @@ import { copyToClipboard, getCompanyUrl } from "@/utils/clipboardUtils";
 import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
 import { CompanySheetImportDialog } from "@/components/admin/CompanySheetImportDialog";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
-import { copyToClipboard, getCompanyUrl } from "@/utils/clipboardUtils";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
