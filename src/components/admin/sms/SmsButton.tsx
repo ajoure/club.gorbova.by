@@ -24,6 +24,7 @@ import { supabase } from "@/integrations/supabase/client";
 interface Props {
   phone: string | null | undefined;
   contactId?: string;
+  companyId?: string;
   dealId?: string;
   size?: "sm" | "default";
   variant?: "default" | "outline" | "secondary";
@@ -52,6 +53,7 @@ const SMS_SEGMENT = 70; // Cyrillic UCS-2 — 70 символов в одном 
 export function SmsButton({
   phone,
   contactId,
+  companyId,
   dealId,
   size = "sm",
   variant = "outline",
@@ -74,7 +76,7 @@ export function SmsButton({
     setBusy(true);
     try {
       const { data, error } = await supabase.functions.invoke("websms-send", {
-        body: { phone, text: trimmed, contact_id: contactId, deal_id: dealId },
+        body: { phone, text: trimmed, contact_id: contactId, company_id: companyId, deal_id: dealId },
       });
       if (error) {
         let code: string | undefined = (data as any)?.error;
@@ -101,7 +103,7 @@ export function SmsButton({
       toast.success("SMS отправлено");
       setText("");
       setOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["sms-history", { contactId, dealId }] });
+      queryClient.invalidateQueries({ queryKey: ["sms-history", { contactId, companyId, dealId }] });
       queryClient.invalidateQueries({ queryKey: ["sms-history"] });
     } catch (e: any) {
       toast.error(e?.message ?? "Не удалось отправить SMS");

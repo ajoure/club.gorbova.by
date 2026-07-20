@@ -97,7 +97,7 @@ function guessFileKind(mime?: string | null, name?: string | null): "image" | "p
 
 // ---------------------- Sub-components ---------------------------------------
 
-function CallCard({ evt, contactId }: { evt: FeedEvent; contactId: string }) {
+function CallCard({ evt, entityId }: { evt: FeedEvent; entityId: string }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const duration = Number(evt.meta?.duration || 0);
@@ -115,7 +115,7 @@ function CallCard({ evt, contactId }: { evt: FeedEvent; contactId: string }) {
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       toast.success("Расшифровка готова");
-      qc.invalidateQueries({ queryKey: ["contact_feed", contactId] });
+      qc.invalidateQueries({ queryKey: ["contact_feed", entityId] });
     } catch (e: any) {
       toast.error(e?.message || "Ошибка расшифровки");
     } finally {
@@ -178,7 +178,7 @@ async function forceDownload(url: string, name: string) {
  * AI-расшифровкой (авто-запуск при отсутствии), сводкой, кнопкой отправки
  * в support-Telegram. Никакого нативного <audio controls> с серым меню.
  */
-function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string }) {
+function VoiceNoteBubble({ evt, entityId }: { evt: FeedEvent; entityId: string }) {
   const qc = useQueryClient();
   const path = evt.meta?.storage_path as string | undefined;
   const name = (evt.title || evt.meta?.name || `voice_${evt.id}.webm`) as string;
@@ -233,7 +233,7 @@ function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string
         setShowTranscript(true);
         toast.success(data?.cached ? "Расшифровка уже готова" : "Расшифровка готова");
       }
-      qc.invalidateQueries({ queryKey: ["contact_feed", contactId] });
+      qc.invalidateQueries({ queryKey: ["contact_feed", entityId] });
     } catch (e: any) {
       toast.error(await normalizeEdgeFunctionErrorAsync(e));
     } finally {
@@ -1008,10 +1008,10 @@ export function ContactFeedTab({
                     </div>
 
                     {evt.kind === "call" ? (
-                      <div className="mt-2"><CallCard evt={evt} contactId={entityId} /></div>
+                      <div className="mt-2"><CallCard evt={evt} entityId={entityId} /></div>
                     ) : evt.kind === "voice_note" ? (
                       <div className="mt-2">
-                        <VoiceNoteBubble evt={evt} contactId={entityId} />
+                        <VoiceNoteBubble evt={evt} entityId={entityId} />
                       </div>
                     ) : evt.kind === "note" ? (
                       <div className="mt-1 text-sm whitespace-pre-wrap break-words">{evt.body}</div>

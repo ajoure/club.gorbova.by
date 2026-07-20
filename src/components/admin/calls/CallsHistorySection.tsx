@@ -40,6 +40,7 @@ interface CallRow {
 
 interface Props {
   contactId?: string;
+  companyId?: string;
   dealId?: string;
   /** Без обёртки в Card (для встраивания во вкладку) */
   bare?: boolean;
@@ -80,7 +81,7 @@ function DirectionIcon({ direction, status }: { direction: string; status: strin
   return <Phone className="h-4 w-4 text-muted-foreground" />;
 }
 
-export function CallsHistorySection({ contactId, dealId, bare = false }: Props) {
+export function CallsHistorySection({ contactId, companyId, dealId, bare = false }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [processingId, setProcessingId] = useState<string | null>(null);
 
@@ -94,7 +95,7 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
       if (data?.error) throw new Error(data.error);
       toast.success("Расшифровка готова");
       setExpanded((s) => ({ ...s, [callId]: true }));
-      queryClient.invalidateQueries({ queryKey: ["calls-history", { contactId, dealId }] });
+      queryClient.invalidateQueries({ queryKey: ["calls-history", { contactId, companyId, dealId }] });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Ошибка расшифровки";
       toast.error(msg);
@@ -103,7 +104,7 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
     }
   }
 
-  const enabled = Boolean(contactId || dealId);
+  const enabled = Boolean(contactId || companyId || dealId);
   const queryClient = useQueryClient();
 
   // Phase 3 — Realtime: подписка на INSERT/UPDATE по этому контакту/сделке.
@@ -111,15 +112,17 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
     if (!enabled) return;
     const filter = contactId
       ? `contact_id=eq.${contactId}`
-      : `deal_id=eq.${dealId}`;
+      : companyId
+        ? `company_id=eq.${companyId}`
+        : `deal_id=eq.${dealId}`;
     const channel = supabase
-      .channel(`calls-${contactId ?? dealId}`)
+      .channel(`calls-${contactId ?? companyId ?? dealId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "calls", filter },
         () => {
           queryClient.invalidateQueries({
-            queryKey: ["calls-history", { contactId, dealId }],
+            queryKey: ["calls-history", { contactId, companyId, dealId }],
           });
         },
       )
@@ -127,11 +130,11 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [enabled, contactId, dealId, queryClient]);
+  }, [enabled, contactId, companyId, dealId, queryClient]);
 
 
   const { data, isLoading } = useQuery({
-    queryKey: ["calls-history", { contactId, dealId }],
+    queryKey: ["calls-history", { contactId, companyId, dealId }],
     enabled,
     queryFn: async (): Promise<CallRow[]> => {
       let q = supabase
@@ -142,6 +145,7 @@ export function CallsHistorySection({ contactId, dealId, bare = false }: Props) 
         .order("started_at", { ascending: false, nullsFirst: false })
         .limit(100);
       if (contactId) q = q.eq("contact_id", contactId);
+      else if (companyId) q = (q as any).eq("company_id", companyId);
       if (dealId) q = q.eq("deal_id", dealId);
       const { data, error } = await q;
       if (error) throw error;
