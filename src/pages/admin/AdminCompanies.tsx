@@ -201,7 +201,7 @@ interface CompanyListContact {
 
 interface CompanyListPersonLink {
   company_id: string;
-  person: { full_name: string | null } | null;
+  person: { full_name: string | null } | Array<{ full_name: string | null }> | null;
   is_current: boolean;
   valid_from: string;
 }
@@ -322,6 +322,18 @@ function getImportedCompanyPhones(company: { phone?: string | null; country?: st
       .map((value) => typeof value === "string" ? normalizeCompanyPhone(value, company.country ?? "BY") : null)
       .filter((value): value is string => Boolean(value)),
   ));
+}
+
+function getLinkedPersonName(person: CompanyListPersonLink["person"]): string | null {
+  if (Array.isArray(person)) return person.find((item) => item.full_name?.trim())?.full_name ?? null;
+  return person?.full_name ?? null;
+}
+
+function isLikelyContactName(value: string | null | undefined): value is string {
+  const name = value?.trim();
+  if (!name || /@/.test(name) || /^(?:tel|mailto):/i.test(name)) return false;
+  const compact = name.replace(/[\s().+\-]/g, "");
+  return !(compact.length >= 7 && /^\d+$/.test(compact));
 }
 
 const PAGE_SIZE = 25;
@@ -545,12 +557,12 @@ export default function AdminCompanies() {
       }
       const result: Record<string, string[]> = {};
       const addName = (companyId: string, rawName: string | null | undefined) => {
-        const name = rawName?.trim();
-        if (!name) return;
+        if (!isLikelyContactName(rawName)) return;
+        const name = rawName.trim();
         const names = result[companyId] ?? [];
         if (!names.includes(name)) result[companyId] = [...names, name];
       };
-      for (const row of registryRows) addName(row.company_id, row.person?.full_name);
+      for (const row of registryRows) addName(row.company_id, getLinkedPersonName(row.person));
       for (const row of rows) addName(row.company_id, (row.profile_id ? profilesById.get(row.profile_id) : null) || row.external_full_name);
       return result;
     },
