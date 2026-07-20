@@ -19862,6 +19862,10 @@ export type Database = {
         Args: { _source_id: string; _target_id: string }
         Returns: string
       }
+      crm_company_parse_callback_at: {
+        Args: { _value: string }
+        Returns: string
+      }
       crm_company_quality_summary: { Args: never; Returns: Json }
       crm_company_relationship_upsert: {
         Args: {
