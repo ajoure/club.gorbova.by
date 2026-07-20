@@ -188,7 +188,7 @@ export default function AdminCompanies() {
   const resetPage = () => setPage(0);
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col gap-4 py-4 md:py-6">
+    <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto overflow-x-hidden overscroll-y-contain py-4 md:py-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -249,8 +249,8 @@ export default function AdminCompanies() {
           <span>{companiesQuery.isLoading ? "Загрузка…" : `Найдено: ${total}`}</span>
           <span>Кликните по строке, чтобы открыть карточку</span>
         </div>
-        <div className="overflow-x-auto">
-          <Table>
+        <div className="table-scroll-x" data-table-scroll-x="true">
+          <Table className="min-w-[760px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Компания</TableHead>
