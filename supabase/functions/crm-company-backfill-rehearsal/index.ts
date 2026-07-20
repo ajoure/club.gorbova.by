@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  const expected = Deno.env.get('PHASE3B_REHEARSAL_TOKEN');
+  const expected = Deno.env.get('PHASE3B_REHEARSAL_TOKEN_INLINE');
   const provided = req.headers.get('x-phase3b-token');
   if (!expected || !provided || provided !== expected) {
     return new Response(JSON.stringify({ error: 'forbidden' }), {
