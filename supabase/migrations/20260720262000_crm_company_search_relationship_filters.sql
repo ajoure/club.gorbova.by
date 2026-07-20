@@ -55,7 +55,7 @@ BEGIN
 
   v_sql := format($f$
     WITH base AS (
-      SELECT c.id, c.public_id, c.full_name, c.short_name, c.unp_normalized,
+      SELECT c.id, c.public_id, c.full_name, c.short_name, c.legal_form, c.unp_normalized,
              c.country, c.company_kind, c.status, c.email, c.phone, c.created_at
         FROM public.companies c
        WHERE ($1 OR c.status <> 'merged')

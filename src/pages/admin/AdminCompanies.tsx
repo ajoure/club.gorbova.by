@@ -124,6 +124,7 @@ interface CompanyListItem {
   public_id: string;
   full_name: string;
   short_name: string | null;
+  legal_form: string | null;
   unp_normalized: string | null;
   country: string;
   company_kind: CompanyKind;
@@ -304,6 +305,8 @@ const kindLabels: Record<CompanyKind, string> = {
   foreign: "Иностранная",
   unknown: "Не определён",
 };
+
+const COMPANY_LEGAL_FORMS = ["ООО", "ОДО", "ЗАО", "ОАО", "СООО", "ИООО", "УП", "ЧУП", "КУП", "РУП", "ТУП", "ПК", "ГП"];
 
 const contactPersonRoleLabels: Record<string, string> = {
   director: "Директор",
@@ -910,6 +913,7 @@ function EditCompanyDialog({ company, open, onOpenChange, onSaved }: {
 }) {
   const [fullName, setFullName] = useState("");
   const [shortName, setShortName] = useState("");
+  const [legalForm, setLegalForm] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
 
@@ -917,6 +921,7 @@ function EditCompanyDialog({ company, open, onOpenChange, onSaved }: {
     if (!company) return;
     setFullName(normalizeCompanyName(company.full_name));
     setShortName(normalizeCompanyName(company.short_name ?? ""));
+    setLegalForm(company.legal_form || inferCompanyLegalForm(company.full_name) || "");
     setEmail(company.email ?? "");
     setPhone(company.phone ?? "");
   }, [company]);
@@ -930,6 +935,7 @@ function EditCompanyDialog({ company, open, onOpenChange, onSaved }: {
         _short_name: normalizeCompanyName(shortName) || null,
         _email: email,
         _phone: phone,
+        _legal_form: legalForm || null,
       });
       if (error) throw error;
     },
@@ -945,6 +951,7 @@ function EditCompanyDialog({ company, open, onOpenChange, onSaved }: {
           <div className="grid gap-4 py-5">
             <label className="grid gap-2 text-sm font-medium">Полное название<Input value={fullName} onChange={(event) => setFullName(event.target.value)} /></label>
             <label className="grid gap-2 text-sm font-medium">Короткое название<Input value={shortName} onChange={(event) => setShortName(event.target.value)} /></label>
+            {company?.company_kind !== "entrepreneur" && <label className="grid gap-2 text-sm font-medium">Организационная форма<Select value={legalForm || "none"} onValueChange={(value) => setLegalForm(value === "none" ? "" : value)}><SelectTrigger><SelectValue placeholder="Выберите ОПФ" /></SelectTrigger><SelectContent><SelectItem value="none">Не указана</SelectItem>{COMPANY_LEGAL_FORMS.map((form) => <SelectItem key={form} value={form}>{form}</SelectItem>)}</SelectContent></Select></label>}
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="grid gap-2 text-sm font-medium">Email<Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" /></label>
               <label className="grid gap-2 text-sm font-medium">Телефон<Input value={phone} onChange={(event) => setPhone(event.target.value)} /></label>
