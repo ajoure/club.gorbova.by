@@ -4012,6 +4012,130 @@ export type Database = {
           },
         ]
       }
+      company_import_batches: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          applied_rows: number
+          conflict_rows: number
+          created_at: string
+          created_by: string
+          cursor_position: number
+          error_rows: number
+          id: string
+          metadata: Json
+          rows: Json
+          skipped_rows: number
+          source: string
+          source_reference: string
+          status: string
+          total_rows: number
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          applied_rows?: number
+          conflict_rows?: number
+          created_at?: string
+          created_by: string
+          cursor_position?: number
+          error_rows?: number
+          id?: string
+          metadata?: Json
+          rows: Json
+          skipped_rows?: number
+          source: string
+          source_reference: string
+          status?: string
+          total_rows?: number
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          applied_rows?: number
+          conflict_rows?: number
+          created_at?: string
+          created_by?: string
+          cursor_position?: number
+          error_rows?: number
+          id?: string
+          metadata?: Json
+          rows?: Json
+          skipped_rows?: number
+          source?: string
+          source_reference?: string
+          status?: string
+          total_rows?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      company_import_ledger: {
+        Row: {
+          batch_id: string
+          company_id: string | null
+          created_at: string
+          id: string
+          metadata: Json
+          row_number: number | null
+          source: string
+          source_key: string
+          status: string
+          task_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          batch_id: string
+          company_id?: string | null
+          created_at?: string
+          id?: string
+          metadata?: Json
+          row_number?: number | null
+          source: string
+          source_key: string
+          status: string
+          task_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          batch_id?: string
+          company_id?: string | null
+          created_at?: string
+          id?: string
+          metadata?: Json
+          row_number?: number | null
+          source?: string
+          source_key?: string
+          status?: string
+          task_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_import_ledger_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "company_import_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "company_import_ledger_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "company_import_ledger_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "crm_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       company_sync_queue: {
         Row: {
           attempts: number
@@ -19240,6 +19364,14 @@ export type Database = {
         Returns: string
       }
       company_note_delete: { Args: { _note_id: string }; Returns: boolean }
+      crm_company_sheet_import_batch_start: {
+        Args: { _rows: Json; _source: string; _source_reference: string }
+        Returns: Json
+      }
+      crm_company_sheet_import_batch_apply: {
+        Args: { _assignee_name?: string; _batch_id: string; _confirm?: boolean; _max_rows?: number }
+        Returns: Json
+      }
       crm_company_external_ids_list: { Args: { _company_id: string }; Returns: Json }
           crm_company_external_id_upsert: {
         Args: {
