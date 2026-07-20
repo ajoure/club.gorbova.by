@@ -16,6 +16,7 @@ import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 import { getEventLabel } from "@/lib/eventLabels";
 import { formatContactName } from "@/lib/nameUtils";
+import { normalizeCompanyName } from "@/lib/companies/normalizeCompanyName";
 import { useActiveAccessRuleProducts, isCurrentValidAccess, isHistoricalAccess } from "@/hooks/useAccessValidation";
 import {
   Sheet,
@@ -2990,7 +2991,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                       <div className="rounded-lg bg-primary/10 p-2 text-primary"><Building2 className="h-4 w-4" /></div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium break-words">{company!.full_name}</span>
+                          <span className="font-medium break-words">{normalizeCompanyName(company!.full_name)}</span>
                           {is_primary && <Badge variant="outline">Основная</Badge>}
                           {is_billing_contact && <Badge variant="outline">Billing</Badge>}
                         </div>
