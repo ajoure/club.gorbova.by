@@ -41,6 +41,8 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION public.crm_company_normalize_import_row() FROM PUBLIC, anon, authenticated, service_role;
+
 DROP TRIGGER IF EXISTS crm_company_import_name_normalization_trg ON public.companies;
 CREATE TRIGGER crm_company_import_name_normalization_trg
   BEFORE INSERT OR UPDATE OF full_name, short_name, legal_form, metadata
