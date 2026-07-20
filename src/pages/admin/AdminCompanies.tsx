@@ -173,6 +173,7 @@ interface CompanyContact {
   id: string;
   profile_id: string | null;
   relationship_type: string;
+  source: "billing_requisites" | "manual" | "import" | "call_center" | "admin_link" | "document_review" | string;
   is_billing_contact: boolean;
   is_primary: boolean;
   external_full_name: string | null;
@@ -317,6 +318,16 @@ const contactPersonRoleLabels: Record<string, string> = {
   employee: "Сотрудник",
   billing_contact: "Billing-контакт",
   contract_signatory: "Подписант",
+};
+
+const companyContactSourceLabels: Record<string, string> = {
+  billing_requisites: "Реквизиты",
+  manual: "Вручную",
+  import: "Импорт",
+  call_center: "Колл-центр",
+  admin_link: "Связь администратора",
+  document_review: "Проверка документа",
+  integration: "Интеграция",
 };
 
 const companyRelationshipLabels: Record<string, string> = {
@@ -1046,7 +1057,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
     queryFn: async (): Promise<CompanyContact[]> => {
       const { data, error } = await supabase
         .from("company_contacts")
-        .select("id, profile_id, relationship_type, is_billing_contact, is_primary, external_full_name, external_email, external_phone")
+        .select("id, profile_id, relationship_type, source, is_billing_contact, is_primary, external_full_name, external_email, external_phone")
         .eq("company_id", companyId!);
       if (error) throw error;
       return data as CompanyContact[];
@@ -1406,7 +1417,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                 <TabsContent value="contacts" className="mt-0 space-y-3">
                   {contactsQuery.isLoading && <Skeleton className="h-16 w-full" />}
                   {!contactsQuery.isLoading && (contactsQuery.data?.length ?? 0) === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанных контактов пока нет.</p>}
-                  {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = profile?.full_name || contact.external_full_name || "Контакт без имени"; const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><div className="font-medium">{name}</div>{profile?.id && <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedLinkedContactId(profile.id)}>Открыть карточку</Button>}</div><div className="mt-0.5 text-xs text-muted-foreground">{contact.relationship_type}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Billing</Badge>}</div></div></div>; })}
+                  {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = profile?.full_name || contact.external_full_name || "Контакт без имени"; const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><div className="font-medium">{name}</div><Badge variant="secondary">{companyContactSourceLabels[contact.source] || contact.source}</Badge>{profile?.id && <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedLinkedContactId(profile.id)}>Открыть карточку</Button>}</div><div className="mt-0.5 text-xs text-muted-foreground">{contact.relationship_type}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Billing</Badge>}</div></div></div>; })}
                 </TabsContent>
                 <TabsContent value="persons" className="mt-0 space-y-3">
                   <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">Персоны без подтверждённого профиля хранятся отдельно. Профиль не создаётся автоматически, а связь роли сохраняется с датами и источником.</div>
