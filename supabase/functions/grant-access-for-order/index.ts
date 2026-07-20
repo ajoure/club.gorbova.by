@@ -337,6 +337,45 @@ Deno.serve(async (req) => {
         } catch (_) { /* non-fatal */ }
       };
       const outcome = await handleThreeDsFinalize(orderId, { supabase, audit });
+
+      // The 3DS writer is a separate early-return path, so it does not reach
+      // the standard post-payment notification block below. Trigger the same
+      // idempotent notification handler here after a successful/processed
+      // finalize. Notification failures remain non-fatal to access granting.
+      const notifyEligible = ![
+        'error',
+        'manual_review_multi_candidate',
+        'manual_review_multi_candidate_sbs',
+        'manual_review_existing_subscription_incomplete',
+        'skip_no_order',
+        'skip_inactive_offer',
+        'skip_tariff_mismatch',
+      ].includes(outcome.kind);
+      if (notifyEligible) {
+        const notifyUrl = Deno.env.get('SUPABASE_URL');
+        const notifyKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+        if (notifyUrl && notifyKey) {
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 20_000);
+            try {
+              await fetch(`${notifyUrl}/functions/v1/notify-order-purchased`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${notifyKey}`,
+                },
+                body: JSON.stringify({ order_id: orderId }),
+                signal: ctrl.signal,
+              });
+            } finally {
+              clearTimeout(timer);
+            }
+          } catch (notifyErr) {
+            console.warn('[grant-access-for-order] 3ds notify-order-purchased failed (ignored):', (notifyErr as Error)?.message || String(notifyErr));
+          }
+        }
+      }
       return new Response(
         JSON.stringify({ context: '3ds_finalize', outcome, request_id: requestId }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
