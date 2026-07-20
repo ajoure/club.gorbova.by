@@ -3886,6 +3886,7 @@ export type Database = {
           created_by: string | null
           entity_id: string | null
           entity_type: string
+          first_attempted_at: string | null
           id: string
           idempotency_key: string | null
           last_error: string | null
@@ -3905,6 +3906,7 @@ export type Database = {
           created_by?: string | null
           entity_id?: string | null
           entity_type: string
+          first_attempted_at?: string | null
           id?: string
           idempotency_key?: string | null
           last_error?: string | null
@@ -3924,6 +3926,7 @@ export type Database = {
           created_by?: string | null
           entity_id?: string | null
           entity_type?: string
+          first_attempted_at?: string | null
           id?: string
           idempotency_key?: string | null
           last_error?: string | null
@@ -19035,6 +19038,43 @@ export type Database = {
       crm_company_merge: {
         Args: { _source_id: string; _target_id: string }
         Returns: string
+      }
+      crm_company_sync_enqueue: {
+        Args: { _cld_id: string; _reason: string }
+        Returns: string
+      }
+      crm_company_sync_worker_claim: {
+        Args: { _batch?: number; _lease_seconds?: number }
+        Returns: {
+          attempts: number
+          created_at: string
+          created_by: string | null
+          entity_id: string | null
+          entity_type: string
+          first_attempted_at: string | null
+          id: string
+          idempotency_key: string | null
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          metadata: Json
+          next_run_at: string
+          payload: Json
+          run_reason: string
+          status: string
+          updated_at: string
+          updated_by: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "company_sync_queue"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      crm_company_sync_worker_complete: {
+        Args: { _error?: string; _id: string; _status: string }
+        Returns: undefined
       }
       crm_company_upsert_from_billing: {
         Args: { _client_legal_details_id: string }
