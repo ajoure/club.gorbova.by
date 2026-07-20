@@ -41,6 +41,7 @@ interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   defaultContactId?: string | null;
+  defaultCompanyId?: string | null;
   defaultDealId?: string | null;
 }
 
@@ -50,6 +51,7 @@ export function CreateCrmTaskDialog({
   open,
   onOpenChange,
   defaultContactId,
+  defaultCompanyId,
   defaultDealId,
 }: Props) {
   const { data: types = [] } = useCrmTaskTypes();
@@ -64,6 +66,7 @@ export function CreateCrmTaskDialog({
   const [assignee, setAssignee] = useState<string>(UNASSIGNED);
   const [dealId, setDealId] = useState<string | null>(defaultDealId ?? null);
   const [contactId, setContactId] = useState<string | null>(defaultContactId ?? null);
+  const [companyId, setCompanyId] = useState<string | null>(defaultCompanyId ?? null);
 
   useEffect(() => {
     if (open && types.length > 0 && !typeId) {
@@ -75,6 +78,7 @@ export function CreateCrmTaskDialog({
     if (open) {
       setDealId(defaultDealId ?? null);
       setContactId(defaultContactId ?? null);
+      setCompanyId(defaultCompanyId ?? null);
     } else {
       setTitle("");
       setDescription("");
@@ -84,8 +88,9 @@ export function CreateCrmTaskDialog({
       setAssignee(UNASSIGNED);
       setDealId(null);
       setContactId(null);
+      setCompanyId(null);
     }
-  }, [open, defaultDealId, defaultContactId]);
+  }, [open, defaultDealId, defaultContactId, defaultCompanyId]);
 
   // Автозаполнение из шаблона типа задачи
   useEffect(() => {
@@ -119,6 +124,7 @@ export function CreateCrmTaskDialog({
         remind_at: remindAtComputed,
         assignee_user_id: assignee === UNASSIGNED ? null : assignee,
         contact_id: contactId,
+        company_id: companyId,
         deal_id: dealId,
         source: "manual",
       },

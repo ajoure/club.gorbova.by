@@ -444,7 +444,7 @@ function shadow(obj, prop, value, nonSerializable = false) {
   });
   return value;
 }
-var BaseException = function BaseExceptionClosure() {
+var BaseException = (function BaseExceptionClosure() {
   function BaseException2(message, name) {
     this.message = message;
     this.name = name;
@@ -452,7 +452,7 @@ var BaseException = function BaseExceptionClosure() {
   BaseException2.prototype = new Error();
   BaseException2.constructor = BaseException2;
   return BaseException2;
-}();
+})();
 var PasswordException = class extends BaseException {
   constructor(msg, code) {
     super(msg, "PasswordException");
@@ -26558,7 +26558,7 @@ function makeEventProps(props, getArgs) {
       continue;
     }
     if (getArgs) {
-      eventProps[eventName] = (event) => eventHandler(event, getArgs(eventName));
+      eventProps[eventName] = ((event) => eventHandler(event, getArgs(eventName)));
     } else {
       eventProps[eventName] = eventHandler;
     }

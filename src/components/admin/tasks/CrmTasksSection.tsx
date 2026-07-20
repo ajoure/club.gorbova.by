@@ -44,6 +44,8 @@ interface Props {
   dealId?: string | null;
   /** When set, lists tasks bound to a contact (profiles.id) */
   contactId?: string | null;
+  /** When set, lists and creates tasks bound to a company (companies.id) */
+  companyId?: string | null;
   /** Optional override title */
   title?: string;
   /** Show as Card (default) or as bare list */
@@ -67,10 +69,11 @@ function isOverdue(t: CrmTask) {
   );
 }
 
-export function CrmTasksSection({ dealId, contactId, title, bare }: Props) {
+export function CrmTasksSection({ dealId, contactId, companyId, title, bare }: Props) {
   const filters: CrmTaskListFilters = {
     deal_id: dealId ?? null,
     contact_id: contactId ?? null,
+    company_id: companyId ?? null,
     limit: 100,
   };
   const { data: tasks = [], isLoading } = useCrmTasks(filters);
@@ -187,6 +190,7 @@ export function CrmTasksSection({ dealId, contactId, title, bare }: Props) {
         onOpenChange={setCreateOpen}
         defaultDealId={dealId ?? null}
         defaultContactId={contactId ?? null}
+        defaultCompanyId={companyId ?? null}
       />
       <EditCrmTaskDialog
         open={!!editTask}

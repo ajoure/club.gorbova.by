@@ -10,9 +10,9 @@
 //                       { error: "<code>" }
 //
 // Тело запроса к функции (без изменений для совместимости с фронтом):
-//   { phone: E164, text: string, contact_id?: uuid, deal_id?: uuid }
+//   { phone: E164, text: string, contact_id?: uuid, company_id?: uuid, deal_id?: uuid }
 //   ИЛИ
-//   { recipients: [{ phone, contact_id?, deal_id? }, ...], text: string }
+//   { recipients: [{ phone, contact_id?, company_id?, deal_id? }, ...], text: string }
 //
 // Проверки: JWT + has_role_v2 (employee|admin|super_admin). Credentials читаются
 // из integration_credentials.provider='websms' (внутренний ключ сохранён для
@@ -58,6 +58,7 @@ function toMsisdn(phoneE164: string): string {
 interface Recipient {
   phone: string;
   contact_id?: string | null;
+  company_id?: string | null;
   deal_id?: string | null;
 }
 
@@ -96,7 +97,7 @@ Deno.serve(async (req) => {
     recipients = body.recipients;
   } else if (body?.phone) {
     recipients = [
-      { phone: body.phone, contact_id: body.contact_id, deal_id: body.deal_id },
+      { phone: body.phone, contact_id: body.contact_id, company_id: body.company_id, deal_id: body.deal_id },
     ];
   } else {
     return json(400, { error: "no_recipients" });
@@ -111,6 +112,17 @@ Deno.serve(async (req) => {
   if (normalized.length === 0) return json(400, { error: "invalid_phones" });
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
+
+  const companyIds = Array.from(new Set(normalized.map((r) => r.company_id).filter(Boolean))) as string[];
+  if (companyIds.length) {
+    const { data: companies, error: companyErr } = await admin
+      .from("companies")
+      .select("id, status")
+      .in("id", companyIds);
+    if (companyErr) return json(500, { error: "company_lookup_failed" });
+    const activeIds = new Set((companies ?? []).filter((row: any) => row.status === "active").map((row: any) => row.id));
+    if (companyIds.some((id) => !activeIds.has(id))) return json(404, { error: "company_not_found" });
+  }
 
   // ── 3. Роль ──────────────────────────────────────────────────────────────
   const roleChecks = await Promise.all(
@@ -156,6 +168,7 @@ Deno.serve(async (req) => {
   // ── 6. Pre-insert sms_messages rows (status=queued) ─────────────────────
   const initialRows = normalized.map((r) => ({
     contact_id: r.contact_id ?? null,
+    company_id: r.company_id ?? null,
     deal_id: r.deal_id ?? null,
     phone_e164: r.phone,
     text,

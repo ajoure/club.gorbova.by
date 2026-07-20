@@ -114,6 +114,7 @@ import {
   Link2,
   Activity,
   Unlink,
+  Building2,
 } from "lucide-react";
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
@@ -194,9 +195,10 @@ interface ContactDetailSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   returnTo?: string;
+  onOpenCompany?: (companyId: string) => void;
 }
 
-export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: ContactDetailSheetProps) {
+export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOpenCompany }: ContactDetailSheetProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { hasPermission, isSuperAdmin, isAdmin } = usePermissions();
@@ -381,6 +383,33 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const resolvedStatus = profileData?.status ?? contact?.status ?? "active";
   const resolvedTelegramUserId = profileData?.telegram_user_id ?? contact?.telegram_user_id ?? null;
   const resolvedTelegramUsername = profileData?.telegram_username ?? contact?.telegram_username ?? null;
+
+  const linkedProfileIds = useMemo(
+    () => Array.from(new Set([contact?.id, resolvedUserId].filter(Boolean) as string[])),
+    [contact?.id, resolvedUserId],
+  );
+  const linkedCompaniesQuery = useQuery({
+    queryKey: ["contact-linked-companies", linkedProfileIds],
+    enabled: linkedProfileIds.length > 0,
+    queryFn: async () => {
+      const { data: links, error: linksError } = await supabase
+        .from("company_contacts")
+        .select("company_id, relationship_type, is_primary, is_billing_contact")
+        .in("profile_id", linkedProfileIds);
+      if (linksError) throw linksError;
+      const companyIds = Array.from(new Set((links ?? []).map((link) => link.company_id).filter(Boolean)));
+      if (companyIds.length === 0) return [];
+      const { data: companies, error: companiesError } = await supabase
+        .from("companies")
+        .select("id, public_id, full_name, short_name, company_kind, status, email, phone")
+        .in("id", companyIds);
+      if (companiesError) throw companiesError;
+      const byId = new Map((companies ?? []).map((company) => [company.id, company]));
+      return (links ?? [])
+        .map((link) => ({ ...link, company: byId.get(link.company_id) }))
+        .filter((link) => link.company);
+    },
+  });
 
   // Fetch Telegram user info (bio, etc.) from Telegram API
   const { data: telegramUserInfo } = useQuery({
@@ -1756,6 +1785,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
             <TabsList className="mx-4 sm:mx-6 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
               <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
+              <TabsTrigger value="companies" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Building2 className="w-3 h-3 mr-1" />
+                Компании {linkedCompaniesQuery.data && linkedCompaniesQuery.data.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{linkedCompaniesQuery.data.length}</Badge>}
+              </TabsTrigger>
               <TabsTrigger value="feed" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <Activity className="w-3 h-3 mr-1" />
                 Лента
@@ -2937,6 +2970,37 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   </CardContent>
                 </Card>
               ) : null}
+            </TabsContent>
+
+            <TabsContent value="companies" className="m-0 space-y-3">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Building2 className="h-4 w-4" /> Связанные компании
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {linkedCompaniesQuery.isLoading && <Skeleton className="h-16 w-full" />}
+                  {linkedCompaniesQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанные компании временно недоступны.</div>}
+                  {!linkedCompaniesQuery.isLoading && !linkedCompaniesQuery.isError && linkedCompaniesQuery.data?.length === 0 && (
+                    <div className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">Контакт пока не связан с компаниями.</div>
+                  )}
+                  {(linkedCompaniesQuery.data ?? []).map(({ company, relationship_type, is_primary, is_billing_contact }) => (
+                    <div key={`${company!.id}-${relationship_type}`} className="flex items-center gap-3 rounded-lg border p-3">
+                      <div className="rounded-lg bg-primary/10 p-2 text-primary"><Building2 className="h-4 w-4" /></div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium break-words">{company!.full_name}</span>
+                          {is_primary && <Badge variant="outline">Основная</Badge>}
+                          {is_billing_contact && <Badge variant="outline">Billing</Badge>}
+                        </div>
+                        <div className="mt-0.5 text-xs text-muted-foreground">{company!.public_id} · {relationship_type || "связанный контакт"}</div>
+                      </div>
+                      {onOpenCompany && <Button type="button" variant="link" size="sm" className="shrink-0 text-xs" onClick={() => onOpenCompany(company!.id)}>Открыть компанию</Button>}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
             </TabsContent>
 
             {/* Telegram-вкладка вынесена выше — за пределы внешнего скролла */}

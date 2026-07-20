@@ -2,7 +2,8 @@
 // voice-note-transcribe-summarize
 // ----------------------------------------------------------------------------
 // Расшифровывает голосовое сообщение из contact-files и пишет transcript/summary
-// в contact_files.meta через тот же shared helper, что и звонки.
+// в исходную таблицу файла (contact_files или company_files) через тот же
+// shared helper, что и звонки.
 // Auth: требуется валидный JWT сотрудника (employee/admin/super_admin).
 // ============================================================================
 
@@ -35,10 +36,10 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-async function updateMeta(service: any, fileId: string, patch: Record<string, any>) {
-  const { data: row } = await service.from("contact_files").select("meta").eq("id", fileId).maybeSingle();
+async function updateMeta(service: any, tableName: "contact_files" | "company_files", fileId: string, patch: Record<string, any>) {
+  const { data: row } = await service.from(tableName).select("meta").eq("id", fileId).maybeSingle();
   const meta = (row?.meta && typeof row.meta === "object") ? row.meta : {};
-  await service.from("contact_files").update({ meta: { ...meta, ...patch } }).eq("id", fileId);
+  await service.from(tableName).update({ meta: { ...meta, ...patch } }).eq("id", fileId);
 }
 
 Deno.serve(async (req) => {
@@ -68,12 +69,23 @@ Deno.serve(async (req) => {
     const fileId = body?.file_id as string | undefined;
     if (!fileId) return jsonResponse({ error: "missing_file_id" }, 400);
 
-    const { data: file, error: fErr } = await service
+    const { data: contactFile, error: contactFileErr } = await service
       .from("contact_files")
       .select("id, storage_path, mime_type, size_bytes, meta")
       .eq("id", fileId)
       .maybeSingle();
-    if (fErr || !file) return jsonResponse({ error: "file_not_found" }, 404);
+    let tableName: "contact_files" | "company_files" = "contact_files";
+    let file: any = contactFile;
+    if (contactFileErr || !contactFile) {
+      const { data: companyFile, error: companyFileErr } = await service
+        .from("company_files")
+        .select("id, storage_path, mime_type, size_bytes, meta")
+        .eq("id", fileId)
+        .maybeSingle();
+      if (companyFileErr || !companyFile) return jsonResponse({ error: "file_not_found" }, 404);
+      tableName = "company_files";
+      file = companyFile;
+    }
 
     const existingMeta = (file.meta && typeof file.meta === "object") ? (file.meta as Record<string, any>) : {};
     const status = existingMeta?.transcribe_status;
@@ -89,25 +101,25 @@ Deno.serve(async (req) => {
 
     // Guard: слишком маленький файл → шум/тишина, галлюцинации
     if (typeof file.size_bytes === "number" && file.size_bytes > 0 && file.size_bytes < MIN_AUDIO_BYTES) {
-      await updateMeta(service, fileId, {
+      await updateMeta(service, tableName, fileId, {
         transcribe_status: "skipped_too_short",
         transcribe_reason: `size_${file.size_bytes}b_below_min_${MIN_AUDIO_BYTES}b`,
       });
       return jsonResponse({ ok: false, skipped: true, reason: "too_short", bytes: file.size_bytes });
     }
 
-    await updateMeta(service, fileId, { transcribe_status: "processing", transcribe_reason: null });
+    await updateMeta(service, tableName, fileId, { transcribe_status: "processing", transcribe_reason: null });
 
     // Скачиваем через service_role — bucket приватный
     const { data: blob, error: dlErr } = await service.storage.from("contact-files").download(file.storage_path);
     if (dlErr || !blob) {
-      await updateMeta(service, fileId, { transcribe_status: "failed", transcribe_reason: `download_failed:${dlErr?.message ?? "no_blob"}` });
+      await updateMeta(service, tableName, fileId, { transcribe_status: "failed", transcribe_reason: `download_failed:${dlErr?.message ?? "no_blob"}` });
       return jsonResponse({ error: "download_failed" }, 500);
     }
 
     const buf = new Uint8Array(await blob.arrayBuffer());
     if (buf.byteLength < MIN_AUDIO_BYTES) {
-      await updateMeta(service, fileId, { transcribe_status: "skipped_too_short", transcribe_reason: `bytes_${buf.byteLength}` });
+      await updateMeta(service, tableName, fileId, { transcribe_status: "skipped_too_short", transcribe_reason: `bytes_${buf.byteLength}` });
       return jsonResponse({ ok: false, skipped: true, reason: "too_short", bytes: buf.byteLength });
     }
 
@@ -121,7 +133,7 @@ Deno.serve(async (req) => {
         format,
         kind: "voice_note",
       });
-      await updateMeta(service, fileId, {
+      await updateMeta(service, tableName, fileId, {
         transcript,
         summary,
         transcribe_status: "done",
@@ -131,7 +143,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true, transcript, summary });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      await updateMeta(service, fileId, { transcribe_status: "failed", transcribe_reason: msg.slice(0, 500) });
+      await updateMeta(service, tableName, fileId, { transcribe_status: "failed", transcribe_reason: msg.slice(0, 500) });
       return jsonResponse({ error: msg }, 500);
     }
   } catch (e) {

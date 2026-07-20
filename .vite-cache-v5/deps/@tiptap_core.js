@@ -15,9 +15,9 @@ import {
   ResizableNodeView,
   ResizableNodeview,
   Tracker,
+  attrsEqual,
   callOrReturn,
   canInsertNode,
-  cancelPositionCheck,
   combineTransactionSteps,
   commands_exports,
   createAtomBlockMarkdownSpec,
@@ -64,6 +64,7 @@ import {
   getSchemaTypeByName,
   getSchemaTypeNameByName,
   getSplittedAttributes,
+  getStyleProperty,
   getText,
   getTextBetween,
   getTextContentFromNodes,
@@ -86,6 +87,7 @@ import {
   isNodeActive,
   isNodeEmpty,
   isNodeSelection,
+  isNodeViewSelected,
   isNumber,
   isPlainObject,
   isRegExp,
@@ -96,6 +98,7 @@ import {
   markInputRule,
   markPasteRule,
   markdown_exports,
+  marksEqual,
   mergeAttributes,
   mergeDeep,
   minMax,
@@ -111,7 +114,6 @@ import {
   resolveExtensions,
   resolveFocusPosition,
   rewriteUnknownContent,
-  schedulePositionCheck,
   selectionToInsertionEnd,
   serializeAttributes,
   sortExtensions,
@@ -121,8 +123,8 @@ import {
   textblockTypeInputRule,
   updateMarkViewAttributes,
   wrappingInputRule
-} from "./chunk-SXIQHOR3.js";
-import "./chunk-YLIL3JKF.js";
+} from "./chunk-6253ETEE.js";
+import "./chunk-DXKRVOGU.js";
 import "./chunk-OL46QLBJ.js";
 export {
   CommandManager,
@@ -141,9 +143,9 @@ export {
   ResizableNodeView,
   ResizableNodeview,
   Tracker,
+  attrsEqual,
   callOrReturn,
   canInsertNode,
-  cancelPositionCheck,
   combineTransactionSteps,
   commands_exports as commands,
   createAtomBlockMarkdownSpec,
@@ -191,6 +193,7 @@ export {
   getSchemaTypeByName,
   getSchemaTypeNameByName,
   getSplittedAttributes,
+  getStyleProperty,
   getText,
   getTextBetween,
   getTextContentFromNodes,
@@ -213,6 +216,7 @@ export {
   isNodeActive,
   isNodeEmpty,
   isNodeSelection,
+  isNodeViewSelected,
   isNumber,
   isPlainObject,
   isRegExp,
@@ -223,6 +227,7 @@ export {
   markInputRule,
   markPasteRule,
   markdown_exports as markdown,
+  marksEqual,
   mergeAttributes,
   mergeDeep,
   minMax,
@@ -238,7 +243,6 @@ export {
   resolveExtensions,
   resolveFocusPosition,
   rewriteUnknownContent,
-  schedulePositionCheck,
   selectionToInsertionEnd,
   serializeAttributes,
   sortExtensions,
@@ -249,4 +253,3 @@ export {
   updateMarkViewAttributes,
   wrappingInputRule
 };
-//# sourceMappingURL=@tiptap_core.js.map

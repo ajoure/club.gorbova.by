@@ -97,7 +97,7 @@ function guessFileKind(mime?: string | null, name?: string | null): "image" | "p
 
 // ---------------------- Sub-components ---------------------------------------
 
-function CallCard({ evt, contactId }: { evt: FeedEvent; contactId: string }) {
+function CallCard({ evt, entityId }: { evt: FeedEvent; entityId: string }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const duration = Number(evt.meta?.duration || 0);
@@ -115,7 +115,7 @@ function CallCard({ evt, contactId }: { evt: FeedEvent; contactId: string }) {
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       toast.success("Расшифровка готова");
-      qc.invalidateQueries({ queryKey: ["contact_feed", contactId] });
+      qc.invalidateQueries({ queryKey: ["contact_feed", entityId] });
     } catch (e: any) {
       toast.error(e?.message || "Ошибка расшифровки");
     } finally {
@@ -178,7 +178,7 @@ async function forceDownload(url: string, name: string) {
  * AI-расшифровкой (авто-запуск при отсутствии), сводкой, кнопкой отправки
  * в support-Telegram. Никакого нативного <audio controls> с серым меню.
  */
-function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string }) {
+function VoiceNoteBubble({ evt, entityId }: { evt: FeedEvent; entityId: string }) {
   const qc = useQueryClient();
   const path = evt.meta?.storage_path as string | undefined;
   const name = (evt.title || evt.meta?.name || `voice_${evt.id}.webm`) as string;
@@ -233,7 +233,7 @@ function VoiceNoteBubble({ evt, contactId }: { evt: FeedEvent; contactId: string
         setShowTranscript(true);
         toast.success(data?.cached ? "Расшифровка уже готова" : "Расшифровка готова");
       }
-      qc.invalidateQueries({ queryKey: ["contact_feed", contactId] });
+      qc.invalidateQueries({ queryKey: ["contact_feed", entityId] });
     } catch (e: any) {
       toast.error(await normalizeEdgeFunctionErrorAsync(e));
     } finally {
@@ -638,7 +638,19 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
 
 // ---------------------- Main -------------------------------------------------
 
-export function ContactFeedTab({ contactId }: { contactId: string }) {
+export function ContactFeedTab({
+  contactId,
+  companyId,
+  embedded = false,
+  readOnly = false,
+}: {
+  contactId?: string;
+  companyId?: string;
+  embedded?: boolean;
+  readOnly?: boolean;
+}) {
+  const entityId = companyId ?? contactId ?? "";
+  const isCompany = Boolean(companyId);
   const qc = useQueryClient();
   const [selected, setSelected] = useState<Set<FeedKind>>(new Set());
   const [search, setSearch] = useState("");
@@ -683,17 +695,25 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ["contact_feed", contactId, types, debounced],
-    enabled: !!contactId,
+    queryKey: ["contact_feed", entityId, types, debounced],
+    enabled: !!entityId,
     placeholderData: (previousData) => previousData ?? [],
     queryFn: async () => {
-      const { data, error } = await supabase.rpc("contact_feed_list", {
-        _contact_id: contactId,
-        _types: types,
-        _search: debounced || null,
-        _limit: 200,
-        _offset: 0,
-      });
+      const { data, error } = isCompany
+        ? await supabase.rpc("company_feed_list", {
+            _company_id: entityId,
+            _types: types,
+            _search: debounced || null,
+            _limit: 200,
+            _offset: 0,
+          })
+        : await supabase.rpc("contact_feed_list", {
+            _contact_id: entityId,
+            _types: types,
+            _search: debounced || null,
+            _limit: 200,
+            _offset: 0,
+          });
       if (error) throw error;
       // RPC возвращает jsonb-массив, но клиент может принести его в нескольких формах.
       const raw: any = data;
@@ -716,10 +736,12 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
                 : [];
       const rpcEvents = arr as FeedEvent[];
       let platformEvents: FeedEvent[] = [];
-      try {
-        platformEvents = await loadPlatformEventsForContact(contactId, types as FeedKind[] | null, debounced || null);
-      } catch (platformError) {
-        console.warn("[contact-feed] platform events fallback failed:", platformError);
+      if (!isCompany) {
+        try {
+          platformEvents = await loadPlatformEventsForContact(entityId, types as FeedKind[] | null, debounced || null);
+        } catch (platformError) {
+          console.warn("[contact-feed] platform events fallback failed:", platformError);
+        }
       }
       const byKey = new Map<string, FeedEvent>();
       [...rpcEvents, ...platformEvents].forEach((evt) => byKey.set(`${evt.kind}:${evt.id}`, evt));
@@ -729,25 +751,33 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
 
   useEffect(() => {
     setLastGoodFeedEvents([]);
-  }, [contactId]);
+  }, [entityId]);
 
   useEffect(() => {
     if (!isLoading && !isError) {
       setLastGoodFeedEvents(feedEvents);
     }
-  }, [contactId, feedEvents, isError, isLoading]);
+  }, [entityId, feedEvents, isError, isLoading]);
 
   const visibleFeedEvents = isError && lastGoodFeedEvents.length > 0 ? lastGoodFeedEvents : feedEvents;
   const hasFeedEvents = visibleFeedEvents.length > 0;
   const feedErrorMessage = error instanceof Error
     ? error.message
-    : "Не удалось загрузить ленту контакта";
+    : isCompany ? "Не удалось загрузить ленту компании" : "Не удалось загрузить ленту контакта";
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["contact_feed", contactId] });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["contact_feed", entityId] });
 
   const createNote = useMutation({
     mutationFn: async (body: string) => {
-      const { error } = await supabase.rpc("contact_note_create", { _contact_id: contactId, _body: body });
+      const { error } = isCompany
+        ? await supabase.rpc("company_note_create", {
+            _company_id: entityId,
+            _body: body,
+            _source: "manual",
+            _source_key: null,
+            _metadata: {},
+          })
+        : await supabase.rpc("contact_note_create", { _contact_id: entityId, _body: body });
       if (error) throw error;
     },
     onSuccess: () => { setNoteBody(""); toast.success("Заметка добавлена"); invalidate(); },
@@ -756,7 +786,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
 
   const deleteNote = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.rpc("contact_note_delete", { _note_id: id });
+      const { error } = await supabase.rpc(isCompany ? "company_note_delete" : "contact_note_delete", { _note_id: id });
       if (error) throw error;
     },
     onSuccess: () => { toast.success("Заметка удалена"); invalidate(); },
@@ -766,7 +796,9 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
   const deleteFile = useMutation({
     mutationFn: async (evt: FeedEvent) => {
       const path = evt.meta?.storage_path as string | undefined;
-      const { error } = await supabase.from("contact_files").delete().eq("id", evt.id);
+      const fileTable = isCompany ? "company_files" : "contact_files";
+      const fileQuery = (supabase as any).from(fileTable);
+      const { error } = await fileQuery.delete().eq("id", evt.id);
       if (error) throw error;
       if (path) await supabase.storage.from("contact-files").remove([path]);
     },
@@ -779,18 +811,14 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     const uid = u?.user?.id;
     if (!uid) throw new Error("no auth");
     const safeName = filename.replace(/[^\p{L}\p{N}._-]+/gu, "_");
-    const path = `${contactId}/${Date.now()}_${safeName}`;
+    const path = `${entityId}/${Date.now()}_${safeName}`;
     const up = await supabase.storage.from("contact-files").upload(path, blob, { contentType: mime, upsert: false });
     if (up.error) throw up.error;
-    const { data: inserted, error: insErr } = await supabase.from("contact_files").insert({
-      contact_id: contactId,
-      uploader_id: uid,
-      name: filename,
-      storage_path: path,
-      url: null,
-      mime_type: mime,
-      size_bytes: blob.size,
-    }).select("id").single();
+    const fileTable = isCompany ? "company_files" : "contact_files";
+    const filePayload = isCompany
+      ? { company_id: entityId, uploader_id: uid, name: filename, storage_path: path, url: null, mime_type: mime, size_bytes: blob.size, meta: {} }
+      : { contact_id: entityId, uploader_id: uid, name: filename, storage_path: path, url: null, mime_type: mime, size_bytes: blob.size };
+    const { data: inserted, error: insErr } = await (supabase as any).from(fileTable).insert(filePayload).select("id").single();
     if (insErr) throw insErr;
     return inserted!.id as string;
   }
@@ -875,10 +903,12 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
     composerRef.current?.focus();
   };
 
-  const canSend = noteBody.trim().length > 0 && !createNote.isPending;
+  const canSend = !readOnly && noteBody.trim().length > 0 && !createNote.isPending;
 
   return (
-    <div className="flex h-[calc(100vh-260px)] min-h-[520px] max-h-[calc(100vh-220px)] flex-col overflow-hidden">
+    <div className={embedded
+      ? "flex min-h-[520px] flex-1 flex-col overflow-hidden"
+      : "flex h-[calc(100vh-260px)] min-h-[520px] max-h-[calc(100vh-220px)] flex-col overflow-hidden"}>
       {/* Filters + search */}
       <div className="flex flex-wrap items-center gap-2 sticky top-0 z-10 bg-background/80 backdrop-blur py-2">
         <button
@@ -978,10 +1008,10 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
                     </div>
 
                     {evt.kind === "call" ? (
-                      <div className="mt-2"><CallCard evt={evt} contactId={contactId} /></div>
+                      <div className="mt-2"><CallCard evt={evt} entityId={entityId} /></div>
                     ) : evt.kind === "voice_note" ? (
                       <div className="mt-2">
-                        <VoiceNoteBubble evt={evt} contactId={contactId} />
+                        <VoiceNoteBubble evt={evt} entityId={entityId} />
                       </div>
                     ) : evt.kind === "note" ? (
                       <div className="mt-1 text-sm whitespace-pre-wrap break-words">{evt.body}</div>
@@ -1018,7 +1048,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
                     )}
                   </div>
 
-                  {evt.kind === "note" && canDelete && (
+                  {evt.kind === "note" && canDelete && !readOnly && (
                     <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => deleteNote.mutate(evt.id)} title="Удалить">
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>
@@ -1030,7 +1060,7 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
                           <Download className="w-3.5 h-3.5" />
                         </Button>
                       )}
-                      {canDelete && (
+                      {canDelete && !readOnly && (
                         <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => deleteFile.mutate(evt)} title="Удалить файл">
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
@@ -1046,7 +1076,12 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
 
       {/* Composer (Telegram-style, sticky bottom) */}
       <div className="z-10 mt-2 shrink-0">
-        {rec.blob ? (
+        {readOnly && (
+          <div className="rounded-2xl border border-dashed px-3 py-2 text-xs text-muted-foreground">
+            Режим просмотра: добавление заметок, файлов и задач доступно пользователям с правом редактирования.
+          </div>
+        )}
+        {!readOnly && (rec.blob ? (
           <div className="flex items-center gap-2 rounded-2xl border border-fuchsia-500/25 bg-fuchsia-500/10 p-2 backdrop-blur">
             <CallRecordingPlayer
               src={recBlobUrl!}
@@ -1134,14 +1169,15 @@ export function ContactFeedTab({ contactId }: { contactId: string }) {
               <Send className="w-4 h-4" />
             </Button>
           </div>
-        )}
+        ))}
       </div>
 
       {/* Modals */}
       <CreateCrmTaskDialog
         open={createTaskOpen}
         onOpenChange={(v) => { setCreateTaskOpen(v); if (!v) invalidate(); }}
-        defaultContactId={contactId}
+        defaultContactId={isCompany ? null : entityId}
+        defaultCompanyId={isCompany ? entityId : null}
       />
       {previewText && (
         <TextFilePreview open onClose={() => setPreviewText(null)} path={previewText.path} name={previewText.name} />

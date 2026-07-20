@@ -14,7 +14,7 @@
 //   5. Идемпотентность: тот же (user, phone) в течение IDEMPOTENCY_WINDOW_SEC
 //      возвращает существующий call_id вместо нового запроса.
 //
-// Тело запроса: { phone: E164, contact_id?: uuid, deal_id?: uuid }
+// Тело запроса: { phone: E164, contact_id?: uuid, company_id?: uuid, deal_id?: uuid }
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
@@ -81,9 +81,20 @@ Deno.serve(async (req) => {
   const phone = normalizePhone(phoneRaw);
   if (!phone) return json(400, { error: "invalid_phone" });
   const contactId: string | null = body?.contact_id ?? null;
+  const companyId: string | null = body?.company_id ?? null;
   const dealId: string | null = body?.deal_id ?? null;
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
+
+  if (companyId) {
+    const { data: company, error: companyErr } = await admin
+      .from("companies")
+      .select("id, status")
+      .eq("id", companyId)
+      .maybeSingle();
+    if (companyErr) return json(500, { error: "company_lookup_failed" });
+    if (!company || company.status !== "active") return json(404, { error: "company_not_found" });
+  }
 
   // ── 3. Право на исходящие звонки ─────────────────────────────────────────
   // SOT — матрица доступа: роль пользователя должна иметь access_level
@@ -229,6 +240,7 @@ Deno.serve(async (req) => {
       link_status: contactId ? "manual" : "unresolved",
       phone_to_e164: phone,
       contact_id: contactId,
+      company_id: companyId,
       deal_id: dealId,
       started_at: startedAt,
       created_by: userId,

@@ -82,6 +82,12 @@ Deno.test('legacy_namespace', () => {
   assertEquals(classifyPlaceholder('document.x'), { kind: 'legacy_namespace', ns: 'document' });
 });
 
+Deno.test('company field', () => {
+  assertEquals(classifyPlaceholder('company.full_name'), {
+    kind: 'company_field', key: 'company.full_name', format: null, case_modifier: null,
+  });
+});
+
 Deno.test('scope billing: pf blocked', () => {
   const r = evaluatePlaceholderInScope('pf-000003', 'billing');
   assertEquals(r.valid, false);

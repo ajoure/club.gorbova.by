@@ -28,6 +28,7 @@ import { useState } from "react";
 interface ContactEmailHistoryProps {
   userId: string | null;
   profileId?: string | null;
+  companyId?: string | null;
   email: string | null;
   clientName?: string | null;
 }
@@ -67,13 +68,27 @@ function compactEmailPreview(item: Pick<EmailLog, "body_text" | "body_html" | "m
   return text || null;
 }
 
-export function ContactEmailHistory({ userId, profileId, email, clientName }: ContactEmailHistoryProps) {
+export function ContactEmailHistory({ userId, profileId, companyId, email, clientName }: ContactEmailHistoryProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // Fetch outgoing email logs - prioritize search by email (most reliable)
   const { data: emails, isLoading: isLoadingLogs } = useQuery({
-    queryKey: ["email-logs", userId, profileId, email],
+    queryKey: ["email-logs", userId, profileId, companyId, email],
     queryFn: async () => {
+      // Company mail must be scoped by company_id. Never fall back to a plain
+      // email match here, otherwise a shared mailbox could leak another
+      // entity's correspondence into the company card.
+      if (companyId) {
+        const { data, error } = await (supabase as any)
+          .from("email_logs")
+          .select("*")
+          .eq("company_id", companyId)
+          .order("created_at", { ascending: false })
+          .limit(100);
+        if (error) throw error;
+        return (data ?? []) as EmailLog[];
+      }
+
       // PRIMARY: Search by email (most reliable - works even if user_id/profile_id is NULL)
       if (email) {
         const { data: byEmail, error } = await supabase
@@ -107,13 +122,14 @@ export function ContactEmailHistory({ userId, profileId, email, clientName }: Co
       if (error) throw error;
       return data as EmailLog[];
     },
-    enabled: !!(userId || profileId || email),
+    enabled: !!(companyId || userId || profileId || email),
   });
 
   // Fetch incoming emails from email_inbox
   const { data: inboxEmails, isLoading: isLoadingInbox } = useQuery({
-    queryKey: ["email-inbox-contact", profileId, email],
+    queryKey: ["email-inbox-contact", profileId, companyId, email],
     queryFn: async () => {
+      if (companyId) return [];
       let query = supabase
         .from("email_inbox")
         .select("*")
@@ -130,14 +146,15 @@ export function ContactEmailHistory({ userId, profileId, email, clientName }: Co
       if (error) return [];
       return data || [];
     },
-    enabled: !!(profileId || email),
+    enabled: !!(!companyId && (profileId || email)),
   });
 
   // Canonical post-payment email audit: product purchase emails are stored here,
   // not in legacy email_logs, so the contact card must read this Source of Truth too.
   const { data: purchaseEmails, isLoading: isLoadingPurchaseEmails } = useQuery({
-    queryKey: ["purchase-email-deliveries", userId, profileId, email],
+    queryKey: ["purchase-email-deliveries", userId, profileId, companyId, email],
     queryFn: async () => {
+      if (companyId) return [] as EmailLog[];
       const orderFilters: string[] = [];
       if (profileId) orderFilters.push(`profile_id.eq.${profileId}`);
       if (userId) orderFilters.push(`user_id.eq.${userId}`);
@@ -190,7 +207,7 @@ export function ContactEmailHistory({ userId, profileId, email, clientName }: Co
         } satisfies EmailLog;
       });
     },
-    enabled: !!(userId || profileId || email),
+    enabled: !!(!companyId && (userId || profileId || email)),
   });
 
   const isLoading = isLoadingLogs || isLoadingInbox || isLoadingPurchaseEmails;
@@ -208,7 +225,7 @@ export function ContactEmailHistory({ userId, profileId, email, clientName }: Co
       if (error) return [];
       return data;
     },
-    enabled: !!email,
+    enabled: !!(!companyId && email),
   });
 
   const getStatusBadge = (status: string) => {
