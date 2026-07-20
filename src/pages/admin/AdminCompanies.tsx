@@ -72,6 +72,7 @@ import { copyToClipboard, getCompanyUrl } from "@/utils/clipboardUtils";
 import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
 import { CompanySheetImportDialog } from "@/components/admin/CompanySheetImportDialog";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
+import { copyToClipboard, getCompanyUrl } from "@/utils/clipboardUtils";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -915,14 +916,15 @@ export default function AdminCompanies() {
                   <TableCell onClick={(event) => event.stopPropagation()}>
                     <div className="flex items-center gap-1">
                       <Checkbox checked={selectedCompanyIds.has(company.id)} onCheckedChange={() => toggleSelection(company.id, true)} />
-                      <button
-                        type="button"
-                        className="rounded p-1 opacity-50 transition-opacity hover:bg-muted hover:opacity-100"
-                        aria-label="Скопировать ссылку на компанию"
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                        title="Скопировать ссылку на компанию"
                         onClick={() => copyToClipboard(getCompanyUrl(company.id), "Ссылка на компанию скопирована")}
                       >
                         <Link2 className="h-3.5 w-3.5" />
-                      </button>
+                      </Button>
                     </div>
                   </TableCell>
                   {visibleColumns.filter((column) => column.key !== "checkbox").map((column) => {
