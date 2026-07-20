@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import type { CrmTask, CrmTaskType } from "@/hooks/useCrmTasks";
 import type { StaffOption } from "@/hooks/useStaffOptions";
 import type { TaskCompanyLite, TaskContactLite, TaskDealLite } from "@/hooks/useTaskRelations";
+import { normalizeCompanyName } from "@/lib/companies/normalizeCompanyName";
 import {
   TASK_BUCKET_THEME,
   TASK_CARD_GLASS,
@@ -208,7 +209,7 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
                 title="Открыть компанию"
               >
                 <Briefcase className="h-3 w-3" />
-                <span className="truncate">{company.full_name || company.public_id || "Компания"}</span>
+                <span className="truncate">{normalizeCompanyName(company.full_name) || company.public_id || "Компания"}</span>
               </button>
             ) : null}
           </div>

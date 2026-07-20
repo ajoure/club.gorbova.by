@@ -50,6 +50,7 @@ import {
 } from "@/hooks/useCrmTasks";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { useTaskRelations } from "@/hooks/useTaskRelations";
+import { normalizeCompanyName } from "@/lib/companies/normalizeCompanyName";
 
 import {
   TASK_DIALOG_GLASS,
@@ -285,7 +286,7 @@ export function ViewCrmTaskDialog({
                   <Briefcase className="h-4 w-4 text-sky-700 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium truncate">
-                      {company.full_name || "Компания без названия"}
+                      {normalizeCompanyName(company.full_name) || "Компания без названия"}
                     </div>
                     <div className="text-[11px] text-muted-foreground truncate">
                       {company.public_id || company.email || company.phone || "Открыть карточку компании"}

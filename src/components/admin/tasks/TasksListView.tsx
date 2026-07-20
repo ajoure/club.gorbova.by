@@ -34,6 +34,7 @@ import {
 } from "@/hooks/useCrmTasks";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { useTaskRelations } from "@/hooks/useTaskRelations";
+import { normalizeCompanyName } from "@/lib/companies/normalizeCompanyName";
 import { TasksBulkActionsBar } from "./TasksBulkActionsBar";
 
 const TYPE_ICONS: Record<string, typeof CircleDot> = {
@@ -243,7 +244,7 @@ export function TasksListView({ tasks, types, onOpenTask, onOpenCompany }: Props
                         className={cn("inline-flex max-w-[220px] items-center gap-1 truncate text-left", onOpenCompany && "text-primary hover:underline")}
                       >
                         <Briefcase className="h-3 w-3 shrink-0" />
-                        <span className="truncate">{company.full_name || company.public_id || "Компания"}</span>
+                        <span className="truncate">{normalizeCompanyName(company.full_name) || company.public_id || "Компания"}</span>
                       </button>
                     ) : <span className="text-muted-foreground">—</span>}
                   </TableCell>
