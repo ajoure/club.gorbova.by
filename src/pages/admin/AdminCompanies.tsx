@@ -161,6 +161,7 @@ interface CompanyDocument {
   status: string;
   order_id: string;
   file_url: string | null;
+  source: "legacy" | "ai";
 }
 
 interface CompanyTask {
@@ -875,7 +876,33 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
         .order("document_date", { ascending: false })
         .limit(100);
       if (error) throw error;
-      return (data ?? []) as CompanyDocument[];
+      return ((data ?? []) as Omit<CompanyDocument, "source">[]).map((document) => ({ ...document, source: "legacy" as const }));
+    },
+  });
+
+  const aiDocumentsQuery = useQuery({
+    queryKey: ["admin-company-ai-documents", orderIds],
+    enabled: orderIds.length > 0,
+    queryFn: async (): Promise<CompanyDocument[]> => {
+      const { data, error } = await supabase
+        .from("ai_generated_documents")
+        .select("id, document_number, document_date, status, context_id, company_id")
+        .in("context_id", orderIds)
+        .in("context_type", ["order", "deal"])
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      return (data ?? []).map((document) => ({
+        id: document.id,
+        document_number: document.document_number ?? document.id,
+        document_type: "AI-документ",
+        document_date: document.document_date ?? new Date().toISOString(),
+        status: document.status,
+        order_id: document.context_id ?? "",
+        file_url: null,
+        source: "ai" as const,
+      }));
     },
   });
 
@@ -979,10 +1006,10 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
                   {(activityQuery.data ?? []).map((activity) => <div key={activity.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{activity.title_snapshot || activity.activity_type}</span><span className="text-xs text-muted-foreground">{format(new Date(activity.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}</span></div>{activity.text_snapshot && <p className="mt-1 text-sm text-muted-foreground">{activity.text_snapshot}</p>}</div>)}
                 </TabsContent>
                 <TabsContent value="documents" className="mt-0 space-y-2">
-                  {documentsQuery.isLoading && <Skeleton className="h-16 w-full" />}
-                  {documentsQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Документы временно недоступны. Заказы компании остаются доступны во вкладке «Сделки».</div>}
-                  {!documentsQuery.isLoading && !documentsQuery.isError && (documentsQuery.data?.length ?? 0) === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Документов по заказам компании пока нет.</div>}
-                  {(documentsQuery.data ?? []).map((document) => <div key={document.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{document.document_number}</span><Badge variant="outline">{document.status}</Badge></div><div className="mt-1 text-xs text-muted-foreground">{document.document_type} · {formatDate(document.document_date)} · заказ {ordersById.get(document.order_id)?.order_number ?? document.order_id}</div>{document.file_url && <a className="mt-2 inline-block text-xs text-primary underline-offset-4 hover:underline" href={document.file_url} target="_blank" rel="noreferrer">Открыть файл</a>}</div>)}
+                  {(documentsQuery.isLoading || aiDocumentsQuery.isLoading) && <Skeleton className="h-16 w-full" />}
+                  {(documentsQuery.isError || aiDocumentsQuery.isError) && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Часть документов временно недоступна. Заказы компании остаются доступны во вкладке «Сделки».</div>}
+                  {!documentsQuery.isLoading && !aiDocumentsQuery.isLoading && !documentsQuery.isError && !aiDocumentsQuery.isError && ((documentsQuery.data?.length ?? 0) + (aiDocumentsQuery.data?.length ?? 0) === 0) && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Документов по заказам компании пока нет.</div>}
+                  {[...(documentsQuery.data ?? []), ...(aiDocumentsQuery.data ?? [])].map((document) => <div key={`${document.source}-${document.id}`} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{document.document_number}</span><div className="flex gap-1"><Badge variant="outline">{document.status}</Badge>{document.source === "ai" && <Badge variant="secondary">AI</Badge>}</div></div><div className="mt-1 text-xs text-muted-foreground">{document.document_type} · {formatDate(document.document_date)} · заказ {ordersById.get(document.order_id)?.order_number ?? document.order_id}</div>{document.file_url && <a className="mt-2 inline-block text-xs text-primary underline-offset-4 hover:underline" href={document.file_url} target="_blank" rel="noreferrer">Открыть файл</a>}</div>)}
                 </TabsContent>
                 <TabsContent value="communications" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Коммуникации компании отображаются в контакт-центре после привязки контакта.</div></TabsContent>
                 <TabsContent value="history" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История доступна во вкладке «Активность».</div></TabsContent>
