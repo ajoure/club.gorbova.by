@@ -18,6 +18,7 @@ AS $$
       public.user_has_live_event_access(auth.uid(), s.live_event_id)
       AND (s.viewer_user_id IS NULL OR s.viewer_user_id = auth.uid())
     ))
+    AND _live_event_id = s.live_event_id
     AND e.live_event_id = _live_event_id AND e.state = 'applied' AND e.visibility_scope = 'public'
   ORDER BY e.offset_seconds ASC, e.created_at ASC;
 $$;
