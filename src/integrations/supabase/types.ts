@@ -19175,6 +19175,16 @@ export type Database = {
         Args: { _client_legal_details_id: string }
         Returns: string
       }
+      company_feed_list: {
+        Args: {
+          _company_id: string
+          _limit?: number
+          _offset?: number
+          _search?: string
+          _types?: string[]
+        }
+        Returns: Json
+      }
       crm_company_grp_refetch: { Args: { _id: string }; Returns: string }
       crm_company_link_contact: {
         Args: {
