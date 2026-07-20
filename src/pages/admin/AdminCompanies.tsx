@@ -831,7 +831,7 @@ export default function AdminCompanies() {
             <Select value={mergeTargetId ?? undefined} onValueChange={setMergeTargetId}>
               <SelectTrigger><SelectValue placeholder="Выберите компанию" /></SelectTrigger>
               <SelectContent>
-                {items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => <SelectItem key={company.id} value={company.id}>{company.full_name} · {company.public_id}</SelectItem>)}
+                {items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => <SelectItem key={company.id} value={company.id}>{(formatCompanyDisplayName(company.full_name) || company.full_name)} · {company.public_id}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
