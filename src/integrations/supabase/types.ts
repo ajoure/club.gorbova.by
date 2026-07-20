@@ -19181,6 +19181,17 @@ export type Database = {
         Args: { _source_id: string; _target_id: string }
         Returns: string
       }
+      crm_company_update: {
+        Args: {
+          _email?: string
+          _full_name: string
+          _id: string
+          _phone?: string
+          _short_name?: string
+        }
+        Returns: string
+      }
+      crm_company_quality_summary: { Args: never; Returns: Json }
       crm_company_sync_admin_dismiss: {
         Args: { _actor_user_id: string; _id: string; _reason: string }
         Returns: Json

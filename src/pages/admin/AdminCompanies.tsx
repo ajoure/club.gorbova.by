@@ -16,6 +16,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  ShieldCheck,
   UserRound,
   CalendarDays,
   X,
@@ -99,6 +100,17 @@ interface CompanySearchResult {
   total: number;
   limit: number;
   offset: number;
+}
+
+interface CompanyQualitySummary {
+  without_contacts: number;
+  without_unp: number;
+  without_billing_map: number;
+  ownership_conflicts: number;
+  broken_merged_chain: number;
+  failed_sync: number;
+  duplicate_candidates: number;
+  orphan_order_links: number;
 }
 
 interface CompanyDetail extends CompanyListItem {
@@ -257,6 +269,16 @@ export default function AdminCompanies() {
       const result = data as unknown as CompanySearchResult | null;
       return result ?? { items: [], total: 0, limit: PAGE_SIZE, offset: page * PAGE_SIZE };
     },
+  });
+
+  const qualityQuery = useQuery({
+    queryKey: ["admin-company-quality"],
+    queryFn: async (): Promise<CompanyQualitySummary> => {
+      const { data, error } = await supabase.rpc("crm_company_quality_summary");
+      if (error) throw error;
+      return (data ?? {}) as unknown as CompanyQualitySummary;
+    },
+    staleTime: 30_000,
   });
 
   const items = companiesQuery.data?.items ?? [];
@@ -431,6 +453,35 @@ export default function AdminCompanies() {
         <span>Показано: <strong className="text-foreground">{items.length}</strong> · Всего: <strong className="text-foreground">{total}</strong></span>
         <ColumnSettings columns={columns} onChange={setColumns} />
       </div>
+
+      <section className="rounded-xl border bg-card p-3" aria-label="Качество данных компаний">
+        <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+          <ShieldCheck className="h-4 w-4 text-primary" />
+          Качество данных
+          {qualityQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        </div>
+        {qualityQuery.isError ? (
+          <p className="text-sm text-muted-foreground">Сводка качества временно недоступна. Список компаний продолжает работать.</p>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              ["Без контактов", qualityQuery.data?.without_contacts],
+              ["Без УНП", qualityQuery.data?.without_unp],
+              ["Без billing-связи", qualityQuery.data?.without_billing_map],
+              ["Конфликты источника", qualityQuery.data?.ownership_conflicts],
+              ["Кандидаты в дубли", qualityQuery.data?.duplicate_candidates],
+              ["Ошибки синхронизации", qualityQuery.data?.failed_sync],
+              ["Сломанные merge-ссылки", qualityQuery.data?.broken_merged_chain],
+              ["Осиротевшие заказы", qualityQuery.data?.orphan_order_links],
+            ].map(([label, value]) => (
+              <div key={label as string} className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2 text-sm">
+                <span className="text-muted-foreground">{label}</span>
+                <Badge variant={Number(value ?? 0) > 0 ? "secondary" : "outline"}>{value ?? "—"}</Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <div className="min-h-0 min-w-0 flex-none overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center justify-between border-b px-4 py-3 text-sm text-muted-foreground">
@@ -657,7 +708,6 @@ function EditCompanyDialog({ company, onOpenChange, onSaved }: {
   const [shortName, setShortName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [status, setStatus] = useState<CompanyStatus>("active");
 
   useEffect(() => {
     if (!company) return;
@@ -665,20 +715,18 @@ function EditCompanyDialog({ company, onOpenChange, onSaved }: {
     setShortName(company.short_name ?? "");
     setEmail(company.email ?? "");
     setPhone(company.phone ?? "");
-    setStatus(company.status);
   }, [company]);
 
   const updateCompany = useMutation({
     mutationFn: async () => {
       if (!company) return;
-      const { error } = await supabase.from("companies").update({
-        full_name: fullName.trim(),
-        short_name: shortName.trim() || null,
-        email: email.trim() || null,
-        phone: phone.trim() || null,
-        status,
-        updated_at: new Date().toISOString(),
-      }).eq("id", company.id);
+      const { error } = await supabase.rpc("crm_company_update", {
+        _id: company.id,
+        _full_name: fullName,
+        _short_name: shortName,
+        _email: email,
+        _phone: phone,
+      });
       if (error) throw error;
     },
     onSuccess: () => { toast.success("Компания обновлена"); onSaved(); },
@@ -697,7 +745,7 @@ function EditCompanyDialog({ company, onOpenChange, onSaved }: {
               <label className="grid gap-2 text-sm font-medium">Email<Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" /></label>
               <label className="grid gap-2 text-sm font-medium">Телефон<Input value={phone} onChange={(event) => setPhone(event.target.value)} /></label>
             </div>
-            <label className="grid gap-2 text-sm font-medium">Статус<Select value={status} onValueChange={(value: CompanyStatus) => setStatus(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="active">Активна</SelectItem><SelectItem value="archived">В архиве</SelectItem><SelectItem value="merged">Объединена</SelectItem></SelectContent></Select></label>
+            <p className="text-xs text-muted-foreground">Статус меняется отдельными действиями «Архивировать» и «Объединить», чтобы не обходить CRM-инварианты.</p>
           </div>
           <DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button><Button type="submit" disabled={updateCompany.isPending}>{updateCompany.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Сохранить</Button></DialogFooter>
         </form>
