@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
+import type { DateRange } from "react-day-picker";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -14,6 +17,8 @@ import {
   RefreshCw,
   Search,
   UserRound,
+  CalendarDays,
+  X,
 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
@@ -36,6 +41,8 @@ import {
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -174,6 +181,7 @@ export default function AdminCompanies() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | CompanyStatus>("active");
   const [kind, setKind] = useState<"all" | CompanyKind>("all");
+  const [createdRange, setCreatedRange] = useState<DateRange | undefined>();
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [editCompany, setEditCompany] = useState<CompanyListItem | null>(null);
@@ -198,11 +206,13 @@ export default function AdminCompanies() {
     q: debouncedQuery || undefined,
     status: status === "all" ? undefined : [status],
     company_kind: kind === "all" ? undefined : [kind],
+    created_from: createdRange?.from ? format(createdRange.from, "yyyy-MM-dd") : undefined,
+    created_to: createdRange?.to ? format(createdRange.to, "yyyy-MM-dd") : undefined,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
     sort_by: "created_at",
     sort_dir: "desc",
-  }), [debouncedQuery, kind, page, status]);
+  }), [createdRange, debouncedQuery, kind, page, status]);
 
   const companiesQuery = useQuery({
     queryKey: ["admin-companies", filters],
@@ -334,6 +344,34 @@ export default function AdminCompanies() {
             <SelectItem value="unknown">Не определён</SelectItem>
           </SelectContent>
         </Select>
+        <div className="flex items-center gap-2 md:col-span-3">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className={`justify-start text-left font-normal ${!createdRange?.from ? "text-muted-foreground" : ""}`}>
+                <CalendarDays className="mr-2 h-4 w-4" />
+                {createdRange?.from
+                  ? createdRange.to
+                    ? `${format(createdRange.from, "dd.MM.yyyy", { locale: ru })} — ${format(createdRange.to, "dd.MM.yyyy", { locale: ru })}`
+                    : format(createdRange.from, "dd.MM.yyyy", { locale: ru })
+                  : "Дата создания"}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                mode="range"
+                selected={createdRange}
+                onSelect={(range) => { setCreatedRange(range); resetPage(); }}
+                numberOfMonths={2}
+                initialFocus
+              />
+            </PopoverContent>
+          </Popover>
+          {createdRange?.from && (
+            <Button variant="ghost" size="sm" onClick={() => { setCreatedRange(undefined); resetPage(); }}>
+              <X className="mr-1 h-4 w-4" /> Сбросить дату
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">

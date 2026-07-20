@@ -4795,6 +4795,7 @@ export type Database = {
           closed_at: string | null
           closed_by: string | null
           contact_id: string | null
+          company_id: string | null
           created_at: string
           created_by: string | null
           deal_id: string | null
@@ -4825,6 +4826,7 @@ export type Database = {
           closed_at?: string | null
           closed_by?: string | null
           contact_id?: string | null
+          company_id?: string | null
           created_at?: string
           created_by?: string | null
           deal_id?: string | null
@@ -4855,6 +4857,7 @@ export type Database = {
           closed_at?: string | null
           closed_by?: string | null
           contact_id?: string | null
+          company_id?: string | null
           created_at?: string
           created_by?: string | null
           deal_id?: string | null
@@ -19263,6 +19266,7 @@ export type Database = {
           closed_at: string | null
           closed_by: string | null
           contact_id: string | null
+          company_id: string | null
           created_at: string
           created_by: string | null
           deal_id: string | null
