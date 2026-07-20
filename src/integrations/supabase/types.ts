@@ -4136,6 +4136,82 @@ export type Database = {
           },
         ]
       }
+      company_relationships: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          evidence: Json
+          from_company_id: string
+          id: string
+          is_current: boolean
+          metadata: Json
+          relationship_type: string
+          source: string
+          to_company_id: string
+          updated_at: string
+          updated_by: string | null
+          valid_from: string
+          valid_to: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          evidence?: Json
+          from_company_id: string
+          id?: string
+          is_current?: boolean
+          metadata?: Json
+          relationship_type: string
+          source?: string
+          to_company_id: string
+          updated_at?: string
+          updated_by?: string | null
+          valid_from?: string
+          valid_to?: string | null
+          workspace_id?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          evidence?: Json
+          from_company_id?: string
+          id?: string
+          is_current?: boolean
+          metadata?: Json
+          relationship_type?: string
+          source?: string
+          to_company_id?: string
+          updated_at?: string
+          updated_by?: string | null
+          valid_from?: string
+          valid_to?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_relationships_from_company_id_fkey"
+            columns: ["from_company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "company_relationships_to_company_id_fkey"
+            columns: ["to_company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "company_relationships_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       company_sync_queue: {
         Row: {
           attempts: number
@@ -19370,6 +19446,24 @@ export type Database = {
       }
       crm_company_sheet_import_batch_apply: {
         Args: { _assignee_name?: string; _batch_id: string; _confirm?: boolean; _max_rows?: number }
+        Returns: Json
+      }
+      crm_company_relationship_upsert: {
+        Args: {
+          _evidence?: Json
+          _from_company_id: string
+          _is_current?: boolean
+          _metadata?: Json
+          _relationship_type: string
+          _source?: string
+          _to_company_id: string
+          _valid_from?: string
+          _valid_to?: string | null
+        }
+        Returns: string
+      }
+      crm_company_relationships_list: {
+        Args: { _company_id: string; _include_history?: boolean }
         Returns: Json
       }
       crm_company_external_ids_list: { Args: { _company_id: string }; Returns: Json }
