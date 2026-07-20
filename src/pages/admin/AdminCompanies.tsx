@@ -177,6 +177,7 @@ interface CompanyDetail extends CompanyListItem {
   bank_account: string | null;
   bank_name: string | null;
   bank_code: string | null;
+  metadata: Record<string, unknown> | null;
   updated_at: string;
 }
 
@@ -295,6 +296,19 @@ interface ProfileSummary {
   loyalty_analyzed_messages_count?: number | null;
   loyalty_updated_at?: string | null;
   communication_style?: Record<string, unknown> | null;
+}
+
+function getImportedCompanyPhones(company: { phone?: string | null; country?: string | null; metadata?: unknown }): string[] {
+  const metadata = company.metadata && typeof company.metadata === "object" ? company.metadata as Record<string, unknown> : null;
+  const importMetadata = metadata?.google_sheet_import && typeof metadata.google_sheet_import === "object"
+    ? metadata.google_sheet_import as Record<string, unknown>
+    : null;
+  const importedPhones = Array.isArray(importMetadata?.phones) ? importMetadata.phones : [];
+  return Array.from(new Set(
+    [company.phone, ...importedPhones]
+      .map((value) => typeof value === "string" ? normalizeCompanyPhone(value, company.country ?? "BY") : null)
+      .filter((value): value is string => Boolean(value)),
+  ));
 }
 
 const PAGE_SIZE = 25;
@@ -1381,6 +1395,8 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
 
   const company = detailQuery.data;
   const normalizedPhone = normalizeCompanyPhone(company?.phone, company?.country ?? "BY");
+  const companyPhones = useMemo(() => getImportedCompanyPhones(company ?? {}), [company]);
+  const additionalCompanyPhones = useMemo(() => companyPhones.filter((phone) => phone !== normalizedPhone), [companyPhones, normalizedPhone]);
   const selectedLinkedProfile = selectedLinkedContactId ? profilesById.get(selectedLinkedContactId) : null;
   const selectedLinkedContact = selectedLinkedProfile ? {
     id: selectedLinkedProfile.id,
@@ -1518,8 +1534,9 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                   <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
                     {company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" /><a href={`mailto:${company.email}`} className="hover:text-foreground hover:underline">{company.email}</a></div>}
                     {normalizedPhone && <div className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${normalizedPhone}`} className="hover:text-foreground hover:underline">{normalizedPhone}</a><span className="ml-auto flex gap-1"><CallButton phone={normalizedPhone} companyId={company.id} size="sm" /><SmsButton phone={normalizedPhone} companyId={company.id} size="sm" /></span></div>}
+                    {additionalCompanyPhones.map((phone) => <div key={phone} className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${phone}`} className="hover:text-foreground hover:underline">{phone}</a><span className="ml-auto flex gap-1"><CallButton phone={phone} companyId={company.id} size="sm" /><SmsButton phone={phone} companyId={company.id} size="sm" /></span></div>)}
                     {company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}
-                    {!company.email && !normalizedPhone && !company.legal_address && "Контактные данные не заполнены."}
+                    {!company.email && companyPhones.length === 0 && !company.legal_address && "Контактные данные не заполнены."}
                   </section>
                 </TabsContent>
                 <TabsContent value="contacts" className="mt-0 space-y-3">
