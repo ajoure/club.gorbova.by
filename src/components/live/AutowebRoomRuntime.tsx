@@ -417,6 +417,7 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
             <TabsContent value="participants" className="flex-1 mt-2">
               <RoomParticipantsList
                 liveEventId={state.live_event_id}
+                autowebSessionId={state.session_id}
                 isStaff={isStaff}
                 visibleForStudents={true}
               />
