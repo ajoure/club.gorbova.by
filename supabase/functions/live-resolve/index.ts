@@ -336,11 +336,38 @@ Deno.serve(async (req) => {
       }, 403);
     }
 
+    // 5a. Server-side replay_disabled gate (Phase D canonical).
+    //   Terminal event (platform_status ∈ {ended, archived} OR event.status='ended')
+    //   with replay_enabled=false → closed for non-admin viewers.
+    //   Admin/super_admin retains visibility (bypass).
+    {
+      const ps = (event.platform_status ?? null) as string | null;
+      const st = (event.status ?? null) as string | null;
+      const terminal = ps === 'ended' || ps === 'archived' || st === 'ended';
+      const isAdminBypass = isAdmin === true || isSuperAdmin === true;
+      if (terminal && !event.replay_enabled && !isAdminBypass) {
+        await logAudit(supabase, 'live_access_replay_disabled', userId, slug, event.id, {
+          platform_status: ps,
+          status: st,
+          replay_enabled: false,
+        });
+        return jsonRes({
+          status: 'replay_disabled',
+          reason: 'replay_disabled',
+          title: event.title,
+          description: event.description,
+          event_status: event.status,
+          replay_enabled: false,
+        }, 410);
+      }
+    }
+
     // 5b. Moderation overlay — check if user is removed/banned from room
     const { data: isRemoved } = await supabase.rpc('is_user_removed_from_room', {
       _user_id: userId,
       _live_event_id: event.id,
     });
+
 
     if (isRemoved === true) {
       await logAudit(supabase, 'live_access_denied', userId, slug, event.id, {
