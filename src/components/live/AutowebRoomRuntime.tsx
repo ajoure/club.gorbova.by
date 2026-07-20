@@ -305,6 +305,21 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
             {isPlaying && "В эфире"}
             {isEnded && "Завершён"}
           </Badge>
+          {state.viewer_count.visible && state.viewer_count.displayed_count !== null && (
+            <Badge
+              variant="outline"
+              className="gap-1 tabular-nums"
+              title={isStaff && typeof state.viewer_count.real_count === "number"
+                ? `Фактически активны: ${state.viewer_count.real_count}`
+                : "Зрителей в комнате"}
+            >
+              <Users className="h-3.5 w-3.5" />
+              {state.viewer_count.displayed_count}
+              {isStaff && typeof state.viewer_count.real_count === "number" && (
+                <span className="text-muted-foreground">· факт {state.viewer_count.real_count}</span>
+              )}
+            </Badge>
+          )}
         </div>
         {description && (
           <p className="room-subtitle text-sm line-clamp-1 mb-1">{description}</p>

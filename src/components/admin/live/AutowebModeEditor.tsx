@@ -66,6 +66,13 @@ export interface AutowebConfig {
     resume_from_last_position?: boolean;
     allow_rewatch_before_end?: boolean;
   };
+  /** Presentation-only audience counter. It never affects sessions or metrics. */
+  viewer_counts?: {
+    enabled?: boolean;
+    base_count?: number;
+    curve_points?: Array<{ at_percent?: number; delta?: number }>;
+    variation_percent?: number;
+  };
 }
 
 interface Props {
@@ -117,6 +124,7 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
   const od = cfg.on_demand ?? {};
   const replay = cfg.replay ?? {};
   const vc = cfg.viewer_controls ?? {};
+  const viewerCounts = cfg.viewer_counts ?? {};
 
   const weekdays = sched.weekdays ?? [1, 3, 5];
   const times = sched.times ?? ["19:00"];
@@ -126,6 +134,22 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
   const jitOffsets = jit.offsets_minutes ?? [5, 10, 15, 30];
   const showCountdown = jit.show_countdown !== false;
   const minDelay = od.min_delay_seconds ?? 0;
+  const viewerCurvePoints = Array.isArray(viewerCounts.curve_points)
+    ? viewerCounts.curve_points.map((point) => ({
+        at_percent: Math.max(0, Math.min(100, Number(point?.at_percent ?? 0) || 0)),
+        delta: Math.trunc(Number(point?.delta ?? 0) || 0),
+      }))
+    : [];
+  const viewerPreview = useMemo(() => {
+    const base = Math.max(0, Math.floor(Number(viewerCounts.base_count ?? 0) || 0));
+    return Array.from({ length: 11 }, (_, index) => {
+      const at = index * 10;
+      return Math.max(0, base + viewerCurvePoints.reduce(
+        (sum, point) => sum + (point.at_percent <= at ? point.delta : 0),
+        0,
+      ));
+    });
+  }, [viewerCounts.base_count, viewerCurvePoints]);
 
   // Превью ближайших запусков (только для scheduled)
   const [preview, setPreview] = useState<Array<{ starts_at: string; ends_at: string }>>([]);
@@ -217,6 +241,9 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
   }
   function patchVc(p: Partial<NonNullable<AutowebConfig["viewer_controls"]>>) {
     onConfigChange({ ...cfg, viewer_controls: { ...vc, ...p } });
+  }
+  function patchViewerCounts(p: Partial<NonNullable<AutowebConfig["viewer_counts"]>>) {
+    onConfigChange({ ...cfg, viewer_counts: { ...viewerCounts, ...p } });
   }
 
   return (
@@ -592,6 +619,120 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
               onChange={(v) => patchVc({ allow_rewatch_before_end: v })}
             />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Presentation counter. Its values are never turned into fake sessions,
+          participants or messages; staff still receives a separate real count. */}
+      <Card>
+        <CardContent className="pt-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <Label className="text-sm font-medium">Отображаемый счётчик зрителей</Label>
+              <p className="text-xs text-muted-foreground mt-1">
+                Только для интерфейса зрителя: реальные сессии и метрики не изменяются.
+              </p>
+            </div>
+            <Switch
+              checked={viewerCounts.enabled === true}
+              onCheckedChange={(enabled) => patchViewerCounts({ enabled })}
+            />
+          </div>
+          {viewerCounts.enabled === true && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Базовое число</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={viewerCounts.base_count ?? 0}
+                    onChange={(e) => patchViewerCounts({ base_count: Math.max(0, Math.floor(Number(e.target.value || 0))) })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Естественная вариация (0–5%)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={5}
+                    step={1}
+                    value={viewerCounts.variation_percent ?? 0}
+                    onChange={(e) => patchViewerCounts({ variation_percent: Math.max(0, Math.min(5, Number(e.target.value || 0))) })}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Точки роста и падения</Label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => patchViewerCounts({
+                      curve_points: [...viewerCurvePoints, { at_percent: 50, delta: 0 }],
+                    })}
+                  >
+                    Добавить точку
+                  </Button>
+                </div>
+                {viewerCurvePoints.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Добавьте точку, чтобы изменить число на выбранном проценте видео.</p>
+                ) : viewerCurvePoints.map((point, index) => (
+                  <div key={`${index}-${point.at_percent}`} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Время видео, %</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={point.at_percent}
+                        onChange={(e) => {
+                          const next = [...viewerCurvePoints];
+                          next[index] = { ...point, at_percent: Math.max(0, Math.min(100, Number(e.target.value || 0))) };
+                          patchViewerCounts({ curve_points: next });
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Изменение</Label>
+                      <Input
+                        type="number"
+                        value={point.delta}
+                        onChange={(e) => {
+                          const next = [...viewerCurvePoints];
+                          next[index] = { ...point, delta: Math.trunc(Number(e.target.value || 0)) };
+                          patchViewerCounts({ curve_points: next });
+                        }}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => patchViewerCounts({ curve_points: viewerCurvePoints.filter((_, itemIndex) => itemIndex !== index) })}
+                    >
+                      Удалить
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs">Превью кривой без вариации</Label>
+                <div className="h-16 rounded-md border bg-muted/30 px-2 flex items-end gap-1" aria-label="Превью кривой зрителей">
+                  {viewerPreview.map((count, index) => {
+                    const maximum = Math.max(1, ...viewerPreview);
+                    return (
+                      <div key={index} className="flex-1 min-w-0 rounded-t bg-primary/70" title={`${index * 10}%: ${count}`} style={{ height: `${Math.max(8, (count / maximum) * 100)}%` }} />
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground">Значение стабильно внутри минуты одной session; вариация детерминирована при refresh.</p>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

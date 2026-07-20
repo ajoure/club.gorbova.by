@@ -19,6 +19,7 @@ import type {
   AutowebRoomStateResponse,
   AutowebViewerControls,
   AutowebResumeContract,
+  AutowebViewerCount,
 } from '../_shared/autoweb-types.ts';
 
 const corsHeaders = {
@@ -62,6 +63,53 @@ export interface ComputeResult {
   replay_ends_at: Date | null;
   session_playback_position_seconds: number;
   resume: AutowebResumeContract;
+}
+
+type ViewerCurvePoint = { at_percent?: unknown; delta?: unknown };
+
+/**
+ * A presentation-only value. The seed includes a minute bucket, so a refresh
+ * inside the same session/window cannot cause a random jump, while the small
+ * bounded variation still looks natural over a longer live show.
+ */
+function displayedViewerCount(
+  rawConfig: Record<string, unknown> | undefined,
+  sessionId: string,
+  startsAt: Date,
+  now: Date,
+  durationSeconds: number,
+  phase: AutowebPhase,
+): AutowebViewerCount {
+  const config = rawConfig ?? {};
+  if (config.enabled !== true) return { visible: false, displayed_count: null };
+
+  const base = Math.max(0, Math.floor(Number(config.base_count ?? 0)) || 0);
+  const percent = durationSeconds > 0
+    ? Math.max(0, Math.min(100, ((now.getTime() - startsAt.getTime()) / 1000 / durationSeconds) * 100))
+    : 0;
+  // A replay has no reliable wall-clock playback position on the server. Use
+  // the terminal curve value instead of a fabricated live audience.
+  const effectivePercent = phase === 'replay' || phase === 'ended' ? 100 : percent;
+  const points = Array.isArray(config.curve_points) ? config.curve_points as ViewerCurvePoint[] : [];
+  const curveDelta = points.reduce((total, point) => {
+    const at = Number(point?.at_percent);
+    const delta = Number(point?.delta);
+    return Number.isFinite(at) && Number.isFinite(delta) && at <= effectivePercent
+      ? total + Math.trunc(delta)
+      : total;
+  }, 0);
+  const baseline = Math.max(0, base + curveDelta);
+  const variationPercent = Math.max(0, Math.min(5, Number(config.variation_percent ?? 0) || 0));
+  const amplitude = Math.round(baseline * variationPercent / 100);
+  const minuteBucket = Math.floor((now.getTime() - startsAt.getTime()) / 60_000);
+  let hash = 2166136261;
+  for (const char of `${sessionId}:${minuteBucket}`) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  const unit = (hash >>> 0) / 0xffffffff;
+  const variation = amplitude ? Math.round((unit * 2 - 1) * amplitude) : 0;
+  return { visible: true, displayed_count: Math.max(0, baseline + variation) };
 }
 
 /**
@@ -239,6 +287,28 @@ Deno.serve(async (req) => {
       saved_position_seconds,
     });
 
+    const viewer_count = displayedViewerCount(
+      cfg?.viewer_counts as Record<string, unknown> | undefined,
+      session.id,
+      new Date(session.starts_at),
+      new Date(),
+      duration_seconds,
+      computed.phase,
+    );
+    // The actual count is a staff diagnostic only. Its RPC is service-role
+    // exclusive, so a normal browser can neither call it nor receive it.
+    if (isStaff) {
+      const { data: realCount, error: realCountError } = await admin.rpc(
+        'autoweb_session_real_viewer_count',
+        { _session_id: session.id },
+      );
+      if (realCountError) {
+        console.warn('[autoweb-room-state] real viewer count unavailable', realCountError.message);
+      } else {
+        viewer_count.real_count = Math.max(0, Number(realCount ?? 0));
+      }
+    }
+
     const response: AutowebRoomStateResponse = {
       status: 'ok',
       phase: computed.phase,
@@ -254,6 +324,7 @@ Deno.serve(async (req) => {
       questions_enabled: cfg?.questions?.enabled !== false,
       session_playback_position_seconds: computed.session_playback_position_seconds,
       resume: computed.resume,
+      viewer_count,
       viewer_timezone: viewerTzParam,
       event_timezone: event.event_timezone ?? cfg?.schedule?.timezone ?? 'Europe/Minsk',
       kinescope_video_id: cfg?.video?.kinescope_video_id ?? null,

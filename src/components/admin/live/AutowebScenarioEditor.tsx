@@ -54,6 +54,19 @@ interface DraftRow {
   _new?: boolean;
 }
 
+type ShiftScope = "comments" | "buttons" | "all";
+interface ShiftPreview {
+  scope: ShiftScope;
+  delta_seconds: number;
+  affected: number;
+  sample: Array<{
+    id: string;
+    entry_type: EntryType;
+    from_offset_seconds: number;
+    to_offset_seconds: number;
+  }>;
+}
+
 function fmtOffset(sec: number): string {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
@@ -83,6 +96,8 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
   const qc = useQueryClient();
   const [rows, setRows] = useState<Record<string, DraftRow>>({});
   const [shiftDelta, setShiftDelta] = useState<string>("30");
+  const [shiftScope, setShiftScope] = useState<ShiftScope>("all");
+  const [shiftPreview, setShiftPreview] = useState<ShiftPreview | null>(null);
   // Local-only test mode. It intentionally has no session/player/heartbeat path.
   const [previewSeconds, setPreviewSeconds] = useState(0);
   const [previewPlaying, setPreviewPlaying] = useState(false);
@@ -175,12 +190,32 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
       const { data, error } = await supabase.rpc("autoweb_scenario_bulk_shift", {
         _live_event_id: liveEventId,
         _delta_seconds: delta,
+        _scope: shiftScope,
       });
       if (error) throw error;
       return data;
     },
-    onSuccess: (res: any) => { toast.success(`Сдвиг применён (${res?.affected ?? 0})`); invalidate(); },
+    onSuccess: (res: any) => {
+      toast.success(`Сдвиг применён (${res?.affected ?? 0})`);
+      setShiftPreview(null);
+      invalidate();
+    },
     onError: (e: any) => toast.error(e?.message ?? "Ошибка bulk shift"),
+  });
+
+  const shiftPreviewMut = useMutation({
+    mutationFn: async () => {
+      const delta = parseInt(shiftDelta, 10) || 0;
+      const { data, error } = await supabase.rpc("autoweb_scenario_bulk_shift_preview", {
+        _live_event_id: liveEventId,
+        _delta_seconds: delta,
+        _scope: shiftScope,
+      });
+      if (error) throw error;
+      return data as ShiftPreview;
+    },
+    onSuccess: (res) => setShiftPreview(res),
+    onError: (e: any) => toast.error(e?.message ?? "Ошибка preview сдвига"),
   });
 
   const previewMut = useMutation({
@@ -267,10 +302,27 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
               className="h-8 w-20"
               type="number"
               value={shiftDelta}
-              onChange={(e) => setShiftDelta(e.target.value)}
+              onChange={(e) => {
+                setShiftDelta(e.target.value);
+                setShiftPreview(null);
+              }}
             />
-            <Button size="sm" variant="outline" onClick={() => shiftMut.mutate()} disabled={shiftMut.isPending}>
-              Сдвинуть драфты (сек)
+            <Select value={shiftScope} onValueChange={(value) => {
+              setShiftScope(value as ShiftScope);
+              setShiftPreview(null);
+            }}>
+              <SelectTrigger className="h-8 w-28"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="comments">Комментарии</SelectItem>
+                <SelectItem value="buttons">Кнопки</SelectItem>
+                <SelectItem value="all">Все</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button size="sm" variant="outline" onClick={() => shiftPreviewMut.mutate()} disabled={shiftPreviewMut.isPending}>
+              <Eye className="h-3.5 w-3.5 mr-1" /> Preview сдвига
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => shiftMut.mutate()} disabled={shiftMut.isPending || !shiftPreview}>
+              Применить сдвиг
             </Button>
           </div>
           <div className="ml-auto flex items-center gap-1">
@@ -285,6 +337,27 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
             </Button>
           </div>
         </div>
+
+        {shiftPreview && (
+          <div className="rounded-md border bg-muted/30 p-2 text-xs space-y-1">
+            <div className="font-medium">
+              Preview сдвига: {shiftPreview.affected} draft-записей · {shiftPreview.scope} · {shiftPreview.delta_seconds >= 0 ? "+" : ""}{shiftPreview.delta_seconds} сек
+            </div>
+            {shiftPreview.sample.length === 0 ? (
+              <p className="text-muted-foreground">Подходящих draft-записей нет.</p>
+            ) : (
+              <div className="space-y-0.5 text-muted-foreground">
+                {shiftPreview.sample.map((item) => (
+                  <div key={item.id}>
+                    {TYPE_LABEL[item.entry_type]}: {fmtOffset(item.from_offset_seconds)} → {fmtOffset(item.to_offset_seconds)}
+                  </div>
+                ))}
+                {shiftPreview.affected > shiftPreview.sample.length && <div>…и ещё {shiftPreview.affected - shiftPreview.sample.length}</div>}
+              </div>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => setShiftPreview(null)}>Отменить preview</Button>
+          </div>
+        )}
 
         <div className="rounded-md border border-dashed bg-muted/30 p-3 space-y-2" data-autoweb-test-mode>
           <div className="flex flex-wrap items-center gap-2 text-xs">

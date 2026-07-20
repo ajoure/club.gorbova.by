@@ -25,6 +25,14 @@ export interface AutowebResumeContract {
   last_video_position_seconds: number;
 }
 
+/** Presentation counter for the room header. `real_count` is never sent to a
+ * regular viewer; it is present only for staff diagnostics. */
+export interface AutowebViewerCount {
+  visible: boolean;
+  displayed_count: number | null;
+  real_count?: number;
+}
+
 export interface AutowebRoomStateResponse {
   status: "ok" | "not_found" | "unsupported_event_type" | "error";
   phase: AutowebPhase;
@@ -45,6 +53,7 @@ export interface AutowebRoomStateResponse {
    */
   session_playback_position_seconds: number;
   resume: AutowebResumeContract;
+  viewer_count: AutowebViewerCount;
   viewer_timezone: string;
   event_timezone: string;
   /** Для UI: видео-источник (ID Kinescope), уже подтверждённый правом на эту session. */

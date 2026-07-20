@@ -23,6 +23,12 @@ export interface AutowebResumeContract {
   last_video_position_seconds: number;
 }
 
+export interface AutowebViewerCount {
+  visible: boolean;
+  displayed_count: number | null;
+  real_count?: number;
+}
+
 export interface AutowebRoomStateResponse {
   status: "ok" | "not_found" | "unsupported_event_type" | "error";
   phase: AutowebPhase;
@@ -38,6 +44,7 @@ export interface AutowebRoomStateResponse {
   questions_enabled: boolean;
   session_playback_position_seconds: number;
   resume: AutowebResumeContract;
+  viewer_count: AutowebViewerCount;
   viewer_timezone: string;
   event_timezone: string;
   kinescope_video_id: string | null;
