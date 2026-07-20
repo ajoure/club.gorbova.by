@@ -19,6 +19,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { CompanySyncQueuePanel } from "@/components/admin/CompanySyncQueuePanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -243,6 +244,8 @@ export default function AdminCompanies() {
           </SelectContent>
         </Select>
       </div>
+
+      <CompanySyncQueuePanel canManage={canCreate} />
 
       <div className="min-h-0 overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center justify-between border-b px-4 py-3 text-sm text-muted-foreground">
