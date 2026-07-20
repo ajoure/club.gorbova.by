@@ -203,8 +203,10 @@ export default function AdminCompanies() {
   }, [columns]);
 
   const filters = useMemo(() => {
-    const equals = (key: string) => activeFilters.find((filter) => filter.field === key && filter.operator === "equals")?.value;
-    const createdFilter = activeFilters.find((filter) => filter.field === "created_at");
+    // A custom filter is appended after the preset, so it deliberately wins
+    // when a user refines a currently selected tab.
+    const equals = (key: string) => [...activeFilters].reverse().find((filter) => filter.field === key && filter.operator === "equals")?.value;
+    const createdFilter = [...activeFilters].reverse().find((filter) => filter.field === "created_at");
     const createdFrom = createdFilter?.operator === "lt" ? undefined : createdFilter?.value;
     const createdTo = createdFilter?.operator === "gt" ? undefined : createdFilter?.value;
     const presetStatus = activePreset === "all" ? undefined : activePreset;
