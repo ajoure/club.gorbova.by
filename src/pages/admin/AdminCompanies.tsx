@@ -281,11 +281,25 @@ const DEFAULT_COMPANY_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 48, order: 0 },
   { key: "company", label: "Компания", visible: true, width: 290, order: 1 },
   { key: "unp", label: "УНП", visible: true, width: 130, order: 2 },
-  { key: "kind", label: "Тип", visible: true, width: 130, order: 3 },
+  { key: "kind", label: "Тип", visible: false, width: 130, order: 3 },
   { key: "contacts", label: "Контакты", visible: true, width: 260, order: 4 },
   { key: "status", label: "Статус", visible: true, width: 130, order: 5 },
   { key: "created", label: "Создана", visible: true, width: 150, order: 6 },
 ];
+
+// Список организационно-правовых форм для очистки отображаемого названия.
+const COMPANY_OPF_REGEX = /(^|[\s"'«»„“”()\[\]\/,.-])(ОДО|ОАО|ООО|ПАО|ЗАО|АО|СООО|ИООО|ЧУП|ЧТУП|ЧПУП|ГУП|МУП|ФГУП|УП|ТДО|ТОО|И\.?\s?П\.?|ИП|LLC|LTD|GMBH|INC|CO)\.?(?=$|[\s"'«»„“”()\[\]\/,.-])/gi;
+
+export function formatCompanyDisplayName(name: string | null | undefined): string {
+  if (!name) return "";
+  const stripped = name
+    .replace(COMPANY_OPF_REGEX, " ")
+    .replace(/["«»„“”'‘’`]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,.\-–—]+|[\s,.\-–—]+$/g, "")
+    .trim();
+  return stripped || (name.trim() || "");
+}
 
 const kindLabels: Record<CompanyKind, string> = {
   legal_entity: "Юрлицо",
@@ -369,8 +383,12 @@ export default function AdminCompanies() {
   const [editCompany, setEditCompany] = useState<CompanyListItem | null>(null);
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
     try {
-      const saved = localStorage.getItem("admin_companies_columns_v1");
-      if (!saved) return DEFAULT_COMPANY_COLUMNS;
+      const saved = localStorage.getItem("admin_companies_columns_v2");
+      if (!saved) {
+        // Миграция: одноразовый сброс старого ключа v1, где «Тип» был visible=true.
+        localStorage.removeItem("admin_companies_columns_v1");
+        return DEFAULT_COMPANY_COLUMNS;
+      }
       const parsed = JSON.parse(saved) as ColumnConfig[];
       return DEFAULT_COMPANY_COLUMNS.map((column) => ({
         ...column,
@@ -432,8 +450,34 @@ export default function AdminCompanies() {
   const visibleColumns = sortedColumns.filter((column) => column.visible);
   const draggableColumnIds = visibleColumns.filter((column) => column.key !== "checkbox").map((column) => column.key);
 
+  const visibleCompanyIds = useMemo(() => items.map((company) => company.id).sort(), [items]);
+  const contactNamesQuery = useQuery({
+    queryKey: ["admin-companies-contact-names", visibleCompanyIds],
+    enabled: visibleCompanyIds.length > 0,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("company_contact_person_links")
+        .select("company_id, role, valid_from, person:company_contact_persons(full_name)")
+        .in("company_id", visibleCompanyIds)
+        .eq("is_current", true)
+        .order("valid_from", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      const map = new Map<string, string[]>();
+      (data ?? []).forEach((row: any) => {
+        const name = (row.person?.full_name ?? "").trim();
+        if (!name) return;
+        const arr = map.get(row.company_id) ?? [];
+        if (arr.length < 2 && !arr.includes(name)) arr.push(name);
+        map.set(row.company_id, arr);
+      });
+      return map;
+    },
+    staleTime: 30_000,
+  });
+
   useEffect(() => {
-    localStorage.setItem("admin_companies_columns_v1", JSON.stringify(columns));
+    localStorage.setItem("admin_companies_columns_v2", JSON.stringify(columns));
   }, [columns]);
 
   const handleColumnResize = useCallback((key: string, width: number) => {
@@ -669,12 +713,12 @@ export default function AdminCompanies() {
         </div>
       </section>
 
-      <div className="min-h-0 min-w-0 flex-none overflow-hidden rounded-xl border bg-card">
+      <div className="min-h-0 min-w-0 flex-none rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between border-b px-4 py-3 text-sm text-muted-foreground">
           <span>{companiesQuery.isLoading ? "Загрузка…" : `Найдено: ${total}`}</span>
           <span>Кликните по строке, чтобы открыть карточку</span>
         </div>
-        <div ref={containerRef} onMouseDown={handleMouseDown} data-table-scroll-x="true" className="table-scroll-x select-none">
+        <div ref={containerRef} onMouseDown={handleMouseDown} data-table-scroll-x="true" className="table-scroll-x select-none w-full overflow-x-auto overflow-y-visible">
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <Table wrapperClassName="contents" style={{ minWidth: 1200 }}>
             <TableHeader>
@@ -719,10 +763,10 @@ export default function AdminCompanies() {
                 >
                   <TableCell onClick={(event) => event.stopPropagation()}><Checkbox checked={selectedCompanyIds.has(company.id)} onCheckedChange={() => toggleSelection(company.id, true)} /></TableCell>
                   {visibleColumns.filter((column) => column.key !== "checkbox").map((column) => {
-                    if (column.key === "company") return <TableCell key={column.key}><div className="font-medium">{company.full_name}</div><div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${company.short_name}` : ""}</div></TableCell>;
+                    if (column.key === "company") return <TableCell key={column.key}><div className="font-medium">{formatCompanyDisplayName(company.full_name) || company.full_name}</div><div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${formatCompanyDisplayName(company.short_name) || company.short_name}` : ""}</div></TableCell>;
                     if (column.key === "unp") return <TableCell key={column.key} className="font-mono text-xs">{company.unp_normalized || "—"}</TableCell>;
                     if (column.key === "kind") return <TableCell key={column.key}>{kindLabels[company.company_kind]}</TableCell>;
-                    if (column.key === "contacts") return <TableCell key={column.key} onClick={(event) => event.stopPropagation()}><div className="space-y-1 text-xs text-muted-foreground">{company.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" /><a href={`mailto:${company.email}`} className="hover:underline">{company.email}</a></div>}{company.phone && <div className="flex items-center gap-1"><Phone className="h-3 w-3" /><a href={`tel:${company.phone}`} className="hover:underline">{company.phone}</a></div>}{!company.email && !company.phone && "—"}</div></TableCell>;
+                    if (column.key === "contacts") { const names = contactNamesQuery.data?.get(company.id) ?? []; return <TableCell key={column.key} onClick={(event) => event.stopPropagation()}><div className="space-y-1 text-xs text-muted-foreground">{names.length > 0 ? names.map((name) => <div key={name} className="flex items-center gap-1 truncate"><UserRound className="h-3 w-3 shrink-0" /><span className="truncate">{name}</span></div>) : "—"}</div></TableCell>; }
                     if (column.key === "status") return <TableCell key={column.key}><StatusBadge status={company.status} /></TableCell>;
                     if (column.key === "created") return <TableCell key={column.key} className="text-right text-sm text-muted-foreground">{formatDate(company.created_at)}</TableCell>;
                     return null;
@@ -787,7 +831,7 @@ export default function AdminCompanies() {
             <Select value={mergeTargetId ?? undefined} onValueChange={setMergeTargetId}>
               <SelectTrigger><SelectValue placeholder="Выберите компанию" /></SelectTrigger>
               <SelectContent>
-                {items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => <SelectItem key={company.id} value={company.id}>{company.full_name} · {company.public_id}</SelectItem>)}
+                {items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => <SelectItem key={company.id} value={company.id}>{(formatCompanyDisplayName(company.full_name) || company.full_name)} · {company.public_id}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -797,7 +841,7 @@ export default function AdminCompanies() {
               <Table className="min-w-[620px] text-sm">
                 <TableHeader><TableRow><TableHead>Поле</TableHead>{items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => <TableHead key={company.id} className={company.id === mergeTargetId ? "text-primary" : ""}>{company.public_id}{company.id === mergeTargetId ? " · target" : ""}</TableHead>)}</TableRow></TableHeader>
                 <TableBody>
-                  {["Название", "УНП", "Тип", "Статус", "Email", "Телефон"].map((label) => <TableRow key={label}><TableCell className="font-medium text-muted-foreground">{label}</TableCell>{items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => { const value = label === "Название" ? company.full_name : label === "УНП" ? company.unp_normalized : label === "Тип" ? kindLabels[company.company_kind] : label === "Статус" ? statusLabels[company.status] : label === "Email" ? company.email : company.phone; return <TableCell key={company.id} className="max-w-[190px] truncate">{value || "—"}</TableCell>; })}</TableRow>)}
+                  {["Название", "УНП", "Тип", "Статус", "Email", "Телефон"].map((label) => <TableRow key={label}><TableCell className="font-medium text-muted-foreground">{label}</TableCell>{items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => { const value = label === "Название" ? (formatCompanyDisplayName(company.full_name) || company.full_name) : label === "УНП" ? company.unp_normalized : label === "Тип" ? kindLabels[company.company_kind] : label === "Статус" ? statusLabels[company.status] : label === "Email" ? company.email : company.phone; return <TableCell key={company.id} className="max-w-[190px] truncate">{value || "—"}</TableCell>; })}</TableRow>)}
                 </TableBody>
               </Table>
             </div>
@@ -1224,7 +1268,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                   <Building2 className="h-6 w-6" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <SheetTitle className="break-words text-lg font-bold leading-tight sm:text-xl">{company.full_name}</SheetTitle>
+                  <SheetTitle className="break-words text-lg font-bold leading-tight sm:text-xl">{formatCompanyDisplayName(company.full_name) || company.full_name}</SheetTitle>
                   <SheetDescription className="mt-0.5 break-all text-xs">{company.email || `${company.public_id} · создана ${formatDate(company.created_at)}`}</SheetDescription>
                 </div>
               </div>
