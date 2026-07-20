@@ -203,6 +203,25 @@ interface CompanyExternalId {
   updated_at: string;
 }
 
+interface CompanyContactPerson {
+  link_id: string;
+  person_id: string;
+  profile_id: string | null;
+  full_name: string;
+  job_title: string | null;
+  email: string | null;
+  phone: string | null;
+  role: string;
+  valid_from: string;
+  valid_to: string | null;
+  is_current: boolean;
+  source: string;
+  consent_status: string;
+  external_ids: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  updated_at: string;
+}
+
 interface ProfileSummary {
   id: string;
   full_name: string | null;
@@ -227,6 +246,17 @@ const kindLabels: Record<CompanyKind, string> = {
   entrepreneur: "ИП",
   foreign: "Иностранная",
   unknown: "Не определён",
+};
+
+const contactPersonRoleLabels: Record<string, string> = {
+  director: "Директор",
+  accountant: "Бухгалтер",
+  founder: "Учредитель",
+  beneficial_owner: "Бенефициар",
+  authorized_representative: "Представитель",
+  employee: "Сотрудник",
+  billing_contact: "Billing-контакт",
+  contract_signatory: "Подписант",
 };
 
 const statusLabels: Record<CompanyStatus, string> = {
@@ -953,6 +983,56 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
       return (Array.isArray(data) ? data : []) as unknown as CompanyExternalId[];
     },
   });
+  const contactPersonsQuery = useQuery({
+    queryKey: ["admin-company-contact-persons", companyId],
+    enabled: !!companyId,
+    queryFn: async (): Promise<CompanyContactPerson[]> => {
+      const { data, error } = await supabase.rpc("crm_company_contact_persons_list", { _company_id: companyId! });
+      if (error) throw error;
+      return (Array.isArray(data) ? data : []) as unknown as CompanyContactPerson[];
+    },
+  });
+  const [personFullName, setPersonFullName] = useState("");
+  const [personTitle, setPersonTitle] = useState("");
+  const [personEmail, setPersonEmail] = useState("");
+  const [personPhone, setPersonPhone] = useState("");
+  const [personRole, setPersonRole] = useState("authorized_representative");
+  const upsertContactPerson = useMutation({
+    mutationFn: async () => {
+      const { data: personId, error: personError } = await supabase.rpc("crm_company_contact_person_upsert", {
+        _full_name: personFullName,
+        _job_title: personTitle || null,
+        _email: personEmail || null,
+        _phone: personPhone || null,
+        _source: "manual",
+        _consent_status: "unknown",
+        _external_ids: {},
+        _metadata: {},
+      });
+      if (personError) throw personError;
+      if (typeof personId !== "string") throw new Error("Не удалось получить ID контактного лица");
+      const { error: linkError } = await supabase.rpc("crm_company_contact_person_link", {
+        _company_id: companyId!,
+        _person_id: personId,
+        _role: personRole,
+        _source: "manual",
+        _evidence: {},
+        _metadata: {},
+      });
+      if (linkError) throw linkError;
+    },
+    onSuccess: () => {
+      toast.success("Контактное лицо компании сохранено");
+      setPersonFullName("");
+      setPersonTitle("");
+      setPersonEmail("");
+      setPersonPhone("");
+      setPersonRole("authorized_representative");
+      queryClient.invalidateQueries({ queryKey: ["admin-company-contact-persons", companyId] });
+      queryClient.invalidateQueries({ queryKey: ["admin-company-activity", companyId] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Не удалось сохранить контактное лицо"),
+  });
   const [externalProvider, setExternalProvider] = useState("");
   const [externalValue, setExternalValue] = useState("");
   const [externalUrl, setExternalUrl] = useState("");
@@ -1012,6 +1092,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
               <TabsList className="w-full justify-start overflow-x-auto rounded-lg bg-muted/60 p-1">
                 <TabsTrigger value="overview">Обзор</TabsTrigger>
                 <TabsTrigger value="contacts">Контакты</TabsTrigger>
+                <TabsTrigger value="persons">Персоны</TabsTrigger>
                 <TabsTrigger value="deals">Сделки</TabsTrigger>
                 <TabsTrigger value="tasks">Задачи</TabsTrigger>
                 <TabsTrigger value="activity">Активность</TabsTrigger>
@@ -1030,6 +1111,14 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                   {contactsQuery.isLoading && <Skeleton className="h-16 w-full" />}
                   {!contactsQuery.isLoading && (contactsQuery.data?.length ?? 0) === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанных контактов пока нет.</p>}
                   {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = profile?.full_name || contact.external_full_name || "Контакт без имени"; const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="font-medium">{name}</div><div className="mt-0.5 text-xs text-muted-foreground">{contact.relationship_type}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Billing</Badge>}</div></div></div>; })}
+                </TabsContent>
+                <TabsContent value="persons" className="mt-0 space-y-3">
+                  <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">Персоны без подтверждённого профиля хранятся отдельно. Профиль не создаётся автоматически, а связь роли сохраняется с датами и источником.</div>
+                  {contactPersonsQuery.isLoading && <Skeleton className="h-16 w-full" />}
+                  {contactPersonsQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Реестр контактных лиц временно недоступен.</div>}
+                  {!contactPersonsQuery.isLoading && !contactPersonsQuery.isError && contactPersonsQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">Внешние контактные лица ещё не добавлены.</div>}
+                  {(contactPersonsQuery.data ?? []).map((person) => <div key={person.link_id} className="rounded-lg border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><UserRound className="h-4 w-4 text-muted-foreground" /><span className="font-medium">{person.full_name}</span><Badge variant="outline">{contactPersonRoleLabels[person.role] || person.role}</Badge>{person.profile_id ? <Badge variant="secondary">Профиль подтверждён</Badge> : <Badge variant="secondary">Внешняя персона</Badge>}</div>{person.job_title && <div className="mt-1 text-xs text-muted-foreground">{person.job_title}</div>}{(person.email || person.phone) && <div className="mt-1 text-xs text-muted-foreground">{[person.email, person.phone].filter(Boolean).join(" · ")}</div>}</div><span className="shrink-0 text-xs text-muted-foreground">с {formatDate(person.valid_from)}</span></div></div>)}
+                  {canEdit && <form className="space-y-2 rounded-lg border bg-muted/30 p-3" onSubmit={(event) => { event.preventDefault(); if (personFullName.trim()) upsertContactPerson.mutate(); }}><div className="text-sm font-medium">Добавить контактное лицо</div><div className="grid gap-2 sm:grid-cols-2"><Input value={personFullName} onChange={(event) => setPersonFullName(event.target.value)} placeholder="Имя и фамилия" /><Input value={personTitle} onChange={(event) => setPersonTitle(event.target.value)} placeholder="Должность (необязательно)" /><Input value={personEmail} onChange={(event) => setPersonEmail(event.target.value)} placeholder="Email (необязательно)" /><Input value={personPhone} onChange={(event) => setPersonPhone(event.target.value)} placeholder="Телефон (необязательно)" /></div><div className="flex gap-2"><Select value={personRole} onValueChange={setPersonRole}><SelectTrigger className="flex-1"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(contactPersonRoleLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Button type="submit" size="sm" disabled={upsertContactPerson.isPending || !personFullName.trim()}>{upsertContactPerson.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Сохранить</Button></div></form>}
                 </TabsContent>
                 <TabsContent value="deals" className="mt-0 space-y-2">
                   {orderLinksQuery.isLoading && <Skeleton className="h-16 w-full" />}
