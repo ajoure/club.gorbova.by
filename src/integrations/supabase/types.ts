@@ -19185,6 +19185,17 @@ export type Database = {
         }
         Returns: Json
       }
+      crm_company_external_ids_list: { Args: { _company_id: string }; Returns: Json }
+      crm_company_external_id_upsert: {
+        Args: {
+          _company_id: string
+          _external_id: string
+          _external_url?: string
+          _metadata?: Json
+          _provider: string
+        }
+        Returns: string
+      }
       crm_company_grp_refetch: { Args: { _id: string }; Returns: string }
       crm_company_link_contact: {
         Args: {

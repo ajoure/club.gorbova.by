@@ -193,6 +193,16 @@ interface CompanyCommunication {
   source: "contact" | "company";
 }
 
+interface CompanyExternalId {
+  id: string;
+  provider: string;
+  external_id: string;
+  external_url: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 interface ProfileSummary {
   id: string;
   full_name: string | null;
@@ -668,7 +678,7 @@ export default function AdminCompanies() {
         </DialogContent>
       </Dialog>
       <EditCompanyDialog company={editCompany} onOpenChange={(open) => { if (!open) setEditCompany(null); }} onSaved={() => { setEditCompany(null); queryClient.invalidateQueries({ queryKey: ["admin-companies"] }); }} />
-      <CompanyDetailsSheet companyId={selectedCompanyId} onClose={() => selectCompany(null)} />
+      <CompanyDetailsSheet companyId={selectedCompanyId} canEdit={canCreate} onClose={() => selectCompany(null)} />
     </div>
   );
 }
@@ -776,7 +786,7 @@ function EditCompanyDialog({ company, onOpenChange, onSaved }: {
   );
 }
 
-function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null; onClose: () => void }) {
+function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: string | null; canEdit: boolean; onClose: () => void }) {
   const detailQuery = useQuery({
     queryKey: ["admin-company", companyId],
     enabled: !!companyId,
@@ -934,6 +944,40 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
     },
   });
 
+  const externalIdsQuery = useQuery({
+    queryKey: ["admin-company-external-ids", companyId],
+    enabled: !!companyId,
+    queryFn: async (): Promise<CompanyExternalId[]> => {
+      const { data, error } = await supabase.rpc("crm_company_external_ids_list", { _company_id: companyId! });
+      if (error) throw error;
+      return (Array.isArray(data) ? data : []) as unknown as CompanyExternalId[];
+    },
+  });
+  const [externalProvider, setExternalProvider] = useState("");
+  const [externalValue, setExternalValue] = useState("");
+  const [externalUrl, setExternalUrl] = useState("");
+  const upsertExternalId = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.rpc("crm_company_external_id_upsert", {
+        _company_id: companyId!,
+        _provider: externalProvider,
+        _external_id: externalValue,
+        _external_url: externalUrl || null,
+        _metadata: {},
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Внешний идентификатор сохранён");
+      setExternalProvider("");
+      setExternalValue("");
+      setExternalUrl("");
+      queryClient.invalidateQueries({ queryKey: ["admin-company-external-ids", companyId] });
+      queryClient.invalidateQueries({ queryKey: ["admin-company-activity", companyId] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Не удалось сохранить идентификатор"),
+  });
+
   const company = detailQuery.data;
   const detailRows = company ? [
     ["УНП", company.unp_normalized],
@@ -1015,7 +1059,13 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
                   {(communicationsQuery.data ?? []).map((item) => <div key={`${item.source}-${item.id}`} className="rounded-lg border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-medium">{item.title || item.kind}</span><Badge variant="outline">{communicationKindLabels[item.kind] || item.kind}</Badge>{item.source === "company" && <Badge variant="secondary">Компания</Badge>}</div>{item.body && <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{item.body}</p>}{item.author && <p className="mt-1 text-xs text-muted-foreground">{item.author}</p>}</div><span className="shrink-0 text-xs text-muted-foreground">{item.at ? format(new Date(item.at), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}</span></div></div>)}
                 </TabsContent>
                 <TabsContent value="history" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История доступна во вкладке «Активность».</div></TabsContent>
-                <TabsContent value="integrations" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Внешние идентификаторы компании пока не настроены.</div></TabsContent>
+                <TabsContent value="integrations" className="mt-0 space-y-3">
+                  {externalIdsQuery.isLoading && <Skeleton className="h-16 w-full" />}
+                  {externalIdsQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Внешние идентификаторы временно недоступны.</div>}
+                  {!externalIdsQuery.isLoading && !externalIdsQuery.isError && externalIdsQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">Идентификаторы интеграций ещё не привязаны.</div>}
+                  {(externalIdsQuery.data ?? []).map((externalId) => <div key={externalId.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><Badge variant="outline">{externalId.provider}</Badge>{externalId.external_url ? <a className="text-xs text-primary underline-offset-4 hover:underline" href={externalId.external_url} target="_blank" rel="noreferrer">Открыть в интеграции</a> : null}</div><div className="mt-2 break-all font-mono text-sm">{externalId.external_id}</div><div className="mt-1 text-xs text-muted-foreground">Обновлён {format(new Date(externalId.updated_at), "dd.MM.yyyy HH:mm", { locale: ru })}</div></div>)}
+                  {canEdit && <form className="space-y-2 rounded-lg border bg-muted/30 p-3" onSubmit={(event) => { event.preventDefault(); if (externalProvider.trim() && externalValue.trim()) upsertExternalId.mutate(); }}><div className="text-sm font-medium">Добавить или обновить идентификатор</div><div className="grid gap-2 sm:grid-cols-2"><Input value={externalProvider} onChange={(event) => setExternalProvider(event.target.value)} placeholder="Провайдер: amo, bitrix24…" /><Input value={externalValue} onChange={(event) => setExternalValue(event.target.value)} placeholder="Внешний ID" /></div><div className="flex gap-2"><Input value={externalUrl} onChange={(event) => setExternalUrl(event.target.value)} placeholder="Ссылка (необязательно)" /><Button type="submit" size="sm" disabled={upsertExternalId.isPending || !externalProvider.trim() || !externalValue.trim()}>Сохранить</Button></div></form>}
+                </TabsContent>
                 <TabsContent value="system" className="mt-0 space-y-2"><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">UUID:</span> {company.id}</div><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">Создано:</span> {formatDate(company.created_at)}</div><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">Изменено:</span> {formatDate(company.updated_at)}</div></TabsContent>
               </div>
             </Tabs>
