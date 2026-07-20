@@ -19192,6 +19192,7 @@ export type Database = {
         Returns: string
       }
       crm_company_quality_summary: { Args: never; Returns: Json }
+      crm_company_restore: { Args: { _id: string }; Returns: string }
       crm_company_sync_admin_dismiss: {
         Args: { _actor_user_id: string; _id: string; _reason: string }
         Returns: Json

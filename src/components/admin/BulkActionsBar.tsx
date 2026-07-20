@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { X, Trash2, Mail, MessageCircle, CheckSquare, Combine, Archive, UserPlus, Edit, CalendarPlus } from "lucide-react";
+import { X, Trash2, Mail, MessageCircle, CheckSquare, Combine, Archive, ArchiveRestore, UserPlus, Edit, CalendarPlus } from "lucide-react";
 
 interface BulkActionsBarProps {
   selectedCount: number;
@@ -9,6 +9,7 @@ interface BulkActionsBarProps {
   onBulkMessage?: () => void;
   onBulkMerge?: () => void;
   onBulkArchive?: () => void;
+  onBulkRestore?: () => void;
   onBulkExtendAccess?: () => void;
   onBulkCreateAccounts?: () => void;
   onBulkEdit?: () => void;
@@ -25,6 +26,7 @@ export function BulkActionsBar({
   onBulkMessage,
   onBulkMerge,
   onBulkArchive,
+  onBulkRestore,
   onBulkExtendAccess,
   onBulkCreateAccounts,
   onBulkEdit,
@@ -84,6 +86,18 @@ export function BulkActionsBar({
           >
             <Archive className="h-4 w-4" />
             Архивировать
+          </Button>
+        )}
+
+        {onBulkRestore && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBulkRestore}
+            className="gap-2 text-emerald-600 hover:text-emerald-700"
+          >
+            <ArchiveRestore className="h-4 w-4" />
+            Восстановить
           </Button>
         )}
 
