@@ -85,51 +85,44 @@ Deno.serve(async (req) => {
     if (!event) return jsonRes({ status: 'not_found' }, 404);
     if (!event.is_published) return jsonRes({ status: 'unpublished' }, 403);
 
-    // Phase D gates (D-slice-2 hotfix, invariant после ревизии 86e5e337):
-    //   1. Терминальный статус + replay_enabled=false → 410 ended.
-    //   2. Терминальный статус + replay_enabled=true  → 200 replay
-    //      (доступ к завершённой записи НЕ блокируется launches_end_at).
-    //   3. Не-терминальный + launches_end_at в прошлом → 410 launches_closed
-    //      (запрет на создание НОВОЙ personal session/новый вход; уже активные
-    //       сессии продолжают жить через autoweb-room-state и не проходят сюда).
-    // Каноническая последовательность важна: replay path ДОЛЖЕН быть раньше
-    // launches_end_at gate, иначе завершённая запись с replay_enabled=true
-    // ошибочно закроется по дедлайну (см. ревизию commit 86e5e337).
+    // Phase D gates: a failed terminal probe must never become an implicit allow.
     let isTerminal = false;
     let replayEnabled = Boolean(event.replay_enabled);
     try {
-      const { data: ev2 } = await supabase
+      const { data: ev2, error: ev2Err } = await supabase
         .from('live_events')
         .select('platform_status, status, replay_enabled')
         .eq('id', event.id)
         .maybeSingle();
-      const ps = (ev2 as any)?.platform_status ?? null;
-      const st = (ev2 as any)?.status ?? null;
-      replayEnabled = Boolean((ev2 as any)?.replay_enabled ?? event.replay_enabled);
+      if (ev2Err || !ev2) {
+        console.error('[autoweb-resolve-sessions] terminal probe failed closed', { eventId: event.id, ev2Err });
+        return jsonRes({ status: 'error', message: 'Internal error' }, 500);
+      }
+      const ps = (ev2 as any).platform_status ?? null;
+      const st = (ev2 as any).status ?? null;
+      replayEnabled = Boolean((ev2 as any).replay_enabled ?? event.replay_enabled);
       isTerminal = ps === 'ended' || ps === 'archived' || st === 'ended';
     } catch (e) {
-      console.warn('[autoweb-resolve-sessions] terminal probe failed:', e);
+      console.error('[autoweb-resolve-sessions] terminal probe threw', e);
+      return jsonRes({ status: 'error', message: 'Internal error' }, 500);
     }
 
     if (isTerminal && !replayEnabled) {
       return jsonRes({
-        status: 'ended',
+        status: 'replay_disabled',
         reason: 'replay_disabled',
         replay_enabled: false,
       }, 410);
     }
 
-    if (isTerminal && replayEnabled) {
-      // Завершённая запись доступна вне зависимости от launches_end_at.
-      return jsonRes({
-        status: 'replay',
-        replay_enabled: true,
-        launches_end_at: event.launches_end_at ?? null,
-      });
-    }
+    // Preserve the selector's established slots contract for enabled replays.
+    // The add-only flags let consumers explain why launches_end_at is bypassed.
+    const replayAddOn = isTerminal && replayEnabled
+      ? { replay_available: true, launches_end_at_bypassed: true }
+      : {};
 
     // Не-терминальное событие: launches_end_at запрещает только НОВЫЕ входы.
-    if (event.launches_end_at) {
+    if (!isTerminal && event.launches_end_at) {
       const deadline = new Date(event.launches_end_at as string).getTime();
       if (Date.now() >= deadline) {
         return jsonRes({
@@ -166,6 +159,7 @@ Deno.serve(async (req) => {
         mode,
         timezone: tz,
         one_time: { starts_at: event.scheduled_at },
+        ...replayAddOn,
       });
     }
 
@@ -195,6 +189,7 @@ Deno.serve(async (req) => {
         mode,
         timezone: tz,
         scheduled: { upcoming: slots },
+        ...replayAddOn,
       });
     }
 
@@ -216,6 +211,7 @@ Deno.serve(async (req) => {
         mode,
         timezone: tz,
         just_in_time: { options, show_countdown: showCountdown },
+        ...replayAddOn,
       });
     }
 
@@ -229,6 +225,7 @@ Deno.serve(async (req) => {
         starts_at: new Date(Date.now() + minDelay * 1000).toISOString(),
         min_delay_seconds: minDelay,
       },
+      ...replayAddOn,
     });
   } catch (e) {
     console.error('[autoweb-resolve-sessions] fatal', e);

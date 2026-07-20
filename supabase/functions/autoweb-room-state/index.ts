@@ -131,12 +131,18 @@ Deno.serve(async (req) => {
 
     const { data: event, error: eErr } = await admin
       .from('live_events')
-      .select('id, event_type, autoweb_mode, autoweb_config, event_timezone, is_published, source_live_event_id')
+      .select('id, event_type, autoweb_mode, autoweb_config, event_timezone, is_published, source_live_event_id, platform_status, status, replay_enabled')
       .eq('id', session.live_event_id)
       .maybeSingle();
     if (eErr || !event) return jsonRes({ status: 'not_found' }, 404);
     if (event.event_type !== 'autowebinar' && event.event_type !== 'recorded_webinar') {
       return jsonRes({ status: 'unsupported_event_type', event_type: event.event_type }, 400);
+    }
+    const terminal = (event as any).platform_status === 'ended'
+      || (event as any).platform_status === 'archived'
+      || (event as any).status === 'ended';
+    if (terminal && !(event as any).replay_enabled) {
+      return jsonRes({ status: 'replay_disabled' }, 410);
     }
 
     // Опционально подтягиваем время фактического старта исходного эфира для timed-replay.

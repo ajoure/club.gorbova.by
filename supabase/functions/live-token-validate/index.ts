@@ -208,7 +208,7 @@ async function handleValidate(
     // Fetch event for slug + published check
     const { data: event } = await supabase
       .from('live_events')
-      .select('id, slug, is_published')
+      .select('id, slug, is_published, platform_status, status, replay_enabled')
       .eq('id', link.live_event_id)
       .maybeSingle();
 
@@ -217,6 +217,10 @@ async function handleValidate(
     }
     if (!event.is_published) {
       return jsonResponse({ status: 'event_unpublished' }, 403);
+    }
+    if (((event as any).platform_status === 'ended' || (event as any).platform_status === 'archived' || (event as any).status === 'ended') && !(event as any).replay_enabled) {
+      await logAudit(supabase, 'live_link_replay_disabled', 'user', user.id, { link_id: link.id, live_event_id: event.id, path: 'reentry' });
+      return jsonResponse({ status: 'replay_disabled' }, 410);
     }
 
     // Refresh proof + session for owner re-entry
@@ -242,7 +246,7 @@ async function handleValidate(
   // 10. Check event exists + published
   const { data: event, error: eventErr } = await supabase
     .from('live_events')
-    .select('id, slug, is_published, product_id, access_rule, status')
+    .select('id, slug, is_published, product_id, access_rule, status, platform_status, replay_enabled')
     .eq('id', link.live_event_id)
     .maybeSingle();
 
@@ -252,6 +256,10 @@ async function handleValidate(
 
   if (!event.is_published) {
     return jsonResponse({ status: 'event_unpublished' }, 403);
+  }
+  if (((event as any).platform_status === 'ended' || (event as any).platform_status === 'archived' || (event as any).status === 'ended') && !(event as any).replay_enabled) {
+    await logAudit(supabase, 'live_link_replay_disabled', 'user', user.id, { link_id: link.id, live_event_id: event.id, path: 'activation' });
+    return jsonResponse({ status: 'replay_disabled' }, 410);
   }
 
   // 11. Canonical access check
