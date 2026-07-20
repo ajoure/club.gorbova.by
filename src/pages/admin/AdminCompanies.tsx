@@ -369,6 +369,8 @@ export default function AdminCompanies() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | CompanyStatus>("active");
   const [kind, setKind] = useState<"all" | CompanyKind>("all");
+  const [contactsFilter, setContactsFilter] = useState<"all" | "with" | "without">("all");
+  const [dealsFilter, setDealsFilter] = useState<"all" | "with" | "without">("all");
   const [createdRange, setCreatedRange] = useState<DateRange | undefined>();
   const [sortKey, setSortKey] = useState<CompanySortKey>("created_at");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -399,13 +401,15 @@ export default function AdminCompanies() {
     q: debouncedQuery || undefined,
     status: status === "all" ? undefined : [status],
     company_kind: kind === "all" ? undefined : [kind],
+    has_contacts: contactsFilter === "all" ? undefined : contactsFilter === "with",
+    has_deals: dealsFilter === "all" ? undefined : dealsFilter === "with",
     created_from: createdRange?.from ? format(createdRange.from, "yyyy-MM-dd") : undefined,
     created_to: createdRange?.to ? format(createdRange.to, "yyyy-MM-dd") : undefined,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
     sort_by: sortKey,
     sort_dir: sortDirection,
-  }), [createdRange, debouncedQuery, kind, page, sortDirection, sortKey, status]);
+  }), [contactsFilter, createdRange, debouncedQuery, dealsFilter, kind, page, sortDirection, sortKey, status]);
 
   const companiesQuery = useQuery({
     queryKey: ["admin-companies", filters],
@@ -610,6 +614,22 @@ export default function AdminCompanies() {
             <SelectItem value="entrepreneur">ИП</SelectItem>
             <SelectItem value="foreign">Иностранные</SelectItem>
             <SelectItem value="unknown">Не определён</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={contactsFilter} onValueChange={(value: "all" | "with" | "without") => { setContactsFilter(value); resetPage(); }}>
+          <SelectTrigger><SelectValue placeholder="Контакты" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Любые контакты</SelectItem>
+            <SelectItem value="with">Есть контакты</SelectItem>
+            <SelectItem value="without">Без контактов</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={dealsFilter} onValueChange={(value: "all" | "with" | "without") => { setDealsFilter(value); resetPage(); }}>
+          <SelectTrigger><SelectValue placeholder="Сделки" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Любые сделки</SelectItem>
+            <SelectItem value="with">Есть сделки</SelectItem>
+            <SelectItem value="without">Без сделок</SelectItem>
           </SelectContent>
         </Select>
         <div className="flex items-center gap-2 md:col-span-3">
