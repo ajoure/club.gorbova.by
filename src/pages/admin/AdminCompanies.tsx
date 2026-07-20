@@ -39,6 +39,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useLegalDetails, type ClientLegalDetails } from "@/hooks/useLegalDetails";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { SelectionBox } from "@/components/admin/SelectionBox";
@@ -919,7 +920,7 @@ function EditCompanyDialog({ company, onOpenChange, onSaved }: {
   );
 }
 
-function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: string | null; canEdit: boolean; onClose: () => void }) {
+export function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: string | null; canEdit: boolean; onClose: () => void }) {
   const [selectedLinkedContactId, setSelectedLinkedContactId] = useState<string | null>(null);
   const detailQuery = useQuery({
     queryKey: ["admin-company", companyId],
@@ -1198,7 +1199,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
 
   return (
     <Sheet open={!!companyId} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+      <SheetContent side="right" className={SHEET_SHELL_CLASS}>
         {detailQuery.isLoading && <div className="space-y-4 pt-8"><Skeleton className="h-8 w-2/3" />{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>}
         {!detailQuery.isLoading && !company && <div className="pt-12 text-center text-muted-foreground">Компания не найдена или недоступна.</div>}
         {company && (
@@ -1225,7 +1226,8 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
               </div>
             </div>
             <Tabs defaultValue="profile" className="flex min-h-0 flex-1 flex-col">
-              <TabsList className="w-full justify-start overflow-x-auto rounded-lg bg-muted/60 p-1">
+              <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
+              <TabsList className="mx-0 inline-flex w-auto min-w-max whitespace-nowrap rounded-lg bg-muted/60 p-1">
                 <TabsTrigger value="profile">Профиль</TabsTrigger>
                 <TabsTrigger value="feed"><Activity className="mr-1 h-3.5 w-3.5" />Лента</TabsTrigger>
                 <TabsTrigger value="telegram"><MessageCircle className="mr-1 h-3.5 w-3.5" />Telegram</TabsTrigger>
@@ -1250,6 +1252,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                 <TabsTrigger value="integrations">Интеграции</TabsTrigger>
                 <TabsTrigger value="system">Система</TabsTrigger>
               </TabsList>
+              </div>
               <div className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
                 <TabsContent value="profile" className="mt-0 space-y-4">
                   <section className="space-y-3"><h3 className="text-sm font-semibold">Реквизиты</h3><div className="divide-y rounded-lg border">{detailRows.map(([label, value]) => <div key={label as string} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 px-3 py-2.5 text-sm"><span className="text-muted-foreground">{label}</span><span className="break-words">{value || "—"}</span></div>)}</div></section>

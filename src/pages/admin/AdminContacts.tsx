@@ -77,6 +77,7 @@ import { exportToExcel, exportToCSV, ExportColumn } from "@/utils/exportTableDat
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { CompanyDetailsSheet } from "@/pages/admin/AdminCompanies";
 
 import { LoyaltyBadge } from "@/components/admin/LoyaltyPulse";
 import { ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
@@ -212,6 +213,7 @@ export default function AdminContacts() {
   const [activePreset, setActivePreset] = useState("active");
   const [displayLimit, setDisplayLimit] = useState(100);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showMergeDialog, setShowMergeDialog] = useState(false);
   const [showTelegramCleanup, setShowTelegramCleanup] = useState(false);
@@ -1850,7 +1852,13 @@ export default function AdminContacts() {
             }
           }
         }}
+        onOpenCompany={(companyId) => setSelectedCompanyId(companyId)}
         returnTo={fromPage || undefined}
+      />
+      <CompanyDetailsSheet
+        companyId={selectedCompanyId}
+        canEdit={canWrite("companies") || isSuperAdmin()}
+        onClose={() => setSelectedCompanyId(null)}
       />
 
       {/* Selection Box for drag select */}
