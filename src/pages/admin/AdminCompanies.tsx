@@ -333,7 +333,7 @@ function getLinkedPersonName(person: CompanyListPersonLink["person"]): string | 
 const PAGE_SIZE = 25;
 const COMPANY_COLUMNS_STORAGE_KEY = "admin_companies_columns_v1";
 const COMPANY_COLUMNS_CONFIG_VERSION_KEY = "admin_companies_columns_config_version";
-const COMPANY_COLUMNS_CONFIG_VERSION = "2";
+const COMPANY_COLUMNS_CONFIG_VERSION = "3";
 type CompanySortKey = "created_at" | "full_name" | "public_id";
 type SortDirection = "asc" | "desc";
 
@@ -344,6 +344,9 @@ const DEFAULT_COMPANY_COLUMNS: ColumnConfig[] = [
   { key: "contacts", label: "Контакты", visible: true, width: 260, order: 3 },
   { key: "status", label: "Статус", visible: true, width: 130, order: 4 },
   { key: "created", label: "Создана", visible: true, width: 150, order: 5 },
+  { key: "country", label: "Страна", visible: false, width: 110, order: 6 },
+  { key: "email", label: "Email", visible: false, width: 240, order: 7 },
+  { key: "phone", label: "Телефон", visible: false, width: 180, order: 8 },
 ];
 
 const kindLabels: Record<CompanyKind, string> = {
@@ -915,6 +918,9 @@ export default function AdminCompanies() {
                       const names = listContactsByCompanyId[company.id] ?? [];
                       return <TableCell key={column.key}><div className="space-y-1 text-sm">{names.slice(0, 2).map((name) => <div key={name} className="truncate">{name}</div>)}{names.length > 2 && <div className="text-xs text-muted-foreground">+{names.length - 2} ещё</div>}{names.length === 0 && <span className="text-muted-foreground">—</span>}</div></TableCell>;
                     }
+                    if (column.key === "country") return <TableCell key={column.key}>{company.country || "—"}</TableCell>;
+                    if (column.key === "email") return <TableCell key={column.key} className="max-w-[240px] truncate">{company.email || "—"}</TableCell>;
+                    if (column.key === "phone") return <TableCell key={column.key} className="whitespace-nowrap">{company.phone ? normalizeCompanyPhone(company.phone, company.country) : "—"}</TableCell>;
                     if (column.key === "status") return <TableCell key={column.key}><StatusBadge status={company.status} /></TableCell>;
                     if (column.key === "created") return <TableCell key={column.key} className="text-right text-sm text-muted-foreground">{formatDate(company.created_at)}</TableCell>;
                     return null;
