@@ -18,7 +18,11 @@ export function normalizeCompanyName(raw: string | null | undefined): string {
     value = value.replace(/\s*,?\s*(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)\s*$/i, "");
   }
 
-  return value.replace(/^[,;:\-\s]+|[,;:\-\s]+$/g, "").trim();
+  // Imported branch names occasionally contain the legal form in the middle
+  // (for example, `ф-л ОАО ...`). It is metadata, not part of the display
+  // name, so remove standalone OPF tokens everywhere after edge cleanup.
+  value = value.replace(/(^|[^\p{L}\p{N}])(ООО|ОДО|ЗАО|ОАО|СООО|ИООО|СЗАО|УП|ЧУП|КУП|ГУП|РУП|ТУП|ИУП|ЧПУП|ЧТУП|ПК|ИП)(?=$|[^\p{L}\p{N}])/giu, "$1");
+  return value.replace(/\s*,\s*,/g, ",").replace(/^[,;:\-\s]+|[,;:\-\s]+$/g, "").replace(/\s{2,}/g, " ").trim();
 }
 
 export function inferCompanyLegalForm(raw: string | null | undefined): string | null {

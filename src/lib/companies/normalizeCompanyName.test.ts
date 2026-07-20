@@ -18,4 +18,8 @@ describe("normalizeCompanyName", () => {
     expect(normalizeCompanyName("Ромашка, СЗАО")).toBe("Ромашка");
     expect(inferCompanyLegalForm("Ромашка, СЗАО")).toBe("СЗАО");
   });
+
+  it("removes duplicated quotes and an OPF embedded in an imported branch name", () => {
+    expect(normalizeCompanyName('Электромонтажстрой, ф-л ОАО """МИНСКРЕМСТРОЙ"""')).toBe("Электромонтажстрой, ф-л МИНСКРЕМСТРОЙ");
+  });
 });

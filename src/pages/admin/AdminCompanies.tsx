@@ -193,6 +193,12 @@ interface CompanyContact {
   external_phone: string | null;
 }
 
+interface CompanyListContact {
+  company_id: string;
+  profile_id: string | null;
+  external_full_name: string | null;
+}
+
 interface CompanyOrderLink {
   id: string;
   order_id: string;
@@ -319,10 +325,9 @@ const DEFAULT_COMPANY_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 48, order: 0 },
   { key: "company", label: "Компания", visible: true, width: 290, order: 1 },
   { key: "unp", label: "УНП", visible: true, width: 130, order: 2 },
-  { key: "kind", label: "Тип", visible: true, width: 130, order: 3 },
-  { key: "contacts", label: "Контакты", visible: true, width: 260, order: 4 },
-  { key: "status", label: "Статус", visible: true, width: 130, order: 5 },
-  { key: "created", label: "Создана", visible: true, width: 150, order: 6 },
+  { key: "contacts", label: "Контакты", visible: true, width: 260, order: 3 },
+  { key: "status", label: "Статус", visible: true, width: 130, order: 4 },
+  { key: "created", label: "Создана", visible: true, width: 150, order: 5 },
 ];
 
 const kindLabels: Record<CompanyKind, string> = {
@@ -488,6 +493,36 @@ export default function AdminCompanies() {
 
   const items = companiesQuery.data?.items ?? [];
   const total = companiesQuery.data?.total ?? 0;
+  const companyIds = useMemo(() => items.map((company) => company.id), [items]);
+  const listContactsQuery = useQuery({
+    queryKey: ["admin-company-list-contacts", companyIds],
+    enabled: companyIds.length > 0,
+    queryFn: async (): Promise<Record<string, string[]>> => {
+      const { data, error } = await supabase
+        .from("company_contacts")
+        .select("company_id, profile_id, external_full_name")
+        .in("company_id", companyIds);
+      if (error) throw error;
+      const rows = (data ?? []) as CompanyListContact[];
+      const profileIds = Array.from(new Set(rows.map((row) => row.profile_id).filter((id): id is string => Boolean(id))));
+      const profilesById = new Map<string, string>();
+      if (profileIds.length > 0) {
+        const { data: profiles, error: profilesError } = await supabase.from("profiles").select("id, full_name").in("id", profileIds);
+        if (profilesError) throw profilesError;
+        for (const profile of profiles ?? []) {
+          if (profile.full_name) profilesById.set(profile.id, profile.full_name);
+        }
+      }
+      return rows.reduce<Record<string, string[]>>((result, row) => {
+        const name = (row.profile_id ? profilesById.get(row.profile_id) : null) || row.external_full_name || "";
+        if (!name.trim()) return result;
+        const names = result[row.company_id] ?? [];
+        if (!names.includes(name.trim())) result[row.company_id] = [...names, name.trim()];
+        return result;
+      }, {});
+    },
+  });
+  const listContactsByCompanyId = listContactsQuery.data ?? {};
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.order - b.order), [columns]);
   const visibleColumns = sortedColumns.filter((column) => column.visible);
@@ -836,10 +871,9 @@ export default function AdminCompanies() {
                   {visibleColumns.filter((column) => column.key !== "checkbox").map((column) => {
                     if (column.key === "company") return <TableCell key={column.key}><div className="font-medium">{normalizeCompanyName(company.full_name)}</div><div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${normalizeCompanyName(company.short_name)}` : ""}</div></TableCell>;
                     if (column.key === "unp") return <TableCell key={column.key} className="font-mono text-xs">{company.unp_normalized || "—"}</TableCell>;
-                    if (column.key === "kind") return <TableCell key={column.key}>{kindLabels[company.company_kind]}</TableCell>;
                     if (column.key === "contacts") {
-                      const phone = normalizeCompanyPhone(company.phone, company.country);
-                      return <TableCell key={column.key} onClick={(event) => event.stopPropagation()}><div className="space-y-1 text-xs text-muted-foreground">{company.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" /><a href={`mailto:${company.email}`} className="hover:underline" onClick={(event) => event.stopPropagation()}>{company.email}</a></div>}{phone && <div className="flex items-center gap-1"><Phone className="h-3 w-3" /><a href={`tel:${phone}`} className="hover:text-foreground hover:underline" onClick={(event) => event.stopPropagation()}>{phone}</a></div>}{!company.email && !phone && "—"}</div></TableCell>;
+                      const names = listContactsByCompanyId[company.id] ?? [];
+                      return <TableCell key={column.key}><div className="space-y-1 text-sm">{names.slice(0, 2).map((name) => <div key={name} className="truncate">{name}</div>)}{names.length > 2 && <div className="text-xs text-muted-foreground">+{names.length - 2} ещё</div>}{names.length === 0 && <span className="text-muted-foreground">—</span>}</div></TableCell>;
                     }
                     if (column.key === "status") return <TableCell key={column.key}><StatusBadge status={company.status} /></TableCell>;
                     if (column.key === "created") return <TableCell key={column.key} className="text-right text-sm text-muted-foreground">{formatDate(company.created_at)}</TableCell>;
