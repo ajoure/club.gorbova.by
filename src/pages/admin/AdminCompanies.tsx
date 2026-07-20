@@ -450,8 +450,34 @@ export default function AdminCompanies() {
   const visibleColumns = sortedColumns.filter((column) => column.visible);
   const draggableColumnIds = visibleColumns.filter((column) => column.key !== "checkbox").map((column) => column.key);
 
+  const visibleCompanyIds = useMemo(() => items.map((company) => company.id).sort(), [items]);
+  const contactNamesQuery = useQuery({
+    queryKey: ["admin-companies-contact-names", visibleCompanyIds],
+    enabled: visibleCompanyIds.length > 0,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("company_contact_person_links")
+        .select("company_id, role, valid_from, person:company_contact_persons(full_name)")
+        .in("company_id", visibleCompanyIds)
+        .eq("is_current", true)
+        .order("valid_from", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      const map = new Map<string, string[]>();
+      (data ?? []).forEach((row: any) => {
+        const name = (row.person?.full_name ?? "").trim();
+        if (!name) return;
+        const arr = map.get(row.company_id) ?? [];
+        if (arr.length < 2 && !arr.includes(name)) arr.push(name);
+        map.set(row.company_id, arr);
+      });
+      return map;
+    },
+    staleTime: 30_000,
+  });
+
   useEffect(() => {
-    localStorage.setItem("admin_companies_columns_v1", JSON.stringify(columns));
+    localStorage.setItem("admin_companies_columns_v2", JSON.stringify(columns));
   }, [columns]);
 
   const handleColumnResize = useCallback((key: string, width: number) => {
