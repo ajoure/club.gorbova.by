@@ -929,6 +929,7 @@ function CreateCompanyDialog({ open, onOpenChange, onCreated }: {
           key={formKey}
           isSubmitting={createCompany.isPending || isCreating}
           showDemoOnEmpty={false}
+          allowMissingUnp
           onSubmit={async (details) => { await createCompany.mutateAsync(details); }}
         />
       </DialogContent>
