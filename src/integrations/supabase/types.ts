@@ -19009,7 +19009,6 @@ export type Database = {
         Args: { _client_legal_details_id: string }
         Returns: Json
       }
-      crm_company_backfill_execute_phase3c: { Args: never; Returns: Json }
       crm_company_get_or_create: {
         Args: {
           _company_kind: string
