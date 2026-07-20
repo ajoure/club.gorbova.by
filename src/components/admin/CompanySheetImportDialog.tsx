@@ -95,7 +95,7 @@ function parseLprContacts(value: string): { contacts: Array<{ full_name: string;
       if (!fullName || (!phone && !email)) return null;
       return { full_name: fullName, job_title: jobTitle, role, phone: phone || undefined, email: email || undefined };
     })
-    .filter((contact): contact is { full_name: string; job_title?: string; role?: string; phone?: string; email?: string } => Boolean(contact));
+    .filter((contact): contact is NonNullable<typeof contact> => Boolean(contact));
   return { contacts, raw };
 }
 
