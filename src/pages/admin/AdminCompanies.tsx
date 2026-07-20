@@ -182,6 +182,17 @@ interface CompanyActivity {
   created_at: string;
 }
 
+interface CompanyCommunication {
+  id: string;
+  kind: string;
+  at: string | null;
+  title: string | null;
+  body: string | null;
+  meta: Record<string, unknown> | null;
+  author: string | null;
+  source: "contact" | "company";
+}
+
 interface ProfileSummary {
   id: string;
   full_name: string | null;
@@ -212,6 +223,18 @@ const statusLabels: Record<CompanyStatus, string> = {
   active: "Активна",
   archived: "В архиве",
   merged: "Объединена",
+};
+
+const communicationKindLabels: Record<string, string> = {
+  call: "Звонок",
+  sms: "SMS",
+  telegram: "Telegram",
+  email: "Email",
+  task: "Задача",
+  note: "Комментарий",
+  file: "Файл",
+  voice_note: "Голосовая заметка",
+  event: "Событие",
 };
 
 function formatDate(value: string) {
@@ -897,6 +920,20 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
     },
   });
 
+  const communicationsQuery = useQuery({
+    queryKey: ["admin-company-communications", companyId],
+    enabled: !!companyId,
+    queryFn: async (): Promise<CompanyCommunication[]> => {
+      const { data, error } = await supabase.rpc("company_feed_list", {
+        _company_id: companyId!,
+        _limit: 100,
+        _offset: 0,
+      });
+      if (error) throw error;
+      return (Array.isArray(data) ? data : []) as unknown as CompanyCommunication[];
+    },
+  });
+
   const company = detailQuery.data;
   const detailRows = company ? [
     ["УНП", company.unp_normalized],
@@ -971,7 +1008,12 @@ function CompanyDetailsSheet({ companyId, onClose }: { companyId: string | null;
                   {!documentsQuery.isLoading && !aiDocumentsQuery.isLoading && !documentsQuery.isError && !aiDocumentsQuery.isError && ((documentsQuery.data?.length ?? 0) + (aiDocumentsQuery.data?.length ?? 0) === 0) && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Документов по заказам компании пока нет.</div>}
                   {[...(documentsQuery.data ?? []), ...(aiDocumentsQuery.data ?? [])].map((document) => <div key={`${document.source}-${document.id}`} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{document.document_number}</span><div className="flex gap-1"><Badge variant="outline">{document.status}</Badge>{document.source === "ai" && <Badge variant="secondary">AI</Badge>}</div></div><div className="mt-1 text-xs text-muted-foreground">{document.document_type} · {formatDate(document.document_date)} · заказ {ordersById.get(document.order_id)?.order_number ?? document.order_id}</div>{document.file_url && <a className="mt-2 inline-block text-xs text-primary underline-offset-4 hover:underline" href={document.file_url} target="_blank" rel="noreferrer">Открыть файл</a>}</div>)}
                 </TabsContent>
-                <TabsContent value="communications" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Коммуникации компании отображаются в контакт-центре после привязки контакта.</div></TabsContent>
+                <TabsContent value="communications" className="mt-0 space-y-2">
+                  {communicationsQuery.isLoading && <Skeleton className="h-16 w-full" />}
+                  {communicationsQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Коммуникационная лента временно недоступна.</div>}
+                  {!communicationsQuery.isLoading && !communicationsQuery.isError && communicationsQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Коммуникаций по компании пока нет.</div>}
+                  {(communicationsQuery.data ?? []).map((item) => <div key={`${item.source}-${item.id}`} className="rounded-lg border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-medium">{item.title || item.kind}</span><Badge variant="outline">{communicationKindLabels[item.kind] || item.kind}</Badge>{item.source === "company" && <Badge variant="secondary">Компания</Badge>}</div>{item.body && <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{item.body}</p>}{item.author && <p className="mt-1 text-xs text-muted-foreground">{item.author}</p>}</div><span className="shrink-0 text-xs text-muted-foreground">{item.at ? format(new Date(item.at), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}</span></div></div>)}
+                </TabsContent>
                 <TabsContent value="history" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История доступна во вкладке «Активность».</div></TabsContent>
                 <TabsContent value="integrations" className="mt-0"><div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Внешние идентификаторы компании пока не настроены.</div></TabsContent>
                 <TabsContent value="system" className="mt-0 space-y-2"><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">UUID:</span> {company.id}</div><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">Создано:</span> {formatDate(company.created_at)}</div><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">Изменено:</span> {formatDate(company.updated_at)}</div></TabsContent>
