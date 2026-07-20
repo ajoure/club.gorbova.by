@@ -66,7 +66,7 @@ function normalizeOrgForm(val: string | null | undefined): string {
 
 // Schema: director fields optional to support ИП mode
 const schema = z.object({
-  unp: z.string().length(9, "УНП должен содержать 9 цифр"),
+  unp: z.string().refine((value) => value === "" || /^\d{9}$/.test(value), "УНП должен содержать 9 цифр или оставьте поле пустым"),
   org_form: z.string().min(1, "Выберите организационную форму"),
   name: z.string().min(3, "Введите название"),
   director_position: z.string().optional(),
@@ -446,7 +446,7 @@ export function OrganizationDetailsForm({
                   />
                 </FormControl>
                 <FormDescription>
-                  Введите УНП — остальные данные заполнятся автоматически
+                  Введите УНП — остальные данные заполнятся автоматически. Если УНП ещё нет, оставьте поле пустым и заполните данные вручную.
                 </FormDescription>
                 <FormMessage />
               </FormItem>

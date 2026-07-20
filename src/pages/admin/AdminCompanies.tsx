@@ -878,6 +878,26 @@ function CreateCompanyDialog({ open, onOpenChange, onCreated }: {
 
   const createCompany = useMutation({
     mutationFn: async (details: Partial<ClientLegalDetails>) => {
+      const unp = details.client_type === "entrepreneur" ? details.ent_unp : details.leg_unp;
+      if (!unp) {
+        const { data, error } = await supabase.rpc("crm_company_create_manual", {
+          _company_kind: details.client_type === "entrepreneur" ? "entrepreneur" : "legal_entity",
+          _full_name: details.client_type === "entrepreneur" ? details.ent_name : details.leg_name,
+          _short_name: details.client_type === "entrepreneur" ? details.ent_name : details.leg_name,
+          _legal_form: details.client_type === "entrepreneur" ? null : details.leg_org_form,
+          _legal_address: details.client_type === "entrepreneur" ? details.ent_address : details.leg_address,
+          _director_name: details.leg_director_name,
+          _director_position: details.leg_director_position,
+          _acts_on_basis: details.client_type === "entrepreneur" ? details.ent_acts_on_basis : details.leg_acts_on_basis,
+          _bank_account: details.bank_account,
+          _bank_name: details.bank_name,
+          _bank_code: details.bank_code,
+          _email: details.email,
+          _phone: details.phone,
+        });
+        if (error) throw error;
+        return data;
+      }
       const created = await createDetails({
         ...details,
       });
@@ -888,7 +908,7 @@ function CreateCompanyDialog({ open, onOpenChange, onCreated }: {
       return data;
     },
     onSuccess: (companyId) => {
-      toast.success("Компания создана из реквизитов");
+      toast.success("Компания создана");
       onOpenChange(false);
       setFormKey((value) => value + 1);
       onCreated(companyId);
@@ -902,7 +922,7 @@ function CreateCompanyDialog({ open, onOpenChange, onCreated }: {
         <DialogHeader>
           <DialogTitle>Добавить компанию</DialogTitle>
           <DialogDescription>
-            Используется то же окно реквизитов, что и в настройках документов: введите УНП, подтвердите данные из реестра и дополните расчётный счёт и руководителя.
+            Используется то же окно реквизитов, что и в настройках документов: при наличии УНП данные подтянутся из реестра, а без УНП их можно заполнить вручную.
           </DialogDescription>
         </DialogHeader>
         <OrganizationDetailsForm
