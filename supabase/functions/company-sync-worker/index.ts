@@ -97,13 +97,39 @@ Deno.serve(async (req: Request) => {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // Optional dry-run for Phase 4D rehearsal: POST body {"dryRun": true}
-  // returns claim=0 without touching the queue.
+  // Optional body flags:
+  //   { "dryRun": true }      → return without claiming or mutating the queue.
+  //   { "healthcheck": true } → return crm_company_sync_health() summary only.
   let dryRun = false;
+  let healthcheck = false;
   try {
     const body = await req.json().catch(() => ({}));
     dryRun = body?.dryRun === true;
+    healthcheck = body?.healthcheck === true;
   } catch { /* body optional */ }
+
+  if (healthcheck) {
+    const { data, error } = await supabase.rpc("crm_company_sync_health");
+    if (error) {
+      console.error(JSON.stringify({
+        evt: "company-sync-worker.health_error",
+        err: trunc(error.message),
+        code: error.code ?? null,
+      }));
+      return new Response(JSON.stringify({ error: "health_failed" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    console.log(JSON.stringify({
+      evt: "company-sync-worker.health",
+      elapsed_ms: Date.now() - startedAt,
+    }));
+    return new Response(JSON.stringify({ ok: true, health: data }), {
+      headers: { "Content-Type": "application/json" },
+      status: 200,
+    });
+  }
 
   if (dryRun) {
     return new Response(JSON.stringify({
