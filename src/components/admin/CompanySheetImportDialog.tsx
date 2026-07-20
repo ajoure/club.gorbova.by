@@ -119,7 +119,7 @@ function parseCompanyRows(csvText: string): NormalizedCompanyImportRow[] {
       name,
       short_name: clean(row[5]) || undefined,
       country: "BY",
-      company_kind: isEntrepreneurForm(organizationForm) ? "entrepreneur" : "legal_entity",
+      company_kind: (isEntrepreneurForm(organizationForm) ? "entrepreneur" : "legal_entity") as "entrepreneur" | "legal_entity",
       unp: clean(row[6]).replace(/\D/g, "").slice(0, 9) || undefined,
       phone: phones[0],
       phones,
