@@ -25,6 +25,7 @@ interface EmailRequest {
   context?: {
     user_id?: string;
     profile_id?: string;
+    company_id?: string;
     subscription_id?: string;
     event_type?: string;
     meta?: Record<string, unknown>;
@@ -498,7 +499,8 @@ const handler = async (req: Request): Promise<Response> => {
       
       const { error: logError } = await supabase.from('email_logs').insert({
         user_id: ctx?.user_id || null,
-        profile_id: ctx?.profile_id || null,
+      profile_id: ctx?.profile_id || null,
+        company_id: ctx?.company_id || null,
         direction: 'outgoing',
         from_email: account.from_email || account.email,
         to_email: to,
@@ -551,6 +553,7 @@ const handler = async (req: Request): Promise<Response> => {
       await supabaseForLog.from('email_logs').insert({
         user_id: parsedBody?.context?.user_id || null,
         profile_id: parsedBody?.context?.profile_id || null,
+        company_id: parsedBody?.context?.company_id || null,
         direction: 'outgoing',
         from_email: 'unknown',
         to_email: parsedBody?.to || 'unknown',

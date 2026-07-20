@@ -15,6 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 interface Props {
   phone: string | null | undefined;
   contactId?: string;
+  companyId?: string;
   dealId?: string;
   size?: "sm" | "default";
   variant?: "default" | "outline" | "secondary";
@@ -36,6 +37,7 @@ const ERROR_LABEL: Record<string, string> = {
 export function CallButton({
   phone,
   contactId,
+  companyId,
   dealId,
   size = "sm",
   variant = "outline",
@@ -52,7 +54,7 @@ export function CallButton({
       const { data, error } = await supabase.functions.invoke(
         "vochi-call-initiate",
         {
-          body: { phone, contact_id: contactId, deal_id: dealId },
+          body: { phone, contact_id: contactId, company_id: companyId, deal_id: dealId },
         },
       );
       if (error) {
@@ -86,7 +88,7 @@ export function CallButton({
         toast.success("Звоним вам — поднимите трубку, чтобы соединиться");
       }
       // Мгновенно обновим список звонков (не ждём realtime).
-      queryClient.invalidateQueries({ queryKey: ["calls-history", { contactId, dealId }] });
+      queryClient.invalidateQueries({ queryKey: ["calls-history", { contactId, companyId, dealId }] });
       queryClient.invalidateQueries({ queryKey: ["calls-history"] });
     } catch (e: any) {
       toast.error(e?.message ?? "Не удалось инициировать звонок");

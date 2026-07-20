@@ -35,6 +35,11 @@ import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings"
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
 import { ContactFeedTab } from "@/components/admin/contact/ContactFeedTab";
+import { CallButton } from "@/components/admin/calls/CallButton";
+import { CallsHistorySection } from "@/components/admin/calls/CallsHistorySection";
+import { SmsButton } from "@/components/admin/sms/SmsButton";
+import { SmsHistorySection } from "@/components/admin/sms/SmsHistorySection";
+import { ComposeEmailDialog } from "@/components/admin/ComposeEmailDialog";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { Badge } from "@/components/ui/badge";
@@ -1129,6 +1134,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
   });
 
   const company = detailQuery.data;
+  const [composeEmailOpen, setComposeEmailOpen] = useState(false);
   const detailRows = company ? [
     ["УНП", company.unp_normalized],
     ["Страна", company.country],
@@ -1157,7 +1163,17 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
               </div>
             </SheetHeader>
 
-            <div className="flex flex-wrap gap-2"><StatusBadge status={company.status} /><Badge variant="outline">{kindLabels[company.company_kind]}</Badge></div>
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={company.status} />
+              <Badge variant="outline">{kindLabels[company.company_kind]}</Badge>
+              <div className="ml-auto flex flex-wrap gap-2">
+                <CallButton phone={company.phone} companyId={company.id} />
+                <SmsButton phone={company.phone} companyId={company.id} />
+                <Button size="sm" variant="outline" disabled={!company.email} onClick={() => setComposeEmailOpen(true)}>
+                  <Mail className="mr-1 h-3.5 w-3.5" /> Письмо
+                </Button>
+              </div>
+            </div>
             <Tabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
               <TabsList className="w-full justify-start overflow-x-auto rounded-lg bg-muted/60 p-1">
                 <TabsTrigger value="overview">Обзор</TabsTrigger>
@@ -1166,6 +1182,8 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                 <TabsTrigger value="structure">Структура</TabsTrigger>
                 <TabsTrigger value="deals">Сделки</TabsTrigger>
                 <TabsTrigger value="tasks">Задачи</TabsTrigger>
+                <TabsTrigger value="calls">Звонки</TabsTrigger>
+                <TabsTrigger value="sms">SMS</TabsTrigger>
                 <TabsTrigger value="activity">Активность</TabsTrigger>
                 <TabsTrigger value="documents">Документы</TabsTrigger>
                 <TabsTrigger value="communications">Лента</TabsTrigger>
@@ -1208,6 +1226,12 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                   {!tasksQuery.isLoading && tasksQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Задач компании пока нет.</div>}
                   {(tasksQuery.data ?? []).map((task) => <div key={task.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{task.title}</span><Badge variant="outline">{task.status}</Badge></div><div className="mt-1 text-xs text-muted-foreground">{task.public_id ?? task.id}{task.due_at ? ` · срок ${format(new Date(task.due_at), "dd.MM.yyyy HH:mm", { locale: ru })}` : ""}</div></div>)}
                 </TabsContent>
+                <TabsContent value="calls" className="mt-0">
+                  <CallsHistorySection companyId={company.id} bare />
+                </TabsContent>
+                <TabsContent value="sms" className="mt-0">
+                  <SmsHistorySection companyId={company.id} bare />
+                </TabsContent>
                 <TabsContent value="activity" className="mt-0 space-y-2">
                   {activityQuery.isLoading && <Skeleton className="h-16 w-full" />}
                   {!activityQuery.isLoading && activityQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">История изменений компании пока пуста.</div>}
@@ -1237,6 +1261,14 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
                 <TabsContent value="system" className="mt-0 space-y-2"><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">UUID:</span> {company.id}</div><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">Создано:</span> {formatDate(company.created_at)}</div><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">Изменено:</span> {formatDate(company.updated_at)}</div></TabsContent>
               </div>
             </Tabs>
+            <ComposeEmailDialog
+              recipientEmail={company.email}
+              recipientName={company.full_name}
+              companyId={company.id}
+              open={composeEmailOpen}
+              onOpenChange={setComposeEmailOpen}
+              onSuccess={() => queryClient.invalidateQueries({ queryKey: ["contact_feed", company.id] })}
+            />
           </div>
         )}
       </SheetContent>
