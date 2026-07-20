@@ -920,6 +920,7 @@ function EditCompanyDialog({ company, onOpenChange, onSaved }: {
 }
 
 function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: string | null; canEdit: boolean; onClose: () => void }) {
+  const queryClient = useQueryClient();
   const [selectedLinkedContactId, setSelectedLinkedContactId] = useState<string | null>(null);
   const detailQuery = useQuery({
     queryKey: ["admin-company", companyId],
@@ -977,7 +978,7 @@ function CompanyDetailsSheet({ companyId, canEdit, onClose }: { companyId: strin
         .is("unlinked_at", null)
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as CompanyOrderLink[];
+      return ((data ?? []) as unknown) as CompanyOrderLink[];
     },
   });
 

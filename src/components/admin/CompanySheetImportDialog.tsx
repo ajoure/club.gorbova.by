@@ -95,7 +95,7 @@ function parseLprContacts(value: string): { contacts: Array<{ full_name: string;
       if (!fullName || (!phone && !email)) return null;
       return { full_name: fullName, job_title: jobTitle, role, phone: phone || undefined, email: email || undefined };
     })
-    .filter((contact): contact is { full_name: string; job_title?: string; role?: string; phone?: string; email?: string } => Boolean(contact));
+    .filter((contact): contact is NonNullable<typeof contact> => Boolean(contact));
   return { contacts, raw };
 }
 
@@ -119,7 +119,7 @@ function parseCompanyRows(csvText: string): NormalizedCompanyImportRow[] {
       name,
       short_name: clean(row[5]) || undefined,
       country: "BY",
-      company_kind: isEntrepreneurForm(organizationForm) ? "entrepreneur" : "legal_entity",
+      company_kind: (isEntrepreneurForm(organizationForm) ? "entrepreneur" : "legal_entity") as "entrepreneur" | "legal_entity",
       unp: clean(row[6]).replace(/\D/g, "").slice(0, 9) || undefined,
       phone: phones[0],
       phones,
@@ -136,7 +136,7 @@ function parseCompanyRows(csvText: string): NormalizedCompanyImportRow[] {
       comments: comments || (!lpr.contacts.length && lpr.raw ? `Контакты ЛПР: ${lpr.raw}` : undefined),
       lpr_contacts: lpr.contacts.length ? lpr.contacts : undefined,
       callback_at: clean(row[13]) || undefined,
-      external_provider: "amocrm",
+      external_provider: "amocrm" as const,
       external_id: amoId || undefined,
       metadata: {
         source_status: clean(row[12]),
