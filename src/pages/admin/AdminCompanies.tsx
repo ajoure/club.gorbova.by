@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Building2,
-  CalendarDays,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -47,11 +46,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { GlassCard } from "@/components/ui/GlassCard";
-import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
-import { ContactFiltersBar } from "@/components/admin/ContactFiltersBar";
-import { ActiveFilter, FilterField, FilterPreset } from "@/components/admin/QuickFilters";
-import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import {
   Table,
   TableBody,
@@ -117,34 +111,6 @@ interface ProfileSummary {
 
 const PAGE_SIZE = 25;
 
-const COMPANY_COLUMNS: ColumnConfig[] = [
-  { key: "name", label: "Компания", visible: true, width: 310, order: 0 },
-  { key: "unp", label: "УНП", visible: true, width: 120, order: 1 },
-  { key: "country", label: "Страна", visible: true, width: 90, order: 2 },
-  { key: "kind", label: "Тип", visible: true, width: 110, order: 3 },
-  { key: "contacts", label: "Контакты", visible: true, width: 230, order: 4 },
-  { key: "status", label: "Статус", visible: true, width: 125, order: 5 },
-  { key: "created", label: "Создана", visible: true, width: 120, order: 6 },
-];
-
-const COMPANY_PRESETS: FilterPreset[] = [
-  { id: "active", label: "Активные", filters: [{ field: "status", operator: "equals", value: "active" }] },
-  { id: "archived", label: "Архив", filters: [{ field: "status", operator: "equals", value: "archived" }] },
-  { id: "merged", label: "Объединённые", filters: [{ field: "status", operator: "equals", value: "merged" }] },
-  { id: "all", label: "Все", filters: [] },
-];
-
-const COMPANY_FILTER_FIELDS: FilterField[] = [
-  { key: "status", label: "Статус", type: "select", options: [
-    { value: "active", label: "Активна" }, { value: "archived", label: "В архиве" }, { value: "merged", label: "Объединена" },
-  ] },
-  { key: "company_kind", label: "Тип", type: "select", options: [
-    { value: "legal_entity", label: "Юрлицо" }, { value: "entrepreneur", label: "ИП" }, { value: "foreign", label: "Иностранная" }, { value: "unknown", label: "Не определён" },
-  ] },
-  { key: "country", label: "Страна", type: "text" },
-  { key: "created_at", label: "Дата создания", type: "date" },
-];
-
 const kindLabels: Record<CompanyKind, string> = {
   legal_entity: "Юрлицо",
   entrepreneur: "ИП",
@@ -181,51 +147,23 @@ export default function AdminCompanies() {
   const queryClient = useQueryClient();
   const access = useAdminAccess();
   const [query, setQuery] = useState("");
-  const [activePreset, setActivePreset] = useState("active");
-  const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>(COMPANY_PRESETS[0].filters);
-  const [sortBy, setSortBy] = useState<"created_at" | "full_name" | "public_id">("created_at");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
-  const [columns, setColumns] = useState<ColumnConfig[]>(() => {
-    try {
-      const saved = localStorage.getItem("admin_companies_columns_v1");
-      if (saved) return JSON.parse(saved) as ColumnConfig[];
-    } catch { /* use defaults */ }
-    return COMPANY_COLUMNS;
-  });
+  const [status, setStatus] = useState<"all" | CompanyStatus>("active");
+  const [kind, setKind] = useState<"all" | CompanyKind>("all");
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 250);
   const selectedCompanyId = searchParams.get("company");
   const canCreate = access.canAccessSection("companies", "manage");
 
-  useEffect(() => {
-    localStorage.setItem("admin_companies_columns_v1", JSON.stringify(columns));
-  }, [columns]);
-
-  const filters = useMemo(() => {
-    // A custom filter is appended after the preset, so it deliberately wins
-    // when a user refines a currently selected tab.
-    const equals = (key: string) => [...activeFilters].reverse().find((filter) => filter.field === key && filter.operator === "equals")?.value;
-    const createdFilter = [...activeFilters].reverse().find((filter) => filter.field === "created_at");
-    const createdFrom = createdFilter?.operator === "lt" ? undefined : createdFilter?.value;
-    const createdTo = createdFilter?.operator === "gt" ? undefined : createdFilter?.value;
-    const presetStatus = activePreset === "all" ? undefined : activePreset;
-    const selectedStatus = equals("status") ?? presetStatus;
-    const companyKind = equals("company_kind");
-    return {
-      q: debouncedQuery || undefined,
-      status: selectedStatus ? [selectedStatus] : undefined,
-      company_kind: companyKind ? [companyKind] : undefined,
-      country: equals("country") || undefined,
-      created_from: createdFrom || undefined,
-      created_to: createdTo || undefined,
-      include_merged: activePreset === "all" || selectedStatus === "merged",
-      limit: PAGE_SIZE,
-      offset: page * PAGE_SIZE,
-      sort_by: sortBy,
-      sort_dir: sortDirection,
-    };
-  }, [activeFilters, activePreset, debouncedQuery, page, sortBy, sortDirection]);
+  const filters = useMemo(() => ({
+    q: debouncedQuery || undefined,
+    status: status === "all" ? undefined : [status],
+    company_kind: kind === "all" ? undefined : [kind],
+    limit: PAGE_SIZE,
+    offset: page * PAGE_SIZE,
+    sort_by: "created_at",
+    sort_dir: "desc",
+  }), [debouncedQuery, kind, page, status]);
 
   const companiesQuery = useQuery({
     queryKey: ["admin-companies", filters],
@@ -249,21 +187,9 @@ export default function AdminCompanies() {
   };
 
   const resetPage = () => setPage(0);
-  const handlePresetChange = (presetId: string) => {
-    const preset = COMPANY_PRESETS.find((item) => item.id === presetId) ?? COMPANY_PRESETS[0];
-    setActivePreset(preset.id);
-    setActiveFilters(preset.filters);
-    resetPage();
-  };
-  const handleSort = (nextSort: "created_at" | "full_name" | "public_id") => {
-    if (sortBy === nextSort) setSortDirection((direction) => direction === "asc" ? "desc" : "asc");
-    else { setSortBy(nextSort); setSortDirection("asc"); }
-    resetPage();
-  };
-  const visibleColumns = [...columns].filter((column) => column.visible).sort((a, b) => a.order - b.order);
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto overflow-x-hidden overscroll-y-contain py-4 md:py-6">
+    <div className="flex-1 min-h-0 flex flex-col gap-4 py-4 md:py-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -288,58 +214,105 @@ export default function AdminCompanies() {
         </div>
       </div>
 
-      <div className="px-1 pt-1 pb-1.5 shrink-0">
-        <div className="inline-flex max-w-full items-center overflow-x-auto rounded-full border border-border/20 bg-muted/40 p-0.5 backdrop-blur-md scrollbar-none">
-          {COMPANY_PRESETS.map((preset) => (
-            <button key={preset.id} onClick={() => handlePresetChange(preset.id)} className={`relative flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-all ${activePreset === preset.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
-              {preset.label}
-              <Badge className="h-4 min-w-4 rounded-full bg-primary/20 px-1 text-[10px] font-semibold text-primary">{total > 99 ? "99+" : total}</Badge>
-            </button>
-          ))}
-          <div className="mx-1 h-5 w-px bg-border/30" />
-          <ContactFiltersBar fields={COMPANY_FILTER_FIELDS} activeFilters={activeFilters} onFiltersChange={(next) => { setActiveFilters(next); resetPage(); }} activePreset={activePreset} presets={COMPANY_PRESETS} />
-          {canCreate && <button type="button" onClick={() => setCreateOpen(true)} className="ml-1 flex items-center gap-1.5 whitespace-nowrap rounded-full border border-primary/25 bg-primary/15 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/25"><Plus className="h-3 w-3" />Новая компания</button>}
+      <div className="grid gap-3 rounded-xl border bg-card p-3 md:grid-cols-[minmax(0,1fr)_180px_180px]">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(event) => { setQuery(event.target.value); resetPage(); }}
+            placeholder="Название, УНП, ID, email или телефон"
+            className="pl-9"
+          />
         </div>
+        <Select value={status} onValueChange={(value: "all" | CompanyStatus) => { setStatus(value); resetPage(); }}>
+          <SelectTrigger><SelectValue placeholder="Статус" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все статусы</SelectItem>
+            <SelectItem value="active">Активные</SelectItem>
+            <SelectItem value="archived">Архив</SelectItem>
+            <SelectItem value="merged">Объединённые</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={kind} onValueChange={(value: "all" | CompanyKind) => { setKind(value); resetPage(); }}>
+          <SelectTrigger><SelectValue placeholder="Тип" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все типы</SelectItem>
+            <SelectItem value="legal_entity">Юрлица</SelectItem>
+            <SelectItem value="entrepreneur">ИП</SelectItem>
+            <SelectItem value="foreign">Иностранные</SelectItem>
+            <SelectItem value="unknown">Не определён</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <CompanySyncQueuePanel canManage={canCreate} />
 
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={query} onChange={(event) => { setQuery(event.target.value); resetPage(); }} placeholder="Глобальный поиск по компаниям: название, УНП, ID, email, телефон…" className="pl-9" />
-          </div>
-          <ColumnSettings columns={columns} onChange={setColumns} onReset={() => setColumns(COMPANY_COLUMNS)} />
+      <div className="min-h-0 overflow-hidden rounded-xl border bg-card">
+        <div className="flex items-center justify-between border-b px-4 py-3 text-sm text-muted-foreground">
+          <span>{companiesQuery.isLoading ? "Загрузка…" : `Найдено: ${total}`}</span>
+          <span>Кликните по строке, чтобы открыть карточку</span>
         </div>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground"><CalendarDays className="h-4 w-4" />Показано: <strong className="text-foreground">{items.length}</strong><span>•</span>Всего: <strong className="text-foreground">{total}</strong></div>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Компания</TableHead>
+                <TableHead>УНП</TableHead>
+                <TableHead>Тип</TableHead>
+                <TableHead>Контакты</TableHead>
+                <TableHead>Статус</TableHead>
+                <TableHead className="text-right">Создана</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {companiesQuery.isLoading && Array.from({ length: 5 }).map((_, index) => (
+                <TableRow key={index}>
+                  <TableCell><Skeleton className="h-8 w-64" /></TableCell>
+                  <TableCell><Skeleton className="h-6 w-24" /></TableCell>
+                  <TableCell><Skeleton className="h-6 w-20" /></TableCell>
+                  <TableCell><Skeleton className="h-6 w-28" /></TableCell>
+                  <TableCell><Skeleton className="h-6 w-20" /></TableCell>
+                  <TableCell><Skeleton className="ml-auto h-6 w-24" /></TableCell>
+                </TableRow>
+              ))}
+              {!companiesQuery.isLoading && items.map((company) => (
+                <TableRow
+                  key={company.id}
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => selectCompany(company.id)}
+                >
+                  <TableCell>
+                    <div className="font-medium">{company.full_name}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${company.short_name}` : ""}</div>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{company.unp_normalized || "—"}</TableCell>
+                  <TableCell>{kindLabels[company.company_kind]}</TableCell>
+                  <TableCell>
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      {company.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" />{company.email}</div>}
+                      {company.phone && <div className="flex items-center gap-1"><Phone className="h-3 w-3" />{company.phone}</div>}
+                      {!company.email && !company.phone && "—"}
+                    </div>
+                  </TableCell>
+                  <TableCell><StatusBadge status={company.status} /></TableCell>
+                  <TableCell className="text-right text-sm text-muted-foreground">{formatDate(company.created_at)}</TableCell>
+                </TableRow>
+              ))}
+              {!companiesQuery.isLoading && items.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-14 text-center">
+                    <Building2 className="mx-auto mb-3 h-9 w-9 text-muted-foreground/50" />
+                    <div className="font-medium">Компаний пока нет</div>
+                    <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                      Создайте компанию вручную или выполните отдельный Phase 3 backfill после его согласования.
+                    </p>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </div>
-
-      <GlassCard className="min-h-0 overflow-hidden p-0">
-        {companiesQuery.isLoading ? <div className="space-y-4 p-6">{Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-16 w-full" />)}</div> : (
-          <div className="table-scroll-x" data-table-scroll-x="true">
-            <Table wrapperClassName="contents" style={{ minWidth: 1100 }}>
-              <TableHeader><TableRow>{visibleColumns.map((column) => {
-                if (column.key === "name") return <SortableTableHead key={column.key} sortKey="full_name" currentSortKey={sortBy} currentSortDirection={sortDirection} onSort={(key) => handleSort(key as "full_name")}>{column.label}</SortableTableHead>;
-                if (column.key === "created") return <SortableTableHead key={column.key} sortKey="created_at" currentSortKey={sortBy} currentSortDirection={sortDirection} onSort={(key) => handleSort(key as "created_at")} className="text-right">{column.label}</SortableTableHead>;
-                return <TableHead key={column.key} style={{ width: column.width }}>{column.label}</TableHead>;
-              })}</TableRow></TableHeader>
-              <TableBody>
-                {items.map((company) => <TableRow key={company.id} className="cursor-pointer transition-colors hover:bg-muted/50" onClick={() => selectCompany(company.id)}>{visibleColumns.map((column) => {
-                  if (column.key === "name") return <TableCell key={column.key}><div className="font-medium">{company.full_name}</div><div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${company.short_name}` : ""}</div></TableCell>;
-                  if (column.key === "unp") return <TableCell key={column.key} className="font-mono text-xs">{company.unp_normalized || "—"}</TableCell>;
-                  if (column.key === "country") return <TableCell key={column.key}>{company.country}</TableCell>;
-                  if (column.key === "kind") return <TableCell key={column.key}>{kindLabels[company.company_kind]}</TableCell>;
-                  if (column.key === "contacts") return <TableCell key={column.key}><div className="space-y-1 text-xs text-muted-foreground">{company.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" />{company.email}</div>}{company.phone && <div className="flex items-center gap-1"><Phone className="h-3 w-3" />{company.phone}</div>}{!company.email && !company.phone && "—"}</div></TableCell>;
-                  if (column.key === "status") return <TableCell key={column.key}><StatusBadge status={company.status} /></TableCell>;
-                  return <TableCell key={column.key} className="text-right text-sm text-muted-foreground">{formatDate(company.created_at)}</TableCell>;
-                })}</TableRow>)}
-                {items.length === 0 && <TableRow><TableCell colSpan={visibleColumns.length} className="py-14 text-center"><Building2 className="mx-auto mb-3 h-9 w-9 text-muted-foreground/50" /><div className="font-medium">Компаний не найдено</div><p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">Измените поиск или фильтры, либо создайте компанию вручную.</p></TableCell></TableRow>}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </GlassCard>
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>Страница {page + 1} из {pageCount}</span>

@@ -20,7 +20,6 @@ export interface CrmTask {
   title: string;
   description: string | null;
   contact_id: string | null;
-  company_id: string | null;
   deal_id: string | null;
   order_id: string | null;
   pipeline_id: string | null;
@@ -62,7 +61,6 @@ export interface CrmTaskListFilters {
   task_type_id?: string[];
   deal_id?: string | null;
   contact_id?: string | null;
-  company_id?: string | null;
   due_from?: string | null;
   due_to?: string | null;
   bucket?: CrmTaskBucket | null;
@@ -184,7 +182,6 @@ export interface CrmTaskUpdatePatch {
   assignee_user_id?: string | null;
   deal_id?: string | null;
   contact_id?: string | null;
-  company_id?: string | null;
 }
 
 export function useUpdateCrmTask() {
@@ -275,3 +272,4 @@ export function useBulkUpdateCrmTask() {
     onError: (err: Error) => toast.error(`Массовое редактирование не удалось: ${err.message}`),
   });
 }
+
