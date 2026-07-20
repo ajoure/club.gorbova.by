@@ -19039,10 +19039,23 @@ export type Database = {
         Args: { _source_id: string; _target_id: string }
         Returns: string
       }
+      crm_company_sync_admin_dismiss: {
+        Args: { _actor_user_id: string; _id: string; _reason: string }
+        Returns: Json
+      }
+      crm_company_sync_admin_retry: {
+        Args: { _actor_user_id: string; _id: string; _reason: string }
+        Returns: Json
+      }
       crm_company_sync_enqueue: {
-        Args: { _cld_id: string; _reason: string }
+        Args: {
+          _cld_id: string
+          _expected_company_id?: string
+          _reason: string
+        }
         Returns: string
       }
+      crm_company_sync_health: { Args: never; Returns: Json }
       crm_company_sync_worker_claim: {
         Args: { _batch?: number; _lease_seconds?: number }
         Returns: {
