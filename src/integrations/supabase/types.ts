@@ -1773,7 +1773,6 @@ export type Database = {
       }
       ai_generated_documents: {
         Row: {
-          company_id: string | null
           context_id: string | null
           context_type: string | null
           created_at: string
@@ -1820,7 +1819,6 @@ export type Database = {
           warnings_snapshot: Json | null
         }
         Insert: {
-          company_id?: string | null
           context_id?: string | null
           context_type?: string | null
           created_at?: string
@@ -1867,7 +1865,6 @@ export type Database = {
           warnings_snapshot?: Json | null
         }
         Update: {
-          company_id?: string | null
           context_id?: string | null
           context_type?: string | null
           created_at?: string
@@ -3968,250 +3965,6 @@ export type Database = {
           },
         ]
       }
-      company_notes: {
-        Row: {
-          author_id: string
-          body: string
-          company_id: string
-          created_at: string
-          id: string
-          metadata: Json
-          source: string
-          source_key: string | null
-          updated_at: string
-        }
-        Insert: {
-          author_id: string
-          body: string
-          company_id: string
-          created_at?: string
-          id?: string
-          metadata?: Json
-          source?: string
-          source_key?: string | null
-          updated_at?: string
-        }
-        Update: {
-          author_id?: string
-          body?: string
-          company_id?: string
-          created_at?: string
-          id?: string
-          metadata?: Json
-          source?: string
-          source_key?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "company_notes_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      company_import_batches: {
-        Row: {
-          approved_at: string | null
-          approved_by: string | null
-          applied_rows: number
-          conflict_rows: number
-          created_at: string
-          created_by: string
-          cursor_position: number
-          error_rows: number
-          id: string
-          metadata: Json
-          rows: Json
-          skipped_rows: number
-          source: string
-          source_reference: string
-          status: string
-          total_rows: number
-          updated_at: string
-        }
-        Insert: {
-          approved_at?: string | null
-          approved_by?: string | null
-          applied_rows?: number
-          conflict_rows?: number
-          created_at?: string
-          created_by: string
-          cursor_position?: number
-          error_rows?: number
-          id?: string
-          metadata?: Json
-          rows: Json
-          skipped_rows?: number
-          source: string
-          source_reference: string
-          status?: string
-          total_rows?: number
-          updated_at?: string
-        }
-        Update: {
-          approved_at?: string | null
-          approved_by?: string | null
-          applied_rows?: number
-          conflict_rows?: number
-          created_at?: string
-          created_by?: string
-          cursor_position?: number
-          error_rows?: number
-          id?: string
-          metadata?: Json
-          rows?: Json
-          skipped_rows?: number
-          source?: string
-          source_reference?: string
-          status?: string
-          total_rows?: number
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      company_import_ledger: {
-        Row: {
-          batch_id: string
-          company_id: string | null
-          created_at: string
-          id: string
-          metadata: Json
-          row_number: number | null
-          source: string
-          source_key: string
-          status: string
-          task_id: string | null
-          updated_at: string
-        }
-        Insert: {
-          batch_id: string
-          company_id?: string | null
-          created_at?: string
-          id?: string
-          metadata?: Json
-          row_number?: number | null
-          source: string
-          source_key: string
-          status: string
-          task_id?: string | null
-          updated_at?: string
-        }
-        Update: {
-          batch_id?: string
-          company_id?: string | null
-          created_at?: string
-          id?: string
-          metadata?: Json
-          row_number?: number | null
-          source?: string
-          source_key?: string
-          status?: string
-          task_id?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "company_import_ledger_batch_id_fkey"
-            columns: ["batch_id"]
-            isOneToOne: false
-            referencedRelation: "company_import_batches"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "company_import_ledger_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "company_import_ledger_task_id_fkey"
-            columns: ["task_id"]
-            isOneToOne: false
-            referencedRelation: "crm_tasks"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      company_relationships: {
-        Row: {
-          created_at: string
-          created_by: string | null
-          evidence: Json
-          from_company_id: string
-          id: string
-          is_current: boolean
-          metadata: Json
-          relationship_type: string
-          source: string
-          to_company_id: string
-          updated_at: string
-          updated_by: string | null
-          valid_from: string
-          valid_to: string | null
-          workspace_id: string
-        }
-        Insert: {
-          created_at?: string
-          created_by?: string | null
-          evidence?: Json
-          from_company_id: string
-          id?: string
-          is_current?: boolean
-          metadata?: Json
-          relationship_type: string
-          source?: string
-          to_company_id: string
-          updated_at?: string
-          updated_by?: string | null
-          valid_from?: string
-          valid_to?: string | null
-          workspace_id?: string
-        }
-        Update: {
-          created_at?: string
-          created_by?: string | null
-          evidence?: Json
-          from_company_id?: string
-          id?: string
-          is_current?: boolean
-          metadata?: Json
-          relationship_type?: string
-          source?: string
-          to_company_id?: string
-          updated_at?: string
-          updated_by?: string | null
-          valid_from?: string
-          valid_to?: string | null
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "company_relationships_from_company_id_fkey"
-            columns: ["from_company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "company_relationships_to_company_id_fkey"
-            columns: ["to_company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "company_relationships_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       company_sync_queue: {
         Row: {
           attempts: number
@@ -5042,7 +4795,6 @@ export type Database = {
           closed_at: string | null
           closed_by: string | null
           contact_id: string | null
-          company_id: string | null
           created_at: string
           created_by: string | null
           deal_id: string | null
@@ -5073,7 +4825,6 @@ export type Database = {
           closed_at?: string | null
           closed_by?: string | null
           contact_id?: string | null
-          company_id?: string | null
           created_at?: string
           created_by?: string | null
           deal_id?: string | null
@@ -5104,7 +4855,6 @@ export type Database = {
           closed_at?: string | null
           closed_by?: string | null
           contact_id?: string | null
-          company_id?: string | null
           created_at?: string
           created_by?: string | null
           deal_id?: string | null
@@ -7595,7 +7345,6 @@ export type Database = {
       }
       generated_documents: {
         Row: {
-          company_id: string | null
           client_details_id: string | null
           client_snapshot: Json
           contract_date: string | null
@@ -7636,7 +7385,6 @@ export type Database = {
           updated_at: string
         }
         Insert: {
-          company_id?: string | null
           client_details_id?: string | null
           client_snapshot: Json
           contract_date?: string | null
@@ -7677,7 +7425,6 @@ export type Database = {
           updated_at?: string
         }
         Update: {
-          company_id?: string | null
           client_details_id?: string | null
           client_snapshot?: Json
           contract_date?: string | null
@@ -19415,112 +19162,6 @@ export type Database = {
         }
         Returns: string
       }
-      crm_company_create_from_billing: {
-        Args: { _client_legal_details_id: string }
-        Returns: string
-      }
-      company_feed_list: {
-        Args: {
-          _company_id: string
-          _limit?: number
-          _offset?: number
-          _search?: string
-          _types?: string[]
-        }
-        Returns: Json
-      }
-      company_note_create: {
-        Args: {
-          _body: string
-          _company_id: string
-          _metadata?: Json
-          _source?: string
-          _source_key?: string
-        }
-        Returns: string
-      }
-      company_note_delete: { Args: { _note_id: string }; Returns: boolean }
-      crm_company_sheet_import_batch_start: {
-        Args: { _rows: Json; _source: string; _source_reference: string }
-        Returns: Json
-      }
-      crm_company_sheet_import_batch_apply: {
-        Args: { _assignee_name?: string; _batch_id: string; _confirm?: boolean; _max_rows?: number }
-        Returns: Json
-      }
-      crm_company_relationship_upsert: {
-        Args: {
-          _evidence?: Json
-          _from_company_id: string
-          _is_current?: boolean
-          _metadata?: Json
-          _relationship_type: string
-          _source?: string
-          _to_company_id: string
-          _valid_from?: string
-          _valid_to?: string | null
-        }
-        Returns: string
-      }
-      crm_company_relationships_list: {
-        Args: { _company_id: string; _include_history?: boolean }
-        Returns: Json
-      }
-      crm_company_invariants_report: { Args: never; Returns: Json }
-      crm_company_external_ids_list: { Args: { _company_id: string }; Returns: Json }
-          crm_company_external_id_upsert: {
-        Args: {
-          _company_id: string
-          _external_id: string
-          _external_url?: string
-          _metadata?: Json
-          _provider: string
-        }
-            Returns: string
-          }
-          crm_company_external_reconcile_preview: {
-            Args: {
-              _provider: string
-              _rows: Json
-              _limit?: number
-            }
-            Returns: Json
-          }
-          crm_company_contact_person_upsert: {
-            Args: {
-              _person_id?: string | null
-              _full_name?: string | null
-              _job_title?: string | null
-              _email?: string | null
-              _phone?: string | null
-              _source?: string
-              _profile_id?: string | null
-              _consent_status?: string
-              _external_ids?: Json
-              _metadata?: Json
-            }
-            Returns: string
-          }
-          crm_company_contact_person_link: {
-            Args: {
-              _company_id: string
-              _person_id: string
-              _role: string
-              _valid_from?: string
-              _valid_to?: string | null
-              _is_current?: boolean
-              _source?: string
-              _evidence?: Json
-              _metadata?: Json
-            }
-            Returns: string
-          }
-          crm_company_contact_persons_list: {
-            Args: {
-              _company_id: string
-            }
-            Returns: Json
-          }
       crm_company_grp_refetch: { Args: { _id: string }; Returns: string }
       crm_company_link_contact: {
         Args: {
@@ -19537,18 +19178,6 @@ export type Database = {
         Args: { _source_id: string; _target_id: string }
         Returns: string
       }
-      crm_company_update: {
-        Args: {
-          _email?: string
-          _full_name: string
-          _id: string
-          _phone?: string
-          _short_name?: string
-        }
-        Returns: string
-      }
-      crm_company_quality_summary: { Args: never; Returns: Json }
-      crm_company_restore: { Args: { _id: string }; Returns: string }
       crm_company_sync_admin_dismiss: {
         Args: { _actor_user_id: string; _id: string; _reason: string }
         Returns: Json
@@ -19634,7 +19263,6 @@ export type Database = {
           closed_at: string | null
           closed_by: string | null
           contact_id: string | null
-          company_id: string | null
           created_at: string
           created_by: string | null
           deal_id: string | null
