@@ -136,7 +136,7 @@ function parseCompanyRows(csvText: string): NormalizedCompanyImportRow[] {
       comments: comments || (!lpr.contacts.length && lpr.raw ? `Контакты ЛПР: ${lpr.raw}` : undefined),
       lpr_contacts: lpr.contacts.length ? lpr.contacts : undefined,
       callback_at: clean(row[13]) || undefined,
-      external_provider: "amocrm",
+      external_provider: "amocrm" as const,
       external_id: amoId || undefined,
       metadata: {
         source_status: clean(row[12]),
