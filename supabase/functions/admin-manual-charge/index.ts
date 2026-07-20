@@ -141,7 +141,12 @@ Deno.serve(async (req) => {
       };
 
       console.log('bePaid gateway URLs:', { origin, returnUrl, notificationUrl });
-      console.log('Charging card:', JSON.stringify({ ...chargePayload, request: { ...chargePayload.request, credit_card: { token: '***' } } }));
+      // Keep saved-card credentials and customer/order details out of logs.
+      console.log('Charging card', {
+        trackingId,
+        amount: chargePayload.request.amount,
+        currency: chargePayload.request.currency,
+      });
 
       const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
         method: 'POST',
@@ -155,7 +160,10 @@ Deno.serve(async (req) => {
       });
 
       const chargeResult = await chargeResponse.json();
-      console.log('bePaid response:', JSON.stringify(chargeResult));
+      console.log('bePaid response received', {
+        status: chargeResponse.status,
+        topLevelKeys: Object.keys(chargeResult || {}).slice(0, 20),
+      });
 
       if (!chargeResponse.ok) {
         return {

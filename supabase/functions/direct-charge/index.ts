@@ -844,7 +844,13 @@ Deno.serve(async (req) => {
 
     console.log('bePaid gateway URLs:', { origin, returnUrl, notificationUrl });
 
-    console.log('Sending charge to bePaid Gateway:', JSON.stringify(chargePayload));
+    // Do not log chargePayload: it contains the saved card token and customer/order data.
+    console.log('Sending charge to bePaid Gateway', {
+      paymentId: payment.id,
+      orderId: order.id,
+      amount: chargePayload.request.amount,
+      currency: chargePayload.request.currency,
+    });
 
     const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
       method: 'POST',
@@ -861,7 +867,11 @@ Deno.serve(async (req) => {
     console.log(`bePaid charge response status: ${chargeResponse.status}`);
     
     const chargeResult = await chargeResponse.json();
-    console.log('bePaid charge response:', JSON.stringify(chargeResult));
+    // Provider responses can echo card/payment credentials; keep logs metadata-only.
+    console.log('bePaid charge response received', {
+      status: chargeResponse.status,
+      topLevelKeys: Object.keys(chargeResult || {}).slice(0, 20),
+    });
 
     // Handle non-200 responses from bePaid
     if (!chargeResponse.ok) {

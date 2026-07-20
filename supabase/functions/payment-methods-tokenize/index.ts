@@ -132,7 +132,12 @@ serve(async (req) => {
           },
         };
 
-        console.log('[tokenize] Creating tokenization checkout (card-only, amount=0, readonly):', JSON.stringify(checkoutData));
+        // Do not log checkoutData: it contains customer PII and provider URLs.
+        console.log('[tokenize] Creating tokenization checkout', {
+          amount: checkoutData.checkout?.order?.amount,
+          currency: checkoutData.checkout?.order?.currency,
+          hasCustomer: Boolean(checkoutData.checkout?.customer),
+        });
 
         // PATCH-D: Use strict credentials helper
         const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
@@ -147,10 +152,17 @@ serve(async (req) => {
         });
 
         const result = await response.json();
-        console.log('[tokenize] bePaid response:', JSON.stringify(result));
+        // Keep the provider response out of logs; it may contain redirect/payment data.
+        console.log('[tokenize] bePaid response received', {
+          status: response.status,
+          topLevelKeys: Object.keys(result || {}).slice(0, 20),
+        });
 
         if (!response.ok || result.errors || result.response?.status === 'error') {
-          console.error('[tokenize] bePaid error:', result);
+          console.error('[tokenize] bePaid error', {
+            status: response.status,
+            hasErrors: Boolean(result?.errors),
+          });
           return new Response(JSON.stringify({ 
             error: 'Failed to create tokenization session',
             details: result.response?.message || result.errors || 'Unknown error'
