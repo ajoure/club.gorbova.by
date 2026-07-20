@@ -36,6 +36,9 @@ verify_jwt = true
 [functions.autoweb-session-heartbeat]
 verify_jwt = true
 
+[functions.autoweb-room-state]
+verify_jwt = true
+
 [functions.public-rr-installment-initiate]
 verify_jwt = false
 
@@ -84,4 +87,3 @@ verify_jwt = false
 # The function also validates an explicit allowed-origin list at runtime.
 [functions.company-sync-admin]
 verify_jwt = true
-

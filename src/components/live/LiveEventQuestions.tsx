@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Loader2, Send, CheckCircle2, Lock, ArrowDown } from "lucide-react";
 import { format } from "date-fns";
@@ -51,6 +52,8 @@ interface LiveEventQuestionsProps {
   /** Autoweb timed-replay history layer. */
   historySourceEventId?: string;
   historySourceStartedAt?: string;
+  /** Start of the current autoweb session; used for unified display_at order. */
+  autowebSessionStartedAt?: string;
   currentPlaybackSeconds?: number;
   /** Для staff — визуально помечать источник (history/live). */
   staffSourceIndicator?: boolean;
@@ -67,6 +70,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
       emojiNormalizationEnabled = true,
       historySourceEventId,
       historySourceStartedAt,
+      autowebSessionStartedAt,
       currentPlaybackSeconds,
       staffSourceIndicator = false,
     },
@@ -81,14 +85,18 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
 
     // Live (текущий автовеб).
     const { data: liveQuestions, isLoading } = useQuery({
-      queryKey: ["live-event-questions", liveEventId],
+      queryKey: ["live-event-questions", liveEventId, autowebSessionId ?? "legacy"],
       queryFn: async () => {
-        const { data, error } = await supabase
+        let questionsQuery = supabase
           .from("live_event_questions")
           .select("id, user_id, content, is_answered, answered_at, answered_by, created_at, author_display_name, author_role, author_avatar_url, author_nickname_color")
           .eq("live_event_id", liveEventId)
           .order("created_at", { ascending: true })
           .limit(200);
+        if (autowebSessionId) {
+          questionsQuery = questionsQuery.eq("metadata->>session_id", autowebSessionId);
+        }
+        const { data, error } = await questionsQuery;
         if (error) throw error;
 
         const needsAvatarFallback = (data || []).filter(q => !q.author_avatar_url);
@@ -153,10 +161,26 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
       const visible = (historyQuestions ?? []).filter(
         (q) => new Date(q.created_at).getTime() <= cutoffMs,
       );
-      const merged = [...visible, ...(liveQuestions ?? [])];
-      merged.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-      return merged;
-    }, [historyEnabled, liveQuestions, historyQuestions, cutoffMs]);
+      const sessionStartedMs = autowebSessionStartedAt
+        ? new Date(autowebSessionStartedAt).getTime()
+        : sourceStartedMs;
+      return [
+        ...visible.map((question) => ({
+          question,
+          displayAt: sessionStartedMs + (new Date(question.created_at).getTime() - sourceStartedMs),
+        })),
+        ...(liveQuestions ?? []).map((question) => ({
+          question,
+          displayAt: new Date(question.created_at).getTime(),
+        })),
+      ]
+        .sort((a, b) => a.displayAt - b.displayAt)
+        .map(({ question }) => question);
+    }, [historyEnabled, liveQuestions, historyQuestions, cutoffMs, autowebSessionStartedAt, sourceStartedMs]);
+    const historicalQuestionIds = useMemo(
+      () => new Set((historyQuestions ?? []).map((question) => question.id)),
+      [historyQuestions],
+    );
 
 
     // Realtime
@@ -167,11 +191,11 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "live_event_questions", filter: `live_event_id=eq.${liveEventId}` },
-          () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId] })
+          () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId, autowebSessionId ?? "legacy"] })
         )
         .subscribe();
       return () => { supabase.removeChannel(channel); };
-    }, [liveEventId, queryClient]);
+    }, [liveEventId, autowebSessionId, queryClient]);
 
     // M1.1: smart auto-scroll for questions list (same pattern as comments).
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -244,7 +268,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
       },
       onSuccess: () => {
         setNewQuestion("");
-        queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId] });
+        queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId, autowebSessionId ?? "legacy"] });
       },
       onError: (err: any) => {
         const msg = String(err?.message || "");
@@ -276,7 +300,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
         const { error } = await supabase.from("live_event_questions").update(patch as any).eq("id", id);
         if (error) throw error;
       },
-      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId] }),
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId, autowebSessionId ?? "legacy"] }),
     });
 
     const handleSend = () => {
@@ -298,6 +322,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
     };
 
     const renderQuestion = (q: Question) => {
+      const isHistorical = historicalQuestionIds.has(q.id);
       const display = resolveParticipantDisplay({
         user_id: q.user_id,
         author_display_name: q.author_display_name,
@@ -336,19 +361,20 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
                   {isOwn && <span className="ml-1 text-[10px] text-primary">(вы)</span>}
                 </span>
                 <LiveRoleBadge role={displayRole} />
+                {staffSourceIndicator && isHistorical && <Badge variant="outline" className="text-[9px] px-1 py-0">История</Badge>}
                 <span className="text-[10px] room-meta-text">{format(new Date(q.created_at), "HH:mm", { locale: ru })}</span>
                 {q.is_answered && <CheckCircle2 className="h-3 w-3 text-primary inline" />}
-                <LiveInlineModeration
-                  liveEventId={liveEventId}
-                  messageId={q.id}
-                  messageUserId={q.user_id}
-                  messageTable="live_event_questions"
-                  onReply={() => setReplyingTo({ id: q.id, userId: q.user_id, name: displayName })}
-                  onOpenProfile={onOpenProfile}
-                />
+                {!isHistorical && <LiveInlineModeration
+                    liveEventId={liveEventId}
+                    messageId={q.id}
+                    messageUserId={q.user_id}
+                    messageTable="live_event_questions"
+                    onReply={() => setReplyingTo({ id: q.id, userId: q.user_id, name: displayName })}
+                    onOpenProfile={onOpenProfile}
+                  />}
               </div>
               <p className="text-sm room-message-text break-words whitespace-pre-wrap">{normalizeEmoji(q.content, emojiNormalizationEnabled)}</p>
-              {isStaff && (
+              {isStaff && !isHistorical && (
                 <button
                   className="text-[10px] room-meta-text hover:text-primary mt-0.5"
                   onClick={() => toggleAnsweredMutation.mutate({ id: q.id, is_answered: !q.is_answered })}
@@ -358,8 +384,8 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
               )}
             </div>
           </div>
-          <LiveEventRepliesList liveEventId={liveEventId} sourceQuestionId={q.id} />
-          {replyingTo?.id === q.id && (
+          {!isHistorical && <LiveEventRepliesList liveEventId={liveEventId} sourceQuestionId={q.id} />}
+          {!isHistorical && replyingTo?.id === q.id && (
             <div className="ml-6 mt-1">
               <LiveEventReplyForm
                 liveEventId={liveEventId}

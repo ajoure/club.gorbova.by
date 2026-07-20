@@ -6,6 +6,8 @@ import { LiveRoleBadge, type AuthorRole } from "./LiveRoleBadge";
 
 interface RoomParticipantsListProps {
   liveEventId: string;
+  /** Для автовебина — присутствие только в этой конкретной session. */
+  autowebSessionId?: string | null;
   /** Если staff — рендерим real_name_for_staff под ником (если есть). */
   isStaff: boolean;
   /** Visibility toggle из room_settings.participants.visible_for_students. */
@@ -24,11 +26,12 @@ interface RoomParticipantsListProps {
  */
 export function RoomParticipantsList({
   liveEventId,
+  autowebSessionId,
   isStaff,
   visibleForStudents,
 }: RoomParticipantsListProps) {
   const enabled = isStaff || visibleForStudents;
-  const { data: participants, isLoading } = useRoomParticipants(liveEventId, enabled);
+  const { data: participants, isLoading } = useRoomParticipants(liveEventId, enabled, autowebSessionId);
 
   if (!enabled) return null;
 

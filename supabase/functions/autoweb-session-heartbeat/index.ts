@@ -47,8 +47,8 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-type PlayerState = 'idle' | 'ready' | 'playing' | 'paused' | 'ended' | 'autoplay_blocked';
-const VALID_STATES: PlayerState[] = ['idle', 'ready', 'playing', 'paused', 'ended', 'autoplay_blocked'];
+type PlayerState = 'idle' | 'ready' | 'playing' | 'paused' | 'ended' | 'error' | 'autoplay_blocked';
+const VALID_STATES: PlayerState[] = ['idle', 'ready', 'playing', 'paused', 'ended', 'error', 'autoplay_blocked'];
 
 function jsonRes(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -98,18 +98,37 @@ Deno.serve(async (req) => {
     // Load session + event.
     const { data: session, error: sErr } = await admin
       .from('live_event_sessions')
-      .select('id, live_event_id, starts_at, ends_at, status, metadata')
+      .select('id, live_event_id, starts_at, ends_at, viewer_user_id, status, metadata')
       .eq('id', session_id)
       .maybeSingle();
     if (sErr || !session) return jsonRes({ status: 'not_found' }, 404);
 
     const { data: event } = await admin
       .from('live_events')
-      .select('id, event_type')
+      .select('id, event_type, autoweb_config')
       .eq('id', session.live_event_id)
       .maybeSingle();
     if (!event || (event.event_type !== 'autowebinar' && event.event_type !== 'recorded_webinar')) {
       return jsonRes({ status: 'unsupported_event_type' }, 400);
+    }
+
+    const [{ data: isAdmin }, { data: isSuperAdmin }, { data: isEmployee }] = await Promise.all([
+      admin.rpc('has_role_v2', { _user_id: actor_user_id, _role_code: 'admin' }),
+      admin.rpc('has_role_v2', { _user_id: actor_user_id, _role_code: 'super_admin' }),
+      admin.rpc('has_role_v2', { _user_id: actor_user_id, _role_code: 'employee' }),
+    ]);
+    const isStaff = isAdmin === true || isSuperAdmin === true || isEmployee === true;
+    const isPersonalSession = (session as any).viewer_user_id !== null;
+    const { data: hasEventAccess } = isStaff
+      ? { data: true }
+      : await admin.rpc('user_has_live_event_access', {
+          _user_id: actor_user_id,
+          _live_event_id: session.live_event_id,
+        });
+    if (!isStaff && (!hasEventAccess || (
+      isPersonalSession && (session as any).viewer_user_id !== actor_user_id
+    ))) {
+      return jsonRes({ status: 'access_denied' }, 403);
     }
 
     const now = new Date();
@@ -172,6 +191,26 @@ Deno.serve(async (req) => {
       noopReason = 'autoplay_blocked_no_start';
     }
 
+    // Ошибка источника не имеет права переводить комнату в live. Сохраняем
+    // диагностику и аудит один раз, чтобы staff видел причину в журнале.
+    if (player_state === 'error' && !meta.source_unavailable_at) {
+      const { data: casSourceError } = await admin
+        .from('live_event_sessions')
+        .update({
+          metadata: { ...meta, source_unavailable_at: nowIso },
+          updated_at: nowIso,
+        })
+        .eq('id', session.id)
+        .filter('metadata->>source_unavailable_at', 'is', null)
+        .select('metadata')
+        .maybeSingle();
+      if (casSourceError) {
+        meta.source_unavailable_at = nowIso;
+        audits.push({ ...auditBase, action: 'autoweb_source_unavailable', meta: { at: nowIso } });
+      }
+      noopReason = 'source_unavailable_no_start';
+    }
+
     // --- 3. auto_started_at + status='live' — ТОЛЬКО при подтверждённом playback ---
     const canStart =
       player_state === 'playing' &&
@@ -203,7 +242,7 @@ Deno.serve(async (req) => {
           },
         });
       }
-    } else if (!meta.auto_started_at && player_state !== 'autoplay_blocked') {
+    } else if (!meta.auto_started_at && player_state !== 'autoplay_blocked' && player_state !== 'error') {
       // Guard-noop: player ещё не готов → сценарий/старт заблокированы.
       if (player_state === 'paused' || player_state === 'idle' || player_state === 'ready') {
         noopReason = `guard_scenario_needs_playback:${player_state}`;
@@ -273,6 +312,44 @@ Deno.serve(async (req) => {
           updated_at: nowIso,
         })
         .eq('id', session.id);
+    }
+
+    // Персональная позиция для resume. Не используем session.metadata: у scheduled
+    // сессий она общая для всех зрителей. Пишем только фактические состояния плеера.
+    if (playback_started && ['playing', 'paused', 'ended'].includes(player_state)) {
+      const durationSeconds = Math.max(
+        0,
+        Math.floor(Number((event as any).autoweb_config?.video?.duration_seconds ?? 3600)),
+      );
+      const position = Math.min(
+        durationSeconds,
+        Math.max(0, Math.floor(current_time_seconds)),
+      );
+      const { data: existingProgress } = await admin
+        .from('live_event_session_progress')
+        .select('id, max_watched_seconds')
+        .eq('session_id', session.id)
+        .eq('viewer_user_id', actor_user_id)
+        .maybeSingle();
+      if (existingProgress) {
+        await admin
+          .from('live_event_session_progress')
+          .update({
+            last_video_position_seconds: position,
+            max_watched_seconds: Math.max(Number((existingProgress as any).max_watched_seconds ?? 0), position),
+            last_seen_at: nowIso,
+          })
+          .eq('id', (existingProgress as any).id);
+      } else {
+        await admin.from('live_event_session_progress').insert({
+          session_id: session.id,
+          viewer_user_id: actor_user_id,
+          first_joined_at: nowIso,
+          last_seen_at: nowIso,
+          last_video_position_seconds: position,
+          max_watched_seconds: position,
+        });
+      }
     }
 
     // --- 6. Audit insert (одним батчем, только реальные события) ---

@@ -336,6 +336,13 @@ Deno.serve(async (req) => {
       }, 403);
     }
 
+    const terminal = event.platform_status === 'ended' || event.platform_status === 'archived' || event.status === 'ended';
+    const isAdminBypass = isAdmin === true || isSuperAdmin === true;
+    if (terminal && !event.replay_enabled && !isAdminBypass) {
+      await logAudit(supabase, 'live_access_replay_disabled', userId, slug, event.id, { replay_enabled: false });
+      return jsonRes({ status: 'replay_disabled', reason: 'replay_disabled', replay_enabled: false }, 410);
+    }
+
     // 5b. Moderation overlay — check if user is removed/banned from room
     const { data: isRemoved } = await supabase.rpc('is_user_removed_from_room', {
       _user_id: userId,
