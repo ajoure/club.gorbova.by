@@ -14,4 +14,8 @@ describe("normalizeCompanyPhone", () => {
   it("keeps a non-Belarusian E.164 number intact", () => {
     expect(normalizeCompanyPhone("+49123456789", "DE")).toBe("+49123456789");
   });
+
+  it("removes repeated spreadsheet formula prefixes", () => {
+    expect(normalizeCompanyPhone("===+375 (29) 123-45-67")).toBe("+375291234567");
+  });
 });
