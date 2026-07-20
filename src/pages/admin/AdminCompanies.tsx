@@ -116,6 +116,11 @@ interface CompanyQualitySummary {
   orphan_order_links: number;
 }
 
+interface CompanyInvariantReport {
+  ok: boolean;
+  checks: Record<string, { status: string; count: number }>;
+}
+
 interface CompanyDetail extends CompanyListItem {
   legal_form: string | null;
   legal_address: string | null;
@@ -381,6 +386,15 @@ export default function AdminCompanies() {
     },
     staleTime: 30_000,
   });
+  const invariantsQuery = useQuery({
+    queryKey: ["admin-company-invariants"],
+    queryFn: async (): Promise<CompanyInvariantReport> => {
+      const { data, error } = await supabase.rpc("crm_company_invariants_report");
+      if (error) throw error;
+      return (data ?? { ok: false, checks: {} }) as unknown as CompanyInvariantReport;
+    },
+    staleTime: 30_000,
+  });
 
   const items = companiesQuery.data?.items ?? [];
   const total = companiesQuery.data?.total ?? 0;
@@ -598,6 +612,10 @@ export default function AdminCompanies() {
             ))}
           </div>
         )}
+        <div className="mt-3 flex items-center justify-between rounded-lg border px-3 py-2 text-sm">
+          <span className="text-muted-foreground">Инварианты Companies</span>
+          {invariantsQuery.isError ? <Badge variant="outline">Проверка недоступна</Badge> : <Badge variant={invariantsQuery.data?.ok ? "outline" : "secondary"}>{invariantsQuery.isFetching ? "Проверка…" : invariantsQuery.data?.ok ? "OK" : "Есть нарушения"}</Badge>}
+        </div>
       </section>
 
       <div className="min-h-0 min-w-0 flex-none overflow-hidden rounded-xl border bg-card">
