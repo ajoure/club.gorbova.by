@@ -38,6 +38,12 @@ export interface AutowebRoomStateResponse {
   timeline_enabled: boolean;
   chat_enabled: boolean;
   questions_enabled: boolean;
+  /**
+   * Точка позднего входа, вычисленная сервером для текущей live-фазы.
+   * Для replay/pre_show это 0; сохранённая пользовательская позиция остаётся
+   * отдельным resume-контрактом и при включённом resume имеет приоритет в UI.
+   */
+  session_playback_position_seconds: number;
   resume: AutowebResumeContract;
   viewer_timezone: string;
   event_timezone: string;

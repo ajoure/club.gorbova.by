@@ -10,8 +10,8 @@
 //   replay    : ends_at <= now < replay_ends_at (с учётом open_strategy/delay)
 //   ended     : иначе
 //
-// resume.last_video_position_seconds читается из live_event_sessions.metadata.last_position
-// (если есть и resume_from_last_position=true). НИКОГДА не пишется здесь.
+// resume.last_video_position_seconds читается из live_event_session_progress
+// строго по (session_id, viewer_user_id). НИКОГДА не пишется здесь.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import type {
@@ -60,6 +60,7 @@ export interface ComputeResult {
   ends_at: Date;
   replay_opens_at: Date | null;
   replay_ends_at: Date | null;
+  session_playback_position_seconds: number;
   resume: AutowebResumeContract;
 }
 
@@ -100,7 +101,23 @@ export function computeRoomState(input: ComputeInput): ComputeResult {
       : 0,
   };
 
-  return { phase, ends_at, replay_opens_at, replay_ends_at, resume };
+  // Поздний вход синхронизируется только с активным показом. Replay — это
+  // отдельный просмотр записи, поэтому начинает с 0 либо с личного resume.
+  const session_playback_position_seconds = phase === 'live'
+    ? Math.min(
+        Math.max(0, Math.floor((t - input.starts_at.getTime()) / 1000)),
+        Math.max(0, Math.floor(input.duration_seconds)),
+      )
+    : 0;
+
+  return {
+    phase,
+    ends_at,
+    replay_opens_at,
+    replay_ends_at,
+    session_playback_position_seconds,
+    resume,
+  };
 }
 
 Deno.serve(async (req) => {
@@ -119,12 +136,21 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const admin = createClient(supabaseUrl, serviceKey);
+
+    const authHeader = req.headers.get('Authorization') ?? '';
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: userData } = await userClient.auth.getUser();
+    const viewerUserId = userData?.user?.id ?? null;
+    if (!viewerUserId) return jsonRes({ status: 'unauthorized' }, 401);
 
     // READ-ONLY load. Никаких UPDATE.
     const { data: session, error: sErr } = await admin
       .from('live_event_sessions')
-      .select('id, live_event_id, starts_at, ends_at, mode, metadata, status')
+      .select('id, live_event_id, starts_at, ends_at, mode, viewer_user_id, status')
       .eq('id', sessionId)
       .maybeSingle();
     if (sErr || !session) return jsonRes({ status: 'not_found' }, 404);
@@ -137,6 +163,24 @@ Deno.serve(async (req) => {
     if (eErr || !event) return jsonRes({ status: 'not_found' }, 404);
     if (event.event_type !== 'autowebinar' && event.event_type !== 'recorded_webinar') {
       return jsonRes({ status: 'unsupported_event_type', event_type: event.event_type }, 400);
+    }
+
+    const [{ data: isAdmin }, { data: isSuperAdmin }, { data: isEmployee }] = await Promise.all([
+      admin.rpc('has_role_v2', { _user_id: viewerUserId, _role_code: 'admin' }),
+      admin.rpc('has_role_v2', { _user_id: viewerUserId, _role_code: 'super_admin' }),
+      admin.rpc('has_role_v2', { _user_id: viewerUserId, _role_code: 'employee' }),
+    ]);
+    const isStaff = isAdmin === true || isSuperAdmin === true || isEmployee === true;
+    const isPersonalSession = !!(session as any).viewer_user_id;
+    const ownsPersonalSession = (session as any).viewer_user_id === viewerUserId;
+    const { data: hasEventAccess } = isStaff
+      ? { data: true }
+      : await admin.rpc('user_has_live_event_access', {
+          _user_id: viewerUserId,
+          _live_event_id: session.live_event_id,
+        });
+    if (!isStaff && (!hasEventAccess || (isPersonalSession && !ownsPersonalSession))) {
+      return jsonRes({ status: 'access_denied' }, 403);
     }
     const terminal = (event as any).platform_status === 'ended'
       || (event as any).platform_status === 'archived'
@@ -178,8 +222,13 @@ Deno.serve(async (req) => {
       ...(cfg?.viewer_controls ?? {}),
     };
 
-    const sessionMeta = (session.metadata ?? {}) as Record<string, any>;
-    const saved_position_seconds = Number(sessionMeta?.last_position ?? 0);
+    const { data: progress } = await admin
+      .from('live_event_session_progress')
+      .select('last_video_position_seconds')
+      .eq('session_id', session.id)
+      .eq('viewer_user_id', viewerUserId)
+      .maybeSingle();
+    const saved_position_seconds = Number((progress as any)?.last_video_position_seconds ?? 0);
 
     const computed = computeRoomState({
       now: new Date(),
@@ -203,6 +252,7 @@ Deno.serve(async (req) => {
       timeline_enabled: cfg?.timeline?.enabled !== false,
       chat_enabled: cfg?.chat?.enabled !== false,
       questions_enabled: cfg?.questions?.enabled !== false,
+      session_playback_position_seconds: computed.session_playback_position_seconds,
       resume: computed.resume,
       viewer_timezone: viewerTzParam,
       event_timezone: event.event_timezone ?? cfg?.schedule?.timezone ?? 'Europe/Minsk',

@@ -72,6 +72,10 @@ function AutowebKinescopePlayer({
 }) {
   const containerId = useId().replaceAll(":", "");
   const [sourceError, setSourceError] = useState(false);
+  // Резолвер поллится каждые 10 секунд и обновляет resume. Этот стартовый
+  // таймкод применяем только один раз: работающий плеер не должен получать
+  // повторный seek от собственного heartbeat.
+  const initialStartSecondsRef = useRef(startSeconds);
 
   const allowSeek = !!viewerControls.allow_seek;
   const allowPause = viewerControls.allow_pause !== false;
@@ -94,7 +98,7 @@ function AutowebKinescopePlayer({
     videoId,
     containerId,
     autoplay: true,
-    autoplayTimecode: startSeconds,
+    autoplayTimecode: initialStartSecondsRef.current,
     playerQuery,
     onReady: () => onPlayerStateChange?.("ready"),
     onPlay: () => onPlayerStateChange?.("playing"),
@@ -319,7 +323,11 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
           ) : isPlaying && state.kinescope_video_id ? (
             <AutowebKinescopePlayer
               videoId={state.kinescope_video_id}
-              startSeconds={state.resume.enabled ? state.resume.last_video_position_seconds : 0}
+              startSeconds={
+                state.resume.enabled && state.resume.last_video_position_seconds > 0
+                  ? state.resume.last_video_position_seconds
+                  : state.session_playback_position_seconds
+              }
               onTimeUpdate={handleTimeUpdate}
               onPlayerStateChange={handlePlayerStateChange}
               viewerControls={state.viewer_controls}
