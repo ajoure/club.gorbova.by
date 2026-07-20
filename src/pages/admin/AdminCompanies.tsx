@@ -281,11 +281,25 @@ const DEFAULT_COMPANY_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 48, order: 0 },
   { key: "company", label: "Компания", visible: true, width: 290, order: 1 },
   { key: "unp", label: "УНП", visible: true, width: 130, order: 2 },
-  { key: "kind", label: "Тип", visible: true, width: 130, order: 3 },
+  { key: "kind", label: "Тип", visible: false, width: 130, order: 3 },
   { key: "contacts", label: "Контакты", visible: true, width: 260, order: 4 },
   { key: "status", label: "Статус", visible: true, width: 130, order: 5 },
   { key: "created", label: "Создана", visible: true, width: 150, order: 6 },
 ];
+
+// Список организационно-правовых форм для очистки отображаемого названия.
+const COMPANY_OPF_REGEX = /(^|[\s"'«»„“”()\[\]\/,.-])(ОДО|ОАО|ООО|ПАО|ЗАО|АО|СООО|ИООО|ЧУП|ЧТУП|ЧПУП|ГУП|МУП|ФГУП|УП|ТДО|ТОО|И\.?\s?П\.?|ИП|LLC|LTD|GMBH|INC|CO)\.?(?=$|[\s"'«»„“”()\[\]\/,.-])/gi;
+
+export function formatCompanyDisplayName(name: string | null | undefined): string {
+  if (!name) return "";
+  const stripped = name
+    .replace(COMPANY_OPF_REGEX, " ")
+    .replace(/["«»„“”'‘’`]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,.\-–—]+|[\s,.\-–—]+$/g, "")
+    .trim();
+  return stripped || (name.trim() || "");
+}
 
 const kindLabels: Record<CompanyKind, string> = {
   legal_entity: "Юрлицо",
