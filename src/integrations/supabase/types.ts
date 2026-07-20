@@ -19466,6 +19466,7 @@ export type Database = {
         Args: { _company_id: string; _include_history?: boolean }
         Returns: Json
       }
+      crm_company_invariants_report: { Args: never; Returns: Json }
       crm_company_external_ids_list: { Args: { _company_id: string }; Returns: Json }
           crm_company_external_id_upsert: {
         Args: {
