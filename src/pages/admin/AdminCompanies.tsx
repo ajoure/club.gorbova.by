@@ -38,6 +38,8 @@ import {
   UserRound,
   CalendarDays,
   X,
+  Download,
+  FileText,
 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
@@ -57,10 +59,12 @@ import { SmsHistorySection } from "@/components/admin/sms/SmsHistorySection";
 import { ComposeEmailDialog } from "@/components/admin/ComposeEmailDialog";
 import { ContactEmailHistory } from "@/components/admin/ContactEmailHistory";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { exportToExcel, exportToCSV, type ExportColumn } from "@/utils/exportTableData";
 import { GrpStatusBadge, InfoRow } from "@/components/ai-requisites/EntityRecordSheet";
 import { formatStructuredAddressForView } from "@/lib/address/formatStructuredAddress";
 import type { CanonicalAddressPayload } from "@/lib/address/types";
 import { normalizeCompanyName, inferCompanyLegalForm } from "@/lib/companies/normalizeCompanyName";
+import { normalizeCompanyPhone } from "@/lib/companies/normalizeCompanyPhone";
 import { GrpLookupAdapter } from "@/lib/legal-entities/adapters/GrpLookupAdapter";
 import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
 import { CompanySheetImportDialog } from "@/components/admin/CompanySheetImportDialog";
@@ -98,6 +102,13 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -591,6 +602,44 @@ export default function AdminCompanies() {
             <RefreshCw className={`mr-2 h-4 w-4 ${companiesQuery.isFetching ? "animate-spin" : ""}`} />
             Обновить
           </Button>
+          <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              <Download className="mr-2 h-4 w-4" />
+              Экспорт
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuItem onClick={async () => {
+              await exportToExcel(items, getCompanyExportColumns(), `kompanii_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
+              toast.success(`Экспортировано компаний: ${items.length}`);
+            }}>
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              Excel — текущая страница ({items.length})
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => {
+              exportToCSV(items, getCompanyExportColumns(), `kompanii_${format(new Date(), "yyyy-MM-dd")}.csv`);
+              toast.success(`Экспортировано компаний: ${items.length}`);
+            }}>
+              <FileText className="mr-2 h-4 w-4" />
+              CSV — текущая страница ({items.length})
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={async () => {
+              toast.info("Выгружаем все компании по текущим фильтрам…");
+              try {
+                const all = await fetchAllCompaniesForExport(filters);
+                await exportToExcel(all, getCompanyExportColumns(), `kompanii_vse_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
+                toast.success(`Экспортировано компаний: ${all.length}`);
+              } catch (error) {
+                toast.error(`Ошибка экспорта: ${(error as Error).message}`);
+              }
+            }}>
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              Excel — все по фильтрам
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+          </DropdownMenu>
           {canCreate && <Button variant="outline" size="sm" onClick={() => setSheetImportOpen(true)}><FileSpreadsheet className="mr-2 h-4 w-4" />Импорт таблицы</Button>}
           {canCreate && (
             <Button size="sm" onClick={() => setCreateOpen(true)}>
@@ -767,7 +816,10 @@ export default function AdminCompanies() {
                     if (column.key === "company") return <TableCell key={column.key}><div className="font-medium">{normalizeCompanyName(company.full_name)}</div><div className="mt-0.5 text-xs text-muted-foreground">{company.public_id}{company.short_name ? ` · ${normalizeCompanyName(company.short_name)}` : ""}</div></TableCell>;
                     if (column.key === "unp") return <TableCell key={column.key} className="font-mono text-xs">{company.unp_normalized || "—"}</TableCell>;
                     if (column.key === "kind") return <TableCell key={column.key}>{kindLabels[company.company_kind]}</TableCell>;
-                    if (column.key === "contacts") return <TableCell key={column.key}><div className="space-y-1 text-xs text-muted-foreground">{company.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" />{company.email}</div>}{company.phone && <div className="flex items-center gap-1"><Phone className="h-3 w-3" />{company.phone}</div>}{!company.email && !company.phone && "—"}</div></TableCell>;
+                    if (column.key === "contacts") {
+                      const phone = normalizeCompanyPhone(company.phone, company.country);
+                      return <TableCell key={column.key}><div className="space-y-1 text-xs text-muted-foreground">{company.email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" />{company.email}</div>}{phone && <div className="flex items-center gap-1"><Phone className="h-3 w-3" /><a href={`tel:${phone}`} className="hover:text-foreground hover:underline" onClick={(event) => event.stopPropagation()}>{phone}</a></div>}{!company.email && !phone && "—"}</div></TableCell>;
+                    }
                     if (column.key === "status") return <TableCell key={column.key}><StatusBadge status={company.status} /></TableCell>;
                     if (column.key === "created") return <TableCell key={column.key} className="text-right text-sm text-muted-foreground">{formatDate(company.created_at)}</TableCell>;
                     return null;
@@ -866,6 +918,35 @@ export default function AdminCompanies() {
       />
     </div>
   );
+}
+
+const getCompanyExportColumns = (): ExportColumn<CompanyListItem>[] => [
+  { header: "Компания", getValue: (company) => normalizeCompanyName(company.full_name) },
+  { header: "Краткое название", getValue: (company) => normalizeCompanyName(company.short_name) },
+  { header: "УНП", getValue: (company) => company.unp_normalized || "" },
+  { header: "Страна", getValue: (company) => company.country || "" },
+  { header: "Тип", getValue: (company) => kindLabels[company.company_kind] || company.company_kind },
+  { header: "Орг. форма", getValue: (company) => company.legal_form || "" },
+  { header: "Email", getValue: (company) => company.email || "" },
+  { header: "Телефон", getValue: (company) => normalizeCompanyPhone(company.phone, company.country) || "" },
+  { header: "Статус", getValue: (company) => statusLabels[company.status] || company.status },
+  { header: "Создана", getValue: (company) => company.created_at ? format(new Date(company.created_at), "dd.MM.yyyy HH:mm") : "" },
+];
+
+async function fetchAllCompaniesForExport(baseFilters: Record<string, unknown>): Promise<CompanyListItem[]> {
+  const pageSize = 100;
+  let offset = 0;
+  const result: CompanyListItem[] = [];
+  while (true) {
+    const { data, error } = await supabase.rpc("search_companies", {
+      _filters: { ...baseFilters, limit: pageSize, offset },
+    });
+    if (error) throw error;
+    const page = (data ?? { items: [] }) as unknown as CompanySearchResult;
+    result.push(...(page.items ?? []));
+    if ((page.items ?? []).length < pageSize || result.length >= page.total) return result;
+    offset += pageSize;
+  }
 }
 
 function CreateCompanyDialog({ open, onOpenChange, onCreated }: {
@@ -1299,6 +1380,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
   });
 
   const company = detailQuery.data;
+  const normalizedPhone = normalizeCompanyPhone(company?.phone, company?.country ?? "BY");
   const selectedLinkedProfile = selectedLinkedContactId ? profilesById.get(selectedLinkedContactId) : null;
   const selectedLinkedContact = selectedLinkedProfile ? {
     id: selectedLinkedProfile.id,
@@ -1395,8 +1477,8 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                 <Badge variant="outline" className="h-7 px-2.5 text-xs">{kindLabels[company.company_kind]}</Badge>
               </div>
               <div className="flex flex-wrap gap-2 pt-1">
-                <CallButton phone={company.phone} companyId={company.id} />
-                <SmsButton phone={company.phone} companyId={company.id} />
+                <CallButton phone={normalizedPhone} companyId={company.id} />
+                <SmsButton phone={normalizedPhone} companyId={company.id} />
                 <Button size="sm" variant="outline" disabled={!company.email} onClick={() => setComposeEmailOpen(true)}>
                   <Mail className="mr-1 h-3.5 w-3.5" /> Письмо
                 </Button>
@@ -1433,7 +1515,12 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
               <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
                 <TabsContent value="profile" className="mt-0 space-y-4">
                   <CompanyProfileOverview company={company} onRefreshRegistry={() => refreshRegistry.mutate()} isRefreshing={refreshRegistry.isPending} />
-                  <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">{company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" />{company.email}</div>}{company.phone && <div className="flex items-center gap-2"><Phone className="h-4 w-4" />{company.phone}</div>}{company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}{!company.email && !company.phone && !company.legal_address && "Контактные данные не заполнены."}</section>
+                  <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
+                    {company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" /><a href={`mailto:${company.email}`} className="hover:text-foreground hover:underline">{company.email}</a></div>}
+                    {normalizedPhone && <div className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${normalizedPhone}`} className="hover:text-foreground hover:underline">{normalizedPhone}</a><span className="ml-auto flex gap-1"><CallButton phone={normalizedPhone} companyId={company.id} size="sm" /><SmsButton phone={normalizedPhone} companyId={company.id} size="sm" /></span></div>}
+                    {company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}
+                    {!company.email && !normalizedPhone && !company.legal_address && "Контактные данные не заполнены."}
+                  </section>
                 </TabsContent>
                 <TabsContent value="contacts" className="mt-0 space-y-3">
                   {contactsQuery.isLoading && <Skeleton className="h-16 w-full" />}
