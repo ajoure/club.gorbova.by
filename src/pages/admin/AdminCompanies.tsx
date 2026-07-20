@@ -65,6 +65,7 @@ import { formatStructuredAddressForView } from "@/lib/address/formatStructuredAd
 import type { CanonicalAddressPayload } from "@/lib/address/types";
 import { normalizeCompanyName, inferCompanyLegalForm } from "@/lib/companies/normalizeCompanyName";
 import { normalizeCompanyPhone } from "@/lib/companies/normalizeCompanyPhone";
+import { getContactDisplayName, isLikelyContactName } from "@/lib/companies/normalizeCompanyContactName";
 import { GrpLookupAdapter } from "@/lib/legal-entities/adapters/GrpLookupAdapter";
 import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
 import { CompanySheetImportDialog } from "@/components/admin/CompanySheetImportDialog";
@@ -327,17 +328,6 @@ function getImportedCompanyPhones(company: { phone?: string | null; country?: st
 function getLinkedPersonName(person: CompanyListPersonLink["person"]): string | null {
   if (Array.isArray(person)) return person.find((item) => item.full_name?.trim())?.full_name ?? null;
   return person?.full_name ?? null;
-}
-
-function isLikelyContactName(value: string | null | undefined): value is string {
-  const name = value?.trim();
-  if (!name || /@/.test(name) || /^(?:tel|mailto):/i.test(name)) return false;
-  const compact = name.replace(/[\s().+\-]/g, "");
-  return !(compact.length >= 7 && /^\d+$/.test(compact));
-}
-
-function getContactDisplayName(...candidates: Array<string | null | undefined>): string {
-  return candidates.find((candidate): candidate is string => isLikelyContactName(candidate))?.trim() || "Контакт без имени";
 }
 
 const PAGE_SIZE = 25;
