@@ -17,7 +17,10 @@ export function normalizeCompanyPhone(value: string | null | undefined, country 
 
   const digits = compact.replace(/\D/g, "");
   if (country.toUpperCase() === "BY") {
-    if (/^8\d{9}$/.test(digits)) return `+375${digits.slice(1)}`;
+    // Belarusian trunk notation is commonly written as 80 + the nine-digit
+    // subscriber number (for example, 80291234567). Drop the trunk prefix
+    // before adding the country code; accepting a bare 8 would shift digits.
+    if (/^80\d{9}$/.test(digits)) return `+375${digits.slice(2)}`;
     if (/^\d{9}$/.test(digits)) return `+375${digits}`;
   }
 
