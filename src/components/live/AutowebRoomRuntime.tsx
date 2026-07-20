@@ -410,6 +410,7 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
                   autowebSessionId={state.session_id}
                   historySourceEventId={historyEventId}
                   historySourceStartedAt={historyStartedAt}
+                  autowebSessionStartedAt={state.starts_at}
                   currentPlaybackSeconds={playbackSeconds}
                   staffSourceIndicator={isStaff}
                 />
@@ -425,6 +426,7 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
                   autowebSessionId={state.session_id}
                   historySourceEventId={historyEventId}
                   historySourceStartedAt={historyStartedAt}
+                  autowebSessionStartedAt={state.starts_at}
                   currentPlaybackSeconds={playbackSeconds}
                   staffSourceIndicator={isStaff}
                 />

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Loader2, Send, ArrowDown } from "lucide-react";
 import { format } from "date-fns";
@@ -56,6 +57,8 @@ interface LiveEventCommentsProps {
    */
   historySourceEventId?: string;
   historySourceStartedAt?: string;
+  /** Start of the current autoweb session; used for unified display_at order. */
+  autowebSessionStartedAt?: string;
   currentPlaybackSeconds?: number;
   /** Для staff — визуально помечать источник (history/live) значком. */
   staffSourceIndicator?: boolean;
@@ -69,6 +72,7 @@ export function LiveEventComments({
   emojiNormalizationEnabled = true,
   historySourceEventId,
   historySourceStartedAt,
+  autowebSessionStartedAt,
   currentPlaybackSeconds,
   staffSourceIndicator = false,
 }: LiveEventCommentsProps) {
@@ -162,12 +166,29 @@ export function LiveEventComments({
     const historicalVisible = (historyComments ?? []).filter(
       (c) => new Date(c.created_at).getTime() <= cut,
     );
-    // Отсортированный merge по created_at (для history — created_at исходного,
-    // для live — реальный now, но т.к. live всегда >= now > cut, они всегда позже).
-    const merged = [...historicalVisible, ...(liveComments ?? [])];
-    merged.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-    return merged;
-  }, [historyEnabled, liveComments, historyComments, cutoffMs]);
+    const sessionStartedMs = autowebSessionStartedAt
+      ? new Date(autowebSessionStartedAt).getTime()
+      : sourceStartedMs;
+    // `display_at` is session-relative for source history and real created_at
+    // for new autoweb messages. Sorting only by the historical source clock
+    // would incorrectly place a prior live stream before this new session.
+    return [
+      ...historicalVisible.map((comment) => ({
+        comment,
+        displayAt: sessionStartedMs + (new Date(comment.created_at).getTime() - sourceStartedMs),
+      })),
+      ...(liveComments ?? []).map((comment) => ({
+        comment,
+        displayAt: new Date(comment.created_at).getTime(),
+      })),
+    ]
+      .sort((a, b) => a.displayAt - b.displayAt)
+      .map(({ comment }) => comment);
+  }, [historyEnabled, liveComments, historyComments, cutoffMs, autowebSessionStartedAt, sourceStartedMs]);
+  const historicalCommentIds = useMemo(
+    () => new Set((historyComments ?? []).map((comment) => comment.id)),
+    [historyComments],
+  );
 
 
 
@@ -320,6 +341,7 @@ export function LiveEventComments({
           <p className="text-sm room-meta-text text-center py-4">Пока нет комментариев</p>
         ) : (
           comments.map((comment) => {
+            const isHistorical = historicalCommentIds.has(comment.id);
             const display = resolveParticipantDisplay({
               user_id: comment.user_id,
               author_display_name: comment.author_display_name,
@@ -359,26 +381,27 @@ export function LiveEventComments({
                         {isOwn && <span className="ml-1 text-[10px] text-primary">(вы)</span>}
                       </span>
                       <LiveRoleBadge role={displayRole} />
+                      {staffSourceIndicator && isHistorical && <Badge variant="outline" className="text-[9px] px-1 py-0">История</Badge>}
                       <span className="text-[10px] room-meta-text">{format(new Date(comment.created_at), "HH:mm", { locale: ru })}</span>
-                      <LiveInlineModeration
-                        liveEventId={liveEventId}
-                        messageId={comment.id}
-                        messageUserId={comment.user_id}
-                        messageTable="live_event_comments"
-                        onReply={() => setReplyingTo({ id: comment.id, userId: comment.user_id, name: displayName })}
-                        onOpenProfile={onOpenProfile}
-                      />
+                      {!isHistorical && <LiveInlineModeration
+                          liveEventId={liveEventId}
+                          messageId={comment.id}
+                          messageUserId={comment.user_id}
+                          messageTable="live_event_comments"
+                          onReply={() => setReplyingTo({ id: comment.id, userId: comment.user_id, name: displayName })}
+                          onOpenProfile={onOpenProfile}
+                        />}
                     </div>
                     <p className="text-sm room-message-text break-words whitespace-pre-wrap">{normalizeEmoji(comment.content, emojiNormalizationEnabled)}</p>
                   </div>
                 </div>
                 {/* Threaded replies */}
-                <LiveEventRepliesList
-                  liveEventId={liveEventId}
-                  sourceCommentId={comment.id}
-                />
+                {!isHistorical && <LiveEventRepliesList
+                    liveEventId={liveEventId}
+                    sourceCommentId={comment.id}
+                  />}
                 {/* Inline reply form */}
-                {replyingTo?.id === comment.id && (
+                {!isHistorical && replyingTo?.id === comment.id && (
                   <div className="ml-6 mt-1">
                     <LiveEventReplyForm
                       liveEventId={liveEventId}

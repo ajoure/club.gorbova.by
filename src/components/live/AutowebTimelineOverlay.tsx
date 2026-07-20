@@ -6,7 +6,7 @@ import { HelpCircle, MessageCircle, Sparkles, UserRound } from "lucide-react";
 
 type ScenarioEntry = {
   id: string;
-  entry_type: "chat" | "question" | "host_message" | "reaction";
+  entry_type: "chat" | "question" | "host_message" | "reaction" | "cta";
   offset_seconds: number;
   actor_display_name: string | null;
   content_text: string;
