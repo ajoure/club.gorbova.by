@@ -89,6 +89,8 @@ interface Props {
   onEdit: (task: CrmTask) => void;
   /** Открывает ContactDetailSheet поверх страницы. Передаётся из AdminTasks. */
   onOpenContact?: (contactUserOrProfileId: string) => void;
+  /** Открывает CompanyDetailsSheet поверх страницы. */
+  onOpenCompany?: (companyId: string) => void;
   onOpenDeal?: (dealId: string) => void;
 }
 
@@ -98,6 +100,7 @@ export function ViewCrmTaskDialog({
   task,
   onEdit,
   onOpenContact,
+  onOpenCompany,
   onOpenDeal,
 }: Props) {
   const { data: types = [] } = useCrmTaskTypes();
@@ -107,6 +110,7 @@ export function ViewCrmTaskDialog({
   const relations = useTaskRelations(
     task?.deal_id ? [task.deal_id] : [],
     task?.contact_id ? [task.contact_id] : [],
+    task?.company_id ? [task.company_id] : [],
   );
 
   const type = useMemo(
@@ -129,6 +133,7 @@ export function ViewCrmTaskDialog({
 
   const deal = task.deal_id ? relations.deals[task.deal_id] ?? null : null;
   const contact = task.contact_id ? relations.contacts[task.contact_id] ?? null : null;
+  const company = task.company_id ? relations.companies[task.company_id] ?? null : null;
 
   // Fallback контакта из snapshot сделки, если contact_id по какой-то
   // причине не разрешился (например, историческая лид-задача).
@@ -258,6 +263,37 @@ export function ViewCrmTaskDialog({
                     </a>
                   ) : null}
                 </div>
+              )}
+            </div>
+          )}
+
+          {task.company_id && (
+            <div className={TASK_DIALOG_SECTION}>
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Компания
+              </div>
+              {company ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenCompany?.(company.id)}
+                  disabled={!onOpenCompany}
+                  className={cn(
+                    "w-full text-left rounded-lg bg-white/60 border border-white/70 px-3 py-2 flex items-center gap-3 shadow-sm",
+                    onOpenCompany && "hover:bg-white cursor-pointer",
+                  )}
+                >
+                  <Briefcase className="h-4 w-4 text-sky-700 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium truncate">
+                      {company.full_name || "Компания без названия"}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground truncate">
+                      {company.public_id || company.email || company.phone || "Открыть карточку компании"}
+                    </div>
+                  </div>
+                </button>
+              ) : (
+                <div className="text-sm text-muted-foreground">Компания недоступна</div>
               )}
             </div>
           )}

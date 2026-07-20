@@ -34,9 +34,10 @@ interface Props {
   types: CrmTaskType[];
   onOpenTask: (task: CrmTask) => void;
   onOpenDeal?: (dealId: string) => void;
+  onOpenCompany?: (companyId: string) => void;
 }
 
-export function TaskKanbanBoard({ tasks, types, onOpenTask, onOpenDeal }: Props) {
+export function TaskKanbanBoard({ tasks, types, onOpenTask, onOpenDeal, onOpenCompany }: Props) {
   const typeMap = useMemo(
     () => Object.fromEntries(types.map((t) => [t.id, t])),
     [types],
@@ -56,7 +57,11 @@ export function TaskKanbanBoard({ tasks, types, onOpenTask, onOpenDeal }: Props)
     () => tasks.map((t) => t.contact_id).filter((x): x is string => !!x),
     [tasks],
   );
-  const { deals, contacts } = useTaskRelations(dealIds, contactIds);
+  const companyIds = useMemo(
+    () => tasks.map((t) => t.company_id).filter((x): x is string => !!x),
+    [tasks],
+  );
+  const { deals, contacts, companies } = useTaskRelations(dealIds, contactIds, companyIds);
 
   const grouped = useMemo(() => {
     const now = Date.now();
@@ -155,9 +160,11 @@ export function TaskKanbanBoard({ tasks, types, onOpenTask, onOpenDeal }: Props)
                       assignee={t.assignee_user_id ? staffMap[t.assignee_user_id] ?? null : null}
                       deal={t.deal_id ? deals[t.deal_id] ?? null : null}
                       contact={t.contact_id ? contacts[t.contact_id] ?? null : null}
+                      company={t.company_id ? companies[t.company_id] ?? null : null}
                       bucketId={b.id}
                       onOpen={onOpenTask}
                       onOpenDeal={onOpenDeal}
+                      onOpenCompany={onOpenCompany}
                     />
                   ))
 
@@ -198,9 +205,11 @@ export function TaskKanbanBoard({ tasks, types, onOpenTask, onOpenDeal }: Props)
                   assignee={t.assignee_user_id ? staffMap[t.assignee_user_id] ?? null : null}
                   deal={t.deal_id ? deals[t.deal_id] ?? null : null}
                   contact={t.contact_id ? contacts[t.contact_id] ?? null : null}
+                  company={t.company_id ? companies[t.company_id] ?? null : null}
                   bucketId="later"
                   onOpen={onOpenTask}
                   onOpenDeal={onOpenDeal}
+                  onOpenCompany={onOpenCompany}
                 />
               ))}
 

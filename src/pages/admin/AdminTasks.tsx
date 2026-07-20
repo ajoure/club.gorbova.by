@@ -16,6 +16,7 @@ import {
 } from "@/hooks/useCrmTasks";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { CompanyDetailsSheet } from "@/pages/admin/AdminCompanies";
 import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialog";
 import { EditCrmTaskDialog } from "@/components/admin/tasks/EditCrmTaskDialog";
 import { ViewCrmTaskDialog } from "@/components/admin/tasks/ViewCrmTaskDialog";
@@ -45,6 +46,7 @@ export default function AdminTasks() {
   const [viewTask, setViewTask] = useState<CrmTask | null>(null);
   const [editTask, setEditTask] = useState<CrmTask | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const {
     selectedContact,
     contactSheetOpen,
@@ -213,6 +215,7 @@ export default function AdminTasks() {
               types={types}
               onOpenTask={setViewTask}
               onOpenDeal={openDeal}
+              onOpenCompany={setSelectedCompanyId}
             />
           )}
         </TabsContent>
@@ -221,7 +224,7 @@ export default function AdminTasks() {
           {isLoading ? (
             <div className="text-sm text-muted-foreground p-6">Загрузка…</div>
           ) : (
-            <TasksListView tasks={tasks} types={types} onOpenTask={setViewTask} />
+            <TasksListView tasks={tasks} types={types} onOpenTask={setViewTask} onOpenCompany={setSelectedCompanyId} />
           )}
         </TabsContent>
 
@@ -240,6 +243,7 @@ export default function AdminTasks() {
           setEditTask(t);
         }}
         onOpenContact={(id) => openContactSheet(id)}
+        onOpenCompany={(id) => setSelectedCompanyId(id)}
         onOpenDeal={openDeal}
       />
       <EditCrmTaskDialog
@@ -251,6 +255,12 @@ export default function AdminTasks() {
         contact={selectedContact}
         open={contactSheetOpen}
         onOpenChange={setContactSheetOpen}
+      />
+      <CompanyDetailsSheet
+        companyId={selectedCompanyId}
+        canEdit={false}
+        onClose={() => setSelectedCompanyId(null)}
+        onOpenCompany={setSelectedCompanyId}
       />
     </div>
   );

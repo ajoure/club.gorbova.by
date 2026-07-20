@@ -75,9 +75,10 @@ interface Props {
   tasks: CrmTask[];
   types: CrmTaskType[];
   onOpenTask: (task: CrmTask) => void;
+  onOpenCompany?: (companyId: string) => void;
 }
 
-export function TasksListView({ tasks, types, onOpenTask }: Props) {
+export function TasksListView({ tasks, types, onOpenTask, onOpenCompany }: Props) {
   const typeMap = useMemo(() => Object.fromEntries(types.map((t) => [t.id, t])), [types]);
   const { data: staff = [] } = useStaffOptions();
   const staffMap = useMemo(
@@ -92,7 +93,11 @@ export function TasksListView({ tasks, types, onOpenTask }: Props) {
     () => tasks.map((t) => t.contact_id).filter((x): x is string => !!x),
     [tasks],
   );
-  const { deals, contacts } = useTaskRelations(dealIds, contactIds);
+  const companyIds = useMemo(
+    () => tasks.map((t) => t.company_id).filter((x): x is string => !!x),
+    [tasks],
+  );
+  const { deals, contacts, companies } = useTaskRelations(dealIds, contactIds, companyIds);
 
   const updateStatus = useUpdateCrmTaskStatus();
 
@@ -154,6 +159,7 @@ export function TasksListView({ tasks, types, onOpenTask }: Props) {
               <TableHead>Задача</TableHead>
               <TableHead>Контакт</TableHead>
               <TableHead>Сделка</TableHead>
+              <TableHead>Компания</TableHead>
               <TableHead>Статус</TableHead>
               <TableHead className="text-right">Действия</TableHead>
             </TableRow>
@@ -165,6 +171,7 @@ export function TasksListView({ tasks, types, onOpenTask }: Props) {
               const assignee = t.assignee_user_id ? staffMap[t.assignee_user_id] : null;
               const deal = t.deal_id ? deals[t.deal_id] : null;
               const contact = t.contact_id ? contacts[t.contact_id] : null;
+              const company = t.company_id ? companies[t.company_id] : null;
               const overdue = isOverdue(t);
               const checked = selected.has(t.id);
               return (
@@ -226,6 +233,19 @@ export function TasksListView({ tasks, types, onOpenTask }: Props) {
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {company ? (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onOpenCompany?.(company.id); }}
+                        disabled={!onOpenCompany}
+                        className={cn("inline-flex max-w-[220px] items-center gap-1 truncate text-left", onOpenCompany && "text-primary hover:underline")}
+                      >
+                        <Briefcase className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{company.full_name || company.public_id || "Компания"}</span>
+                      </button>
+                    ) : <span className="text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary" className="text-[10px]">
