@@ -87,6 +87,10 @@ interface UseKinescopePlayerOptions {
   containerId: string;
   /** Initial timecode for autoplay (used on first load) */
   autoplayTimecode?: number | null;
+  /** Start playback even when the requested timecode is 0. */
+  autoplay?: boolean;
+  /** Query parameters supported by the Kinescope embed player. */
+  playerQuery?: Record<string, string>;
   /** Callback when player is ready */
   onReady?: () => void;
   /** Callback on error */
@@ -97,6 +101,8 @@ interface UseKinescopePlayerOptions {
   onTimeUpdate?: (currentTime: number, duration: number, percent: number) => void;
   /** Callback when video playback starts */
   onPlay?: () => void;
+  /** Callback when video playback is paused */
+  onPause?: () => void;
   /** Callback when video ends */
   onEnded?: () => void;
 }
@@ -114,17 +120,21 @@ export function useKinescopePlayer({
   videoId,
   containerId,
   autoplayTimecode,
+  autoplay = false,
+  playerQuery,
   onReady,
   onError,
   onSeekApplied,
   onTimeUpdate,
   onPlay,
+  onPause,
   onEnded,
 }: UseKinescopePlayerOptions) {
   const playerRef = useRef<KinescopePlayer | null>(null);
   const pendingSeekRef = useRef<PendingSeekRequest | null>(null);
   const isReadyRef = useRef(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const playerQuerySignature = JSON.stringify(playerQuery ?? {});
 
   /**
    * Apply pending seek: mute → seek → play
@@ -312,7 +322,11 @@ export function useKinescopePlayer({
         const urlFormats = [
           `https://kinescope.io/${videoId}`,
           `https://kinescope.io/embed/${videoId}`,
-        ];
+        ].map((baseUrl) => {
+          const url = new URL(baseUrl);
+          for (const [key, value] of Object.entries(playerQuery ?? {})) url.searchParams.set(key, value);
+          return url.toString();
+        });
         
         let lastError: Error | null = null;
         
@@ -427,6 +441,11 @@ export function useKinescopePlayer({
           console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Play event`);
           onPlay?.();
         });
+
+        player.on('pause', () => {
+          if (!isMounted) return;
+          onPause?.();
+        });
         
         // Listen for ended event
         player.on('ended', () => {
@@ -436,18 +455,19 @@ export function useKinescopePlayer({
         });
 
         // If initial autoplay timecode was provided, set it as pending
-        if (autoplayTimecode != null && autoplayTimecode > 0) {
+        if (autoplay || (autoplayTimecode != null && autoplayTimecode > 0)) {
           pendingSeekRef.current = {
-            seconds: autoplayTimecode,
+            seconds: Math.max(0, autoplayTimecode ?? 0),
             nonce: Date.now(),
             consumed: false,
           };
         }
 
-        // Apply any pending seek
-        await applyPendingSeek();
-
         onReady?.();
+
+        // Apply any pending seek only after reporting readiness, so a synchronous
+        // play event cannot be overwritten by a later `ready` state in consumers.
+        await applyPendingSeek();
       } catch (err) {
         console.error(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player init error:`, err);
         onError?.(err as Error);
@@ -488,12 +508,12 @@ export function useKinescopePlayer({
         window.removeEventListener("unhandledrejection", onUnhandledRejection);
       }
     };
-  }, [videoId, containerId]); // Don't include autoplayTimecode - handled via seekAndPlay
+  }, [videoId, containerId, playerQuerySignature]); // Don't include autoplayTimecode - handled via seekAndPlay
 
   // Handle external timecode changes (after initial mount)
   useEffect(() => {
     if (!isReadyRef.current) return;
-    if (autoplayTimecode == null || autoplayTimecode <= 0) return;
+    if (autoplayTimecode == null || (!autoplay && autoplayTimecode <= 0)) return;
     
     // Check if this is a new request (different from last consumed)
     const pending = pendingSeekRef.current;
@@ -502,7 +522,7 @@ export function useKinescopePlayer({
     }
 
     seekAndPlay(autoplayTimecode);
-  }, [autoplayTimecode, seekAndPlay]);
+  }, [autoplay, autoplayTimecode, seekAndPlay]);
 
   return {
     player: playerRef.current,

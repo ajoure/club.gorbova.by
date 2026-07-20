@@ -14,7 +14,7 @@
  *  - Участники: показываем ТОЛЬКО текущих в autoweb-session (никакого архива online).
  *  - Сценарий/Блоки: подтягиваются из source (это редакторский контент прошедшего эфира).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { useAutowebRoomState } from "@/hooks/useAutowebRoomState";
 import { useAutowebHeartbeat, type AutowebPlayerState } from "@/hooks/useAutowebHeartbeat";
+import { useKinescopePlayer } from "@/hooks/useKinescopePlayer";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { AutowebTimelineOverlay } from "@/components/live/AutowebTimelineOverlay";
@@ -49,7 +50,7 @@ interface Props {
 }
 
 /**
- * Kinescope iframe плеер. Разрешения/запреты берутся из viewerControls (единый SoT).
+ * Kinescope SDK facade. Разрешения/запреты берутся из viewerControls (единый SoT).
  *  - allow_seek=false        → hotkeys=false + overlay-guard на нижнюю панель (timeline)
  *  - allow_pause=false       → controls=false + overlay-guard на центр (клик = pause/play)
  *  - allow_speed_control=false → speed=false + settings=false
@@ -69,80 +70,49 @@ function AutowebKinescopePlayer({
   onPlayerStateChange?: (state: AutowebPlayerState) => void;
   viewerControls: AutowebViewerControls;
 }) {
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const containerId = useId().replaceAll(":", "");
+  const [sourceError, setSourceError] = useState(false);
 
   const allowSeek = !!viewerControls.allow_seek;
   const allowPause = viewerControls.allow_pause !== false;
   const allowSpeed = !!viewerControls.allow_speed_control;
 
-  const src = useMemo(() => {
-    const u = new URL(`https://kinescope.io/embed/${videoId}`);
-    if (startSeconds > 0) u.searchParams.set("t", String(Math.floor(startSeconds)));
-    u.searchParams.set("autoplay", "1");
+  const playerQuery = useMemo(() => {
+    const query: Record<string, string> = { autoplay: "1", subtitles: "false", captions: "false", pip: "false", preload: "true" };
     if (!allowPause && !allowSeek) {
-      u.searchParams.set("controls", "false");
+      query.controls = "false";
     }
-    u.searchParams.set("hotkeys", allowPause || allowSeek ? "true" : "false");
+    query.hotkeys = allowPause || allowSeek ? "true" : "false";
     if (!allowSpeed) {
-      u.searchParams.set("speed", "false");
-      u.searchParams.set("settings", "false");
+      query.speed = "false";
+      query.settings = "false";
     }
-    u.searchParams.set("subtitles", "false");
-    u.searchParams.set("captions", "false");
-    u.searchParams.set("pip", "false");
-    u.searchParams.set("preload", "true");
-    return u.toString();
-  }, [videoId, startSeconds, allowPause, allowSeek, allowSpeed]);
+    return query;
+  }, [allowPause, allowSeek, allowSpeed]);
 
-  // Минимальный Kinescope postMessage bridge (Фаза A): читаем только playing/paused/ended
-  // + currentTime. Полный SDK не подключаем.
-  useEffect(() => {
-    const handler = (event: MessageEvent) => {
-      try {
-        if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return;
-        const data: any = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-        if (!data) return;
-
-        const t: number | undefined =
-          data?.data?.currentTime ?? data?.currentTime ?? data?.time ?? undefined;
-        if (typeof t === "number" && isFinite(t)) onTimeUpdate(t);
-
-        // Kinescope шлёт события вида {event: 'play'|'pause'|'ended'|'ready'|'timeupdate'}
-        // либо {type: 'kinescope:...'}. Нормализуем.
-        const raw: string =
-          data?.event ?? data?.type ?? data?.data?.event ?? data?.data?.type ?? "";
-        const evt = String(raw).toLowerCase();
-        if (!onPlayerStateChange) return;
-        if (evt.includes("play") && !evt.includes("playing_stopped") && !evt.includes("pause")) {
-          onPlayerStateChange("playing");
-        } else if (evt.includes("pause")) {
-          onPlayerStateChange("paused");
-        } else if (evt.includes("end")) {
-          onPlayerStateChange("ended");
-        } else if (evt.includes("ready") || evt.includes("canplay")) {
-          onPlayerStateChange("ready");
-        }
-      } catch {
-        // ignore malformed messages
-      }
-    };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, [onTimeUpdate, onPlayerStateChange]);
-
-  // Не синтезируем playback-time wall-clock таймером: сценарий, timed-chat и
-  // heartbeat принимают только позицию, подтверждённую bridge/SDK плеера.
+  const { autoplayBlocked, manualPlay } = useKinescopePlayer({
+    videoId,
+    containerId,
+    autoplay: true,
+    autoplayTimecode: startSeconds,
+    playerQuery,
+    onReady: () => onPlayerStateChange?.("ready"),
+    onPlay: () => onPlayerStateChange?.("playing"),
+    onPause: () => onPlayerStateChange?.("paused"),
+    onEnded: () => onPlayerStateChange?.("ended"),
+    onError: () => setSourceError(true),
+    onTimeUpdate: (seconds) => onTimeUpdate(seconds),
+  });
 
   return (
     <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
-      <iframe
-        ref={iframeRef}
-        src={src}
-        title="Autoweb video"
-        allow="autoplay; fullscreen; picture-in-picture"
-        allowFullScreen
-        className="absolute inset-0 w-full h-full border-0"
-      />
+      <div id={containerId} className="absolute inset-0" />
+      {sourceError && <div className="absolute inset-0 grid place-items-center bg-black/80 text-sm text-white">Источник видео недоступен</div>}
+      {autoplayBlocked && !sourceError && (
+        <button type="button" onClick={() => void manualPlay()} className="absolute inset-x-4 bottom-4 z-20 rounded-md bg-primary px-4 py-3 text-sm font-medium text-primary-foreground">
+          Нажмите, чтобы начать просмотр
+        </button>
+      )}
       {/* Overlay-guard: перехватывает клики по нижней панели (timeline).
           Ставим ТОЛЬКО если перемотка запрещена — иначе не мешаем зрителю. */}
       {!allowSeek && (
