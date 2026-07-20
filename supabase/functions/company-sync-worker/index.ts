@@ -207,12 +207,22 @@ Deno.serve(async (req: Request) => {
     if (writerErr) {
       nextStatus = classifyError(writerErr);
       nextError = trunc(writerErr.message);
-    } else if (writerResult && (writerResult as any).status !== "ok") {
-      // Writer returned a structured non-ok payload (guard-abort etc.).
-      nextStatus = "dead_letter";
-      nextError = trunc(writerResult);
     } else {
-      nextStatus = "done";
+      // Success contract of crm_company_backfill_billing_cld: returns a jsonb
+      // object that ALWAYS includes company_id, map_id, contact_id and the
+      // writer marker fields. Any structural violation (missing company_id,
+      // explicit error field, or missing writer marker) is treated as a
+      // non-retryable guard failure.
+      const wr = (writerResult ?? {}) as Record<string, unknown>;
+      const hasWriterMarker = wr.writer === "crm_company_backfill_billing_cld";
+      const hasCompanyId = typeof wr.company_id === "string" && wr.company_id.length > 0;
+      const hasError = typeof wr.error === "string" || wr.ok === false;
+      if (!writerResult || !hasWriterMarker || !hasCompanyId || hasError) {
+        nextStatus = "dead_letter";
+        nextError = trunc(writerResult ?? "writer returned no payload");
+      } else {
+        nextStatus = "done";
+      }
     }
 
     const { error: cErr } = await supabase.rpc(
