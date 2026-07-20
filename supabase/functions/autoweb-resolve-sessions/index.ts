@@ -168,6 +168,7 @@ Deno.serve(async (req) => {
         mode,
         timezone: tz,
         one_time: { starts_at: event.scheduled_at },
+        ...replayAddOn,
       });
     }
 
@@ -197,6 +198,7 @@ Deno.serve(async (req) => {
         mode,
         timezone: tz,
         scheduled: { upcoming: slots },
+        ...replayAddOn,
       });
     }
 
@@ -218,6 +220,7 @@ Deno.serve(async (req) => {
         mode,
         timezone: tz,
         just_in_time: { options, show_countdown: showCountdown },
+        ...replayAddOn,
       });
     }
 
@@ -231,7 +234,9 @@ Deno.serve(async (req) => {
         starts_at: new Date(Date.now() + minDelay * 1000).toISOString(),
         min_delay_seconds: minDelay,
       },
+      ...replayAddOn,
     });
+
   } catch (e) {
     console.error('[autoweb-resolve-sessions] fatal', e);
     return jsonRes({ status: 'error', message: 'Internal error' }, 500);
