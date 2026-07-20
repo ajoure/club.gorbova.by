@@ -5742,17 +5742,24 @@ var convertCell = (type, value) => {
       return toJson(value);
     case PostgresTypes.timestamp:
       return toTimestampString(value);
+    // Format to be consistent with PostgREST
     case PostgresTypes.abstime:
+    // To allow users to cast it based on Timezone
     case PostgresTypes.date:
+    // To allow users to cast it based on Timezone
     case PostgresTypes.daterange:
     case PostgresTypes.int4range:
     case PostgresTypes.int8range:
     case PostgresTypes.money:
     case PostgresTypes.reltime:
+    // To allow users to cast it based on Timezone
     case PostgresTypes.text:
     case PostgresTypes.time:
+    // To allow users to cast it based on Timezone
     case PostgresTypes.timestamptz:
+    // To allow users to cast it based on Timezone
     case PostgresTypes.timetz:
+    // To allow users to cast it based on Timezone
     case PostgresTypes.tsrange:
     case PostgresTypes.tstzrange:
       return noop(value);
@@ -9261,9 +9268,9 @@ Option 2: Install and provide the "ws" package:
     result.logger = options === null || options === void 0 ? void 0 : options.logger;
     result.heartbeatCallback = this._wrapHeartbeatCallback(options === null || options === void 0 ? void 0 : options.heartbeatCallback);
     result.sessionStorage = (_h = options === null || options === void 0 ? void 0 : options.sessionStorage) !== null && _h !== void 0 ? _h : resolveSessionStorage();
-    result.reconnectAfterMs = (_j = options === null || options === void 0 ? void 0 : options.reconnectAfterMs) !== null && _j !== void 0 ? _j : (tries) => {
+    result.reconnectAfterMs = (_j = options === null || options === void 0 ? void 0 : options.reconnectAfterMs) !== null && _j !== void 0 ? _j : ((tries) => {
       return RECONNECT_INTERVALS[tries - 1] || DEFAULT_RECONNECT_FALLBACK;
-    };
+    });
     let defaultEncode;
     let defaultDecode;
     const vsn = (_k = options === null || options === void 0 ? void 0 : options.vsn) !== null && _k !== void 0 ? _k : DEFAULT_VSN;
@@ -9935,7 +9942,7 @@ var StorageUnknownError = class extends StorageError {
     this.originalError = originalError;
   }
 };
-var StorageVectorsErrorCode = function(StorageVectorsErrorCode$1) {
+var StorageVectorsErrorCode = (function(StorageVectorsErrorCode$1) {
   StorageVectorsErrorCode$1["InternalError"] = "InternalError";
   StorageVectorsErrorCode$1["S3VectorConflictException"] = "S3VectorConflictException";
   StorageVectorsErrorCode$1["S3VectorNotFoundException"] = "S3VectorNotFoundException";
@@ -9943,7 +9950,7 @@ var StorageVectorsErrorCode = function(StorageVectorsErrorCode$1) {
   StorageVectorsErrorCode$1["S3VectorMaxBucketsExceeded"] = "S3VectorMaxBucketsExceeded";
   StorageVectorsErrorCode$1["S3VectorMaxIndexesExceeded"] = "S3VectorMaxIndexesExceeded";
   return StorageVectorsErrorCode$1;
-}({});
+})({});
 function setHeader(headers, name, value) {
   const result = _objectSpread22({}, headers);
   const nameLower = name.toLowerCase();

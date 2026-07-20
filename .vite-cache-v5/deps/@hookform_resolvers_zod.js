@@ -56,7 +56,7 @@ var n = function(r2, e) {
 var t = function(o2, t2, s2) {
   return void 0 === s2 && (s2 = {}), function(i2, a, u) {
     try {
-      return Promise.resolve(function(e, n2) {
+      return Promise.resolve((function(e, n2) {
         try {
           var a2 = Promise.resolve(o2["sync" === s2.mode ? "parse" : "parseAsync"](i2, t2)).then(function(e2) {
             return u.shouldUseNativeValidation && o({}, u), { errors: {}, values: s2.raw ? i2 : e2 };
@@ -65,10 +65,10 @@ var t = function(o2, t2, s2) {
           return n2(r2);
         }
         return a2 && a2.then ? a2.then(void 0, n2) : a2;
-      }(0, function(r2) {
-        if (function(r3) {
+      })(0, function(r2) {
+        if ((function(r3) {
           return Array.isArray(null == r3 ? void 0 : r3.errors);
-        }(r2)) return { values: {}, errors: r(n(r2.errors, !u.shouldUseNativeValidation && "all" === u.criteriaMode), u) };
+        })(r2)) return { values: {}, errors: r(n(r2.errors, !u.shouldUseNativeValidation && "all" === u.criteriaMode), u) };
         throw r2;
       }));
     } catch (r2) {

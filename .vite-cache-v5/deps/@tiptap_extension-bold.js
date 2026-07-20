@@ -3,8 +3,8 @@ import {
   markInputRule,
   markPasteRule,
   mergeAttributes
-} from "./chunk-SXIQHOR3.js";
-import "./chunk-YLIL3JKF.js";
+} from "./chunk-6253ETEE.js";
+import "./chunk-DXKRVOGU.js";
 import "./chunk-OL46QLBJ.js";
 
 // node_modules/@tiptap/core/dist/jsx-runtime/jsx-runtime.js
@@ -17,7 +17,9 @@ var h = (tag, attributes) => {
   }
   const { children, ...rest } = attributes != null ? attributes : {};
   if (tag === "svg") {
-    throw new Error("SVG elements are not supported in the JSX syntax, use the array syntax instead");
+    throw new Error(
+      "SVG elements are not supported in the JSX syntax, use the array syntax instead"
+    );
   }
   return [tag, rest, children];
 };
@@ -59,6 +61,12 @@ var Bold = Mark.create({
   markdownTokenName: "strong",
   parseMarkdown: (token, helpers) => {
     return helpers.applyMark("bold", helpers.parseInline(token.tokens || []));
+  },
+  markdownOptions: {
+    htmlReopen: {
+      open: "<strong>",
+      close: "</strong>"
+    }
   },
   renderMarkdown: (node, h2) => {
     return `**${h2.renderChildren(node)}**`;

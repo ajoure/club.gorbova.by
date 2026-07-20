@@ -9,7 +9,7 @@ import {
   localize,
   match,
   toDate
-} from "./chunk-6FNJJH2Z.js";
+} from "./chunk-ZA7IRVH5.js";
 
 // node_modules/date-fns/locale/af/_lib/formatDistance.mjs
 var formatDistanceLocale = {
@@ -31172,7 +31172,9 @@ function lastWeek8(day) {
   const weekday = accusativeWeekdays7[day];
   switch (day) {
     case 0:
+    /* Sun */
     case 3:
+    /* Wed */
     case 6:
       return "'minulú " + weekday + " o' p";
     default:
@@ -31191,7 +31193,9 @@ function nextWeek8(day) {
   const weekday = accusativeWeekdays7[day];
   switch (day) {
     case 0:
+    /* Sun */
     case 4:
+    /* Wed */
     case 6:
       return "'budúcu " + weekday + " o' p";
     default:
@@ -38386,10 +38390,13 @@ var ordinalNumber81 = (dirtyNumber, options) => {
     switch (number) {
       case 1:
         return "thứ 2";
+      // meaning 2nd day but it's the first day of the week :D
       case 2:
         return "thứ 3";
+      // meaning 3rd day
       case 3:
         return "thứ 4";
+      // meaning 4th day and so on
       case 4:
         return "thứ 5";
       case 5:
@@ -39993,4 +40000,4 @@ export {
   zhHK,
   zhTW
 };
-//# sourceMappingURL=chunk-J6UVB5PM.js.map
+//# sourceMappingURL=chunk-AUQYW7DF.js.map

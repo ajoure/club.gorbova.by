@@ -41,7 +41,7 @@ import {
   unreachable,
   values,
   visit
-} from "./chunk-4OCITFLB.js";
+} from "./chunk-44QN3SYM.js";
 import "./chunk-W2HZVVEF.js";
 import {
   require_jsx_runtime
@@ -6384,7 +6384,7 @@ var CallableInstance = (
    * @param {string | symbol} property
    * @returns {(...parameters: Array<unknown>) => unknown}
    */
-  function(property) {
+  (function(property) {
     const self2 = this;
     const constr = self2.constructor;
     const proto = (
@@ -6399,7 +6399,7 @@ var CallableInstance = (
     };
     Object.setPrototypeOf(apply, proto);
     return apply;
-  }
+  })
 );
 
 // node_modules/unified/lib/index.js

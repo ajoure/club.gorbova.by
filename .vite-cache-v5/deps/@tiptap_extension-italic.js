@@ -3,8 +3,8 @@ import {
   markInputRule,
   markPasteRule,
   mergeAttributes
-} from "./chunk-SXIQHOR3.js";
-import "./chunk-YLIL3JKF.js";
+} from "./chunk-6253ETEE.js";
+import "./chunk-DXKRVOGU.js";
 import "./chunk-OL46QLBJ.js";
 
 // node_modules/@tiptap/extension-italic/dist/index.js
@@ -56,6 +56,12 @@ var Italic = Mark.create({
   markdownTokenName: "em",
   parseMarkdown: (token, helpers) => {
     return helpers.applyMark("italic", helpers.parseInline(token.tokens || []));
+  },
+  markdownOptions: {
+    htmlReopen: {
+      open: "<em>",
+      close: "</em>"
+    }
   },
   renderMarkdown: (node, h) => {
     return `*${h.renderChildren(node)}*`;

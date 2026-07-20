@@ -1,8 +1,8 @@
 import {
   Node3,
   mergeAttributes
-} from "./chunk-SXIQHOR3.js";
-import "./chunk-YLIL3JKF.js";
+} from "./chunk-6253ETEE.js";
+import "./chunk-DXKRVOGU.js";
 import "./chunk-OL46QLBJ.js";
 
 // node_modules/@tiptap/extension-paragraph/dist/index.js
@@ -30,18 +30,22 @@ var Paragraph = Node3.create({
       return helpers.parseChildren([tokens[0]]);
     }
     const content = helpers.parseInline(tokens);
-    if (content.length === 1 && content[0].type === "text" && (content[0].text === EMPTY_PARAGRAPH_MARKDOWN || content[0].text === NBSP_CHAR)) {
+    const hasExplicitEmptyParagraphMarker = tokens.length === 1 && tokens[0].type === "text" && (tokens[0].raw === EMPTY_PARAGRAPH_MARKDOWN || tokens[0].text === EMPTY_PARAGRAPH_MARKDOWN || tokens[0].raw === NBSP_CHAR || tokens[0].text === NBSP_CHAR);
+    if (hasExplicitEmptyParagraphMarker && content.length === 1 && content[0].type === "text" && (content[0].text === EMPTY_PARAGRAPH_MARKDOWN || content[0].text === NBSP_CHAR)) {
       return helpers.createNode("paragraph", void 0, []);
     }
     return helpers.createNode("paragraph", void 0, content);
   },
-  renderMarkdown: (node, h) => {
+  renderMarkdown: (node, h, ctx) => {
+    var _a, _b;
     if (!node) {
       return "";
     }
     const content = Array.isArray(node.content) ? node.content : [];
     if (content.length === 0) {
-      return EMPTY_PARAGRAPH_MARKDOWN;
+      const previousContent = Array.isArray((_a = ctx == null ? void 0 : ctx.previousNode) == null ? void 0 : _a.content) ? ctx.previousNode.content : [];
+      const previousNodeIsEmptyParagraph = ((_b = ctx == null ? void 0 : ctx.previousNode) == null ? void 0 : _b.type) === "paragraph" && previousContent.length === 0;
+      return previousNodeIsEmptyParagraph ? EMPTY_PARAGRAPH_MARKDOWN : "";
     }
     return h.renderChildren(content);
   },

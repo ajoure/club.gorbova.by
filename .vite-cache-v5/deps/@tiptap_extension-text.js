@@ -1,7 +1,7 @@
 import {
   Node3
-} from "./chunk-SXIQHOR3.js";
-import "./chunk-YLIL3JKF.js";
+} from "./chunk-6253ETEE.js";
+import "./chunk-DXKRVOGU.js";
 import "./chunk-OL46QLBJ.js";
 
 // node_modules/@tiptap/extension-text/dist/index.js

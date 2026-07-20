@@ -15,4 +15,3 @@ export {
   createSlot,
   createSlottable
 };
-//# sourceMappingURL=@radix-ui_react-slot.js.map
