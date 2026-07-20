@@ -13,6 +13,7 @@
 | Tasks | `crm_tasks.company_id` | contact task lineage сохраняется | `crm_task_create` с company context |
 | Contact feed | `company_contacts` + linked profiles | external persons не создают `profiles` | contact writers unchanged |
 | Company feed | company notes/tasks/events + linked contact feed | `contact_notes` остаётся contact-owned | `company_note_create`, `company_feed_list` |
+| Company phone | `companies.phone` in normalized E.164 form (`+375…` for BY) | imported spreadsheet values may contain formatting/formula prefixes | company phone normalization trigger; `CallButton`/`SmsButton` with `company_id` |
 | External integrations | `company_external_ids` | provider payloads outside canonical record | adapter boundary + reconciliation preview |
 | Sheet migration | `company_import_batches` + ledger | Google Sheet read-only | explicit `_confirm=true` apply, max 100 rows |
 
@@ -24,6 +25,15 @@
 4. Support read-only: expose list/card/feed/structure; no write permissions.
 5. Full rollout: only after seven days without invariant failures or unexplained import errors.
 6. Architecture freeze: remove fallback writers only after the 30-day stability window.
+
+## Company phone contract
+
+`companies.phone` is the callable company contact, not a display-only note. The
+phone boundary removes spreadsheet formula prefixes and common Belarusian local
+formats before storing the value; UI reads use the same normalization as a
+backward-compatible fallback. The company list exposes a `tel:` link, while the
+company card must route VOCHI calls and SMS through the existing actions with
+`company_id`, so communication history remains attached to the company.
 
 ## Stop conditions
 
