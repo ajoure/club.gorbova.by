@@ -101,6 +101,7 @@ DECLARE
   v_lpr jsonb;
   v_callback_text text;
   v_due_at timestamptz;
+  v_retrying_error boolean := false;
   v_match_count integer;
   v_reason text;
 BEGIN
@@ -113,7 +114,7 @@ BEGIN
 
   SELECT * INTO v_batch FROM public.company_import_batches WHERE id = _batch_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'batch_not_found' USING ERRCODE='23503'; END IF;
-  IF v_batch.status IN ('completed','cancelled') THEN
+  IF v_batch.status = 'cancelled' THEN
     RETURN jsonb_build_object('batch_id', _batch_id, 'status', v_batch.status, 'processed', 0, 'writes', false);
   END IF;
 
@@ -138,8 +139,18 @@ BEGIN
   FOR v_row, v_ord IN
     SELECT value, ordinality
       FROM jsonb_array_elements(v_batch.rows) WITH ORDINALITY
-     WHERE ordinality > v_batch.cursor_position
-       AND ordinality <= v_batch.cursor_position + v_limit
+     WHERE (
+       (v_batch.status = 'completed' AND EXISTS (
+          SELECT 1
+            FROM public.company_import_ledger l
+           WHERE l.source = v_source
+             AND l.source_key = coalesce(nullif(btrim(value->>'source_key'), ''), 'row:' || ordinality::text)
+             AND l.status = 'error'
+       ))
+       OR (v_batch.status <> 'completed'
+           AND ordinality > v_batch.cursor_position
+           AND ordinality <= v_batch.cursor_position + v_limit)
+     )
      ORDER BY ordinality
   LOOP
     v_processed := v_processed + 1;
@@ -153,7 +164,19 @@ BEGIN
     IF v_source_key IS NULL THEN v_source_key := 'row:' || v_ord::text; END IF;
     v_row_number := coalesce(nullif(v_row->>'row_number','')::integer, v_ord::integer);
 
-    IF EXISTS (SELECT 1 FROM public.company_import_ledger l WHERE l.source = v_source AND l.source_key = v_source_key) THEN
+    v_retrying_error := false;
+    SELECT coalesce(l.status = 'error', false)
+      INTO v_retrying_error
+      FROM public.company_import_ledger l
+     WHERE l.source = v_source AND l.source_key = v_source_key;
+
+    IF EXISTS (
+      SELECT 1
+        FROM public.company_import_ledger l
+       WHERE l.source = v_source
+         AND l.source_key = v_source_key
+         AND l.status <> 'error'
+    ) THEN
       UPDATE public.company_import_batches SET skipped_rows = skipped_rows + 1, cursor_position = v_batch.cursor_position + v_processed WHERE id = _batch_id;
       CONTINUE;
     END IF;
@@ -281,13 +304,32 @@ BEGIN
       END IF;
 
       INSERT INTO public.company_import_ledger(source, source_key, batch_id, row_number, status, company_id, task_id, metadata)
-      VALUES (v_source, v_source_key, _batch_id, v_row_number, 'applied', v_company_id, v_task_id, jsonb_build_object('name', v_name, 'unp', v_unp));
-      UPDATE public.company_import_batches SET applied_rows = applied_rows + 1, cursor_position = v_batch.cursor_position + v_processed WHERE id = _batch_id;
+      VALUES (v_source, v_source_key, _batch_id, v_row_number, 'applied', v_company_id, v_task_id, jsonb_build_object('name', v_name, 'unp', v_unp))
+      ON CONFLICT (source, source_key) DO UPDATE SET
+        batch_id = excluded.batch_id,
+        row_number = excluded.row_number,
+        status = 'applied',
+        company_id = excluded.company_id,
+        task_id = excluded.task_id,
+        metadata = excluded.metadata,
+        updated_at = now()
+       WHERE public.company_import_ledger.status = 'error';
+      UPDATE public.company_import_batches SET
+        applied_rows = applied_rows + 1,
+        error_rows = greatest(error_rows - CASE WHEN v_retrying_error THEN 1 ELSE 0 END, 0),
+        cursor_position = v_batch.cursor_position + v_processed
+       WHERE id = _batch_id;
     EXCEPTION WHEN OTHERS THEN
       v_reason := left(SQLERRM, 500);
       INSERT INTO public.company_import_ledger(source, source_key, batch_id, row_number, status, metadata)
       VALUES (v_source, v_source_key, _batch_id, v_row_number, CASE WHEN v_reason LIKE '%conflict%' THEN 'conflict' ELSE 'error' END, jsonb_build_object('error', v_reason, 'row', v_row))
-      ON CONFLICT (source, source_key) DO NOTHING;
+      ON CONFLICT (source, source_key) DO UPDATE SET
+        batch_id = excluded.batch_id,
+        row_number = excluded.row_number,
+        status = excluded.status,
+        metadata = excluded.metadata,
+        updated_at = now()
+       WHERE public.company_import_ledger.status = 'error';
       UPDATE public.company_import_batches SET
         conflict_rows = conflict_rows + CASE WHEN v_reason LIKE '%conflict%' THEN 1 ELSE 0 END,
         error_rows = error_rows + CASE WHEN v_reason LIKE '%conflict%' THEN 0 ELSE 1 END,
