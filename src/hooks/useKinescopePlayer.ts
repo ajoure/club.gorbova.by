@@ -91,6 +91,8 @@ interface UseKinescopePlayerOptions {
   autoplay?: boolean;
   /** Query parameters supported by the Kinescope embed player. */
   playerQuery?: Record<string, string>;
+  /** Disallow backward seeking while leaving forward seeking available. */
+  preventRewind?: boolean;
   /** Callback when player is ready */
   onReady?: () => void;
   /** Callback on error */
@@ -122,6 +124,7 @@ export function useKinescopePlayer({
   autoplayTimecode,
   autoplay = false,
   playerQuery,
+  preventRewind = false,
   onReady,
   onError,
   onSeekApplied,
@@ -135,6 +138,7 @@ export function useKinescopePlayer({
   const isReadyRef = useRef(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const playerQuerySignature = JSON.stringify(playerQuery ?? {});
+  const furthestPlaybackRef = useRef(0);
 
   /**
    * Apply pending seek: mute → seek → play
@@ -363,6 +367,7 @@ export function useKinescopePlayer({
 
         playerRef.current = player;
         isReadyRef.current = true;
+        furthestPlaybackRef.current = 0;
         
         // Force fill immediately
         forceFill();
@@ -422,6 +427,14 @@ export function useKinescopePlayer({
           if (!isMounted) return;
           try {
             const currentTime = await player.getCurrentTime();
+            // Kinescope controls can expose a seek bar. When the product allows
+            // seeking but disallows rewatching, keep the viewer from moving
+            // behind the furthest real playback point while preserving forward seek.
+            if (preventRewind && currentTime + 1 < furthestPlaybackRef.current) {
+              await player.seekTo(furthestPlaybackRef.current);
+              return;
+            }
+            furthestPlaybackRef.current = Math.max(furthestPlaybackRef.current, currentTime);
             // Try to get duration if not cached
             if (!cachedDuration) {
               cachedDuration = await player.getDuration() || 0;
@@ -508,7 +521,7 @@ export function useKinescopePlayer({
         window.removeEventListener("unhandledrejection", onUnhandledRejection);
       }
     };
-  }, [videoId, containerId, playerQuerySignature]); // Don't include autoplayTimecode - handled via seekAndPlay
+  }, [videoId, containerId, playerQuerySignature, preventRewind]); // Don't include autoplayTimecode - handled via seekAndPlay
 
   // Handle external timecode changes (after initial mount)
   useEffect(() => {

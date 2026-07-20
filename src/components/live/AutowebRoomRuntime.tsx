@@ -100,6 +100,7 @@ function AutowebKinescopePlayer({
     autoplay: true,
     autoplayTimecode: initialStartSecondsRef.current,
     playerQuery,
+    preventRewind: !viewerControls.allow_rewatch_before_end,
     onReady: () => onPlayerStateChange?.("ready"),
     onPlay: () => onPlayerStateChange?.("playing"),
     onPause: () => onPlayerStateChange?.("paused"),
