@@ -974,7 +974,7 @@ function CreateCompanyDialog({ open, onOpenChange, onCreated }: {
           _bank_name: details.bank_name,
           _bank_code: details.bank_code,
           _email: details.email,
-          _phone: details.phone,
+          _phone: normalizeCompanyPhone(details.phone, "BY"),
         });
         if (error) throw error;
         return data;
@@ -1036,7 +1036,7 @@ function EditCompanyDialog({ company, open, onOpenChange, onSaved }: {
     setShortName(normalizeCompanyName(company.short_name ?? ""));
     setLegalForm(company.legal_form || inferCompanyLegalForm(company.full_name) || "");
     setEmail(company.email ?? "");
-    setPhone(company.phone ?? "");
+    setPhone(normalizeCompanyPhone(company.phone, company.country) ?? "");
   }, [company]);
 
   const updateCompany = useMutation({
@@ -1047,7 +1047,7 @@ function EditCompanyDialog({ company, open, onOpenChange, onSaved }: {
         _full_name: normalizeCompanyName(fullName),
         _short_name: normalizeCompanyName(shortName) || null,
         _email: email,
-        _phone: phone,
+        _phone: normalizeCompanyPhone(phone, company.country),
         _legal_form: legalForm || null,
       });
       if (error) throw error;
