@@ -17,6 +17,8 @@ AS $$
 DECLARE
   v_actor uuid := auth.uid();
   v_row public.companies%ROWTYPE;
+  v_full_name text;
+  v_short_name text;
   v_form text := NULLIF(btrim(_legal_form), '');
   v_changed jsonb;
 BEGIN
@@ -28,9 +30,30 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'company not found' USING ERRCODE='23503'; END IF;
   IF v_row.status = 'merged' THEN RAISE EXCEPTION 'merged company cannot be edited' USING ERRCODE='22023'; END IF;
 
+  -- Normalize the two display fields at the server boundary as well. The
+  -- browser does the same for immediate feedback, but RPC callers must not be
+  -- able to reintroduce quotes or an inline legal-form prefix/suffix.
+  v_full_name := NULLIF(btrim(regexp_replace(
+    regexp_replace(btrim(coalesce(_full_name, '')), '[«»“”„‟"]', '', 'g'),
+    '\s+', ' ', 'g'
+  )), '');
+  v_full_name := btrim(regexp_replace(v_full_name, '^[,;:\-\s]+|[,;:\-\s]+$', '', 'g'));
+  IF v_full_name ~* '^(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)([[:space:]]|$)' THEN
+    IF v_form IS NULL THEN v_form := upper((regexp_match(v_full_name, '^(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)([[:space:]]|$)', 'i'))[1]); END IF;
+    v_full_name := btrim(regexp_replace(v_full_name, '^(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*[,;:\-]?\s*', '', 'i'));
+  ELSIF v_full_name ~* ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*$' THEN
+    IF v_form IS NULL THEN v_form := upper((regexp_match(v_full_name, ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*$', 'i'))[1]); END IF;
+    v_full_name := btrim(regexp_replace(v_full_name, ',?\s*(ООО|ОДО|ЗАО|ОАО|СООО|УП|ЧУП|КУП|ТУП|ИП)\s*$', '', 'i'));
+  END IF;
+  v_short_name := NULLIF(btrim(regexp_replace(
+    regexp_replace(btrim(coalesce(_short_name, '')), '[«»“”„‟"]', '', 'g'),
+    '\s+', ' ', 'g'
+  )), '');
+  IF v_full_name IS NULL THEN RAISE EXCEPTION 'full_name required' USING ERRCODE='22023'; END IF;
+
   -- Reuse the already guarded/audited five-field edit path for the canonical
   -- mutable fields; this overload only adds the separate legal-form field.
-  PERFORM public.crm_company_update(_id, _full_name, _short_name, _email, _phone);
+  PERFORM public.crm_company_update(_id, v_full_name, v_short_name, _email, _phone);
 
   IF v_row.legal_form IS NOT DISTINCT FROM v_form THEN
     RETURN _id;
