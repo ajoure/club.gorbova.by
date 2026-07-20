@@ -72,6 +72,7 @@ import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventModerationPanel } from "@/components/live/LiveEventModeration";
 import { LiveEventScenario } from "@/components/live/LiveEventScenario";
+import { AutowebScenarioEditor } from "@/components/admin/live/AutowebScenarioEditor";
 import { LiveEventRoomBlocksEditor } from "@/components/admin/live/LiveEventRoomBlocksEditor";
 import { LiveEventProductCtaBindings } from "@/components/admin/live/LiveEventProductCtaBindings";
 import { LiveEventCtaRuntimePanel } from "@/components/admin/live/LiveEventCtaRuntimePanel";
@@ -1890,7 +1891,8 @@ export default function AdminLiveEvents() {
                     <TabsContent value="moderation" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
                       <LiveEventModerationPanel liveEventId={editingId} />
                     </TabsContent>
-                    <TabsContent value="scenario" className="border rounded-lg mt-2">
+                    <TabsContent value="scenario" className="border rounded-lg mt-2 space-y-3 p-3">
+                      <AutowebScenarioEditor liveEventId={editingId} />
                       <LiveEventScenario liveEventId={editingId} />
                     </TabsContent>
                     <TabsContent value="blocks" className="border rounded-lg mt-2">
