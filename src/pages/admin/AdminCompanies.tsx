@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -1012,6 +1012,17 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
   const queryClient = useQueryClient();
   const [selectedLinkedContactId, setSelectedLinkedContactId] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("profile");
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (companyId) setActiveTab("profile");
+  }, [companyId]);
+
+  useEffect(() => {
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+  }, [activeTab]);
+
   const detailQuery = useQuery({
     queryKey: ["admin-company", companyId],
     enabled: !!companyId,
@@ -1352,9 +1363,9 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                 </Button>
               </div>
             </SheetHeader>
-            <Tabs defaultValue="profile" className="flex min-h-0 flex-1 flex-col">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
               <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
-                <TabsList className="mx-0 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
+                <TabsList className="mx-4 sm:mx-6 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
                   <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
                   <TabsTrigger value="feed" className="text-xs sm:text-sm px-2.5 sm:px-3"><Activity className="mr-1 h-3.5 w-3.5" />Лента</TabsTrigger>
                   <TabsTrigger value="telegram" className="text-xs sm:text-sm px-2.5 sm:px-3"><MessageCircle className="mr-1 h-3.5 w-3.5" />Telegram</TabsTrigger>
@@ -1380,7 +1391,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                   <TabsTrigger value="system" className="text-xs sm:text-sm px-2.5 sm:px-3">Система</TabsTrigger>
                 </TabsList>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
+              <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
                 <TabsContent value="profile" className="mt-0 space-y-4">
                   <CompanyProfileOverview company={company} onRefreshRegistry={() => refreshRegistry.mutate()} isRefreshing={refreshRegistry.isPending} />
                   <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">{company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" />{company.email}</div>}{company.phone && <div className="flex items-center gap-2"><Phone className="h-4 w-4" />{company.phone}</div>}{company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}{!company.email && !company.phone && !company.legal_address && "Контактные данные не заполнены."}</section>
