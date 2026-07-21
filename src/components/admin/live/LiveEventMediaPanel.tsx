@@ -4,8 +4,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileAudio, FileText, Loader2, RefreshCw, Sparkles, Download, ShieldCheck } from "lucide-react";
+import { FileAudio, FileText, Loader2, RefreshCw, Sparkles, Download, ShieldCheck, Play } from "lucide-react";
 import { toast } from "sonner";
+import { TranscriptionWizard } from "@/components/admin/live/TranscriptionWizard";
 
 type MediaStatus = {
   audio: {
@@ -54,7 +55,20 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
   const queryClient = useQueryClient();
   const [running, setRunning] = useState<"sync_audio" | "start_transcript" | "audio" | "docx" | null>(null);
   const [awaitingTranscript, setAwaitingTranscript] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const key = ["live-event-media", liveEventId];
+
+  const clientJobQuery = useQuery({
+    queryKey: ["live-event-transcription-client-job", liveEventId],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke("transcription-client-worker", {
+        body: { action: "status", live_event_id: liveEventId },
+      });
+      if (error) return { job: null };
+      return (data as { job: { id: string; status: string; stage: string; total_parts: number; completed_parts: number } | null }) || { job: null };
+    },
+    refetchInterval: 15000,
+  });
 
   const statusQuery = useQuery({
     queryKey: key,
