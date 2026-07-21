@@ -642,6 +642,18 @@ export default function AdminCompanies() {
     handleMouseDown,
     selectedCount,
   } = useDragSelect({ items, getItemId: (company) => company.id });
+  const selectedCompanies = useMemo(
+    () => items.filter((company) => selectedCompanyIds.has(company.id)),
+    [items, selectedCompanyIds],
+  );
+  const mergeEligibleCompanies = useMemo(
+    () => selectedCompanies.filter((company) => company.status === "active" && !company.merged_into_company_id),
+    [selectedCompanies],
+  );
+  const mergeIneligibleCompanies = useMemo(
+    () => selectedCompanies.filter((company) => company.status !== "active" || Boolean(company.merged_into_company_id)),
+    [selectedCompanies],
+  );
 
   const archiveCompanies = useMutation({
     mutationFn: async ({ ids, reason }: { ids: string[]; reason: string }) => {
@@ -1092,7 +1104,7 @@ export default function AdminCompanies() {
         }}
       />
       {isDragging && selectionBox && <SelectionBox startX={selectionBox.startX} startY={selectionBox.startY} endX={selectionBox.endX} endY={selectionBox.endY} />}
-      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canCreate && selectedCount >= 2 ? () => { setMergeTargetId(Array.from(selectedCompanyIds)[0] ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "active") ? () => setArchiveReasonOpen(true) : undefined} onBulkRestore={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "archived") ? () => restoreCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "archived").map((company) => company.id)) : undefined} onBulkEdit={canCreate && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
+      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canCreate && selectedCount >= 2 ? () => { setMergeTargetId(mergeEligibleCompanies[0]?.id ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "active") ? () => setArchiveReasonOpen(true) : undefined} onBulkRestore={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "archived") ? () => restoreCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "archived").map((company) => company.id)) : undefined} onBulkEdit={canCreate && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
       <Dialog open={archiveReasonOpen} onOpenChange={setArchiveReasonOpen}>
         <DialogContent>
           <DialogHeader>
@@ -1121,12 +1133,17 @@ export default function AdminCompanies() {
             <DialogTitle>Объединить компании</DialogTitle>
             <DialogDescription>Выберите каноническую компанию. Остальные выбранные записи будут объединены в неё через защищённый CRM RPC.</DialogDescription>
           </DialogHeader>
+          {mergeIneligibleCompanies.length > 0 && (
+            <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              Объединение доступно только для активных канонических компаний. Уберите из выбора: {mergeIneligibleCompanies.map((company) => normalizeCompanyName(company.full_name)).join(", ")}.
+            </div>
+          )}
           <div className="grid gap-2 py-4">
             <label className="text-sm font-medium">Каноническая запись</label>
             <Select value={mergeTargetId ?? undefined} onValueChange={setMergeTargetId}>
               <SelectTrigger><SelectValue placeholder="Выберите компанию" /></SelectTrigger>
               <SelectContent>
-                {items.filter((company) => selectedCompanyIds.has(company.id)).map((company) => <SelectItem key={company.id} value={company.id}>{normalizeCompanyName(company.full_name)} · {company.public_id}</SelectItem>)}
+                {mergeEligibleCompanies.map((company) => <SelectItem key={company.id} value={company.id}>{normalizeCompanyName(company.full_name)} · {company.public_id}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -1144,7 +1161,7 @@ export default function AdminCompanies() {
           <p className="text-xs text-muted-foreground">После подтверждения защищённый RPC перенесёт связанные map, контакты, заказы и задачи в target. Автоматическое объединение по похожему названию не выполняется.</p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setMergeOpen(false)}>Отмена</Button>
-            <Button disabled={!mergeTargetId || mergeCompanies.isPending} onClick={() => mergeTargetId && mergeCompanies.mutate({ sourceIds: Array.from(selectedCompanyIds), targetId: mergeTargetId })}>
+            <Button disabled={selectedCompanies.length < 2 || mergeIneligibleCompanies.length > 0 || !mergeTargetId || mergeCompanies.isPending} onClick={() => mergeTargetId && mergeIneligibleCompanies.length === 0 && mergeCompanies.mutate({ sourceIds: selectedCompanies.map((company) => company.id), targetId: mergeTargetId })}>
               {mergeCompanies.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Объединить
             </Button>
