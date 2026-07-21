@@ -47,6 +47,7 @@ export default function AdminReferrals() {
         .from("referral_partners")
         .select("id,public_id,partner_code,status,joined_at,profiles:profile_id(full_name,email)", { count: "exact" })
         .order("joined_at", { ascending: false })
+        .order("id", { ascending: false })
         .range(from, from + PARTNERS_PAGE_SIZE - 1);
       if (error) throw error;
       return { rows: data ?? [], count: count ?? 0 };
