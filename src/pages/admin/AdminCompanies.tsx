@@ -147,6 +147,7 @@ interface CompanyListItem {
   country: string;
   company_kind: CompanyKind;
   status: CompanyStatus;
+  merged_into_company_id: string | null;
   email: string | null;
   phone: string | null;
   created_at: string;
@@ -1362,9 +1363,11 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
   const [editOpen, setEditOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("profile");
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const redirectedMergedIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (companyId) setActiveTab("profile");
+    redirectedMergedIdRef.current = null;
   }, [companyId]);
 
   useEffect(() => {
@@ -1608,6 +1611,17 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
   });
 
   const company = detailQuery.data;
+
+  // A merged record is an alias, not a second editable company. Keep deep links
+  // and task/contact navigation useful by forwarding to the canonical record.
+  useEffect(() => {
+    if (!company || company.status !== "merged" || !company.merged_into_company_id || !onOpenCompany) return;
+    if (company.merged_into_company_id === company.id || redirectedMergedIdRef.current === company.id) return;
+    redirectedMergedIdRef.current = company.id;
+    toast.info("Компания объединена — открываем каноническую карточку");
+    onOpenCompany(company.merged_into_company_id);
+  }, [company, onOpenCompany]);
+
   const normalizedPhone = normalizeCompanyPhone(company?.phone, company?.country ?? "BY");
   const companyPhones = useMemo(() => getImportedCompanyPhones(company ?? {}), [company]);
   const additionalCompanyPhones = useMemo(() => companyPhones.filter((phone) => phone !== normalizedPhone), [companyPhones, normalizedPhone]);
@@ -1706,6 +1720,11 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                 <StatusBadge status={company.status} />
                 <Badge variant="outline" className="h-7 px-2.5 text-xs">{kindLabels[company.company_kind]}</Badge>
               </div>
+              {company.status === "merged" && company.merged_into_company_id && !onOpenCompany && (
+                <div className="rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  Эта запись объединена с другой компанией. Откройте каноническую карточку из списка компаний.
+                </div>
+              )}
               <div className="flex flex-wrap gap-2 pt-1">
                 <CallButton phone={normalizedPhone} companyId={company.id} />
                 <SmsButton phone={normalizedPhone} companyId={company.id} />
