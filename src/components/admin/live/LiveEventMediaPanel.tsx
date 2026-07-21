@@ -145,7 +145,7 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <Badge variant={audio?.status === "ready" ? "default" : audio?.status === "failed" ? "destructive" : "secondary"}>
-              {audio ? audioStatusText[audio.status] : "Ещё не синхронизировано"}
+              {statusQuery.isLoading && !audio ? "Проверяю статус…" : audio ? audioStatusText[audio.status] : "Ещё не синхронизировано"}
             </Badge>
             {audio?.source_file_name && <span className="text-muted-foreground truncate max-w-[240px]">{audio.source_file_name}</span>}
             {audio?.source_language && <span className="text-muted-foreground">Язык: {audio.source_language}</span>}
