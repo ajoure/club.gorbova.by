@@ -1493,32 +1493,41 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
   const ordersById = useMemo(() => new Map((ordersQuery.data ?? []).map((order) => [order.id, order])), [ordersQuery.data]);
 
   const documentsQuery = useQuery({
-    queryKey: ["admin-company-documents", orderIds],
-    enabled: orderIds.length > 0,
+    queryKey: ["admin-company-documents", companyId, orderIds],
+    enabled: !!companyId,
     queryFn: async (): Promise<CompanyDocument[]> => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("generated_documents")
         .select("id, document_number, document_type, document_date, status, order_id, file_url")
-        .in("order_id", orderIds)
         .order("document_date", { ascending: false })
         .limit(100);
+      if (orderIds.length > 0) {
+        query = query.or(`company_id.eq.${companyId},order_id.in.(${orderIds.join(",")})`);
+      } else {
+        query = query.eq("company_id", companyId!);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       return ((data ?? []) as Omit<CompanyDocument, "source">[]).map((document) => ({ ...document, source: "legacy" as const }));
     },
   });
 
   const aiDocumentsQuery = useQuery({
-    queryKey: ["admin-company-ai-documents", orderIds],
-    enabled: orderIds.length > 0,
+    queryKey: ["admin-company-ai-documents", companyId, orderIds],
+    enabled: !!companyId,
     queryFn: async (): Promise<CompanyDocument[]> => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("ai_generated_documents")
         .select("id, document_number, document_date, status, context_id, company_id")
-        .in("context_id", orderIds)
-        .in("context_type", ["order", "deal"])
         .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(100);
+      if (orderIds.length > 0) {
+        query = query.or(`company_id.eq.${companyId},context_id.in.(${orderIds.join(",")})`);
+      } else {
+        query = query.eq("company_id", companyId!);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       return (data ?? []).map((document) => ({
         id: document.id,

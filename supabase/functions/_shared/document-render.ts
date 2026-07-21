@@ -737,6 +737,7 @@ export async function generateCanonicalDocument(
   }
 
   const payload = await resolveCanonicalPayload(supabase, input);
+  const resolvedCompanyId = ((payload.snapshot as any)?.company_resolution?.company_id || input.company_id || null) as string | null;
 
   if (payload.missing_tokens.length > 0) {
     return { success: false, payload, error: `missing_required_tokens:${payload.missing_tokens.join(',')}` };
@@ -809,6 +810,7 @@ export async function generateCanonicalDocument(
       legal_details_id: input.legal_details_id || null,
       signer_link_id: input.signer_link_id || null,
       storage_bucket: opts.storageBucketOutput || 'documents',
+      company_id: resolvedCompanyId,
       idempotency_key: idempotencyKey,
       context_type: input.context_type || null,
       context_id: input.context_id || null,
@@ -1027,6 +1029,7 @@ export async function generateCanonicalDocument(
     const { error: updErr } = await supabase.from('ai_generated_documents').update({
       title: `${payload.template.name} — ${docNumber}`,
       status: 'success',
+      company_id: resolvedCompanyId,
       file_path: filePath,
       file_name: fileName,
       file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -1062,6 +1065,7 @@ export async function generateCanonicalDocument(
       file_name: fileName,
       file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       storage_bucket: outBucket,
+      company_id: resolvedCompanyId,
       snapshot: payload.snapshot,
       missing_tokens: payload.missing_tokens,
       template_tokens_snapshot: { tokens: payload.template_tokens, manifest: payload.token_manifest },
