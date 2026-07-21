@@ -12,7 +12,6 @@
 // ============================================================================
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { audioFormatFromMime, base64FromBytes, transcribeAndSummarize } from "../_shared/transcribe-audio.ts";
 import { buildLiveEventTranscriptDocx } from "../_shared/live-event-transcript-docx.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
@@ -21,6 +20,12 @@ const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY") ?? "";
 const KINESCOPE_V1 = "https://api.kinescope.io/v1";
 const BUCKET = "live-event-media";
+// Lovable AI Gateway hard-caps /v1/audio/transcriptions at ~25 MiB per request.
+// We keep a small safety margin so streaming overhead does not push a borderline
+// file over the wire limit.
+const AUDIO_TRANSCRIBE_MAX_BYTES = 24 * 1024 * 1024;
+const TRANSCRIBE_ENDPOINT = "https://ai.gateway.lovable.dev/v1/audio/transcriptions";
+const TRANSCRIBE_MODEL = "openai/gpt-4o-transcribe";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
