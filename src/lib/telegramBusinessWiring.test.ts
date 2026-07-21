@@ -22,6 +22,12 @@ describe("Telegram Business contact-centre wiring", () => {
     expect(adminChatSource).toContain('transport: businessConnectionId ? "business" : "bot"');
   });
 
+  it("validates an explicitly selected personal sender against the dialog", () => {
+    expect(adminChatSource).toContain('sender_type === "business"');
+    expect(adminChatSource).toContain('.eq("business_account_id", businessConnection.id)');
+    expect(adminChatSource).toContain("business_sender_not_available_for_dialog");
+  });
+
   it("re-applies a configured webhook secret and preserves existing update types", () => {
     expect(botActionsSource).toContain("missingUpdates.length === 0 && !webhookSecret");
     expect(botActionsSource).toContain("[...new Set([...currentUpdates, ...businessRequiredUpdates])]");
