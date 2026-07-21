@@ -13,6 +13,7 @@ type DashboardData = {
   partner: null | { id: string; public_id: string; partner_code: string; status: string };
   balances?: { pending_minor: number; available_minor: number; held_minor: number; paid_minor: number; currency: "BYN" };
   payouts?: { enabled: boolean; minimum_payout_minor: number };
+  terms?: { default_commission_percent_bps: number; default_customer_discount_percent_bps: number; terms_url?: string | null };
   referrals?: Array<{ relationship_id: string; display_name: string; attached_at: string; sales_count: number; commission_minor: number }>;
   sales?: Array<{ id: string; public_id: string; created_at: string; status: string; basis_minor: number; commission_minor: number; reversed_minor: number; product_name: string }>;
 };
@@ -81,6 +82,8 @@ export function ReferralDashboardCard() {
   const data = dashboardQuery.data;
   const link = buildReferralLink(data.partner.partner_code);
   const balances = data.balances ?? { pending_minor: 0, available_minor: 0, held_minor: 0, paid_minor: 0, currency: "BYN" as const };
+  const commissionPercent = Number(data.terms?.default_commission_percent_bps ?? 0) / 100;
+  const discountPercent = Number(data.terms?.default_customer_discount_percent_bps ?? 0) / 100;
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(link);
@@ -91,7 +94,9 @@ export function ReferralDashboardCard() {
     <Card className="overflow-hidden">
       <CardHeader className="bg-primary/5">
         <CardTitle className="flex items-center gap-2 text-lg"><Gift className="h-5 w-5" /> Реферальная программа</CardTitle>
-        <p className="text-sm text-muted-foreground">Получайте 10% от каждой отдельной покупки приглашённого. Автопродления не учитываются.</p>
+        <p className="text-sm text-muted-foreground">
+          Получайте до {commissionPercent}% от отдельных покупок приглашённых. По вашей ссылке приглашённый может получить скидку до {discountPercent}%. Точные условия зависят от продукта, автопродления не учитываются.
+        </p>
       </CardHeader>
       <CardContent className="pt-5 space-y-5">
         <div className="flex flex-col sm:flex-row gap-2">

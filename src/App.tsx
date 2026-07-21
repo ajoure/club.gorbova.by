@@ -70,6 +70,7 @@ const PaymentMethodsSettings = lazy(() => import("./pages/settings/PaymentMethod
 const ConsentsSettings = lazy(() => import("./pages/settings/Consents"));
 const LegalDetailsSettings = lazy(() => import("./pages/settings/LegalDetails"));
 const UserRequisitesSettings = lazy(() => import("./pages/settings/UserRequisites"));
+const PartnershipSettings = lazy(() => import("./pages/settings/Partnership"));
 const Learning = lazy(() => import("./pages/Learning"));
 const Consultation = lazy(() => import("./pages/Consultation"));
 const CourseAccountant = lazy(() => import("./pages/CourseAccountant"));
@@ -277,6 +278,7 @@ const App = () => {
               <Route path="/settings/legal-details" element={<ProtectedRoute><LazyRoute><LegalDetailsSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/user-requisites" element={<ProtectedRoute><LazyRoute><UserRequisitesSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/consents" element={<ProtectedRoute><LazyRoute><ConsentsSettings /></LazyRoute></ProtectedRoute>} />
+              <Route path="/settings/partnership" element={<ProtectedRoute><LazyRoute><PartnershipSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/subscriptions" element={<Navigate to="/purchases" replace />} />
               
               {/* Admin routes - CRM */}

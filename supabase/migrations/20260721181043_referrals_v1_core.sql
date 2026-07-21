@@ -13,6 +13,8 @@ create table public.referral_program_settings (
   base_currency text not null default 'BYN' check (base_currency = 'BYN'),
   commission_percent_bps integer not null default 1000
     check (commission_percent_bps between 0 and 10000),
+  customer_discount_percent_bps integer not null default 0
+    check (customer_discount_percent_bps between 0 and 10000),
   hold_days integer not null default 14 check (hold_days between 0 and 365),
   minimum_payout_minor bigint not null default 0 check (minimum_payout_minor >= 0),
   terms_version text,
@@ -26,6 +28,14 @@ create table public.referral_program_settings (
 insert into public.referral_program_settings (singleton)
 values (true)
 on conflict (singleton) do nothing;
+
+alter table public.products_v2
+  add column referral_settings_mode text not null default 'inherit'
+    check (referral_settings_mode in ('inherit', 'custom', 'disabled')),
+  add column referral_commission_percent_bps integer
+    check (referral_commission_percent_bps between 0 and 10000),
+  add column referral_customer_discount_percent_bps integer
+    check (referral_customer_discount_percent_bps between 0 and 10000);
 
 create table public.referral_partners (
   id uuid primary key default gen_random_uuid(),
@@ -47,6 +57,25 @@ create table public.referral_partners (
 
 create unique index referral_partners_code_lower_uidx
   on public.referral_partners (lower(partner_code));
+
+create or replace function public.referral_create_partner_for_profile()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if coalesce(new.is_archived, false) then return new; end if;
+  insert into public.referral_partners(profile_id, partner_code, status, created_by)
+  values (new.id, 'REF-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)), 'active', new.user_id)
+  on conflict (profile_id) do nothing;
+  return new;
+end $$;
+revoke all on function public.referral_create_partner_for_profile() from public;
+create trigger referral_profile_create_partner
+after insert on public.profiles for each row execute function public.referral_create_partner_for_profile();
+
+insert into public.referral_partners(profile_id, partner_code, status, created_by)
+select p.id, 'REF-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)), 'active', p.user_id
+from public.profiles p
+where not coalesce(p.is_archived, false)
+  and not exists (select 1 from public.referral_partners rp where rp.profile_id = p.id);
 
 create table public.referral_relationships (
   id uuid primary key default gen_random_uuid(),
@@ -71,6 +100,44 @@ create unique index referral_relationship_one_active_referrer_uidx
   where status = 'active';
 create index referral_relationship_partner_idx
   on public.referral_relationships (partner_id, attached_at desc);
+
+create or replace function public.referral_apply_customer_discount()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_settings public.referral_program_settings%rowtype; v_mode text; v_discount_bps integer;
+  v_base numeric; v_existing_bps integer;
+begin
+  if new.profile_id is null or new.product_id is null or new.status::text = 'paid' then return new; end if;
+  select * into v_settings from public.referral_program_settings where singleton;
+  if not coalesce(v_settings.is_enabled, false) or not coalesce(v_settings.tracking_enabled, false) then return new; end if;
+  if not exists (select 1 from public.referral_relationships where referred_profile_id = new.profile_id and status = 'active') then return new; end if;
+  select referral_settings_mode,
+    case referral_settings_mode
+      when 'disabled' then 0
+      when 'custom' then coalesce(referral_customer_discount_percent_bps, v_settings.customer_discount_percent_bps)
+      else v_settings.customer_discount_percent_bps
+    end
+    into v_mode, v_discount_bps from public.products_v2 where id = new.product_id;
+  if coalesce(v_discount_bps, 0) <= 0 then return new; end if;
+  v_base := coalesce(new.base_price, new.final_price);
+  if v_base is null or v_base <= 0 then return new; end if;
+  v_existing_bps := case when new.final_price is null then 0
+    else greatest(0, least(10000, round((1 - new.final_price / v_base) * 10000)::integer)) end;
+  if v_existing_bps >= v_discount_bps then return new; end if;
+  new.base_price := v_base;
+  new.discount_percent := v_discount_bps::numeric / 100;
+  new.final_price := round(v_base * (10000 - v_discount_bps)::numeric / 10000, 2);
+  new.meta := coalesce(new.meta, '{}'::jsonb) || jsonb_build_object(
+    'referral_discount_percent_bps', v_discount_bps,
+    'referral_discount_applied', true,
+    'referral_discount_rule', v_mode
+  );
+  return new;
+end $$;
+revoke all on function public.referral_apply_customer_discount() from public;
+create trigger referral_order_customer_discount
+before insert or update of profile_id, product_id, base_price, final_price on public.orders_v2
+for each row execute function public.referral_apply_customer_discount();
 
 create table public.referral_sale_attributions (
   id uuid primary key default gen_random_uuid(),
@@ -217,8 +284,8 @@ create policy referral_settings_admin_select on public.referral_program_settings
   for select to authenticated using (public.referral_is_admin((select auth.uid())));
 create policy referral_settings_admin_update on public.referral_program_settings
   for update to authenticated
-  using (public.referral_is_admin((select auth.uid())))
-  with check (public.referral_is_admin((select auth.uid())));
+  using (coalesce(public.has_role_v2((select auth.uid()), 'super_admin'), false))
+  with check (coalesce(public.has_role_v2((select auth.uid()), 'super_admin'), false));
 
 create policy referral_partners_owner_or_admin_select on public.referral_partners
   for select to authenticated using (
@@ -412,7 +479,7 @@ declare
   v_order public.orders_v2%rowtype; v_settings public.referral_program_settings%rowtype;
   v_relationship public.referral_relationships%rowtype; v_partner public.referral_partners%rowtype;
   v_payment_id uuid; v_paid_minor bigint; v_basis_minor bigint; v_commission_minor bigint;
-  v_sale_id uuid; v_tx_id uuid; v_status text; v_available_at timestamptz;
+  v_sale_id uuid; v_tx_id uuid; v_status text; v_available_at timestamptz; v_commission_bps integer;
 begin
   select * into v_settings from public.referral_program_settings where singleton;
   if not coalesce(v_settings.is_enabled, false) or not coalesce(v_settings.accrual_enabled, false) then return null; end if;
@@ -435,9 +502,16 @@ begin
   if v_relationship.id is null then return null; end if;
   select * into v_partner from public.referral_partners where id = v_relationship.partner_id and status = 'active';
   if v_partner.id is null or v_partner.profile_id = v_order.profile_id then return null; end if;
+  select case p.referral_settings_mode
+      when 'disabled' then 0
+      when 'custom' then coalesce(p.referral_commission_percent_bps, v_settings.commission_percent_bps)
+      else v_settings.commission_percent_bps
+    end into v_commission_bps
+    from public.products_v2 p where p.id = v_order.product_id;
+  v_commission_bps := coalesce(v_commission_bps, v_settings.commission_percent_bps);
   v_basis_minor := least(round(v_order.paid_amount * 100)::bigint, v_paid_minor);
   if v_basis_minor <= 0 then return null; end if;
-  v_commission_minor := round(v_basis_minor * v_settings.commission_percent_bps::numeric / 10000)::bigint;
+  v_commission_minor := round(v_basis_minor * v_commission_bps::numeric / 10000)::bigint;
   if v_commission_minor <= 0 then return null; end if;
   v_status := case when v_settings.shadow_mode then 'shadow' else 'pending' end;
   v_available_at := now() + make_interval(days => v_settings.hold_days);
@@ -447,14 +521,15 @@ begin
     available_at, rule_snapshot, order_snapshot
   ) values (
     v_partner.id, v_relationship.id, v_order.id, v_payment_id, v_order.product_id, v_order.tariff_id, v_order.offer_id,
-    v_status, v_basis_minor, 'BYN', v_settings.commission_percent_bps, v_commission_minor, v_available_at,
-    jsonb_build_object('commission_percent_bps', v_settings.commission_percent_bps, 'hold_days', v_settings.hold_days, 'version', 1),
+    v_status, v_basis_minor, 'BYN', v_commission_bps, v_commission_minor, v_available_at,
+    jsonb_build_object('commission_percent_bps', v_commission_bps, 'hold_days', v_settings.hold_days, 'version', 2),
     jsonb_build_object('order_id', v_order.id, 'paid_amount', v_order.paid_amount, 'currency', v_order.currency,
       'product_id', v_order.product_id, 'tariff_id', v_order.tariff_id, 'offer_id', v_order.offer_id)
   ) returning id into v_sale_id;
   if not v_settings.shadow_mode then
     insert into public.referral_balance_transactions(partner_id, transaction_type, idempotency_key, source_type, source_id, description)
-    values (v_partner.id, 'commission_pending', 'referral:commission:' || v_sale_id, 'sale_attribution', v_sale_id, '10% за покупку приглашённого')
+    values (v_partner.id, 'commission_pending', 'referral:commission:' || v_sale_id, 'sale_attribution', v_sale_id,
+      trim(trailing '0' from trim(trailing '.' from (v_commission_bps::numeric / 100)::text)) || '% за покупку приглашённого')
     returning id into v_tx_id;
     insert into public.referral_balance_entries(transaction_id, partner_id, bucket, amount_minor)
     values (v_tx_id, v_partner.id, 'pending', v_commission_minor);
@@ -647,6 +722,11 @@ begin
     'payouts', (select jsonb_build_object(
       'enabled', payout_requests_enabled,
       'minimum_payout_minor', minimum_payout_minor
+    ) from public.referral_program_settings where singleton),
+    'terms', (select jsonb_build_object(
+      'default_commission_percent_bps', commission_percent_bps,
+      'default_customer_discount_percent_bps', customer_discount_percent_bps,
+      'terms_url', terms_url
     ) from public.referral_program_settings where singleton),
     'balances', (select jsonb_build_object(
       'pending_minor', coalesce(sum(amount_minor) filter (where bucket = 'pending'), 0),

@@ -21,13 +21,24 @@ begin
   if to_regprocedure('public.referral_reconcile_orders(integer)') is null then
     raise exception 'missing referral reconciliation RPC';
   end if;
+  if to_regprocedure('public.referral_apply_customer_discount()') is null then
+    raise exception 'missing referred-customer discount trigger function';
+  end if;
 
   if not exists (
     select 1 from public.referral_program_settings
     where singleton and base_currency = 'BYN' and commission_percent_bps = 1000
+      and customer_discount_percent_bps = 0
       and not is_enabled and not tracking_enabled and not accrual_enabled
       and not partner_portal_enabled and shadow_mode
   ) then raise exception 'unsafe or incorrect default settings'; end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'products_v2'
+      and column_name in ('referral_settings_mode', 'referral_commission_percent_bps', 'referral_customer_discount_percent_bps')
+    group by table_schema, table_name having count(*) = 3
+  ) then raise exception 'missing product referral settings'; end if;
 
   v_commission := round(500000::numeric * 1000 / 10000)::bigint;
   if v_commission <> 50000 then raise exception '10 percent calculation failed'; end if;

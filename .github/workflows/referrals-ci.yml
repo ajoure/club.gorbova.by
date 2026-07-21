@@ -6,6 +6,9 @@ on:
       - "src/**/Referral*.tsx"
       - "src/**/referrals*.ts"
       - "src/pages/admin/AdminReferrals.tsx"
+      - "src/pages/admin/AdminProductDetailV2.tsx"
+      - "src/pages/settings/Partnership.tsx"
+      - "src/components/admin/product/ProductReferralSettings.tsx"
       - "src/components/admin/ContactDetailSheet.tsx"
       - "src/pages/Dashboard.tsx"
       - "src/App.tsx"
@@ -17,6 +20,9 @@ on:
       - "src/**/Referral*.tsx"
       - "src/**/referrals*.ts"
       - "src/pages/admin/AdminReferrals.tsx"
+      - "src/pages/admin/AdminProductDetailV2.tsx"
+      - "src/pages/settings/Partnership.tsx"
+      - "src/components/admin/product/ProductReferralSettings.tsx"
       - "supabase/migrations/*referrals*.sql"
       - "supabase/tests/referrals*.sql"
       - ".github/workflows/referrals-ci.yml"
@@ -60,6 +66,8 @@ jobs:
           src/components/referrals/ReferralDashboardCard.tsx
           src/components/admin/contact/ContactReferralsTab.tsx
           src/pages/admin/AdminReferrals.tsx
+          src/pages/settings/Partnership.tsx
+          src/components/admin/product/ProductReferralSettings.tsx
           src/pages/Dashboard.tsx
           src/App.tsx
           src/lib/adminMenuRegistry.ts
