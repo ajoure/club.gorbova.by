@@ -241,8 +241,18 @@ export function RoomLifecycleActions({
       <Button
         variant="outline"
         className={cn(GLASS_BASE, GLASS_TONE.primary, LIFECYCLE_BUTTON_WIDTH_FIXED)}
-        disabled={!canPerformAction(roomState, "start_live") || !!pending}
-        onClick={() => callAction("start_live")}
+        disabled={!canPerformAction(roomState, "start_live") || !!pending || startBlocked}
+        onClick={() => {
+          if (startBlocked) {
+            toast.warning(
+              "Начать вебинар нельзя: не задано ни одного правила доступа. Non-admin получат access_denied. Настройте правило во вкладке «Доступ».",
+            );
+            onRequestAccessSetup?.();
+            return;
+          }
+          callAction("start_live");
+        }}
+        title={startBlocked ? "Правило доступа не задано — non-admin получат access_denied" : undefined}
       >
         {pending === "start_live" ? (
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -251,6 +261,7 @@ export function RoomLifecycleActions({
         )}
         Начать вебинар
       </Button>
+
 
       <AlertDialog>
         <AlertDialogTrigger asChild>
