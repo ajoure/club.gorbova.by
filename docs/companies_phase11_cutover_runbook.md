@@ -61,3 +61,13 @@ an import rollback. A rollback must be a separately reviewed operation.
 - Import slice: ≤ 100 rows per transaction; conflict/error rate visible after every slice.
 - Invariant report: ≤ 2 s on the normal CRM dataset.
 - Lovable/GitHub sync: merged SHA visible in Lovable before operator verification.
+
+### Reproducible UI benchmark
+
+The read-only browser benchmark is available as `npm run companies:benchmark`.
+It requires `PLAYWRIGHT_BASE_URL` plus either `PLAYWRIGHT_STORAGE_STATE` or
+`E2E_ADMIN_EMAIL`/`E2E_ADMIN_PASSWORD`; `COMPANIES_BENCHMARK_SEARCH` selects
+an existing company and `COMPANIES_BENCHMARK_REPETITIONS` defaults to 10.
+The command prints every search/card sample and p50/p95, and never creates,
+updates, or deletes CRM data. Do not store credentials or storage-state files
+in the repository.
