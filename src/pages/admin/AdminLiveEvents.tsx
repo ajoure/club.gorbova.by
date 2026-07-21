@@ -87,6 +87,8 @@ import { useActiveParticipants } from "@/hooks/useActiveParticipants";
 import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveRoomLifecycle";
 import { ColumnSettings } from "@/components/admin/ColumnSettings";
 import { LiveEventsTable } from "@/components/admin/live/LiveEventsTable";
+import { useLiveEventsAccessRuleFlags } from "@/hooks/useLiveEventsAccessRuleFlags";
+
 import { useLiveEventsColumns, LIVE_EVENTS_LOCKED_KEYS } from "@/hooks/useLiveEventsColumns";
 import { AutowebModeEditor, type AutowebUserMode as AutowebUserModeT, type AutowebConfig } from "@/components/admin/live/AutowebModeEditor";
 
