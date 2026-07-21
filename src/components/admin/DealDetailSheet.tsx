@@ -676,8 +676,140 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
 
           <TabsContent value="overview" className="flex-1 overflow-y-auto p-6 mt-0 data-[state=inactive]:hidden">
             <div className="space-y-6">
-              {/* Deal Info */}
+              {/* Contact & channels — canonical first section */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                  <User className="w-4 h-4" />
+                  Контакт и каналы связи
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {linkedCompany && (
+                  <>
+                    <button type="button" onClick={() => navigate(`/admin/companies?company=${linkedCompany.id}`)} className="flex w-full items-center gap-2 rounded-lg border border-border/40 bg-muted/30 px-2.5 py-2 text-left text-sm hover:bg-muted/50">
+                      <Building2 className="h-4 w-4 shrink-0 text-primary" />
+                      <span className="min-w-0 flex-1 truncate font-medium">{linkedCompany.full_name}</span>
+                      <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                    </button>
+                    <Separator />
+                  </>
+                )}
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const contactUserId = profile?.user_id || deal?.user_id;
+                      if (!contactUserId) return;
+                      openContactSheet(contactUserId);
+                    }}
+                    disabled={!(profile?.user_id || deal?.user_id)}
+                    className={cn(
+                      "flex items-center gap-2 text-left",
+                      (profile?.user_id || deal?.user_id) && "cursor-pointer hover:underline text-primary",
+                      !(profile?.user_id || deal?.user_id) && "cursor-default"
+                    )}
+                  >
+                    <Avatar className="h-8 w-8">
+                      <AvatarImage src={profile?.avatar_url} alt={profile?.full_name} />
+                      <AvatarFallback>
+                        <User className="w-4 h-4 text-muted-foreground" />
+                      </AvatarFallback>
+                    </Avatar>
+                    <span>
+                      {profile?.full_name 
+                        || (profile?.name && profile?.surname ? `${profile.name} ${profile.surname}` : null)
+                        || profile?.name
+                        || deal?.meta?.customer_full_name
+                        || deal?.meta?.card_holder
+                        || deal?.customer_email 
+                        || profile?.email 
+                        || deal?.customer_phone 
+                        || profile?.phone 
+                        || "—"}
+                    </span>
+                    {(profile?.user_id || deal?.user_id) && <ExternalLink className="w-3 h-3" />}
+                  </button>
+                </div>
+                <Separator />
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="truncate">{deal.customer_email || profile?.email || "—"}</span>
+                  </div>
+                  {(deal.customer_email || profile?.email) && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button variant="ghost" size="sm" className="h-7 w-7" onClick={() => copyToClipboard(deal.customer_email || profile?.email, "Email")}>
+                        <Copy className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <Separator />
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Phone className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="truncate">{deal.customer_phone || profile?.phone || "—"}</span>
+                  </div>
+                  {(deal.customer_phone || profile?.phone) && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <CallButton
+                        phone={deal.customer_phone || profile?.phone}
+                        dealId={deal.id}
+                      />
+                      <SmsButton
+                        phone={deal.customer_phone || profile?.phone}
+                        dealId={deal.id}
+                      />
+                    </div>
+                  )}
+                </div>
+                
+                {/* Customer data from bePaid import (from meta) */}
+                {deal.meta && (deal.meta.customer_full_name || deal.meta.customer_email || deal.meta.customer_phone || deal.meta.card_holder) && (
+                  <>
+                    <Separator />
+                    <div className="bg-muted/50 p-3 rounded-lg space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground uppercase mb-2">
+                        Данные из платёжной системы
+                      </div>
+                      {deal.meta.customer_full_name && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">ФИО клиента:</span>
+                          <span>{deal.meta.customer_full_name}</span>
+                        </div>
+                      )}
+                      {deal.meta.customer_email && deal.meta.customer_email !== deal.customer_email && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Email bePaid:</span>
+                          <span>{deal.meta.customer_email}</span>
+                        </div>
+                      )}
+                      {deal.meta.customer_phone && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Телефон bePaid:</span>
+                          <span>{deal.meta.customer_phone}</span>
+                        </div>
+                      )}
+                      {deal.meta.card_holder && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Владелец карты:</span>
+                          <span>{deal.meta.card_holder}</span>
+                        </div>
+                      )}
+                      {deal.meta.purchased_at && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Дата покупки:</span>
+                          <span>{format(new Date(deal.meta.purchased_at), "dd.MM.yyyy HH:mm", { locale: ru })}</span>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
 
+              {/* Deal Info */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
@@ -816,138 +948,9 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
               </CardContent>
             </Card>
 
-            {/* Contact Info */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
-                  <User className="w-4 h-4" />
-                  Контакт
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {linkedCompany && (
-                  <>
-                    <button type="button" onClick={() => navigate(`/admin/companies?company=${linkedCompany.id}`)} className="flex w-full items-center gap-2 rounded-lg border border-border/40 bg-muted/30 px-2.5 py-2 text-left text-sm hover:bg-muted/50">
-                      <Building2 className="h-4 w-4 shrink-0 text-primary" />
-                      <span className="min-w-0 flex-1 truncate font-medium">{linkedCompany.full_name}</span>
-                      <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                    </button>
-                    <Separator />
-                  </>
-                )}
-                <div className="flex items-center justify-between">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const contactUserId = profile?.user_id || deal?.user_id;
-                      if (!contactUserId) return;
-                      openContactSheet(contactUserId);
-                    }}
-                    disabled={!(profile?.user_id || deal?.user_id)}
-                    className={cn(
-                      "flex items-center gap-2 text-left",
-                      (profile?.user_id || deal?.user_id) && "cursor-pointer hover:underline text-primary",
-                      !(profile?.user_id || deal?.user_id) && "cursor-default"
-                    )}
-                  >
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={profile?.avatar_url} alt={profile?.full_name} />
-                      <AvatarFallback>
-                        <User className="w-4 h-4 text-muted-foreground" />
-                      </AvatarFallback>
-                    </Avatar>
-                    <span>
-                      {profile?.full_name 
-                        || (profile?.name && profile?.surname ? `${profile.name} ${profile.surname}` : null)
-                        || profile?.name
-                        || deal?.meta?.customer_full_name
-                        || deal?.meta?.card_holder
-                        || deal?.customer_email 
-                        || profile?.email 
-                        || deal?.customer_phone 
-                        || profile?.phone 
-                        || "—"}
-                    </span>
-                    {(profile?.user_id || deal?.user_id) && <ExternalLink className="w-3 h-3" />}
-                  </button>
-                </div>
-                <Separator />
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <span className="truncate">{deal.customer_email || profile?.email || "—"}</span>
-                  </div>
-                  {(deal.customer_email || profile?.email) && (
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Button variant="ghost" size="sm" className="h-7 w-7" onClick={() => copyToClipboard(deal.customer_email || profile?.email, "Email")}>
-                        <Copy className="w-3 h-3" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-                <Separator />
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Phone className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <span className="truncate">{deal.customer_phone || profile?.phone || "—"}</span>
-                  </div>
-                  {(deal.customer_phone || profile?.phone) && (
-                    <div className="flex items-center gap-1 shrink-0">
-                      <CallButton
-                        phone={deal.customer_phone || profile?.phone}
-                        dealId={deal.id}
-                      />
-                      <SmsButton
-                        phone={deal.customer_phone || profile?.phone}
-                        dealId={deal.id}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                
-                {/* Customer data from bePaid import (from meta) */}
-                {deal.meta && (deal.meta.customer_full_name || deal.meta.customer_email || deal.meta.customer_phone || deal.meta.card_holder) && (
-                  <>
-                    <Separator />
-                    <div className="bg-muted/50 p-3 rounded-lg space-y-2">
-                      <div className="text-xs font-medium text-muted-foreground uppercase mb-2">
-                        Данные из платёжной системы
-                      </div>
-                      {deal.meta.customer_full_name && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">ФИО клиента:</span>
-                          <span>{deal.meta.customer_full_name}</span>
-                        </div>
-                      )}
-                      {deal.meta.customer_email && deal.meta.customer_email !== deal.customer_email && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Email bePaid:</span>
-                          <span>{deal.meta.customer_email}</span>
-                        </div>
-                      )}
-                      {deal.meta.customer_phone && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Телефон bePaid:</span>
-                          <span>{deal.meta.customer_phone}</span>
-                        </div>
-                      )}
-                      {deal.meta.card_holder && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Владелец карты:</span>
-                          <span>{deal.meta.card_holder}</span>
-                        </div>
-                      )}
-                      {deal.meta.purchased_at && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Дата покупки:</span>
-                          <span>{format(new Date(deal.meta.purchased_at), "dd.MM.yyyy HH:mm", { locale: ru })}</span>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
+            {/* Removed duplicate Contact card — moved to top as Контакт и каналы связи */}
               </CardContent>
+
             </Card>
 
             {/* Внутренняя рассрочка (canonical bepaid finite subscription) */}
