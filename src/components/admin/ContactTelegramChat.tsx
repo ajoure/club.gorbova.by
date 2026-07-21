@@ -133,6 +133,10 @@ interface TelegramMessage {
   bot_id?: string | null;
   bot_username?: string | null; // for optimistic UI
   bot_name?: string | null; // for optimistic UI
+  transport?: "bot" | "business";
+  business_connection_id?: string | null;
+  business_account_id?: string | null;
+  message_origin?: "client" | "owner_manual" | "crm_operator" | "bot_automation" | null;
   admin_profile?: {
     full_name: string | null;
     avatar_url: string | null;
@@ -224,6 +228,26 @@ export function ContactTelegramChat({
   }, [telegramBots]);
 
   const activeBots = useMemo(() => telegramBots.filter(b => b.status === "active"), [telegramBots]);
+  const { data: businessContext } = useQuery({
+    queryKey: ["telegram-business-dialog-context", userId],
+    queryFn: async () => {
+      // Generated DB types are refreshed only after the migration is deployed.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from("telegram_messages")
+        .select("business_connection_id, business_account_id, bot_id")
+        .eq("user_id", userId)
+        .eq("transport", "business")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data as { business_connection_id: string; business_account_id: string | null; bot_id: string } | null;
+    },
+    enabled: !!userId,
+    staleTime: 30_000,
+  });
+  const isBusinessDialog = !!businessContext?.business_connection_id;
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const didInitialScrollRef = useRef(false);
@@ -702,7 +726,8 @@ export function ContactTelegramChat({
 
       const isEdited = !!(metaAny.edited ?? (msg as any).edited);
       const isDeleted = !!(msg.status === "deleted" || metaAny.deleted || (msg as any).deleted);
-      const canEdit = msg.direction === "outgoing" && !!msg.message_id && msg.status === "sent" && !fileType && !isDeleted;
+      const isManualBusinessMessage = (msg.meta as any)?.message_origin === "owner_manual";
+      const canEdit = msg.direction === "outgoing" && !!msg.message_id && msg.status === "sent" && !fileType && !isDeleted && !isManualBusinessMessage;
       const canDelete = msg.direction === "outgoing" && !!msg.message_id && msg.status === "sent" && !isDeleted;
 
       // Quote precompute (H4 fix — no lookup in bubble render).
@@ -733,9 +758,11 @@ export function ContactTelegramChat({
       const botNameRaw = msg.bot_name ?? joined?.bot_name ?? fromMap?.bot_name ?? null;
       const botUsernameRaw = msg.bot_username ?? joined?.bot_username ?? fromMap?.bot_username ?? null;
       const botLabelName = botNameRaw?.trim();
-      const botLabel = botLabelName
-        ? botLabelName
-        : (botUsernameRaw?.trim() ? `@${botUsernameRaw.trim()}` : null);
+      const botLabel = msg.direction === "outgoing" && metaAny.source === "telegram_business"
+        ? (metaAny.message_origin === "owner_manual" ? "Екатерина · вручную" : "Екатерина · CRM")
+        : botLabelName
+          ? botLabelName
+          : (botUsernameRaw?.trim() ? `@${botUsernameRaw.trim()}` : null);
 
       // Automated badge.
       const automated = msg.direction === "outgoing" && !msg.sent_by_admin && !!(msg.meta as any)?.automated;
@@ -1204,6 +1231,9 @@ export function ContactTelegramChat({
       "Failed to send message": "Не удалось отправить сообщение",
       "Bad Request: have no rights to send a message": "Нет прав для отправки сообщения",
       "Bad Request: user not found": "Пользователь не найден",
+      "business_reply_unavailable": "Telegram не разрешает отвечать от имени подключённого аккаунта",
+      "BUSINESS_CONNECTION_INVALID": "Подключение личного Telegram изменилось или было отключено",
+      "BUSINESS_PEER_USAGE_MISSING": "Клиент должен снова написать Екатерине, прежде чем можно будет ответить из системы",
     };
     
     // Check for exact match first
@@ -1344,6 +1374,8 @@ export function ContactTelegramChat({
         bot_id: selectedBotId,
         bot_username: selectedBotId ? botsMap.get(selectedBotId)?.bot_username || null : null,
         bot_name: selectedBotId ? botsMap.get(selectedBotId)?.bot_name || null : null,
+        transport: isBusinessDialog ? "business" : "bot",
+        message_origin: isBusinessDialog ? "crm_operator" : null,
         meta: selectedFile ? {
           file_type: selectedFileType,
           file_name: selectedFile.name,
@@ -1810,7 +1842,14 @@ export function ContactTelegramChat({
             родитель уже ограничен по высоте (Telegram-вкладка),
             поэтому композер всегда виден внизу карточки. */}
         <div className="shrink-0 border-t bg-background px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)]">
-          {activeBots.length > 1 && (
+          {isBusinessDialog && (
+            <div className="flex items-center gap-2 pb-2">
+              <Badge variant="outline" className="border-primary/30 bg-primary/5 text-primary">
+                От имени Екатерины · Telegram Business
+              </Badge>
+            </div>
+          )}
+          {!isBusinessDialog && activeBots.length > 1 && (
             <div className="flex items-center gap-1.5 pb-1.5">
               <Select value={selectedBotId || ""} onValueChange={handleBotChange}>
                 <SelectTrigger className="h-7 w-auto min-w-[100px] text-[11px] rounded-lg border-border/40 bg-muted/30 gap-1 px-2">
