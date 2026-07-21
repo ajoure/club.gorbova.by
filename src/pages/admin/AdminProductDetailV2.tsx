@@ -21,8 +21,9 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import {
-  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X, EyeOff, Power, PowerOff, GripVertical, Shield
+  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X, EyeOff, Power, PowerOff, GripVertical, Shield, Percent
 } from "lucide-react";
+import { ProductReferralSettings } from "@/components/admin/product/ProductReferralSettings";
 import { ProductAccessRulesTab } from "@/components/admin/product/ProductAccessRulesTab";
 import { DndContext, closestCenter, PointerSensor, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
@@ -92,7 +93,7 @@ export default function AdminProductDetailV2() {
   // Sync tab from query params on navigation
   useEffect(() => {
     const t = searchParams.get("tab");
-    if (t && ["tariffs", "offers", "flows", "preview", "custom_fields", "composition", "access_rules"].includes(t)) {
+    if (t && ["tariffs", "offers", "flows", "preview", "custom_fields", "composition", "access_rules", "referrals"].includes(t)) {
       setActiveTab(t);
     }
   }, [searchParams]);
@@ -1148,6 +1149,10 @@ export default function AdminProductDetailV2() {
                 <Shield className="h-3.5 w-3.5" />
                 Доступы
               </TabsTrigger>
+              <TabsTrigger value="referrals" className="gap-1.5 text-xs">
+                <Percent className="h-3.5 w-3.5" />
+                Рефералы
+              </TabsTrigger>
             </TabsList>
           </div>
 
@@ -1658,6 +1663,10 @@ export default function AdminProductDetailV2() {
                 initialAction={activeTab === "access_rules" ? accessRulesAction : undefined}
               />
             )}
+          </TabsContent>
+
+          <TabsContent value="referrals" className="space-y-4 mt-6">
+            <ProductReferralSettings product={product} />
           </TabsContent>
         </Tabs>
       </div>

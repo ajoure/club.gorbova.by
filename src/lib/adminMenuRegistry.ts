@@ -69,6 +69,12 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
     routePrefix: "/admin/contacts",
   },
   {
+    code: "referrals",
+    label: "Реферальная программа",
+    group: "crm",
+    routePrefix: "/admin/referrals",
+  },
+  {
     code: "companies",
     label: "Компании",
     group: "crm",

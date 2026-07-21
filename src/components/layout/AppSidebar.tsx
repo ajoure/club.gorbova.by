@@ -23,7 +23,7 @@ import {
   CollapsibleContent, 
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive, FileText, FileSignature, Radio, Lock } from "lucide-react";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive, FileText, FileSignature, Radio, Lock, Handshake } from "lucide-react";
 import { useUnreadTicketsCount } from "@/hooks/useTickets";
 
 // Static menu structure - modules are shown inside page tabs, not in sidebar dropdown
@@ -116,6 +116,7 @@ const profileMenuItems = [
   { title: "Оплата и карты", url: "/settings/payment-methods", icon: ShoppingBag },
   { title: "Согласия", url: "/settings/consents", icon: Shield },
   { title: "Мои покупки", url: "/purchases", icon: Target },
+  { title: "Партнёрство", url: "/settings/partnership", icon: Handshake },
 ];
 
 export function AppSidebar() {

@@ -28,6 +28,7 @@ const OAuthConsent = lazy(() => import("./pages/OAuthConsent"));
 const ConnectAgent = lazy(() => import("./pages/ConnectAgent"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
+const ReferralCapture = lazy(() => import("./pages/ReferralCapture"));
 
 // DEV-only fixture stand for the slot bridge regression harness. Guarded by
 // import.meta.env.DEV; production bundles never register the route below.
@@ -69,6 +70,7 @@ const PaymentMethodsSettings = lazy(() => import("./pages/settings/PaymentMethod
 const ConsentsSettings = lazy(() => import("./pages/settings/Consents"));
 const LegalDetailsSettings = lazy(() => import("./pages/settings/LegalDetails"));
 const UserRequisitesSettings = lazy(() => import("./pages/settings/UserRequisites"));
+const PartnershipSettings = lazy(() => import("./pages/settings/Partnership"));
 const Learning = lazy(() => import("./pages/Learning"));
 const Consultation = lazy(() => import("./pages/Consultation"));
 const CourseAccountant = lazy(() => import("./pages/CourseAccountant"));
@@ -154,6 +156,7 @@ const AdminKbImport = lazy(() => import("./pages/admin/AdminKbImport"));
 const AdminSiteBuilder = lazy(() => import("./pages/admin/AdminSiteBuilder"));
 const AdminSiteEditor = lazy(() => import("./pages/admin/AdminSiteEditor"));
 const AdminLiveEvents = lazy(() => import("./pages/admin/AdminLiveEvents"));
+const AdminReferrals = lazy(() => import("./pages/admin/AdminReferrals"));
 const LiveEvent = lazy(() => import("./pages/LiveEvent"));
 const LiveAccessEntry = lazy(() => import("./pages/LiveAccessEntry"));
 // AdminBepaidSubscriptions removed - redirects to /admin/payments/bepaid-subscriptions
@@ -203,6 +206,7 @@ const App = () => {
               {/* Public routes */}
               <Route path="/" element={<DomainHomePage />} />
               <Route path="/auth" element={<LazyRoute><Auth /></LazyRoute>} />
+              <Route path="/r/:partnerCode" element={<LazyRoute><ReferralCapture /></LazyRoute>} />
               <Route path="/auth/v1/verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
               <Route path="/auth-verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
               <Route path="/.lovable/oauth/consent" element={<LazyRoute><OAuthConsent /></LazyRoute>} />
@@ -274,6 +278,7 @@ const App = () => {
               <Route path="/settings/legal-details" element={<ProtectedRoute><LazyRoute><LegalDetailsSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/user-requisites" element={<ProtectedRoute><LazyRoute><UserRequisitesSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/consents" element={<ProtectedRoute><LazyRoute><ConsentsSettings /></LazyRoute></ProtectedRoute>} />
+              <Route path="/settings/partnership" element={<ProtectedRoute><LazyRoute><PartnershipSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/subscriptions" element={<Navigate to="/purchases" replace />} />
               
               {/* Admin routes - CRM */}
@@ -367,6 +372,7 @@ const App = () => {
               <Route path="/admin/sites" element={<ProtectedRoute><LazyRoute><AdminSiteBuilder /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/sites/:id" element={<ProtectedRoute><LazyRoute><AdminSiteEditor /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/live-events" element={<ProtectedRoute><LazyRoute><AdminLiveEvents /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/referrals" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminReferrals /></AdminLayout></LazyRoute></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
