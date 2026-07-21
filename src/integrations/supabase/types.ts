@@ -4631,9 +4631,11 @@ export type Database = {
       }
       contact_files: {
         Row: {
+          company_id: string | null
           contact_id: string
           created_at: string
           id: string
+          deal_id: string | null
           meta: Json
           mime_type: string | null
           name: string
@@ -4643,9 +4645,11 @@ export type Database = {
           url: string | null
         }
         Insert: {
+          company_id?: string | null
           contact_id: string
           created_at?: string
           id?: string
+          deal_id?: string | null
           meta?: Json
           mime_type?: string | null
           name: string
@@ -4655,9 +4659,11 @@ export type Database = {
           url?: string | null
         }
         Update: {
+          company_id?: string | null
           contact_id?: string
           created_at?: string
           id?: string
+          deal_id?: string | null
           meta?: Json
           mime_type?: string | null
           name?: string
@@ -4681,24 +4687,30 @@ export type Database = {
           author_id: string
           body: string
           contact_id: string
+          company_id: string | null
           created_at: string
           id: string
+          deal_id: string | null
           updated_at: string
         }
         Insert: {
           author_id: string
           body: string
           contact_id: string
+          company_id?: string | null
           created_at?: string
           id?: string
+          deal_id?: string | null
           updated_at?: string
         }
         Update: {
           author_id?: string
           body?: string
           contact_id?: string
+          company_id?: string | null
           created_at?: string
           id?: string
+          deal_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -11654,6 +11666,11 @@ export type Database = {
           customer_email: string | null
           customer_ip: string | null
           customer_phone: string | null
+          company_id: string | null
+          responsible_user_id: string | null
+          source_deal_id: string | null
+          creation_batch_id: string | null
+          campaign_key: string | null
           deal_date: string | null
           deleted_at: string | null
           deleted_by: string | null
@@ -11697,6 +11714,11 @@ export type Database = {
           customer_email?: string | null
           customer_ip?: string | null
           customer_phone?: string | null
+          company_id?: string | null
+          responsible_user_id?: string | null
+          source_deal_id?: string | null
+          creation_batch_id?: string | null
+          campaign_key?: string | null
           deal_date?: string | null
           deleted_at?: string | null
           deleted_by?: string | null
@@ -11740,6 +11762,11 @@ export type Database = {
           customer_email?: string | null
           customer_ip?: string | null
           customer_phone?: string | null
+          company_id?: string | null
+          responsible_user_id?: string | null
+          source_deal_id?: string | null
+          creation_batch_id?: string | null
+          campaign_key?: string | null
           deal_date?: string | null
           deleted_at?: string | null
           deleted_by?: string | null

@@ -56,6 +56,37 @@ interface FeedEvent {
   author: string | null;
 }
 
+async function enrichFeedDealContext(events: FeedEvent[]): Promise<FeedEvent[]> {
+  const noteIds = events.filter((event) => event.kind === "note").map((event) => event.id);
+  const fileIds = events.filter((event) => event.kind === "file" || event.kind === "voice_note").map((event) => event.id);
+  const links = new Map<string, string>();
+  if (noteIds.length) {
+    const { data } = await (supabase as any).from("contact_notes").select("id,deal_id").in("id", noteIds).not("deal_id", "is", null);
+    (data ?? []).forEach((row: any) => links.set(`note:${row.id}`, row.deal_id));
+  }
+  if (fileIds.length) {
+    const { data } = await (supabase as any).from("contact_files").select("id,deal_id").in("id", fileIds).not("deal_id", "is", null);
+    (data ?? []).forEach((row: any) => {
+      links.set(`file:${row.id}`, row.deal_id);
+      links.set(`voice_note:${row.id}`, row.deal_id);
+    });
+  }
+  const dealIds = Array.from(new Set(links.values()));
+  if (!dealIds.length) return events;
+  const { data: deals } = await supabase.from("orders_v2").select("id,order_number").in("id", dealIds);
+  const names = new Map((deals ?? []).map((deal) => [deal.id, deal.order_number]));
+  return events.map((event) => {
+    const dealId = links.get(`${event.kind}:${event.id}`);
+    if (!dealId) return event;
+    const number = names.get(dealId);
+    return {
+      ...event,
+      title: `${event.kind === "note" ? "Заметка" : event.title ?? "Файл"} по сделке ${number ? `#${number}` : ""}`.trim(),
+      meta: { ...(event.meta ?? {}), deal_id: dealId, order_number: number ?? null },
+    };
+  });
+}
+
 // Каждый тип события — уникальный «дорогой» оттенок; никаких коллизий цвета
 // между двумя разными типами (например, file/deal больше не оба зелёные).
 const KIND_META: Record<FeedKind, { label: string; icon: any; tint: string; iconColor: string; }> = {
@@ -641,16 +672,19 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
 export function ContactFeedTab({
   contactId,
   companyId,
+  dealId,
   embedded = false,
   readOnly = false,
 }: {
   contactId?: string;
   companyId?: string;
+  dealId?: string;
   embedded?: boolean;
   readOnly?: boolean;
 }) {
-  const entityId = companyId ?? contactId ?? "";
-  const isCompany = Boolean(companyId);
+  const entityId = dealId ?? companyId ?? contactId ?? "";
+  const isDeal = Boolean(dealId);
+  const isCompany = !isDeal && Boolean(companyId);
   const qc = useQueryClient();
   const [selected, setSelected] = useState<Set<FeedKind>>(new Set());
   const [search, setSearch] = useState("");
@@ -699,7 +733,15 @@ export function ContactFeedTab({
     enabled: !!entityId,
     placeholderData: (previousData) => previousData ?? [],
     queryFn: async () => {
-      const { data, error } = isCompany
+      const { data, error } = isDeal
+        ? await (supabase as any).rpc("deal_feed_list", {
+            _deal_id: entityId,
+            _types: types,
+            _search: debounced || null,
+            _limit: 200,
+            _offset: 0,
+          })
+        : isCompany
         ? await supabase.rpc("company_feed_list", {
             _company_id: entityId,
             _types: types,
@@ -736,7 +778,7 @@ export function ContactFeedTab({
                 : [];
       const rpcEvents = arr as FeedEvent[];
       let platformEvents: FeedEvent[] = [];
-      if (!isCompany) {
+      if (!isCompany && !isDeal) {
         try {
           platformEvents = await loadPlatformEventsForContact(entityId, types as FeedKind[] | null, debounced || null);
         } catch (platformError) {
@@ -745,7 +787,8 @@ export function ContactFeedTab({
       }
       const byKey = new Map<string, FeedEvent>();
       [...rpcEvents, ...platformEvents].forEach((evt) => byKey.set(`${evt.kind}:${evt.id}`, evt));
-      return Array.from(byKey.values()).sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime());
+      const enriched = await enrichFeedDealContext(Array.from(byKey.values()));
+      return enriched.sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime());
     },
   });
 
@@ -763,13 +806,15 @@ export function ContactFeedTab({
   const hasFeedEvents = visibleFeedEvents.length > 0;
   const feedErrorMessage = error instanceof Error
     ? error.message
-    : isCompany ? "Не удалось загрузить ленту компании" : "Не удалось загрузить ленту контакта";
+    : isDeal ? "Не удалось загрузить ленту сделки" : isCompany ? "Не удалось загрузить ленту компании" : "Не удалось загрузить ленту контакта";
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["contact_feed", entityId] });
 
   const createNote = useMutation({
     mutationFn: async (body: string) => {
-      const { error } = isCompany
+      const { error } = isDeal
+        ? await (supabase as any).rpc("crm_deal_note_create", { _deal_id: entityId, _body: body })
+        : isCompany
         ? await supabase.rpc("company_note_create", {
             _company_id: entityId,
             _body: body,
@@ -811,13 +856,14 @@ export function ContactFeedTab({
     const uid = u?.user?.id;
     if (!uid) throw new Error("no auth");
     const safeName = filename.replace(/[^\p{L}\p{N}._-]+/gu, "_");
-    const path = `${entityId}/${Date.now()}_${safeName}`;
+    const storageOwnerId = contactId ?? entityId;
+    const path = `${storageOwnerId}/${Date.now()}_${safeName}`;
     const up = await supabase.storage.from("contact-files").upload(path, blob, { contentType: mime, upsert: false });
     if (up.error) throw up.error;
     const fileTable = isCompany ? "company_files" : "contact_files";
     const filePayload = isCompany
       ? { company_id: entityId, uploader_id: uid, name: filename, storage_path: path, url: null, mime_type: mime, size_bytes: blob.size, meta: {} }
-      : { contact_id: entityId, uploader_id: uid, name: filename, storage_path: path, url: null, mime_type: mime, size_bytes: blob.size };
+      : { contact_id: contactId ?? entityId, deal_id: dealId ?? null, company_id: dealId ? companyId ?? null : null, uploader_id: uid, name: filename, storage_path: path, url: null, mime_type: mime, size_bytes: blob.size };
     const { data: inserted, error: insErr } = await (supabase as any).from(fileTable).insert(filePayload).select("id").single();
     if (insErr) throw insErr;
     return inserted!.id as string;
@@ -1176,8 +1222,9 @@ export function ContactFeedTab({
       <CreateCrmTaskDialog
         open={createTaskOpen}
         onOpenChange={(v) => { setCreateTaskOpen(v); if (!v) invalidate(); }}
-        defaultContactId={isCompany ? null : entityId}
-        defaultCompanyId={isCompany ? entityId : null}
+        defaultContactId={isCompany ? null : contactId ?? null}
+        defaultCompanyId={isCompany ? entityId : companyId ?? null}
+        defaultDealId={dealId ?? null}
       />
       {previewText && (
         <TextFilePreview open onClose={() => setPreviewText(null)} path={previewText.path} name={previewText.name} />

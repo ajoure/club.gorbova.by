@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { ContactFeedTab } from "@/components/admin/contact/ContactFeedTab";
 import {
   Sheet,
   SheetContent,
@@ -59,6 +60,8 @@ import {
   Undo2,
   Search,
   Link2,
+  Activity,
+  Building2,
 } from "lucide-react";
 import { copyToClipboard as copyToClipboardUtil, getDealUrl } from "@/utils/clipboardUtils";
 import { toast } from "sonner";
@@ -134,6 +137,15 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
 
   const dealArr = useMemo(() => deal ? [{ id: deal.id, purchase_snapshot: deal.purchase_snapshot }] : [], [deal]);
   const { data: moduleMetaMap } = useModuleDisplayMeta(dealArr);
+  const { data: linkedCompany } = useQuery({
+    queryKey: ["deal-company", deal?.company_id],
+    enabled: !!deal?.company_id,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("companies").select("id,public_id,full_name,phone,email").eq("id", deal.company_id).maybeSingle();
+      if (error) throw error;
+      return data as { id: string; public_id: string; full_name: string; phone: string | null; email: string | null } | null;
+    },
+  });
 
   // Check if current user is super_admin
   const { data: isSuperAdmin } = useQuery({
@@ -796,6 +808,16 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
+                {linkedCompany && (
+                  <>
+                    <button type="button" onClick={() => navigate(`/admin/companies?company=${linkedCompany.id}`)} className="flex w-full items-center gap-2 rounded-lg border border-border/40 bg-muted/30 px-2.5 py-2 text-left text-sm hover:bg-muted/50">
+                      <Building2 className="h-4 w-4 shrink-0 text-primary" />
+                      <span className="min-w-0 flex-1 truncate font-medium">{linkedCompany.full_name}</span>
+                      <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                    </button>
+                    <Separator />
+                  </>
+                )}
                 <div className="flex items-center justify-between">
                   <button
                     type="button"
@@ -1186,6 +1208,20 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
 
             {/* Documents — единая карточка */}
             <DealPayerDocumentsCard orderId={deal.id} />
+
+            {/* Unified amoCRM-style feed. Deal notes are stored once and are
+                also visible from the linked contact/company feeds. */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                  <Activity className="w-4 h-4" />
+                  Лента
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <ContactFeedTab dealId={deal.id} contactId={deal.profile_id ?? profile?.id ?? undefined} companyId={deal.company_id ?? undefined} embedded />
+              </CardContent>
+            </Card>
 
             {/* Tasks — задачи по сделке */}
             <CrmTasksSection dealId={deal.id} />
