@@ -873,8 +873,6 @@ export default function AdminLiveEvents() {
         eventId = inserted.id;
       }
 
-      if (eventId) {
-        await supabase.from("live_event_access_rules").delete().eq("live_event_id", eventId);
 
       // FORENSIC PATCH: only touch live_event_access_rules when the user
       // explicitly changed the Access section (or when creating a new event).
