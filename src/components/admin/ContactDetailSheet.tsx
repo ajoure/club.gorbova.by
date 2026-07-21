@@ -2031,14 +2031,25 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
             </div>
           </TabsContent>
 
+          {/* Feed-вкладка вынесена ИЗ внешнего скролла:
+              скроллится только список событий внутри ContactFeedTab,
+              а composer остаётся прижат к низу карточки. */}
+          <TabsContent
+            value="feed"
+            forceMount
+            className="m-0 px-3 sm:px-4 pb-3 sm:pb-4 flex-1 min-h-0 flex flex-col overflow-hidden data-[state=inactive]:hidden"
+          >
+            <ContactFeedTab contactId={contact.id} embedded />
+          </TabsContent>
+
           {/* Все остальные вкладки — во внешнем скролле как раньше.
-              При активной Telegram-вкладке прячем этот контейнер,
+              При активной Telegram- или Feed-вкладке прячем этот контейнер,
               чтобы не было двойного скролла и pb-24 не съедал высоту. */}
           <div
             ref={scrollContainerRef}
-            className={cn("flex-1 overflow-y-auto", activeTab === "telegram" && "hidden")}
+            className={cn("flex-1 overflow-y-auto", (activeTab === "telegram" || activeTab === "feed") && "hidden")}
           >
-            <div className={cn("px-4 sm:px-6 py-4", activeTab === "feed" ? "pb-2" : "pb-24")}>
+            <div className="px-4 sm:px-6 py-4 pb-24">
             <TabsContent value="profile" className="m-0 space-y-4">
               {contact.id && (
                 <ContactChannelsSection
