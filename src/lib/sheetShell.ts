@@ -21,3 +21,26 @@ export const SHEET_SHELL_CLASS = [
   "pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)]",
   "flex flex-col overflow-hidden",
 ].join(" ");
+
+/**
+ * Glassmorphism entity-tinted variant.
+ * Distinguishes contact / company / deal record sheets by pale, desaturated,
+ * translucent surface tint. Backdrop-blur + soft border give a frosted-glass feel
+ * while keeping high foreground contrast in both light and dark modes.
+ *
+ * Kept intentionally subtle — do NOT increase saturation, gradients, or borders.
+ */
+export type EntityShellVariant = "contact" | "company" | "deal";
+
+const ENTITY_SHELL_CLASSES: Record<EntityShellVariant, string> = {
+  // Cool pale sky-blue — contact
+  contact: "entity-shell entity-shell-contact",
+  // Muted neutral lilac / grey-violet — company
+  company: "entity-shell entity-shell-company",
+  // Pale sage-green — deal
+  deal: "entity-shell entity-shell-deal",
+};
+
+export function getEntityShellClass(variant: EntityShellVariant): string {
+  return `${SHEET_SHELL_CLASS} ${ENTITY_SHELL_CLASSES[variant]}`;
+}
