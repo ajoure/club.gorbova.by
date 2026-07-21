@@ -112,7 +112,7 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
         _include_applied: true,
       });
       if (error) throw error;
-      return (data ?? []) as Entry[];
+      return (data ?? []) as unknown as Entry[];
     },
   });
 
