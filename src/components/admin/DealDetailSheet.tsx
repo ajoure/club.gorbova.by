@@ -743,11 +743,16 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                   </div>
                   {(deal.customer_email || profile?.email) && (
                     <div className="flex items-center gap-1 shrink-0">
+                      <Button variant="outline" size="sm" className="h-7 px-2.5 text-xs" onClick={() => setComposeEmailOpen(true)}>
+                        <Mail className="w-3 h-3 mr-1" />
+                        Письмо
+                      </Button>
                       <Button variant="ghost" size="sm" className="h-7 w-7" onClick={() => copyToClipboard(deal.customer_email || profile?.email, "Email")}>
                         <Copy className="w-3 h-3" />
                       </Button>
                     </div>
                   )}
+
                 </div>
                 <Separator />
                 <div className="flex items-center justify-between gap-2">
@@ -1435,6 +1440,13 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       open={contactSheetOpen}
       onOpenChange={setContactSheetOpen}
     />
+    <ComposeEmailDialog
+      recipientEmail={deal.customer_email || profile?.email || null}
+      recipientName={deal?.meta?.customer_full_name || profile?.full_name || null}
+      open={composeEmailOpen}
+      onOpenChange={setComposeEmailOpen}
+    />
     </>
+
   );
 }
