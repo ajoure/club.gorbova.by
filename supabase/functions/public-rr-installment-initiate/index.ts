@@ -52,6 +52,8 @@ import {
   buildNegativeSnapshot,
   resolveOrderRouting,
 } from "../_shared/crm-routing.ts";
+import { referralDiscountMeta, resolveReferralCheckoutDiscount } from "../_shared/referral-checkout-discount.ts";
+import { reserveReferralCustomerCredit } from "../_shared/referral-customer-credit.ts";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -64,6 +66,7 @@ interface InitiatePayload {
   email?: string;
   comment?: string | null;
   website?: string;
+  customer_credit_requested_minor?: number;
 }
 
 function normalizePhone(raw: string): string {
@@ -316,12 +319,36 @@ Deno.serve(async (req: Request) => {
   if (!tariff?.is_active) return errorResponse("tariff_inactive", 403);
   if (!product?.is_active) return errorResponse("product_inactive", 403);
 
-  const amountNumeric = Number(offer.amount);
+  let amountNumeric = Number(offer.amount);
   if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
     return errorResponse("amount_invalid", 500);
   }
   const currency = String(product.currency || "BYN").toUpperCase();
-  const amountMinor = Math.round(amountNumeric * 100);
+  let amountMinor = Math.round(amountNumeric * 100);
+  let referralCreditMeta: Record<string, unknown> = {};
+  if (userId) {
+    const referralQuote = await resolveReferralCheckoutDiscount({
+      supabase: supabaseAdmin, userId, productId: product.id, amountMinor, allowImmediateDiscount: true,
+    });
+    amountMinor = referralQuote.finalAmountMinor;
+    const reservation = await reserveReferralCustomerCredit({
+      supabase: supabaseAdmin,
+      userId,
+      chargeAmountMinor: amountMinor,
+      requestedMinor: Math.max(0, Math.round(Number(body.customer_credit_requested_minor ?? 0))),
+      checkoutKey: `rr:${offerContactHash}`,
+    });
+    amountMinor -= reservation.appliedMinor;
+    amountNumeric = amountMinor / 100;
+    referralCreditMeta = {
+      payment_type: 'one_time',
+      ...referralDiscountMeta(referralQuote),
+      ...(reservation.appliedMinor > 0 ? {
+        referral_customer_credit_applied_minor: reservation.appliedMinor,
+        referral_customer_credit_reservation_id: reservation.reservationId,
+      } : {}),
+    };
+  }
 
   let cfg;
   try {
@@ -411,6 +438,7 @@ Deno.serve(async (req: Request) => {
     crm_success_skip: true,
     // B.0 invariant: snapshot embedded atomically at INSERT.
     crm_routing_snapshot: crmSnapshot,
+    ...referralCreditMeta,
     rr: {
       runtime: "sprintB",
       mode: cfg.mode,

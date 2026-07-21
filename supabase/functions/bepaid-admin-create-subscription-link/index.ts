@@ -207,6 +207,7 @@ Deno.serve(async (req) => {
 
     const referralQuote = await resolveReferralCheckoutDiscount({
       supabase, userId: subscription.user_id, productId: subscription.product_id, amountMinor: amountCents,
+      allowImmediateDiscount: false,
     });
     amountCents = referralQuote.finalAmountMinor;
     const referralMeta = referralDiscountMeta(referralQuote);

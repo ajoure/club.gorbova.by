@@ -15,7 +15,7 @@ const unchanged = (amount: number): ReferralCheckoutDiscount => ({
 });
 
 export function applyReferralDiscount(amountMinor: number, discountBps: number): number {
-  return Math.max(1, Math.round(amountMinor * (10_000 - discountBps) / 10_000));
+  return Math.max(Math.min(100, amountMinor), Math.round(amountMinor * (10_000 - discountBps) / 10_000));
 }
 
 /** Resolve the invited customer's price before any acquiring provider is called. */
@@ -25,10 +25,12 @@ export async function resolveReferralCheckoutDiscount(params: {
   userId: string;
   productId: string;
   amountMinor: number;
+  allowImmediateDiscount?: boolean;
 }): Promise<ReferralCheckoutDiscount> {
   const { supabase, userId, productId } = params;
   const amountMinor = Math.round(Number(params.amountMinor));
   if (!userId || !productId || !Number.isFinite(amountMinor) || amountMinor <= 0) return unchanged(amountMinor);
+  if (params.allowImmediateDiscount === false) return unchanged(amountMinor);
 
   const [settingsResult, productResult, profileResult] = await Promise.all([
     supabase.from('referral_program_settings')

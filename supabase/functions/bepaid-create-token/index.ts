@@ -28,6 +28,8 @@ interface CreateTokenRequest {
   // PATCH-2: MIT flow control - if true, use checkout payment API (NOT subscriptions API)
   // This saves the card token for future MIT charges without creating a bePaid subscription
   useMitTokenization?: boolean;
+  customerCreditRequestedMinor?: number;
+  customerCreditCheckoutKey?: string;
 }
 
 interface ProductInfo {
@@ -98,6 +100,8 @@ Deno.serve(async (req) => {
       offerId,
       isOneTime,
       useMitTokenization, // PATCH-2: MIT flow - use checkout API instead of subscriptions
+      customerCreditRequestedMinor,
+      customerCreditCheckoutKey,
     }: CreateTokenRequest = await req.json();
 
     if (!productId || !customerEmail) {
@@ -688,6 +692,11 @@ Deno.serve(async (req) => {
         provider: effectiveProvider,
         account_code: effectiveAccountCode,
         currency: productInfo.currency || (effectiveProvider === 'stripe' ? 'BYN' : undefined),
+        customer_credit_requested_minor: Math.max(0, Math.round(Number(customerCreditRequestedMinor ?? 0))),
+        customer_credit_checkout_key:
+          typeof customerCreditCheckoutKey === 'string' && customerCreditCheckoutKey.length <= 200
+            ? customerCreditCheckoutKey
+            : undefined,
         meta_extra: {
           provider_choice_resolution: {
             mode: 'fixed',
@@ -830,12 +839,14 @@ Deno.serve(async (req) => {
     if (productInfo.isV2 && userId) {
       const quote = await resolveReferralCheckoutDiscount({
         supabase, userId, productId, amountMinor: Math.round(paymentAmount * 100),
+        allowImmediateDiscount: isOneTime === true,
       });
       paymentAmount = quote.finalAmountMinor / 100;
       legacyReferralMeta = referralDiscountMeta(quote);
       if (trialConfig?.auto_charge_amount) {
         const recurringQuote = await resolveReferralCheckoutDiscount({
           supabase, userId, productId, amountMinor: Math.round(trialConfig.auto_charge_amount * 100),
+          allowImmediateDiscount: false,
         });
         trialConfig.auto_charge_amount = recurringQuote.finalAmountMinor / 100;
       }
