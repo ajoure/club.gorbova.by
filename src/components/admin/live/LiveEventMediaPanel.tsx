@@ -89,6 +89,7 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
           video_processing: "Kinescope ещё обрабатывает запись. Попробуйте немного позже.",
           audio_not_available: "В записи Kinescope пока нет доступной аудиодорожки.",
           audio_not_ready: "Сначала сохраните аудиофайл эфира.",
+          audio_too_large: "Аудиозапись слишком большая для автоматической транскрибации (лимит ≈24 МБ на запрос). Обратитесь к администратору, чтобы подготовить транскрипт через внутренний fallback.",
         };
         throw new Error(messages[data?.code] || data?.error || "Операция пока недоступна");
       }
@@ -145,7 +146,7 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <Badge variant={audio?.status === "ready" ? "default" : audio?.status === "failed" ? "destructive" : "secondary"}>
-              {audio ? audioStatusText[audio.status] : "Ещё не синхронизировано"}
+              {statusQuery.isLoading && !audio ? "Проверяю статус…" : audio ? audioStatusText[audio.status] : "Ещё не синхронизировано"}
             </Badge>
             {audio?.source_file_name && <span className="text-muted-foreground truncate max-w-[240px]">{audio.source_file_name}</span>}
             {audio?.source_language && <span className="text-muted-foreground">Язык: {audio.source_language}</span>}
@@ -175,7 +176,7 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <Badge variant={transcript?.status === "ready" ? "default" : transcript?.status === "failed" ? "destructive" : "secondary"}>
-              {transcript ? transcriptStatusText[transcript.status] : "Ещё не создавалась"}
+              {statusQuery.isLoading && !transcript ? "Проверяю статус…" : transcript ? transcriptStatusText[transcript.status] : "Ещё не создавалась"}
             </Badge>
             {transcript?.generated_at && <span className="text-muted-foreground">Сформирована {new Date(transcript.generated_at).toLocaleString("ru-RU")}</span>}
           </div>
