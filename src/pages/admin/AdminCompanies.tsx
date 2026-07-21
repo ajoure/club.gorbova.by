@@ -1749,14 +1749,14 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
               </div>
               <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
                 <TabsContent value="profile" className="mt-0 space-y-4">
-                  <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
+                  <section className="grid gap-2 rounded-2xl border border-border/40 bg-background/75 backdrop-blur p-3 text-sm text-muted-foreground">
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground/80">Каналы связи</div>
                     {company.email && <div className="flex flex-wrap items-center gap-2"><Mail className="h-4 w-4" /><a href={`mailto:${company.email}`} className="min-w-0 flex-1 break-all hover:text-foreground hover:underline">{company.email}</a><Button size="sm" variant="outline" className="h-7 px-2.5 text-xs shrink-0" onClick={() => setComposeEmailOpen(true)}><Mail className="mr-1 h-3 w-3" />Письмо</Button></div>}
                     {normalizedPhone && <div className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${normalizedPhone}`} className="hover:text-foreground hover:underline">{normalizedPhone}</a><span className="ml-auto flex gap-1"><CallButton phone={normalizedPhone} companyId={company.id} /><SmsButton phone={normalizedPhone} companyId={company.id} /></span></div>}
                     {additionalCompanyPhones.map((phone) => <div key={phone} className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${phone}`} className="hover:text-foreground hover:underline">{phone}</a><span className="ml-auto flex gap-1"><CallButton phone={phone} companyId={company.id} /><SmsButton phone={phone} companyId={company.id} /></span></div>)}
-                    {company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}
-                    {!company.email && companyPhones.length === 0 && !company.legal_address && "Контактные данные не заполнены."}
+                    {!company.email && companyPhones.length === 0 && "Контактные данные не заполнены."}
                   </section>
+
                   <CompanyProfileOverview company={company} onRefreshRegistry={canEditCompany ? () => refreshRegistry.mutate() : undefined} isRefreshing={refreshRegistry.isPending} />
                 </TabsContent>
                 <TabsContent value="contacts" className="mt-0 space-y-3">

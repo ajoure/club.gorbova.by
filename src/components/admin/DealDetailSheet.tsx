@@ -76,6 +76,8 @@ import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
 import { CallButton } from "./calls/CallButton";
 import { SmsButton } from "./sms/SmsButton";
+import { ComposeEmailDialog } from "./ComposeEmailDialog";
+
 import { InternalInstallmentBlock } from "@/components/installments/InternalInstallmentBlock";
 
 interface DealDetailSheetProps {
@@ -138,6 +140,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const [linkPaymentDialogOpen, setLinkPaymentDialogOpen] = useState(false);
   const [grantAccessDialogOpen, setGrantAccessDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("overview");
+  const [composeEmailOpen, setComposeEmailOpen] = useState(false);
+
 
 
   const dealArr = useMemo(() => deal ? [{ id: deal.id, purchase_snapshot: deal.purchase_snapshot }] : [], [deal]);
@@ -163,7 +167,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
     },
     staleTime: 60000,
   });
-  
+
   // Fetch bePaid docs mutation
   const fetchBepaidDocsMutation = useMutation({
     mutationFn: async (orderId: string) => {
@@ -187,7 +191,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       toast.error('Ошибка: ' + error.message);
     },
   });
-  
+
   // Fetch full payments for this deal
   const { data: payments, isLoading: paymentsLoading } = useQuery({
     queryKey: ["deal-payments", deal?.id],
@@ -234,7 +238,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         .order("created_at", { ascending: false })
         .limit(20);
       if (error) return [];
-      
+
       // Fetch actor profiles for the logs
       const actorIds = [...new Set(logs.map(l => l.actor_user_id).filter(Boolean))];
       if (actorIds.length > 0) {
@@ -242,14 +246,14 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           .from("profiles")
           .select("user_id, full_name, email")
           .in("user_id", actorIds);
-        
+
         const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
         return logs.map(log => ({
           ...log,
           actor_profile: profileMap.get(log.actor_user_id) || null
         }));
       }
-      
+
       return logs.map(log => ({ ...log, actor_profile: null }));
     },
     enabled: !!deal?.id,
@@ -264,7 +268,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const deleteMutation = useMutation({
     mutationFn: async () => {
       if (!deal?.id) throw new Error("No deal ID");
-      
+
       console.log(`[DealDetailSheet] Starting deletion of deal: ${deal.id}`);
 
       // 0. Load order snapshot for notifications + telegram revoke + GetCourse cancel
@@ -278,7 +282,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         console.error("[DealDetailSheet] Error fetching order:", orderError);
         throw new Error(`Не удалось найти сделку: ${orderError.message}`);
       }
-      
+
       if (!order) {
         throw new Error("Сделка не найдена или уже удалена");
       }
@@ -313,7 +317,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           .from("installment_payments")
           .delete()
           .in("subscription_id", subscriptionIds);
-        
+
         if (installError) {
           console.error("[DealDetailSheet] Error deleting installments:", installError);
         }
@@ -325,7 +329,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           .from("subscriptions_v2")
           .delete()
           .eq("order_id", order.id);
-        
+
         if (subsDeleteError) {
           console.error("[DealDetailSheet] Error deleting subscriptions:", subsDeleteError);
           throw new Error(`Ошибка удаления подписок: ${subsDeleteError.message}`);
@@ -341,7 +345,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           .delete()
           .eq("user_id", order.user_id)
           .eq("product_code", orderProductCode);
-        
+
         if (entError) {
           console.error("[DealDetailSheet] Error deleting entitlements:", entError);
         }
@@ -349,7 +353,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
 
       // 4.1 Check for other active deals before revoking Telegram access
       const telegramClubId = (order.products_v2 as any)?.telegram_club_id;
-      
+
       if (order.user_id && telegramClubId) {
         // Check if user has other active deals with same product
         const { count: otherActiveDeals } = await supabase
@@ -373,9 +377,9 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         if (!otherActiveDeals && !activeSubscriptions) {
           await supabase.functions
             .invoke("telegram-revoke-access", {
-              body: { 
-                user_id: order.user_id, 
-                club_id: telegramClubId, 
+              body: {
+                user_id: order.user_id,
+                club_id: telegramClubId,
                 reason: "deal_deleted",
                 is_manual: true,
                 admin_id: (await supabase.auth.getUser()).data.user?.id,
@@ -407,9 +411,9 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         .from("payments_v2")
         .select("id, meta")
         .eq("order_id", order.id);
-      
+
       const paymentsCount = linkedPayments?.length || 0;
-      
+
       if (deleteWithPayments && paymentsCount > 0) {
         // DANGEROUS: Actually delete payments (super_admin only)
         console.log(`[DealDetailSheet] Deleting ${paymentsCount} payments (dangerous mode)`);
@@ -417,7 +421,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           .from("payments_v2")
           .delete()
           .eq("order_id", order.id);
-        
+
         if (paymentsError) {
           console.error("[DealDetailSheet] Error deleting payments:", paymentsError);
           throw new Error(`Ошибка удаления платежей: ${paymentsError.message}`);
@@ -425,7 +429,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       } else if (paymentsCount > 0) {
         // SAFE DEFAULT: Detach payments (set order_id = NULL, preserve metadata)
         console.log(`[DealDetailSheet] Detaching ${paymentsCount} payments (safe mode)`);
-        
+
         for (const pmt of linkedPayments || []) {
           const updatedMeta = {
             ...(pmt.meta as object || {}),
@@ -433,7 +437,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
             deleted_order_number: order.order_number,
             detached_at: new Date().toISOString(),
           };
-          
+
           const { error: detachError } = await supabase
             .from("payments_v2")
             .update({
@@ -441,7 +445,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
               meta: updatedMeta,
             })
             .eq("id", pmt.id);
-          
+
           if (detachError) {
             console.error("[DealDetailSheet] Error detaching payment:", detachError);
             // HARD GUARD: If detaching fails, STOP and do NOT delete the deal
@@ -457,12 +461,12 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         .from("orders_v2")
         .delete()
         .eq("id", order.id);
-      
+
       if (error) {
         console.error("[DealDetailSheet] CRITICAL: Failed to delete order:", error);
         throw new Error(`Не удалось удалить сделку: ${error.message}. Код: ${error.code}`);
       }
-      
+
       console.log(`[DealDetailSheet] Successfully deleted order ${order.order_number}`);
     },
     onSuccess: () => {
@@ -562,7 +566,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
               </div>
               <div className="min-w-0">
                 <SheetTitle className="text-lg sm:text-xl flex items-center gap-2">
-                  Сделка 
+                  Сделка
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -589,7 +593,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
               {statusConfig.label}
             </Badge>
           </div>
-          
+
           {/* Action buttons */}
           <div className="flex items-center gap-2 mt-3 flex-wrap">
             <Badge
@@ -717,15 +721,15 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                       </AvatarFallback>
                     </Avatar>
                     <span>
-                      {profile?.full_name 
+                      {profile?.full_name
                         || (profile?.name && profile?.surname ? `${profile.name} ${profile.surname}` : null)
                         || profile?.name
                         || deal?.meta?.customer_full_name
                         || deal?.meta?.card_holder
-                        || deal?.customer_email 
-                        || profile?.email 
-                        || deal?.customer_phone 
-                        || profile?.phone 
+                        || deal?.customer_email
+                        || profile?.email
+                        || deal?.customer_phone
+                        || profile?.phone
                         || "—"}
                     </span>
                     {(profile?.user_id || deal?.user_id) && <ExternalLink className="w-3 h-3" />}
@@ -739,11 +743,16 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                   </div>
                   {(deal.customer_email || profile?.email) && (
                     <div className="flex items-center gap-1 shrink-0">
+                      <Button variant="outline" size="sm" className="h-7 px-2.5 text-xs" onClick={() => setComposeEmailOpen(true)}>
+                        <Mail className="w-3 h-3 mr-1" />
+                        Письмо
+                      </Button>
                       <Button variant="ghost" size="sm" className="h-7 w-7" onClick={() => copyToClipboard(deal.customer_email || profile?.email, "Email")}>
                         <Copy className="w-3 h-3" />
                       </Button>
                     </div>
                   )}
+
                 </div>
                 <Separator />
                 <div className="flex items-center justify-between gap-2">
@@ -764,7 +773,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                     </div>
                   )}
                 </div>
-                
+
                 {/* Customer data from bePaid import (from meta) */}
                 {deal.meta && (deal.meta.customer_full_name || deal.meta.customer_email || deal.meta.customer_phone || deal.meta.card_holder) && (
                   <>
@@ -988,7 +997,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                       const paymentStatusConfig =
                         PAYMENT_STATUS_CONFIG[payment.status] || { label: payment.status, color: "bg-muted" };
                       // Priority: new receipt_url column > fallback to provider_response
-                      const receiptUrl = (payment as any)?.receipt_url || 
+                      const receiptUrl = (payment as any)?.receipt_url ||
                                         (payment as any)?.provider_response?.transaction?.receipt_url;
                       const isBepaid = (payment as any)?.provider === 'bepaid';
                       const refunds = ((payment as any)?.refunds || []) as any[];
@@ -1039,8 +1048,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                                     </a>
                                   </Button>
                                 ) : isBepaid && (
-                                  <Button 
-                                    variant="outline" 
+                                  <Button
+                                    variant="outline"
                                     size="sm"
                                     onClick={() => fetchBepaidDocsMutation.mutate(deal.id)}
                                     disabled={fetchBepaidDocsMutation.isPending}
@@ -1056,7 +1065,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                               </div>
                             </div>
                           </div>
-                          
+
                           {/* Refunds section */}
                           {refunds.length > 0 && (
                             <div className="border-t pt-2 mt-2">
@@ -1071,8 +1080,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                                       <span className="font-medium">
                                         {refund.amount?.toFixed(2)} {refund.currency || 'BYN'}
                                       </span>
-                                      <Badge 
-                                        variant="outline" 
+                                      <Badge
+                                        variant="outline"
                                         className={cn(
                                           "text-[10px]",
                                           refund.status === 'succeeded' && "text-green-600 border-green-300",
@@ -1080,8 +1089,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                                           refund.status === 'failed' && "text-red-600 border-red-300"
                                         )}
                                       >
-                                        {refund.status === 'succeeded' ? 'Выполнен' : 
-                                         refund.status === 'pending' ? 'В обработке' : 
+                                        {refund.status === 'succeeded' ? 'Выполнен' :
+                                         refund.status === 'pending' ? 'В обработке' :
                                          refund.status === 'failed' ? 'Ошибка' : refund.status}
                                       </Badge>
                                       {refund.reason && (
@@ -1105,12 +1114,12 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                               </div>
                             </div>
                           )}
-                          
+
                           {/* Refresh from bePaid button */}
                           {isBepaid && payment.status === 'succeeded' && (
                             <div className="flex justify-end pt-1">
-                              <Button 
-                                variant="ghost" 
+                              <Button
+                                variant="ghost"
                                 size="sm"
                                 className="text-xs h-7"
                                 onClick={() => fetchBepaidDocsMutation.mutate(deal.id)}
@@ -1165,7 +1174,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                       // Check if auto-renewal is active
                       const isCanceled = subscription.status === 'canceled' || subscription.status === 'expired';
                       const autoRenewalOff = subscription.auto_renew === false;
-                      
+
                       if (isCanceled || autoRenewalOff) {
                         return (
                           <>
@@ -1177,7 +1186,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                           </>
                         );
                       }
-                      
+
                       // Priority: next_charge_at from subscription
                       if (subscription.next_charge_at) {
                         return (
@@ -1190,13 +1199,13 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                           </>
                         );
                       }
-                      
+
                       // Fallback: calculate from last payment + billing period
                       // Default to access_end_at - 3 days (standard billing logic)
                       if (subscription.access_end_at && subscription.status === 'active') {
                         const accessEnd = new Date(subscription.access_end_at);
                         const calculatedChargeDate = new Date(accessEnd.getTime() - 3 * 24 * 60 * 60 * 1000);
-                        
+
                         // Only show if in the future
                         if (calculatedChargeDate > new Date()) {
                           return (
@@ -1210,7 +1219,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                           );
                         }
                       }
-                      
+
                       return null;
                     })()}
                   </div>
@@ -1251,7 +1260,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           </TabsContent>
 
           {/* Лента — единая amoCRM-подобная лента (переиспользует ContactFeedTab) */}
-          <TabsContent value="feed" className="flex-1 min-h-0 overflow-hidden p-3 sm:p-4 mt-0 data-[state=inactive]:hidden">
+          <TabsContent value="feed" className="p-3 sm:p-4 mt-0 data-[state=inactive]:hidden">
             <ContactFeedTab
               dealId={deal.id}
               contactId={deal.profile_id ?? profile?.id ?? undefined}
@@ -1323,7 +1332,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         </Tabs>
       </SheetContent>
 
-      
+
       {/* Edit Dialog */}
       <EditDealDialog
         deal={deal}
@@ -1334,7 +1343,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
         }}
       />
-      
+
       {/* Delete Confirmation */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={(open) => {
         setDeleteDialogOpen(open);
@@ -1369,7 +1378,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction 
+            <AlertDialogAction
               onClick={() => deleteMutation.mutate()}
               className={cn(
                 "bg-destructive text-destructive-foreground hover:bg-destructive/90",
@@ -1381,7 +1390,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      
+
       {/* Link Payment Dialog */}
       <LinkPaymentDialog
         open={linkPaymentDialogOpen}
@@ -1400,7 +1409,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           setLinkPaymentDialogOpen(false);
         }}
       />
-      
+
       {/* Grant Access Dialog */}
       <GrantAccessFromDealDialog
         open={grantAccessDialogOpen}
@@ -1431,6 +1440,13 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       open={contactSheetOpen}
       onOpenChange={setContactSheetOpen}
     />
+    <ComposeEmailDialog
+      recipientEmail={deal.customer_email || profile?.email || null}
+      recipientName={deal?.meta?.customer_full_name || profile?.full_name || null}
+      open={composeEmailOpen}
+      onOpenChange={setComposeEmailOpen}
+    />
     </>
+
   );
 }
