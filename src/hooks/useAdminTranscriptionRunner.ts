@@ -281,7 +281,7 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
         if (!existing) return true;
         if (existing.status === "ready") return false;
         if (options.retryFailedOnly) return existing.status === "failed";
-        return existing.status !== "ready";
+        return true;
       });
 
       patch({
