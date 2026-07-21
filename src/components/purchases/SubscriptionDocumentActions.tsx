@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 import { useOrderCanonicalDocuments } from "@/hooks/useOrderCanonicalDocuments";
+import { invokeAuthenticatedFunction } from "@/utils/invokeAuthenticatedFunction";
 
 interface Props {
   orderId: string | null | undefined;
@@ -48,9 +49,9 @@ export function SubscriptionDocumentActions({ orderId, className }: Props) {
   const gen = async () => {
     setIsGenerating(true);
     try {
-      const { data, error } = await supabase.functions.invoke(
+      const { data, error } = await invokeAuthenticatedFunction(
         "canonical-document-generate-strict",
-        { body: { order_id: orderId, mode: "generate" } },
+        { order_id: orderId, mode: "generate" },
       );
       if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
       if (data?.error) throw new Error(normalizeEdgeFunctionError(null, data));
