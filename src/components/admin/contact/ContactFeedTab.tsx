@@ -35,7 +35,26 @@ import {
   Instagram, LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { localizeAuditAction, localizeEntityType, localizeReasonCode } from "@/lib/crmDisplayLabels";
+import { localizeAuditAction, localizeEntityType, localizeReasonCode, localizeCrmStatus } from "@/lib/crmDisplayLabels";
+
+/** Русская подпись для «technical» event-title типа `company.created` / `company.linked_to_contact`. */
+function humanizeEventTitle(title: string | null | undefined): string {
+  const raw = (title ?? "").trim();
+  if (!raw) return "Системное событие";
+  // Если это dotted/snake_case-код — прогнать через локализацию action-словаря.
+  if (/^[a-z0-9_.-]+$/i.test(raw) && /[._-]/.test(raw)) return localizeAuditAction(raw);
+  return raw;
+}
+
+/** Убрать HTML-теги, оставив читаемый текст. Не рендерим сырые `<b>` пользователю. */
+function stripHtmlTags(input: string | null | undefined): string {
+  const raw = (input ?? "").toString();
+  if (!raw) return "";
+  if (typeof document === "undefined") return raw.replace(/<[^>]+>/g, "");
+  const div = document.createElement("div");
+  div.innerHTML = raw;
+  return (div.textContent || div.innerText || "").trim();
+}
 import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialog";
 import { CallRecordingPlayer } from "@/components/admin/calls/CallRecordingPlayer";
 import { MediaLightbox } from "@/components/admin/chat/MediaLightbox";
@@ -160,7 +179,7 @@ function CallCard({ evt, entityId }: { evt: FeedEvent; entityId: string }) {
       <div className="flex items-center gap-2 flex-wrap">
         {evt.meta?.phone && <span className="text-sm font-medium">{evt.meta.phone}</span>}
         {duration > 0 && <Badge variant="outline" className="text-[10px]">{duration}с</Badge>}
-        {evt.meta?.status && <Badge variant="outline" className="text-[10px]">{String(evt.meta.status)}</Badge>}
+        {evt.meta?.status && <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>}
       </div>
       {recording && (
         <CallRecordingPlayer src={recording} fallbackDurationSec={duration || null} fileName={`call-${evt.meta?.public_id || evt.id}.mp3`} />
@@ -1058,10 +1077,13 @@ export function ContactFeedTab({
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-semibold uppercase tracking-wide opacity-70">{M.label}</span>
                       {evt.kind === "task" && evt.meta?.status && (
-                        <Badge variant="outline" className="text-[10px]">{String(evt.meta.status)}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>
                       )}
                       {evt.kind === "deal" && evt.meta?.status && (
-                        <Badge variant="outline" className="text-[10px]">{String(evt.meta.status)}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>
+                      )}
+                      {evt.kind === "event" && evt.meta?.status && (
+                        <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>
                       )}
                       <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
                         {evt.at ? format(new Date(evt.at), "d MMM, HH:mm", { locale: ru }) : "—"}
@@ -1083,6 +1105,20 @@ export function ContactFeedTab({
                         </button>
                         <span className="text-xs text-muted-foreground">{formatBytes(evt.meta?.size_bytes)}</span>
                       </div>
+                    ) : evt.kind === "event" ? (
+                      <>
+                        <div className="mt-1 text-sm font-medium truncate">{humanizeEventTitle(evt.title)}</div>
+                        {evt.body && (
+                          <div className={cn(
+                            "mt-1 text-sm text-muted-foreground whitespace-pre-wrap break-words",
+                            evt.meta?.event_source === "order_notification"
+                              ? "max-h-80 overflow-y-auto rounded-md bg-background/40 p-2"
+                              : "line-clamp-4"
+                          )}>
+                            {stripHtmlTags(evt.body)}
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <>
                         {evt.title && (
@@ -1095,7 +1131,7 @@ export function ContactFeedTab({
                               ? "max-h-80 overflow-y-auto rounded-md bg-background/40 p-2"
                               : "line-clamp-4"
                           )}>
-                            {evt.body}
+                            {stripHtmlTags(evt.body)}
                           </div>
                         )}
                       </>
