@@ -949,9 +949,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
             </Card>
 
             {/* Removed duplicate Contact card — moved to top as Контакт и каналы связи */}
-              </CardContent>
 
-            </Card>
 
             {/* Внутренняя рассрочка (canonical bepaid finite subscription) */}
             <InternalInstallmentBlock order={deal} />
