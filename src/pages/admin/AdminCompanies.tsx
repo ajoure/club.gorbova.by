@@ -1623,6 +1623,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
   }, [company, onOpenCompany]);
 
   const normalizedPhone = normalizeCompanyPhone(company?.phone, company?.country ?? "BY");
+  const canEditCompany = canEdit && company?.status === "active";
   const companyPhones = useMemo(() => getImportedCompanyPhones(company ?? {}), [company]);
   const additionalCompanyPhones = useMemo(() => companyPhones.filter((phone) => phone !== normalizedPhone), [companyPhones, normalizedPhone]);
   const selectedLinkedProfile = selectedLinkedContactId ? profilesById.get(selectedLinkedContactId) : null;
@@ -1708,7 +1709,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                 >
                   <Copy className="h-3 w-3" /> {company.public_id}
                 </Badge>
-                {canEdit && (
+                {canEditCompany && (
                   <Badge
                     variant="outline"
                     className="h-7 cursor-pointer gap-1 border-primary/30 px-2.5 text-xs text-primary hover:bg-primary/10"
@@ -1723,6 +1724,11 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
               {company.status === "merged" && company.merged_into_company_id && !onOpenCompany && (
                 <div className="rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   Эта запись объединена с другой компанией. Откройте каноническую карточку из списка компаний.
+                </div>
+              )}
+              {company.status === "archived" && (
+                <div className="rounded-lg border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  Архивная компания доступна только для просмотра. Восстановление выполняется из списка компаний.
                 </div>
               )}
               <div className="flex flex-wrap gap-2 pt-1">
@@ -1763,7 +1769,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
               </div>
               <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
                 <TabsContent value="profile" className="mt-0 space-y-4">
-                  <CompanyProfileOverview company={company} onRefreshRegistry={() => refreshRegistry.mutate()} isRefreshing={refreshRegistry.isPending} />
+                  <CompanyProfileOverview company={company} onRefreshRegistry={canEditCompany ? () => refreshRegistry.mutate() : undefined} isRefreshing={refreshRegistry.isPending} />
                   <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
                     {company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" /><a href={`mailto:${company.email}`} className="hover:text-foreground hover:underline">{company.email}</a></div>}
                     {normalizedPhone && <div className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${normalizedPhone}`} className="hover:text-foreground hover:underline">{normalizedPhone}</a><span className="ml-auto flex gap-1"><CallButton phone={normalizedPhone} companyId={company.id} size="sm" /><SmsButton phone={normalizedPhone} companyId={company.id} size="sm" /></span></div>}
@@ -1811,7 +1817,7 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
                 </TabsContent>
                 <TabsContent value="feed" className="m-0 flex min-h-0 flex-1 flex-col">
                   <div className="mb-2 flex items-center gap-2 text-sm font-medium"><Activity className="h-4 w-4 text-primary" />Лента компании</div>
-                  <ContactFeedTab companyId={company.id} embedded readOnly={!canEdit} />
+                  <ContactFeedTab companyId={company.id} embedded readOnly={!canEditCompany} />
                 </TabsContent>
                 <TabsContent value="telegram" className="mt-0 space-y-3">
                   <CompanyTelegramSummary profiles={profilesQuery.data ?? []} contacts={contactsQuery.data ?? []} onOpenContact={setSelectedLinkedContactId} />
