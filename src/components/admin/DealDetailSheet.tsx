@@ -1251,7 +1251,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           </TabsContent>
 
           {/* Лента — единая amoCRM-подобная лента (переиспользует ContactFeedTab) */}
-          <TabsContent value="feed" className="flex-1 overflow-y-auto p-4 sm:p-6 mt-0 data-[state=inactive]:hidden">
+          <TabsContent value="feed" className="flex-1 min-h-0 overflow-hidden p-3 sm:p-4 mt-0 data-[state=inactive]:hidden">
             <ContactFeedTab
               dealId={deal.id}
               contactId={deal.profile_id ?? profile?.id ?? undefined}
