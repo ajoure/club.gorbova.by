@@ -432,6 +432,92 @@ Deno.serve(async (req) => {
       return json({ error: "invalid_download_kind" }, 400);
     }
 
+    if (action === "apply_transcript_text") {
+      // Internal admin fallback: accepts a pre-built transcript (e.g. produced
+      // out-of-band from an audio file too large for a single edge invocation),
+      // generates the executive summary + DOCX, uploads it and marks the
+      // transcript row as ready. Audio must already be present as an asset.
+      const transcriptText = typeof body?.transcript_text === "string" ? body.transcript_text.trim() : "";
+      if (transcriptText.length < 200) return json({ error: "transcript_text_too_short" }, 400);
+      if (!LOVABLE_API_KEY) return json({ error: "missing_lovable_api_key" }, 500);
+      const event = await getLiveEvent(service, eventId);
+      const { data: audio } = await service
+        .from("live_event_audio_assets")
+        .select("*")
+        .eq("live_event_id", eventId)
+        .eq("status", "ready")
+        .order("copied_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!audio?.id) return json({ error: "audio_not_ready" }, 409);
+
+      const { data: existing } = await service
+        .from("live_event_transcripts")
+        .select("*")
+        .eq("audio_asset_id", audio.id)
+        .maybeSingle();
+      const pending = {
+        live_event_id: eventId,
+        audio_asset_id: audio.id,
+        status: "processing",
+        requested_by: auth.user.id,
+        error_code: null,
+        error_message: null,
+      };
+      let transcriptRow: any = existing;
+      if (existing) {
+        const { data, error } = await service.from("live_event_transcripts").update(pending).eq("id", existing.id).select("*").single();
+        if (error) throw error;
+        transcriptRow = data;
+      } else {
+        const { data, error } = await service.from("live_event_transcripts").insert(pending).select("*").single();
+        if (error) throw error;
+        transcriptRow = data;
+      }
+
+      try {
+        const brief = await makeWebinarBrief(LOVABLE_API_KEY, transcriptText, "");
+        const generatedAt = new Date().toISOString();
+        const docx = await buildLiveEventTranscriptDocx({
+          title: event.title,
+          eventDate: event.scheduled_at,
+          generatedAt,
+          executiveSummary: brief.executiveSummary,
+          keyPoints: brief.keyPoints,
+          actionItems: brief.actionItems,
+          transcript: transcriptText,
+        });
+        const docxPath = `${eventId}/transcripts/${transcriptRow.id}/transcription.docx`;
+        const { error: docxUploadError } = await service.storage.from(BUCKET).upload(docxPath, docx, {
+          contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          upsert: true,
+        });
+        if (docxUploadError) throw new Error("docx_upload_failed");
+        const { data: ready, error: readyError } = await service.from("live_event_transcripts").update({
+          status: "ready",
+          transcript_text: transcriptText,
+          executive_summary: brief.executiveSummary,
+          key_points: brief.keyPoints,
+          action_items: brief.actionItems,
+          docx_storage_bucket: BUCKET,
+          docx_storage_path: docxPath,
+          generated_at: generatedAt,
+          error_code: null,
+          error_message: null,
+        }).eq("id", transcriptRow.id).select("*").single();
+        if (readyError) throw readyError;
+        return json({ ok: true, transcript: ready });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await service.from("live_event_transcripts").update({
+          status: "failed",
+          error_code: message.slice(0, 80),
+          error_message: message.slice(0, 500),
+        }).eq("id", transcriptRow.id);
+        throw error;
+      }
+    }
+
     return json({ error: "unknown_action" }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
