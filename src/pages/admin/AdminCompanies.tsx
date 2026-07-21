@@ -1760,15 +1760,69 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                   <TabsTrigger value="artifacts" className="text-xs sm:text-sm px-2.5 sm:px-3"><BookOpen className="mr-1 h-3.5 w-3.5" />Анкеты</TabsTrigger>
                 </TabsList>
               </div>
-              <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
+              <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto">
+                <div className={cn("px-4 sm:px-6 py-4", activeTab === "feed" ? "pb-2" : "pb-24")}>
                 <TabsContent value="profile" className="mt-0 space-y-4">
-                  <section className="grid gap-2 rounded-2xl border border-border/40 bg-background/75 backdrop-blur p-3 text-sm text-muted-foreground">
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground/80">Каналы связи</div>
-                    {company.email && <div className="flex flex-wrap items-center gap-2"><Mail className="h-4 w-4" /><a href={`mailto:${company.email}`} className="min-w-0 flex-1 break-all hover:text-foreground hover:underline">{company.email}</a><Button size="sm" variant="outline" className="h-7 px-2.5 text-xs shrink-0" onClick={() => setComposeEmailOpen(true)}><Mail className="mr-1 h-3 w-3" />Письмо</Button></div>}
-                    {normalizedPhone && <div className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${normalizedPhone}`} className="hover:text-foreground hover:underline">{normalizedPhone}</a><span className="ml-auto flex gap-1"><CallButton phone={normalizedPhone} companyId={company.id} /><SmsButton phone={normalizedPhone} companyId={company.id} /></span></div>}
-                    {additionalCompanyPhones.map((phone) => <div key={phone} className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${phone}`} className="hover:text-foreground hover:underline">{phone}</a><span className="ml-auto flex gap-1"><CallButton phone={phone} companyId={company.id} /><SmsButton phone={phone} companyId={company.id} /></span></div>)}
-                    {!company.email && companyPhones.length === 0 && "Контактные данные не заполнены."}
-                  </section>
+                  <Card className="border-border/40">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                        <Link2 className="h-4 w-4 text-primary" />
+                        Каналы связи
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3 text-sm">
+                      {company.email && (
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            <a href={`mailto:${company.email}`} className="min-w-0 truncate hover:text-foreground hover:underline">{company.email}</a>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <Button variant="outline" size="sm" className="h-7 px-2.5 text-xs" onClick={() => setComposeEmailOpen(true)}>
+                              <Mail className="mr-1 h-3 w-3" />Письмо
+                            </Button>
+                            <Button variant="ghost" size="sm" className="h-7 w-7" onClick={() => { navigator.clipboard.writeText(company.email!); toast.success("Email скопирован"); }}>
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                      {normalizedPhone && (
+                        <>
+                          {company.email && <Separator />}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <Phone className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <a href={`tel:${normalizedPhone}`} className="min-w-0 truncate hover:text-foreground hover:underline">{normalizedPhone}</a>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <CallButton phone={normalizedPhone} companyId={company.id} />
+                              <SmsButton phone={normalizedPhone} companyId={company.id} />
+                            </div>
+                          </div>
+                        </>
+                      )}
+                      {additionalCompanyPhones.map((phone, idx) => (
+                        <div key={phone}>
+                          {(company.email || normalizedPhone || idx > 0) && <Separator />}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <Phone className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <a href={`tel:${phone}`} className="min-w-0 truncate hover:text-foreground hover:underline">{phone}</a>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <CallButton phone={phone} companyId={company.id} />
+                              <SmsButton phone={phone} companyId={company.id} />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {!company.email && companyPhones.length === 0 && (
+                        <p className="text-xs text-muted-foreground">Контактные данные не заполнены.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
 
                   <CompanyProfileOverview company={company} onRefreshRegistry={canEditCompany ? () => refreshRegistry.mutate() : undefined} isRefreshing={refreshRegistry.isPending} />
                 </TabsContent>
