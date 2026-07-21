@@ -167,7 +167,7 @@ serve(async (req) => {
     const request: KinescopeRequest = await req.json();
     const { action, instance_id, api_token: directToken, project_id, folder_id, video_id, live_event_id, page = 1, per_page = 100 } = request;
 
-    console.log(`Kinescope API action: ${action} actor: ${userData.user.id}`);
+    console.log(`Kinescope API action: ${action} internal: ${isServiceRoleCall}`);
 
     // Get API token
     let apiToken = directToken || null;
