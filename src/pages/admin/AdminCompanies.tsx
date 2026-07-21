@@ -1879,10 +1879,7 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                 <TabsContent value="email" className="mt-0 space-y-4">
                   <ContactEmailHistory companyId={company.id} userId={null} email={company.email} clientName={normalizeCompanyName(company.full_name)} />
                 </TabsContent>
-                <TabsContent value="feed" className="m-0 flex min-h-0 flex-1 flex-col">
-                  <div className="mb-2 flex items-center gap-2 text-sm font-medium"><Activity className="h-4 w-4 text-primary" />Лента компании</div>
-                  <ContactFeedTab companyId={company.id} embedded readOnly={!canEditCompany} />
-                </TabsContent>
+                {/* value="feed" вынесен наверх — вне внешнего скролла */}
                 <TabsContent value="telegram" className="mt-0 space-y-3">
                   <CompanyTelegramSummary profiles={profilesQuery.data ?? []} contacts={contactsQuery.data ?? []} onOpenContact={setSelectedLinkedContactId} />
                 </TabsContent>
