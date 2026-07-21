@@ -280,7 +280,7 @@ export default function AdminProductsV2() {
     const pageValidation = formData.page_slug.trim()
       ? validateProductPageAddress(formData.page_slug)
       : null;
-    if (pageValidation && pageValidation.ok === false) {
+    if (pageValidation && !pageValidation.ok) {
       toast.error(pageValidation.error);
       return;
     }

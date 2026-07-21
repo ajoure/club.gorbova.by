@@ -62,7 +62,7 @@ export async function saveProductPageAddress(args: {
   address: string;
 }): Promise<ProductSitePageSummary> {
   const validation = validateProductPageAddress(args.address);
-  if (validation.ok === false) throw new Error(validation.error);
+  if (!validation.ok) throw new Error(validation.error);
 
   const existing = await getProductSitePage(args.productId);
   await assertProductPageSlugAvailable(validation.slug, existing?.id);
