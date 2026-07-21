@@ -15,6 +15,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Bookmark,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -35,10 +36,12 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Save,
   ShieldCheck,
   UserRound,
   CalendarDays,
   X,
+  Trash2,
   Download,
   FileText,
 } from "lucide-react";
@@ -337,8 +340,23 @@ const PAGE_SIZE = 25;
 const COMPANY_COLUMNS_STORAGE_KEY = "admin_companies_columns_v1";
 const COMPANY_COLUMNS_CONFIG_VERSION_KEY = "admin_companies_columns_config_version";
 const COMPANY_COLUMNS_CONFIG_VERSION = "3";
+const COMPANY_SAVED_FILTERS_STORAGE_KEY = "admin_companies_saved_filters_v1";
 type CompanySortKey = "created_at" | "full_name" | "public_id";
 type SortDirection = "asc" | "desc";
+
+interface SavedCompanyFilter {
+  id: string;
+  name: string;
+  query: string;
+  status: "all" | CompanyStatus;
+  kind: "all" | CompanyKind;
+  contactsFilter: "all" | "with" | "without";
+  dealsFilter: "all" | "with" | "without";
+  createdFrom: string | null;
+  createdTo: string | null;
+  sortKey: CompanySortKey;
+  sortDirection: SortDirection;
+}
 
 const DEFAULT_COMPANY_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 48, order: 0 },
@@ -447,6 +465,17 @@ export default function AdminCompanies() {
   const [createdRange, setCreatedRange] = useState<DateRange | undefined>();
   const [sortKey, setSortKey] = useState<CompanySortKey>("created_at");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [savedFilters, setSavedFilters] = useState<SavedCompanyFilter[]>(() => {
+    try {
+      const stored = localStorage.getItem(COMPANY_SAVED_FILTERS_STORAGE_KEY);
+      const parsed = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [saveFilterOpen, setSaveFilterOpen] = useState(false);
+  const [saveFilterName, setSaveFilterName] = useState("");
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [sheetImportOpen, setSheetImportOpen] = useState(false);
@@ -578,6 +607,10 @@ export default function AdminCompanies() {
     localStorage.setItem(COMPANY_COLUMNS_CONFIG_VERSION_KEY, COMPANY_COLUMNS_CONFIG_VERSION);
   }, [columns]);
 
+  useEffect(() => {
+    localStorage.setItem(COMPANY_SAVED_FILTERS_STORAGE_KEY, JSON.stringify(savedFilters));
+  }, [savedFilters]);
+
   const handleColumnResize = useCallback((key: string, width: number) => {
     setColumns((current) => current.map((column) => column.key === key ? { ...column, width } : column));
   }, []);
@@ -665,6 +698,39 @@ export default function AdminCompanies() {
   };
 
   const resetPage = () => setPage(0);
+  const applySavedFilter = (saved: SavedCompanyFilter) => {
+    setQuery(saved.query);
+    setStatus(saved.status);
+    setKind(saved.kind);
+    setContactsFilter(saved.contactsFilter);
+    setDealsFilter(saved.dealsFilter);
+    setSortKey(saved.sortKey);
+    setSortDirection(saved.sortDirection);
+    setCreatedRange(saved.createdFrom ? { from: new Date(saved.createdFrom), to: saved.createdTo ? new Date(saved.createdTo) : undefined } : undefined);
+    resetPage();
+    toast.success(`Фильтр «${saved.name}» применён`);
+  };
+  const saveCurrentFilter = () => {
+    const name = saveFilterName.trim();
+    if (!name) return;
+    const saved: SavedCompanyFilter = {
+      id: crypto.randomUUID(),
+      name,
+      query,
+      status,
+      kind,
+      contactsFilter,
+      dealsFilter,
+      createdFrom: createdRange?.from ? format(createdRange.from, "yyyy-MM-dd") : null,
+      createdTo: createdRange?.to ? format(createdRange.to, "yyyy-MM-dd") : null,
+      sortKey,
+      sortDirection,
+    };
+    setSavedFilters((current) => [saved, ...current.filter((item) => item.name !== name)].slice(0, 20));
+    setSaveFilterName("");
+    setSaveFilterOpen(false);
+    toast.success(`Фильтр «${name}» сохранён`);
+  };
   const handleSort = (nextKey: CompanySortKey) => {
     if (sortKey === nextKey) setSortDirection((currentDirection) => currentDirection === "asc" ? "desc" : "asc");
     else {
@@ -825,6 +891,36 @@ export default function AdminCompanies() {
             </Button>
           )}
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              <Bookmark className="mr-2 h-4 w-4" />
+              Сохранённые фильтры{savedFilters.length > 0 ? ` (${savedFilters.length})` : ""}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-72">
+            {savedFilters.length === 0 && <DropdownMenuItem disabled>Сохранённых фильтров пока нет</DropdownMenuItem>}
+            {savedFilters.map((saved) => (
+              <DropdownMenuItem key={saved.id} onSelect={() => applySavedFilter(saved)}>
+                <Bookmark className="mr-2 h-4 w-4" />{saved.name}
+              </DropdownMenuItem>
+            ))}
+            {savedFilters.length > 0 && <DropdownMenuSeparator />}
+            {savedFilters.map((saved) => (
+              <DropdownMenuItem key={`delete-${saved.id}`} className="text-destructive focus:text-destructive" onSelect={() => setSavedFilters((current) => current.filter((item) => item.id !== saved.id))}>
+                <Trash2 className="mr-2 h-4 w-4" />Удалить «{saved.name}»
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => setSaveFilterOpen(true)}>
+              <Save className="mr-2 h-4 w-4" />Сохранить текущий фильтр
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <span className="text-xs text-muted-foreground">Фильтры и сортировка сохраняются только для вашей рабочей сессии.</span>
       </div>
 
       <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
@@ -1025,6 +1121,19 @@ export default function AdminCompanies() {
               {mergeCompanies.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Объединить
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={saveFilterOpen} onOpenChange={setSaveFilterOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Сохранить фильтр</DialogTitle>
+            <DialogDescription>Сохранятся текущие поиск, фильтры, диапазон даты и сортировка. Фильтр доступен только вам в этом браузере.</DialogDescription>
+          </DialogHeader>
+          <Input value={saveFilterName} onChange={(event) => setSaveFilterName(event.target.value)} placeholder="Например: Компании без контактов" autoFocus />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSaveFilterOpen(false)}>Отмена</Button>
+            <Button onClick={saveCurrentFilter} disabled={!saveFilterName.trim()}><Save className="mr-2 h-4 w-4" />Сохранить</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
