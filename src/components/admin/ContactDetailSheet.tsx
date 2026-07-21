@@ -2052,15 +2052,26 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                   <CardTitle className="text-sm text-muted-foreground">Контактные данные</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <Mail className="w-4 h-4 text-muted-foreground" />
-                      <span>{contact.email || "—"}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <span className="truncate">{contact.email || "—"}</span>
                     </div>
                     {contact.email && (
-                      <Button variant="ghost" size="sm" onClick={() => copyToClipboard(contact.email!, "Email")}>
-                        <Copy className="w-3 h-3" />
-                      </Button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2.5 text-xs"
+                          onClick={() => setComposeEmailOpen(true)}
+                        >
+                          <Mail className="w-3 h-3 mr-1" />
+                          Письмо
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-7 w-7" onClick={() => copyToClipboard(contact.email!, "Email")}>
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
                     )}
                   </div>
                   <Separator />
@@ -2141,22 +2152,6 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                     </>
                   )}
                   
-                  {/* Send email button */}
-                  {contact.email && (
-                    <>
-                      <Separator />
-                      <div className="pt-2">
-                        <Button
-                          variant="outline"
-                          className="w-full gap-2"
-                          onClick={() => setComposeEmailOpen(true)}
-                        >
-                          <Mail className="w-4 h-4" />
-                          Написать письмо
-                        </Button>
-                      </div>
-                    </>
-                  )}
                 </CardContent>
               </Card>
 

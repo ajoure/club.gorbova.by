@@ -75,6 +75,7 @@ import { DealPayerDocumentsCard } from "./DealPayerDocumentsCard";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
 import { CallButton } from "./calls/CallButton";
+import { SmsButton } from "./sms/SmsButton";
 import { InternalInstallmentBlock } from "@/components/installments/InternalInstallmentBlock";
 
 interface DealDetailSheetProps {
@@ -871,28 +872,36 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                   </button>
                 </div>
                 <Separator />
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-muted-foreground" />
-                    <span>{deal.customer_email || profile?.email || "—"}</span>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="truncate">{deal.customer_email || profile?.email || "—"}</span>
                   </div>
                   {(deal.customer_email || profile?.email) && (
-                    <Button variant="ghost" size="sm" onClick={() => copyToClipboard(deal.customer_email || profile?.email, "Email")}>
-                      <Copy className="w-3 h-3" />
-                    </Button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button variant="ghost" size="sm" className="h-7 w-7" onClick={() => copyToClipboard(deal.customer_email || profile?.email, "Email")}>
+                        <Copy className="w-3 h-3" />
+                      </Button>
+                    </div>
                   )}
                 </div>
                 <Separator />
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Phone className="w-4 h-4 text-muted-foreground" />
-                    <span>{deal.customer_phone || profile?.phone || "—"}</span>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Phone className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="truncate">{deal.customer_phone || profile?.phone || "—"}</span>
                   </div>
                   {(deal.customer_phone || profile?.phone) && (
-                    <CallButton
-                      phone={deal.customer_phone || profile?.phone}
-                      dealId={deal.id}
-                    />
+                    <div className="flex items-center gap-1 shrink-0">
+                      <CallButton
+                        phone={deal.customer_phone || profile?.phone}
+                        dealId={deal.id}
+                      />
+                      <SmsButton
+                        phone={deal.customer_phone || profile?.phone}
+                        dealId={deal.id}
+                      />
+                    </div>
                   )}
                 </div>
 
