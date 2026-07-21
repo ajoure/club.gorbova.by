@@ -10109,6 +10109,109 @@ export type Database = {
           },
         ]
       }
+      live_event_audio_assets: {
+        Row: {
+          copied_at: string | null
+          created_at: string
+          error_code: string | null
+          error_message: string | null
+          id: string
+          live_event_id: string
+          mime_type: string | null
+          size_bytes: number | null
+          source_file_name: string | null
+          source_file_size: number | null
+          source_file_type: string | null
+          source_language: string | null
+          source_track_id: string
+          source_video_id: string
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          updated_at: string
+        }
+        Insert: {
+          copied_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          live_event_id: string
+          mime_type?: string | null
+          size_bytes?: number | null
+          source_file_name?: string | null
+          source_file_size?: number | null
+          source_file_type?: string | null
+          source_language?: string | null
+          source_track_id: string
+          source_video_id: string
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          updated_at?: string
+        }
+        Update: {
+          copied_at?: string | null
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          live_event_id?: string
+          mime_type?: string | null
+          size_bytes?: number | null
+          source_file_name?: string | null
+          source_file_size?: number | null
+          source_file_type?: string | null
+          source_language?: string | null
+          source_track_id?: string
+          source_video_id?: string
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_audio_assets_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_event_comment_reactions: {
+        Row: {
+          comment_id: string
+          created_at: string
+          emoji: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          comment_id: string
+          created_at?: string
+          emoji: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          comment_id?: string
+          created_at?: string
+          emoji?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_comment_reactions_comment_id_fkey"
+            columns: ["comment_id"]
+            isOneToOne: false
+            referencedRelation: "live_event_comments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_event_comments: {
         Row: {
           author_avatar_url: string | null
@@ -10155,38 +10258,6 @@ export type Database = {
             columns: ["live_event_id"]
             isOneToOne: false
             referencedRelation: "live_events"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      live_event_comment_reactions: {
-        Row: {
-          comment_id: string
-          created_at: string
-          emoji: string
-          id: string
-          user_id: string
-        }
-        Insert: {
-          comment_id: string
-          created_at?: string
-          emoji: string
-          id?: string
-          user_id: string
-        }
-        Update: {
-          comment_id?: string
-          created_at?: string
-          emoji?: string
-          id?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "live_event_comment_reactions_comment_id_fkey"
-            columns: ["comment_id"]
-            isOneToOne: false
-            referencedRelation: "live_event_comments"
             referencedColumns: ["id"]
           },
         ]
@@ -10900,6 +10971,78 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "live_event_timeline_events_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_event_transcripts: {
+        Row: {
+          action_items: Json
+          audio_asset_id: string
+          created_at: string
+          docx_storage_bucket: string
+          docx_storage_path: string | null
+          error_code: string | null
+          error_message: string | null
+          executive_summary: string | null
+          generated_at: string | null
+          id: string
+          key_points: Json
+          live_event_id: string
+          requested_by: string | null
+          status: string
+          transcript_text: string | null
+          updated_at: string
+        }
+        Insert: {
+          action_items?: Json
+          audio_asset_id: string
+          created_at?: string
+          docx_storage_bucket?: string
+          docx_storage_path?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          executive_summary?: string | null
+          generated_at?: string | null
+          id?: string
+          key_points?: Json
+          live_event_id: string
+          requested_by?: string | null
+          status?: string
+          transcript_text?: string | null
+          updated_at?: string
+        }
+        Update: {
+          action_items?: Json
+          audio_asset_id?: string
+          created_at?: string
+          docx_storage_bucket?: string
+          docx_storage_path?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          executive_summary?: string | null
+          generated_at?: string | null
+          id?: string
+          key_points?: Json
+          live_event_id?: string
+          requested_by?: string | null
+          status?: string
+          transcript_text?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_transcripts_audio_asset_id_fkey"
+            columns: ["audio_asset_id"]
+            isOneToOne: true
+            referencedRelation: "live_event_audio_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_event_transcripts_live_event_id_fkey"
             columns: ["live_event_id"]
             isOneToOne: false
             referencedRelation: "live_events"
@@ -19566,6 +19709,35 @@ export type Database = {
         }
         Returns: undefined
       }
+      autoweb_history_comments_list: {
+        Args: { _session_id: string; _source_event_id: string }
+        Returns: {
+          author_avatar_url: string
+          author_display_name: string
+          author_nickname_color: string
+          author_role: string
+          content: string
+          created_at: string
+          id: string
+          user_id: string
+        }[]
+      }
+      autoweb_history_questions_list: {
+        Args: { _session_id: string; _source_event_id: string }
+        Returns: {
+          answered_at: string
+          answered_by: string
+          author_avatar_url: string
+          author_display_name: string
+          author_nickname_color: string
+          author_role: string
+          content: string
+          created_at: string
+          id: string
+          is_answered: boolean
+          user_id: string
+        }[]
+      }
       autoweb_scenario_apply: {
         Args: { _live_event_id: string }
         Returns: Json
@@ -19693,6 +19865,10 @@ export type Database = {
           marked_count: number
           remaining_unread_count: number
         }[]
+      }
+      can_send_live_comment_reaction: {
+        Args: { _user_id: string }
+        Returns: boolean
       }
       can_send_reaction: {
         Args: { _event_id: string; _user_id: string }
@@ -21063,6 +21239,15 @@ export type Database = {
           p_profile_id: string
         }
         Returns: Json
+      }
+      live_event_comment_reaction_summary: {
+        Args: { _comment_ids: string[] }
+        Returns: {
+          comment_id: string
+          emoji: string
+          reaction_count: number
+          user_reacted: boolean
+        }[]
       }
       log_document_package_event: {
         Args: { _action: string; _meta?: Json; _package_id: string }

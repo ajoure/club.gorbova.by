@@ -82,20 +82,20 @@ export function useToggleLiveEventCommentReaction() {
   return useMutation({
     mutationFn: async ({ commentId, emoji }: { commentId: string; emoji: string }) => {
       if (!user?.id) throw new Error("auth_required");
-      const { data: existing, error: lookupError } = await supabase
+      const { data: existing, error: lookupError } = await (supabase
         .from("live_event_comment_reactions" as any)
         .select("id")
         .eq("comment_id", commentId)
         .eq("user_id", user.id)
         .eq("emoji", emoji)
-        .maybeSingle();
+        .maybeSingle() as any);
       if (lookupError) throw lookupError;
 
-      if (existing?.id) {
+      if ((existing as any)?.id) {
         const { error } = await supabase
           .from("live_event_comment_reactions" as any)
           .delete()
-          .eq("id", existing.id);
+          .eq("id", (existing as any).id);
         if (error) throw error;
       } else {
         const { error } = await supabase
