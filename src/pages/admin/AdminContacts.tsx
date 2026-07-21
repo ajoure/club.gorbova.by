@@ -1885,7 +1885,7 @@ export default function AdminContacts() {
         onBulkMerge={selectedCount >= 2 ? () => setShowMergeDialog(true) : undefined}
         onBulkArchive={eligibleForArchive.length > 0 ? () => setShowBulkArchiveDialog(true) : undefined}
         onBulkCreateAccounts={eligibleForInvite.length > 0 ? () => setShowBulkInviteDialog(true) : undefined}
-        onBulkCreateDeals={isAdmin() ? () => setShowBulkCreateDeals(true) : undefined}
+        onBulkCreateDeals={canWrite("deals") || isSuperAdmin() ? () => setShowBulkCreateDeals(true) : undefined}
         totalCount={sortedContacts.length}
         entityName="контактов"
         onSelectAll={selectAll}

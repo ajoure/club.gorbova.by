@@ -495,14 +495,11 @@ export default function AdminCompanies() {
   });
   const debouncedQuery = useDebouncedValue(query, 250);
   const selectedCompanyId = searchParams.get("company");
-  // Section RBAC is deliberately split: edit-level roles may update a
-  // canonical company and its feed, while create/import/archive/merge/restore
-  // remain manage-level operations.
-  // Administrators are always allowed to edit canonical companies. Keep the
-  // explicit role bypass here as a second guard for sessions where the access
-  // RPC is stale while the role has already been resolved in the client.
+  // RBAC v3 unified: любой уровень edit+ на разделе "companies" разрешает
+  // create / edit / delete (+ импорт, merge, archive, restore). Read-only
+  // не даёт мутаций. super_admin / admin — полный доступ (bypass).
   const canEdit = access.isSuperAdmin || access.isAdmin || access.canAccessSection("companies", "edit");
-  const canManage = access.canAccessSection("companies", "manage");
+  const canManage = canEdit;
 
   const filters = useMemo(() => ({
     q: debouncedQuery || undefined,
@@ -1046,7 +1043,7 @@ export default function AdminCompanies() {
         }}
       />
       {isDragging && selectionBox && <SelectionBox startX={selectionBox.startX} startY={selectionBox.startY} endX={selectionBox.endX} endY={selectionBox.endY} />}
-      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canManage && selectedCount >= 2 ? () => { setMergeTargetId(mergeEligibleCompanies[0]?.id ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canManage && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "active") ? () => setArchiveReasonOpen(true) : undefined} onBulkRestore={canManage && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "archived") ? () => restoreCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "archived").map((company) => company.id)) : undefined} onBulkEdit={canEdit && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} onBulkCreateDeals={access.isAdmin || access.isSuperAdmin ? () => setBulkCreateDealsOpen(true) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
+      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canManage && selectedCount >= 2 ? () => { setMergeTargetId(mergeEligibleCompanies[0]?.id ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canManage && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "active") ? () => setArchiveReasonOpen(true) : undefined} onBulkRestore={canManage && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "archived") ? () => restoreCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "archived").map((company) => company.id)) : undefined} onBulkEdit={canEdit && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} onBulkCreateDeals={(access.isAdmin || access.isSuperAdmin || access.canAccessSection("deals", "edit")) ? () => setBulkCreateDealsOpen(true) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
       <BulkCreateDealsDialog open={bulkCreateDealsOpen} onOpenChange={setBulkCreateDealsOpen} sourceType="company" sourceIds={Array.from(selectedCompanyIds)} onCreated={() => { clearSelection(); queryClient.invalidateQueries({ queryKey: ["admin-deals"] }); }} />
       <Dialog open={archiveReasonOpen} onOpenChange={setArchiveReasonOpen}>
         <DialogContent>
