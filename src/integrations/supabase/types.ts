@@ -22145,6 +22145,7 @@ export type Database = {
         Args: { p_profile_id: string }
         Returns: string
       }
+      referral_admin_get_summary: { Args: never; Returns: Json }
       referral_attach_current_profile: {
         Args: { p_captured_at: string; p_partner_code: string }
         Returns: Json
