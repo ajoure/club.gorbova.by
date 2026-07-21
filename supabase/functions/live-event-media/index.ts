@@ -290,7 +290,17 @@ async function generateTranscript(service: any, eventId: string, actorId: string
     .select("*")
     .eq("audio_asset_id", audio.id)
     .maybeSingle();
+  // Idempotent: a completed transcript for this exact audio asset is returned
+  // as-is unless the caller explicitly requests a rebuild.
   if (!force && existing?.status === "ready" && existing.docx_storage_path) return { ok: true, transcript: existing, cached: true };
+
+  // Guard the OOM path up-front: the gateway rejects transcription bodies over
+  // ~25 MiB, and buffering more than that also crashes the edge worker. Long
+  // recordings must be handled out-of-band via `apply_transcript_text`.
+  const knownSize = Number(audio.size_bytes || audio.source_file_size || 0);
+  if (knownSize && knownSize > AUDIO_TRANSCRIBE_MAX_BYTES) {
+    return { ok: false, code: "audio_too_large", status: 413, size_bytes: knownSize, max_bytes: AUDIO_TRANSCRIBE_MAX_BYTES };
+  }
 
   const pending = {
     live_event_id: eventId,
@@ -312,20 +322,41 @@ async function generateTranscript(service: any, eventId: string, actorId: string
   }
 
   try {
+    // Stream from private Storage → gateway as multipart. No base64, no full
+    // buffering of the file in worker memory.
     const { data: blob, error: downloadError } = await service.storage.from(audio.storage_bucket || BUCKET).download(audio.storage_path);
     if (downloadError || !blob) throw new Error("stored_audio_download_failed");
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    if (bytes.byteLength < 4096) throw new Error("audio_too_small");
+    if (blob.size < 4096) throw new Error("audio_too_small");
+    if (blob.size > AUDIO_TRANSCRIBE_MAX_BYTES) {
+      // Size becomes known only after download for legacy rows without size_bytes.
+      await service.from("live_event_transcripts").update({
+        status: "failed",
+        error_code: "audio_too_large",
+        error_message: `size=${blob.size} bytes exceeds ${AUDIO_TRANSCRIBE_MAX_BYTES}`,
+      }).eq("id", transcriptRow.id);
+      return { ok: false, code: "audio_too_large", status: 413, size_bytes: blob.size, max_bytes: AUDIO_TRANSCRIBE_MAX_BYTES };
+    }
 
-    const { transcript, summary } = await transcribeAndSummarize({
-      apiKey: LOVABLE_API_KEY,
-      base64: base64FromBytes(bytes),
-      format: audioFormatFromMime(audio.mime_type || blob.type || "audio/mp4"),
-      kind: "webinar",
+    const mime = audio.mime_type || blob.type || "audio/mp4";
+    const ext = ({ "audio/webm": "webm", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/ogg": "ogg" } as Record<string, string>)[mime.split(";")[0]] ?? "mp4";
+    const form = new FormData();
+    form.append("model", TRANSCRIBE_MODEL);
+    form.append("language", "ru");
+    form.append("file", blob, `recording.${ext}`);
+    const sttResponse = await fetch(TRANSCRIBE_ENDPOINT, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${LOVABLE_API_KEY}` },
+      body: form,
     });
-    if (!transcript.trim()) throw new Error("empty_transcript");
+    if (!sttResponse.ok) {
+      const detail = (await sttResponse.text().catch(() => "")).slice(0, 300);
+      throw new Error(`stt_${sttResponse.status}${detail ? `:${detail}` : ""}`);
+    }
+    const sttPayload = await sttResponse.json();
+    const transcript = String(sttPayload?.text || "").trim();
+    if (!transcript) throw new Error("empty_transcript");
 
-    const brief = await makeWebinarBrief(LOVABLE_API_KEY, transcript, summary);
+    const brief = await makeWebinarBrief(LOVABLE_API_KEY, transcript, "");
     const generatedAt = new Date().toISOString();
     const docx = await buildLiveEventTranscriptDocx({
       title: event.title,
