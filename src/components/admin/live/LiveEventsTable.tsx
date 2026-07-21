@@ -168,7 +168,10 @@ export function LiveEventsTable({
   onDelete,
   onSelectionChange,
   selectionResetKey,
+  eventsWithAccessRule,
+  onEditAccess,
 }: Props) {
+
   const { visibleColumns, handleColumnResize, handleDragEnd } = useLiveEventsColumns();
   const accessRuleFlagsReady = eventsWithAccessRule !== undefined;
   const hasRule = (id: string) => !accessRuleFlagsReady || eventsWithAccessRule!.has(id);
