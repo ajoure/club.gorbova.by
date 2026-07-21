@@ -35,6 +35,7 @@ import {
   Instagram, LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { localizeAuditAction, localizeEntityType, localizeReasonCode } from "@/lib/crmDisplayLabels";
 import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialog";
 import { CallRecordingPlayer } from "@/components/admin/calls/CallRecordingPlayer";
 import { MediaLightbox } from "@/components/admin/chat/MediaLightbox";
