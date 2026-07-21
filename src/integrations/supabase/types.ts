@@ -19709,6 +19709,35 @@ export type Database = {
         }
         Returns: undefined
       }
+      autoweb_history_comments_list: {
+        Args: { _session_id: string; _source_event_id: string }
+        Returns: {
+          author_avatar_url: string
+          author_display_name: string
+          author_nickname_color: string
+          author_role: string
+          content: string
+          created_at: string
+          id: string
+          user_id: string
+        }[]
+      }
+      autoweb_history_questions_list: {
+        Args: { _session_id: string; _source_event_id: string }
+        Returns: {
+          answered_at: string
+          answered_by: string
+          author_avatar_url: string
+          author_display_name: string
+          author_nickname_color: string
+          author_role: string
+          content: string
+          created_at: string
+          id: string
+          is_answered: boolean
+          user_id: string
+        }[]
+      }
       autoweb_scenario_apply: {
         Args: { _live_event_id: string }
         Returns: Json
