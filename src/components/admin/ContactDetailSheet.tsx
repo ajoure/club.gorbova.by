@@ -1651,7 +1651,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
   return (
     <>
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className={SHEET_SHELL_CLASS}>
+      <SheetContent className={getEntityShellClass("contact")}>
         {/* Compact header for mobile - with padding-right for close button */}
         <SheetHeader className="px-4 sm:px-6 pt-4 sm:pt-6 pb-0 pr-14 sm:pr-16 flex-shrink-0 space-y-1.5">
           {/* Row 1: Avatar + Name + Email */}
