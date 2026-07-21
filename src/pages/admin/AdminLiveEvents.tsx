@@ -757,6 +757,14 @@ export default function AdminLiveEvents() {
     mutationFn: async (data: LiveEventForm) => {
       if (slugExists) throw new Error("Такой slug уже существует. Выберите другой.");
 
+      // FORENSIC PATCH: refuse to touch an existing event before its access
+      // rules have been loaded & hydrated into the form. Prevents the
+      // hydration race that briefly wiped live_event_access_rules for an
+      // ongoing broadcast.
+      if (editingId && !accessRulesLoadedForEditing) {
+        throw new Error("Правила доступа ещё загружаются. Подождите пару секунд и повторите сохранение.");
+      }
+
       // sourceKind вычисляется ниже в зависимости от effectiveEventType (Sprint A patch).
 
       // Merge metadata: preserve existing provider data
