@@ -33,6 +33,7 @@ export function BulkActionsBar({
   onBulkCreateAccounts,
   onBulkEdit,
   onBulkCreateDeals,
+  onBulkMove,
   onSelectAll,
   totalCount,
   entityName = "элементов",
