@@ -398,6 +398,19 @@ const companyRelationshipLabels: Record<string, string> = {
   partner: "Партнёр",
 };
 
+const companyContactRelationshipLabels: Record<string, string> = {
+  billing_contact: "Плательщик",
+  primary_contact: "Основной контакт",
+  contact_person: "Контактное лицо",
+  authorized_representative: "Представитель",
+  director: "Директор",
+  accountant: "Бухгалтер",
+  founder: "Учредитель",
+  contract_signatory: "Подписант",
+  employee: "Сотрудник",
+  other: "Другое",
+};
+
 const statusLabels: Record<CompanyStatus, string> = {
   active: "Активна",
   archived: "В архиве",
