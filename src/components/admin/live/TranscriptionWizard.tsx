@@ -1,140 +1,108 @@
-import { useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Progress } from "@/components/ui/progress";
+import { useMemo } from "react";
+import { AlertTriangle, Loader2, PlayCircle, RefreshCw, RotateCcw, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, CheckCircle2, AlertTriangle, XCircle, Play } from "lucide-react";
-import { useAdminTranscriptionRunner, type TranscriptionStage } from "@/hooks/useAdminTranscriptionRunner";
+import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
+import { useAdminTranscriptionRunner, type RunnerPhase } from "@/hooks/useAdminTranscriptionRunner";
 
-type Props = {
-  liveEventId: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCompleted?: () => void;
-  autoStart?: boolean;
-};
-
-const STAGE_TITLE: Record<TranscriptionStage, string> = {
-  idle: "Готов к запуску",
-  downloading_audio: "Сохраняем аудио",
-  decoding: "Готовим аудио к обработке",
-  planning: "Подготавливаем части",
-  uploading: "Отправляем часть",
-  transcribing: "Распознаём речь",
-  finalizing: "Собираем DOCX",
-  ready: "Готово",
-  failed: "Ошибка",
+const PHASE_LABEL: Record<RunnerPhase, string> = {
+  idle: "Готово к запуску",
+  loading_audio: "Скачиваю аудио",
+  chunking: "Готовлю окна",
+  creating_job: "Создаю задачу",
+  registering_parts: "Регистрирую окна",
+  transcribing: "Транскрибирую окна",
+  finalizing: "Собираю DOCX",
+  ready: "Транскрипт готов",
+  failed: "Ошибка — можно повторить",
   cancelled: "Отменено",
 };
 
-export function TranscriptionWizard({ liveEventId, open, onOpenChange, onCompleted, autoStart }: Props) {
-  const { state, run, cancel, reset, refreshStatus } = useAdminTranscriptionRunner(liveEventId);
+function humanBytes(n: number | null) {
+  if (!n) return "—";
+  const mb = n / (1024 * 1024);
+  return `${mb.toFixed(1)} МБ`;
+}
 
-  useEffect(() => {
-    if (!open) return;
-    void refreshStatus().catch(() => {});
-  }, [open, refreshStatus]);
+function humanMs(ms: number | null) {
+  if (!ms) return "—";
+  const s = Math.round(ms / 1000);
+  const m = Math.floor(s / 60);
+  return `${m}м ${s % 60}с`;
+}
 
-  useEffect(() => {
-    if (open && autoStart && state.stage === "idle") {
-      void run();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, autoStart]);
+type Props = { liveEventId: string; onFinished?: () => void };
 
-  useEffect(() => {
-    if (state.stage === "ready" && onCompleted) onCompleted();
-  }, [state.stage, onCompleted]);
-
-  const running = ["downloading_audio", "decoding", "planning", "uploading", "transcribing", "finalizing"].includes(state.stage);
-  const failed = state.stage === "failed";
-  const done = state.stage === "ready";
-  const cancelled = state.stage === "cancelled";
-
-  const handleClose = () => {
-    if (running) return; // блокируем закрытие во время активной работы
-    onOpenChange(false);
-    if (done) reset();
-  };
+export function TranscriptionWizard({ liveEventId, onFinished }: Props) {
+  const { state, start, retryFailed, cancel, refresh } = useAdminTranscriptionRunner(liveEventId);
+  const percent = state.totalParts > 0 ? Math.round((state.completedParts / state.totalParts) * 100) : 0;
+  const canStart = !state.isActive && state.phase !== "ready";
+  const canRetry = state.phase === "failed" && state.failedParts > 0;
+  const canResume = state.phase === "failed" || state.phase === "cancelled";
+  const failedList = useMemo(() => state.parts.filter((p) => p.status === "failed"), [state.parts]);
 
   return (
-    <Dialog open={open} onOpenChange={(next) => (running ? undefined : onOpenChange(next))}>
-      <DialogContent className="sm:max-w-lg" onInteractOutside={(e) => { if (running) e.preventDefault(); }} onEscapeKeyDown={(e) => { if (running) e.preventDefault(); }}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {done ? <CheckCircle2 className="h-5 w-5 text-green-600" /> : failed ? <XCircle className="h-5 w-5 text-destructive" /> : running ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : <Play className="h-5 w-5 text-primary" />}
-            Транскрибация эфира
-          </DialogTitle>
-          <DialogDescription>
-            {done
-              ? "Всё сохранено. Аудио и DOCX готовы — вкладку можно закрыть."
-              : running
-              ? "Обычно 10–15 минут, зависит от устройства и длины записи. Не закрывайте вкладку — обработка идёт в этом окне."
-              : failed
-              ? "Часть работы не завершилась. Готовые фрагменты уже сохранены на сервере — можно продолжить с того же места."
-              : cancelled
-              ? "Обработка отменена. Сохранённые части остаются на сервере — можно продолжить в любой момент."
-              : "Браузерная вкладка помогает подготовить длинную запись по частям, потом сервер собирает документ."}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4 py-2">
-          <div className="rounded-md border bg-muted/30 p-3">
-            <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
-              <span>{STAGE_TITLE[state.stage]}</span>
-              <span>{state.percent}%</span>
-            </div>
-            <Progress value={state.percent} />
-            <div className="mt-2 text-xs text-muted-foreground">
-              {state.totalParts > 0
-                ? `Готово частей: ${state.completedParts} из ${state.totalParts}${state.currentPartIndex !== null ? ` · сейчас часть ${state.currentPartIndex + 1}` : ""}`
-                : "Определяем количество частей…"}
-            </div>
+    <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="font-medium">Частичная транскрибация в браузере</span>
+            <Badge variant={state.phase === "ready" ? "default" : state.phase === "failed" ? "destructive" : "secondary"}>
+              {PHASE_LABEL[state.phase]}
+            </Badge>
           </div>
-
-          {failed && state.error && (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Ошибка</AlertTitle>
-              <AlertDescription className="text-xs break-all">{state.error}</AlertDescription>
-            </Alert>
+          <p className="text-xs text-muted-foreground mt-1">
+            Для длинных записей (свыше ≈24 МБ). Аудио скачивается в браузер, режется на окна по 90 секунд и передаётся серверу по частям. Уход со страницы прервёт передачу — можно затем возобновить.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={refresh} disabled={state.isActive} className="gap-1"><RefreshCw className="h-3.5 w-3.5" />Обновить</Button>
+          {canStart && (
+            <Button size="sm" onClick={async () => { await start(); onFinished?.(); }} className="gap-1">
+              <PlayCircle className="h-3.5 w-3.5" />{canResume ? "Возобновить" : "Запустить"}
+            </Button>
           )}
-
-          {done && (
-            <Alert>
-              <CheckCircle2 className="h-4 w-4" />
-              <AlertTitle>Готово</AlertTitle>
-              <AlertDescription>
-                Аудио и DOCX сохранены в разделе «Материалы» эфира. Кнопки скачивания активны — можно закрыть окно.
-              </AlertDescription>
-            </Alert>
+          {canRetry && (
+            <Button size="sm" variant="secondary" onClick={() => retryFailed()} className="gap-1"><RotateCcw className="h-3.5 w-3.5" />Повторить {state.failedParts}</Button>
+          )}
+          {state.isActive && (
+            <Button size="sm" variant="destructive" onClick={cancel} className="gap-1"><StopCircle className="h-3.5 w-3.5" />Отменить</Button>
           )}
         </div>
+      </div>
 
-        <DialogFooter className="gap-2">
-          {(state.stage === "idle" || cancelled) && (
-            <Button onClick={() => void run()} className="gap-2">
-              <Play className="h-4 w-4" />
-              {cancelled || state.canResume ? "Продолжить обработку" : "Запустить транскрибацию"}
-            </Button>
-          )}
-          {failed && (
-            <Button onClick={() => void run()} className="gap-2">
-              <Play className="h-4 w-4" /> Повторить
-            </Button>
-          )}
-          {running && (
-            <Button variant="outline" onClick={() => void cancel()}>
-              Приостановить
-            </Button>
-          )}
-          {(done || failed || cancelled || state.stage === "idle") && (
-            <Button variant="ghost" onClick={handleClose}>
-              {done ? "Закрыть" : "Скрыть окно"}
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      {state.totalParts > 0 && (
+        <div className="space-y-1.5">
+          <Progress value={percent} />
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              {state.completedParts}/{state.totalParts} готово{state.failedParts ? ` · ${state.failedParts} с ошибкой` : ""}
+              {state.currentPartIndex != null ? ` · сейчас окно #${state.currentPartIndex + 1}` : ""}
+            </span>
+            <span>{humanBytes(state.audioSizeBytes)} · {humanMs(state.audioDurationMs)}</span>
+          </div>
+        </div>
+      )}
+
+      {state.isActive && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <span>{state.message || "Работаю…"}</span>
+        </div>
+      )}
+
+      {state.errorMessage && (
+        <div className="flex items-start gap-2 text-xs text-destructive">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5" />
+          <span className="break-all">{state.errorMessage}</span>
+        </div>
+      )}
+
+      {failedList.length > 0 && (
+        <div className="text-xs text-muted-foreground">
+          Окна с ошибкой: {failedList.map((p) => `#${p.partIndex + 1}`).join(", ")}
+        </div>
+      )}
+    </div>
   );
 }
