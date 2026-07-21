@@ -2057,10 +2057,21 @@ export default function AdminLiveEvents() {
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Отмена</Button>
               <Button
                 onClick={() => saveMutation.mutate(form)}
-                disabled={(!form.title.trim() || !form.slug.trim() || !!slugExists) || saveMutation.isPending}
+                disabled={
+                  (!form.title.trim() || !form.slug.trim() || !!slugExists) ||
+                  saveMutation.isPending ||
+                  (!!editingId && !accessRulesLoadedForEditing)
+                }
+                title={
+                  editingId && !accessRulesLoadedForEditing
+                    ? "Правила доступа загружаются…"
+                    : undefined
+                }
               >
                 {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                {editingId ? "Сохранить" : "Создать"}
+                {editingId
+                  ? (accessRulesLoadedForEditing ? "Сохранить" : "Загрузка правил доступа…")
+                  : "Создать"}
               </Button>
             </div>
           </SheetContent>
