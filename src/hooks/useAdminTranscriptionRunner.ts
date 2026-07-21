@@ -164,6 +164,7 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
     if (runningRef.current) return;
     runningRef.current = true;
     abortRef.current = new AbortController();
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
     try {
       let plan = chunksRef.current;
       let job: any = null;
@@ -189,6 +190,9 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
         });
         job = created.job;
         patch({ jobId: job.id, totalParts: job.total_parts });
+        heartbeat = setInterval(() => {
+          if (job?.id) invoke({ action: "heartbeat", job_id: job.id }).catch(() => {});
+        }, 20_000);
 
         patch({ phase: "registering_parts", message: "Регистрирую окна…" });
         await invoke({
@@ -241,6 +245,7 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
       const message = error instanceof Error ? error.message : String(error);
       patch({ phase: message === "cancelled_by_user" ? "cancelled" : "failed", errorMessage: message, currentPartIndex: null });
     } finally {
+      if (heartbeat) clearInterval(heartbeat);
       runningRef.current = false;
     }
   }, [liveEventId, state.jobId, loadStatus, hydrateFromStatus, downloadAudio, patch, invoke, uploadPart]);
