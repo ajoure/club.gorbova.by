@@ -246,8 +246,6 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
     </div>
   );
 }
-    </div>
-  );
-}
+
 
 
