@@ -765,6 +765,18 @@ export default function AdminLiveEvents() {
         throw new Error("Правила доступа ещё загружаются. Подождите пару секунд и повторите сохранение.");
       }
 
+      // FORENSIC PATCH v2: if the user explicitly edited the Access section,
+      // refuse to save when the resulting rule set is empty. This blocks BOTH
+      // update live_events AND delete live_event_access_rules, so an ongoing
+      // event cannot be silently left without any access rule.
+      if (accessRulesDirtyRef.current) {
+        const hasAnyAuth = data.access_rules.some(r => r.rule_kind === "any_authenticated");
+        const hasProduct = data.access_rules.some(r => r.rule_kind !== "any_authenticated" && !!r.product_id);
+        if (!hasAnyAuth && !hasProduct) {
+          throw new Error("Укажите хотя бы одно правило доступа");
+        }
+      }
+
       // sourceKind вычисляется ниже в зависимости от effectiveEventType (Sprint A patch).
 
       // Merge metadata: preserve existing provider data
