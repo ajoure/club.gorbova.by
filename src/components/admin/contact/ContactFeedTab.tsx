@@ -179,7 +179,7 @@ function CallCard({ evt, entityId }: { evt: FeedEvent; entityId: string }) {
       <div className="flex items-center gap-2 flex-wrap">
         {evt.meta?.phone && <span className="text-sm font-medium">{evt.meta.phone}</span>}
         {duration > 0 && <Badge variant="outline" className="text-[10px]">{duration}с</Badge>}
-        {evt.meta?.status && <Badge variant="outline" className="text-[10px]">{String(evt.meta.status)}</Badge>}
+        {evt.meta?.status && <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>}
       </div>
       {recording && (
         <CallRecordingPlayer src={recording} fallbackDurationSec={duration || null} fileName={`call-${evt.meta?.public_id || evt.id}.mp3`} />
