@@ -3712,10 +3712,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
               <SmsHistorySection contactId={contact.id} bare />
             </TabsContent>
 
-            {/* Communications Tab */}
-            <TabsContent value="feed" className="m-0 px-3 sm:px-4 pb-3 sm:pb-4 flex-1 min-h-0 flex flex-col">
-              <ContactFeedTab contactId={contact.id} embedded />
-            </TabsContent>
+            {/* value="feed" вынесен наверх — вне внешнего скролла */}
 
 
 
