@@ -1131,7 +1131,7 @@ export function ContactFeedTab({
                               ? "max-h-80 overflow-y-auto rounded-md bg-background/40 p-2"
                               : "line-clamp-4"
                           )}>
-                            {evt.body}
+                            {stripHtmlTags(evt.body)}
                           </div>
                         )}
                       </>
