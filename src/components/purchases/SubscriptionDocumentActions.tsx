@@ -49,7 +49,7 @@ export function SubscriptionDocumentActions({ orderId, className }: Props) {
   const gen = async () => {
     setIsGenerating(true);
     try {
-      const { data, error } = await invokeAuthenticatedFunction(
+      const { data, error } = await invokeAuthenticatedFunction<{ error?: string }>(
         "canonical-document-generate-strict",
         { order_id: orderId, mode: "generate" },
       );
