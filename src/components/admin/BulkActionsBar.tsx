@@ -148,6 +148,18 @@ export function BulkActionsBar({
           </Button>
         )}
 
+        {onBulkMove && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBulkMove}
+            className="h-8 gap-2 text-blue-600 hover:text-blue-700"
+          >
+            <MoveRight className="h-4 w-4" />
+            Переместить
+          </Button>
+        )}
+
         {onBulkMessage && (
           <Button
             variant="ghost"
