@@ -118,7 +118,7 @@ export function CompanySyncQueuePanel({ canManage }: { canManage: boolean }) {
       </div>
 
       {healthQuery.isLoading && <div className="grid gap-3 p-4 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-20" />)}</div>}
-      {healthQuery.isError && <p className="p-4 text-sm text-destructive">Состояние очереди сейчас недоступно. Очередь и доступы не менялись.</p>}
+      {healthQuery.isError && <p className="p-4 text-sm text-muted-foreground">Мониторинг очереди временно недоступен. Список компаний и сами данные не затронуты.</p>}
       {health && (
         <div className="space-y-4 p-4">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

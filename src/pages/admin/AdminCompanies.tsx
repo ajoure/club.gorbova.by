@@ -71,6 +71,7 @@ import { GrpLookupAdapter } from "@/lib/legal-entities/adapters/GrpLookupAdapter
 import { copyToClipboard, getCompanyUrl } from "@/utils/clipboardUtils";
 import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
 import { CompanySheetImportDialog } from "@/components/admin/CompanySheetImportDialog";
+import { CompanySyncQueuePanel } from "@/components/admin/CompanySyncQueuePanel";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { Badge } from "@/components/ui/badge";
@@ -863,6 +864,8 @@ export default function AdminCompanies() {
           {invariantsQuery.isError ? <Badge variant="outline">Проверка недоступна</Badge> : <Badge variant={invariantsQuery.data?.ok ? "outline" : "secondary"}>{invariantsQuery.isFetching ? "Проверка…" : invariantsQuery.data?.ok ? "OK" : "Есть нарушения"}</Badge>}
         </div>
       </section>
+
+      {access.isAdmin || access.isSuperAdmin ? <CompanySyncQueuePanel canManage /> : null}
 
       <div className="min-h-0 min-w-0 flex-none overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center justify-between border-b px-4 py-3 text-sm text-muted-foreground">
