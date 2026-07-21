@@ -523,6 +523,7 @@ Deno.serve(async (req) => {
       case "create_job": return await handleCreateJob(service, auth.user, body);
       case "register_parts": return await handleRegisterParts(service, auth.user, body);
       case "status": return await handleStatus(service, auth.user, body);
+      case "heartbeat": return await handleHeartbeat(service, auth.user, body);
       case "finalize": return await handleFinalize(service, auth.user, body);
       case "cancel": return await handleCancel(service, auth.user, body);
       default: return json({ error: "unknown_action" }, 400);
