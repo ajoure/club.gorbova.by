@@ -246,14 +246,19 @@ Deno.serve(async (req) => {
         // Idempotent: check current webhook info first
         const webhookInfo = await telegramRequest(botToken, 'getWebhookInfo', {});
         const currentUpdates: string[] = webhookInfo.result?.allowed_updates || [];
-        const requiredUpdates = [
+        const businessRequiredUpdates = [
           'message', 'message_reaction', 'message_reaction_count', 'chat_member',
           'my_chat_member', 'chat_join_request', 'callback_query',
           ...TELEGRAM_BUSINESS_ALLOWED_UPDATES,
         ];
-        const missingUpdates = requiredUpdates.filter(u => !currentUpdates.includes(u));
+        const missingUpdates = businessRequiredUpdates.filter(u => !currentUpdates.includes(u));
+        const requiredUpdates = [...new Set([...currentUpdates, ...businessRequiredUpdates])];
+        const webhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET');
 
-        if (missingUpdates.length === 0) {
+        // Telegram does not expose whether secret_token is already installed.
+        // If a secret is configured, always re-apply setWebhook so enabling or
+        // rotating it cannot leave Telegram sending unsigned requests.
+        if (missingUpdates.length === 0 && !webhookSecret) {
           return new Response(JSON.stringify({
             success: true,
             no_op: true,
@@ -276,7 +281,6 @@ Deno.serve(async (req) => {
           url: currentUrl,
           allowed_updates: requiredUpdates,
         };
-        const webhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET');
         if (webhookSecret) updatePayload.secret_token = webhookSecret;
         const updateResult = await telegramRequest(botToken, 'setWebhook', updatePayload);
 

@@ -22,6 +22,12 @@ describe("Telegram Business contact-centre wiring", () => {
     expect(adminChatSource).toContain('transport: businessConnectionId ? "business" : "bot"');
   });
 
+  it("re-applies a configured webhook secret and preserves existing update types", () => {
+    expect(botActionsSource).toContain("missingUpdates.length === 0 && !webhookSecret");
+    expect(botActionsSource).toContain("[...new Set([...currentUpdates, ...businessRequiredUpdates])]");
+    expect(botActionsSource).toContain("updatePayload.secret_token = webhookSecret");
+  });
+
   it("creates a secured connection table and message dedupe index", () => {
     expect(migrationSource).toContain("CREATE TABLE public.telegram_business_connections");
     expect(migrationSource).toContain("ENABLE ROW LEVEL SECURITY");

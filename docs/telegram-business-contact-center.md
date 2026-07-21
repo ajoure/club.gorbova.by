@@ -22,7 +22,7 @@
 1. Применить миграцию `telegram_business_contact_center`.
 2. Рекомендуется задать одинаковый secret `TELEGRAM_WEBHOOK_SECRET` для `telegram-webhook` и `telegram-bot-actions`. Если secret задан, неподписанные webhook-запросы отклоняются.
 3. Развернуть Edge Functions `telegram-webhook`, `telegram-bot-actions`, `telegram-admin-chat`.
-4. В админке открыть `Интеграции → Telegram → Боты` и нажать кнопку установки webhook у `@gorbovabybot`. Это добавит Business-типы в `allowed_updates` и установит secret, если он настроен.
+4. В админке открыть `Интеграции → Telegram → Боты` и нажать кнопку установки webhook у `@gorbovabybot`. Это добавит Business-типы в `allowed_updates` и установит secret, если он настроен. При настроенном secret операция намеренно повторно вызывает `setWebhook`, даже если список событий уже актуален.
 5. Проверить `getWebhookInfo`: список должен содержать `business_connection`, `business_message`, `edited_business_message`, `deleted_business_messages`.
 6. Открыть `Личные аккаунты`. Если карточки ещё нет, достаточно получить первое Business-сообщение: webhook восстановит подключение через Telegram API. Переподключение бота не обязательно.
 
