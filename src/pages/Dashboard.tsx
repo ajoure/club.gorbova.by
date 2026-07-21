@@ -10,6 +10,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useTelegramLinkStatus } from "@/hooks/useTelegramLink";
 import { ArrowUpRight } from "lucide-react";
 import { Link } from "react-router-dom";
+import { ReferralDashboardCard } from "@/components/referrals/ReferralDashboardCard";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -87,6 +88,8 @@ export default function Dashboard() {
             <TelegramLinkReminder />
           </>
         )}
+
+        <ReferralDashboardCard />
 
         {/* Block 2: Daily Affirmation */}
         <DailyAffirmation />

@@ -116,6 +116,7 @@ import {
   Activity,
   Unlink,
   Building2,
+  Gift,
 } from "lucide-react";
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
@@ -155,6 +156,7 @@ import { WebinarActivitySection } from "./contact/WebinarActivitySection";
 import { isStaffRole } from "@/lib/liveRoomRoles";
 import { useAuth } from "@/contexts/AuthContext";
 import { ContactChannelsSection } from "./ContactChannelsSection";
+import { ContactReferralsTab } from "./contact/ContactReferralsTab";
 
 // formatContactName imported from @/lib/nameUtils
 
@@ -1837,6 +1839,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
               <TabsTrigger value="loyalty" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <Sparkles className="w-3 h-3 mr-1" />
                 Лояльность
+              </TabsTrigger>
+              <TabsTrigger value="referrals" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Gift className="w-3 h-3 mr-1" />
+                Рефералы
               </TabsTrigger>
               <TabsTrigger value="artifacts" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <BookOpen className="w-3 h-3 mr-1" />
@@ -3831,6 +3837,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
             {/* Loyalty Tab */}
             <TabsContent value="loyalty" className="m-0">
               <ContactLoyaltyTab contact={contact} />
+            </TabsContent>
+
+            <TabsContent value="referrals" className="m-0">
+              <ContactReferralsTab profileId={contact.id} />
             </TabsContent>
 
             {/* Artifacts Tab — Анкеты, обучение и вебинары */}

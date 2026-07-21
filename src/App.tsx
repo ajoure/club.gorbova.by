@@ -28,6 +28,7 @@ const OAuthConsent = lazy(() => import("./pages/OAuthConsent"));
 const ConnectAgent = lazy(() => import("./pages/ConnectAgent"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
+const ReferralCapture = lazy(() => import("./pages/ReferralCapture"));
 
 // DEV-only fixture stand for the slot bridge regression harness. Guarded by
 // import.meta.env.DEV; production bundles never register the route below.
@@ -154,6 +155,7 @@ const AdminKbImport = lazy(() => import("./pages/admin/AdminKbImport"));
 const AdminSiteBuilder = lazy(() => import("./pages/admin/AdminSiteBuilder"));
 const AdminSiteEditor = lazy(() => import("./pages/admin/AdminSiteEditor"));
 const AdminLiveEvents = lazy(() => import("./pages/admin/AdminLiveEvents"));
+const AdminReferrals = lazy(() => import("./pages/admin/AdminReferrals"));
 const LiveEvent = lazy(() => import("./pages/LiveEvent"));
 const LiveAccessEntry = lazy(() => import("./pages/LiveAccessEntry"));
 // AdminBepaidSubscriptions removed - redirects to /admin/payments/bepaid-subscriptions
@@ -203,6 +205,7 @@ const App = () => {
               {/* Public routes */}
               <Route path="/" element={<DomainHomePage />} />
               <Route path="/auth" element={<LazyRoute><Auth /></LazyRoute>} />
+              <Route path="/r/:partnerCode" element={<LazyRoute><ReferralCapture /></LazyRoute>} />
               <Route path="/auth/v1/verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
               <Route path="/auth-verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
               <Route path="/.lovable/oauth/consent" element={<LazyRoute><OAuthConsent /></LazyRoute>} />
@@ -367,6 +370,7 @@ const App = () => {
               <Route path="/admin/sites" element={<ProtectedRoute><LazyRoute><AdminSiteBuilder /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/sites/:id" element={<ProtectedRoute><LazyRoute><AdminSiteEditor /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/live-events" element={<ProtectedRoute><LazyRoute><AdminLiveEvents /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/referrals" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminReferrals /></AdminLayout></LazyRoute></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
