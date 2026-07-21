@@ -83,6 +83,7 @@ export function KanbanBulkActionsBar({
   });
   const moveTargetStage = targetStages.find((stage) => stage.id === targetStageId) ?? null;
   const targetPipeline = pipelines.find((item) => item.id === targetPipelineId) ?? null;
+  const pipelineName = pipelines.find((item) => item.id === pipelineId)?.name ?? "";
 
   useEffect(() => {
     if (!showMoveDialog || targetStages.length === 0) return;

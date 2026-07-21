@@ -98,6 +98,9 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { usePipelines } from "@/hooks/usePipelines";
 import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { DealsKanbanBoard } from "@/components/admin/deals/DealsKanbanBoard";
+import { bulkMoveDealsToPipeline } from "@/services/pipelineService";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import { BulkCreateDealsDialog } from "@/components/admin/deals/BulkCreateDealsDialog";
 import { PipelineManagementPopover } from "@/components/admin/deals/PipelineManagementPopover";
 import { DealsFiltersBar } from "@/components/admin/deals/DealsFiltersBar";
@@ -277,6 +280,10 @@ export default function AdminDeals() {
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
   const [showCreateDealDialog, setShowCreateDealDialog] = useState(false);
   const [showBulkCreateDeals, setShowBulkCreateDeals] = useState(false);
+  const [showBulkMoveDialog, setShowBulkMoveDialog] = useState(false);
+  const [moveTargetPipelineId, setMoveTargetPipelineId] = useState<string>("");
+  const [moveTargetStageId, setMoveTargetStageId] = useState<string>("");
+  const [isBulkMoving, setIsBulkMoving] = useState(false);
 
   // View mode & filters from URL
   const [searchParams, setSearchParams] = useSearchParams();
@@ -351,6 +358,8 @@ export default function AdminDeals() {
   const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn, renamePipeline: renamePipelineFn, deletePipeline: deletePipelineFn, reorderPipelines: reorderPipelinesFn } = usePipelines();
   const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
   const { stages: activePipelineStages = [] } = usePipelineStages(activePipelineId);
+  const { stages: moveTargetStagesRaw = [] } = usePipelineStages(moveTargetPipelineId || null);
+  const moveTargetStages = [...moveTargetStagesRaw].sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0));
 
   // Deal counts per pipeline (for delete guards)
   const { data: pipelineDealCounts } = useQuery({
@@ -1636,6 +1645,11 @@ export default function AdminDeals() {
           onBulkEdit={() => setShowBulkEditDialog(true)}
           onBulkExtendAccess={() => setShowBulkExtendDialog(true)}
           onBulkCreateDeals={isAdmin() ? () => setShowBulkCreateDeals(true) : undefined}
+          onBulkMove={(isAdmin() || isSuperAdmin()) ? () => {
+            setMoveTargetPipelineId(activePipelineId ?? "");
+            setMoveTargetStageId("");
+            setShowBulkMoveDialog(true);
+          } : undefined}
           totalCount={visibleDeals.length}
           entityName="сделок"
           onSelectAll={selectAll}
@@ -1675,6 +1689,69 @@ export default function AdminDeals() {
           queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
         }}
       />
+
+      {/* Bulk Move Deals Dialog */}
+      <AlertDialog open={showBulkMoveDialog} onOpenChange={(open) => { if (!open && !isBulkMoving) setShowBulkMoveDialog(false); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Переместить {selectedCount} сделок?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-1.5">
+                <p>Выберите целевую воронку и стадию. Связанные контакты, компании, платежи, задачи и лента сохранятся.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Воронка</Label>
+              <Select value={moveTargetPipelineId} onValueChange={(v) => { setMoveTargetPipelineId(v); setMoveTargetStageId(""); }}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Выберите воронку" /></SelectTrigger>
+                <SelectContent>
+                  {pipelines.map((p: any) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Стадия</Label>
+              <Select value={moveTargetStageId} onValueChange={setMoveTargetStageId} disabled={!moveTargetPipelineId || moveTargetStages.length === 0}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Выберите стадию" /></SelectTrigger>
+                <SelectContent>
+                  {moveTargetStages.map((s: any) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isBulkMoving}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isBulkMoving || !moveTargetPipelineId || !moveTargetStageId}
+              onClick={async (e) => {
+                e.preventDefault();
+                const ids = Array.from(selectedDealIds);
+                if (ids.length === 0 || !moveTargetPipelineId || !moveTargetStageId) return;
+                setIsBulkMoving(true);
+                try {
+                  const res = await bulkMoveDealsToPipeline(ids, moveTargetPipelineId, moveTargetStageId);
+                  toast.success(`Перемещено сделок: ${res?.affected ?? ids.length}`);
+                  setShowBulkMoveDialog(false);
+                  clearSelection();
+                  queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+                  queryClient.invalidateQueries({ queryKey: ["admin-deals-tab-counts"] });
+                  queryClient.invalidateQueries({ queryKey: ["deals-board"] });
+                  queryClient.invalidateQueries({ queryKey: ["pipeline-deal-counts"] });
+                } catch (err: any) {
+                  toast.error(err?.message ?? "Не удалось переместить сделки");
+                } finally {
+                  setIsBulkMoving(false);
+                }
+              }}
+            >
+              {isBulkMoving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Переместить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
