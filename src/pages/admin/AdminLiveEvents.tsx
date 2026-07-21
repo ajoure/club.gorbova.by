@@ -352,7 +352,11 @@ export default function AdminLiveEvents() {
   const { data: eventsWithAccessRule } = useLiveEventsAccessRuleFlags(true);
 
 
-  const { data: existingRules } = useQuery({
+  const {
+    data: existingRules,
+    isSuccess: existingRulesLoaded,
+    isFetching: existingRulesFetching,
+  } = useQuery({
     queryKey: ["live-event-access-rules", editingId],
     queryFn: async () => {
       if (!editingId) return [];
@@ -365,6 +369,16 @@ export default function AdminLiveEvents() {
     },
     enabled: !!editingId,
   });
+
+  // FORENSIC PATCH: track whether the user intentionally edited the Access
+  // section of the currently-open form. Save must NOT delete/recreate
+  // live_event_access_rules unless this is true. Reset on every open/close.
+  const accessRulesDirtyRef = useRef(false);
+  // Track which editingId's rules have been hydrated into the form. Prevents
+  // saving stale form.access_rules = [] before the fetch completes.
+  const accessRulesHydratedForRef = useRef<string | null>(null);
+  const accessRulesLoadedForEditing =
+    !editingId || (existingRulesLoaded && accessRulesHydratedForRef.current === editingId);
 
   // Kinescope integration instance
   const { data: kinescopeInstance, isLoading: kinescopeInstanceLoading } = useQuery({
@@ -743,6 +757,14 @@ export default function AdminLiveEvents() {
     mutationFn: async (data: LiveEventForm) => {
       if (slugExists) throw new Error("Такой slug уже существует. Выберите другой.");
 
+      // FORENSIC PATCH: refuse to touch an existing event before its access
+      // rules have been loaded & hydrated into the form. Prevents the
+      // hydration race that briefly wiped live_event_access_rules for an
+      // ongoing broadcast.
+      if (editingId && !accessRulesLoadedForEditing) {
+        throw new Error("Правила доступа ещё загружаются. Подождите пару секунд и повторите сохранение.");
+      }
+
       // sourceKind вычисляется ниже в зависимости от effectiveEventType (Sprint A patch).
 
       // Merge metadata: preserve existing provider data
@@ -851,8 +873,26 @@ export default function AdminLiveEvents() {
         eventId = inserted.id;
       }
 
-      if (eventId) {
-        await supabase.from("live_event_access_rules").delete().eq("live_event_id", eventId);
+
+      // FORENSIC PATCH: only touch live_event_access_rules when the user
+      // explicitly changed the Access section (or when creating a new event).
+      // Saving unrelated sections of the card must NOT wipe existing rules.
+      const shouldWriteAccessRules = !editingId || accessRulesDirtyRef.current;
+
+      if (eventId && shouldWriteAccessRules) {
+        // Read the confirmed current state as a rollback baseline before we
+        // touch anything. Client-side rollback is best-effort — this is NOT a
+        // real DB transaction, and we make no atomicity promises across
+        // delete+insert.
+        let baseline: any[] = [];
+        if (editingId) {
+          const { data: currentRows, error: baselineErr } = await supabase
+            .from("live_event_access_rules")
+            .select("live_event_id, product_id, tariff_id, sort_order, conditions, rule_kind")
+            .eq("live_event_id", eventId);
+          if (baselineErr) throw baselineErr;
+          baseline = currentRows || [];
+        }
 
         const hasAnyAuth = data.access_rules.some(r => r.rule_kind === "any_authenticated");
         const rows: Array<{
@@ -865,7 +905,6 @@ export default function AdminLiveEvents() {
         }> = [];
 
         if (hasAnyAuth) {
-          // Any-authenticated is mutually exclusive with product rules.
           rows.push({
             live_event_id: eventId!,
             product_id: null,
@@ -889,10 +928,23 @@ export default function AdminLiveEvents() {
           });
         }
 
+        const { error: delErr } = await supabase.from("live_event_access_rules").delete().eq("live_event_id", eventId);
+        if (delErr) throw delErr;
+
         if (rows.length > 0) {
           const { error: rulesError } = await supabase.from("live_event_access_rules").insert(rows as any);
-          if (rulesError) throw rulesError;
+          if (rulesError) {
+            // Best-effort restore of the pre-save baseline so the event does
+            // not end up rule-less while a broadcast is running.
+            if (baseline.length > 0) {
+              await supabase.from("live_event_access_rules").insert(baseline as any);
+            }
+            throw new Error(`Не удалось сохранить правила доступа: ${rulesError.message}. Прежние правила восстановлены.`);
+          }
         }
+
+        // Access section is now in sync with DB; clear the dirty flag.
+        accessRulesDirtyRef.current = false;
       }
     },
     onSuccess: () => {
@@ -957,6 +1009,11 @@ export default function AdminLiveEvents() {
   };
 
   const handleEdit = (event: LiveEvent) => {
+    // FORENSIC PATCH: reset access-rules hydration/dirty tracking. Until the
+    // access rules query for this editingId resolves and hydrates the form,
+    // saveMutation must refuse to touch live_event_access_rules.
+    accessRulesHydratedForRef.current = null;
+    accessRulesDirtyRef.current = false;
     setEditingId(event.id);
     setSlugManuallyEdited(true);
     setPublishAttempted(false);
@@ -1000,40 +1057,47 @@ export default function AdminLiveEvents() {
     setDialogOpen(true);
   };
 
-  // Sync loaded rules into form when editing
-  useMemo(() => {
-    if (!existingRules || !editingId) return;
-    const rows = existingRules as Array<{ product_id: string | null; tariff_id: string | null; conditions?: any; rule_kind?: string }>;
+  // Hydrate loaded access rules into the form exactly once per editingId.
+  // Runs as an effect (not useMemo — hydration is a side effect on state).
+  // Marks form.access_rules as "clean" so saveMutation will not touch
+  // live_event_access_rules unless the user explicitly edits the Access section.
+  useEffect(() => {
+    if (!editingId) return;
+    if (!existingRulesLoaded) return;
+    if (accessRulesHydratedForRef.current === editingId) return;
+    const rows = (existingRules || []) as Array<{ product_id: string | null; tariff_id: string | null; conditions?: any; rule_kind?: string }>;
 
-    // Any-authenticated preset short-circuits product grouping
     if (rows.some(r => r.rule_kind === "any_authenticated")) {
       setForm(f => ({ ...f, access_rules: [{ rule_kind: "any_authenticated", product_id: "", tariff_ids: [] }] }));
-      return;
-    }
-
-    type Group = { tariff_ids: string[]; match_purchase_month: boolean };
-    const grouped = new Map<string, Group>();
-    for (const row of rows) {
-      if (!row.product_id) continue;
-      const pid = row.product_id;
-      if (!grouped.has(pid)) grouped.set(pid, { tariff_ids: [], match_purchase_month: false });
-      const g = grouped.get(pid)!;
-      if (row.tariff_id) g.tariff_ids.push(row.tariff_id);
-      const cond = row.conditions || {};
-      if (cond?.match_purchase_month === true) g.match_purchase_month = true;
-    }
-    const accessRules: AccessRuleRow[] = Array.from(grouped.entries()).map(([product_id, g]) => ({
-      rule_kind: "product",
-      product_id,
-      tariff_ids: g.tariff_ids,
-      match_purchase_month: g.match_purchase_month,
-    }));
-    if (accessRules.length > 0 || form.access_rules.length === 0) {
+    } else {
+      type Group = { tariff_ids: string[]; match_purchase_month: boolean };
+      const grouped = new Map<string, Group>();
+      for (const row of rows) {
+        if (!row.product_id) continue;
+        const pid = row.product_id;
+        if (!grouped.has(pid)) grouped.set(pid, { tariff_ids: [], match_purchase_month: false });
+        const g = grouped.get(pid)!;
+        if (row.tariff_id) g.tariff_ids.push(row.tariff_id);
+        const cond = row.conditions || {};
+        if (cond?.match_purchase_month === true) g.match_purchase_month = true;
+      }
+      const accessRules: AccessRuleRow[] = Array.from(grouped.entries()).map(([product_id, g]) => ({
+        rule_kind: "product",
+        product_id,
+        tariff_ids: g.tariff_ids,
+        match_purchase_month: g.match_purchase_month,
+      }));
       setForm(f => ({ ...f, access_rules: accessRules }));
     }
-  }, [existingRules, editingId]);
+    accessRulesHydratedForRef.current = editingId;
+    accessRulesDirtyRef.current = false;
+  }, [existingRules, existingRulesLoaded, editingId]);
 
   const handleCreate = () => {
+    // FORENSIC PATCH: creating a fresh event — no rules exist yet.
+    // Any rule the user picks in the Access section IS a deliberate change.
+    accessRulesHydratedForRef.current = null;
+    accessRulesDirtyRef.current = true;
     setEditingId(null);
     setForm(defaultForm);
     setSlugManuallyEdited(false);
@@ -1559,10 +1623,26 @@ export default function AdminLiveEvents() {
                     Используется правилами с включённым флагом «Совпадение месяца покупки».
                   </p>
                 </div>
+                {editingId && !accessRulesLoadedForEditing && (
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Правила доступа загружаются…
+                  </p>
+                )}
                 <LiveEventAccessRulesEditor
                   rules={form.access_rules}
-                  onChange={(rules) => setForm({ ...form, access_rules: rules })}
+                  onChange={(rules) => {
+                    // FORENSIC PATCH: mark Access section as intentionally
+                    // edited. Only then will saveMutation delete+reinsert
+                    // live_event_access_rules.
+                    accessRulesDirtyRef.current = true;
+                    setForm({ ...form, access_rules: rules });
+                  }}
                 />
+                {editingId && existingRulesFetching && (
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    Синхронизация правил доступа с сервером…
+                  </p>
+                )}
               </FormSection>
 
               <Separator />
@@ -1977,10 +2057,21 @@ export default function AdminLiveEvents() {
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Отмена</Button>
               <Button
                 onClick={() => saveMutation.mutate(form)}
-                disabled={(!form.title.trim() || !form.slug.trim() || !!slugExists) || saveMutation.isPending}
+                disabled={
+                  (!form.title.trim() || !form.slug.trim() || !!slugExists) ||
+                  saveMutation.isPending ||
+                  (!!editingId && !accessRulesLoadedForEditing)
+                }
+                title={
+                  editingId && !accessRulesLoadedForEditing
+                    ? "Правила доступа загружаются…"
+                    : undefined
+                }
               >
                 {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                {editingId ? "Сохранить" : "Создать"}
+                {editingId
+                  ? (accessRulesLoadedForEditing ? "Сохранить" : "Загрузка правил доступа…")
+                  : "Создать"}
               </Button>
             </div>
           </SheetContent>
