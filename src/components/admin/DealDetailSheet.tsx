@@ -1225,28 +1225,43 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
             {/* Documents — единая карточка */}
             <DealPayerDocumentsCard orderId={deal.id} />
 
-            {/* Unified amoCRM-style feed. Deal notes are stored once and are
-                also visible from the linked contact/company feeds. */}
+            {/* ID Info */}
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
-                  <Activity className="w-4 h-4" />
-                  Лента
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                <ContactFeedTab dealId={deal.id} contactId={deal.profile_id ?? profile?.id ?? undefined} companyId={deal.company_id ?? undefined} embedded />
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">ID сделки</span>
+                  <Button variant="ghost" size="sm" onClick={() => copyToClipboard(deal.id, "ID")}>
+                    <code className="text-xs mr-2">{deal.id.slice(0, 8)}...</code>
+                    <Copy className="w-3 h-3" />
+                  </Button>
+                </div>
               </CardContent>
             </Card>
+            </div>
+          </TabsContent>
 
-            {/* Tasks — задачи по сделке */}
+          {/* Лента — единая amoCRM-подобная лента (переиспользует ContactFeedTab) */}
+          <TabsContent value="feed" className="flex-1 overflow-y-auto p-4 sm:p-6 mt-0 data-[state=inactive]:hidden">
+            <ContactFeedTab
+              dealId={deal.id}
+              contactId={deal.profile_id ?? profile?.id ?? undefined}
+              companyId={deal.company_id ?? undefined}
+              embedded
+            />
+          </TabsContent>
+
+          {/* Задачи по сделке (переиспользует CrmTasksSection) */}
+          <TabsContent value="tasks" className="flex-1 overflow-y-auto p-4 sm:p-6 mt-0 data-[state=inactive]:hidden">
             <CrmTasksSection dealId={deal.id} />
+          </TabsContent>
 
-            {/* Calls — звонки по сделке (VOCHI Phase 2) */}
+          {/* Звонки по сделке (переиспользует CallsHistorySection, VOCHI Phase 2) */}
+          <TabsContent value="calls" className="flex-1 overflow-y-auto p-4 sm:p-6 mt-0 data-[state=inactive]:hidden">
             <CallsHistorySection dealId={deal.id} />
+          </TabsContent>
 
-
-            {/* Audit */}
+          {/* История действий — audit_logs */}
+          <TabsContent value="history" className="flex-1 overflow-y-auto p-4 sm:p-6 mt-0 data-[state=inactive]:hidden">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
@@ -1263,7 +1278,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {auditLogs.slice(0, 5).map((log: any) => (
+                    {auditLogs.map((log: any) => (
                       <div key={log.id} className="p-3 rounded-lg bg-muted/30 space-y-1.5">
                         <div className="flex items-start justify-between gap-2">
                           <span className="font-medium text-sm">{getActionLabel(log.action)}</span>
@@ -1294,22 +1309,10 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 )}
               </CardContent>
             </Card>
-
-            {/* ID Info */}
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">ID сделки</span>
-                  <Button variant="ghost" size="sm" onClick={() => copyToClipboard(deal.id, "ID")}>
-                    <code className="text-xs mr-2">{deal.id.slice(0, 8)}...</code>
-                    <Copy className="w-3 h-3" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
+          </TabsContent>
+        </Tabs>
       </SheetContent>
+
       
       {/* Edit Dialog */}
       <EditDealDialog
