@@ -592,7 +592,7 @@ export default function AdminCompanies() {
   );
 
   return (
-    <div className="flex-1 min-h-0 h-full flex flex-col gap-4 overflow-y-auto overflow-x-hidden overscroll-y-contain py-4 pb-24 md:py-6">
+    <div className="space-y-4 pb-24">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="flex items-center gap-2">
