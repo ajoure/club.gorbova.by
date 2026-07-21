@@ -174,7 +174,7 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
   useEffect(() => stopHeartbeat, [stopHeartbeat]);
 
   const downloadAudio = useCallback(async (): Promise<Blob> => {
-    patch({ phase: "loading_audio", message: "Скачиваю аудио из хранилища…" });
+    patch({ phase: "loading_audio", message: "Загружаем сохранённый аудиофайл для обработки…" });
     const { data, error } = await supabase.functions.invoke("live-event-media", {
       body: { action: "download", kind: "audio", live_event_id: liveEventId },
     });
