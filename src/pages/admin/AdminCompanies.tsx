@@ -1765,8 +1765,21 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                   <TabsTrigger value="artifacts" className="text-xs sm:text-sm px-2.5 sm:px-3"><BookOpen className="mr-1 h-3.5 w-3.5" />Анкеты</TabsTrigger>
                 </TabsList>
               </div>
-              <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto">
-                <div className={cn("px-4 sm:px-6 py-4", activeTab === "feed" ? "pb-2" : "pb-24")}>
+              {/* Feed tab — вынесен из внешнего overflow-y-auto, чтобы composer
+                  оставался прижат к нижнему краю карточки, а прокручивался только
+                  список событий внутри ContactFeedTab (контракт как в Telegram-чате). */}
+              <TabsContent
+                value="feed"
+                forceMount
+                className="m-0 px-3 sm:px-4 pb-3 sm:pb-4 flex-1 min-h-0 flex flex-col overflow-hidden data-[state=inactive]:hidden"
+              >
+                <ContactFeedTab companyId={company.id} embedded readOnly={!canEditCompany} />
+              </TabsContent>
+              <div
+                ref={scrollContainerRef}
+                className={cn("min-h-0 flex-1 overflow-y-auto", activeTab === "feed" && "hidden")}
+              >
+                <div className="px-4 sm:px-6 py-4 pb-24">
                 <TabsContent value="profile" className="mt-0 space-y-4">
                   <Card className="border-border/40">
                     <CardHeader className="pb-2">
