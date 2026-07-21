@@ -170,6 +170,9 @@ export function LiveEventsTable({
   selectionResetKey,
 }: Props) {
   const { visibleColumns, handleColumnResize, handleDragEnd } = useLiveEventsColumns();
+  const accessRuleFlagsReady = eventsWithAccessRule !== undefined;
+  const hasRule = (id: string) => !accessRuleFlagsReady || eventsWithAccessRule!.has(id);
+
 
   // PATCH: explicit total width = sum of visible column widths.
   // tableLayout:fixed + width:max-content alone не давал корректную итоговую ширину
