@@ -3702,9 +3702,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
             </TabsContent>
 
             {/* Communications Tab */}
-            <TabsContent value="feed" className="m-0 flex-1 min-h-0 overflow-hidden px-3 sm:px-4 pb-3 sm:pb-4 flex flex-col">
+            <TabsContent value="feed" className="m-0 px-3 sm:px-4 pb-3 sm:pb-4">
               <ContactFeedTab contactId={contact.id} embedded />
             </TabsContent>
+
 
 
             {/* Consent Tab */}
