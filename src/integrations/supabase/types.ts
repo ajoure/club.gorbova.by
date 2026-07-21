@@ -17392,6 +17392,81 @@ export type Database = {
         }
         Relationships: []
       }
+      telegram_business_connections: {
+        Row: {
+          bot_id: string
+          business_user_id: number
+          can_reply: boolean
+          connected_at: string
+          connection_id: string
+          created_at: string
+          disconnected_at: string | null
+          first_name: string | null
+          id: string
+          is_enabled: boolean
+          last_error: string | null
+          last_event_at: string
+          last_name: string | null
+          rights: Json
+          updated_at: string
+          user_chat_id: number | null
+          username: string | null
+        }
+        Insert: {
+          bot_id: string
+          business_user_id: number
+          can_reply?: boolean
+          connected_at?: string
+          connection_id: string
+          created_at?: string
+          disconnected_at?: string | null
+          first_name?: string | null
+          id?: string
+          is_enabled?: boolean
+          last_error?: string | null
+          last_event_at?: string
+          last_name?: string | null
+          rights?: Json
+          updated_at?: string
+          user_chat_id?: number | null
+          username?: string | null
+        }
+        Update: {
+          bot_id?: string
+          business_user_id?: number
+          can_reply?: boolean
+          connected_at?: string
+          connection_id?: string
+          created_at?: string
+          disconnected_at?: string | null
+          first_name?: string | null
+          id?: string
+          is_enabled?: boolean
+          last_error?: string | null
+          last_event_at?: string
+          last_name?: string | null
+          rights?: Json
+          updated_at?: string
+          user_chat_id?: number | null
+          username?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_business_connections_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_business_connections_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_club_members: {
         Row: {
           access_status: string
@@ -17920,6 +17995,8 @@ export type Database = {
       telegram_messages: {
         Row: {
           bot_id: string | null
+          business_account_id: string | null
+          business_connection_id: string | null
           created_at: string
           direction: string
           error_message: string | null
@@ -17928,16 +18005,20 @@ export type Database = {
           is_pinned: boolean | null
           is_read: boolean | null
           message_id: number | null
+          message_origin: string | null
           message_text: string | null
           meta: Json | null
           reply_to_message_id: number | null
           sent_by_admin: string | null
           status: string
           telegram_user_id: number
+          transport: string
           user_id: string
         }
         Insert: {
           bot_id?: string | null
+          business_account_id?: string | null
+          business_connection_id?: string | null
           created_at?: string
           direction: string
           error_message?: string | null
@@ -17946,16 +18027,20 @@ export type Database = {
           is_pinned?: boolean | null
           is_read?: boolean | null
           message_id?: number | null
+          message_origin?: string | null
           message_text?: string | null
           meta?: Json | null
           reply_to_message_id?: number | null
           sent_by_admin?: string | null
           status?: string
           telegram_user_id: number
+          transport?: string
           user_id: string
         }
         Update: {
           bot_id?: string | null
+          business_account_id?: string | null
+          business_connection_id?: string | null
           created_at?: string
           direction?: string
           error_message?: string | null
@@ -17964,12 +18049,14 @@ export type Database = {
           is_pinned?: boolean | null
           is_read?: boolean | null
           message_id?: number | null
+          message_origin?: string | null
           message_text?: string | null
           meta?: Json | null
           reply_to_message_id?: number | null
           sent_by_admin?: string | null
           status?: string
           telegram_user_id?: number
+          transport?: string
           user_id?: string
         }
         Relationships: [
@@ -17985,6 +18072,13 @@ export type Database = {
             columns: ["bot_id"]
             isOneToOne: false
             referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_messages_business_account_id_fkey"
+            columns: ["business_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_business_connections"
             referencedColumns: ["id"]
           },
           {
