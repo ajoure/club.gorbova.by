@@ -347,6 +347,11 @@ export default function AdminLiveEvents() {
     },
   });
 
+  // ACCESS-RULE GUARD (read-only): помечаем эфиры без access rule и блокируем
+  // запуск lifecycle до настройки доступа. Не изменяет доступ и не создаёт правил.
+  const { data: eventsWithAccessRule } = useLiveEventsAccessRuleFlags(true);
+
+
   const { data: existingRules } = useQuery({
     queryKey: ["live-event-access-rules", editingId],
     queryFn: async () => {
