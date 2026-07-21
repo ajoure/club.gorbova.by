@@ -213,54 +213,85 @@ export function RoomLifecycleActions({
         </button>
       )}
 
-      <Button
-        variant="outline"
-        className={cn(GLASS_BASE, GLASS_TONE.neutral, LIFECYCLE_BUTTON_WIDTH_FIXED)}
-        disabled={!canPerformAction(roomState, "open_room") || !!pending || openBlocked}
-        onClick={() => {
-          if (openBlocked) {
-            toast.warning(
-              "Открыть комнату нельзя: не задано ни одного правила доступа. Non-admin получат access_denied. Настройте правило во вкладке «Доступ».",
-            );
-            onRequestAccessSetup?.();
-            return;
-          }
-          callAction("open_room");
-        }}
-        title={openBlocked ? "Правило доступа не задано — non-admin получат access_denied" : undefined}
-      >
-        {pending === "open_room" ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <DoorOpen className="h-4 w-4" />
-        )}
-        Открыть комнату
-      </Button>
+      {(() => {
+        const canOpen = canPerformAction(roomState, "open_room");
+        const trulyDisabled = !canOpen || !!pending;
+        const guardOnly = openBlocked && !trulyDisabled;
+        return (
+          <Button
+            variant="outline"
+            className={cn(
+              GLASS_BASE,
+              GLASS_TONE.neutral,
+              LIFECYCLE_BUTTON_WIDTH_FIXED,
+              guardOnly && "opacity-50 cursor-not-allowed border-destructive/40",
+            )}
+            disabled={trulyDisabled}
+            aria-disabled={guardOnly || trulyDisabled}
+            onClick={(e) => {
+              if (guardOnly) {
+                e.preventDefault();
+                e.stopPropagation();
+                toast.warning(
+                  "Открыть комнату нельзя: не задано ни одного правила доступа. Non-admin получат access_denied. Настройте правило во вкладке «Доступ».",
+                );
+                onRequestAccessSetup?.();
+                return;
+              }
+              callAction("open_room");
+            }}
+            title={guardOnly ? "Правило доступа не задано — non-admin получат access_denied" : undefined}
+          >
+            {pending === "open_room" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <DoorOpen className="h-4 w-4" />
+            )}
+            Открыть комнату
+          </Button>
+        );
+      })()}
 
 
-      <Button
-        variant="outline"
-        className={cn(GLASS_BASE, GLASS_TONE.primary, LIFECYCLE_BUTTON_WIDTH_FIXED)}
-        disabled={!canPerformAction(roomState, "start_live") || !!pending || startBlocked}
-        onClick={() => {
-          if (startBlocked) {
-            toast.warning(
-              "Начать вебинар нельзя: не задано ни одного правила доступа. Non-admin получат access_denied. Настройте правило во вкладке «Доступ».",
-            );
-            onRequestAccessSetup?.();
-            return;
-          }
-          callAction("start_live");
-        }}
-        title={startBlocked ? "Правило доступа не задано — non-admin получат access_denied" : undefined}
-      >
-        {pending === "start_live" ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <PlayCircle className="h-4 w-4" />
-        )}
-        Начать вебинар
-      </Button>
+      {(() => {
+        const canStart = canPerformAction(roomState, "start_live");
+        const trulyDisabled = !canStart || !!pending;
+        const guardOnly = startBlocked && !trulyDisabled;
+        return (
+          <Button
+            variant="outline"
+            className={cn(
+              GLASS_BASE,
+              GLASS_TONE.primary,
+              LIFECYCLE_BUTTON_WIDTH_FIXED,
+              guardOnly && "opacity-50 cursor-not-allowed border-destructive/40",
+            )}
+            disabled={trulyDisabled}
+            aria-disabled={guardOnly || trulyDisabled}
+            onClick={(e) => {
+              if (guardOnly) {
+                e.preventDefault();
+                e.stopPropagation();
+                toast.warning(
+                  "Начать вебинар нельзя: не задано ни одного правила доступа. Non-admin получат access_denied. Настройте правило во вкладке «Доступ».",
+                );
+                onRequestAccessSetup?.();
+                return;
+              }
+              callAction("start_live");
+            }}
+            title={guardOnly ? "Правило доступа не задано — non-admin получат access_denied" : undefined}
+          >
+            {pending === "start_live" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <PlayCircle className="h-4 w-4" />
+            )}
+            Начать вебинар
+          </Button>
+        );
+      })()}
+
 
 
       <AlertDialog>
