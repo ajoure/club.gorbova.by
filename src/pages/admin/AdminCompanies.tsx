@@ -1317,10 +1317,14 @@ function CompanyProfileOverview({ company, onRefreshRegistry, isRefreshing }: { 
     ["Ликвидация", company.grp_liquidation_date],
   ].filter(([, value]) => value);
 
+  const sourceLabel = company.metadata?.created_source
+    ? (companyContactSourceLabels[company.metadata.created_source] || company.metadata.created_source)
+    : (company.metadata?.google_sheet_import ? "Импорт таблицы" : "CRM");
+
   return (
-    <div className="space-y-4 px-1 pb-6">
-      <Card>
-        <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Info className="h-4 w-4" />Основная информация</CardTitle></CardHeader>
+    <div className="space-y-4 pb-6">
+      <Card className="border-border/40">
+        <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><Info className="h-4 w-4 text-primary" />Основная информация</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <InfoRow label={isEntrepreneur ? "ФИО" : "Полное наименование"} value={normalizeCompanyName(company.full_name)} />
           {!isEntrepreneur && <><Separator /><InfoRow label="Орг. форма" value={company.legal_form || inferCompanyLegalForm(company.full_name)} /></>}
@@ -1329,8 +1333,8 @@ function CompanyProfileOverview({ company, onRefreshRegistry, isRefreshing }: { 
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="pb-2"><div className="flex items-center justify-between gap-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><ClipboardList className="h-4 w-4" />Данные реестра</CardTitle>{company.unp_normalized && onRefreshRegistry && <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" disabled={isRefreshing} onClick={onRefreshRegistry}>{isRefreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}Обновить из реестра</Button>}</div></CardHeader>
+      <Card className="border-border/40">
+        <CardHeader className="pb-2"><div className="flex items-center justify-between gap-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><ClipboardList className="h-4 w-4 text-primary" />Данные реестра</CardTitle>{company.unp_normalized && onRefreshRegistry && <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" disabled={isRefreshing} onClick={onRefreshRegistry}>{isRefreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}Обновить из реестра</Button>}</div></CardHeader>
         <CardContent className="space-y-3">
           {registryRows.length === 0 ? <p className="text-sm text-muted-foreground">{company.unp_normalized ? "Данные реестра ещё не загружены" : "Нет УНП для поиска"}</p> : registryRows.map(([label, value], index) => <div key={label as string}>{index > 0 && <Separator />}{label === "Статус" ? <div className="flex items-center justify-between gap-2"><span className="shrink-0 text-sm text-muted-foreground">Статус</span><GrpStatusBadge status={String(value)} /></div> : <InfoRow label={label as string} value={String(value)} mono={label === "Код ИМНС"} />}</div>)}
           {company.grp_liquidation_reason && <><Separator /><InfoRow label="Причина ликвидации" value={company.grp_liquidation_reason} /></>}
@@ -1338,13 +1342,13 @@ function CompanyProfileOverview({ company, onRefreshRegistry, isRefreshing }: { 
         </CardContent>
       </Card>
 
-      {addressLines.length > 0 && <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><MapPin className="h-4 w-4" />Адрес</CardTitle></CardHeader><CardContent><div className="flex items-start justify-between gap-2"><span className="shrink-0 text-sm text-muted-foreground">Юридический адрес</span><div className="text-right text-sm">{addressLines.map((line, index) => <div key={index}>{line}</div>)}</div></div></CardContent></Card>}
+      {addressLines.length > 0 && <Card className="border-border/40"><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><MapPin className="h-4 w-4 text-primary" />Юридический адрес</CardTitle></CardHeader><CardContent><div className="flex items-start justify-between gap-3"><span className="shrink-0 text-sm text-muted-foreground">Адрес</span><div className="min-w-0 text-right text-sm">{addressLines.map((line, index) => <div key={index} className="break-words">{line}</div>)}</div></div></CardContent></Card>}
 
-      {!isEntrepreneur && (company.director_name || company.director_position) && <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Briefcase className="h-4 w-4" />Руководитель</CardTitle></CardHeader><CardContent className="space-y-3">{company.director_position && <InfoRow label="Должность" value={company.director_position} />}{company.director_position && company.director_name && <Separator />}{company.director_name && <InfoRow label="ФИО" value={company.director_name} />}</CardContent></Card>}
+      {!isEntrepreneur && (company.director_name || company.director_position) && <Card className="border-border/40"><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><Briefcase className="h-4 w-4 text-primary" />Руководитель</CardTitle></CardHeader><CardContent className="space-y-3">{company.director_position && <InfoRow label="Должность" value={company.director_position} />}{company.director_position && company.director_name && <Separator />}{company.director_name && <InfoRow label="ФИО" value={company.director_name} />}</CardContent></Card>}
 
-      {(company.bank_account || company.bank_name || company.bank_code) && <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Landmark className="h-4 w-4" />Банковские реквизиты</CardTitle></CardHeader><CardContent className="space-y-3"><InfoRow label="Расчётный счёт" value={company.bank_account} copyable mono />{company.bank_name && <><Separator /><InfoRow label="Банк" value={company.bank_name} /></>}{company.bank_code && <><Separator /><InfoRow label="Код банка" value={company.bank_code} copyable mono /></>}</CardContent></Card>}
+      {(company.bank_account || company.bank_name || company.bank_code) && <Card className="border-border/40"><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><Landmark className="h-4 w-4 text-primary" />Банковские реквизиты</CardTitle></CardHeader><CardContent className="space-y-3"><InfoRow label="Расчётный счёт" value={company.bank_account} copyable mono />{company.bank_name && <><Separator /><InfoRow label="Банк" value={company.bank_name} /></>}{company.bank_code && <><Separator /><InfoRow label="Код банка" value={company.bank_code} copyable mono /></>}</CardContent></Card>}
 
-      <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Info className="h-4 w-4" />Служебная информация</CardTitle></CardHeader><CardContent className="space-y-3"><InfoRow label="Источник" value={company.metadata?.created_source || (company.metadata?.google_sheet_import ? "Импорт таблицы" : "CRM")} /><Separator /><InfoRow label="Дата создания" value={format(new Date(company.created_at), "dd MMM yyyy HH:mm", { locale: ru })} /><Separator /><InfoRow label="ID" value={company.id} copyable mono /></CardContent></Card>
+      <Card className="border-border/40"><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><Info className="h-4 w-4 text-primary" />Служебная информация</CardTitle></CardHeader><CardContent className="space-y-3"><InfoRow label="Источник" value={sourceLabel} /><Separator /><InfoRow label="Дата создания" value={format(new Date(company.created_at), "dd MMM yyyy HH:mm", { locale: ru })} /><Separator /><InfoRow label="ID" value={company.id} copyable mono /></CardContent></Card>
     </div>
   );
 }
