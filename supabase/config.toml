@@ -98,9 +98,3 @@ verify_jwt = false
 # The function also validates an explicit allowed-origin list at runtime.
 [functions.company-sync-admin]
 verify_jwt = true
-
-# Phase 4D: invoked by pg_cron via net.http_post with a vault-backed
-# X-Worker-Secret header. Authorization is enforced inside the function
-# (shared-secret gate + service-role client). Must remain JWT-less.
-[functions.company-sync-worker]
-verify_jwt = false
