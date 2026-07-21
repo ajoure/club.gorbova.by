@@ -89,6 +89,7 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
           video_processing: "Kinescope ещё обрабатывает запись. Попробуйте немного позже.",
           audio_not_available: "В записи Kinescope пока нет доступной аудиодорожки.",
           audio_not_ready: "Сначала сохраните аудиофайл эфира.",
+          audio_too_large: "Аудиозапись слишком большая для автоматической транскрибации (лимит ≈24 МБ на запрос). Обратитесь к администратору, чтобы подготовить транскрипт через внутренний fallback.",
         };
         throw new Error(messages[data?.code] || data?.error || "Операция пока недоступна");
       }
