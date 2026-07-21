@@ -876,6 +876,26 @@ export default function AdminLiveEvents() {
       if (eventId) {
         await supabase.from("live_event_access_rules").delete().eq("live_event_id", eventId);
 
+      // FORENSIC PATCH: only touch live_event_access_rules when the user
+      // explicitly changed the Access section (or when creating a new event).
+      // Saving unrelated sections of the card must NOT wipe existing rules.
+      const shouldWriteAccessRules = !editingId || accessRulesDirtyRef.current;
+
+      if (eventId && shouldWriteAccessRules) {
+        // Read the confirmed current state as a rollback baseline before we
+        // touch anything. Client-side rollback is best-effort — this is NOT a
+        // real DB transaction, and we make no atomicity promises across
+        // delete+insert.
+        let baseline: any[] = [];
+        if (editingId) {
+          const { data: currentRows, error: baselineErr } = await supabase
+            .from("live_event_access_rules")
+            .select("live_event_id, product_id, tariff_id, sort_order, conditions, rule_kind")
+            .eq("live_event_id", eventId);
+          if (baselineErr) throw baselineErr;
+          baseline = currentRows || [];
+        }
+
         const hasAnyAuth = data.access_rules.some(r => r.rule_kind === "any_authenticated");
         const rows: Array<{
           live_event_id: string;
@@ -887,7 +907,6 @@ export default function AdminLiveEvents() {
         }> = [];
 
         if (hasAnyAuth) {
-          // Any-authenticated is mutually exclusive with product rules.
           rows.push({
             live_event_id: eventId!,
             product_id: null,
@@ -911,10 +930,23 @@ export default function AdminLiveEvents() {
           });
         }
 
+        const { error: delErr } = await supabase.from("live_event_access_rules").delete().eq("live_event_id", eventId);
+        if (delErr) throw delErr;
+
         if (rows.length > 0) {
           const { error: rulesError } = await supabase.from("live_event_access_rules").insert(rows as any);
-          if (rulesError) throw rulesError;
+          if (rulesError) {
+            // Best-effort restore of the pre-save baseline so the event does
+            // not end up rule-less while a broadcast is running.
+            if (baseline.length > 0) {
+              await supabase.from("live_event_access_rules").insert(baseline as any);
+            }
+            throw new Error(`Не удалось сохранить правила доступа: ${rulesError.message}. Прежние правила восстановлены.`);
+          }
         }
+
+        // Access section is now in sync with DB; clear the dirty flag.
+        accessRulesDirtyRef.current = false;
       }
     },
     onSuccess: () => {
