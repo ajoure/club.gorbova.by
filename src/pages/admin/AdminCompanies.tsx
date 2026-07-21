@@ -55,7 +55,7 @@ import { BulkCreateDealsDialog } from "@/components/admin/deals/BulkCreateDealsD
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
-import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
+import { SHEET_SHELL_CLASS, getEntityShellClass } from "@/lib/sheetShell";
 import { ContactFeedTab } from "@/components/admin/contact/ContactFeedTab";
 import { CallButton } from "@/components/admin/calls/CallButton";
 import { CallsHistorySection } from "@/components/admin/calls/CallsHistorySection";
@@ -1684,7 +1684,7 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
   });
   return (
     <Sheet open={!!companyId} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" className={SHEET_SHELL_CLASS}>
+      <SheetContent side="right" className={getEntityShellClass("company")}>
         {detailQuery.isLoading && <div className="space-y-4 pt-8"><Skeleton className="h-8 w-2/3" />{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>}
         {!detailQuery.isLoading && !company && <div className="pt-12 text-center text-muted-foreground">Компания не найдена или недоступна.</div>}
         {company && (

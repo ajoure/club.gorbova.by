@@ -6,7 +6,7 @@ import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisp
 import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
-import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
+import { SHEET_SHELL_CLASS, getEntityShellClass } from "@/lib/sheetShell";
 import { useNavigate } from "react-router-dom";
 import { format, addDays, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";

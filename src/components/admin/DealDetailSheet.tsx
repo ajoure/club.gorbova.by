@@ -3,7 +3,9 @@ import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisp
 import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
-import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
+import { SHEET_SHELL_CLASS, getEntityShellClass } from "@/lib/sheetShell";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+
 import { useNavigate } from "react-router-dom";
 import { format, parse } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -548,7 +550,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   return (
     <>
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className={SHEET_SHELL_CLASS}>
+      <SheetContent className={getEntityShellClass("deal")}>
         <SheetHeader className="p-4 sm:p-6 pb-4 pr-14 sm:pr-16">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-3 sm:gap-4">
