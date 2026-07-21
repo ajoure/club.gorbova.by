@@ -952,11 +952,14 @@ export function ContactFeedTab({
   const canSend = !readOnly && noteBody.trim().length > 0 && !createNote.isPending;
 
   return (
-    <div className={embedded
-      ? "flex min-h-[520px] flex-1 flex-col overflow-hidden"
-      : "flex h-[calc(100vh-260px)] min-h-[520px] max-h-[calc(100vh-220px)] flex-col overflow-hidden"}>
+    <div className={cn(
+      embedded
+        ? "flex min-h-[520px] flex-1 flex-col overflow-hidden rounded-2xl border border-border/40 bg-background/60 backdrop-blur-sm p-3 sm:p-4"
+        : "flex h-[calc(100vh-260px)] min-h-[520px] max-h-[calc(100vh-220px)] flex-col overflow-hidden rounded-2xl border border-border/40 bg-background/60 backdrop-blur-sm p-3 sm:p-4"
+    )}>
       {/* Filters + search */}
-      <div className="flex flex-wrap items-center gap-2 sticky top-0 z-10 bg-background/80 backdrop-blur py-2">
+      <div className="flex flex-wrap items-center gap-1.5 sticky top-0 z-10 bg-background/70 backdrop-blur py-1 -mx-3 sm:-mx-4 px-3 sm:px-4 border-b border-border/30">
+
         <button
           onClick={() => setSelected(new Set())}
           className={cn(

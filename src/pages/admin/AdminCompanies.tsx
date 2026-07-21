@@ -1749,7 +1749,6 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
               </div>
               <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
                 <TabsContent value="profile" className="mt-0 space-y-4">
-                  <CompanyProfileOverview company={company} onRefreshRegistry={canEditCompany ? () => refreshRegistry.mutate() : undefined} isRefreshing={refreshRegistry.isPending} />
                   <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground/80">Каналы связи</div>
                     {company.email && <div className="flex flex-wrap items-center gap-2"><Mail className="h-4 w-4" /><a href={`mailto:${company.email}`} className="min-w-0 flex-1 break-all hover:text-foreground hover:underline">{company.email}</a><Button size="sm" variant="outline" className="h-7 px-2.5 text-xs shrink-0" onClick={() => setComposeEmailOpen(true)}><Mail className="mr-1 h-3 w-3" />Письмо</Button></div>}
@@ -1758,6 +1757,7 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                     {company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}
                     {!company.email && companyPhones.length === 0 && !company.legal_address && "Контактные данные не заполнены."}
                   </section>
+                  <CompanyProfileOverview company={company} onRefreshRegistry={canEditCompany ? () => refreshRegistry.mutate() : undefined} isRefreshing={refreshRegistry.isPending} />
                 </TabsContent>
                 <TabsContent value="contacts" className="mt-0 space-y-3">
                   {contactsQuery.isLoading && <Skeleton className="h-16 w-full" />}
