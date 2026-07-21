@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Loader2, Send, ArrowDown } from "lucide-react";
+import { Loader2, Send, ArrowDown, SmilePlus } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
@@ -22,6 +22,10 @@ import { toast } from "sonner";
 import { resolveParticipantDisplay } from "@/lib/participantDisplay";
 import { normalizeEmoji } from "@/lib/normalizeEmoji";
 import { useStaffNameMap } from "@/hooks/useStaffNameMap";
+import { useLiveEventCommentReactions, useToggleLiveEventCommentReaction } from "@/hooks/useLiveEventCommentReactions";
+import { LiveEventCommentReactions } from "./LiveEventCommentReactions";
+import { TELEGRAM_REACTION_EMOJIS } from "@/lib/telegramReactionEmojis";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 interface Comment {
   id: string;
@@ -189,6 +193,15 @@ export function LiveEventComments({
     [historyComments],
   );
 
+  // Reactions are available only for the actual room messages. Source history
+  // is deliberately read-only in an autowebinar and must never be mutated.
+  const liveCommentIds = useMemo(
+    () => (liveComments ?? []).map((comment) => comment.id),
+    [liveComments],
+  );
+  const { data: commentReactions } = useLiveEventCommentReactions(liveCommentIds);
+  const toggleCommentReaction = useToggleLiveEventCommentReaction();
+
 
 
   // Realtime subscription
@@ -322,6 +335,25 @@ export function LiveEventComments({
     sendMutation.mutate(newComment.trim());
   };
 
+  const handleEmojiInsert = (emoji: string) => {
+    setNewComment((current) => `${current}${current && !current.endsWith(" ") ? " " : ""}${emoji}`);
+  };
+
+  const handleToggleCommentReaction = (commentId: string, emoji: string) => {
+    if (!user) {
+      toast.error("Войдите, чтобы реагировать");
+      return;
+    }
+    if (isBlocked) {
+      toast.error(isRemoved ? "Вы удалены из комнаты модератором" : "Вы заглушены модератором");
+      return;
+    }
+    toggleCommentReaction.mutate(
+      { commentId, emoji },
+      { onError: () => toast.error("Не удалось изменить реакцию") },
+    );
+  };
+
   const resolveDisplayRole = (c: Comment): AuthorRole | string | null => {
     // Visual presenter label is derived from live_events.metadata.presenter_user_id.
     // Auth role is unaffected; this is UI-only.
@@ -360,8 +392,8 @@ export function LiveEventComments({
             // Политика: mem://security/access-control/webinar-staff-action-guards.
             const canOpenProfile = !!onOpenProfile;
             return (
-              <div key={comment.id}>
-                <div className={`flex gap-2 group rounded-lg p-2 ${highlight}`}>
+              <div key={comment.id} className="group">
+                <div className={`flex gap-2 rounded-lg p-2 ${highlight}`}>
                   <Avatar
                     className={`h-7 w-7 shrink-0 ${canOpenProfile ? "cursor-pointer" : ""}`}
                     onClick={canOpenProfile ? () => onOpenProfile!(comment.user_id) : undefined}
@@ -394,6 +426,13 @@ export function LiveEventComments({
                     <p className="text-sm room-message-text break-words whitespace-pre-wrap">{normalizeEmoji(comment.content, emojiNormalizationEnabled)}</p>
                   </div>
                 </div>
+                {!isHistorical && (
+                  <LiveEventCommentReactions
+                    reactions={commentReactions?.[comment.id]}
+                    disabled={toggleCommentReaction.isPending || isBlocked}
+                    onToggle={(emoji) => handleToggleCommentReaction(comment.id, emoji)}
+                  />
+                )}
                 {/* Threaded replies */}
                 {!isHistorical && <LiveEventRepliesList
                     liveEventId={liveEventId}
@@ -451,6 +490,34 @@ export function LiveEventComments({
               className="flex-1"
               disabled={isBlocked}
             />
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  disabled={isBlocked}
+                  aria-label="Добавить эмодзи в комментарий"
+                >
+                  <SmilePlus className="h-4 w-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[320px] p-2" side="top" align="end">
+                <div className="grid grid-cols-10 gap-1" aria-label="Выбор эмодзи">
+                  {TELEGRAM_REACTION_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => handleEmojiInsert(emoji)}
+                      className="flex h-7 w-7 items-center justify-center rounded text-sm transition-colors hover:bg-accent focus:bg-accent"
+                      aria-label={`Добавить ${emoji}`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
             <Button
               size="icon"
               variant="ghost"
