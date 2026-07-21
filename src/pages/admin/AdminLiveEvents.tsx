@@ -56,7 +56,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
-import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor, ShoppingCart, Trash2, MoreHorizontal, Settings, Image as ImageIcon, Info, FileAudio } from "lucide-react";
+import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, ShieldAlert, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor, ShoppingCart, Trash2, MoreHorizontal, Settings, Image as ImageIcon, Info, FileAudio } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -87,6 +87,8 @@ import { useActiveParticipants } from "@/hooks/useActiveParticipants";
 import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveRoomLifecycle";
 import { ColumnSettings } from "@/components/admin/ColumnSettings";
 import { LiveEventsTable } from "@/components/admin/live/LiveEventsTable";
+import { useLiveEventsAccessRuleFlags } from "@/hooks/useLiveEventsAccessRuleFlags";
+
 import { useLiveEventsColumns, LIVE_EVENTS_LOCKED_KEYS } from "@/hooks/useLiveEventsColumns";
 import { AutowebModeEditor, type AutowebUserMode as AutowebUserModeT, type AutowebConfig } from "@/components/admin/live/AutowebModeEditor";
 
@@ -344,6 +346,11 @@ export default function AdminLiveEvents() {
       return (data || []) as unknown as LiveEvent[];
     },
   });
+
+  // ACCESS-RULE GUARD (read-only): помечаем эфиры без access rule и блокируем
+  // запуск lifecycle до настройки доступа. Не изменяет доступ и не создаёт правил.
+  const { data: eventsWithAccessRule } = useLiveEventsAccessRuleFlags(true);
+
 
   const { data: existingRules } = useQuery({
     queryKey: ["live-event-access-rules", editingId],
@@ -1109,7 +1116,13 @@ export default function AdminLiveEvents() {
               onLifecycleAction={handleLifecycleAction}
               onDelete={(id) => setDeleteIds([id])}
               onSelectionChange={setSelectedIds}
+              eventsWithAccessRule={eventsWithAccessRule}
+              onEditAccess={(event) => {
+                handleEdit(event as unknown as LiveEvent);
+                setActiveTab("access");
+              }}
             />
+
           </div>
         )}
 
@@ -1517,7 +1530,23 @@ export default function AdminLiveEvents() {
 
                   {/* === TAB: Доступ === */}
                   <TabsContent value="access" className="m-0 space-y-4">
+              {/* GUARD: правило доступа обязательно. Без записи в
+                  live_event_access_rules non-admin получают default-deny
+                  при попытке войти в комнату (штатное поведение backend). */}
+              {form.access_rules.length === 0 && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive flex items-start gap-2">
+                  <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" />
+                  <div>
+                    <div className="font-semibold">Правило доступа обязательно</div>
+                    <div className="mt-0.5 text-destructive/90">
+                      Без хотя бы одного правила ниже авторизованные пользователи получат <code>access_denied</code> при входе в комнату.
+                      Выберите «Любой авторизованный» либо задайте продукт/тариф.
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* Section 3: Access rules */}
+
               <FormSection>
                 <div className="space-y-2 mb-4">
                   <Label className="text-sm font-medium">Месяц контента</Label>
