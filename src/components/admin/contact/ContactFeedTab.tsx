@@ -1134,10 +1134,10 @@ export function ContactFeedTab({
               className="!bg-fuchsia-500/10 !border-fuchsia-500/25 flex-1"
               fileName={`voice_${Date.now()}.webm`}
             />
-            <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0" onClick={rec.reset} title="Отменить">
+            <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={rec.reset} title="Отменить">
               <X className="w-4 h-4" />
             </Button>
-            <Button size="icon" className="h-9 w-9 shrink-0 rounded-full" disabled={uploading} onClick={sendVoice} title="Отправить">
+            <Button size="icon" className="h-8 w-8 shrink-0 rounded-full" disabled={uploading} onClick={sendVoice} title="Отправить">
               <Send className="w-4 h-4" />
             </Button>
           </div>
@@ -1146,7 +1146,7 @@ export function ContactFeedTab({
             <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
             <span className="text-sm tabular-nums">{Math.floor(rec.elapsed/60)}:{String(rec.elapsed%60).padStart(2,"0")}</span>
             <span className="text-xs text-muted-foreground flex-1">Идёт запись…</span>
-            <Button size="icon" className="h-9 w-9 shrink-0 rounded-full" onClick={rec.stop} title="Остановить">
+            <Button size="icon" className="h-8 w-8 shrink-0 rounded-full" onClick={rec.stop} title="Остановить">
               <Square className="w-4 h-4" />
             </Button>
           </div>
@@ -1154,7 +1154,7 @@ export function ContactFeedTab({
           <div className="flex items-end gap-2 rounded-2xl border border-border/50 bg-background/95 p-2 backdrop-blur">
             <Popover>
               <PopoverTrigger asChild>
-                <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0 rounded-full" title="Эмодзи">
+                <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full" title="Эмодзи">
                   <Smile className="w-4 h-4" />
                 </Button>
               </PopoverTrigger>
@@ -1168,7 +1168,7 @@ export function ContactFeedTab({
             </Popover>
             <Popover>
               <PopoverTrigger asChild>
-                <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0 rounded-full" disabled={uploading}>
+                <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full" disabled={uploading}>
                   <Paperclip className="w-4 h-4" />
                 </Button>
               </PopoverTrigger>
@@ -1202,12 +1202,12 @@ export function ContactFeedTab({
               rows={1}
               className="flex-1 min-h-[36px] max-h-[160px] resize-none bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none px-2 py-2 text-sm"
             />
-            <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0 rounded-full" onClick={rec.start} title="Голосовое сообщение">
+            <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full" onClick={rec.start} title="Голосовое сообщение">
               <Mic className="w-4 h-4" />
             </Button>
             <Button
               size="icon"
-              className="h-9 w-9 shrink-0 rounded-full"
+              className="h-8 w-8 shrink-0 rounded-full"
               disabled={!canSend}
               onClick={() => createNote.mutate(noteBody.trim())}
               title="Отправить"
