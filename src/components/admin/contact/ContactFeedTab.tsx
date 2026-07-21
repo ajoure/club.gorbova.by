@@ -964,7 +964,7 @@ export function ContactFeedTab({
   return (
     <div className={cn(
       embedded
-        ? "flex min-h-[240px] flex-col overflow-hidden rounded-2xl border border-border/40 bg-background/75 backdrop-blur-sm p-3 sm:p-4"
+        ? "flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40 bg-background/75 backdrop-blur-sm p-3 sm:p-4"
         : "flex h-[calc(100vh-260px)] min-h-[520px] max-h-[calc(100vh-220px)] flex-col overflow-hidden rounded-2xl border border-border/40 bg-background/75 backdrop-blur-sm p-3 sm:p-4"
 
     )}>
