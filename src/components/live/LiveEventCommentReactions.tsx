@@ -22,7 +22,7 @@ export function LiveEventCommentReactions({ reactions, disabled, onToggle }: Liv
           <button
             type="button"
             disabled={disabled}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-border bg-card text-muted-foreground opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed"
+            className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-border bg-card text-muted-foreground opacity-100 transition-opacity hover:bg-accent focus:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 disabled:cursor-not-allowed"
             aria-label="Добавить реакцию"
           >
             <SmilePlus className="h-3.5 w-3.5" />
