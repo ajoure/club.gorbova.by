@@ -208,7 +208,7 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
               size="sm"
               className="gap-1"
               onClick={() => setWizardOpen(true)}
-              disabled={audio?.status !== "ready"}
+              disabled={audio?.status !== "ready" || transcribing}
             >
               <Sparkles className="h-3.5 w-3.5" />
               {transcript?.status === "ready" ? "Создать заново (в браузере)" : "Запустить транскрибацию"}
@@ -246,7 +246,8 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
     </div>
   );
 }
-// suppress-unused: kept legacy invoke("start_transcript") wiring available if fallback needed
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const _keepLegacyStartTranscript = "start_transcript";
+    </div>
+  );
+}
+
 
