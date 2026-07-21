@@ -486,6 +486,25 @@ async function handleCancel(service: any, user: any, body: any) {
   return json({ ok: true });
 }
 
+async function handleHeartbeat(service: any, user: any, body: any) {
+  const jobId = String(body?.job_id || "");
+  if (!jobId) return json({ error: "missing_job" }, 400);
+  const job = await loadJob(service, jobId);
+  if (!job) return json({ error: "job_not_found" }, 404);
+  if (!(await canManage(service, user.id, job.live_event_id))) return json({ error: "forbidden" }, 403);
+  if (["ready", "failed", "cancelled"].includes(job.status)) {
+    return json({ ok: true, job, skipped: true });
+  }
+  const { data, error } = await service
+    .from("live_event_client_transcription_jobs")
+    .update({ heartbeat_at: new Date().toISOString() })
+    .eq("id", jobId)
+    .select("id, status, heartbeat_at")
+    .single();
+  if (error) throw error;
+  return json({ ok: true, job: data });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -504,6 +523,7 @@ Deno.serve(async (req) => {
       case "create_job": return await handleCreateJob(service, auth.user, body);
       case "register_parts": return await handleRegisterParts(service, auth.user, body);
       case "status": return await handleStatus(service, auth.user, body);
+      case "heartbeat": return await handleHeartbeat(service, auth.user, body);
       case "finalize": return await handleFinalize(service, auth.user, body);
       case "cancel": return await handleCancel(service, auth.user, body);
       default: return json({ error: "unknown_action" }, 400);
