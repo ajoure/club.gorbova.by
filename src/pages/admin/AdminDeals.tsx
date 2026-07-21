@@ -280,6 +280,10 @@ export default function AdminDeals() {
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
   const [showCreateDealDialog, setShowCreateDealDialog] = useState(false);
   const [showBulkCreateDeals, setShowBulkCreateDeals] = useState(false);
+  const [showBulkMoveDialog, setShowBulkMoveDialog] = useState(false);
+  const [moveTargetPipelineId, setMoveTargetPipelineId] = useState<string>("");
+  const [moveTargetStageId, setMoveTargetStageId] = useState<string>("");
+  const [isBulkMoving, setIsBulkMoving] = useState(false);
 
   // View mode & filters from URL
   const [searchParams, setSearchParams] = useSearchParams();
