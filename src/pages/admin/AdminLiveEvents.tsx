@@ -971,6 +971,11 @@ export default function AdminLiveEvents() {
   };
 
   const handleEdit = (event: LiveEvent) => {
+    // FORENSIC PATCH: reset access-rules hydration/dirty tracking. Until the
+    // access rules query for this editingId resolves and hydrates the form,
+    // saveMutation must refuse to touch live_event_access_rules.
+    accessRulesHydratedForRef.current = null;
+    accessRulesDirtyRef.current = false;
     setEditingId(event.id);
     setSlugManuallyEdited(true);
     setPublishAttempted(false);
