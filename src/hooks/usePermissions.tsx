@@ -35,6 +35,7 @@ const CATEGORY_TO_SECTION: Record<string, string> = {
   deals: "deals",
   users: "contacts",
   contacts: "contacts",
+  companies: "companies",
   payments: "payments",
   entitlements: "payments",
   support: "support",

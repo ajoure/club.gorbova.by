@@ -29,4 +29,10 @@ describe("normalizeCompanyName", () => {
   it("removes duplicated quotes and an OPF embedded in an imported branch name", () => {
     expect(normalizeCompanyName('Электромонтажстрой, ф-л ОАО """МИНСКРЕМСТРОЙ"""')).toBe("Электромонтажстрой, ф-л МИНСКРЕМСТРОЙ");
   });
+
+  it("removes long legal-form phrases from imported registry names", () => {
+    expect(normalizeCompanyName("Закрытое акционерное общество «Журнкам»")).toBe("Журнкам");
+    expect(normalizeCompanyName("Журнкам, закрытое акционерное общество")).toBe("Журнкам");
+    expect(inferCompanyLegalForm("Закрытое акционерное общество «Журнкам»")).toBe("ЗАО");
+  });
 });

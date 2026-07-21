@@ -23,6 +23,7 @@ import { ViewCrmTaskDialog } from "@/components/admin/tasks/ViewCrmTaskDialog";
 import { TaskKanbanBoard } from "@/components/admin/tasks/board/TaskKanbanBoard";
 import { TasksListView } from "@/components/admin/tasks/TasksListView";
 import { TasksStaffStatsPanel } from "@/components/admin/tasks/stats/TasksStaffStatsPanel";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 import {
   TasksFiltersBar,
   type TasksFiltersValue,
@@ -47,6 +48,7 @@ export default function AdminTasks() {
   const [editTask, setEditTask] = useState<CrmTask | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
+  const companyAccess = useAdminAccess();
   const {
     selectedContact,
     contactSheetOpen,
@@ -258,7 +260,7 @@ export default function AdminTasks() {
       />
       <CompanyDetailsSheet
         companyId={selectedCompanyId}
-        canEdit={false}
+        canEdit={companyAccess.isSuperAdmin || companyAccess.isAdmin || companyAccess.canAccessSection("companies", "edit")}
         onClose={() => setSelectedCompanyId(null)}
         onOpenCompany={setSelectedCompanyId}
       />

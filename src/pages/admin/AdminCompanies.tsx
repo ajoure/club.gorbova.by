@@ -74,7 +74,6 @@ import { GrpLookupAdapter } from "@/lib/legal-entities/adapters/GrpLookupAdapter
 import { copyToClipboard, getCompanyUrl } from "@/utils/clipboardUtils";
 import { CrmTasksSection } from "@/components/admin/tasks/CrmTasksSection";
 import { CompanySheetImportDialog } from "@/components/admin/CompanySheetImportDialog";
-import { CompanySyncQueuePanel } from "@/components/admin/CompanySyncQueuePanel";
 import { SortableResizableTableHead, ResizableTableHead } from "@/components/admin/table/SortableResizableTableHead";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { Badge } from "@/components/ui/badge";
@@ -158,22 +157,6 @@ interface CompanySearchResult {
   total: number;
   limit: number;
   offset: number;
-}
-
-interface CompanyQualitySummary {
-  without_contacts: number;
-  without_unp: number;
-  without_billing_map: number;
-  ownership_conflicts: number;
-  broken_merged_chain: number;
-  failed_sync: number;
-  duplicate_candidates: number;
-  orphan_order_links: number;
-}
-
-interface CompanyInvariantReport {
-  ok: boolean;
-  checks: Record<string, { status: string; count: number }>;
 }
 
 interface CompanyDetail extends CompanyListItem {
@@ -337,7 +320,10 @@ function getLinkedPersonName(person: CompanyListPersonLink["person"]): string | 
   return person?.full_name ?? null;
 }
 
-const PAGE_SIZE = 25;
+// Keep the first page aligned with Contacts/Payments. Search remains a
+// server-side RPC query, so q is evaluated against the full Companies dataset,
+// not against the 100 rows currently rendered in the browser.
+const PAGE_SIZE = 100;
 const COMPANY_COLUMNS_STORAGE_KEY = "admin_companies_columns_v1";
 const COMPANY_COLUMNS_CONFIG_VERSION_KEY = "admin_companies_columns_config_version";
 const COMPANY_COLUMNS_CONFIG_VERSION = "3";
@@ -507,7 +493,14 @@ export default function AdminCompanies() {
   });
   const debouncedQuery = useDebouncedValue(query, 250);
   const selectedCompanyId = searchParams.get("company");
-  const canCreate = access.canAccessSection("companies", "manage");
+  // Section RBAC is deliberately split: edit-level roles may update a
+  // canonical company and its feed, while create/import/archive/merge/restore
+  // remain manage-level operations.
+  // Administrators are always allowed to edit canonical companies. Keep the
+  // explicit role bypass here as a second guard for sessions where the access
+  // RPC is stale while the role has already been resolved in the client.
+  const canEdit = access.isSuperAdmin || access.isAdmin || access.canAccessSection("companies", "edit");
+  const canManage = access.canAccessSection("companies", "manage");
 
   const filters = useMemo(() => ({
     q: debouncedQuery || undefined,
@@ -533,24 +526,6 @@ export default function AdminCompanies() {
     },
   });
 
-  const qualityQuery = useQuery({
-    queryKey: ["admin-company-quality"],
-    queryFn: async (): Promise<CompanyQualitySummary> => {
-      const { data, error } = await supabase.rpc("crm_company_quality_summary");
-      if (error) throw error;
-      return (data ?? {}) as unknown as CompanyQualitySummary;
-    },
-    staleTime: 30_000,
-  });
-  const invariantsQuery = useQuery({
-    queryKey: ["admin-company-invariants"],
-    queryFn: async (): Promise<CompanyInvariantReport> => {
-      const { data, error } = await supabase.rpc("crm_company_invariants_report");
-      if (error) throw error;
-      return (data ?? { ok: false, checks: {} }) as unknown as CompanyInvariantReport;
-    },
-    staleTime: 30_000,
-  });
 
   const items = companiesQuery.data?.items ?? [];
   const total = companiesQuery.data?.total ?? 0;
@@ -825,8 +800,8 @@ export default function AdminCompanies() {
             </DropdownMenuItem>
           </DropdownMenuContent>
           </DropdownMenu>
-          {canCreate && <Button variant="outline" size="sm" onClick={() => setSheetImportOpen(true)}><FileSpreadsheet className="mr-2 h-4 w-4" />Импорт таблицы</Button>}
-          {canCreate && (
+          {canManage && <Button variant="outline" size="sm" onClick={() => setSheetImportOpen(true)}><FileSpreadsheet className="mr-2 h-4 w-4" />Импорт таблицы</Button>}
+          {canManage && (
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               Создать компанию
@@ -835,18 +810,18 @@ export default function AdminCompanies() {
         </div>
       </div>
 
-      <div className="grid gap-3 rounded-xl border bg-card p-3 md:grid-cols-[minmax(0,1fr)_180px_180px]">
-        <div className="relative">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-2">
+        <div className="relative min-w-[280px] flex-1 md:min-w-[360px]">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
             onChange={(event) => { setQuery(event.target.value); resetPage(); }}
             placeholder="Название, УНП, ID, email или телефон"
-            className="pl-9"
+            className="h-9 min-w-[280px] pl-9 md:min-w-[360px]"
           />
         </div>
         <Select value={status} onValueChange={(value: "all" | CompanyStatus) => { setStatus(value); resetPage(); }}>
-          <SelectTrigger><SelectValue placeholder="Статус" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-[145px] text-xs"><SelectValue placeholder="Статус" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все статусы</SelectItem>
             <SelectItem value="active">Активные</SelectItem>
@@ -855,7 +830,7 @@ export default function AdminCompanies() {
           </SelectContent>
         </Select>
         <Select value={kind} onValueChange={(value: "all" | CompanyKind) => { setKind(value); resetPage(); }}>
-          <SelectTrigger><SelectValue placeholder="Тип" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-[135px] text-xs"><SelectValue placeholder="Тип" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все типы</SelectItem>
             <SelectItem value="legal_entity">Юрлица</SelectItem>
@@ -865,7 +840,7 @@ export default function AdminCompanies() {
           </SelectContent>
         </Select>
         <Select value={contactsFilter} onValueChange={(value: "all" | "with" | "without") => { setContactsFilter(value); resetPage(); }}>
-          <SelectTrigger><SelectValue placeholder="Контакты" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-[145px] text-xs"><SelectValue placeholder="Контакты" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Любые контакты</SelectItem>
             <SelectItem value="with">Есть контакты</SelectItem>
@@ -873,17 +848,17 @@ export default function AdminCompanies() {
           </SelectContent>
         </Select>
         <Select value={dealsFilter} onValueChange={(value: "all" | "with" | "without") => { setDealsFilter(value); resetPage(); }}>
-          <SelectTrigger><SelectValue placeholder="Сделки" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-[135px] text-xs"><SelectValue placeholder="Сделки" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Любые сделки</SelectItem>
             <SelectItem value="with">Есть сделки</SelectItem>
             <SelectItem value="without">Без сделок</SelectItem>
           </SelectContent>
         </Select>
-        <div className="flex items-center gap-2 md:col-span-3">
+        <div className="flex items-center gap-2">
           <Popover>
             <PopoverTrigger asChild>
-              <Button variant="outline" className={`justify-start text-left font-normal ${!createdRange?.from ? "text-muted-foreground" : ""}`}>
+              <Button variant="outline" size="sm" className={`h-9 justify-start text-left font-normal ${!createdRange?.from ? "text-muted-foreground" : ""}`}>
                 <CalendarDays className="mr-2 h-4 w-4" />
                 {createdRange?.from
                   ? createdRange.to
@@ -910,10 +885,10 @@ export default function AdminCompanies() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" className="h-8">
               <Bookmark className="mr-2 h-4 w-4" />
               Сохранённые фильтры{savedFilters.length > 0 ? ` (${savedFilters.length})` : ""}
             </Button>
@@ -944,41 +919,6 @@ export default function AdminCompanies() {
         <span>Показано: <strong className="text-foreground">{items.length}</strong> · Всего: <strong className="text-foreground">{total}</strong></span>
         <ColumnSettings columns={columns} onChange={setColumns} />
       </div>
-
-      <section className="rounded-xl border bg-card p-3" aria-label="Качество данных компаний">
-        <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-          <ShieldCheck className="h-4 w-4 text-primary" />
-          Качество данных
-          {qualityQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-        </div>
-        {qualityQuery.isError ? (
-          <p className="text-sm text-muted-foreground">Сводка качества временно недоступна. Список компаний продолжает работать.</p>
-        ) : (
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {[
-              ["Без контактов", qualityQuery.data?.without_contacts],
-              ["Без УНП", qualityQuery.data?.without_unp],
-              ["Без billing-связи", qualityQuery.data?.without_billing_map],
-              ["Конфликты источника", qualityQuery.data?.ownership_conflicts],
-              ["Кандидаты в дубли", qualityQuery.data?.duplicate_candidates],
-              ["Ошибки синхронизации", qualityQuery.data?.failed_sync],
-              ["Сломанные merge-ссылки", qualityQuery.data?.broken_merged_chain],
-              ["Осиротевшие заказы", qualityQuery.data?.orphan_order_links],
-            ].map(([label, value]) => (
-              <div key={label as string} className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2 text-sm">
-                <span className="text-muted-foreground">{label}</span>
-                <Badge variant={Number(value ?? 0) > 0 ? "secondary" : "outline"}>{value ?? "—"}</Badge>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="mt-3 flex items-center justify-between rounded-lg border px-3 py-2 text-sm">
-          <span className="text-muted-foreground">Инварианты Companies</span>
-          {invariantsQuery.isError ? <Badge variant="outline">Проверка недоступна</Badge> : <Badge variant={invariantsQuery.data?.ok ? "outline" : "secondary"}>{invariantsQuery.isFetching ? "Проверка…" : invariantsQuery.data?.ok ? "OK" : "Есть нарушения"}</Badge>}
-        </div>
-      </section>
-
-      {access.isAdmin || access.isSuperAdmin ? <CompanySyncQueuePanel canManage /> : null}
 
       <div className="min-h-0 min-w-0 flex-none overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center justify-between border-b px-4 py-3 text-sm text-muted-foreground">
@@ -1104,7 +1044,7 @@ export default function AdminCompanies() {
         }}
       />
       {isDragging && selectionBox && <SelectionBox startX={selectionBox.startX} startY={selectionBox.startY} endX={selectionBox.endX} endY={selectionBox.endY} />}
-      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canCreate && selectedCount >= 2 ? () => { setMergeTargetId(mergeEligibleCompanies[0]?.id ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "active") ? () => setArchiveReasonOpen(true) : undefined} onBulkRestore={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "archived") ? () => restoreCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "archived").map((company) => company.id)) : undefined} onBulkEdit={canCreate && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
+      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canManage && selectedCount >= 2 ? () => { setMergeTargetId(mergeEligibleCompanies[0]?.id ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canManage && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "active") ? () => setArchiveReasonOpen(true) : undefined} onBulkRestore={canManage && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "archived") ? () => restoreCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "archived").map((company) => company.id)) : undefined} onBulkEdit={canEdit && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
       <Dialog open={archiveReasonOpen} onOpenChange={setArchiveReasonOpen}>
         <DialogContent>
           <DialogHeader>
@@ -1184,7 +1124,7 @@ export default function AdminCompanies() {
       <EditCompanyDialog company={editCompany} onOpenChange={(open) => { if (!open) setEditCompany(null); }} onSaved={() => { setEditCompany(null); queryClient.invalidateQueries({ queryKey: ["admin-companies"] }); }} />
       <CompanyDetailsSheet
         companyId={selectedCompanyId}
-        canEdit={canCreate}
+        canEdit={canEdit}
         onClose={() => selectCompany(null)}
         onOpenCompany={selectCompany}
       />
@@ -1786,18 +1726,12 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                   Архивная компания доступна только для просмотра. Восстановление выполняется из списка компаний.
                 </div>
               )}
-              <div className="flex flex-wrap gap-2 pt-1">
-                <CallButton phone={normalizedPhone} companyId={company.id} />
-                <SmsButton phone={normalizedPhone} companyId={company.id} />
-                <Button size="sm" variant="outline" disabled={!company.email} onClick={() => setComposeEmailOpen(true)}>
-                  <Mail className="mr-1 h-3.5 w-3.5" /> Письмо
-                </Button>
-              </div>
             </SheetHeader>
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
               <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
                 <TabsList className="mx-4 sm:mx-6 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
                   <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
+                  <TabsTrigger value="contacts" className="text-xs sm:text-sm px-2.5 sm:px-3"><UserRound className="mr-1 h-3.5 w-3.5" />Контакты</TabsTrigger>
                   <TabsTrigger value="feed" className="text-xs sm:text-sm px-2.5 sm:px-3"><Activity className="mr-1 h-3.5 w-3.5" />Лента</TabsTrigger>
                   <TabsTrigger value="telegram" className="text-xs sm:text-sm px-2.5 sm:px-3"><MessageCircle className="mr-1 h-3.5 w-3.5" />Telegram</TabsTrigger>
                   <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">Сделки</TabsTrigger>
@@ -1811,22 +1745,13 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                   <TabsTrigger value="installments" className="text-xs sm:text-sm px-2.5 sm:px-3"><Wallet className="mr-1 h-3.5 w-3.5" />Рассрочки</TabsTrigger>
                   <TabsTrigger value="loyalty" className="text-xs sm:text-sm px-2.5 sm:px-3"><Sparkles className="mr-1 h-3.5 w-3.5" />Лояльность</TabsTrigger>
                   <TabsTrigger value="artifacts" className="text-xs sm:text-sm px-2.5 sm:px-3"><BookOpen className="mr-1 h-3.5 w-3.5" />Анкеты</TabsTrigger>
-                  <TabsTrigger value="duplicates" className="text-xs sm:text-sm px-2.5 sm:px-3"><Copy className="mr-1 h-3.5 w-3.5" />Дубли</TabsTrigger>
-                  <TabsTrigger value="contacts" className="text-xs sm:text-sm px-2.5 sm:px-3">Контакты</TabsTrigger>
-                  <TabsTrigger value="persons" className="text-xs sm:text-sm px-2.5 sm:px-3">Персоны</TabsTrigger>
-                  <TabsTrigger value="structure" className="text-xs sm:text-sm px-2.5 sm:px-3">Структура</TabsTrigger>
-                  <TabsTrigger value="activity" className="text-xs sm:text-sm px-2.5 sm:px-3">Активность</TabsTrigger>
-                  <TabsTrigger value="documents" className="text-xs sm:text-sm px-2.5 sm:px-3">Документы</TabsTrigger>
-                  <TabsTrigger value="history" className="text-xs sm:text-sm px-2.5 sm:px-3">История</TabsTrigger>
-                  <TabsTrigger value="integrations" className="text-xs sm:text-sm px-2.5 sm:px-3">Интеграции</TabsTrigger>
-                  <TabsTrigger value="system" className="text-xs sm:text-sm px-2.5 sm:px-3">Система</TabsTrigger>
                 </TabsList>
               </div>
               <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
                 <TabsContent value="profile" className="mt-0 space-y-4">
                   <CompanyProfileOverview company={company} onRefreshRegistry={canEditCompany ? () => refreshRegistry.mutate() : undefined} isRefreshing={refreshRegistry.isPending} />
                   <section className="grid gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
-                    {company.email && <div className="flex items-center gap-2"><Mail className="h-4 w-4" /><a href={`mailto:${company.email}`} className="hover:text-foreground hover:underline">{company.email}</a></div>}
+                    {company.email && <div className="flex flex-wrap items-center gap-2"><Mail className="h-4 w-4" /><a href={`mailto:${company.email}`} className="min-w-0 flex-1 break-all hover:text-foreground hover:underline">{company.email}</a><Button size="sm" variant="outline" className="h-8 shrink-0" onClick={() => setComposeEmailOpen(true)}><Mail className="mr-1 h-3.5 w-3.5" />Письмо</Button></div>}
                     {normalizedPhone && <div className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${normalizedPhone}`} className="hover:text-foreground hover:underline">{normalizedPhone}</a><span className="ml-auto flex gap-1"><CallButton phone={normalizedPhone} companyId={company.id} size="sm" /><SmsButton phone={normalizedPhone} companyId={company.id} size="sm" /></span></div>}
                     {additionalCompanyPhones.map((phone) => <div key={phone} className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${phone}`} className="hover:text-foreground hover:underline">{phone}</a><span className="ml-auto flex gap-1"><CallButton phone={phone} companyId={company.id} size="sm" /><SmsButton phone={phone} companyId={company.id} size="sm" /></span></div>)}
                     {company.legal_address && <div className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0" />{company.legal_address}</div>}
@@ -1835,14 +1760,12 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                 </TabsContent>
                 <TabsContent value="contacts" className="mt-0 space-y-3">
                   {contactsQuery.isLoading && <Skeleton className="h-16 w-full" />}
-                  {!contactsQuery.isLoading && (contactsQuery.data?.length ?? 0) === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанных контактов пока нет.</p>}
+                  {!contactsQuery.isLoading && !contactPersonsQuery.isLoading && (contactsQuery.data?.length ?? 0) === 0 && (contactPersonsQuery.data?.length ?? 0) === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанных контактов пока нет.</p>}
                   {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = getContactDisplayName(profile?.full_name, contact.external_full_name); const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><div className="font-medium">{name}</div><Badge variant="secondary">{companyContactSourceLabels[contact.source] || contact.source}</Badge>{profile?.id && <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedLinkedContactId(profile.id)}>Открыть карточку</Button>}</div><div className="mt-0.5 text-xs text-muted-foreground">{contact.relationship_type}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Billing</Badge>}</div></div></div>; })}
-                </TabsContent>
-                <TabsContent value="persons" className="mt-0 space-y-3">
-                  <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">Персоны без подтверждённого профиля хранятся отдельно. Профиль не создаётся автоматически, а связь роли сохраняется с датами и источником.</div>
+                  {((contactsQuery.data?.length ?? 0) > 0 && (contactPersonsQuery.data?.length ?? 0) > 0) && <Separator />}
+                  {(contactPersonsQuery.data?.length ?? 0) > 0 && <div className="text-sm font-medium text-muted-foreground">Контактные лица</div>}
                   {contactPersonsQuery.isLoading && <Skeleton className="h-16 w-full" />}
                   {contactPersonsQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Реестр контактных лиц временно недоступен.</div>}
-                  {!contactPersonsQuery.isLoading && !contactPersonsQuery.isError && contactPersonsQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">Внешние контактные лица ещё не добавлены.</div>}
                   {(contactPersonsQuery.data ?? []).map((person) => <div key={person.link_id} className="rounded-lg border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><UserRound className="h-4 w-4 text-muted-foreground" /><span className="font-medium">{person.full_name}</span><Badge variant="outline">{contactPersonRoleLabels[person.role] || person.role}</Badge>{person.profile_id ? <Badge variant="secondary">Профиль подтверждён</Badge> : <Badge variant="secondary">Внешняя персона</Badge>}</div>{person.job_title && <div className="mt-1 text-xs text-muted-foreground">{person.job_title}</div>}{(person.email || person.phone) && <div className="mt-1 text-xs text-muted-foreground">{[person.email, person.phone].filter(Boolean).join(" · ")}</div>}</div><span className="shrink-0 text-xs text-muted-foreground">с {formatDate(person.valid_from)}</span></div></div>)}
                   {canEdit && <form className="space-y-2 rounded-lg border bg-muted/30 p-3" onSubmit={(event) => { event.preventDefault(); if (personFullName.trim()) upsertContactPerson.mutate(); }}><div className="text-sm font-medium">Добавить контактное лицо</div><div className="grid gap-2 sm:grid-cols-2"><Input value={personFullName} onChange={(event) => setPersonFullName(event.target.value)} placeholder="Имя и фамилия" /><Input value={personTitle} onChange={(event) => setPersonTitle(event.target.value)} placeholder="Должность (необязательно)" /><Input value={personEmail} onChange={(event) => setPersonEmail(event.target.value)} placeholder="Email (необязательно)" /><Input value={personPhone} onChange={(event) => setPersonPhone(event.target.value)} placeholder="Телефон (необязательно)" /></div><div className="flex gap-2"><Select value={personRole} onValueChange={setPersonRole}><SelectTrigger className="flex-1"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(contactPersonRoleLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Button type="submit" size="sm" disabled={upsertContactPerson.isPending || !personFullName.trim()}>{upsertContactPerson.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Сохранить</Button></div></form>}
                 </TabsContent>
