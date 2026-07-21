@@ -183,6 +183,9 @@ export function RoomLifecycleActions({
   }
 
   // admin layout — все 3 кнопки + badge (glass-стиль, цветные tint-фоны)
+  const missingAccessRule = hasAccessRule === false;
+  const openBlocked = missingAccessRule && canPerformAction(roomState, "open_room");
+  const startBlocked = missingAccessRule && canPerformAction(roomState, "start_live");
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Badge
@@ -195,11 +198,36 @@ export function RoomLifecycleActions({
         {badge.label}
       </Badge>
 
+      {missingAccessRule && (
+        <button
+          type="button"
+          onClick={() => {
+            if (onRequestAccessSetup) onRequestAccessSetup();
+            else toast.warning("Настройте правило доступа во вкладке «Доступ» карточки эфира.");
+          }}
+          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-destructive/40 bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/15 transition-colors"
+          title="Без правила доступа авторизованные пользователи получают default-deny. Настройте правило перед запуском."
+        >
+          <ShieldAlert className="h-4 w-4" />
+          Настроить доступ
+        </button>
+      )}
+
       <Button
         variant="outline"
         className={cn(GLASS_BASE, GLASS_TONE.neutral, LIFECYCLE_BUTTON_WIDTH_FIXED)}
-        disabled={!canPerformAction(roomState, "open_room") || !!pending}
-        onClick={() => callAction("open_room")}
+        disabled={!canPerformAction(roomState, "open_room") || !!pending || openBlocked}
+        onClick={() => {
+          if (openBlocked) {
+            toast.warning(
+              "Открыть комнату нельзя: не задано ни одного правила доступа. Non-admin получат access_denied. Настройте правило во вкладке «Доступ».",
+            );
+            onRequestAccessSetup?.();
+            return;
+          }
+          callAction("open_room");
+        }}
+        title={openBlocked ? "Правило доступа не задано — non-admin получат access_denied" : undefined}
       >
         {pending === "open_room" ? (
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -208,6 +236,7 @@ export function RoomLifecycleActions({
         )}
         Открыть комнату
       </Button>
+
 
       <Button
         variant="outline"
