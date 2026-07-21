@@ -16,6 +16,7 @@ interface CreateSubscriptionRequest {
 
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { referralDiscountMeta, resolveReferralCheckoutDiscount } from '../_shared/referral-checkout-discount.ts';
 
 // PATCH-3: Safe name parsing - handles 0/1/2/3+ tokens correctly
 function safeParseFullName(fullName: string | null | undefined): { firstName: string | undefined; lastName: string | undefined } {
@@ -224,6 +225,15 @@ Deno.serve(async (req) => {
       });
     }
 
+    const referralQuote = await resolveReferralCheckoutDiscount({
+      supabase,
+      userId: subscription.user_id,
+      productId: subscription.product_id,
+      amountMinor: amountCents,
+    });
+    amountCents = referralQuote.finalAmountMinor;
+    const referralMeta = referralDiscountMeta(referralQuote);
+
     // profile already fetched above (line 119)
     const product = subscription.products_v2 || {};
     const tariff = subscription.tariffs || {};
@@ -353,6 +363,7 @@ Deno.serve(async (req) => {
         currency,
         interval_days: intervalDays,
         raw_data: bepaidResult,
+        meta: referralMeta,
       }, { 
         onConflict: 'provider,provider_subscription_id',
         ignoreDuplicates: false 
@@ -370,6 +381,7 @@ Deno.serve(async (req) => {
         billing_type: 'provider_managed',
         meta: {
           ...subMeta,
+          ...referralMeta,
           bepaid_subscription_id: bepaidSubId,
           bepaid_subscription_created_at: new Date().toISOString(),
         },

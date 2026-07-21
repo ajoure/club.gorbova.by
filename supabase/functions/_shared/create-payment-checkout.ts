@@ -29,6 +29,7 @@ import {
   resolveChargeNotificationSnapshotForWriter,
   serializeChargeNotificationPolicy,
 } from './charge-notification-policy.ts';
+import { referralDiscountMeta, resolveReferralCheckoutDiscount } from './referral-checkout-discount.ts';
 
 export interface CreateCheckoutParams {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -105,23 +106,35 @@ export type CreateCheckoutResult = CreateCheckoutSuccess | CreateCheckoutError;
 
 export async function createPaymentCheckout(params: CreateCheckoutParams): Promise<CreateCheckoutResult> {
   const {
-    supabase, user_id, product_id, tariff_id, amount,
+    supabase, user_id, product_id, tariff_id, amount: requestedAmount,
     payment_type, description, offer_id, origin, actor_user_id, actor_type,
     replacement_of_subscription_v2_id,
     meta_extra,
   } = params;
-  const extraMeta = meta_extra && typeof meta_extra === 'object' ? meta_extra : {};
+  let extraMeta = meta_extra && typeof meta_extra === 'object' ? meta_extra : {};
 
   // === STOP-GUARD: validate required fields ===
-  if (!user_id || !product_id || !tariff_id || !amount) {
+  if (!user_id || !product_id || !tariff_id || !requestedAmount) {
     console.error('[create-payment-checkout] STOP-GUARD: missing required fields', {
       has_user_id: !!user_id,
       has_product_id: !!product_id,
       has_tariff_id: !!tariff_id,
-      has_amount: !!amount,
+      has_amount: !!requestedAmount,
     });
     return { success: false, error: 'Missing required fields: user_id, product_id, tariff_id, amount' };
   }
+  let referralQuote;
+  try {
+    referralQuote = await resolveReferralCheckoutDiscount({
+      supabase, userId: user_id, productId: product_id, amountMinor: requestedAmount,
+    });
+  } catch (error) {
+    console.error('[create-payment-checkout] referral discount lookup failed; checkout stopped', error);
+    return { success: false, error: 'Could not safely calculate referral discount' };
+  }
+  const amount = referralQuote.finalAmountMinor;
+  const baseAmountByn = referralQuote.baseAmountMinor / 100;
+  extraMeta = { ...extraMeta, ...referralDiscountMeta(referralQuote) };
   // ============================================================
   // Phase 4.1 — provider dispatch (default 'bepaid' = байт-в-байт legacy path).
   // Stripe-ветка короткозамыкается ДО любых bePaid creds и DB-операций bepaid-flow.
@@ -165,7 +178,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     };
   }
 
-  if (amount < 100) {
+  if (requestedAmount < 100) {
     return { success: false, error: 'Minimum amount is 100 kopecks (1 BYN)' };
   }
 
@@ -342,7 +355,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         product_id,
         tariff_id,
         offer_id: offer_id || null,
-        base_price: amountByn,
+        base_price: baseAmountByn,
         final_price: amountByn,
         paid_amount: 0,
         currency: 'BYN',
@@ -870,7 +883,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         product_id,
         tariff_id,
         offer_id: offer_id || null,
-        base_price: amountByn,
+        base_price: baseAmountByn,
         final_price: amountByn,
         paid_amount: 0,
         currency: 'BYN',
