@@ -221,53 +221,62 @@ export async function applyCrmStageOnTerminal(
   const targetStageId = terminalKind === 'success' ? snapshot.stage_on_success : snapshot.stage_on_failed;
   const targetStageName = terminalKind === 'success' ? snapshot.stage_names.success : snapshot.stage_names.failed;
 
-  // 3. Manual-override guard
-  // 3a. Different pipeline → manual move
-  if (order.pipeline_id && order.pipeline_id !== snapshot.pipeline_id) {
-    await audit(supabase, 'crm_stage_apply_skipped_manual_override', {
+  // 3. Idempotent — already at target
+  if (
+    order.pipeline_stage_id === targetStageId &&
+    order.pipeline_id === snapshot.pipeline_id
+  ) {
+    await audit(supabase, `crm_stage_applied_${terminalKind}`, {
       order_id: orderId, terminal_kind: terminalKind, trigger,
-      reason: 'pipeline_changed_manually',
-      expected_pipeline: snapshot.pipeline_id,
-      actual_pipeline: order.pipeline_id,
+      result: 'idempotent_already_at_target',
+      target_stage_id: targetStageId, target_stage_name: targetStageName,
       pipeline_name: snapshot.pipeline_name,
     });
-    return { applied: false, reason: 'manual_pipeline_change' };
-  }
-  // 3b. Stage diverged from initial pending → manual move
-  if (order.pipeline_stage_id && order.pipeline_stage_id !== snapshot.stage_on_pending) {
-    // Idempotent: already at target → skip silently with audit
-    if (order.pipeline_stage_id === targetStageId) {
-      await audit(supabase, `crm_stage_applied_${terminalKind}`, {
-        order_id: orderId, terminal_kind: terminalKind, trigger,
-        result: 'idempotent_already_at_target',
-        target_stage_id: targetStageId, target_stage_name: targetStageName,
-        pipeline_name: snapshot.pipeline_name,
-      });
-      return { applied: false, reason: 'idempotent' };
-    }
-    await audit(supabase, 'crm_stage_apply_skipped_manual_override', {
-      order_id: orderId, terminal_kind: terminalKind, trigger,
-      reason: 'stage_changed_manually',
-      expected_stage: snapshot.stage_on_pending,
-      actual_stage: order.pipeline_stage_id,
-      pipeline_name: snapshot.pipeline_name,
-    });
-    return { applied: false, reason: 'manual_stage_change' };
-  }
-  // 3c. pipeline_id NULL but should be set — anomaly, skip
-  if (!order.pipeline_id) {
-    await audit(supabase, 'crm_stage_apply_skipped_manual_override', {
-      order_id: orderId, terminal_kind: terminalKind, trigger,
-      reason: 'pipeline_id_null_anomaly',
-      expected_pipeline: snapshot.pipeline_id,
-    });
-    return { applied: false, reason: 'pipeline_null_anomaly' };
+    return { applied: false, reason: 'idempotent' };
   }
 
-  // 4. Apply
+  // 4. Validate target stage exists and belongs to snapshot pipeline
+  const { data: targetStage, error: stageErr } = await supabase
+    .from('crm_pipeline_stages')
+    .select('id, pipeline_id, stage_type, name')
+    .eq('id', targetStageId)
+    .maybeSingle();
+  if (stageErr || !targetStage) {
+    await audit(supabase, 'crm_stage_apply_skipped_invalid_config', {
+      order_id: orderId, terminal_kind: terminalKind, trigger,
+      reason: 'target_stage_missing',
+      target_stage_id: targetStageId,
+      error: stageErr?.message ?? null,
+    });
+    return { applied: false, reason: 'target_stage_missing' };
+  }
+  if (targetStage.pipeline_id !== snapshot.pipeline_id) {
+    await audit(supabase, 'crm_stage_apply_skipped_invalid_config', {
+      order_id: orderId, terminal_kind: terminalKind, trigger,
+      reason: 'target_stage_wrong_pipeline',
+      target_stage_id: targetStageId,
+      expected_pipeline: snapshot.pipeline_id,
+      actual_pipeline: targetStage.pipeline_id,
+    });
+    return { applied: false, reason: 'target_stage_wrong_pipeline' };
+  }
+
+  // 5. Atomically enforce terminal placement.
+  // SOT is the immutable routing snapshot: a financially terminal deal
+  // MUST land at the configured success/failure stage even if a manager
+  // moved it to another open stage in the meantime. Both pipeline_id and
+  // pipeline_stage_id are set in the same UPDATE for atomicity.
+  const fromPipelineId = order.pipeline_id ?? null;
+  const fromStageId = order.pipeline_stage_id ?? null;
+  const manualOverride = !!(
+    (fromPipelineId && fromPipelineId !== snapshot.pipeline_id) ||
+    (fromStageId && fromStageId !== snapshot.stage_on_pending && fromStageId !== targetStageId)
+  );
+
   const { error: updErr } = await supabase
     .from('orders_v2')
     .update({
+      pipeline_id: snapshot.pipeline_id,
       pipeline_stage_id: targetStageId,
       updated_at: new Date().toISOString(),
     })
