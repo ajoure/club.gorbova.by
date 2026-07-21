@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileAudio, FileText, Loader2, RefreshCw, Sparkles, Download, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import { TranscriptionWizard } from "@/components/admin/live/TranscriptionWizard";
 
 type MediaStatus = {
   audio: {
@@ -146,7 +147,7 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <Badge variant={audio?.status === "ready" ? "default" : audio?.status === "failed" ? "destructive" : "secondary"}>
-              {statusQuery.isLoading && !audio ? "Проверяю статус…" : audio ? audioStatusText[audio.status] : "Ещё не синхронизировано"}
+              {!statusQuery.data && statusQuery.isLoading ? "Проверяю статус…" : audio ? audioStatusText[audio.status] : "Ещё не синхронизировано"}
             </Badge>
             {audio?.source_file_name && <span className="text-muted-foreground truncate max-w-[240px]">{audio.source_file_name}</span>}
             {audio?.source_language && <span className="text-muted-foreground">Язык: {audio.source_language}</span>}
@@ -176,7 +177,7 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <Badge variant={transcript?.status === "ready" ? "default" : transcript?.status === "failed" ? "destructive" : "secondary"}>
-              {statusQuery.isLoading && !transcript ? "Проверяю статус…" : transcript ? transcriptStatusText[transcript.status] : "Ещё не создавалась"}
+              {!statusQuery.data && statusQuery.isLoading ? "Проверяю статус…" : transcript ? transcriptStatusText[transcript.status] : "Ещё не создавалась"}
             </Badge>
             {transcript?.generated_at && <span className="text-muted-foreground">Сформирована {new Date(transcript.generated_at).toLocaleString("ru-RU")}</span>}
           </div>
@@ -195,6 +196,18 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
           </div>
         </CardContent>
       </Card>
+
+      {audio?.status === "ready" && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" /> Частичная транскрибация (для длинных записей)</CardTitle>
+            <CardDescription className="text-xs">Используйте, если запись больше ≈24 МБ и обычная транскрибация возвращает ошибку размера. Браузер режет аудио на окна и отправляет их по одному.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <TranscriptionWizard liveEventId={liveEventId} onFinished={() => queryClient.invalidateQueries({ queryKey: key })} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
