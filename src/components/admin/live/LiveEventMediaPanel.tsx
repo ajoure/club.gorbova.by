@@ -195,20 +195,58 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
             {transcript?.generated_at && <span className="text-muted-foreground">Сформирована {new Date(transcript.generated_at).toLocaleString("ru-RU")}</span>}
           </div>
           {transcript?.status === "failed" && <p className="text-xs text-destructive">Не удалось подготовить документ ({transcript.error_code || "неизвестная ошибка"}). Можно повторить.</p>}
+          {clientJobQuery.data?.job && ["pending_parts","transcribing","finalizing"].includes(clientJobQuery.data.job.status) && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs flex items-center justify-between gap-2">
+              <span>Есть незавершённая транскрибация: часть {clientJobQuery.data.job.completed_parts} из {clientJobQuery.data.job.total_parts}.</span>
+              <Button size="sm" variant="outline" className="gap-1" onClick={() => setWizardOpen(true)}>
+                <Play className="h-3.5 w-3.5" /> Продолжить обработку
+              </Button>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" className="gap-1" onClick={() => invoke("start_transcript")} disabled={audio?.status !== "ready" || transcribing}>
-              {transcribing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-              {transcript?.status === "ready" ? "Создать заново" : "Создать транскрибацию"}
+            <Button
+              size="sm"
+              className="gap-1"
+              onClick={() => setWizardOpen(true)}
+              disabled={audio?.status !== "ready"}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {transcript?.status === "ready" ? "Создать заново (в браузере)" : "Запустить транскрибацию"}
             </Button>
             {transcript?.status === "ready" && (
-              <Button size="sm" className="gap-1" onClick={() => download("docx")} disabled={running === "docx"}>
+              <Button size="sm" variant="outline" className="gap-1" onClick={() => download("docx")} disabled={running === "docx"}>
                 {running === "docx" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                 Скачать DOCX
               </Button>
             )}
           </div>
+          <p className="text-[11px] text-muted-foreground">
+            Обработка идёт во вкладке браузера и на сервере. Обычно 10–15 минут, зависит от устройства и длины записи.
+            Прогресс сохраняется — при перезагрузке можно продолжить с того же места.
+          </p>
         </CardContent>
       </Card>
+
+      <TranscriptionWizard
+        liveEventId={liveEventId}
+        open={wizardOpen}
+        onOpenChange={(open) => {
+          setWizardOpen(open);
+          if (!open) {
+            void queryClient.invalidateQueries({ queryKey: key });
+            void clientJobQuery.refetch();
+          }
+        }}
+        onCompleted={() => {
+          void queryClient.invalidateQueries({ queryKey: key });
+          void clientJobQuery.refetch();
+          toast.success("Транскрибация завершена. DOCX и аудио готовы.");
+        }}
+      />
     </div>
   );
 }
+// suppress-unused: kept legacy invoke("start_transcript") wiring available if fallback needed
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _keepLegacyStartTranscript = "start_transcript";
+
