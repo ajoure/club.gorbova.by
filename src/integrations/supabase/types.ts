@@ -20003,16 +20003,28 @@ export type Database = {
         Args: { _link_id: string; _reason: string }
         Returns: boolean
       }
-      crm_company_update: {
-        Args: {
-          _email?: string
-          _full_name: string
-          _id: string
-          _phone?: string
-          _short_name?: string
-        }
-        Returns: string
-      }
+      crm_company_update:
+        | {
+            Args: {
+              _email?: string
+              _full_name: string
+              _id: string
+              _phone?: string
+              _short_name?: string
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              _email: string
+              _full_name: string
+              _id: string
+              _legal_form: string
+              _phone: string
+              _short_name: string
+            }
+            Returns: string
+          }
       crm_company_upsert_from_billing: {
         Args: { _client_legal_details_id: string }
         Returns: string
