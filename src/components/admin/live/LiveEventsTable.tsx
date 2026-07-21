@@ -345,9 +345,12 @@ export function LiveEventsTable({
               eventId={event.id}
               roomState={parseRoomState(event.room_state)}
               layout="admin"
+              hasAccessRule={accessRuleFlagsReady ? hasRule(event.id) : undefined}
+              onRequestAccessSetup={onEditAccess ? () => onEditAccess(event) : undefined}
             />
           </TableCell>
         );
+
       case "actions":
         return (
           <TableCell key={col.key} style={{ width: col.width }} onClick={(e) => e.stopPropagation()}>
