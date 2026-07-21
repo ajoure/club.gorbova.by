@@ -14,6 +14,7 @@ interface BulkActionsBarProps {
   onBulkCreateAccounts?: () => void;
   onBulkEdit?: () => void;
   onBulkCreateDeals?: () => void;
+  onBulkMove?: () => void;
   onSelectAll?: () => void;
   totalCount?: number;
   entityName?: string;
