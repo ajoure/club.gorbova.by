@@ -1116,7 +1116,13 @@ export default function AdminLiveEvents() {
               onLifecycleAction={handleLifecycleAction}
               onDelete={(id) => setDeleteIds([id])}
               onSelectionChange={setSelectedIds}
+              eventsWithAccessRule={eventsWithAccessRule}
+              onEditAccess={(event) => {
+                handleEdit(event as unknown as LiveEvent);
+                setActiveTab("access");
+              }}
             />
+
           </div>
         )}
 
