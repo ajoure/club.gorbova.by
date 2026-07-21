@@ -6,7 +6,7 @@ import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisp
 import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
-import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
+import { SHEET_SHELL_CLASS, getEntityShellClass } from "@/lib/sheetShell";
 import { useNavigate } from "react-router-dom";
 import { format, addDays, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -1651,7 +1651,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
   return (
     <>
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className={SHEET_SHELL_CLASS}>
+      <SheetContent className={getEntityShellClass("contact")}>
         {/* Compact header for mobile - with padding-right for close button */}
         <SheetHeader className="px-4 sm:px-6 pt-4 sm:pt-6 pb-0 pr-14 sm:pr-16 flex-shrink-0 space-y-1.5">
           {/* Row 1: Avatar + Name + Email */}
