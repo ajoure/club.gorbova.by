@@ -25,6 +25,7 @@ import {
 } from "@/lib/documents/purchaseDocumentRules";
 import { useOrderOfferMeta } from "@/hooks/useOrderOfferMeta";
 import { derivePaymentChannel } from "@/utils/derivePaymentChannel";
+import { invokeAuthenticatedFunction } from "@/utils/invokeAuthenticatedFunction";
 
 interface Order {
   id: string;
@@ -114,9 +115,9 @@ export function OrderListItem({ order }: OrderListItemProps) {
   const generateDoc = async () => {
     setIsGenerating(true);
     try {
-      const { data, error } = await supabase.functions.invoke(
+      const { data, error } = await invokeAuthenticatedFunction(
         "canonical-document-generate-strict",
-        { body: { order_id: order.id, mode: "generate" } },
+        { order_id: order.id, mode: "generate" },
       );
       if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
       if (data?.error) throw new Error(normalizeEdgeFunctionError(null, data));
