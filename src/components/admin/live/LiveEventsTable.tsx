@@ -59,10 +59,12 @@ import {
   MoreHorizontal,
   RefreshCw,
   Radio,
+  ShieldAlert,
   Trash2,
   Users,
   Video,
 } from "lucide-react";
+
 
 // Минимальный contract эфира для таблицы (страница даёт более широкий тип).
 export interface LiveEventRow {
