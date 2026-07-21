@@ -28,7 +28,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-type Action = "status" | "sync_audio" | "start_transcript" | "download";
+type Action = "status" | "sync_audio" | "start_transcript" | "download" | "apply_transcript_text";
 type DownloadKind = "audio" | "docx";
 
 type AudioTrack = {
