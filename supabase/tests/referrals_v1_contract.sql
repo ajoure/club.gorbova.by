@@ -1,4 +1,4 @@
--- Run after 20260721181043_referrals_v1_core.sql in a disposable database.
+-- Run after all referrals v1 migrations in a disposable database.
 begin;
 
 do $$
@@ -20,6 +20,9 @@ begin
   end if;
   if to_regprocedure('public.referral_reconcile_orders(integer)') is null then
     raise exception 'missing referral reconciliation RPC';
+  end if;
+  if to_regprocedure('public.referral_admin_get_summary()') is null then
+    raise exception 'missing exact referral admin summary RPC';
   end if;
   if to_regprocedure('public.referral_apply_customer_discount()') is null then
     raise exception 'missing referred-customer discount trigger function';
@@ -59,6 +62,9 @@ begin
     'EXECUTE'
   ) then
     raise exception 'authenticated must not run referral reconciliation';
+  end if;
+  if has_function_privilege('anon', 'public.referral_admin_get_summary()', 'EXECUTE') then
+    raise exception 'anon must not run referral admin summary';
   end if;
 end $$;
 
