@@ -35,7 +35,26 @@ import {
   Instagram, LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { localizeAuditAction, localizeEntityType, localizeReasonCode } from "@/lib/crmDisplayLabels";
+import { localizeAuditAction, localizeEntityType, localizeReasonCode, localizeCrmStatus } from "@/lib/crmDisplayLabels";
+
+/** Русская подпись для «technical» event-title типа `company.created` / `company.linked_to_contact`. */
+function humanizeEventTitle(title: string | null | undefined): string {
+  const raw = (title ?? "").trim();
+  if (!raw) return "Системное событие";
+  // Если это dotted/snake_case-код — прогнать через локализацию action-словаря.
+  if (/^[a-z0-9_.-]+$/i.test(raw) && /[._-]/.test(raw)) return localizeAuditAction(raw);
+  return raw;
+}
+
+/** Убрать HTML-теги, оставив читаемый текст. Не рендерим сырые `<b>` пользователю. */
+function stripHtmlTags(input: string | null | undefined): string {
+  const raw = (input ?? "").toString();
+  if (!raw) return "";
+  if (typeof document === "undefined") return raw.replace(/<[^>]+>/g, "");
+  const div = document.createElement("div");
+  div.innerHTML = raw;
+  return (div.textContent || div.innerText || "").trim();
+}
 import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialog";
 import { CallRecordingPlayer } from "@/components/admin/calls/CallRecordingPlayer";
 import { MediaLightbox } from "@/components/admin/chat/MediaLightbox";
