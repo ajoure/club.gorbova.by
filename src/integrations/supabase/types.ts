@@ -15315,6 +15315,38 @@ export type Database = {
           },
         ]
       }
+      site_page_slug_aliases: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          site_page_id: string
+          slug: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          site_page_id: string
+          slug: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          site_page_id?: string
+          slug?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_page_slug_aliases_site_page_id_fkey"
+            columns: ["site_page_id"]
+            isOneToOne: false
+            referencedRelation: "site_pages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       site_page_tag_links: {
         Row: {
           created_at: string
