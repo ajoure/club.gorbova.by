@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import webhookSource from "../../supabase/functions/telegram-webhook/index.ts?raw";
 import botActionsSource from "../../supabase/functions/telegram-bot-actions/index.ts?raw";
 import adminChatSource from "../../supabase/functions/telegram-admin-chat/index.ts?raw";
-import migrationSource from "../../supabase/migrations/20260721113128_telegram_business_contact_center.sql?raw";
+import migrationSource from "../../supabase/migrations/20260721183552_c27995d4-a65d-4202-b4aa-add4bd025ea1.sql?raw";
 
 describe("Telegram Business contact-centre wiring", () => {
   it("subscribes and handles every Business update family", () => {
