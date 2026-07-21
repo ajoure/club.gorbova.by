@@ -10,6 +10,8 @@ import { Phone, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { crmActionBtnClass, crmActionIconClass } from "@/lib/crmActionButton";
 import { supabase } from "@/integrations/supabase/client";
 
 interface Props {
@@ -104,13 +106,13 @@ export function CallButton({
       variant={variant}
       disabled={disabled}
       onClick={handleClick}
-      className={className}
+      className={cn(crmActionBtnClass, className)}
       title={!phone ? "Не указан телефон" : "Позвонить через VOCHI"}
     >
       {busy ? (
-        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+        <Loader2 className={cn(crmActionIconClass, "animate-spin")} />
       ) : (
-        <Phone className="h-3.5 w-3.5 mr-1" />
+        <Phone className={crmActionIconClass} />
       )}
       Позвонить
     </Button>
