@@ -66,7 +66,7 @@ function normalizeOrgForm(val: string | null | undefined): string {
 
 // Schema: director fields optional to support ИП mode
 const schema = z.object({
-  unp: z.string().length(9, "УНП должен содержать 9 цифр"),
+  unp: z.string(),
   org_form: z.string().min(1, "Выберите организационную форму"),
   name: z.string().min(3, "Введите название"),
   director_position: z.string().optional(),
@@ -86,6 +86,7 @@ interface OrganizationDetailsFormProps {
   onSubmit: (data: Partial<ClientLegalDetails>) => Promise<void>;
   isSubmitting: boolean;
   showDemoOnEmpty?: boolean;
+  allowMissingUnp?: boolean;
 }
 
 export function OrganizationDetailsForm({
@@ -93,6 +94,7 @@ export function OrganizationDetailsForm({
   onSubmit,
   isSubmitting,
   showDemoOnEmpty = true,
+  allowMissingUnp = false,
 }: OrganizationDetailsFormProps) {
   // Determine if editing existing entrepreneur or legal_entity
   const isEditingEntrepreneur = initialData?.client_type === 'entrepreneur';
@@ -199,8 +201,15 @@ export function OrganizationDetailsForm({
     };
   };
 
+  const formSchema = useMemo(() => schema.superRefine((data, ctx) => {
+    const isValid = /^\d{9}$/.test(data.unp);
+    if (!isValid && !(allowMissingUnp && data.unp === "")) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["unp"], message: allowMissingUnp ? "УНП должен содержать 9 цифр или оставьте поле пустым" : "УНП должен содержать 9 цифр" });
+    }
+  }), [allowMissingUnp]);
+
   const form = useForm<FormData>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(formSchema),
     defaultValues: getDefaultValues(),
   });
 
@@ -446,7 +455,7 @@ export function OrganizationDetailsForm({
                   />
                 </FormControl>
                 <FormDescription>
-                  Введите УНП — остальные данные заполнятся автоматически
+                  Введите УНП — остальные данные заполнятся автоматически{allowMissingUnp ? ". Если УНП ещё нет, оставьте поле пустым и заполните данные вручную." : "."}
                 </FormDescription>
                 <FormMessage />
               </FormItem>

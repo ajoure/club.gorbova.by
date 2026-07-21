@@ -72,7 +72,7 @@ function normalizeStatus(raw: string): 'active' | 'inactive' | 'unknown' {
   return 'unknown';
 }
 
-function GrpStatusBadge({ status }: { status: string }) {
+export function GrpStatusBadge({ status }: { status: string }) {
   const kind = normalizeStatus(status);
   const cls = kind === 'active'
     ? 'text-green-700/70 border-green-200/50 bg-green-50/30 dark:text-green-400/70 dark:border-green-800/50 dark:bg-green-950/30'
@@ -89,7 +89,7 @@ function copyToClipboard(text: string, label: string) {
   toast.success(`${label} скопировано`);
 }
 
-function InfoRow({
+export function InfoRow({
   label,
   value,
   copyable,

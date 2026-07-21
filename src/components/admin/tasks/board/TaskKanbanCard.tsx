@@ -21,7 +21,8 @@ import { cn } from "@/lib/utils";
 
 import type { CrmTask, CrmTaskType } from "@/hooks/useCrmTasks";
 import type { StaffOption } from "@/hooks/useStaffOptions";
-import type { TaskContactLite, TaskDealLite } from "@/hooks/useTaskRelations";
+import type { TaskCompanyLite, TaskContactLite, TaskDealLite } from "@/hooks/useTaskRelations";
+import { normalizeCompanyName } from "@/lib/companies/normalizeCompanyName";
 import {
   TASK_BUCKET_THEME,
   TASK_CARD_GLASS,
@@ -71,9 +72,11 @@ interface Props {
   assignee: StaffOption | null;
   deal: TaskDealLite | null;
   contact: TaskContactLite | null;
+  company: TaskCompanyLite | null;
   bucketId?: TaskBucketId;
   onOpen: (task: CrmTask) => void;
   onOpenDeal?: (dealId: string) => void;
+  onOpenCompany?: (companyId: string) => void;
 }
 
 export const TaskKanbanCard = memo(function TaskKanbanCard({
@@ -82,9 +85,11 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
   assignee,
   deal,
   contact,
+  company,
   bucketId = "later",
   onOpen,
   onOpenDeal,
+  onOpenCompany,
 }: Props) {
   const theme = TASK_BUCKET_THEME[bucketId];
   const Icon = TYPE_ICONS[type?.icon ?? "CircleDot"] ?? CircleDot;
@@ -169,7 +174,7 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
         </div>
 
         {/* Relations */}
-        {(deal || contact) && (
+        {(deal || contact || company) && (
           <div className="flex flex-wrap items-center gap-1.5">
             {deal ? (
               <button
@@ -192,6 +197,20 @@ export const TaskKanbanCard = memo(function TaskKanbanCard({
                   {contact.full_name || contact.email || contact.phone || "Контакт"}
                 </span>
               </span>
+            ) : null}
+            {company ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenCompany?.(company.id);
+                }}
+                className={cn(TASK_CARD_PILL, "max-w-[180px] truncate hover:bg-white")}
+                title="Открыть компанию"
+              >
+                <Briefcase className="h-3 w-3" />
+                <span className="truncate">{normalizeCompanyName(company.full_name) || company.public_id || "Компания"}</span>
+              </button>
             ) : null}
           </div>
         )}
