@@ -14062,6 +14062,9 @@ export type Database = {
           public_id: string | null
           public_subtitle: string | null
           public_title: string | null
+          referral_commission_percent_bps: number | null
+          referral_customer_discount_percent_bps: number | null
+          referral_settings_mode: string
           slug: string | null
           status: string
           telegram_club_id: string | null
@@ -14084,6 +14087,9 @@ export type Database = {
           public_id?: string | null
           public_subtitle?: string | null
           public_title?: string | null
+          referral_commission_percent_bps?: number | null
+          referral_customer_discount_percent_bps?: number | null
+          referral_settings_mode?: string
           slug?: string | null
           status?: string
           telegram_club_id?: string | null
@@ -14106,6 +14112,9 @@ export type Database = {
           public_id?: string | null
           public_subtitle?: string | null
           public_title?: string | null
+          referral_commission_percent_bps?: number | null
+          referral_customer_discount_percent_bps?: number | null
+          referral_settings_mode?: string
           slug?: string | null
           status?: string
           telegram_club_id?: string | null
@@ -14802,6 +14811,466 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      referral_balance_entries: {
+        Row: {
+          amount_minor: number
+          bucket: string
+          created_at: string
+          id: string
+          partner_id: string
+          transaction_id: string
+        }
+        Insert: {
+          amount_minor: number
+          bucket: string
+          created_at?: string
+          id?: string
+          partner_id: string
+          transaction_id: string
+        }
+        Update: {
+          amount_minor?: number
+          bucket?: string
+          created_at?: string
+          id?: string
+          partner_id?: string
+          transaction_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_balance_entries_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_balance_entries_transaction_id_fkey"
+            columns: ["transaction_id"]
+            isOneToOne: false
+            referencedRelation: "referral_balance_transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_balance_transactions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          currency: string
+          description: string | null
+          id: string
+          idempotency_key: string
+          metadata: Json
+          partner_id: string
+          public_id: string
+          source_id: string | null
+          source_type: string
+          transaction_type: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          description?: string | null
+          id?: string
+          idempotency_key: string
+          metadata?: Json
+          partner_id: string
+          public_id?: string
+          source_id?: string | null
+          source_type: string
+          transaction_type: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          description?: string | null
+          id?: string
+          idempotency_key?: string
+          metadata?: Json
+          partner_id?: string
+          public_id?: string
+          source_id?: string | null
+          source_type?: string
+          transaction_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_balance_transactions_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_partners: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          joined_at: string
+          metadata: Json
+          partner_code: string
+          profile_id: string
+          public_id: string
+          status: string
+          status_reason: string | null
+          terms_accepted_at: string | null
+          terms_version: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          joined_at?: string
+          metadata?: Json
+          partner_code: string
+          profile_id: string
+          public_id?: string
+          status?: string
+          status_reason?: string | null
+          terms_accepted_at?: string | null
+          terms_version?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          joined_at?: string
+          metadata?: Json
+          partner_code?: string
+          profile_id?: string
+          public_id?: string
+          status?: string
+          status_reason?: string | null
+          terms_accepted_at?: string | null
+          terms_version?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_partners_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_payout_requests: {
+        Row: {
+          amount_minor: number
+          created_at: string
+          currency: string
+          decided_at: string | null
+          decided_by: string | null
+          decision_reason: string | null
+          id: string
+          paid_at: string | null
+          partner_id: string
+          payment_reference: string | null
+          public_id: string
+          requested_at: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amount_minor: number
+          created_at?: string
+          currency?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_reason?: string | null
+          id?: string
+          paid_at?: string | null
+          partner_id: string
+          payment_reference?: string | null
+          public_id?: string
+          requested_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amount_minor?: number
+          created_at?: string
+          currency?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_reason?: string | null
+          id?: string
+          paid_at?: string | null
+          partner_id?: string
+          payment_reference?: string | null
+          public_id?: string
+          requested_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_payout_requests_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_program_settings: {
+        Row: {
+          accrual_enabled: boolean
+          base_currency: string
+          commission_percent_bps: number
+          created_at: string
+          customer_discount_percent_bps: number
+          enabled_at: string | null
+          hold_days: number
+          id: string
+          is_enabled: boolean
+          minimum_payout_minor: number
+          partner_portal_enabled: boolean
+          payout_requests_enabled: boolean
+          shadow_mode: boolean
+          singleton: boolean
+          split_60_40_enabled: boolean
+          terms_url: string | null
+          terms_version: string | null
+          tracking_enabled: boolean
+          updated_at: string
+          updated_by: string | null
+          withdrawable_percent_bps: number
+        }
+        Insert: {
+          accrual_enabled?: boolean
+          base_currency?: string
+          commission_percent_bps?: number
+          created_at?: string
+          customer_discount_percent_bps?: number
+          enabled_at?: string | null
+          hold_days?: number
+          id?: string
+          is_enabled?: boolean
+          minimum_payout_minor?: number
+          partner_portal_enabled?: boolean
+          payout_requests_enabled?: boolean
+          shadow_mode?: boolean
+          singleton?: boolean
+          split_60_40_enabled?: boolean
+          terms_url?: string | null
+          terms_version?: string | null
+          tracking_enabled?: boolean
+          updated_at?: string
+          updated_by?: string | null
+          withdrawable_percent_bps?: number
+        }
+        Update: {
+          accrual_enabled?: boolean
+          base_currency?: string
+          commission_percent_bps?: number
+          created_at?: string
+          customer_discount_percent_bps?: number
+          enabled_at?: string | null
+          hold_days?: number
+          id?: string
+          is_enabled?: boolean
+          minimum_payout_minor?: number
+          partner_portal_enabled?: boolean
+          payout_requests_enabled?: boolean
+          shadow_mode?: boolean
+          singleton?: boolean
+          split_60_40_enabled?: boolean
+          terms_url?: string | null
+          terms_version?: string | null
+          tracking_enabled?: boolean
+          updated_at?: string
+          updated_by?: string | null
+          withdrawable_percent_bps?: number
+        }
+        Relationships: []
+      }
+      referral_relationships: {
+        Row: {
+          attached_at: string
+          created_at: string
+          id: string
+          manual_actor_user_id: string | null
+          manual_reason: string | null
+          metadata: Json
+          partner_id: string
+          public_id: string
+          referred_profile_id: string
+          revoked_at: string | null
+          source: string
+          status: string
+        }
+        Insert: {
+          attached_at?: string
+          created_at?: string
+          id?: string
+          manual_actor_user_id?: string | null
+          manual_reason?: string | null
+          metadata?: Json
+          partner_id: string
+          public_id?: string
+          referred_profile_id: string
+          revoked_at?: string | null
+          source?: string
+          status?: string
+        }
+        Update: {
+          attached_at?: string
+          created_at?: string
+          id?: string
+          manual_actor_user_id?: string | null
+          manual_reason?: string | null
+          metadata?: Json
+          partner_id?: string
+          public_id?: string
+          referred_profile_id?: string
+          revoked_at?: string | null
+          source?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_relationships_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_relationships_referred_profile_id_fkey"
+            columns: ["referred_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_sale_attributions: {
+        Row: {
+          available_at: string
+          commission_basis_currency: string
+          commission_basis_minor: number
+          commission_minor: number
+          commission_percent_bps: number
+          created_at: string
+          id: string
+          metadata: Json
+          offer_id: string | null
+          order_id: string
+          order_snapshot: Json
+          partner_id: string
+          payment_id: string | null
+          product_id: string | null
+          public_id: string
+          relationship_id: string
+          reversed_minor: number
+          rule_snapshot: Json
+          status: string
+          tariff_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          available_at: string
+          commission_basis_currency: string
+          commission_basis_minor: number
+          commission_minor: number
+          commission_percent_bps: number
+          created_at?: string
+          id?: string
+          metadata?: Json
+          offer_id?: string | null
+          order_id: string
+          order_snapshot: Json
+          partner_id: string
+          payment_id?: string | null
+          product_id?: string | null
+          public_id?: string
+          relationship_id: string
+          reversed_minor?: number
+          rule_snapshot: Json
+          status?: string
+          tariff_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          available_at?: string
+          commission_basis_currency?: string
+          commission_basis_minor?: number
+          commission_minor?: number
+          commission_percent_bps?: number
+          created_at?: string
+          id?: string
+          metadata?: Json
+          offer_id?: string | null
+          order_id?: string
+          order_snapshot?: Json
+          partner_id?: string
+          payment_id?: string | null
+          product_id?: string | null
+          public_id?: string
+          relationship_id?: string
+          reversed_minor?: number
+          rule_snapshot?: Json
+          status?: string
+          tariff_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_sale_attributions_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: true
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_sale_attributions_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_sale_attributions_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_sale_attributions_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_sale_attributions_relationship_id_fkey"
+            columns: ["relationship_id"]
+            isOneToOne: false
+            referencedRelation: "referral_relationships"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_sale_attributions_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       rejected_card_attempts: {
         Row: {
@@ -21655,6 +22124,49 @@ export type Database = {
         }
         Returns: Json
       }
+      referral_admin_attach_profile: {
+        Args: {
+          p_partner_profile_id: string
+          p_reason: string
+          p_referred_profile_id: string
+        }
+        Returns: string
+      }
+      referral_admin_decide_payout: {
+        Args: {
+          p_decision: string
+          p_payment_reference?: string
+          p_reason?: string
+          p_request_id: string
+        }
+        Returns: undefined
+      }
+      referral_admin_ensure_partner: {
+        Args: { p_profile_id: string }
+        Returns: string
+      }
+      referral_attach_current_profile: {
+        Args: { p_captured_at: string; p_partner_code: string }
+        Returns: Json
+      }
+      referral_create_payout_request: {
+        Args: { p_amount_minor: number }
+        Returns: string
+      }
+      referral_emit_event: {
+        Args: { p_entity_id: string; p_event_type: string; p_payload?: Json }
+        Returns: string
+      }
+      referral_ensure_current_partner: { Args: never; Returns: Json }
+      referral_get_my_dashboard: { Args: never; Returns: Json }
+      referral_is_admin: { Args: { p_user_id: string }; Returns: boolean }
+      referral_mature_due_commissions: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
+      referral_process_order: { Args: { p_order_id: string }; Returns: string }
+      referral_process_refund: { Args: { p_order_id: string }; Returns: number }
+      referral_reconcile_orders: { Args: { p_limit?: number }; Returns: Json }
       release_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
       reorder_tariff_offers: {
         Args: { p_ordered_ids: string[]; p_tariff_id: string }
