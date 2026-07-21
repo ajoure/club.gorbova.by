@@ -38,6 +38,20 @@ interface SyncHealth {
     dead_letter_count: number;
     failure_count: number;
   };
+  processing?: {
+    window_hours: number;
+    completed_count: number;
+    avg_ms: number;
+    p95_ms: number;
+  };
+  alerts?: {
+    oldest_pending: boolean;
+    failure_rate: boolean;
+    failure_rate_value: number;
+    oldest_pending_threshold_seconds: number;
+    failure_rate_threshold: number;
+    evaluated_window_hours: number;
+  };
   recent_failures: FailedJob[];
 }
 
@@ -96,6 +110,7 @@ export function CompanySyncQueuePanel({ canManage }: { canManage: boolean }) {
   const health = healthQuery.data;
   const queue = health?.queue;
   const hasAttention = (queue?.dead_letter_count ?? 0) > 0 || (queue?.stuck_running ?? 0) > 0;
+  const alerts = health?.alerts;
 
   return (
     <section className="rounded-xl border bg-card">
@@ -132,6 +147,21 @@ export function CompanySyncQueuePanel({ canManage }: { canManage: boolean }) {
             <span>Ошибок: {queue.failure_count}</span>
             <span>Проверено: {formatDateTime(health.checked_at)}</span>
           </div>
+          {health.processing && (
+            <div className="flex flex-wrap gap-x-5 gap-y-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+              <span>Обработка за {health.processing.window_hours} ч: {health.processing.completed_count} задач</span>
+              <span>Среднее: {Math.round(health.processing.avg_ms)} мс</span>
+              <span>P95: {Math.round(health.processing.p95_ms)} мс</span>
+            </div>
+          )}
+          {alerts && (alerts.oldest_pending || alerts.failure_rate) && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-800">
+              Внимание мониторинга: {[
+                alerts.oldest_pending ? `старейшая pending дольше ${Math.round(alerts.oldest_pending_threshold_seconds / 60)} мин` : null,
+                alerts.failure_rate ? `failure rate ${(alerts.failure_rate_value * 100).toFixed(1)}% за ${alerts.evaluated_window_hours} ч` : null,
+              ].filter(Boolean).join("; ")}.
+            </div>
+          )}
 
           <div className="overflow-hidden rounded-lg border">
             <div className="border-b bg-muted/40 px-3 py-2 text-sm font-medium">Последние ошибки</div>
