@@ -56,6 +56,7 @@ import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings"
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
 import { SHEET_SHELL_CLASS, getEntityShellClass } from "@/lib/sheetShell";
+import { cn } from "@/lib/utils";
 import { ContactFeedTab } from "@/components/admin/contact/ContactFeedTab";
 import { CallButton } from "@/components/admin/calls/CallButton";
 import { CallsHistorySection } from "@/components/admin/calls/CallsHistorySection";
