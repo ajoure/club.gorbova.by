@@ -294,12 +294,14 @@ export async function applyCrmStageOnTerminal(
     order_id: orderId, terminal_kind: terminalKind, trigger,
     pipeline_id: snapshot.pipeline_id,
     pipeline_name: snapshot.pipeline_name,
-    from_stage_id: order.pipeline_stage_id,
+    from_pipeline_id: fromPipelineId,
+    from_stage_id: fromStageId,
     from_stage_name: snapshot.stage_names.pending,
     to_stage_id: targetStageId,
     to_stage_name: targetStageName,
     offer_id: snapshot.offer_id,
     offer_title: snapshot.offer_title,
+    manual_override_enforced: manualOverride,
   });
 
   return { applied: true, reason: 'ok' };
