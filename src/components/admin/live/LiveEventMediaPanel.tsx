@@ -175,7 +175,7 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <Badge variant={transcript?.status === "ready" ? "default" : transcript?.status === "failed" ? "destructive" : "secondary"}>
-              {transcript ? transcriptStatusText[transcript.status] : "Ещё не создавалась"}
+              {statusQuery.isLoading && !transcript ? "Проверяю статус…" : transcript ? transcriptStatusText[transcript.status] : "Ещё не создавалась"}
             </Badge>
             {transcript?.generated_at && <span className="text-muted-foreground">Сформирована {new Date(transcript.generated_at).toLocaleString("ru-RU")}</span>}
           </div>
