@@ -528,8 +528,17 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
       .limit(160);
     for (const a of ((audits || []) as any[])) {
       const action = String(a.action || "");
-      const title = /delete|remove|удал/i.test(action) ? "Удаление данных" : /create|insert|add|создан|добав/i.test(action) ? "Добавление данных" : /update|change|reset|измен/i.test(action) ? "Изменение данных" : /payment|bepaid|pay/i.test(action) ? "Платёжная операция" : "Событие платформы";
-      const body = [`Действие: ${action}`, a.entity_type ? `Объект: ${a.entity_type}` : null, a.entity_id ? `ID: ${a.entity_id}` : null].filter(Boolean).join("\n");
+      const title = localizeAuditAction(action);
+      const entityLabel = localizeEntityType(a.entity_type);
+      const metaObj = (a.meta && typeof a.meta === "object") ? a.meta as Record<string, any> : {};
+      const reasonLabel = metaObj.reason ? localizeReasonCode(String(metaObj.reason)) : "";
+      const bodyLines: string[] = [];
+      if (entityLabel) bodyLines.push(`Объект: ${entityLabel}`);
+      if (reasonLabel) bodyLines.push(`Причина: ${reasonLabel}`);
+      if (metaObj.pipeline_name) bodyLines.push(`Воронка: ${metaObj.pipeline_name}`);
+      if (metaObj.to_stage_name) bodyLines.push(`Новая стадия: ${metaObj.to_stage_name}`);
+      else if (metaObj.target_stage_name) bodyLines.push(`Целевая стадия: ${metaObj.target_stage_name}`);
+      const body = bodyLines.join("\n");
       if (match(title, body, a.actor_label, JSON.stringify(a.meta || {}))) events.push({ id: `audit-${a.id}`, kind: "event", at: a.created_at, title, body, author: a.actor_label || (a.actor_type === "system" ? "Система" : "Сотрудник"), meta: { event_source: "audit", action: a.action, entity_type: a.entity_type, entity_id: a.entity_id, raw_meta: a.meta } });
     }
   }
