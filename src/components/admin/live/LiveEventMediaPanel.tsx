@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileAudio, FileText, Loader2, RefreshCw, Sparkles, Download, ShieldCheck, Play } from "lucide-react";
+import { FileAudio, FileText, Loader2, RefreshCw, Sparkles, Download, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { TranscriptionWizard } from "@/components/admin/live/TranscriptionWizard";
 
@@ -55,20 +55,7 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
   const queryClient = useQueryClient();
   const [running, setRunning] = useState<"sync_audio" | "start_transcript" | "audio" | "docx" | null>(null);
   const [awaitingTranscript, setAwaitingTranscript] = useState(false);
-  const [wizardOpen, setWizardOpen] = useState(false);
   const key = ["live-event-media", liveEventId];
-
-  const clientJobQuery = useQuery({
-    queryKey: ["live-event-transcription-client-job", liveEventId],
-    queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke("transcription-client-worker", {
-        body: { action: "status", live_event_id: liveEventId },
-      });
-      if (error) return { job: null };
-      return (data as { job: { id: string; status: string; stage: string; total_parts: number; completed_parts: number } | null }) || { job: null };
-    },
-    refetchInterval: 15000,
-  });
 
   const statusQuery = useQuery({
     queryKey: key,
@@ -160,7 +147,7 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <Badge variant={audio?.status === "ready" ? "default" : audio?.status === "failed" ? "destructive" : "secondary"}>
-              {statusQuery.isLoading && !audio ? "Проверяю статус…" : audio ? audioStatusText[audio.status] : "Ещё не синхронизировано"}
+              {!statusQuery.data && statusQuery.isLoading ? "Проверяю статус…" : audio ? audioStatusText[audio.status] : "Ещё не синхронизировано"}
             </Badge>
             {audio?.source_file_name && <span className="text-muted-foreground truncate max-w-[240px]">{audio.source_file_name}</span>}
             {audio?.source_language && <span className="text-muted-foreground">Язык: {audio.source_language}</span>}
@@ -190,62 +177,37 @@ export function LiveEventMediaPanel({ liveEventId }: { liveEventId: string }) {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <Badge variant={transcript?.status === "ready" ? "default" : transcript?.status === "failed" ? "destructive" : "secondary"}>
-              {statusQuery.isLoading && !transcript ? "Проверяю статус…" : transcript ? transcriptStatusText[transcript.status] : "Ещё не создавалась"}
+              {!statusQuery.data && statusQuery.isLoading ? "Проверяю статус…" : transcript ? transcriptStatusText[transcript.status] : "Ещё не создавалась"}
             </Badge>
             {transcript?.generated_at && <span className="text-muted-foreground">Сформирована {new Date(transcript.generated_at).toLocaleString("ru-RU")}</span>}
           </div>
           {transcript?.status === "failed" && <p className="text-xs text-destructive">Не удалось подготовить документ ({transcript.error_code || "неизвестная ошибка"}). Можно повторить.</p>}
-          {clientJobQuery.data?.job && ["pending_parts","transcribing","finalizing"].includes(clientJobQuery.data.job.status) && (
-            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs flex items-center justify-between gap-2">
-              <span>Есть незавершённая транскрибация: часть {clientJobQuery.data.job.completed_parts} из {clientJobQuery.data.job.total_parts}.</span>
-              <Button size="sm" variant="outline" className="gap-1" onClick={() => setWizardOpen(true)}>
-                <Play className="h-3.5 w-3.5" /> Продолжить обработку
-              </Button>
-            </div>
-          )}
           <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              className="gap-1"
-              onClick={() => setWizardOpen(true)}
-              disabled={audio?.status !== "ready" || transcribing}
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              {transcript?.status === "ready" ? "Создать заново (в браузере)" : "Запустить транскрибацию"}
+            <Button size="sm" variant="outline" className="gap-1" onClick={() => invoke("start_transcript")} disabled={audio?.status !== "ready" || transcribing}>
+              {transcribing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              {transcript?.status === "ready" ? "Создать заново" : "Создать транскрибацию"}
             </Button>
             {transcript?.status === "ready" && (
-              <Button size="sm" variant="outline" className="gap-1" onClick={() => download("docx")} disabled={running === "docx"}>
+              <Button size="sm" className="gap-1" onClick={() => download("docx")} disabled={running === "docx"}>
                 {running === "docx" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                 Скачать DOCX
               </Button>
             )}
           </div>
-          <p className="text-[11px] text-muted-foreground">
-            Обработка идёт во вкладке браузера и на сервере. Обычно 10–15 минут, зависит от устройства и длины записи.
-            Прогресс сохраняется — при перезагрузке можно продолжить с того же места.
-          </p>
         </CardContent>
       </Card>
 
-      <TranscriptionWizard
-        liveEventId={liveEventId}
-        open={wizardOpen}
-        onOpenChange={(open) => {
-          setWizardOpen(open);
-          if (!open) {
-            void queryClient.invalidateQueries({ queryKey: key });
-            void clientJobQuery.refetch();
-          }
-        }}
-        onCompleted={() => {
-          void queryClient.invalidateQueries({ queryKey: key });
-          void clientJobQuery.refetch();
-          toast.success("Транскрибация завершена. DOCX и аудио готовы.");
-        }}
-      />
+      {audio?.status === "ready" && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" /> Частичная транскрибация (для длинных записей)</CardTitle>
+            <CardDescription className="text-xs">Используйте, если запись больше ≈24 МБ и обычная транскрибация возвращает ошибку размера. Браузер режет аудио на окна и отправляет их по одному.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <TranscriptionWizard liveEventId={liveEventId} onFinished={() => queryClient.invalidateQueries({ queryKey: key })} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
-
-
-
