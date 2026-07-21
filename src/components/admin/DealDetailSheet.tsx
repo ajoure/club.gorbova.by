@@ -75,6 +75,7 @@ import { DealPayerDocumentsCard } from "./DealPayerDocumentsCard";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
 import { CallButton } from "./calls/CallButton";
+import { SmsButton } from "./sms/SmsButton";
 import { InternalInstallmentBlock } from "@/components/installments/InternalInstallmentBlock";
 
 interface DealDetailSheetProps {
