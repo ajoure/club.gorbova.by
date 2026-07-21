@@ -76,6 +76,8 @@ import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
 import { CallButton } from "./calls/CallButton";
 import { SmsButton } from "./sms/SmsButton";
+import { ComposeEmailDialog } from "./ComposeEmailDialog";
+
 import { InternalInstallmentBlock } from "@/components/installments/InternalInstallmentBlock";
 
 interface DealDetailSheetProps {
@@ -138,6 +140,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const [linkPaymentDialogOpen, setLinkPaymentDialogOpen] = useState(false);
   const [grantAccessDialogOpen, setGrantAccessDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("overview");
+  const [composeEmailOpen, setComposeEmailOpen] = useState(false);
+
 
 
   const dealArr = useMemo(() => deal ? [{ id: deal.id, purchase_snapshot: deal.purchase_snapshot }] : [], [deal]);
