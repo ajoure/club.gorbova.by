@@ -352,7 +352,11 @@ export default function AdminLiveEvents() {
   const { data: eventsWithAccessRule } = useLiveEventsAccessRuleFlags(true);
 
 
-  const { data: existingRules } = useQuery({
+  const {
+    data: existingRules,
+    isSuccess: existingRulesLoaded,
+    isFetching: existingRulesFetching,
+  } = useQuery({
     queryKey: ["live-event-access-rules", editingId],
     queryFn: async () => {
       if (!editingId) return [];
@@ -365,6 +369,16 @@ export default function AdminLiveEvents() {
     },
     enabled: !!editingId,
   });
+
+  // FORENSIC PATCH: track whether the user intentionally edited the Access
+  // section of the currently-open form. Save must NOT delete/recreate
+  // live_event_access_rules unless this is true. Reset on every open/close.
+  const accessRulesDirtyRef = useRef(false);
+  // Track which editingId's rules have been hydrated into the form. Prevents
+  // saving stale form.access_rules = [] before the fetch completes.
+  const accessRulesHydratedForRef = useRef<string | null>(null);
+  const accessRulesLoadedForEditing =
+    !editingId || (existingRulesLoaded && accessRulesHydratedForRef.current === editingId);
 
   // Kinescope integration instance
   const { data: kinescopeInstance, isLoading: kinescopeInstanceLoading } = useQuery({
