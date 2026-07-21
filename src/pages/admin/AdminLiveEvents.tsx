@@ -1530,7 +1530,23 @@ export default function AdminLiveEvents() {
 
                   {/* === TAB: Доступ === */}
                   <TabsContent value="access" className="m-0 space-y-4">
+              {/* GUARD: правило доступа обязательно. Без записи в
+                  live_event_access_rules non-admin получают default-deny
+                  при попытке войти в комнату (штатное поведение backend). */}
+              {form.access_rules.length === 0 && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive flex items-start gap-2">
+                  <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" />
+                  <div>
+                    <div className="font-semibold">Правило доступа обязательно</div>
+                    <div className="mt-0.5 text-destructive/90">
+                      Без хотя бы одного правила ниже авторизованные пользователи получат <code>access_denied</code> при входе в комнату.
+                      Выберите «Любой авторизованный» либо задайте продукт/тариф.
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* Section 3: Access rules */}
+
               <FormSection>
                 <div className="space-y-2 mb-4">
                   <Label className="text-sm font-medium">Месяц контента</Label>
