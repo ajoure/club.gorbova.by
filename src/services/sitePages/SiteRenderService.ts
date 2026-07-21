@@ -8,7 +8,7 @@ import type { SitePage } from "./types";
  * - "error": fetch/transport error (network, 5xx, CORS, parse)
  */
 export type PublicPageResolution =
-  | { status: "ok"; page: SitePage }
+  | { status: "ok"; page: SitePage; canonicalSlug?: string }
   | { status: "not-found" }
   | { status: "error"; error: string };
 
@@ -132,8 +132,37 @@ export class SiteRenderService {
         logResolveError("resolveBySlug", error, { slug });
         return { status: "error", error: error.message || "fetch failed" };
       }
-      if (!data) return { status: "not-found" };
-      return { status: "ok", page: data as SitePage };
+      if (data) return { status: "ok", page: data as SitePage };
+
+      const { data: alias, error: aliasError } = await supabase
+        .from("site_page_slug_aliases")
+        .select("site_page_id")
+        .eq("slug", slug)
+        .maybeSingle();
+
+      if (aliasError) {
+        logResolveError("resolveBySlug.alias", aliasError, { slug });
+        return { status: "error", error: aliasError.message || "alias fetch failed" };
+      }
+      if (!alias) return { status: "not-found" };
+
+      const { data: aliasedPage, error: aliasedPageError } = await (supabase
+        .from("site_pages") as any)
+        .select("*")
+        .eq("id", alias.site_page_id)
+        .eq("status", "published")
+        .maybeSingle();
+
+      if (aliasedPageError) {
+        logResolveError("resolveBySlug.alias-page", aliasedPageError, { slug, pageId: alias.site_page_id });
+        return { status: "error", error: aliasedPageError.message || "aliased page fetch failed" };
+      }
+      if (!aliasedPage) return { status: "not-found" };
+      return {
+        status: "ok",
+        page: aliasedPage as SitePage,
+        canonicalSlug: aliasedPage.slug,
+      };
     } catch (e: any) {
       logResolveError("resolveBySlug.exception", e, { slug });
       return { status: "error", error: e?.message || String(e) };

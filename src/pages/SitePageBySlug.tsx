@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { SiteRenderService } from "@/services/sitePages/SiteRenderService";
@@ -153,6 +153,8 @@ function collectLeadOptions(
 
 export default function SitePageBySlug() {
   const { slug } = useParams<{ slug: string }>();
+  const location = useLocation();
+  const navigate = useNavigate();
   const hashScrolled = useRef(false);
 
   const { data: resolution, isLoading, refetch } = useQuery({
@@ -165,6 +167,12 @@ export default function SitePageBySlug() {
   const page = resolution?.status === "ok" ? resolution.page : null;
   const blocks = (page?.blocks as unknown as SiteBlock[]) || [];
   const { pricingData } = useSitePricingData(blocks);
+
+  useEffect(() => {
+    if (resolution?.status !== "ok" || !resolution.canonicalSlug) return;
+    if (resolution.canonicalSlug === slug) return;
+    navigate(`/${resolution.canonicalSlug}${location.search}${location.hash}`, { replace: true });
+  }, [location.hash, location.search, navigate, resolution, slug]);
 
 
   // ─── site-action bridge: open offer ───
@@ -607,4 +615,3 @@ export default function SitePageBySlug() {
     </SiteSlotManifestContext.Provider>
   );
 }
-
