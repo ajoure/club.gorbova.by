@@ -35,6 +35,26 @@ import {
   Instagram, LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { localizeAuditAction, localizeEntityType, localizeReasonCode, localizeCrmStatus } from "@/lib/crmDisplayLabels";
+
+/** Русская подпись для «technical» event-title типа `company.created` / `company.linked_to_contact`. */
+function humanizeEventTitle(title: string | null | undefined): string {
+  const raw = (title ?? "").trim();
+  if (!raw) return "Системное событие";
+  // Если это dotted/snake_case-код — прогнать через локализацию action-словаря.
+  if (/^[a-z0-9_.-]+$/i.test(raw) && /[._-]/.test(raw)) return localizeAuditAction(raw);
+  return raw;
+}
+
+/** Убрать HTML-теги, оставив читаемый текст. Не рендерим сырые `<b>` пользователю. */
+function stripHtmlTags(input: string | null | undefined): string {
+  const raw = (input ?? "").toString();
+  if (!raw) return "";
+  if (typeof document === "undefined") return raw.replace(/<[^>]+>/g, "");
+  const div = document.createElement("div");
+  div.innerHTML = raw;
+  return (div.textContent || div.innerText || "").trim();
+}
 import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialog";
 import { CallRecordingPlayer } from "@/components/admin/calls/CallRecordingPlayer";
 import { MediaLightbox } from "@/components/admin/chat/MediaLightbox";
@@ -159,7 +179,7 @@ function CallCard({ evt, entityId }: { evt: FeedEvent; entityId: string }) {
       <div className="flex items-center gap-2 flex-wrap">
         {evt.meta?.phone && <span className="text-sm font-medium">{evt.meta.phone}</span>}
         {duration > 0 && <Badge variant="outline" className="text-[10px]">{duration}с</Badge>}
-        {evt.meta?.status && <Badge variant="outline" className="text-[10px]">{String(evt.meta.status)}</Badge>}
+        {evt.meta?.status && <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>}
       </div>
       {recording && (
         <CallRecordingPlayer src={recording} fallbackDurationSec={duration || null} fileName={`call-${evt.meta?.public_id || evt.id}.mp3`} />
@@ -528,8 +548,17 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
       .limit(160);
     for (const a of ((audits || []) as any[])) {
       const action = String(a.action || "");
-      const title = /delete|remove|удал/i.test(action) ? "Удаление данных" : /create|insert|add|создан|добав/i.test(action) ? "Добавление данных" : /update|change|reset|измен/i.test(action) ? "Изменение данных" : /payment|bepaid|pay/i.test(action) ? "Платёжная операция" : "Событие платформы";
-      const body = [`Действие: ${action}`, a.entity_type ? `Объект: ${a.entity_type}` : null, a.entity_id ? `ID: ${a.entity_id}` : null].filter(Boolean).join("\n");
+      const title = localizeAuditAction(action);
+      const entityLabel = localizeEntityType(a.entity_type);
+      const metaObj = (a.meta && typeof a.meta === "object") ? a.meta as Record<string, any> : {};
+      const reasonLabel = metaObj.reason ? localizeReasonCode(String(metaObj.reason)) : "";
+      const bodyLines: string[] = [];
+      if (entityLabel) bodyLines.push(`Объект: ${entityLabel}`);
+      if (reasonLabel) bodyLines.push(`Причина: ${reasonLabel}`);
+      if (metaObj.pipeline_name) bodyLines.push(`Воронка: ${metaObj.pipeline_name}`);
+      if (metaObj.to_stage_name) bodyLines.push(`Новая стадия: ${metaObj.to_stage_name}`);
+      else if (metaObj.target_stage_name) bodyLines.push(`Целевая стадия: ${metaObj.target_stage_name}`);
+      const body = bodyLines.join("\n");
       if (match(title, body, a.actor_label, JSON.stringify(a.meta || {}))) events.push({ id: `audit-${a.id}`, kind: "event", at: a.created_at, title, body, author: a.actor_label || (a.actor_type === "system" ? "Система" : "Сотрудник"), meta: { event_source: "audit", action: a.action, entity_type: a.entity_type, entity_id: a.entity_id, raw_meta: a.meta } });
     }
   }
@@ -954,7 +983,7 @@ export function ContactFeedTab({
   return (
     <div className={cn(
       embedded
-        ? "flex min-h-[240px] flex-col overflow-hidden rounded-2xl border border-border/40 bg-background/75 backdrop-blur-sm p-3 sm:p-4"
+        ? "flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40 bg-background/75 backdrop-blur-sm p-3 sm:p-4"
         : "flex h-[calc(100vh-260px)] min-h-[520px] max-h-[calc(100vh-220px)] flex-col overflow-hidden rounded-2xl border border-border/40 bg-background/75 backdrop-blur-sm p-3 sm:p-4"
 
     )}>
@@ -997,7 +1026,7 @@ export function ContactFeedTab({
       </div>
 
       {/* List (scrollable) */}
-      <div className="min-h-0 flex-1 overflow-y-auto space-y-2 pb-3 pt-1 max-h-[60vh]">
+      <div className="min-h-0 flex-1 overflow-y-auto space-y-2 pb-3 pt-1">
         {isError && hasFeedEvents && (
           <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1048,10 +1077,13 @@ export function ContactFeedTab({
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-semibold uppercase tracking-wide opacity-70">{M.label}</span>
                       {evt.kind === "task" && evt.meta?.status && (
-                        <Badge variant="outline" className="text-[10px]">{String(evt.meta.status)}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>
                       )}
                       {evt.kind === "deal" && evt.meta?.status && (
-                        <Badge variant="outline" className="text-[10px]">{String(evt.meta.status)}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>
+                      )}
+                      {evt.kind === "event" && evt.meta?.status && (
+                        <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>
                       )}
                       <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
                         {evt.at ? format(new Date(evt.at), "d MMM, HH:mm", { locale: ru }) : "—"}
@@ -1073,6 +1105,20 @@ export function ContactFeedTab({
                         </button>
                         <span className="text-xs text-muted-foreground">{formatBytes(evt.meta?.size_bytes)}</span>
                       </div>
+                    ) : evt.kind === "event" ? (
+                      <>
+                        <div className="mt-1 text-sm font-medium truncate">{humanizeEventTitle(evt.title)}</div>
+                        {evt.body && (
+                          <div className={cn(
+                            "mt-1 text-sm text-muted-foreground whitespace-pre-wrap break-words",
+                            evt.meta?.event_source === "order_notification"
+                              ? "max-h-80 overflow-y-auto rounded-md bg-background/40 p-2"
+                              : "line-clamp-4"
+                          )}>
+                            {stripHtmlTags(evt.body)}
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <>
                         {evt.title && (
@@ -1085,7 +1131,7 @@ export function ContactFeedTab({
                               ? "max-h-80 overflow-y-auto rounded-md bg-background/40 p-2"
                               : "line-clamp-4"
                           )}>
-                            {evt.body}
+                            {stripHtmlTags(evt.body)}
                           </div>
                         )}
                       </>

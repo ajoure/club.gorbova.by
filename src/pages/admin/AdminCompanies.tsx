@@ -56,6 +56,7 @@ import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings"
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
 import { SHEET_SHELL_CLASS, getEntityShellClass } from "@/lib/sheetShell";
+import { cn } from "@/lib/utils";
 import { ContactFeedTab } from "@/components/admin/contact/ContactFeedTab";
 import { CallButton } from "@/components/admin/calls/CallButton";
 import { CallsHistorySection } from "@/components/admin/calls/CallsHistorySection";
@@ -396,6 +397,19 @@ const companyRelationshipLabels: Record<string, string> = {
   group_member: "Участник группы",
   franchisee: "Франчайзи",
   partner: "Партнёр",
+};
+
+const companyContactRelationshipLabels: Record<string, string> = {
+  billing_contact: "Плательщик",
+  primary_contact: "Основной контакт",
+  contact_person: "Контактное лицо",
+  authorized_representative: "Представитель",
+  director: "Директор",
+  accountant: "Бухгалтер",
+  founder: "Учредитель",
+  contract_signatory: "Подписант",
+  employee: "Сотрудник",
+  other: "Другое",
 };
 
 const statusLabels: Record<CompanyStatus, string> = {
@@ -1303,10 +1317,14 @@ function CompanyProfileOverview({ company, onRefreshRegistry, isRefreshing }: { 
     ["Ликвидация", company.grp_liquidation_date],
   ].filter(([, value]) => value);
 
+  const sourceLabel = company.metadata?.created_source
+    ? (companyContactSourceLabels[company.metadata.created_source] || company.metadata.created_source)
+    : (company.metadata?.google_sheet_import ? "Импорт таблицы" : "CRM");
+
   return (
-    <div className="space-y-4 px-1 pb-6">
-      <Card>
-        <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Info className="h-4 w-4" />Основная информация</CardTitle></CardHeader>
+    <div className="space-y-4 pb-6">
+      <Card className="border-border/40">
+        <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><Info className="h-4 w-4 text-primary" />Основная информация</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <InfoRow label={isEntrepreneur ? "ФИО" : "Полное наименование"} value={normalizeCompanyName(company.full_name)} />
           {!isEntrepreneur && <><Separator /><InfoRow label="Орг. форма" value={company.legal_form || inferCompanyLegalForm(company.full_name)} /></>}
@@ -1315,8 +1333,8 @@ function CompanyProfileOverview({ company, onRefreshRegistry, isRefreshing }: { 
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="pb-2"><div className="flex items-center justify-between gap-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><ClipboardList className="h-4 w-4" />Данные реестра</CardTitle>{company.unp_normalized && onRefreshRegistry && <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" disabled={isRefreshing} onClick={onRefreshRegistry}>{isRefreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}Обновить из реестра</Button>}</div></CardHeader>
+      <Card className="border-border/40">
+        <CardHeader className="pb-2"><div className="flex items-center justify-between gap-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><ClipboardList className="h-4 w-4 text-primary" />Данные реестра</CardTitle>{company.unp_normalized && onRefreshRegistry && <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" disabled={isRefreshing} onClick={onRefreshRegistry}>{isRefreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}Обновить из реестра</Button>}</div></CardHeader>
         <CardContent className="space-y-3">
           {registryRows.length === 0 ? <p className="text-sm text-muted-foreground">{company.unp_normalized ? "Данные реестра ещё не загружены" : "Нет УНП для поиска"}</p> : registryRows.map(([label, value], index) => <div key={label as string}>{index > 0 && <Separator />}{label === "Статус" ? <div className="flex items-center justify-between gap-2"><span className="shrink-0 text-sm text-muted-foreground">Статус</span><GrpStatusBadge status={String(value)} /></div> : <InfoRow label={label as string} value={String(value)} mono={label === "Код ИМНС"} />}</div>)}
           {company.grp_liquidation_reason && <><Separator /><InfoRow label="Причина ликвидации" value={company.grp_liquidation_reason} /></>}
@@ -1324,13 +1342,13 @@ function CompanyProfileOverview({ company, onRefreshRegistry, isRefreshing }: { 
         </CardContent>
       </Card>
 
-      {addressLines.length > 0 && <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><MapPin className="h-4 w-4" />Адрес</CardTitle></CardHeader><CardContent><div className="flex items-start justify-between gap-2"><span className="shrink-0 text-sm text-muted-foreground">Юридический адрес</span><div className="text-right text-sm">{addressLines.map((line, index) => <div key={index}>{line}</div>)}</div></div></CardContent></Card>}
+      {addressLines.length > 0 && <Card className="border-border/40"><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><MapPin className="h-4 w-4 text-primary" />Юридический адрес</CardTitle></CardHeader><CardContent><div className="flex items-start justify-between gap-3"><span className="shrink-0 text-sm text-muted-foreground">Адрес</span><div className="min-w-0 text-right text-sm">{addressLines.map((line, index) => <div key={index} className="break-words">{line}</div>)}</div></div></CardContent></Card>}
 
-      {!isEntrepreneur && (company.director_name || company.director_position) && <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Briefcase className="h-4 w-4" />Руководитель</CardTitle></CardHeader><CardContent className="space-y-3">{company.director_position && <InfoRow label="Должность" value={company.director_position} />}{company.director_position && company.director_name && <Separator />}{company.director_name && <InfoRow label="ФИО" value={company.director_name} />}</CardContent></Card>}
+      {!isEntrepreneur && (company.director_name || company.director_position) && <Card className="border-border/40"><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><Briefcase className="h-4 w-4 text-primary" />Руководитель</CardTitle></CardHeader><CardContent className="space-y-3">{company.director_position && <InfoRow label="Должность" value={company.director_position} />}{company.director_position && company.director_name && <Separator />}{company.director_name && <InfoRow label="ФИО" value={company.director_name} />}</CardContent></Card>}
 
-      {(company.bank_account || company.bank_name || company.bank_code) && <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Landmark className="h-4 w-4" />Банковские реквизиты</CardTitle></CardHeader><CardContent className="space-y-3"><InfoRow label="Расчётный счёт" value={company.bank_account} copyable mono />{company.bank_name && <><Separator /><InfoRow label="Банк" value={company.bank_name} /></>}{company.bank_code && <><Separator /><InfoRow label="Код банка" value={company.bank_code} copyable mono /></>}</CardContent></Card>}
+      {(company.bank_account || company.bank_name || company.bank_code) && <Card className="border-border/40"><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><Landmark className="h-4 w-4 text-primary" />Банковские реквизиты</CardTitle></CardHeader><CardContent className="space-y-3"><InfoRow label="Расчётный счёт" value={company.bank_account} copyable mono />{company.bank_name && <><Separator /><InfoRow label="Банк" value={company.bank_name} /></>}{company.bank_code && <><Separator /><InfoRow label="Код банка" value={company.bank_code} copyable mono /></>}</CardContent></Card>}
 
-      <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm text-muted-foreground"><Info className="h-4 w-4" />Служебная информация</CardTitle></CardHeader><CardContent className="space-y-3"><InfoRow label="Источник" value={company.metadata?.created_source || (company.metadata?.google_sheet_import ? "Импорт таблицы" : "CRM")} /><Separator /><InfoRow label="Дата создания" value={format(new Date(company.created_at), "dd MMM yyyy HH:mm", { locale: ru })} /><Separator /><InfoRow label="ID" value={company.id} copyable mono /></CardContent></Card>
+      <Card className="border-border/40"><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm font-semibold"><Info className="h-4 w-4 text-primary" />Служебная информация</CardTitle></CardHeader><CardContent className="space-y-3"><InfoRow label="Источник" value={sourceLabel} /><Separator /><InfoRow label="Дата создания" value={format(new Date(company.created_at), "dd MMM yyyy HH:mm", { locale: ru })} /><Separator /><InfoRow label="ID" value={company.id} copyable mono /></CardContent></Card>
     </div>
   );
 }
@@ -1747,22 +1765,89 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                   <TabsTrigger value="artifacts" className="text-xs sm:text-sm px-2.5 sm:px-3"><BookOpen className="mr-1 h-3.5 w-3.5" />Анкеты</TabsTrigger>
                 </TabsList>
               </div>
-              <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto py-4 pr-1">
+              {/* Feed tab — вынесен из внешнего overflow-y-auto, чтобы composer
+                  оставался прижат к нижнему краю карточки, а прокручивался только
+                  список событий внутри ContactFeedTab (контракт как в Telegram-чате). */}
+              <TabsContent
+                value="feed"
+                forceMount
+                className="m-0 px-3 sm:px-4 pb-3 sm:pb-4 flex-1 min-h-0 flex flex-col overflow-hidden data-[state=inactive]:hidden"
+              >
+                <ContactFeedTab companyId={company.id} embedded readOnly={!canEditCompany} />
+              </TabsContent>
+              <div
+                ref={scrollContainerRef}
+                className={cn("min-h-0 flex-1 overflow-y-auto", activeTab === "feed" && "hidden")}
+              >
+                <div className="px-4 sm:px-6 py-4 pb-24">
                 <TabsContent value="profile" className="mt-0 space-y-4">
-                  <section className="grid gap-2 rounded-2xl border border-border/40 bg-background/75 backdrop-blur p-3 text-sm text-muted-foreground">
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground/80">Каналы связи</div>
-                    {company.email && <div className="flex flex-wrap items-center gap-2"><Mail className="h-4 w-4" /><a href={`mailto:${company.email}`} className="min-w-0 flex-1 break-all hover:text-foreground hover:underline">{company.email}</a><Button size="sm" variant="outline" className="h-7 px-2.5 text-xs shrink-0" onClick={() => setComposeEmailOpen(true)}><Mail className="mr-1 h-3 w-3" />Письмо</Button></div>}
-                    {normalizedPhone && <div className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${normalizedPhone}`} className="hover:text-foreground hover:underline">{normalizedPhone}</a><span className="ml-auto flex gap-1"><CallButton phone={normalizedPhone} companyId={company.id} /><SmsButton phone={normalizedPhone} companyId={company.id} /></span></div>}
-                    {additionalCompanyPhones.map((phone) => <div key={phone} className="flex flex-wrap items-center gap-2"><Phone className="h-4 w-4" /><a href={`tel:${phone}`} className="hover:text-foreground hover:underline">{phone}</a><span className="ml-auto flex gap-1"><CallButton phone={phone} companyId={company.id} /><SmsButton phone={phone} companyId={company.id} /></span></div>)}
-                    {!company.email && companyPhones.length === 0 && "Контактные данные не заполнены."}
-                  </section>
+                  <Card className="border-border/40">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                        <Link2 className="h-4 w-4 text-primary" />
+                        Каналы связи
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3 text-sm">
+                      {company.email && (
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            <a href={`mailto:${company.email}`} className="min-w-0 truncate hover:text-foreground hover:underline">{company.email}</a>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <Button variant="outline" size="sm" className="h-7 px-2.5 text-xs" onClick={() => setComposeEmailOpen(true)}>
+                              <Mail className="mr-1 h-3 w-3" />Письмо
+                            </Button>
+                            <Button variant="ghost" size="sm" className="h-7 w-7" onClick={() => { navigator.clipboard.writeText(company.email!); toast.success("Email скопирован"); }}>
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                      {normalizedPhone && (
+                        <>
+                          {company.email && <Separator />}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <Phone className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <a href={`tel:${normalizedPhone}`} className="min-w-0 truncate hover:text-foreground hover:underline">{normalizedPhone}</a>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <CallButton phone={normalizedPhone} companyId={company.id} />
+                              <SmsButton phone={normalizedPhone} companyId={company.id} />
+                            </div>
+                          </div>
+                        </>
+                      )}
+                      {additionalCompanyPhones.map((phone, idx) => (
+                        <div key={phone}>
+                          {(company.email || normalizedPhone || idx > 0) && <Separator />}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <Phone className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <a href={`tel:${phone}`} className="min-w-0 truncate hover:text-foreground hover:underline">{phone}</a>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <CallButton phone={phone} companyId={company.id} />
+                              <SmsButton phone={phone} companyId={company.id} />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {!company.email && companyPhones.length === 0 && (
+                        <p className="text-xs text-muted-foreground">Контактные данные не заполнены.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
 
                   <CompanyProfileOverview company={company} onRefreshRegistry={canEditCompany ? () => refreshRegistry.mutate() : undefined} isRefreshing={refreshRegistry.isPending} />
                 </TabsContent>
                 <TabsContent value="contacts" className="mt-0 space-y-3">
                   {contactsQuery.isLoading && <Skeleton className="h-16 w-full" />}
                   {!contactsQuery.isLoading && !contactPersonsQuery.isLoading && (contactsQuery.data?.length ?? 0) === 0 && (contactPersonsQuery.data?.length ?? 0) === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанных контактов пока нет.</p>}
-                  {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = getContactDisplayName(profile?.full_name, contact.external_full_name); const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><div className="font-medium">{name}</div><Badge variant="secondary">{companyContactSourceLabels[contact.source] || contact.source}</Badge>{profile?.id && <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedLinkedContactId(profile.id)}>Открыть карточку</Button>}</div><div className="mt-0.5 text-xs text-muted-foreground">{contact.relationship_type}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Billing</Badge>}</div></div></div>; })}
+                  {(contactsQuery.data ?? []).map((contact) => { const profile = contact.profile_id ? profilesById.get(contact.profile_id) : null; const name = getContactDisplayName(profile?.full_name, contact.external_full_name); const contactValue = profile?.email || profile?.phone || contact.external_email || contact.external_phone; const relLabel = companyContactRelationshipLabels[contact.relationship_type] || contact.relationship_type; return <div key={contact.id} className="rounded-lg border p-3"><div className="flex items-start gap-2"><UserRound className="mt-0.5 h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><div className="font-medium">{name}</div><Badge variant="secondary">{companyContactSourceLabels[contact.source] || contact.source}</Badge>{profile?.id && <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedLinkedContactId(profile.id)}>Открыть карточку</Button>}</div><div className="mt-0.5 text-xs text-muted-foreground">{relLabel}{contactValue ? ` · ${contactValue}` : ""}</div></div><div className="flex gap-1">{contact.is_primary && <Badge variant="outline">Основной</Badge>}{contact.is_billing_contact && <Badge variant="outline">Плательщик</Badge>}</div></div></div>; })}
                   {((contactsQuery.data?.length ?? 0) > 0 && (contactPersonsQuery.data?.length ?? 0) > 0) && <Separator />}
                   {(contactPersonsQuery.data?.length ?? 0) > 0 && <div className="text-sm font-medium text-muted-foreground">Контактные лица</div>}
                   {contactPersonsQuery.isLoading && <Skeleton className="h-16 w-full" />}
@@ -1794,10 +1879,7 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                 <TabsContent value="email" className="mt-0 space-y-4">
                   <ContactEmailHistory companyId={company.id} userId={null} email={company.email} clientName={normalizeCompanyName(company.full_name)} />
                 </TabsContent>
-                <TabsContent value="feed" className="m-0 flex min-h-0 flex-1 flex-col">
-                  <div className="mb-2 flex items-center gap-2 text-sm font-medium"><Activity className="h-4 w-4 text-primary" />Лента компании</div>
-                  <ContactFeedTab companyId={company.id} embedded readOnly={!canEditCompany} />
-                </TabsContent>
+                {/* value="feed" вынесен наверх — вне внешнего скролла */}
                 <TabsContent value="telegram" className="mt-0 space-y-3">
                   <CompanyTelegramSummary profiles={profilesQuery.data ?? []} contacts={contactsQuery.data ?? []} onOpenContact={setSelectedLinkedContactId} />
                 </TabsContent>
@@ -1842,6 +1924,7 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                   {canEdit && <form className="space-y-2 rounded-lg border bg-muted/30 p-3" onSubmit={(event) => { event.preventDefault(); if (externalProvider.trim() && externalValue.trim()) upsertExternalId.mutate(); }}><div className="text-sm font-medium">Добавить или обновить идентификатор</div><div className="grid gap-2 sm:grid-cols-2"><Input value={externalProvider} onChange={(event) => setExternalProvider(event.target.value)} placeholder="Провайдер: amo, bitrix24…" /><Input value={externalValue} onChange={(event) => setExternalValue(event.target.value)} placeholder="Внешний ID" /></div><div className="flex gap-2"><Input value={externalUrl} onChange={(event) => setExternalUrl(event.target.value)} placeholder="Ссылка (необязательно)" /><Button type="submit" size="sm" disabled={upsertExternalId.isPending || !externalProvider.trim() || !externalValue.trim()}>Сохранить</Button></div></form>}
                 </TabsContent>
                 <TabsContent value="system" className="mt-0 space-y-2"><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">UUID:</span> {company.id}</div><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">Создано:</span> {formatDate(company.created_at)}</div><div className="rounded-lg border p-3 text-sm"><span className="text-muted-foreground">Изменено:</span> {formatDate(company.updated_at)}</div></TabsContent>
+                </div>
               </div>
             </Tabs>
             <ComposeEmailDialog

@@ -85,6 +85,7 @@ import { OutboundMediaPreview } from "./chat/OutboundMediaPreview";
 import { ChatMediaMessage } from "./chat/ChatMediaMessage";
 import { useTelegramReactions, useToggleTelegramReaction } from "@/hooks/useTelegramReactions";
 import { SmilePlus } from "lucide-react";
+import { TELEGRAM_REACTION_EMOJIS } from "@/lib/telegramReactionEmojis";
 // V1.3: memo-bubble refactor
 import { TelegramMessageBubble } from "./chat/TelegramMessageBubble";
 import { TelegramEventBubble } from "./chat/TelegramEventBubble";
@@ -172,17 +173,7 @@ interface TelegramEvent {
 
 type ChatItem = TelegramMessage | TelegramEvent;
 
-// Only Telegram-supported reaction emojis (whitelist)
-const EMOJI_LIST = [
-  "👍", "👎", "❤️", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱",
-  "🤬", "😢", "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡",
-  "🥱", "🥴", "😍", "🐳", "❤️‍🔥", "🌚", "🌭", "💯", "🤣", "⚡",
-  "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈",
-  "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨",
-  "🤝", "✍️", "🤗", "🫡", "🎅", "🎄", "☃️", "💅", "🤪", "🗿",
-  "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂️",
-  "🤷", "🤷‍♀️", "😡",
-];
+const EMOJI_LIST = TELEGRAM_REACTION_EMOJIS;
 
 // V1.3: EVENT_ICONS moved to ./chat/telegramBubbleTypes,
 // text formatters moved to ./chat/telegramFormat.

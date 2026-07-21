@@ -34,6 +34,7 @@ interface Entry {
   actor_display_name: string | null;
   actor_avatar_url: string | null;
   content_text: string;
+  cta_url: string;
   visibility_scope: "public" | "private";
   metadata: Record<string, unknown>;
   state: EntryState;
@@ -111,7 +112,7 @@ export function AutowebScenarioEditor({ liveEventId }: { liveEventId: string }) 
         _include_applied: true,
       });
       if (error) throw error;
-      return (data ?? []) as Entry[];
+      return (data ?? []) as unknown as Entry[];
     },
   });
 

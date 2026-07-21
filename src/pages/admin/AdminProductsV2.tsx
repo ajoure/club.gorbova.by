@@ -29,6 +29,17 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { SortPill } from "@/components/admin/SortPill";
 import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import type { StatusBadgeKind } from "@/utils/badgeUtils";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  assertProductPageSlugAvailable,
+  saveProductPageAddress,
+} from "@/services/sitePages/ProductSitePageAdminService";
+import {
+  getProductPageUrl,
+  normalizeProductPageSlug,
+  suggestProductPageSlug,
+  validateProductPageAddress,
+} from "@/lib/productPageAddress";
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Активный",
@@ -41,6 +52,7 @@ interface ProductFormData {
   description: string;
   status: string;
   primary_domain: string;
+  page_slug: string;
 }
 
 /* ── Universal Product Card ── */
@@ -201,6 +213,7 @@ const defaultFormData: ProductFormData = {
   description: "",
   status: "active",
   primary_domain: "",
+  page_slug: "",
 };
 
 export default function AdminProductsV2() {
@@ -222,6 +235,7 @@ export default function AdminProductsV2() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
   const [formData, setFormData] = useState<ProductFormData>(defaultFormData);
+  const [isSavingPageAddress, setIsSavingPageAddress] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 200);
@@ -238,6 +252,7 @@ export default function AdminProductsV2() {
         description: product.description || "",
         status: product.status || "active",
         primary_domain: product.primary_domain || "",
+        page_slug: product.site_pages?.[0]?.slug || "",
       });
     } else {
       setEditingProduct(null);
@@ -257,25 +272,71 @@ export default function AdminProductsV2() {
       toast.error("Заполните название");
       return;
     }
+    if (formData.primary_domain.trim() && !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(formData.primary_domain.trim())) {
+      toast.error("Домен указывается без https:// и пути, например club.gorbova.by");
+      return;
+    }
+
+    const pageValidation = formData.page_slug.trim()
+      ? validateProductPageAddress(formData.page_slug)
+      : null;
+    if (pageValidation && pageValidation.ok === false) {
+      toast.error(pageValidation.error);
+      return;
+    }
 
     const payload: any = {
       name: formData.name,
       description: formData.description || null,
       status: formData.status,
-      primary_domain: formData.primary_domain || null,
+      primary_domain: formData.primary_domain.trim().toLowerCase() || null,
     };
 
-    if (editingProduct) {
-      await updateMutation.mutateAsync({ id: editingProduct, ...payload });
-      handleCloseDialog();
-    } else {
-      payload.code = 'prd_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12);
-      const newProduct = await createMutation.mutateAsync(payload);
-      handleCloseDialog();
-      if (newProduct?.id) {
-        navigate(`/admin/products-v2/${newProduct.id}`);
-        toast.info("Теперь добавьте тарифы для продукта");
+    setIsSavingPageAddress(true);
+    try {
+      if (pageValidation?.ok) {
+        const currentPageId = editingProduct
+          ? products?.find((p: any) => p.id === editingProduct)?.site_pages?.[0]?.id
+          : undefined;
+        await assertProductPageSlugAvailable(pageValidation.slug, currentPageId);
       }
+
+      if (editingProduct) {
+        await updateMutation.mutateAsync({ id: editingProduct, ...payload });
+        if (pageValidation?.ok) {
+          await saveProductPageAddress({
+            productId: editingProduct,
+            productName: formData.name,
+            address: pageValidation.slug,
+          });
+          toast.success(`Адрес страницы сохранён: ${getProductPageUrl(pageValidation.slug)}`);
+        }
+        handleCloseDialog();
+      } else {
+        payload.code = 'prd_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+        const newProduct = await createMutation.mutateAsync(payload);
+        if (newProduct?.id && pageValidation?.ok) {
+          try {
+            await saveProductPageAddress({
+              productId: newProduct.id,
+              productName: formData.name,
+              address: pageValidation.slug,
+            });
+          } catch (pageError) {
+            await supabase.from("products_v2").delete().eq("id", newProduct.id);
+            throw pageError;
+          }
+        }
+        handleCloseDialog();
+        if (newProduct?.id) {
+          navigate(`/admin/products-v2/${newProduct.id}`);
+          toast.info(pageValidation?.ok ? "Страница создана как черновик" : "Теперь добавьте тарифы для продукта");
+        }
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось сохранить адрес страницы");
+    } finally {
+      setIsSavingPageAddress(false);
     }
   };
 
@@ -672,13 +733,36 @@ export default function AdminProductsV2() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label>URL сайта</Label>
+                  <Label>Домен сайта</Label>
                   <Input
                     placeholder="club.gorbova.by"
                     value={formData.primary_domain}
                     onChange={(e) => setFormData({ ...formData, primary_domain: e.target.value })}
                   />
-                  <p className="text-xs text-muted-foreground">Где продаётся продукт (опционально)</p>
+                  <p className="text-xs text-muted-foreground">Только домен без https:// и пути (опционально)</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Адрес страницы на gorbova.by</Label>
+                  <div className="flex items-center rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                    <span className="pl-3 text-sm text-muted-foreground whitespace-nowrap">gorbova.by/</span>
+                    <Input
+                      className="border-0 pl-1 focus-visible:ring-0 focus-visible:ring-offset-0"
+                      placeholder={suggestProductPageSlug(formData.name) || "ir"}
+                      value={formData.page_slug}
+                      onChange={(e) => setFormData({ ...formData, page_slug: e.target.value })}
+                      onBlur={() => {
+                        if (!formData.page_slug.trim()) return;
+                        setFormData((current) => ({
+                          ...current,
+                          page_slug: normalizeProductPageSlug(current.page_slug),
+                        }));
+                      }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Например: ir. При изменении старый адрес продолжит работать.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -696,7 +780,7 @@ export default function AdminProductsV2() {
 
           <DialogFooter className="pt-4 border-t border-border/40">
             <Button variant="outline" onClick={handleCloseDialog}>Отмена</Button>
-            <Button onClick={handleSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
+            <Button onClick={handleSubmit} disabled={createMutation.isPending || updateMutation.isPending || isSavingPageAddress}>
               {editingProduct ? "Сохранить" : "Создать"}
             </Button>
           </DialogFooter>

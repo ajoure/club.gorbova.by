@@ -178,18 +178,26 @@ Deno.serve(async (req) => {
             instance_id: kinescopeInstance.id,
           }),
         });
-        if (!resp.ok) {
-          const txt = await resp.text();
-          // PATCH KINESCOPE-TOKEN: распознаём специфичную ошибку отсутствия токена.
-          const reason =
-            txt.includes("токен не найден") || txt.includes("API token") || resp.status === 401
-              ? "provider_token_missing"
-              : "provider_call_failed";
+        // Читаем тело один раз и парсим как JSON.
+        const rawBody = await resp.text();
+        let payload: { success?: boolean; error?: string; data?: unknown } | null = null;
+        try {
+          payload = rawBody ? JSON.parse(rawBody) : null;
+        } catch {
+          payload = null;
+        }
+        const providerSuccess = resp.ok && payload?.success === true;
+        if (!providerSuccess) {
+          const providerError = payload?.error ?? rawBody.slice(0, 300);
+          const tokenMissing =
+            resp.status === 401 ||
+            (typeof providerError === "string" &&
+              (providerError.includes("токен не найден") || providerError.includes("API token")));
           providerResult = {
             attempted: true,
             ok: false,
-            reason,
-            error: `${resp.status} ${txt.slice(0, 300)}`,
+            reason: tokenMissing ? "provider_token_missing" : "provider_call_failed",
+            error: `HTTP ${resp.status} provider_success=${payload?.success ?? "null"} ${String(providerError).slice(0, 300)}`,
           };
         }
       }
