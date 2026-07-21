@@ -400,6 +400,33 @@ export default function AdminDeals() {
   const queryClient = useQueryClient();
   const debouncedSearch = useDebouncedValue(search, 200);
 
+  const openBulkMoveDialog = useCallback(() => {
+    setMoveTargetPipelineId(activePipelineId ?? "");
+    setMoveTargetStageId("");
+    setShowBulkMoveDialog(true);
+  }, [activePipelineId]);
+
+  const handleBulkMoveConfirm = useCallback(async () => {
+    if (!moveTargetPipelineId || !moveTargetStageId) return;
+    const ids = Array.from(selectedDealIdsRef.current ?? []);
+    if (ids.length === 0) return;
+    setIsBulkMoving(true);
+    try {
+      const res = await bulkMoveDealsToPipeline(ids, moveTargetPipelineId, moveTargetStageId);
+      toast.success(`Перемещено сделок: ${res?.affected ?? ids.length}`);
+      setShowBulkMoveDialog(false);
+      clearSelectionRef.current?.();
+      queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-deals-tab-counts"] });
+      queryClient.invalidateQueries({ queryKey: ["deals-board"] });
+      queryClient.invalidateQueries({ queryKey: ["pipeline-deal-counts"] });
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось переместить сделки");
+    } finally {
+      setIsBulkMoving(false);
+    }
+  }, [moveTargetPipelineId, moveTargetStageId, queryClient]);
+
   // Reset display limit when filters change
   useEffect(() => {
     setDisplayLimit(PAGE_SIZE);
