@@ -15,6 +15,13 @@ begin
   where to_regclass('public.' || name) is null;
   if v_missing is not null then raise exception 'missing referral tables: %', v_missing; end if;
 
+  if to_regprocedure('public.referral_attach_current_profile(text,timestamp with time zone)') is null then
+    raise exception 'missing timestamp-bound referral capture RPC';
+  end if;
+  if to_regprocedure('public.referral_reconcile_orders(integer)') is null then
+    raise exception 'missing referral reconciliation RPC';
+  end if;
+
   if not exists (
     select 1 from public.referral_program_settings
     where singleton and base_currency = 'BYN' and commission_percent_bps = 1000
@@ -33,6 +40,13 @@ begin
   end if;
   if has_table_privilege('authenticated', 'public.referral_balance_entries', 'DELETE') then
     raise exception 'authenticated must not delete ledger entries';
+  end if;
+  if has_function_privilege(
+    'authenticated',
+    'public.referral_reconcile_orders(integer)',
+    'EXECUTE'
+  ) then
+    raise exception 'authenticated must not run referral reconciliation';
   end if;
 end $$;
 

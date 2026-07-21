@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReferralLink, formatBynMinor, referralStatusLabel } from "./referrals";
+import { buildReferralLink, formatBynMinor, readCapturedReferral, REFERRAL_STORAGE_KEY, referralStatusLabel, storeCapturedReferral } from "./referrals";
 
 describe("referral helpers", () => {
   it("formats minor units as BYN", () => {
@@ -13,5 +13,12 @@ describe("referral helpers", () => {
   it("uses understandable status labels", () => {
     expect(referralStatusLabel("pending")).toContain("Ожидает");
     expect(referralStatusLabel("available")).toContain("выплате");
+  });
+
+  it("stores referral capture time with the code", () => {
+    storeCapturedReferral("REF-TIME");
+    expect(readCapturedReferral()?.code).toBe("REF-TIME");
+    expect(Date.parse(readCapturedReferral()!.capturedAt)).not.toBeNaN();
+    localStorage.removeItem(REFERRAL_STORAGE_KEY);
   });
 });

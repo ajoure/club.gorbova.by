@@ -60,6 +60,7 @@ export default function AdminReferrals() {
       <Setting label="Ссылки и привязка" checked={data.settings.tracking_enabled} onChange={(value) => updateSettings.mutate({ tracking_enabled: value })} />
       <Setting label="Кабинет партнёра" checked={data.settings.partner_portal_enabled} onChange={(value) => updateSettings.mutate({ partner_portal_enabled: value })} />
       <Setting label="Реальные начисления" checked={data.settings.accrual_enabled && !data.settings.shadow_mode} onChange={(value) => updateSettings.mutate({ accrual_enabled: value, shadow_mode: !value })} />
+      <Setting label="Заявки на выплату" checked={data.settings.payout_requests_enabled} onChange={(value) => updateSettings.mutate({ payout_requests_enabled: value })} />
       <p className="sm:col-span-2 text-xs text-muted-foreground">Включайте реальные начисления только после shadow-проверки в Lovable Cloud. Миграция первоначально оставляет все переключатели выключенными.</p>
     </CardContent></Card>
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3"><Summary label="Партнёры" value={String(data.partners.length)} /><Summary label="Начислено" value={formatBynMinor(totals.pending)} /><Summary label="К выплате" value={formatBynMinor(totals.available)} /><Summary label="Выплачено" value={formatBynMinor(totals.paid)} /></div>

@@ -7,7 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { buildReferralLink, formatBynMinor, REFERRAL_STORAGE_KEY, referralStatusLabel } from "@/lib/referrals";
+import { buildReferralLink, formatBynMinor, readCapturedReferral, REFERRAL_STORAGE_KEY, referralStatusLabel } from "@/lib/referrals";
 
 type DashboardData = {
   partner: null | { id: string; public_id: string; partner_code: string; status: string };
@@ -43,8 +43,8 @@ export function ReferralDashboardCard() {
   });
 
   const attachMutation = useMutation({
-    mutationFn: async (code: string) => {
-      const { data, error } = await rpc("referral_attach_current_profile", { p_partner_code: code });
+    mutationFn: async ({ code, capturedAt }: { code: string; capturedAt: string }) => {
+      const { data, error } = await rpc("referral_attach_current_profile", { p_partner_code: code, p_captured_at: capturedAt });
       if (error) throw error;
       return data as { attached: boolean; reason?: string };
     },
@@ -69,8 +69,8 @@ export function ReferralDashboardCard() {
 
   useEffect(() => {
     if (partnerQuery.data?.enabled !== true || attachMutation.isPending) return;
-    const code = localStorage.getItem(REFERRAL_STORAGE_KEY);
-    if (code) attachMutation.mutate(code);
+    const captured = readCapturedReferral();
+    if (captured) attachMutation.mutate(captured);
   }, [partnerQuery.data?.enabled, attachMutation]);
 
   if (partnerQuery.isLoading || dashboardQuery.isLoading) {

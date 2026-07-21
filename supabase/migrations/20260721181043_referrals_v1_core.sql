@@ -152,8 +152,15 @@ create table public.referral_payout_requests (
 create index referral_payout_partner_idx
   on public.referral_payout_requests (partner_id, requested_at desc);
 
+create or replace function public.referral_settings_before_update()
+returns trigger language plpgsql set search_path = public, pg_temp as $$
+begin
+  new.updated_at := now();
+  if new.is_enabled and not old.is_enabled then new.enabled_at := coalesce(new.enabled_at, now()); end if;
+  return new;
+end $$;
 create trigger referral_settings_updated_at before update on public.referral_program_settings
-for each row execute function public.update_updated_at_column();
+for each row execute function public.referral_settings_before_update();
 create trigger referral_partners_updated_at before update on public.referral_partners
 for each row execute function public.update_updated_at_column();
 create trigger referral_sales_updated_at before update on public.referral_sale_attributions
@@ -187,6 +194,7 @@ for each row execute function public.referral_forbid_ledger_mutation();
 
 revoke all on function public.referral_guard_relationship_self_reference() from public;
 revoke all on function public.referral_forbid_ledger_mutation() from public;
+revoke all on function public.referral_settings_before_update() from public;
 
 alter table public.referral_program_settings enable row level security;
 alter table public.referral_partners enable row level security;
@@ -281,6 +289,8 @@ begin
   insert into public.domain_events(event_type, source, entity_id, payload)
   values (p_event_type, 'referrals', p_entity_id, coalesce(p_payload, '{}'::jsonb))
   returning id into v_id;
+  insert into public.domain_executions(event_id, step, status, attempt)
+  values (v_id, 'referrals.persisted', 'success', 1);
   return v_id;
 end $$;
 revoke all on function public.referral_emit_event(text, uuid, jsonb) from public;
@@ -335,7 +345,7 @@ end $$;
 revoke all on function public.referral_admin_ensure_partner(uuid) from public;
 grant execute on function public.referral_admin_ensure_partner(uuid) to authenticated;
 
-create or replace function public.referral_attach_current_profile(p_partner_code text)
+create or replace function public.referral_attach_current_profile(p_partner_code text, p_captured_at timestamptz)
 returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_uid uuid := auth.uid(); v_profile_id uuid; v_partner public.referral_partners%rowtype;
@@ -346,7 +356,15 @@ begin
   if not coalesce(v_settings.is_enabled, false) or not coalesce(v_settings.tracking_enabled, false) then
     return jsonb_build_object('attached', false, 'reason', 'tracking_disabled');
   end if;
-  select id into v_profile_id from public.profiles where user_id = v_uid and coalesce(is_archived, false) = false order by created_at limit 1;
+  if p_captured_at is null or p_captured_at > now() + interval '5 minutes' or p_captured_at < now() - interval '60 days' then
+    return jsonb_build_object('attached', false, 'reason', 'invalid_or_expired_capture');
+  end if;
+  select id into v_profile_id from public.profiles
+    where user_id = v_uid and coalesce(is_archived, false) = false and created_at >= p_captured_at - interval '10 minutes'
+    order by created_at limit 1;
+  if v_profile_id is null and exists (select 1 from public.profiles where user_id = v_uid and coalesce(is_archived, false) = false) then
+    return jsonb_build_object('attached', false, 'reason', 'existing_profile_requires_admin');
+  end if;
   if v_profile_id is null then raise exception 'profile_not_found'; end if;
   select * into v_partner from public.referral_partners where lower(partner_code) = lower(trim(p_partner_code)) and status = 'active';
   if v_partner.id is null then return jsonb_build_object('attached', false, 'reason', 'invalid_partner'); end if;
@@ -361,8 +379,8 @@ begin
     jsonb_build_object('partner_id', v_partner.id, 'referred_profile_id', v_profile_id));
   return jsonb_build_object('attached', true, 'relationship_id', v_relationship.id);
 end $$;
-revoke all on function public.referral_attach_current_profile(text) from public;
-grant execute on function public.referral_attach_current_profile(text) to authenticated;
+revoke all on function public.referral_attach_current_profile(text, timestamptz) from public;
+grant execute on function public.referral_attach_current_profile(text, timestamptz) to authenticated;
 
 create or replace function public.referral_admin_attach_profile(
   p_partner_profile_id uuid, p_referred_profile_id uuid, p_reason text
@@ -443,6 +461,9 @@ begin
   end if;
   perform public.referral_emit_event('referral.commission.' || v_status, v_sale_id,
     jsonb_build_object('partner_id', v_partner.id, 'order_id', v_order.id, 'commission_minor', v_commission_minor, 'currency', 'BYN'));
+  insert into public.audit_logs(actor_type, actor_label, action, entity_type, entity_id, meta)
+  values ('system', 'referrals', 'referral_commission_' || v_status, 'referral_sale_attribution', v_sale_id,
+    jsonb_build_object('partner_id', v_partner.id, 'order_id', v_order.id, 'commission_minor', v_commission_minor, 'currency', 'BYN'));
   return v_sale_id;
 exception when unique_violation then
   select id into v_sale_id from public.referral_sale_attributions where order_id = p_order_id; return v_sale_id;
@@ -467,6 +488,54 @@ after insert or update of status, paid_at on public.payments_v2
 for each row when (new.status::text = 'succeeded' and new.order_id is not null)
 execute function public.referral_order_payment_trigger();
 
+create or replace function public.referral_process_orders_for_relationship()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_order_id uuid; v_enabled_at timestamptz;
+begin
+  select enabled_at into v_enabled_at from public.referral_program_settings where singleton;
+  if v_enabled_at is null then return new; end if;
+  for v_order_id in
+    select o.id from public.orders_v2 o
+    where o.profile_id = new.referred_profile_id
+      and o.status::text = 'paid'
+      and o.created_at >= v_enabled_at
+      and not exists (select 1 from public.referral_sale_attributions rsa where rsa.order_id = o.id)
+    order by o.created_at
+    limit 100
+  loop
+    perform public.referral_process_order(v_order_id);
+  end loop;
+  return new;
+end $$;
+revoke all on function public.referral_process_orders_for_relationship() from public;
+create trigger referral_relationship_process_recent_orders
+after insert on public.referral_relationships
+for each row when (new.status = 'active') execute function public.referral_process_orders_for_relationship();
+
+create or replace function public.referral_reconcile_orders(p_limit integer default 500)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_order_id uuid; v_enabled_at timestamptz; v_scanned integer := 0; v_created integer := 0; v_result uuid;
+begin
+  if not (public.referral_is_admin(auth.uid()) or coalesce(auth.jwt()->>'role', '') = 'service_role') then raise exception 'forbidden'; end if;
+  select enabled_at into v_enabled_at from public.referral_program_settings where singleton;
+  if v_enabled_at is null then return jsonb_build_object('scanned', 0, 'created', 0, 'reason', 'program_never_enabled'); end if;
+  for v_order_id in
+    select o.id from public.orders_v2 o
+    join public.referral_relationships rr on rr.referred_profile_id = o.profile_id and rr.status = 'active'
+    where o.status::text = 'paid' and o.created_at >= v_enabled_at
+      and not exists (select 1 from public.referral_sale_attributions rsa where rsa.order_id = o.id)
+    order by o.created_at
+    limit least(greatest(p_limit, 1), 2000)
+  loop
+    v_scanned := v_scanned + 1;
+    v_result := public.referral_process_order(v_order_id);
+    if v_result is not null then v_created := v_created + 1; end if;
+  end loop;
+  return jsonb_build_object('scanned', v_scanned, 'created', v_created);
+end $$;
+revoke all on function public.referral_reconcile_orders(integer) from public;
+grant execute on function public.referral_reconcile_orders(integer) to service_role;
+
 create or replace function public.referral_mature_due_commissions(p_limit integer default 500)
 returns integer language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_sale public.referral_sale_attributions%rowtype; v_tx uuid; v_count integer := 0; v_remaining bigint;
@@ -487,6 +556,10 @@ begin
       end if;
     end if;
     update public.referral_sale_attributions set status = case when v_remaining > 0 then 'available' else 'reversed' end, updated_at = now() where id = v_sale.id;
+    if v_remaining > 0 then
+      perform public.referral_emit_event('referral.commission.available', v_sale.id,
+        jsonb_build_object('partner_id', v_sale.partner_id, 'available_minor', v_remaining, 'currency', 'BYN'));
+    end if;
     v_count := v_count + 1;
   end loop;
   return v_count;
@@ -502,8 +575,13 @@ declare
 begin
   select * into v_sale from public.referral_sale_attributions where order_id = p_order_id for update;
   if v_sale.id is null or v_sale.status in ('shadow', 'declined') then return 0; end if;
-  select coalesce(sum(round(greatest(coalesce(refunded_amount, 0), 0) * 100)::bigint), 0)
-    into v_refunded_minor from public.payments_v2 where order_id = p_order_id and status::text in ('succeeded', 'refunded');
+  select greatest(
+      coalesce(sum(round(greatest(coalesce(refunded_amount, 0), 0) * 100)::bigint)
+        filter (where amount >= 0), 0),
+      coalesce(sum(round(abs(amount) * 100)::bigint)
+        filter (where amount < 0 and (coalesce(transaction_type, '') ilike '%refund%' or status::text = 'refunded')), 0)
+    ) into v_refunded_minor
+    from public.payments_v2 where order_id = p_order_id and not coalesce(is_deleted, false);
   v_target := least(v_sale.commission_minor,
     floor(v_sale.commission_minor::numeric * least(v_refunded_minor, v_sale.commission_basis_minor) / v_sale.commission_basis_minor)::bigint);
   v_delta := greatest(v_target - v_sale.reversed_minor, 0);
@@ -521,6 +599,9 @@ begin
     updated_at = now() where id = v_sale.id;
   perform public.referral_emit_event('referral.commission.reversed', v_sale.id,
     jsonb_build_object('reversal_minor', v_delta, 'cumulative_reversed_minor', v_target));
+  insert into public.audit_logs(actor_type, actor_label, action, entity_type, entity_id, meta)
+  values ('system', 'referrals', 'referral_commission_reversed', 'referral_sale_attribution', v_sale.id,
+    jsonb_build_object('reversal_minor', v_delta, 'cumulative_reversed_minor', v_target, 'order_id', p_order_id));
   return v_delta;
 end $$;
 revoke all on function public.referral_process_refund(uuid) from public;
@@ -540,6 +621,16 @@ for each row when (
   new.order_id is not null and (
     coalesce(new.refunded_amount, 0) > coalesce(old.refunded_amount, 0)
     or (new.status::text = 'refunded' and old.status::text <> 'refunded')
+  )
+) execute function public.referral_refund_trigger();
+
+create trigger referral_payment_refund_insert_trigger
+after insert on public.payments_v2
+for each row when (
+  new.order_id is not null and (
+    coalesce(new.refunded_amount, 0) > 0
+    or new.amount < 0
+    or new.status::text = 'refunded'
   )
 ) execute function public.referral_refund_trigger();
 

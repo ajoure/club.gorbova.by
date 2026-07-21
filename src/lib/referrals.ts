@@ -1,5 +1,29 @@
 export const REFERRAL_STORAGE_KEY = "gorbova_referral_code";
 
+export interface CapturedReferral {
+  code: string;
+  capturedAt: string;
+}
+
+export function storeCapturedReferral(code: string) {
+  const payload: CapturedReferral = { code, capturedAt: new Date().toISOString() };
+  localStorage.setItem(REFERRAL_STORAGE_KEY, JSON.stringify(payload));
+}
+
+export function readCapturedReferral(): CapturedReferral | null {
+  const raw = localStorage.getItem(REFERRAL_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<CapturedReferral>;
+    if (typeof parsed.code === "string" && typeof parsed.capturedAt === "string") {
+      return { code: parsed.code, capturedAt: parsed.capturedAt };
+    }
+  } catch {
+    // Legacy value created before timestamped capture: keep it unusable for automatic attribution.
+  }
+  return null;
+}
+
 export function formatBynMinor(amountMinor: number | string | null | undefined) {
   const value = Number(amountMinor ?? 0) / 100;
   return new Intl.NumberFormat("ru-BY", {

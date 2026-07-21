@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
-import { REFERRAL_STORAGE_KEY } from "@/lib/referrals";
+import { storeCapturedReferral } from "@/lib/referrals";
 
 export default function ReferralCapture() {
   const { partnerCode } = useParams();
@@ -9,7 +9,7 @@ export default function ReferralCapture() {
 
   useEffect(() => {
     const code = partnerCode?.trim();
-    if (code) localStorage.setItem(REFERRAL_STORAGE_KEY, code);
+    if (code) storeCapturedReferral(code);
     navigate(`/auth${code ? `?ref=${encodeURIComponent(code)}` : ""}`, { replace: true });
   }, [navigate, partnerCode]);
 
