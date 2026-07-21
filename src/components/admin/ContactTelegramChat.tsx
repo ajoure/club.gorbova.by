@@ -7,7 +7,6 @@ import { ru } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -202,6 +201,7 @@ export function ContactTelegramChat({
   const [editingMessage, setEditingMessage] = useState<TelegramMessage | null>(null);
   const [editText, setEditText] = useState("");
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+  const [selectedBusinessAccountId, setSelectedBusinessAccountId] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<TelegramMessage | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [isNearBottomState, setIsNearBottomState] = useState(true);
@@ -247,7 +247,28 @@ export function ContactTelegramChat({
     enabled: !!userId,
     staleTime: 30_000,
   });
-  const isBusinessDialog = !!businessContext?.business_connection_id;
+  const { data: businessAccount } = useQuery({
+    queryKey: ["telegram-business-sender", businessContext?.business_account_id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("telegram_business_connections")
+        .select("id, bot_id, first_name, last_name, username, can_reply, is_enabled")
+        .eq("id", businessContext!.business_account_id!)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!businessContext?.business_account_id,
+    staleTime: 30_000,
+  });
+  const businessSenderName = useMemo(() => {
+    if (!businessAccount) return "Telegram Business";
+    const fullName = [businessAccount.first_name, businessAccount.last_name].filter(Boolean).join(" ").trim();
+    return fullName || (businessAccount.username ? `@${businessAccount.username}` : "Telegram Business");
+  }, [businessAccount]);
+  const selectedSender = selectedBusinessAccountId
+    ? `business:${selectedBusinessAccountId}`
+    : selectedBotId ? `bot:${selectedBotId}` : "";
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const didInitialScrollRef = useRef(false);
@@ -859,17 +880,44 @@ export function ContactTelegramChat({
     });
   }, [messages]);
 
-  // V1.2: Reset selectedBotId immediately on dialog switch so the footer
-  // doesn't flash the previous chat's bot before the useEffect below
-  // resolves the correct one from localStorage/messages/active bots.
+  // Reset sender immediately on dialog switch so the footer doesn't flash
+  // the previous chat's sender while the next dialog context is loading.
   useEffect(() => {
     setSelectedBotId(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setSelectedBusinessAccountId(null);
   }, [userId]);
 
-  // === DEFAULT BOT SELECTION ===
+  // === DEFAULT SENDER SELECTION ===
   useEffect(() => {
-    if (!messages || messages.length === 0 || activeBots.length === 0) return;
+    if (!messages || messages.length === 0) return;
+
+    const savedSender = localStorage.getItem(`tg_sender_${userId}`);
+    if (savedSender?.startsWith("business:") && businessAccount?.is_enabled && businessAccount.can_reply) {
+      const accountId = savedSender.slice("business:".length);
+      if (accountId === businessAccount.id) {
+        setSelectedBusinessAccountId(accountId);
+        setSelectedBotId(null);
+        return;
+      }
+    }
+    if (savedSender?.startsWith("bot:")) {
+      const botId = savedSender.slice("bot:".length);
+      if (activeBots.some(b => b.id === botId)) {
+        setSelectedBotId(botId);
+        setSelectedBusinessAccountId(null);
+        return;
+      }
+    }
+
+    // A personal-account dialog defaults to the same personal account, while
+    // still allowing the operator to deliberately switch to an ordinary bot.
+    if (businessAccount?.is_enabled && businessAccount.can_reply) {
+      setSelectedBusinessAccountId(businessAccount.id);
+      setSelectedBotId(null);
+      return;
+    }
+
+    if (activeBots.length === 0) return;
 
     const savedBotId = localStorage.getItem(`tg_bot_${userId}`);
     if (savedBotId && activeBots.some(b => b.id === savedBotId)) {
@@ -887,11 +935,25 @@ export function ContactTelegramChat({
     const primaryBot = activeBots.find(b => b.is_primary);
     if (primaryBot) { setSelectedBotId(primaryBot.id); return; }
     if (activeBots[0]) { setSelectedBotId(activeBots[0].id); }
-  }, [messages, activeBots, userId]);
+  }, [messages, activeBots, userId, businessAccount]);
 
   const handleBotChange = (botId: string) => {
     setSelectedBotId(botId);
+    setSelectedBusinessAccountId(null);
     localStorage.setItem(`tg_bot_${userId}`, botId);
+    localStorage.setItem(`tg_sender_${userId}`, `bot:${botId}`);
+  };
+
+  const handleSenderChange = (value: string) => {
+    if (value.startsWith("business:")) {
+      const accountId = value.slice("business:".length);
+      setSelectedBusinessAccountId(accountId);
+      setSelectedBotId(null);
+    } else {
+      handleBotChange(value.slice("bot:".length));
+      return;
+    }
+    localStorage.setItem(`tg_sender_${userId}`, value);
   };
 
   const refetch = useCallback(() => {
@@ -1335,6 +1397,8 @@ export function ContactTelegramChat({
           message: text || "",
           file: fileData,
           bot_id: selectedBotId || undefined,
+          sender_type: selectedBusinessAccountId ? "business" : "bot",
+          business_account_id: selectedBusinessAccountId || undefined,
           reply_to_message_id: replyToMessageId ?? undefined,
         },
       });
@@ -1371,11 +1435,13 @@ export function ContactTelegramChat({
         message_id: null,
         status: "pending",
         created_at: new Date().toISOString(),
-        bot_id: selectedBotId,
+        bot_id: selectedBusinessAccountId ? businessAccount?.bot_id || null : selectedBotId,
         bot_username: selectedBotId ? botsMap.get(selectedBotId)?.bot_username || null : null,
         bot_name: selectedBotId ? botsMap.get(selectedBotId)?.bot_name || null : null,
-        transport: isBusinessDialog ? "business" : "bot",
-        message_origin: isBusinessDialog ? "crm_operator" : null,
+        transport: selectedBusinessAccountId ? "business" : "bot",
+        business_connection_id: selectedBusinessAccountId ? businessContext?.business_connection_id || null : null,
+        business_account_id: selectedBusinessAccountId,
+        message_origin: selectedBusinessAccountId ? "crm_operator" : null,
         meta: selectedFile ? {
           file_type: selectedFileType,
           file_name: selectedFile.name,
@@ -1842,23 +1908,21 @@ export function ContactTelegramChat({
             родитель уже ограничен по высоте (Telegram-вкладка),
             поэтому композер всегда виден внизу карточки. */}
         <div className="shrink-0 border-t bg-background px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)]">
-          {isBusinessDialog && (
-            <div className="flex items-center gap-2 pb-2">
-              <Badge variant="outline" className="border-primary/30 bg-primary/5 text-primary">
-                От имени Екатерины · Telegram Business
-              </Badge>
-            </div>
-          )}
-          {!isBusinessDialog && activeBots.length > 1 && (
+          {(activeBots.length > 0 || (businessAccount?.is_enabled && businessAccount.can_reply)) && (
             <div className="flex items-center gap-1.5 pb-1.5">
-              <Select value={selectedBotId || ""} onValueChange={handleBotChange}>
-                <SelectTrigger className="h-7 w-auto min-w-[100px] text-[11px] rounded-lg border-border/40 bg-muted/30 gap-1 px-2">
+              <Select value={selectedSender} onValueChange={handleSenderChange}>
+                <SelectTrigger className="h-7 w-auto min-w-[140px] text-[11px] rounded-lg border-border/40 bg-muted/30 gap-1 px-2">
                   <Bot className="h-3 w-3 shrink-0" />
-                  <SelectValue placeholder="Бот" />
+                  <SelectValue placeholder="Выберите отправителя" />
                 </SelectTrigger>
                 <SelectContent>
+                  {businessAccount?.is_enabled && businessAccount.can_reply && (
+                    <SelectItem value={`business:${businessAccount.id}`} className="text-xs">
+                      {businessSenderName} · личный Telegram
+                    </SelectItem>
+                  )}
                   {activeBots.map(bot => (
-                    <SelectItem key={bot.id} value={bot.id} className="text-xs">
+                    <SelectItem key={bot.id} value={`bot:${bot.id}`} className="text-xs">
                       {bot.bot_name?.trim() ? bot.bot_name : `@${bot.bot_username}`}
                     </SelectItem>
                   ))}
@@ -2047,9 +2111,9 @@ export function ContactTelegramChat({
           <div className="flex shrink-0 flex-col gap-1 items-end">
             <Button
               onClick={handleSend}
-              disabled={(!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || !selectedBotId}
+              disabled={(!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || (!selectedBotId && !selectedBusinessAccountId)}
               className="h-12 w-12 p-0 shrink-0"
-              title={!selectedBotId ? "Выберите бота для отправки" : undefined}
+              title={!selectedBotId && !selectedBusinessAccountId ? "Выберите отправителя" : undefined}
             >
               <Send className="w-4 h-4" />
             </Button>

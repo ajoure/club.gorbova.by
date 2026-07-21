@@ -37,6 +37,8 @@ interface ChatAction {
   message?: string;
   file?: FileData;
   bot_id?: string;
+  sender_type?: "bot" | "business";
+  business_account_id?: string;
   limit?: number;
   message_id?: number;
   db_message_id?: string;
@@ -462,11 +464,17 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case "send_message": {
-        const { user_id, message, file, bot_id } = payload;
+        const { user_id, message, file, bot_id, sender_type, business_account_id } = payload;
         const replyToMessageId = (payload as any).reply_to_message_id as number | null | undefined;
 
         if (!user_id || (!message && !file)) {
           return new Response(JSON.stringify({ error: "user_id and (message or file) required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (sender_type && sender_type !== "bot" && sender_type !== "business") {
+          return new Response(JSON.stringify({ success: false, error: "invalid_sender_type" }), {
             status: 400,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
@@ -508,9 +516,10 @@ Deno.serve(async (req) => {
           });
         }
 
-        // A dialog becomes a Business dialog as soon as at least one message
-        // from the connected personal account is persisted. Business routing is
-        // derived server-side and cannot be overridden by the browser.
+        // Resolve the requested sender on the server. The browser may select a
+        // connection row id, but never supplies a raw Telegram connection id or
+        // token. We additionally require this exact dialog to have been seen
+        // through the selected Business account.
         const { data: lastBusinessMessage } = await supabase
           .from("telegram_messages")
           .select("bot_id, business_connection_id, business_account_id")
@@ -521,14 +530,20 @@ Deno.serve(async (req) => {
           .limit(1)
           .maybeSingle();
 
-        let businessConnectionId: string | null = lastBusinessMessage?.business_connection_id || null;
-        let businessAccountId: string | null = lastBusinessMessage?.business_account_id || null;
-        if (businessConnectionId) {
+        let businessConnectionId: string | null = null;
+        let businessAccountId: string | null = null;
+        let businessBotId: string | null = null;
+        if (sender_type === "business") {
+          if (!business_account_id) {
+            return new Response(JSON.stringify({ success: false, error: "business_account_required" }), {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
           const { data: businessConnection } = await supabase
             .from("telegram_business_connections")
-            .select("id, is_enabled, can_reply")
-            .eq("bot_id", lastBusinessMessage.bot_id)
-            .eq("connection_id", businessConnectionId)
+            .select("id, bot_id, connection_id, is_enabled, can_reply")
+            .eq("id", business_account_id)
             .maybeSingle();
           if (!businessConnection?.is_enabled || !businessConnection?.can_reply) {
             return new Response(JSON.stringify({
@@ -540,7 +555,44 @@ Deno.serve(async (req) => {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
             });
           }
+          const { data: dialogConnection } = await supabase
+            .from("telegram_messages")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("transport", "business")
+            .eq("business_account_id", businessConnection.id)
+            .limit(1)
+            .maybeSingle();
+          if (!dialogConnection) {
+            return new Response(JSON.stringify({ success: false, error: "business_sender_not_available_for_dialog" }), {
+              status: 403,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          businessConnectionId = businessConnection.connection_id;
           businessAccountId = businessConnection.id;
+          businessBotId = businessConnection.bot_id;
+        } else if (!sender_type && lastBusinessMessage?.business_connection_id) {
+          // Backward compatibility for older clients during a rolling deploy.
+          const { data: legacyConnection } = await supabase
+            .from("telegram_business_connections")
+            .select("id, bot_id, connection_id, is_enabled, can_reply")
+            .eq("bot_id", lastBusinessMessage.bot_id)
+            .eq("connection_id", lastBusinessMessage.business_connection_id)
+            .maybeSingle();
+          if (!legacyConnection?.is_enabled || !legacyConnection?.can_reply) {
+            return new Response(JSON.stringify({
+              success: false,
+              error: "business_reply_unavailable",
+              message: "Telegram не разрешает отвечать от имени подключенного аккаунта",
+            }), {
+              status: 409,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          businessConnectionId = legacyConnection.connection_id;
+          businessAccountId = legacyConnection.id;
+          businessBotId = legacyConnection.bot_id;
         }
 
 
@@ -548,7 +600,7 @@ Deno.serve(async (req) => {
         let botToken: string | null = null;
         let usedBotId: string | null = null;
 
-        const requestedBotId = businessConnectionId ? lastBusinessMessage?.bot_id : bot_id;
+        const requestedBotId = businessConnectionId ? businessBotId : bot_id;
         if (requestedBotId) {
           const { data: bot } = await supabase
             .from("telegram_bots")
