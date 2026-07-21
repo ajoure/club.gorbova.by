@@ -1378,7 +1378,7 @@ function CompanyProfileOverview({ company, onRefreshRegistry, isRefreshing }: { 
   );
 }
 
-export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany }: {
+export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onClose, onOpenCompany }: {
   companyId: string | null;
   canEdit: boolean;
   onClose: () => void;
@@ -1649,7 +1649,10 @@ export function CompanyDetailsSheet({ companyId, canEdit, onClose, onOpenCompany
   }, [company, onOpenCompany]);
 
   const normalizedPhone = normalizeCompanyPhone(company?.phone, company?.country ?? "BY");
-  const canEditCompany = canEdit && company?.status === "active";
+  // Archived and merged records are read-only; only the canonical active card
+  // may mutate requisites, contacts, integrations, or the feed.
+  const canEdit = canEditPermission && company?.status === "active";
+  const canEditCompany = canEdit;
   const companyPhones = useMemo(() => getImportedCompanyPhones(company ?? {}), [company]);
   const additionalCompanyPhones = useMemo(() => companyPhones.filter((phone) => phone !== normalizedPhone), [companyPhones, normalizedPhone]);
   const selectedLinkedProfile = selectedLinkedContactId ? profilesById.get(selectedLinkedContactId) : null;
