@@ -1014,38 +1014,41 @@ export default function AdminLiveEvents() {
     setDialogOpen(true);
   };
 
-  // Sync loaded rules into form when editing
-  useMemo(() => {
-    if (!existingRules || !editingId) return;
-    const rows = existingRules as Array<{ product_id: string | null; tariff_id: string | null; conditions?: any; rule_kind?: string }>;
+  // Hydrate loaded access rules into the form exactly once per editingId.
+  // Runs as an effect (not useMemo — hydration is a side effect on state).
+  // Marks form.access_rules as "clean" so saveMutation will not touch
+  // live_event_access_rules unless the user explicitly edits the Access section.
+  useEffect(() => {
+    if (!editingId) return;
+    if (!existingRulesLoaded) return;
+    if (accessRulesHydratedForRef.current === editingId) return;
+    const rows = (existingRules || []) as Array<{ product_id: string | null; tariff_id: string | null; conditions?: any; rule_kind?: string }>;
 
-    // Any-authenticated preset short-circuits product grouping
     if (rows.some(r => r.rule_kind === "any_authenticated")) {
       setForm(f => ({ ...f, access_rules: [{ rule_kind: "any_authenticated", product_id: "", tariff_ids: [] }] }));
-      return;
-    }
-
-    type Group = { tariff_ids: string[]; match_purchase_month: boolean };
-    const grouped = new Map<string, Group>();
-    for (const row of rows) {
-      if (!row.product_id) continue;
-      const pid = row.product_id;
-      if (!grouped.has(pid)) grouped.set(pid, { tariff_ids: [], match_purchase_month: false });
-      const g = grouped.get(pid)!;
-      if (row.tariff_id) g.tariff_ids.push(row.tariff_id);
-      const cond = row.conditions || {};
-      if (cond?.match_purchase_month === true) g.match_purchase_month = true;
-    }
-    const accessRules: AccessRuleRow[] = Array.from(grouped.entries()).map(([product_id, g]) => ({
-      rule_kind: "product",
-      product_id,
-      tariff_ids: g.tariff_ids,
-      match_purchase_month: g.match_purchase_month,
-    }));
-    if (accessRules.length > 0 || form.access_rules.length === 0) {
+    } else {
+      type Group = { tariff_ids: string[]; match_purchase_month: boolean };
+      const grouped = new Map<string, Group>();
+      for (const row of rows) {
+        if (!row.product_id) continue;
+        const pid = row.product_id;
+        if (!grouped.has(pid)) grouped.set(pid, { tariff_ids: [], match_purchase_month: false });
+        const g = grouped.get(pid)!;
+        if (row.tariff_id) g.tariff_ids.push(row.tariff_id);
+        const cond = row.conditions || {};
+        if (cond?.match_purchase_month === true) g.match_purchase_month = true;
+      }
+      const accessRules: AccessRuleRow[] = Array.from(grouped.entries()).map(([product_id, g]) => ({
+        rule_kind: "product",
+        product_id,
+        tariff_ids: g.tariff_ids,
+        match_purchase_month: g.match_purchase_month,
+      }));
       setForm(f => ({ ...f, access_rules: accessRules }));
     }
-  }, [existingRules, editingId]);
+    accessRulesHydratedForRef.current = editingId;
+    accessRulesDirtyRef.current = false;
+  }, [existingRules, existingRulesLoaded, editingId]);
 
   const handleCreate = () => {
     setEditingId(null);
