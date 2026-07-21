@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveUserIds, getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
+import { referralDiscountMeta, resolveReferralCheckoutDiscount } from '../_shared/referral-checkout-discount.ts';
 import { resolveOrderRouting, buildNegativeSnapshot, auditNegativeSnapshot } from '../_shared/crm-routing.ts';
 
 const corsHeaders = {
@@ -825,6 +826,20 @@ Deno.serve(async (req) => {
       }
     }
 
+    let legacyReferralMeta: Record<string, unknown> = {};
+    if (productInfo.isV2 && userId) {
+      const quote = await resolveReferralCheckoutDiscount({
+        supabase, userId, productId, amountMinor: Math.round(paymentAmount * 100),
+      });
+      paymentAmount = quote.finalAmountMinor / 100;
+      legacyReferralMeta = referralDiscountMeta(quote);
+      if (trialConfig?.auto_charge_amount) {
+        const recurringQuote = await resolveReferralCheckoutDiscount({
+          supabase, userId, productId, amountMinor: Math.round(trialConfig.auto_charge_amount * 100),
+        });
+        trialConfig.auto_charge_amount = recurringQuote.finalAmountMinor / 100;
+      }
+    }
     console.log('Final payment amount:', paymentAmount, 'BYN');
 
     // Create order in database (using legacy orders table for compatibility)
@@ -851,6 +866,7 @@ Deno.serve(async (req) => {
           is_trial: isTrial || false,
           trial_days: trialConfig?.trial_days || null,
           auto_charge_amount: trialConfig?.auto_charge_amount || null,
+          ...legacyReferralMeta,
         }
       })
       .select()
