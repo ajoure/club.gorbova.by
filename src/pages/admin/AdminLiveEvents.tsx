@@ -56,7 +56,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
-import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor, ShoppingCart, Trash2, MoreHorizontal, Settings, Image as ImageIcon, Info } from "lucide-react";
+import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor, ShoppingCart, Trash2, MoreHorizontal, Settings, Image as ImageIcon, Info, FileAudio } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -78,6 +78,7 @@ import { LiveEventProductCtaBindings } from "@/components/admin/live/LiveEventPr
 import { LiveEventCtaRuntimePanel } from "@/components/admin/live/LiveEventCtaRuntimePanel";
 import { LiveEventThemeEditor } from "@/components/admin/live/LiveEventThemeEditor";
 import { WebinarRoomSettingsCard } from "@/components/admin/live/WebinarRoomSettingsCard";
+import { LiveEventMediaPanel } from "@/components/admin/live/LiveEventMediaPanel";
 import { DomainEventService } from "@/lib/domain-events";
 import { LiveEventsHelpDialog } from "@/components/admin/live/LiveEventsHelpDialog";
 import { LiveEventExportButtons } from "@/components/live/LiveEventExportButtons";
@@ -1900,6 +1901,9 @@ export default function AdminLiveEvents() {
                         <TabsTrigger value="theme" className="gap-1.5 text-xs sm:text-sm px-2.5 sm:px-3">
                           <Monitor className="h-3 w-3" /> Тема
                         </TabsTrigger>
+                        <TabsTrigger value="media" className="gap-1.5 text-xs sm:text-sm px-2.5 sm:px-3">
+                          <FileAudio className="h-3 w-3" /> Материалы
+                        </TabsTrigger>
                       </TabsList>
                     </div>
                     <TabsContent value="room" className="border rounded-lg mt-2">
@@ -1927,6 +1931,9 @@ export default function AdminLiveEvents() {
                     </TabsContent>
                     <TabsContent value="theme" className="border rounded-lg mt-2">
                       <LiveEventThemeEditor liveEventId={editingId} />
+                    </TabsContent>
+                    <TabsContent value="media" className="border rounded-lg mt-2">
+                      <LiveEventMediaPanel liveEventId={editingId} />
                     </TabsContent>
                   </Tabs>
                 </>
@@ -2249,6 +2256,18 @@ function LiveStreamControlPanel({
       }
 
       await supabase.from("live_events").update(updatePayload as any).eq("id", editingId);
+
+      // The replay is the canonical moment when Kinescope has produced its
+      // audio track. Import it asynchronously: a media failure must never
+      // block the replay itself from becoming available to viewers.
+      if (replayVideoId) {
+        void supabase.functions.invoke("live-event-media", {
+          body: { action: "sync_audio", live_event_id: editingId },
+        }).then(({ error }) => {
+          if (error) console.warn("[live-event-media] audio import was not started:", error.message);
+          queryClient.invalidateQueries({ queryKey: ["live-event-media", editingId] });
+        });
+      }
 
       // Audit
       try {

@@ -39,6 +39,11 @@ verify_jwt = true
 [functions.autoweb-room-state]
 verify_jwt = true
 
+# The function also validates the caller's administrator/presenter role before
+# it exposes a private Kinescope-derived audio file or a transcript download.
+[functions.live-event-media]
+verify_jwt = true
+
 [functions.public-rr-installment-initiate]
 verify_jwt = false
 

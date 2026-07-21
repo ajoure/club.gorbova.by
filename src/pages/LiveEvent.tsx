@@ -20,8 +20,6 @@ import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
 import { LiveEventProductCta, useHasActiveCtaBindings } from "@/components/live/LiveEventProductCta";
 import { LiveBadge, type LiveBadgeMode } from "@/components/live/LiveBadge";
 import { RoomParticipantsList } from "@/components/live/RoomParticipantsList";
-import { LiveRoomReactionsBar } from "@/components/live/LiveRoomReactionsBar";
-import { LiveRoomReactionsOverlay } from "@/components/live/LiveRoomReactionsOverlay";
 import "@/components/live/liveRoomTheme.css";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
@@ -766,10 +764,6 @@ function LiveEventLegacy() {
                 </div>
               );
             })()}
-            {/* Sprint final: Reactions overlay поверх видео — emoji-only, fade-out ~3s, realtime для всех. */}
-            {eventId && roomSettings.reactions.enabled && !isReplay && (
-              <LiveRoomReactionsOverlay liveEventId={eventId} enabled={roomSettings.reactions.enabled} />
-            )}
           </div>
           {/* Room blocks — under_video (legacy, only if no product CTA bindings) */}
           {eventId && !hasUnderVideoCta && (
@@ -787,10 +781,6 @@ function LiveEventLegacy() {
               displayContext={isReplay ? "replay" : "live"}
               eventStartedAt={data?.scheduled_at}
             />
-          )}
-          {/* Sprint final: Live-room reactions bar (room-level emoji reactions). */}
-          {eventId && roomSettings.reactions.enabled && !isReplay && (
-            <LiveRoomReactionsBar liveEventId={eventId} enabled={roomSettings.reactions.enabled} />
           )}
         </div>
 
