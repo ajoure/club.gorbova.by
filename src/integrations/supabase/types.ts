@@ -10180,6 +10180,140 @@ export type Database = {
           },
         ]
       }
+      live_event_client_transcription_job_parts: {
+        Row: {
+          attempts: number
+          bytes: number | null
+          created_at: string
+          end_ms: number
+          error_code: string | null
+          error_message: string | null
+          id: string
+          job_id: string
+          part_index: number
+          start_ms: number
+          status: string
+          transcribed_at: string | null
+          transcript_text: string | null
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          bytes?: number | null
+          created_at?: string
+          end_ms: number
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          job_id: string
+          part_index: number
+          start_ms: number
+          status?: string
+          transcribed_at?: string | null
+          transcript_text?: string | null
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          bytes?: number | null
+          created_at?: string
+          end_ms?: number
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          job_id?: string
+          part_index?: number
+          start_ms?: number
+          status?: string
+          transcribed_at?: string | null
+          transcript_text?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_client_transcription_job_parts_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "live_event_client_transcription_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_event_client_transcription_jobs: {
+        Row: {
+          audio_asset_id: string
+          audio_duration_ms: number | null
+          completed_parts: number
+          created_at: string
+          error_code: string | null
+          error_message: string | null
+          failed_parts: number
+          finalized_at: string | null
+          heartbeat_at: string | null
+          id: string
+          live_event_id: string
+          requested_by: string | null
+          stage: string
+          status: string
+          total_parts: number
+          updated_at: string
+          window_ms: number
+        }
+        Insert: {
+          audio_asset_id: string
+          audio_duration_ms?: number | null
+          completed_parts?: number
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          failed_parts?: number
+          finalized_at?: string | null
+          heartbeat_at?: string | null
+          id?: string
+          live_event_id: string
+          requested_by?: string | null
+          stage?: string
+          status?: string
+          total_parts?: number
+          updated_at?: string
+          window_ms?: number
+        }
+        Update: {
+          audio_asset_id?: string
+          audio_duration_ms?: number | null
+          completed_parts?: number
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          failed_parts?: number
+          finalized_at?: string | null
+          heartbeat_at?: string | null
+          id?: string
+          live_event_id?: string
+          requested_by?: string | null
+          stage?: string
+          status?: string
+          total_parts?: number
+          updated_at?: string
+          window_ms?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_client_transcription_jobs_audio_asset_id_fkey"
+            columns: ["audio_asset_id"]
+            isOneToOne: false
+            referencedRelation: "live_event_audio_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_event_client_transcription_jobs_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_event_comment_reactions: {
         Row: {
           comment_id: string
