@@ -136,6 +136,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const [fetchingDocs, setFetchingDocs] = useState(false);
   const [linkPaymentDialogOpen, setLinkPaymentDialogOpen] = useState(false);
   const [grantAccessDialogOpen, setGrantAccessDialogOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>("overview");
+
 
   const dealArr = useMemo(() => deal ? [{ id: deal.id, purchase_snapshot: deal.purchase_snapshot }] : [], [deal]);
   const { data: moduleMetaMap } = useModuleDisplayMeta(dealArr);
@@ -660,9 +662,21 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           })()}
         </SheetHeader>
 
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="space-y-6">
-            {/* Deal Info */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="border-b border-border/40 bg-background/30 backdrop-blur-sm sticky top-0 z-10 overflow-x-auto scrollbar-none">
+            <TabsList className="mx-4 sm:mx-6 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
+              <TabsTrigger value="overview" className="text-xs sm:text-sm px-2.5 sm:px-3"><Package className="mr-1 h-3.5 w-3.5" />Обзор</TabsTrigger>
+              <TabsTrigger value="feed" className="text-xs sm:text-sm px-2.5 sm:px-3"><Activity className="mr-1 h-3.5 w-3.5" />Лента</TabsTrigger>
+              <TabsTrigger value="tasks" className="text-xs sm:text-sm px-2.5 sm:px-3"><CheckCircle className="mr-1 h-3.5 w-3.5" />Задачи</TabsTrigger>
+              <TabsTrigger value="calls" className="text-xs sm:text-sm px-2.5 sm:px-3"><Phone className="mr-1 h-3.5 w-3.5" />Звонки</TabsTrigger>
+              <TabsTrigger value="history" className="text-xs sm:text-sm px-2.5 sm:px-3"><Clock className="mr-1 h-3.5 w-3.5" />История действий</TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent value="overview" className="flex-1 overflow-y-auto p-6 mt-0 data-[state=inactive]:hidden">
+            <div className="space-y-6">
+              {/* Deal Info */}
+
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
