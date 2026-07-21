@@ -46,12 +46,14 @@ function slugifyRoleCode(name: string, existing: string[]): string {
 
 /**
  * RBAC v3 — UI-редактор Section/Resource access.
- * Три уровня: none / view / manage. (edit опускаем в UI; backend поддерживает, но не используется отсюда.)
+ * Четыре уровня: none / view / edit / manage. `manage` включает создание,
+ * редактирование и destructive-операции, а `edit` даёт редактирование без
+ * импорта/архивации/объединения.
  * Source of truth — roles-admin actions: list_catalog, get_role_access, preview_access_change,
  * set_section_access, set_resource_access.
  */
 
-type UiLevel = "none" | "view" | "manage";
+type UiLevel = "none" | "view" | "edit" | "manage";
 
 interface CatalogSection {
   id: string;
@@ -92,11 +94,12 @@ interface RoleAccessResp {
 const LEVEL_LABEL: Record<UiLevel, string> = {
   none: "Нет",
   view: "Только просмотр",
+  edit: "Редактирование",
   manage: "Полный доступ",
 };
 
 function toUiLevel(level: string | undefined | null, fallback: UiLevel = "none"): UiLevel {
-  if (level === "manage" || level === "edit") return "manage";
+  if (level === "manage" || level === "edit") return level;
   if (level === "view") return "view";
   if (level === "none") return "none";
   return fallback;
@@ -575,7 +578,7 @@ export function RoleAccessEditor() {
                 <div className="divide-y">
                   <div className="flex items-center justify-end gap-2 px-3 py-2 text-xs text-muted-foreground">
                     <span>Применить ко всем ресурсам:</span>
-                    {(["none", "view", "manage"] as UiLevel[]).map((lvl) => (
+                    {(["none", "view", "edit", "manage"] as UiLevel[]).map((lvl) => (
                       <button
                         key={lvl}
                         type="button"
@@ -807,7 +810,7 @@ function LevelRadio({
       className="flex items-center gap-3"
       disabled={disabled}
     >
-      {(["none", "view", "manage"] as UiLevel[]).map((lvl) => (
+      {(["none", "view", "edit", "manage"] as UiLevel[]).map((lvl) => (
         <div key={lvl} className="flex items-center gap-1">
           <RadioGroupItem id={`${name}-${lvl}`} value={lvl} disabled={disabled} />
           <Label htmlFor={`${name}-${lvl}`} className="text-xs cursor-pointer">

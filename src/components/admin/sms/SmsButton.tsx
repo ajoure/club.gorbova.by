@@ -20,6 +20,8 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
+import { cn } from "@/lib/utils";
+import { crmActionBtnClass, crmActionIconClass } from "@/lib/crmActionButton";
 
 interface Props {
   phone: string | null | undefined;
@@ -120,10 +122,10 @@ export function SmsButton({
         variant={variant}
         disabled={disabled}
         onClick={() => setOpen(true)}
-        className={className}
+        className={cn(crmActionBtnClass, className)}
         title={!phone ? "Не указан телефон" : "Отправить SMS"}
       >
-        <MessageSquare className="h-3.5 w-3.5 mr-1" />
+        <MessageSquare className={crmActionIconClass} />
         SMS
       </Button>
 

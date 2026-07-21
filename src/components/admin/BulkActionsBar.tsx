@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { X, Trash2, Mail, MessageCircle, CheckSquare, Combine, Archive, ArchiveRestore, UserPlus, Edit, CalendarPlus } from "lucide-react";
+import { X, Trash2, Mail, MessageCircle, CheckSquare, Combine, Archive, ArchiveRestore, UserPlus, Edit, CalendarPlus, Handshake, MoveRight } from "lucide-react";
 
 interface BulkActionsBarProps {
   selectedCount: number;
@@ -13,6 +13,8 @@ interface BulkActionsBarProps {
   onBulkExtendAccess?: () => void;
   onBulkCreateAccounts?: () => void;
   onBulkEdit?: () => void;
+  onBulkCreateDeals?: () => void;
+  onBulkMove?: () => void;
   onSelectAll?: () => void;
   totalCount?: number;
   entityName?: string;
@@ -30,6 +32,8 @@ export function BulkActionsBar({
   onBulkExtendAccess,
   onBulkCreateAccounts,
   onBulkEdit,
+  onBulkCreateDeals,
+  onBulkMove,
   onSelectAll,
   totalCount,
   entityName = "элементов",
@@ -74,6 +78,13 @@ export function BulkActionsBar({
           >
             <Combine className="h-4 w-4" />
             Объединить
+          </Button>
+        )}
+
+        {onBulkCreateDeals && (
+          <Button variant="ghost" size="sm" onClick={onBulkCreateDeals} className="h-8 gap-1.5 text-xs text-emerald-700 hover:text-emerald-800">
+            <Handshake className="h-3.5 w-3.5" />
+            Создать сделки
           </Button>
         )}
 
@@ -134,6 +145,18 @@ export function BulkActionsBar({
           >
             <CalendarPlus className="h-4 w-4" />
             Продлить доступ
+          </Button>
+        )}
+
+        {onBulkMove && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBulkMove}
+            className="h-8 gap-2 text-blue-600 hover:text-blue-700"
+          >
+            <MoveRight className="h-4 w-4" />
+            Переместить
           </Button>
         )}
 

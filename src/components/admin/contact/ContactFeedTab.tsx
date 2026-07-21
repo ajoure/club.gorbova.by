@@ -35,6 +35,26 @@ import {
   Instagram, LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { localizeAuditAction, localizeEntityType, localizeReasonCode, localizeCrmStatus } from "@/lib/crmDisplayLabels";
+
+/** Русская подпись для «technical» event-title типа `company.created` / `company.linked_to_contact`. */
+function humanizeEventTitle(title: string | null | undefined): string {
+  const raw = (title ?? "").trim();
+  if (!raw) return "Системное событие";
+  // Если это dotted/snake_case-код — прогнать через локализацию action-словаря.
+  if (/^[a-z0-9_.-]+$/i.test(raw) && /[._-]/.test(raw)) return localizeAuditAction(raw);
+  return raw;
+}
+
+/** Убрать HTML-теги, оставив читаемый текст. Не рендерим сырые `<b>` пользователю. */
+function stripHtmlTags(input: string | null | undefined): string {
+  const raw = (input ?? "").toString();
+  if (!raw) return "";
+  if (typeof document === "undefined") return raw.replace(/<[^>]+>/g, "");
+  const div = document.createElement("div");
+  div.innerHTML = raw;
+  return (div.textContent || div.innerText || "").trim();
+}
 import { CreateCrmTaskDialog } from "@/components/admin/tasks/CreateCrmTaskDialog";
 import { CallRecordingPlayer } from "@/components/admin/calls/CallRecordingPlayer";
 import { MediaLightbox } from "@/components/admin/chat/MediaLightbox";
@@ -54,6 +74,37 @@ interface FeedEvent {
   body: string | null;
   meta: Record<string, any> | null;
   author: string | null;
+}
+
+async function enrichFeedDealContext(events: FeedEvent[]): Promise<FeedEvent[]> {
+  const noteIds = events.filter((event) => event.kind === "note").map((event) => event.id);
+  const fileIds = events.filter((event) => event.kind === "file" || event.kind === "voice_note").map((event) => event.id);
+  const links = new Map<string, string>();
+  if (noteIds.length) {
+    const { data } = await (supabase as any).from("contact_notes").select("id,deal_id").in("id", noteIds).not("deal_id", "is", null);
+    (data ?? []).forEach((row: any) => links.set(`note:${row.id}`, row.deal_id));
+  }
+  if (fileIds.length) {
+    const { data } = await (supabase as any).from("contact_files").select("id,deal_id").in("id", fileIds).not("deal_id", "is", null);
+    (data ?? []).forEach((row: any) => {
+      links.set(`file:${row.id}`, row.deal_id);
+      links.set(`voice_note:${row.id}`, row.deal_id);
+    });
+  }
+  const dealIds = Array.from(new Set(links.values()));
+  if (!dealIds.length) return events;
+  const { data: deals } = await supabase.from("orders_v2").select("id,order_number").in("id", dealIds);
+  const names = new Map((deals ?? []).map((deal) => [deal.id, deal.order_number]));
+  return events.map((event) => {
+    const dealId = links.get(`${event.kind}:${event.id}`);
+    if (!dealId) return event;
+    const number = names.get(dealId);
+    return {
+      ...event,
+      title: `${event.kind === "note" ? "Заметка" : event.title ?? "Файл"} по сделке ${number ? `#${number}` : ""}`.trim(),
+      meta: { ...(event.meta ?? {}), deal_id: dealId, order_number: number ?? null },
+    };
+  });
 }
 
 // Каждый тип события — уникальный «дорогой» оттенок; никаких коллизий цвета
@@ -128,7 +179,7 @@ function CallCard({ evt, entityId }: { evt: FeedEvent; entityId: string }) {
       <div className="flex items-center gap-2 flex-wrap">
         {evt.meta?.phone && <span className="text-sm font-medium">{evt.meta.phone}</span>}
         {duration > 0 && <Badge variant="outline" className="text-[10px]">{duration}с</Badge>}
-        {evt.meta?.status && <Badge variant="outline" className="text-[10px]">{String(evt.meta.status)}</Badge>}
+        {evt.meta?.status && <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>}
       </div>
       {recording && (
         <CallRecordingPlayer src={recording} fallbackDurationSec={duration || null} fileName={`call-${evt.meta?.public_id || evt.id}.mp3`} />
@@ -497,8 +548,17 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
       .limit(160);
     for (const a of ((audits || []) as any[])) {
       const action = String(a.action || "");
-      const title = /delete|remove|удал/i.test(action) ? "Удаление данных" : /create|insert|add|создан|добав/i.test(action) ? "Добавление данных" : /update|change|reset|измен/i.test(action) ? "Изменение данных" : /payment|bepaid|pay/i.test(action) ? "Платёжная операция" : "Событие платформы";
-      const body = [`Действие: ${action}`, a.entity_type ? `Объект: ${a.entity_type}` : null, a.entity_id ? `ID: ${a.entity_id}` : null].filter(Boolean).join("\n");
+      const title = localizeAuditAction(action);
+      const entityLabel = localizeEntityType(a.entity_type);
+      const metaObj = (a.meta && typeof a.meta === "object") ? a.meta as Record<string, any> : {};
+      const reasonLabel = metaObj.reason ? localizeReasonCode(String(metaObj.reason)) : "";
+      const bodyLines: string[] = [];
+      if (entityLabel) bodyLines.push(`Объект: ${entityLabel}`);
+      if (reasonLabel) bodyLines.push(`Причина: ${reasonLabel}`);
+      if (metaObj.pipeline_name) bodyLines.push(`Воронка: ${metaObj.pipeline_name}`);
+      if (metaObj.to_stage_name) bodyLines.push(`Новая стадия: ${metaObj.to_stage_name}`);
+      else if (metaObj.target_stage_name) bodyLines.push(`Целевая стадия: ${metaObj.target_stage_name}`);
+      const body = bodyLines.join("\n");
       if (match(title, body, a.actor_label, JSON.stringify(a.meta || {}))) events.push({ id: `audit-${a.id}`, kind: "event", at: a.created_at, title, body, author: a.actor_label || (a.actor_type === "system" ? "Система" : "Сотрудник"), meta: { event_source: "audit", action: a.action, entity_type: a.entity_type, entity_id: a.entity_id, raw_meta: a.meta } });
     }
   }
@@ -641,16 +701,19 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
 export function ContactFeedTab({
   contactId,
   companyId,
+  dealId,
   embedded = false,
   readOnly = false,
 }: {
   contactId?: string;
   companyId?: string;
+  dealId?: string;
   embedded?: boolean;
   readOnly?: boolean;
 }) {
-  const entityId = companyId ?? contactId ?? "";
-  const isCompany = Boolean(companyId);
+  const entityId = dealId ?? companyId ?? contactId ?? "";
+  const isDeal = Boolean(dealId);
+  const isCompany = !isDeal && Boolean(companyId);
   const qc = useQueryClient();
   const [selected, setSelected] = useState<Set<FeedKind>>(new Set());
   const [search, setSearch] = useState("");
@@ -699,7 +762,15 @@ export function ContactFeedTab({
     enabled: !!entityId,
     placeholderData: (previousData) => previousData ?? [],
     queryFn: async () => {
-      const { data, error } = isCompany
+      const { data, error } = isDeal
+        ? await (supabase as any).rpc("deal_feed_list", {
+            _deal_id: entityId,
+            _types: types,
+            _search: debounced || null,
+            _limit: 200,
+            _offset: 0,
+          })
+        : isCompany
         ? await supabase.rpc("company_feed_list", {
             _company_id: entityId,
             _types: types,
@@ -736,7 +807,7 @@ export function ContactFeedTab({
                 : [];
       const rpcEvents = arr as FeedEvent[];
       let platformEvents: FeedEvent[] = [];
-      if (!isCompany) {
+      if (!isCompany && !isDeal) {
         try {
           platformEvents = await loadPlatformEventsForContact(entityId, types as FeedKind[] | null, debounced || null);
         } catch (platformError) {
@@ -745,7 +816,8 @@ export function ContactFeedTab({
       }
       const byKey = new Map<string, FeedEvent>();
       [...rpcEvents, ...platformEvents].forEach((evt) => byKey.set(`${evt.kind}:${evt.id}`, evt));
-      return Array.from(byKey.values()).sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime());
+      const enriched = await enrichFeedDealContext(Array.from(byKey.values()));
+      return enriched.sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime());
     },
   });
 
@@ -763,13 +835,15 @@ export function ContactFeedTab({
   const hasFeedEvents = visibleFeedEvents.length > 0;
   const feedErrorMessage = error instanceof Error
     ? error.message
-    : isCompany ? "Не удалось загрузить ленту компании" : "Не удалось загрузить ленту контакта";
+    : isDeal ? "Не удалось загрузить ленту сделки" : isCompany ? "Не удалось загрузить ленту компании" : "Не удалось загрузить ленту контакта";
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["contact_feed", entityId] });
 
   const createNote = useMutation({
     mutationFn: async (body: string) => {
-      const { error } = isCompany
+      const { error } = isDeal
+        ? await (supabase as any).rpc("crm_deal_note_create", { _deal_id: entityId, _body: body })
+        : isCompany
         ? await supabase.rpc("company_note_create", {
             _company_id: entityId,
             _body: body,
@@ -811,13 +885,14 @@ export function ContactFeedTab({
     const uid = u?.user?.id;
     if (!uid) throw new Error("no auth");
     const safeName = filename.replace(/[^\p{L}\p{N}._-]+/gu, "_");
-    const path = `${entityId}/${Date.now()}_${safeName}`;
+    const storageOwnerId = contactId ?? entityId;
+    const path = `${storageOwnerId}/${Date.now()}_${safeName}`;
     const up = await supabase.storage.from("contact-files").upload(path, blob, { contentType: mime, upsert: false });
     if (up.error) throw up.error;
     const fileTable = isCompany ? "company_files" : "contact_files";
     const filePayload = isCompany
       ? { company_id: entityId, uploader_id: uid, name: filename, storage_path: path, url: null, mime_type: mime, size_bytes: blob.size, meta: {} }
-      : { contact_id: entityId, uploader_id: uid, name: filename, storage_path: path, url: null, mime_type: mime, size_bytes: blob.size };
+      : { contact_id: contactId ?? entityId, deal_id: dealId ?? null, company_id: dealId ? companyId ?? null : null, uploader_id: uid, name: filename, storage_path: path, url: null, mime_type: mime, size_bytes: blob.size };
     const { data: inserted, error: insErr } = await (supabase as any).from(fileTable).insert(filePayload).select("id").single();
     if (insErr) throw insErr;
     return inserted!.id as string;
@@ -906,11 +981,15 @@ export function ContactFeedTab({
   const canSend = !readOnly && noteBody.trim().length > 0 && !createNote.isPending;
 
   return (
-    <div className={embedded
-      ? "flex min-h-[520px] flex-1 flex-col overflow-hidden"
-      : "flex h-[calc(100vh-260px)] min-h-[520px] max-h-[calc(100vh-220px)] flex-col overflow-hidden"}>
+    <div className={cn(
+      embedded
+        ? "flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40 bg-background/75 backdrop-blur-sm p-3 sm:p-4"
+        : "flex h-[calc(100vh-260px)] min-h-[520px] max-h-[calc(100vh-220px)] flex-col overflow-hidden rounded-2xl border border-border/40 bg-background/75 backdrop-blur-sm p-3 sm:p-4"
+
+    )}>
       {/* Filters + search */}
-      <div className="flex flex-wrap items-center gap-2 sticky top-0 z-10 bg-background/80 backdrop-blur py-2">
+      <div className="flex flex-wrap items-center gap-1.5 sticky top-0 z-10 bg-background/70 backdrop-blur py-1 -mx-3 sm:-mx-4 px-3 sm:px-4 border-b border-border/30">
+
         <button
           onClick={() => setSelected(new Set())}
           className={cn(
@@ -974,11 +1053,12 @@ export function ContactFeedTab({
             </Button>
           </div>
         ) : !hasFeedEvents ? (
-          <div className="flex h-full min-h-[260px] flex-col items-center justify-center text-center text-muted-foreground">
-            <Activity className="w-12 h-12 mx-auto mb-2 opacity-30" />
+          <div className={cn("flex flex-col items-center justify-center text-center text-muted-foreground", embedded ? "min-h-[220px] py-6" : "h-full min-h-[260px]")}>
+            <Activity className="w-10 h-10 mx-auto mb-2 opacity-30" />
             <p className="text-sm">Пока событий нет</p>
             <p className="text-xs">Добавь заметку, задачу или загрузи файл — они появятся здесь.</p>
           </div>
+
         ) : (
           visibleFeedEvents.map((evt) => {
             const M = KIND_META[evt.kind] ?? KIND_META.event;
@@ -997,10 +1077,13 @@ export function ContactFeedTab({
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-semibold uppercase tracking-wide opacity-70">{M.label}</span>
                       {evt.kind === "task" && evt.meta?.status && (
-                        <Badge variant="outline" className="text-[10px]">{String(evt.meta.status)}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>
                       )}
                       {evt.kind === "deal" && evt.meta?.status && (
-                        <Badge variant="outline" className="text-[10px]">{String(evt.meta.status)}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>
+                      )}
+                      {evt.kind === "event" && evt.meta?.status && (
+                        <Badge variant="outline" className="text-[10px]">{localizeCrmStatus(String(evt.meta.status))}</Badge>
                       )}
                       <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
                         {evt.at ? format(new Date(evt.at), "d MMM, HH:mm", { locale: ru }) : "—"}
@@ -1022,6 +1105,20 @@ export function ContactFeedTab({
                         </button>
                         <span className="text-xs text-muted-foreground">{formatBytes(evt.meta?.size_bytes)}</span>
                       </div>
+                    ) : evt.kind === "event" ? (
+                      <>
+                        <div className="mt-1 text-sm font-medium truncate">{humanizeEventTitle(evt.title)}</div>
+                        {evt.body && (
+                          <div className={cn(
+                            "mt-1 text-sm text-muted-foreground whitespace-pre-wrap break-words",
+                            evt.meta?.event_source === "order_notification"
+                              ? "max-h-80 overflow-y-auto rounded-md bg-background/40 p-2"
+                              : "line-clamp-4"
+                          )}>
+                            {stripHtmlTags(evt.body)}
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <>
                         {evt.title && (
@@ -1034,7 +1131,7 @@ export function ContactFeedTab({
                               ? "max-h-80 overflow-y-auto rounded-md bg-background/40 p-2"
                               : "line-clamp-4"
                           )}>
-                            {evt.body}
+                            {stripHtmlTags(evt.body)}
                           </div>
                         )}
                       </>
@@ -1088,10 +1185,10 @@ export function ContactFeedTab({
               className="!bg-fuchsia-500/10 !border-fuchsia-500/25 flex-1"
               fileName={`voice_${Date.now()}.webm`}
             />
-            <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0" onClick={rec.reset} title="Отменить">
+            <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={rec.reset} title="Отменить">
               <X className="w-4 h-4" />
             </Button>
-            <Button size="icon" className="h-9 w-9 shrink-0 rounded-full" disabled={uploading} onClick={sendVoice} title="Отправить">
+            <Button size="icon" className="h-8 w-8 shrink-0 rounded-full" disabled={uploading} onClick={sendVoice} title="Отправить">
               <Send className="w-4 h-4" />
             </Button>
           </div>
@@ -1100,7 +1197,7 @@ export function ContactFeedTab({
             <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
             <span className="text-sm tabular-nums">{Math.floor(rec.elapsed/60)}:{String(rec.elapsed%60).padStart(2,"0")}</span>
             <span className="text-xs text-muted-foreground flex-1">Идёт запись…</span>
-            <Button size="icon" className="h-9 w-9 shrink-0 rounded-full" onClick={rec.stop} title="Остановить">
+            <Button size="icon" className="h-8 w-8 shrink-0 rounded-full" onClick={rec.stop} title="Остановить">
               <Square className="w-4 h-4" />
             </Button>
           </div>
@@ -1108,7 +1205,7 @@ export function ContactFeedTab({
           <div className="flex items-end gap-2 rounded-2xl border border-border/50 bg-background/95 p-2 backdrop-blur">
             <Popover>
               <PopoverTrigger asChild>
-                <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0 rounded-full" title="Эмодзи">
+                <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full" title="Эмодзи">
                   <Smile className="w-4 h-4" />
                 </Button>
               </PopoverTrigger>
@@ -1122,7 +1219,7 @@ export function ContactFeedTab({
             </Popover>
             <Popover>
               <PopoverTrigger asChild>
-                <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0 rounded-full" disabled={uploading}>
+                <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full" disabled={uploading}>
                   <Paperclip className="w-4 h-4" />
                 </Button>
               </PopoverTrigger>
@@ -1156,12 +1253,12 @@ export function ContactFeedTab({
               rows={1}
               className="flex-1 min-h-[36px] max-h-[160px] resize-none bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none px-2 py-2 text-sm"
             />
-            <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0 rounded-full" onClick={rec.start} title="Голосовое сообщение">
+            <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 rounded-full" onClick={rec.start} title="Голосовое сообщение">
               <Mic className="w-4 h-4" />
             </Button>
             <Button
               size="icon"
-              className="h-9 w-9 shrink-0 rounded-full"
+              className="h-8 w-8 shrink-0 rounded-full"
               disabled={!canSend}
               onClick={() => createNote.mutate(noteBody.trim())}
               title="Отправить"
@@ -1176,8 +1273,9 @@ export function ContactFeedTab({
       <CreateCrmTaskDialog
         open={createTaskOpen}
         onOpenChange={(v) => { setCreateTaskOpen(v); if (!v) invalidate(); }}
-        defaultContactId={isCompany ? null : entityId}
-        defaultCompanyId={isCompany ? entityId : null}
+        defaultContactId={isCompany ? null : contactId ?? null}
+        defaultCompanyId={isCompany ? entityId : companyId ?? null}
+        defaultDealId={dealId ?? null}
       />
       {previewText && (
         <TextFilePreview open onClose={() => setPreviewText(null)} path={previewText.path} name={previewText.name} />

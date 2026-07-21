@@ -6,7 +6,7 @@ import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisp
 import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
-import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
+import { SHEET_SHELL_CLASS, getEntityShellClass } from "@/lib/sheetShell";
 import { useNavigate } from "react-router-dom";
 import { format, addDays, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -16,6 +16,7 @@ import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 import { getEventLabel } from "@/lib/eventLabels";
 import { formatContactName } from "@/lib/nameUtils";
+import { normalizeCompanyName } from "@/lib/companies/normalizeCompanyName";
 import { useActiveAccessRuleProducts, isCurrentValidAccess, isHistoricalAccess } from "@/hooks/useAccessValidation";
 import {
   Sheet,
@@ -1650,7 +1651,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
   return (
     <>
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className={SHEET_SHELL_CLASS}>
+      <SheetContent className={getEntityShellClass("contact")}>
         {/* Compact header for mobile - with padding-right for close button */}
         <SheetHeader className="px-4 sm:px-6 pt-4 sm:pt-6 pb-0 pr-14 sm:pr-16 flex-shrink-0 space-y-1.5">
           {/* Row 1: Avatar + Name + Email */}
@@ -2030,14 +2031,25 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
             </div>
           </TabsContent>
 
+          {/* Feed-вкладка вынесена ИЗ внешнего скролла:
+              скроллится только список событий внутри ContactFeedTab,
+              а composer остаётся прижат к низу карточки. */}
+          <TabsContent
+            value="feed"
+            forceMount
+            className="m-0 px-3 sm:px-4 pb-3 sm:pb-4 flex-1 min-h-0 flex flex-col overflow-hidden data-[state=inactive]:hidden"
+          >
+            <ContactFeedTab contactId={contact.id} embedded />
+          </TabsContent>
+
           {/* Все остальные вкладки — во внешнем скролле как раньше.
-              При активной Telegram-вкладке прячем этот контейнер,
+              При активной Telegram- или Feed-вкладке прячем этот контейнер,
               чтобы не было двойного скролла и pb-24 не съедал высоту. */}
           <div
             ref={scrollContainerRef}
-            className={cn("flex-1 overflow-y-auto", activeTab === "telegram" && "hidden")}
+            className={cn("flex-1 overflow-y-auto", (activeTab === "telegram" || activeTab === "feed") && "hidden")}
           >
-            <div className={cn("px-4 sm:px-6 py-4", activeTab === "feed" ? "pb-2" : "pb-24")}>
+            <div className="px-4 sm:px-6 py-4 pb-24">
             <TabsContent value="profile" className="m-0 space-y-4">
               {contact.id && (
                 <ContactChannelsSection
@@ -2051,15 +2063,26 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                   <CardTitle className="text-sm text-muted-foreground">Контактные данные</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <Mail className="w-4 h-4 text-muted-foreground" />
-                      <span>{contact.email || "—"}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <span className="truncate">{contact.email || "—"}</span>
                     </div>
                     {contact.email && (
-                      <Button variant="ghost" size="sm" onClick={() => copyToClipboard(contact.email!, "Email")}>
-                        <Copy className="w-3 h-3" />
-                      </Button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2.5 text-xs"
+                          onClick={() => setComposeEmailOpen(true)}
+                        >
+                          <Mail className="w-3 h-3 mr-1" />
+                          Письмо
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-7 w-7" onClick={() => copyToClipboard(contact.email!, "Email")}>
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
                     )}
                   </div>
                   <Separator />
@@ -2140,22 +2163,6 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                     </>
                   )}
                   
-                  {/* Send email button */}
-                  {contact.email && (
-                    <>
-                      <Separator />
-                      <div className="pt-2">
-                        <Button
-                          variant="outline"
-                          className="w-full gap-2"
-                          onClick={() => setComposeEmailOpen(true)}
-                        >
-                          <Mail className="w-4 h-4" />
-                          Написать письмо
-                        </Button>
-                      </div>
-                    </>
-                  )}
                 </CardContent>
               </Card>
 
@@ -2990,7 +2997,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                       <div className="rounded-lg bg-primary/10 p-2 text-primary"><Building2 className="h-4 w-4" /></div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium break-words">{company!.full_name}</span>
+                          <span className="font-medium break-words">{normalizeCompanyName(company!.full_name)}</span>
                           {is_primary && <Badge variant="outline">Основная</Badge>}
                           {is_billing_contact && <Badge variant="outline">Billing</Badge>}
                         </div>
@@ -3705,10 +3712,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
               <SmsHistorySection contactId={contact.id} bare />
             </TabsContent>
 
-            {/* Communications Tab */}
-            <TabsContent value="feed" className="m-0">
-              <ContactFeedTab contactId={contact.id} />
-            </TabsContent>
+            {/* value="feed" вынесен наверх — вне внешнего скролла */}
+
+
 
             {/* Consent Tab */}
             <TabsContent value="consent" className="m-0 space-y-4">

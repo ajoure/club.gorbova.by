@@ -84,6 +84,7 @@ import { ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/compone
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { BulkCreateDealsDialog } from "@/components/admin/deals/BulkCreateDealsDialog";
 import { MergeContactsDialog } from "@/components/admin/MergeContactsDialog";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
@@ -220,11 +221,12 @@ export default function AdminContacts() {
   const [showDemoCleanup, setShowDemoCleanup] = useState(false);
   const [showGCImport, setShowGCImport] = useState(false);
   const [showCreateContact, setShowCreateContact] = useState(false);
-  const { hasPermission, canWrite, isSuperAdmin } = usePermissions();
+  const { hasPermission, canWrite, isSuperAdmin, isAdmin } = usePermissions();
   
   // Bulk action dialogs
   const [showBulkArchiveDialog, setShowBulkArchiveDialog] = useState(false);
   const [showBulkInviteDialog, setShowBulkInviteDialog] = useState(false);
+  const [showBulkCreateDeals, setShowBulkCreateDeals] = useState(false);
   
   // Global search state
   const [globalSearchResults, setGlobalSearchResults] = useState<GlobalSearchResults | null>(null);
@@ -1883,9 +1885,17 @@ export default function AdminContacts() {
         onBulkMerge={selectedCount >= 2 ? () => setShowMergeDialog(true) : undefined}
         onBulkArchive={eligibleForArchive.length > 0 ? () => setShowBulkArchiveDialog(true) : undefined}
         onBulkCreateAccounts={eligibleForInvite.length > 0 ? () => setShowBulkInviteDialog(true) : undefined}
+        onBulkCreateDeals={canWrite("deals") || isSuperAdmin() ? () => setShowBulkCreateDeals(true) : undefined}
         totalCount={sortedContacts.length}
         entityName="контактов"
         onSelectAll={selectAll}
+      />
+      <BulkCreateDealsDialog
+        open={showBulkCreateDeals}
+        onOpenChange={setShowBulkCreateDeals}
+        sourceType="contact"
+        sourceIds={Array.from(selectedContactIds)}
+        onCreated={() => { clearSelection(); queryClient.invalidateQueries({ queryKey: ["admin-deals"] }); }}
       />
 
       {/* Merge Contacts Dialog */}

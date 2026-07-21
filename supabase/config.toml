@@ -88,7 +88,19 @@ verify_jwt = false
 [functions.public-webhook-deploy-probe]
 verify_jwt = false
 
+# Phase 4D: the worker is invoked by the pg_cron/net.http_post path with its
+# own vault-backed X-Worker-Secret. Platform JWT verification would reject
+# that server-to-server call before the in-function secret check runs.
+[functions.company-sync-worker]
+verify_jwt = false
+
 # Phase 4E: the platform JWT gate runs before the in-function admin-role check.
 # The function also validates an explicit allowed-origin list at runtime.
 [functions.company-sync-admin]
 verify_jwt = true
+
+# Phase 4D: invoked by pg_cron via net.http_post with a vault-backed
+# X-Worker-Secret header. Authorization is enforced inside the function
+# (shared-secret gate + service-role client). Must remain JWT-less.
+[functions.company-sync-worker]
+verify_jwt = false

@@ -4631,8 +4631,10 @@ export type Database = {
       }
       contact_files: {
         Row: {
+          company_id: string | null
           contact_id: string
           created_at: string
+          deal_id: string | null
           id: string
           meta: Json
           mime_type: string | null
@@ -4643,8 +4645,10 @@ export type Database = {
           url: string | null
         }
         Insert: {
+          company_id?: string | null
           contact_id: string
           created_at?: string
+          deal_id?: string | null
           id?: string
           meta?: Json
           mime_type?: string | null
@@ -4655,8 +4659,10 @@ export type Database = {
           url?: string | null
         }
         Update: {
+          company_id?: string | null
           contact_id?: string
           created_at?: string
+          deal_id?: string | null
           id?: string
           meta?: Json
           mime_type?: string | null
@@ -4668,10 +4674,24 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "contact_files_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "contact_files_contact_id_fkey"
             columns: ["contact_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contact_files_deal_id_fkey"
+            columns: ["deal_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
             referencedColumns: ["id"]
           },
         ]
@@ -4680,33 +4700,53 @@ export type Database = {
         Row: {
           author_id: string
           body: string
+          company_id: string | null
           contact_id: string
           created_at: string
+          deal_id: string | null
           id: string
           updated_at: string
         }
         Insert: {
           author_id: string
           body: string
+          company_id?: string | null
           contact_id: string
           created_at?: string
+          deal_id?: string | null
           id?: string
           updated_at?: string
         }
         Update: {
           author_id?: string
           body?: string
+          company_id?: string | null
           contact_id?: string
           created_at?: string
+          deal_id?: string | null
           id?: string
           updated_at?: string
         }
         Relationships: [
           {
+            foreignKeyName: "contact_notes_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "contact_notes_contact_id_fkey"
             columns: ["contact_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contact_notes_deal_id_fkey"
+            columns: ["deal_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
             referencedColumns: ["id"]
           },
         ]
@@ -5003,6 +5043,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      crm_deal_action_batches: {
+        Row: {
+          action: string
+          actor_user_id: string
+          affected_count: number
+          created_at: string
+          id: string
+          parameters: Json
+          request_id: string
+          requested_count: number
+          result: Json
+          skipped_count: number
+        }
+        Insert: {
+          action: string
+          actor_user_id: string
+          affected_count?: number
+          created_at?: string
+          id: string
+          parameters?: Json
+          request_id: string
+          requested_count?: number
+          result?: Json
+          skipped_count?: number
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string
+          affected_count?: number
+          created_at?: string
+          id?: string
+          parameters?: Json
+          request_id?: string
+          requested_count?: number
+          result?: Json
+          skipped_count?: number
+        }
+        Relationships: []
       }
       crm_pipeline_product_bindings: {
         Row: {
@@ -11681,7 +11760,10 @@ export type Database = {
         Row: {
           base_price: number
           bepaid_subscription_id: string | null
+          campaign_key: string | null
+          company_id: string | null
           created_at: string
+          creation_batch_id: string | null
           currency: string
           customer_email: string | null
           customer_ip: string | null
@@ -11715,6 +11797,8 @@ export type Database = {
           provider_payment_id: string | null
           purchase_snapshot: Json | null
           reconcile_source: string | null
+          responsible_user_id: string | null
+          source_deal_id: string | null
           status: Database["public"]["Enums"]["order_status"]
           tariff_id: string | null
           trial_end_at: string | null
@@ -11724,7 +11808,10 @@ export type Database = {
         Insert: {
           base_price: number
           bepaid_subscription_id?: string | null
+          campaign_key?: string | null
+          company_id?: string | null
           created_at?: string
+          creation_batch_id?: string | null
           currency?: string
           customer_email?: string | null
           customer_ip?: string | null
@@ -11758,6 +11845,8 @@ export type Database = {
           provider_payment_id?: string | null
           purchase_snapshot?: Json | null
           reconcile_source?: string | null
+          responsible_user_id?: string | null
+          source_deal_id?: string | null
           status?: Database["public"]["Enums"]["order_status"]
           tariff_id?: string | null
           trial_end_at?: string | null
@@ -11767,7 +11856,10 @@ export type Database = {
         Update: {
           base_price?: number
           bepaid_subscription_id?: string | null
+          campaign_key?: string | null
+          company_id?: string | null
           created_at?: string
+          creation_batch_id?: string | null
           currency?: string
           customer_email?: string | null
           customer_ip?: string | null
@@ -11801,6 +11893,8 @@ export type Database = {
           provider_payment_id?: string | null
           purchase_snapshot?: Json | null
           reconcile_source?: string | null
+          responsible_user_id?: string | null
+          source_deal_id?: string | null
           status?: Database["public"]["Enums"]["order_status"]
           tariff_id?: string | null
           trial_end_at?: string | null
@@ -11808,6 +11902,13 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "orders_v2_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "orders_v2_flow_id_fkey"
             columns: ["flow_id"]
@@ -11862,6 +11963,13 @@ export type Database = {
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_v2_source_deal_id_fkey"
+            columns: ["source_deal_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
             referencedColumns: ["id"]
           },
           {
@@ -19844,6 +19952,31 @@ export type Database = {
             }
             Returns: Json
           }
+      crm_bulk_create_deals: {
+        Args: {
+          _campaign_key?: string
+          _pipeline_id: string
+          _request_id?: string
+          _responsible_user_id?: string
+          _source_ids: string[]
+          _source_type: string
+          _stage_id: string
+          _task_due_at?: string
+          _task_title?: string
+          _task_type_id?: string
+          _title_template?: string
+        }
+        Returns: Json
+      }
+      crm_bulk_move_deals: {
+        Args: {
+          _deal_ids: string[]
+          _pipeline_id: string
+          _request_id: string
+          _stage_id: string
+        }
+        Returns: Json
+      }
       crm_company_archive: {
         Args: { _id: string; _reason: string }
         Returns: string
@@ -20035,24 +20168,43 @@ export type Database = {
         Args: { _link_id: string; _reason: string }
         Returns: boolean
       }
-      crm_company_update: {
-        Args: {
-          _email?: string
-          _full_name: string
-          _id: string
-          _phone?: string
-          _short_name?: string
-        }
-        Returns: string
-      }
+      crm_company_update:
+        | {
+            Args: {
+              _email?: string
+              _full_name: string
+              _id: string
+              _phone?: string
+              _short_name?: string
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              _email: string
+              _full_name: string
+              _id: string
+              _legal_form: string
+              _phone: string
+              _short_name: string
+            }
+            Returns: string
+          }
       crm_company_upsert_from_billing: {
         Args: { _client_legal_details_id: string }
+        Returns: string
+      }
+      crm_deal_note_create: {
+        Args: { _body: string; _deal_id: string }
         Returns: string
       }
       crm_enqueue_from_source_change: {
         Args: { _cld_id: string; _reason: string }
         Returns: string
       }
+      crm_normalize_company_phone:
+        | { Args: { _arr: Json }; Returns: Json }
+        | { Args: { _raw: string }; Returns: string }
       crm_phase4_worker_secret: { Args: never; Returns: string }
       crm_task_apply_automation: {
         Args: { _context?: Json; _deal_id: string; _offer_id: string }
@@ -20124,6 +20276,16 @@ export type Database = {
       crm_tasks_schedule_due_notifications: { Args: never; Returns: Json }
       deactivate_global_document_package: {
         Args: { _package_id: string }
+        Returns: Json
+      }
+      deal_feed_list: {
+        Args: {
+          _deal_id: string
+          _limit?: number
+          _offset?: number
+          _search?: string
+          _types?: string[]
+        }
         Returns: Json
       }
       delete_email: {

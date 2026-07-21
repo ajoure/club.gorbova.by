@@ -18,11 +18,19 @@ export interface TaskContactLite {
   phone: string | null;
 }
 
+export interface TaskCompanyLite {
+  id: string;
+  full_name: string | null;
+  public_id: string | null;
+  email: string | null;
+  phone: string | null;
+}
+
 /**
  * Batch-load deals and contacts referenced by tasks, for display in cards/list.
  * Returns maps keyed by id.
  */
-export function useTaskRelations(dealIds: string[], contactIds: string[]) {
+export function useTaskRelations(dealIds: string[], contactIds: string[], companyIds: string[] = []) {
   const dealsQ = useQuery({
     queryKey: ["task-relations-deals", [...new Set(dealIds)].sort()],
     enabled: dealIds.length > 0,
@@ -85,9 +93,27 @@ export function useTaskRelations(dealIds: string[], contactIds: string[]) {
     staleTime: 60_000,
   });
 
+  const companiesQ = useQuery({
+    queryKey: ["task-relations-companies", [...new Set(companyIds)].sort()],
+    enabled: companyIds.length > 0,
+    queryFn: async (): Promise<Record<string, TaskCompanyLite>> => {
+      const ids = Array.from(new Set(companyIds));
+      const { data, error } = await (supabase as any)
+        .from("companies")
+        .select("id, full_name, public_id, email, phone")
+        .in("id", ids);
+      if (error) throw error;
+      const map: Record<string, TaskCompanyLite> = {};
+      for (const row of (data ?? []) as TaskCompanyLite[]) map[row.id] = row;
+      return map;
+    },
+    staleTime: 60_000,
+  });
+
   return {
     deals: dealsQ.data ?? {},
     contacts: contactsQ.data ?? {},
-    isLoading: dealsQ.isLoading || contactsQ.isLoading,
+    companies: companiesQ.data ?? {},
+    isLoading: dealsQ.isLoading || contactsQ.isLoading || companiesQ.isLoading,
   };
 }

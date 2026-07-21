@@ -14,9 +14,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { normalizeCompanyPhone } from "@/lib/companies/normalizeCompanyPhone";
 
 const DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1CeLOojDIEF_pVb0OJLOHuCwFIJcevNl0wt3T3MFsfg0/edit?usp=sharing";
 const DEFAULT_SOURCE_REFERENCE = "1CeLOojDIEF_pVb0OJLOHuCwFIJcevNl0wt3T3MFsfg0:База для обзвона";
+
+type CompanyImportRpcResult = { data: Record<string, unknown> | null; error: { message: string } | null };
+
+async function invokeCompanyImportRpc(functionName: string, args: Record<string, unknown>): Promise<CompanyImportRpcResult> {
+  const rpc = supabase.rpc as unknown as (name: string, params: Record<string, unknown>) => Promise<CompanyImportRpcResult>;
+  return rpc(functionName, args);
+}
 
 type ImportStep = "source" | "preview" | "applying" | "done";
 
@@ -81,7 +89,7 @@ function parseLprContacts(value: string): { contacts: Array<{ full_name: string;
     .map((chunk) => {
       const email = chunk.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/)?.[0]?.toLowerCase();
       const phoneMatch = chunk.match(/(?:\+?375|80)[\s()-]*\d{2,3}[\s()-]*\d{2,3}[\s()-]*\d{2,4}|\b0\d{8,9}\b|\b\d{9}\b/);
-      const phone = phoneMatch?.[0]?.replace(/\D/g, "");
+      const phone = normalizeCompanyPhone(phoneMatch?.[0], "BY") ?? undefined;
       const roleMatch = chunk.match(/\b(директор|бухгалтер|главбух|глабух|секретарь|иной|иное|ГБ)\b/i);
       const jobTitle = roleMatch?.[0];
       const role = /директор/i.test(jobTitle ?? "") ? "director" : /бухгалтер|главбух|глабух|гб/i.test(jobTitle ?? "") ? "accountant" : undefined;
@@ -106,7 +114,11 @@ function parseCompanyRows(csvText: string): NormalizedCompanyImportRow[] {
   // header and all subsequent rows are data.
   return parsed.slice(1).map((row, index) => {
     const rowNumber = Number(clean(row[0])) || index + 4;
-    const phones = splitValues(clean(row[2]));
+    const phones = Array.from(new Set(
+      splitValues(clean(row[2]))
+        .map((value) => normalizeCompanyPhone(value, "BY"))
+        .filter((value): value is string => Boolean(value)),
+    ));
     const emails = splitValues(clean(row[3]).toLowerCase());
     const organizationForm = clean(row[4]);
     const lpr = parseLprContacts(clean(row[11]));
@@ -225,13 +237,13 @@ export function CompanySheetImportDialog({ open, onOpenChange, onComplete }: { o
     setLoading(true);
     setError(null);
     try {
-      const { data, error: rpcError } = await (supabase as any).rpc("crm_company_sheet_import_batch_start", {
+      const { data, error: rpcError } = await invokeCompanyImportRpc("crm_company_sheet_import_batch_start", {
         _source: "google_sheet",
         _source_reference: sourceReference.trim(),
         _rows: rows,
       });
       if (rpcError) throw rpcError;
-      setBatchId(data?.batch_id ?? null);
+      setBatchId(typeof data?.batch_id === "string" ? data.batch_id : null);
       setProgress({ current: 0, total: rows.length });
       setConfirm(false);
       toast.success("Предпросмотр импорта сохранён; CRM ещё не изменена");
@@ -251,7 +263,7 @@ export function CompanySheetImportDialog({ open, onOpenChange, onComplete }: { o
       let cursor = progress.current;
       let status = "running";
       while (status === "running" || status === "preview") {
-        const { data, error: rpcError } = await (supabase as any).rpc("crm_company_sheet_import_batch_apply", {
+        const { data, error: rpcError } = await invokeCompanyImportRpc("crm_company_sheet_import_batch_apply", {
           _batch_id: batchId,
           _assignee_name: "Полина Асманта",
           _max_rows: 100,
@@ -259,13 +271,15 @@ export function CompanySheetImportDialog({ open, onOpenChange, onComplete }: { o
         });
         if (rpcError) throw rpcError;
         cursor = Number(data?.cursor_position ?? cursor);
-        status = String(data?.status ?? "completed");
+        status = typeof data?.status === "string" ? data.status : "completed";
         setProgress({ current: Math.min(cursor, rows.length), total: rows.length });
-        if (!data?.processed && status === "running") throw new Error("Импорт не продвинулся; остановлен защитным контуром");
+        if (data?.processed !== true && status === "running") throw new Error("Импорт не продвинулся; остановлен защитным контуром");
       }
       setStep("done");
       toast.success("Импорт компаний завершён контролируемыми пачками");
       queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-company-quality"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-company-invariants"] });
       onComplete?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Импорт остановлен с ошибкой");
@@ -273,7 +287,7 @@ export function CompanySheetImportDialog({ open, onOpenChange, onComplete }: { o
     } finally {
       setLoading(false);
     }
-  }, [batchId, confirm, onComplete, progress.current, rows.length]);
+  }, [batchId, confirm, onComplete, progress, queryClient, rows.length]);
 
   const sample = useMemo(() => rows.slice(0, 5), [rows]);
 
@@ -299,7 +313,7 @@ export function CompanySheetImportDialog({ open, onOpenChange, onComplete }: { o
           {batchId && step === "preview" && <Alert><AlertTriangle className="h-4 w-4" /><AlertDescription>После подтверждения будут созданы/обновлены компании, заметки и callback-задачи. Руководитель не станет контактом; задачи назначаются только на точного пользователя «Полина Асманта».</AlertDescription></Alert>}
           {step === "applying" && <div className="space-y-2"><div className="flex items-center justify-between text-sm"><span>Выполнено строк</span><span>{progress.current} / {progress.total}</span></div><Progress value={progress.total ? (progress.current / progress.total) * 100 : 0} /></div>}
           {step === "done" && <Alert><CheckCircle2 className="h-4 w-4" /><AlertDescription>Импорт завершён. Повторный запуск тех же строк безопасен: ledger не создаст дубли.</AlertDescription></Alert>}
-          <div className="table-scroll-x rounded-lg border"><Table className="min-w-[900px] text-sm"><TableHeader><TableRow><TableHead>Строка</TableHead><TableHead>Компания</TableHead><TableHead>УНП</TableHead><TableHead>Телефон</TableHead><TableHead>Email</TableHead><TableHead>Callback</TableHead></TableRow></TableHeader><TableBody>{sample.map((row) => <TableRow key={row.source_key}><TableCell>{row.row_number}</TableCell><TableCell>{row.name || "—"}</TableCell><TableCell>{row.unp || "—"}</TableCell><TableCell>{row.phone || "—"}</TableCell><TableCell>{row.email || "—"}</TableCell><TableCell>{row.callback_at || "—"}</TableCell></TableRow>)}</TableBody></Table></div>
+          <div className="table-scroll-x rounded-lg border"><Table className="min-w-[900px] text-sm"><TableHeader><TableRow><TableHead>Строка</TableHead><TableHead>Компания</TableHead><TableHead>УНП</TableHead><TableHead>Телефоны</TableHead><TableHead>Email</TableHead><TableHead>Callback</TableHead></TableRow></TableHeader><TableBody>{sample.map((row) => <TableRow key={row.source_key}><TableCell>{row.row_number}</TableCell><TableCell>{row.name || "—"}</TableCell><TableCell>{row.unp || "—"}</TableCell><TableCell className="whitespace-normal">{row.phones.join(", ") || "—"}</TableCell><TableCell>{row.email || "—"}</TableCell><TableCell>{row.callback_at || "—"}</TableCell></TableRow>)}</TableBody></Table></div>
           {batchId && step === "preview" && <label className="flex items-start gap-2 rounded-lg border bg-muted/30 p-3 text-sm"><Checkbox checked={confirm} onCheckedChange={(value) => setConfirm(value === true)} /><span>Подтверждаю controlled apply этого batch. Импорт будет идти последовательно, максимум по 100 строк за вызов.</span></label>}
         </div>}
 

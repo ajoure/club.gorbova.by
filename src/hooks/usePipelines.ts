@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchPipelines, createPipeline, renamePipeline, deletePipeline, reorderPipelines } from "@/services/pipelineService";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,6 +8,7 @@ const QUERY_KEY = ["crm-pipelines"];
 
 export function usePipelines() {
   const qc = useQueryClient();
+  const channelNonceRef = useRef(Math.random().toString(36).slice(2));
 
   const { data: pipelines = [], isLoading } = useQuery({
     queryKey: QUERY_KEY,
@@ -18,7 +19,7 @@ export function usePipelines() {
   // Realtime: любое изменение в crm_pipelines → инвалидация
   useEffect(() => {
     const channel = supabase
-      .channel("crm-pipelines-rt")
+      .channel(`crm-pipelines-rt-${channelNonceRef.current}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "crm_pipelines" },
