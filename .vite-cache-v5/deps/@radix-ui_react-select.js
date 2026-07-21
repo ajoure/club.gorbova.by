@@ -7,15 +7,15 @@ import {
   createPopperScope
 } from "./chunk-FW36JWTZ.js";
 import {
+  clamp
+} from "./chunk-TCQMTAGU.js";
+import {
   usePrevious
 } from "./chunk-V5T4XLSE.js";
 import "./chunk-W3C47TT7.js";
 import {
   createCollection
 } from "./chunk-HFB7DSPC.js";
-import {
-  clamp
-} from "./chunk-TCQMTAGU.js";
 import {
   useDirection
 } from "./chunk-TPBLUEFY.js";

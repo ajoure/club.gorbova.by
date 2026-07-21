@@ -1,5 +1,8 @@
 "use client";
 import {
+  clamp
+} from "./chunk-TCQMTAGU.js";
+import {
   usePrevious
 } from "./chunk-V5T4XLSE.js";
 import {
@@ -8,9 +11,6 @@ import {
 import {
   createCollection
 } from "./chunk-HFB7DSPC.js";
-import {
-  clamp
-} from "./chunk-TCQMTAGU.js";
 import {
   useDirection
 } from "./chunk-TPBLUEFY.js";

@@ -7,8 +7,9 @@ import { useAdminTranscriptionRunner, type RunnerPhase } from "@/hooks/useAdminT
 
 const PHASE_LABEL: Record<RunnerPhase, string> = {
   idle: "Готово к запуску",
-  loading_audio: "Скачиваю аудио",
-  chunking: "Готовлю окна",
+  loading_audio: "Загружаем сохранённый аудиофайл",
+  chunking: "Готовим окна",
+
   creating_job: "Создаю задачу",
   registering_parts: "Регистрирую окна",
   transcribing: "Транскрибирую окна",

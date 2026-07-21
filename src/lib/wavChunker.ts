@@ -44,21 +44,28 @@ function toMono16k(buffer: AudioBuffer): Float32Array {
   if (channels > 1) {
     for (let i = 0; i < mixed.length; i += 1) mixed[i] /= channels;
   }
-  const ratio = buffer.sampleRate / TARGET_SAMPLE_RATE;
-  if (ratio <= 1.0001 && ratio >= 0.9999) return mixed;
-  const outLen = Math.floor(mixed.length / ratio);
+  return resampleMonoLinear(mixed, buffer.sampleRate, TARGET_SAMPLE_RATE);
+}
+
+// Linear-interpolation mono resampler. Exported so the fMP4 streaming
+// chunker can reuse the same downsampling path as the progressive one.
+export function resampleMonoLinear(mono: Float32Array, srcRate: number, dstRate: number): Float32Array {
+  const ratio = srcRate / dstRate;
+  if (ratio <= 1.0001 && ratio >= 0.9999) return mono;
+  const outLen = Math.floor(mono.length / ratio);
   const out = new Float32Array(outLen);
   for (let i = 0; i < outLen; i += 1) {
     const srcIndex = i * ratio;
     const i0 = Math.floor(srcIndex);
-    const i1 = Math.min(i0 + 1, mixed.length - 1);
+    const i1 = Math.min(i0 + 1, mono.length - 1);
     const frac = srcIndex - i0;
-    out[i] = mixed[i0] * (1 - frac) + mixed[i1] * frac;
+    out[i] = mono[i0] * (1 - frac) + mono[i1] * frac;
   }
   return out;
 }
 
-function encodeWav(samples: Float32Array, sampleRate: number): Blob {
+// Encode a mono Float32 PCM buffer as a standard 16-bit WAV blob.
+export function encodeMonoPcmToWav(samples: Float32Array, sampleRate: number): Blob {
   const bytesPerSample = 2;
   const dataBytes = samples.length * bytesPerSample;
   const buffer = new ArrayBuffer(44 + dataBytes);
@@ -88,6 +95,10 @@ function encodeWav(samples: Float32Array, sampleRate: number): Blob {
   }
   return new Blob([buffer], { type: "audio/wav" });
 }
+
+// Backwards-compatible internal alias used below.
+const encodeWav = encodeMonoPcmToWav;
+
 
 export async function chunkAudioBlobToWavWindows(
   blob: Blob,

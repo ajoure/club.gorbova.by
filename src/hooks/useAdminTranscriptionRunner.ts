@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { chunkAudioBlobToWavWindows, type WavChunkPlan } from "@/lib/wavChunker";
+import { chunkAudioBlobToWavWindows, type WavChunk, type WavChunkPlan } from "@/lib/wavChunker";
+import {
+  preflightFmp4,
+  sniffAudioContainer,
+  streamFmp4ToWavWindows,
+  type Fmp4Preflight,
+} from "@/lib/fmp4AudioChunker";
 
 // Client-assisted transcription runner. Drives the whole pipeline against the
 // `transcription-client-worker` edge function and exposes progress + controls
 // (start, resume, retry failed, cancel). Uses beforeunload to warn the user
 // while a run is in flight and heartbeats every 20 s so the server can tell
 // active jobs from abandoned ones.
+
 
 export type RunnerPhase =
   | "idle"
@@ -70,10 +77,25 @@ const HEARTBEAT_MS = 20_000;
 
 type StartOptions = { retryFailedOnly?: boolean; resume?: boolean };
 
+type UnifiedPlan =
+  | {
+      mode: "progressive";
+      totalDurationMs: number;
+      totalParts: number;
+      chunks: WavChunk[];
+    }
+  | {
+      mode: "fmp4";
+      totalDurationMs: number;
+      totalParts: number;
+      blob: Blob;
+      preflight: Fmp4Preflight;
+    };
+
 export function useAdminTranscriptionRunner(liveEventId: string | null) {
   const [state, setState] = useState<RunnerState>(INITIAL);
   const abortRef = useRef<AbortController | null>(null);
-  const chunksRef = useRef<WavChunkPlan | null>(null);
+  const planRef = useRef<UnifiedPlan | null>(null);
   const runningRef = useRef(false);
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stateRef = useRef<RunnerState>(INITIAL);
@@ -86,6 +108,7 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
       return merged;
     });
   }, []);
+
 
   // beforeunload warning while a run is in flight.
   useEffect(() => {
@@ -186,13 +209,57 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
     return blob;
   }, [liveEventId, patch]);
 
-  const ensurePlan = useCallback(async (): Promise<WavChunkPlan> => {
-    if (chunksRef.current) return chunksRef.current;
+  const humanFriendlyError = useCallback((raw: unknown): string => {
+    const code = raw instanceof Error ? raw.message : String(raw);
+    switch (code) {
+      case "webcodecs_unavailable":
+        return "Этот браузер не поддерживает WebCodecs — фрагментированный аудиофайл Kinescope не может быть обработан здесь. Откройте админку в актуальном Chrome/Edge/Opera и запустите транскрибацию заново.";
+      case "audio_decoder_config_unsupported":
+        return "Аудиокодек этого фрагмента Kinescope не поддерживается WebCodecs в вашем браузере. Обновите Chrome/Edge или используйте другой браузер — повтор на этой же машине не поможет.";
+      case "fmp4_no_audio_track":
+        return "Это аудиофрагмент Kinescope, но аудио-дорожку прочитать не удалось. Проверьте исходный трек в Kinescope; повтор в этом браузере не изменит результат.";
+      case "fmp4_moov_not_found_in_preflight_window":
+        return "Аудиофайл выглядит как fragmented MP4, но заголовок moov не найден в начале файла. Файл повреждён или обрезан — повтор не поможет.";
+      case "cancelled_by_user":
+        return "Отменено по запросу.";
+      default:
+        if (code.startsWith("audio_fetch_")) return `Не удалось скачать аудио: HTTP ${code.replace("audio_fetch_", "")}.`;
+        return `Не удалось декодировать сохранённый аудиофайл: ${code}. Скорее всего, контейнер не поддерживается — повтор не поможет; обратитесь к разработчику.`;
+    }
+  }, []);
+
+  const ensurePlan = useCallback(async (): Promise<UnifiedPlan> => {
+    if (planRef.current) return planRef.current;
+    patch({ phase: "loading_audio", message: "Загружаем сохранённый аудиофайл для обработки…" });
     const audio = await downloadAudio();
-    patch({ phase: "chunking", message: "Готовлю аудио и делю на окна…" });
-    const plan = await chunkAudioBlobToWavWindows(audio, WINDOW_MS);
-    chunksRef.current = plan;
-    patch({ audioDurationMs: plan.totalDurationMs, totalParts: plan.chunks.length });
+    patch({ phase: "chunking", message: "Проверяем контейнер аудио…" });
+    const sniff = await sniffAudioContainer(audio);
+    if (sniff.container === "fmp4") {
+      // Preflight: prove we can actually decode this fMP4 before creating a
+      // server-side job. If WebCodecs or the codec config is unsupported, we
+      // abort here with a human message and do not touch the STT worker.
+      patch({ message: "Проверяем поддержку декодирования fMP4/AAC в этом браузере…" });
+      const pre = await preflightFmp4(audio);
+      if (!pre.webCodecsSupported) throw new Error("webcodecs_unavailable");
+      if (!pre.decoderConfigSupported) throw new Error("audio_decoder_config_unsupported");
+      const totalDurationMs = pre.totalDurationMs
+        ?? Math.round((audio.size / (128_000 / 8)) * 1000); // AAC ~128 kbps fallback estimate
+      const totalParts = Math.max(1, Math.ceil(totalDurationMs / WINDOW_MS));
+      const plan: UnifiedPlan = { mode: "fmp4", totalDurationMs, totalParts, blob: audio, preflight: pre };
+      planRef.current = plan;
+      patch({ audioDurationMs: totalDurationMs, totalParts });
+      return plan;
+    }
+    patch({ message: "Готовим прогрессивное аудио и делим на окна…" });
+    const progressive = await chunkAudioBlobToWavWindows(audio, WINDOW_MS);
+    const plan: UnifiedPlan = {
+      mode: "progressive",
+      totalDurationMs: progressive.totalDurationMs,
+      totalParts: progressive.chunks.length,
+      chunks: progressive.chunks,
+    };
+    planRef.current = plan;
+    patch({ audioDurationMs: plan.totalDurationMs, totalParts: plan.totalParts });
     return plan;
   }, [downloadAudio, patch]);
 
@@ -216,31 +283,22 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
     try {
       let job: any = null;
 
-      // Resume path: existing job on server (retryFailedOnly or resume after
-      // reload). Re-download + re-chunk deterministically if the in-memory
-      // plan is missing, then only send parts that are pending/failed.
       const existingSnap = state.jobId
         ? await loadStatus(state.jobId)
         : await loadStatus(null);
-      if (
-        (options.retryFailedOnly || options.resume) &&
+      const canReuse =
         existingSnap?.job &&
-        !["ready", "cancelled"].includes(existingSnap.job.status)
-      ) {
-        job = existingSnap.job;
-        hydrateFromStatus(existingSnap);
-        await ensurePlan();
-      } else if (
-        existingSnap?.job &&
-        !["ready", "failed", "cancelled"].includes(existingSnap.job.status)
-      ) {
-        // Active job on server that we didn't launch — resume it instead of
-        // creating a duplicate.
+        (options.retryFailedOnly || options.resume
+          ? !["ready", "cancelled"].includes(existingSnap.job.status)
+          : !["ready", "failed", "cancelled"].includes(existingSnap.job.status));
+      if (canReuse) {
         job = existingSnap.job;
         hydrateFromStatus(existingSnap);
         await ensurePlan();
       } else {
-        // Fresh run.
+        // Fresh run. Preflight the container first — for fMP4 we must not
+        // create a job or hand any audio to the STT pipeline unless the
+        // decoder pipeline actually initialises here in the browser.
         const plan = await ensurePlan();
         patch({ phase: "creating_job", message: "Создаю задачу транскрибации…" });
         const created = await invoke({
@@ -253,16 +311,20 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
         patch({ jobId: job.id, totalParts: job.total_parts });
 
         patch({ phase: "registering_parts", message: "Регистрирую окна…" });
-        await invoke({
-          action: "register_parts",
-          job_id: job.id,
-          parts: plan.chunks.map((c) => ({
-            part_index: c.partIndex,
-            start_ms: c.startMs,
-            end_ms: c.endMs,
-            bytes: c.blob.size,
-          })),
-        });
+        const parts = plan.mode === "progressive"
+          ? plan.chunks.map((c) => ({
+              part_index: c.partIndex,
+              start_ms: c.startMs,
+              end_ms: c.endMs,
+              bytes: c.blob.size,
+            }))
+          : Array.from({ length: plan.totalParts }, (_, i) => ({
+              part_index: i,
+              start_ms: i * WINDOW_MS,
+              end_ms: Math.min((i + 1) * WINDOW_MS, plan.totalDurationMs),
+              bytes: null,
+            }));
+        await invoke({ action: "register_parts", job_id: job.id, parts });
       }
 
       startHeartbeat(job.id);
@@ -276,20 +338,28 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
           { partIndex: p.part_index, status: p.status, attempts: p.attempts ?? 0, errorMessage: p.error_message },
         ]),
       );
-      const toSend = (chunksRef.current?.chunks || []).filter((c) => {
-        const existing = partsById.get(c.partIndex);
+      const shouldSend = (idx: number): boolean => {
+        const existing = partsById.get(idx);
         if (!existing) return true;
         if (existing.status === "ready") return false;
         if (options.retryFailedOnly) return existing.status === "failed";
         return true;
-      });
+      };
+
+      const plan = planRef.current!;
+      const remainingCount =
+        plan.mode === "progressive"
+          ? plan.chunks.filter((c) => shouldSend(c.partIndex)).length
+          : Array.from({ length: plan.totalParts }, (_, i) => i).filter(shouldSend).length;
 
       patch({
         phase: "transcribing",
-        message: `Транскрибирую ${toSend.length} окно(а). Не закрывайте вкладку — оценка 10–15 минут для эфира 60–90 минут.`,
+        message: `Транскрибирую ${remainingCount} окно(а). Не закрывайте вкладку — оценка 10–15 минут для эфира 60–90 минут.`,
       });
-      for (const chunk of toSend) {
+
+      const handleChunk = async (chunk: { partIndex: number; blob: Blob }) => {
         if (abortRef.current?.signal.aborted) throw new Error("cancelled_by_user");
+        if (!shouldSend(chunk.partIndex)) return;
         patch({ currentPartIndex: chunk.partIndex });
         try {
           await uploadPart(job.id, chunk);
@@ -299,7 +369,21 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
           const fresh = await loadStatus(job.id).catch(() => null);
           if (fresh) hydrateFromStatus(fresh);
         }
+      };
+
+      if (plan.mode === "progressive") {
+        for (const chunk of plan.chunks) await handleChunk(chunk);
+      } else {
+        // Streaming fMP4: emit each 90 s WAV, upload, then release its PCM
+        // buffer before decoding continues. Backpressure holds because
+        // streamFmp4ToWavWindows awaits our onPart callback.
+        await streamFmp4ToWavWindows(plan.blob, {
+          windowMs: WINDOW_MS,
+          signal: abortRef.current?.signal,
+          onPart: handleChunk,
+        });
       }
+
 
       const finalSnap = await loadStatus(job.id);
       hydrateFromStatus(finalSnap);
@@ -324,10 +408,10 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
         currentPartIndex: null,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const raw = error instanceof Error ? error.message : String(error);
       patch({
-        phase: message === "cancelled_by_user" ? "cancelled" : "failed",
-        errorMessage: message,
+        phase: raw === "cancelled_by_user" ? "cancelled" : "failed",
+        errorMessage: humanFriendlyError(error),
         currentPartIndex: null,
       });
     } finally {
@@ -345,7 +429,9 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
     uploadPart,
     startHeartbeat,
     stopHeartbeat,
+    humanFriendlyError,
   ]);
+
 
   const retryFailed = useCallback(() => start({ retryFailedOnly: true }), [start]);
   const resume = useCallback(() => start({ resume: true }), [start]);
@@ -365,7 +451,7 @@ export function useAdminTranscriptionRunner(liveEventId: string | null) {
   }, [state.jobId, loadStatus, hydrateFromStatus]);
 
   const reset = useCallback(() => {
-    chunksRef.current = null;
+    planRef.current = null;
     stopHeartbeat();
     setState(INITIAL);
     stateRef.current = INITIAL;
