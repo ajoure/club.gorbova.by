@@ -15,6 +15,9 @@ create table public.referral_program_settings (
     check (commission_percent_bps between 0 and 10000),
   customer_discount_percent_bps integer not null default 0
     check (customer_discount_percent_bps between 0 and 10000),
+  split_60_40_enabled boolean not null default false,
+  withdrawable_percent_bps integer not null default 6000
+    check (withdrawable_percent_bps between 0 and 10000),
   hold_days integer not null default 14 check (hold_days between 0 and 365),
   minimum_payout_minor bigint not null default 0 check (minimum_payout_minor >= 0),
   terms_version text,
@@ -190,7 +193,7 @@ create table public.referral_balance_entries (
   id uuid primary key default gen_random_uuid(),
   transaction_id uuid not null references public.referral_balance_transactions(id),
   partner_id uuid not null references public.referral_partners(id),
-  bucket text not null check (bucket in ('pending', 'available', 'held', 'paid')),
+  bucket text not null check (bucket in ('pending', 'internal_pending', 'available', 'internal', 'held', 'paid')),
   amount_minor bigint not null check (amount_minor <> 0),
   created_at timestamptz not null default now()
 );
@@ -480,6 +483,7 @@ declare
   v_relationship public.referral_relationships%rowtype; v_partner public.referral_partners%rowtype;
   v_payment_id uuid; v_paid_minor bigint; v_basis_minor bigint; v_commission_minor bigint;
   v_sale_id uuid; v_tx_id uuid; v_status text; v_available_at timestamptz; v_commission_bps integer;
+  v_cash_minor bigint; v_internal_minor bigint;
 begin
   select * into v_settings from public.referral_program_settings where singleton;
   if not coalesce(v_settings.is_enabled, false) or not coalesce(v_settings.accrual_enabled, false) then return null; end if;
@@ -522,7 +526,9 @@ begin
   ) values (
     v_partner.id, v_relationship.id, v_order.id, v_payment_id, v_order.product_id, v_order.tariff_id, v_order.offer_id,
     v_status, v_basis_minor, 'BYN', v_commission_bps, v_commission_minor, v_available_at,
-    jsonb_build_object('commission_percent_bps', v_commission_bps, 'hold_days', v_settings.hold_days, 'version', 2),
+    jsonb_build_object('commission_percent_bps', v_commission_bps, 'hold_days', v_settings.hold_days,
+      'split_60_40_enabled', v_settings.split_60_40_enabled,
+      'withdrawable_percent_bps', v_settings.withdrawable_percent_bps, 'version', 3),
     jsonb_build_object('order_id', v_order.id, 'paid_amount', v_order.paid_amount, 'currency', v_order.currency,
       'product_id', v_order.product_id, 'tariff_id', v_order.tariff_id, 'offer_id', v_order.offer_id)
   ) returning id into v_sale_id;
@@ -531,8 +537,18 @@ begin
     values (v_partner.id, 'commission_pending', 'referral:commission:' || v_sale_id, 'sale_attribution', v_sale_id,
       trim(trailing '0' from trim(trailing '.' from (v_commission_bps::numeric / 100)::text)) || '% за покупку приглашённого')
     returning id into v_tx_id;
-    insert into public.referral_balance_entries(transaction_id, partner_id, bucket, amount_minor)
-    values (v_tx_id, v_partner.id, 'pending', v_commission_minor);
+    v_cash_minor := case when v_settings.split_60_40_enabled
+      then round(v_commission_minor * v_settings.withdrawable_percent_bps::numeric / 10000)::bigint
+      else v_commission_minor end;
+    v_internal_minor := v_commission_minor - v_cash_minor;
+    if v_cash_minor > 0 then
+      insert into public.referral_balance_entries(transaction_id, partner_id, bucket, amount_minor)
+      values (v_tx_id, v_partner.id, 'pending', v_cash_minor);
+    end if;
+    if v_internal_minor > 0 then
+      insert into public.referral_balance_entries(transaction_id, partner_id, bucket, amount_minor)
+      values (v_tx_id, v_partner.id, 'internal_pending', v_internal_minor);
+    end if;
   end if;
   perform public.referral_emit_event('referral.commission.' || v_status, v_sale_id,
     jsonb_build_object('partner_id', v_partner.id, 'order_id', v_order.id, 'commission_minor', v_commission_minor, 'currency', 'BYN'));
@@ -614,6 +630,7 @@ grant execute on function public.referral_reconcile_orders(integer) to service_r
 create or replace function public.referral_mature_due_commissions(p_limit integer default 500)
 returns integer language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_sale public.referral_sale_attributions%rowtype; v_tx uuid; v_count integer := 0; v_remaining bigint;
+  v_cash bigint; v_internal bigint; v_withdrawable_bps integer; v_split boolean;
 begin
   if not (public.referral_is_admin(auth.uid()) or coalesce(auth.jwt()->>'role', '') = 'service_role') then raise exception 'forbidden'; end if;
   for v_sale in select * from public.referral_sale_attributions
@@ -626,8 +643,21 @@ begin
       values (v_sale.partner_id, 'commission_available', 'referral:mature:' || v_sale.id, 'sale_attribution', v_sale.id, 'Комиссия доступна к выплате')
       on conflict (idempotency_key) do nothing returning id into v_tx;
       if v_tx is not null then
-        insert into public.referral_balance_entries(transaction_id, partner_id, bucket, amount_minor)
-        values (v_tx, v_sale.partner_id, 'pending', -v_remaining), (v_tx, v_sale.partner_id, 'available', v_remaining);
+        v_split := coalesce((v_sale.rule_snapshot->>'split_60_40_enabled')::boolean, false);
+        v_withdrawable_bps := coalesce((v_sale.rule_snapshot->>'withdrawable_percent_bps')::integer, 10000);
+        v_cash := case when v_split then
+            round(v_sale.commission_minor * v_withdrawable_bps::numeric / 10000)::bigint
+            - round(v_sale.reversed_minor * v_withdrawable_bps::numeric / 10000)::bigint
+          else v_remaining end;
+        v_internal := v_remaining - v_cash;
+        if v_cash > 0 then
+          insert into public.referral_balance_entries(transaction_id, partner_id, bucket, amount_minor)
+          values (v_tx, v_sale.partner_id, 'pending', -v_cash), (v_tx, v_sale.partner_id, 'available', v_cash);
+        end if;
+        if v_internal > 0 then
+          insert into public.referral_balance_entries(transaction_id, partner_id, bucket, amount_minor)
+          values (v_tx, v_sale.partner_id, 'internal_pending', -v_internal), (v_tx, v_sale.partner_id, 'internal', v_internal);
+        end if;
       end if;
     end if;
     update public.referral_sale_attributions set status = case when v_remaining > 0 then 'available' else 'reversed' end, updated_at = now() where id = v_sale.id;
@@ -646,7 +676,8 @@ create or replace function public.referral_process_refund(p_order_id uuid)
 returns bigint language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_sale public.referral_sale_attributions%rowtype; v_refunded_minor bigint; v_target bigint; v_delta bigint;
-  v_tx uuid; v_bucket text;
+  v_tx uuid; v_cash_bucket text; v_internal_bucket text; v_cash_delta bigint; v_internal_delta bigint;
+  v_split boolean; v_withdrawable_bps integer; v_matured boolean;
 begin
   select * into v_sale from public.referral_sale_attributions where order_id = p_order_id for update;
   if v_sale.id is null or v_sale.status in ('shadow', 'declined') then return 0; end if;
@@ -661,14 +692,29 @@ begin
     floor(v_sale.commission_minor::numeric * least(v_refunded_minor, v_sale.commission_basis_minor) / v_sale.commission_basis_minor)::bigint);
   v_delta := greatest(v_target - v_sale.reversed_minor, 0);
   if v_delta = 0 then return 0; end if;
-  select case when coalesce(sum(amount_minor) filter (where bucket = 'pending'), 0) > 0 then 'pending' else 'available' end
-    into v_bucket from public.referral_balance_entries where partner_id = v_sale.partner_id;
+  v_split := coalesce((v_sale.rule_snapshot->>'split_60_40_enabled')::boolean, false);
+  v_withdrawable_bps := coalesce((v_sale.rule_snapshot->>'withdrawable_percent_bps')::integer, 10000);
+  v_cash_delta := case when v_split then
+      round(v_target * v_withdrawable_bps::numeric / 10000)::bigint
+      - round(v_sale.reversed_minor * v_withdrawable_bps::numeric / 10000)::bigint
+    else v_delta end;
+  v_internal_delta := v_delta - v_cash_delta;
+  select exists (select 1 from public.referral_balance_transactions
+    where idempotency_key = 'referral:mature:' || v_sale.id) into v_matured;
+  v_cash_bucket := case when v_matured then 'available' else 'pending' end;
+  v_internal_bucket := case when v_matured then 'internal' else 'internal_pending' end;
   insert into public.referral_balance_transactions(partner_id, transaction_type, idempotency_key, source_type, source_id, description, metadata)
   values (v_sale.partner_id, 'refund_reversal', 'referral:refund:' || v_sale.id || ':' || v_target,
     'sale_attribution', v_sale.id, 'Корректировка комиссии после возврата', jsonb_build_object('refunded_minor', v_refunded_minor))
   returning id into v_tx;
-  insert into public.referral_balance_entries(transaction_id, partner_id, bucket, amount_minor)
-  values (v_tx, v_sale.partner_id, v_bucket, -v_delta);
+  if v_cash_delta > 0 then
+    insert into public.referral_balance_entries(transaction_id, partner_id, bucket, amount_minor)
+    values (v_tx, v_sale.partner_id, v_cash_bucket, -v_cash_delta);
+  end if;
+  if v_internal_delta > 0 then
+    insert into public.referral_balance_entries(transaction_id, partner_id, bucket, amount_minor)
+    values (v_tx, v_sale.partner_id, v_internal_bucket, -v_internal_delta);
+  end if;
   update public.referral_sale_attributions set reversed_minor = v_target,
     status = case when v_target >= commission_minor then 'reversed' else 'partially_reversed' end,
     updated_at = now() where id = v_sale.id;
@@ -726,11 +772,15 @@ begin
     'terms', (select jsonb_build_object(
       'default_commission_percent_bps', commission_percent_bps,
       'default_customer_discount_percent_bps', customer_discount_percent_bps,
+      'split_60_40_enabled', split_60_40_enabled,
+      'withdrawable_percent_bps', withdrawable_percent_bps,
       'terms_url', terms_url
     ) from public.referral_program_settings where singleton),
     'balances', (select jsonb_build_object(
       'pending_minor', coalesce(sum(amount_minor) filter (where bucket = 'pending'), 0),
+      'internal_pending_minor', coalesce(sum(amount_minor) filter (where bucket = 'internal_pending'), 0),
       'available_minor', coalesce(sum(amount_minor) filter (where bucket = 'available'), 0),
+      'internal_minor', coalesce(sum(amount_minor) filter (where bucket = 'internal'), 0),
       'held_minor', coalesce(sum(amount_minor) filter (where bucket = 'held'), 0),
       'paid_minor', coalesce(sum(amount_minor) filter (where bucket = 'paid'), 0),
       'currency', 'BYN') from public.referral_balance_entries where partner_id = v_partner.id),

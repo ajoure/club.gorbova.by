@@ -29,6 +29,7 @@ begin
     select 1 from public.referral_program_settings
     where singleton and base_currency = 'BYN' and commission_percent_bps = 1000
       and customer_discount_percent_bps = 0
+      and not split_60_40_enabled and withdrawable_percent_bps = 6000
       and not is_enabled and not tracking_enabled and not accrual_enabled
       and not partner_portal_enabled and shadow_mode
   ) then raise exception 'unsafe or incorrect default settings'; end if;

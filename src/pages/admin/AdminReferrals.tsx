@@ -68,9 +68,11 @@ export default function AdminReferrals() {
       <Setting label="Кабинет партнёра" checked={data.settings.partner_portal_enabled} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ partner_portal_enabled: value })} />
       <Setting label="Реальные начисления" checked={data.settings.accrual_enabled && !data.settings.shadow_mode} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ accrual_enabled: value, shadow_mode: !value })} />
       <Setting label="Заявки на выплату" checked={data.settings.payout_requests_enabled} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ payout_requests_enabled: value })} />
+      <Setting label="Разделение 60/40" checked={data.settings.split_60_40_enabled} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ split_60_40_enabled: value, withdrawable_percent_bps: 6000 })} />
       <PercentageSetting label="Вознаграждение партнёру по умолчанию" valueBps={data.settings.commission_percent_bps} disabled={!canConfigure} onSave={(value) => updateSettings.mutate({ commission_percent_bps: value })} />
       <PercentageSetting label="Скидка приглашённому по умолчанию" valueBps={data.settings.customer_discount_percent_bps} disabled={!canConfigure} onSave={(value) => updateSettings.mutate({ customer_discount_percent_bps: value })} />
       {!canConfigure && <p className="sm:col-span-2 text-xs text-muted-foreground">Общие настройки может изменять только суперадминистратор.</p>}
+      <p className="sm:col-span-2 text-xs text-muted-foreground">При включении 60% новых начислений доступны к выводу после периода ожидания, 40% учитываются как внутренний бонус. Старые начисления не пересчитываются.</p>
       <p className="sm:col-span-2 text-xs text-muted-foreground">Включайте реальные начисления только после shadow-проверки в Lovable Cloud. Миграция первоначально оставляет все переключатели выключенными.</p>
     </CardContent></Card>
     <Card><CardHeader><CardTitle>Правила по продуктам</CardTitle></CardHeader><CardContent className="space-y-2">

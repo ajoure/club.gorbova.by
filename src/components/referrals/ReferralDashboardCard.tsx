@@ -11,9 +11,9 @@ import { buildReferralLink, formatBynMinor, readCapturedReferral, REFERRAL_STORA
 
 type DashboardData = {
   partner: null | { id: string; public_id: string; partner_code: string; status: string };
-  balances?: { pending_minor: number; available_minor: number; held_minor: number; paid_minor: number; currency: "BYN" };
+  balances?: { pending_minor: number; internal_pending_minor: number; available_minor: number; internal_minor: number; held_minor: number; paid_minor: number; currency: "BYN" };
   payouts?: { enabled: boolean; minimum_payout_minor: number };
-  terms?: { default_commission_percent_bps: number; default_customer_discount_percent_bps: number; terms_url?: string | null };
+  terms?: { default_commission_percent_bps: number; default_customer_discount_percent_bps: number; split_60_40_enabled?: boolean; withdrawable_percent_bps?: number; terms_url?: string | null };
   referrals?: Array<{ relationship_id: string; display_name: string; attached_at: string; sales_count: number; commission_minor: number }>;
   sales?: Array<{ id: string; public_id: string; created_at: string; status: string; basis_minor: number; commission_minor: number; reversed_minor: number; product_name: string }>;
 };
@@ -81,7 +81,7 @@ export function ReferralDashboardCard() {
 
   const data = dashboardQuery.data;
   const link = buildReferralLink(data.partner.partner_code);
-  const balances = data.balances ?? { pending_minor: 0, available_minor: 0, held_minor: 0, paid_minor: 0, currency: "BYN" as const };
+  const balances = data.balances ?? { pending_minor: 0, internal_pending_minor: 0, available_minor: 0, internal_minor: 0, held_minor: 0, paid_minor: 0, currency: "BYN" as const };
   const commissionPercent = Number(data.terms?.default_commission_percent_bps ?? 0) / 100;
   const discountPercent = Number(data.terms?.default_customer_discount_percent_bps ?? 0) / 100;
 
@@ -97,6 +97,7 @@ export function ReferralDashboardCard() {
         <p className="text-sm text-muted-foreground">
           Получайте до {commissionPercent}% от отдельных покупок приглашённых. По вашей ссылке приглашённый может получить скидку до {discountPercent}%. Точные условия зависят от продукта, автопродления не учитываются.
         </p>
+        {data.terms?.split_60_40_enabled && <p className="text-xs text-muted-foreground">Сейчас действует правило 60/40: 60% вознаграждения можно вывести, 40% зачисляется как внутренний бонус.</p>}
       </CardHeader>
       <CardContent className="pt-5 space-y-5">
         <div className="flex flex-col sm:flex-row gap-2">
@@ -104,9 +105,10 @@ export function ReferralDashboardCard() {
           <Button onClick={copyLink} className="gap-2"><Copy className="h-4 w-4" /> Копировать</Button>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           <Balance label="Ожидает" value={formatBynMinor(balances.pending_minor)} />
           <Balance label="К выплате" value={formatBynMinor(balances.available_minor)} />
+          <Balance label="Внутренний бонус" value={formatBynMinor(balances.internal_minor)} />
           <Balance label="Зарезервировано" value={formatBynMinor(balances.held_minor)} />
           <Balance label="Выплачено" value={formatBynMinor(balances.paid_minor)} />
         </div>
