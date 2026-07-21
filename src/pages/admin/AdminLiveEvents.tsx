@@ -1623,10 +1623,26 @@ export default function AdminLiveEvents() {
                     Используется правилами с включённым флагом «Совпадение месяца покупки».
                   </p>
                 </div>
+                {editingId && !accessRulesLoadedForEditing && (
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Правила доступа загружаются…
+                  </p>
+                )}
                 <LiveEventAccessRulesEditor
                   rules={form.access_rules}
-                  onChange={(rules) => setForm({ ...form, access_rules: rules })}
+                  onChange={(rules) => {
+                    // FORENSIC PATCH: mark Access section as intentionally
+                    // edited. Only then will saveMutation delete+reinsert
+                    // live_event_access_rules.
+                    accessRulesDirtyRef.current = true;
+                    setForm({ ...form, access_rules: rules });
+                  }}
                 />
+                {editingId && existingRulesFetching && (
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    Синхронизация правил доступа с сервером…
+                  </p>
+                )}
               </FormSection>
 
               <Separator />
