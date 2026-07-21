@@ -1644,8 +1644,8 @@ export default function AdminDeals() {
           onBulkDelete={() => setShowDeleteDialog(true)}
           onBulkEdit={() => setShowBulkEditDialog(true)}
           onBulkExtendAccess={() => setShowBulkExtendDialog(true)}
-          onBulkCreateDeals={isAdmin() ? () => setShowBulkCreateDeals(true) : undefined}
-          onBulkMove={(isAdmin() || isSuperAdmin()) ? () => {
+          onBulkCreateDeals={canEdit ? () => setShowBulkCreateDeals(true) : undefined}
+          onBulkMove={canEdit ? () => {
             setMoveTargetPipelineId(activePipelineId ?? "");
             setMoveTargetStageId("");
             setShowBulkMoveDialog(true);
