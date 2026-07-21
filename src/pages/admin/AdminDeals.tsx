@@ -1690,6 +1690,69 @@ export default function AdminDeals() {
         }}
       />
 
+      {/* Bulk Move Deals Dialog */}
+      <AlertDialog open={showBulkMoveDialog} onOpenChange={(open) => { if (!open && !isBulkMoving) setShowBulkMoveDialog(false); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Переместить {selectedCount} сделок?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-1.5">
+                <p>Выберите целевую воронку и стадию. Связанные контакты, компании, платежи, задачи и лента сохранятся.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Воронка</Label>
+              <Select value={moveTargetPipelineId} onValueChange={(v) => { setMoveTargetPipelineId(v); setMoveTargetStageId(""); }}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Выберите воронку" /></SelectTrigger>
+                <SelectContent>
+                  {pipelines.map((p: any) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Стадия</Label>
+              <Select value={moveTargetStageId} onValueChange={setMoveTargetStageId} disabled={!moveTargetPipelineId || moveTargetStages.length === 0}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Выберите стадию" /></SelectTrigger>
+                <SelectContent>
+                  {moveTargetStages.map((s: any) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isBulkMoving}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isBulkMoving || !moveTargetPipelineId || !moveTargetStageId}
+              onClick={async (e) => {
+                e.preventDefault();
+                const ids = Array.from(selectedDealIds);
+                if (ids.length === 0 || !moveTargetPipelineId || !moveTargetStageId) return;
+                setIsBulkMoving(true);
+                try {
+                  const res = await bulkMoveDealsToPipeline(ids, moveTargetPipelineId, moveTargetStageId);
+                  toast.success(`Перемещено сделок: ${res?.affected ?? ids.length}`);
+                  setShowBulkMoveDialog(false);
+                  clearSelection();
+                  queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+                  queryClient.invalidateQueries({ queryKey: ["admin-deals-tab-counts"] });
+                  queryClient.invalidateQueries({ queryKey: ["deals-board"] });
+                  queryClient.invalidateQueries({ queryKey: ["pipeline-deal-counts"] });
+                } catch (err: any) {
+                  toast.error(err?.message ?? "Не удалось переместить сделки");
+                } finally {
+                  setIsBulkMoving(false);
+                }
+              }}
+            >
+              {isBulkMoving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Переместить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
