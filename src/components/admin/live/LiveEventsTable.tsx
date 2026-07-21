@@ -91,7 +91,16 @@ interface Props {
   onSelectionChange?: (selectedIds: Set<string>) => void;
   /** Reset selection signal (filters changed). Resetting also runs on rowset signature change. */
   selectionResetKey?: string;
+  /**
+   * ACCESS-RULE GUARD: Set из event.id, у которых есть >=1 access rule.
+   * Undefined = данные ещё загружаются (guard временно не применяется).
+   * Строки без правил визуально помечаются, кнопки lifecycle блокируются.
+   */
+  eventsWithAccessRule?: Set<string>;
+  /** Открыть карточку эфира сразу на вкладке «Доступ» (CTA из guard-предупреждения). */
+  onEditAccess?: (event: LiveEventRow) => void;
 }
+
 
 const platformStatusLabels: Record<string, string> = {
   draft: "Черновик",
