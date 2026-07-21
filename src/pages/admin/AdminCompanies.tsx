@@ -480,6 +480,8 @@ export default function AdminCompanies() {
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [sheetImportOpen, setSheetImportOpen] = useState(false);
+  const [archiveReasonOpen, setArchiveReasonOpen] = useState(false);
+  const [archiveReason, setArchiveReason] = useState("");
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
   const [editCompany, setEditCompany] = useState<CompanyListItem | null>(null);
@@ -642,15 +644,17 @@ export default function AdminCompanies() {
   } = useDragSelect({ items, getItemId: (company) => company.id });
 
   const archiveCompanies = useMutation({
-    mutationFn: async (ids: string[]) => {
+    mutationFn: async ({ ids, reason }: { ids: string[]; reason: string }) => {
       for (const id of ids) {
-        const { error } = await supabase.rpc("crm_company_archive", { _id: id, _reason: "Архивирование из списка компаний" });
+        const { error } = await supabase.rpc("crm_company_archive", { _id: id, _reason: reason });
         if (error) throw error;
       }
       return ids.length;
     },
     onSuccess: (count) => {
       toast.success(`Архивировано компаний: ${count}`);
+      setArchiveReason("");
+      setArchiveReasonOpen(false);
       clearSelection();
       queryClient.invalidateQueries({ queryKey: ["admin-companies"] });
     },
@@ -1088,7 +1092,29 @@ export default function AdminCompanies() {
         }}
       />
       {isDragging && selectionBox && <SelectionBox startX={selectionBox.startX} startY={selectionBox.startY} endX={selectionBox.endX} endY={selectionBox.endY} />}
-      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canCreate && selectedCount >= 2 ? () => { setMergeTargetId(Array.from(selectedCompanyIds)[0] ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "active") ? () => archiveCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "active").map((company) => company.id)) : undefined} onBulkRestore={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "archived") ? () => restoreCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "archived").map((company) => company.id)) : undefined} onBulkEdit={canCreate && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
+      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canCreate && selectedCount >= 2 ? () => { setMergeTargetId(Array.from(selectedCompanyIds)[0] ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "active") ? () => setArchiveReasonOpen(true) : undefined} onBulkRestore={canCreate && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "archived") ? () => restoreCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "archived").map((company) => company.id)) : undefined} onBulkEdit={canCreate && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
+      <Dialog open={archiveReasonOpen} onOpenChange={setArchiveReasonOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Архивировать компании</DialogTitle>
+            <DialogDescription>Укажите причину. Она будет сохранена в аудите для всех выбранных активных компаний.</DialogDescription>
+          </DialogHeader>
+          <Input value={archiveReason} onChange={(event) => setArchiveReason(event.target.value)} placeholder="Например: компания закрыта" autoFocus />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setArchiveReasonOpen(false)}>Отмена</Button>
+            <Button
+              disabled={!archiveReason.trim() || archiveCompanies.isPending}
+              onClick={() => archiveCompanies.mutate({
+                ids: items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "active").map((company) => company.id),
+                reason: archiveReason.trim(),
+              })}
+            >
+              {archiveCompanies.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Архивировать
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={mergeOpen} onOpenChange={setMergeOpen}>
         <DialogContent>
           <DialogHeader>
