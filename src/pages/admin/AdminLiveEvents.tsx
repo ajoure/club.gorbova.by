@@ -1056,6 +1056,10 @@ export default function AdminLiveEvents() {
   }, [existingRules, existingRulesLoaded, editingId]);
 
   const handleCreate = () => {
+    // FORENSIC PATCH: creating a fresh event — no rules exist yet.
+    // Any rule the user picks in the Access section IS a deliberate change.
+    accessRulesHydratedForRef.current = null;
+    accessRulesDirtyRef.current = true;
     setEditingId(null);
     setForm(defaultForm);
     setSlugManuallyEdited(false);
