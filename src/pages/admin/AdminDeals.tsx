@@ -1645,6 +1645,11 @@ export default function AdminDeals() {
           onBulkEdit={() => setShowBulkEditDialog(true)}
           onBulkExtendAccess={() => setShowBulkExtendDialog(true)}
           onBulkCreateDeals={isAdmin() ? () => setShowBulkCreateDeals(true) : undefined}
+          onBulkMove={(isAdmin() || isSuperAdmin()) ? () => {
+            setMoveTargetPipelineId(activePipelineId ?? "");
+            setMoveTargetStageId("");
+            setShowBulkMoveDialog(true);
+          } : undefined}
           totalCount={visibleDeals.length}
           entityName="сделок"
           onSelectAll={selectAll}
