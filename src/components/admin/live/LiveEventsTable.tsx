@@ -259,13 +259,30 @@ export function LiveEventsTable({
             />
           </TableCell>
         );
-      case "title":
+      case "title": {
+        const missingRule = !hasRule(event.id);
         return (
           <TableCell key={col.key} style={{ width: col.width }} className="font-medium">
             <div className="truncate" title={event.title}>{event.title}</div>
             <div className="text-xs text-muted-foreground truncate" title={event.slug}>{event.slug}</div>
+            {missingRule && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEditAccess?.(event);
+                }}
+                className="mt-1 inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive hover:bg-destructive/15 transition-colors"
+                title="Без правила доступа non-admin получают access_denied. Настройте правило перед открытием комнаты."
+              >
+                <ShieldAlert className="h-3 w-3" />
+                Нет правила доступа
+              </button>
+            )}
           </TableCell>
         );
+      }
+
       case "type":
         return (
           <TableCell key={col.key} style={{ width: col.width }}>
