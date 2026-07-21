@@ -62,6 +62,15 @@ interface Props {
   layout?: "admin" | "room" | "room-mobile";
   invalidateKeys?: string[][];
   onSuccess?: () => void;
+  /**
+   * ACCESS-RULE GUARD (только admin layout).
+   * Если явно передан `false`, кнопки «Открыть комнату» и «Начать вебинар»
+   * блокируются, показывается предупреждение и (опционально) CTA
+   * `onRequestAccessSetup` для перехода к настройке доступа.
+   * Undefined = guard не применяется (обратная совместимость для in-room layouts).
+   */
+  hasAccessRule?: boolean;
+  onRequestAccessSetup?: () => void;
 }
 
 export function RoomLifecycleActions({
@@ -70,7 +79,10 @@ export function RoomLifecycleActions({
   layout = "admin",
   invalidateKeys = [["admin-live-events"]],
   onSuccess,
+  hasAccessRule,
+  onRequestAccessSetup,
 }: Props) {
+
   const qc = useQueryClient();
   const [pending, setPending] = useState<LifecycleAction | null>(null);
   const badge = getRoomStateBadgeVM(roomState);
