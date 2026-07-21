@@ -321,6 +321,36 @@ export async function bulkAssignDealsToStage(
   return { affected };
 }
 
+export interface BulkMoveDealsResult {
+  affected: number;
+  requested: number;
+  pipeline_id: string;
+  stage_id: string;
+}
+
+/**
+ * Server-validated bulk move across pipelines. The RPC checks permissions and
+ * that the target stage belongs to the selected pipeline, then writes one
+ * audited transaction so a partial browser-side loop cannot split the batch.
+ */
+export async function bulkMoveDealsToPipeline(
+  dealIds: string[],
+  pipelineId: string,
+  stageId: string,
+): Promise<BulkMoveDealsResult> {
+  if (dealIds.length === 0) {
+    return { affected: 0, requested: 0, pipeline_id: pipelineId, stage_id: stageId };
+  }
+  const { data, error } = await (supabase as any).rpc("crm_bulk_move_deals", {
+    _deal_ids: dealIds,
+    _pipeline_id: pipelineId,
+    _stage_id: stageId,
+    _request_id: crypto.randomUUID(),
+  });
+  if (error) throw error;
+  return data as BulkMoveDealsResult;
+}
+
 // ─── Audit helper ───
 async function writeAudit(action: string, meta: Record<string, unknown>) {
   try {

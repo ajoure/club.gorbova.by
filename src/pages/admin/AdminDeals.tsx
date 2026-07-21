@@ -98,6 +98,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { usePipelines } from "@/hooks/usePipelines";
 import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { DealsKanbanBoard } from "@/components/admin/deals/DealsKanbanBoard";
+import { BulkCreateDealsDialog } from "@/components/admin/deals/BulkCreateDealsDialog";
 import { PipelineManagementPopover } from "@/components/admin/deals/PipelineManagementPopover";
 import { DealsFiltersBar } from "@/components/admin/deals/DealsFiltersBar";
 import { useDealsFilters, type DealsExtraFilters } from "@/hooks/useDealsFilters";
@@ -172,7 +173,6 @@ function buildDealsQuery(
   dateFilter: DateFilter,
   tariffIds?: string[],
   pipelineId?: string | null,
-  isDefaultPipeline?: boolean,
   extraFilters?: DealsExtraFilters,
 ) {
   // Lightweight select: only columns used in the table row.
@@ -196,6 +196,7 @@ function buildDealsQuery(
       product_id,
       tariff_id,
       pipeline_id,
+      company_id,
       user_id,
       profile_id,
       reconcile_source,
@@ -250,13 +251,7 @@ function buildDealsQuery(
   }
 
   // Pipeline filter
-  if (pipelineId) {
-    if (isDefaultPipeline) {
-      query = query.or(`pipeline_id.eq.${pipelineId},pipeline_id.is.null`);
-    } else {
-      query = query.eq("pipeline_id", pipelineId);
-    }
-  }
+  if (pipelineId) query = query.eq("pipeline_id", pipelineId);
 
   // Apply canonical extra filters (status, created range, price, stage,
   // exact contact, advanced source/provider/recon, synthetic exclusion)
@@ -269,7 +264,7 @@ function buildDealsQuery(
 
 export default function AdminDeals() {
   const navigate = useNavigate();
-  const { canWrite, isSuperAdmin } = usePermissions();
+  const { canWrite, isAdmin, isSuperAdmin } = usePermissions();
   const canEdit = canWrite("deals") || isSuperAdmin();
 
   const [search, setSearch] = useState("");
@@ -281,6 +276,7 @@ export default function AdminDeals() {
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
   const [showCreateDealDialog, setShowCreateDealDialog] = useState(false);
+  const [showBulkCreateDeals, setShowBulkCreateDeals] = useState(false);
 
   // View mode & filters from URL
   const [searchParams, setSearchParams] = useSearchParams();
@@ -445,6 +441,7 @@ export default function AdminDeals() {
       product_id: r.product_id,
       tariff_id: r.tariff_id,
       pipeline_id: r.pipeline_id,
+      company_id: r.company_id ?? null,
       user_id: r.user_id,
       profile_id: r.profile_id,
       reconcile_source: r.reconcile_source,
@@ -493,11 +490,7 @@ export default function AdminDeals() {
           : rows;
         // Client-side pipeline filter for RPC results (RPC doesn't support pipeline param)
         if (activePipelineId) {
-          const isDefault = activePipeline?.is_default;
-          filtered = filtered.filter((r: any) => {
-            if (isDefault) return r.pipeline_id === activePipelineId || !r.pipeline_id;
-            return r.pipeline_id === activePipelineId;
-          });
+          filtered = filtered.filter((r: any) => r.pipeline_id === activePipelineId);
         }
         // Client-side extra filters for RPC results (mirror server-side semantics)
         if (extraFilters.statuses.length > 0) {
@@ -534,7 +527,7 @@ export default function AdminDeals() {
       }
 
       // Default mode → lightweight PostgREST query (no name search needed)
-      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds, activePipelineId, activePipeline?.is_default, extraFilters);
+      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds, activePipelineId, extraFilters);
       const { data, error, count } = await query
         .order("deal_date", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false })
@@ -1227,7 +1220,6 @@ export default function AdminDeals() {
         <DealsKanbanBoard
           pipelineId={activePipelineId}
           pipelineName={activePipeline?.name}
-          isDefaultPipeline={activePipeline?.is_default}
           search={debouncedSearch}
           productId={selectedProductId}
           tariffIds={selectedTariffIds}
@@ -1643,11 +1635,21 @@ export default function AdminDeals() {
           onBulkDelete={() => setShowDeleteDialog(true)}
           onBulkEdit={() => setShowBulkEditDialog(true)}
           onBulkExtendAccess={() => setShowBulkExtendDialog(true)}
+          onBulkCreateDeals={isAdmin() ? () => setShowBulkCreateDeals(true) : undefined}
           totalCount={visibleDeals.length}
           entityName="сделок"
           onSelectAll={selectAll}
         />
       )}
+
+      <BulkCreateDealsDialog
+        open={showBulkCreateDeals}
+        onOpenChange={setShowBulkCreateDeals}
+        sourceType="deal"
+        sourceIds={Array.from(selectedDealIds)}
+        defaultPipelineId={activePipelineId}
+        onCreated={() => { clearSelection(); queryClient.invalidateQueries({ queryKey: ["admin-deals"] }); queryClient.invalidateQueries({ queryKey: ["deals-board"] }); }}
+      />
 
       {/* Bulk Edit Dialog */}
       <BulkEditDealsDialog

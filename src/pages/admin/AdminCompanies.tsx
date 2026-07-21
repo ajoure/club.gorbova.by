@@ -51,6 +51,7 @@ import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useLegalDetails, type ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { BulkCreateDealsDialog } from "@/components/admin/deals/BulkCreateDealsDialog";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
@@ -468,6 +469,7 @@ export default function AdminCompanies() {
   const [sheetImportOpen, setSheetImportOpen] = useState(false);
   const [archiveReasonOpen, setArchiveReasonOpen] = useState(false);
   const [archiveReason, setArchiveReason] = useState("");
+  const [bulkCreateDealsOpen, setBulkCreateDealsOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
   const [editCompany, setEditCompany] = useState<CompanyListItem | null>(null);
@@ -1044,7 +1046,8 @@ export default function AdminCompanies() {
         }}
       />
       {isDragging && selectionBox && <SelectionBox startX={selectionBox.startX} startY={selectionBox.startY} endX={selectionBox.endX} endY={selectionBox.endY} />}
-      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canManage && selectedCount >= 2 ? () => { setMergeTargetId(mergeEligibleCompanies[0]?.id ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canManage && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "active") ? () => setArchiveReasonOpen(true) : undefined} onBulkRestore={canManage && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "archived") ? () => restoreCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "archived").map((company) => company.id)) : undefined} onBulkEdit={canEdit && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
+      <BulkActionsBar selectedCount={selectedCount} onClearSelection={clearSelection} onBulkMerge={canManage && selectedCount >= 2 ? () => { setMergeTargetId(mergeEligibleCompanies[0]?.id ?? null); setMergeOpen(true); } : undefined} onBulkArchive={canManage && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "active") ? () => setArchiveReasonOpen(true) : undefined} onBulkRestore={canManage && items.some((company) => selectedCompanyIds.has(company.id) && company.status === "archived") ? () => restoreCompanies.mutate(items.filter((company) => selectedCompanyIds.has(company.id) && company.status === "archived").map((company) => company.id)) : undefined} onBulkEdit={canEdit && selectedCount === 1 ? () => setEditCompany(items.find((company) => selectedCompanyIds.has(company.id)) ?? null) : undefined} onBulkCreateDeals={access.isAdmin || access.isSuperAdmin ? () => setBulkCreateDealsOpen(true) : undefined} totalCount={items.length} entityName="компаний" onSelectAll={selectAll} />
+      <BulkCreateDealsDialog open={bulkCreateDealsOpen} onOpenChange={setBulkCreateDealsOpen} sourceType="company" sourceIds={Array.from(selectedCompanyIds)} onCreated={() => { clearSelection(); queryClient.invalidateQueries({ queryKey: ["admin-deals"] }); }} />
       <Dialog open={archiveReasonOpen} onOpenChange={setArchiveReasonOpen}>
         <DialogContent>
           <DialogHeader>

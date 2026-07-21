@@ -18,6 +18,7 @@ import {
   Video,
   CheckSquare,
   StickyNote,
+  Building2,
 } from "lucide-react";
 import type { BoardDeal } from "@/hooks/useDealsBoard";
 import type { DealTaskSummary } from "@/hooks/useDealTaskSummary";
@@ -229,6 +230,12 @@ export const KanbanDealCard = memo(function KanbanDealCard({
         {(deal.contact_name || deal.contact_email) && (
           <div className="mb-1 truncate text-[11px] text-muted-foreground">
             {deal.contact_name || deal.contact_email}
+          </div>
+        )}
+        {deal.company_name && (
+          <div className="mb-1 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+            <Building2 className="h-3 w-3 shrink-0" />
+            <span className="truncate">{deal.company_name}</span>
           </div>
         )}
 
