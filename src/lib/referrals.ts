@@ -1,4 +1,5 @@
 export const REFERRAL_STORAGE_KEY = "gorbova_referral_code";
+export const REFERRAL_PUBLIC_ORIGIN = "https://gorbova.by";
 
 export interface CapturedReferral {
   code: string;
@@ -34,8 +35,7 @@ export function formatBynMinor(amountMinor: number | string | null | undefined) 
 }
 
 export function buildReferralLink(partnerCode: string) {
-  if (typeof window === "undefined") return `/r/${encodeURIComponent(partnerCode)}`;
-  return `${window.location.origin}/r/${encodeURIComponent(partnerCode)}`;
+  return `${REFERRAL_PUBLIC_ORIGIN}/r/${encodeURIComponent(partnerCode.trim())}`;
 }
 
 export function referralStatusLabel(status: string) {

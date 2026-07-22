@@ -109,6 +109,7 @@ export default function Auth() {
 
   const [mode, setMode] = useState<AuthMode>(() => {
     if (isRecoveryFlow) return "update_password";
+    if (searchParams.get("mode") === "signup" || searchParams.has("ref")) return "signup";
     return "login";
   });
   // Set to true ONLY after supabase.auth.updateUser({ password }) succeeds.

@@ -10,7 +10,7 @@ export default function ReferralCapture() {
   useEffect(() => {
     const code = partnerCode?.trim();
     if (code) storeCapturedReferral(code);
-    navigate(`/auth${code ? `?ref=${encodeURIComponent(code)}` : ""}`, { replace: true });
+    navigate(`/auth?mode=signup${code ? `&ref=${encodeURIComponent(code)}` : ""}`, { replace: true });
   }, [navigate, partnerCode]);
 
   return (
