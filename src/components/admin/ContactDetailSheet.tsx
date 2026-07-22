@@ -789,12 +789,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
 
   // PATCH-7: Fetch provider-managed subscriptions for contact
   const { data: contactProviderSubscriptions } = useQuery({
-    queryKey: ["contact-provider-subscriptions", contact?.user_id],
+    queryKey: ["contact-provider-subscriptions", contact?.id, resolvedUserId, contact?.email],
     queryFn: async () => {
-      if (!contact?.user_id) return [];
-      const { data, error } = await supabase
-        .from("provider_subscriptions")
-        .select(`
+      if (!contact?.id) return [];
+      const select = `
           id, provider, state, provider_subscription_id,
           next_charge_at, amount_cents, currency, card_brand, card_last4, created_at, last_charge_at, interval_days,
           subscription_v2_id, meta,
@@ -803,15 +801,45 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
             products_v2 ( id, name ),
             tariffs ( id, name, product_id )
           )
-        `)
-        .eq("user_id", contact.user_id)
-        .in("state", ["active", "pending"])
+        `;
+      const identityFilters = [
+        contact.user_id ? `user_id.eq.${contact.user_id}` : null,
+        resolvedUserId ? `user_id.eq.${resolvedUserId}` : null,
+        `profile_id.eq.${contact.id}`,
+      ].filter(Boolean).join(',');
+
+      const linkedQuery = supabase
+        .from("provider_subscriptions")
+        .select(select)
+        .or(identityFilters)
+        .in("state", ["active", "trial", "pending", "past_due", "failed_attempt"])
         .order("created_at", { ascending: false });
-      
-      if (error) throw error;
-      return data;
+
+      // Discovery fallback for provider rows that were found by the bePaid list
+      // sync but have not yet been linked to a local user/profile. Exact email
+      // matching makes such a live external subscription visible and cancellable
+      // from the contact card without guessing by card last4.
+      const normalizedEmail = contact.email?.trim().toLowerCase();
+      const orphanQuery = normalizedEmail
+        ? supabase
+            .from("provider_subscriptions")
+            .select(select)
+            .eq("provider", "bepaid")
+            .is("user_id", null)
+            .ilike("raw_data->customer->>email", normalizedEmail)
+            .in("state", ["active", "trial", "pending", "past_due", "failed_attempt"])
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null });
+
+      const [linkedResult, orphanResult] = await Promise.all([linkedQuery, orphanQuery]);
+      if (linkedResult.error) throw linkedResult.error;
+      if (orphanResult.error) throw orphanResult.error;
+      return Array.from(new Map(
+        [...(linkedResult.data || []), ...(orphanResult.data || [])]
+          .map((row: any) => [row.provider_subscription_id, row]),
+      ).values());
     },
-    enabled: !!contact?.user_id,
+    enabled: !!contact?.id,
   });
 
   // PATCH-7: Admin cancel provider subscription mutation
@@ -872,6 +900,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         body: { subscription_id: providerSubId }
       });
       if (error) throw error;
+      if (data?.success === false || data?.ok === false || data?.error) {
+        throw new Error(data?.details || data?.error || 'bePaid не вернул данные подписки');
+      }
       return data;
     },
     onSuccess: () => {
