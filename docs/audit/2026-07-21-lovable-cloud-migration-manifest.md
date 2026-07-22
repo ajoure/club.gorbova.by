@@ -6,7 +6,7 @@
 | --- | --- |
 | Источник (без записи во время подготовки) | Lovable Cloud, ref `hdjgkjceownmmnrqqtuz` |
 | Целевой старый слепок | user-owned Supabase, ref `ypwsuumurrtkxatoyqhk` |
-| Кодовая база для переноса | GitHub `main`, commit `f17bc23242925ea0e8c87ac27351b28b414c998b` |
+| Кодовая база для переноса | GitHub `main`, commit `675c2bf97e0b13ea050921b0d555f5256b867c50` |
 
 Проекты `ajoure.by_SOURCE` и `ajoure.by_TARGET` находятся вне границ работ.
 
@@ -25,13 +25,10 @@
 1. Целевой старый проект не является готовой копией (на предыдущей проверке:
    27 совпавших миграций, 100 Edge Functions, около 10 Auth users и отсутствие
    buckets/custom secrets).
-2. В GitHub `main` есть повторяющиеся номера миграций. Пары конфликтов:
-   `20260720140000_autoweb_real_viewer_count.sql` /
-   `20260720140000_crm_company_external_ids.sql` и
-   `20260721120000_crm_bulk_deals_and_feed_context.sql` /
-   `20260721120000_crm_company_sync_health_metrics.sql`. Массовый
-   `supabase db push` запрещён, пока не будет создана воспроизводимая цепочка
-   миграций для нового target.
+2. Исторические коллизии номеров миграций устранены в актуальном GitHub
+   `main`: проверка имён файлов не показывает повторяющихся timestamp. Это
+   снимает прежний блокер, но не даёт права применять миграции к старому target
+   без отдельного dry-run и сверки его фактической схемы.
 3. CSV-экспорт не переносит пароли Auth, секреты Edge Functions, OAuth
    credentials, cron/vault configuration и storage files автоматически.
 
