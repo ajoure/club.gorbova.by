@@ -14907,6 +14907,93 @@ export type Database = {
           },
         ]
       }
+      referral_customer_credit_entries: {
+        Row: {
+          amount_minor: number
+          applied_order_id: string | null
+          checkout_key: string | null
+          created_at: string
+          entry_type: string
+          expires_at: string | null
+          id: string
+          metadata: Json
+          profile_id: string
+          reversal_of_entry_id: string | null
+          source_order_id: string | null
+          source_payment_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amount_minor: number
+          applied_order_id?: string | null
+          checkout_key?: string | null
+          created_at?: string
+          entry_type: string
+          expires_at?: string | null
+          id?: string
+          metadata?: Json
+          profile_id: string
+          reversal_of_entry_id?: string | null
+          source_order_id?: string | null
+          source_payment_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amount_minor?: number
+          applied_order_id?: string | null
+          checkout_key?: string | null
+          created_at?: string
+          entry_type?: string
+          expires_at?: string | null
+          id?: string
+          metadata?: Json
+          profile_id?: string
+          reversal_of_entry_id?: string | null
+          source_order_id?: string | null
+          source_payment_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_customer_credit_entries_applied_order_id_fkey"
+            columns: ["applied_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_customer_credit_entries_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_customer_credit_entries_reversal_of_entry_id_fkey"
+            columns: ["reversal_of_entry_id"]
+            isOneToOne: true
+            referencedRelation: "referral_customer_credit_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_customer_credit_entries_source_order_id_fkey"
+            columns: ["source_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_customer_credit_entries_source_payment_id_fkey"
+            columns: ["source_payment_id"]
+            isOneToOne: true
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       referral_partners: {
         Row: {
           created_at: string
@@ -22154,11 +22241,16 @@ export type Database = {
         Args: { p_amount_minor: number }
         Returns: string
       }
+      referral_customer_credit_available: {
+        Args: { p_profile_id: string }
+        Returns: number
+      }
       referral_emit_event: {
         Args: { p_entity_id: string; p_event_type: string; p_payload?: Json }
         Returns: string
       }
       referral_ensure_current_partner: { Args: never; Returns: Json }
+      referral_get_my_customer_credit: { Args: never; Returns: Json }
       referral_get_my_dashboard: { Args: never; Returns: Json }
       referral_is_admin: { Args: { p_user_id: string }; Returns: boolean }
       referral_mature_due_commissions: {
@@ -22168,6 +22260,15 @@ export type Database = {
       referral_process_order: { Args: { p_order_id: string }; Returns: string }
       referral_process_refund: { Args: { p_order_id: string }; Returns: number }
       referral_reconcile_orders: { Args: { p_limit?: number }; Returns: Json }
+      referral_reserve_customer_credit: {
+        Args: {
+          p_charge_amount_minor: number
+          p_checkout_key: string
+          p_requested_minor: number
+          p_user_id: string
+        }
+        Returns: Json
+      }
       release_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
       reorder_tariff_offers: {
         Args: { p_ordered_ids: string[]; p_tariff_id: string }
