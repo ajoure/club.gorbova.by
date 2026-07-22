@@ -118,11 +118,13 @@ Deno.serve(async (req) => {
 
     // POST — create checkout
     const body = await req.json();
-    const { url_token, email, replacement_of_subscription_v2_id, provider_choice } = body as {
+    const { url_token, email, replacement_of_subscription_v2_id, provider_choice, customer_credit_requested_minor, customer_credit_checkout_key } = body as {
       url_token?: string;
       email?: string;
       replacement_of_subscription_v2_id?: string;
       provider_choice?: 'bepaid' | 'stripe';
+      customer_credit_requested_minor?: number;
+      customer_credit_checkout_key?: string;
     };
 
     if (!url_token) {
@@ -409,6 +411,14 @@ Deno.serve(async (req) => {
       provider: effectiveProvider,
       account_code: effectiveAccountCode,
       currency: link.currency ?? (effectiveProvider === 'stripe' ? 'EUR' : 'BYN'),
+      customer_credit_requested_minor:
+        effectivePaymentType === 'one_time' || hasInstallment
+          ? Math.max(0, Math.round(Number(customer_credit_requested_minor ?? 0)))
+          : 0,
+      customer_credit_checkout_key:
+        typeof customer_credit_checkout_key === 'string' && customer_credit_checkout_key.length <= 200
+          ? customer_credit_checkout_key
+          : undefined,
     });
 
     if (!result.success) {

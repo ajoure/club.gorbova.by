@@ -287,6 +287,7 @@ Deno.serve(async (req) => {
 
     const referralQuote = await resolveReferralCheckoutDiscount({
       supabase, userId: userId!, productId, amountMinor: amountCents,
+      allowImmediateDiscount: false,
     });
     const baseAmountCents = amountCents;
     amountCents = referralQuote.finalAmountMinor;
@@ -430,6 +431,7 @@ Deno.serve(async (req) => {
         status: 'pending',
         deal_date: new Date().toISOString(),
         meta: {
+          payment_type: 'subscription',
           payment_flow: 'provider_managed_checkout',
           source: 'bepaid-create-subscription-checkout',
           expected_amount: amountMoney,

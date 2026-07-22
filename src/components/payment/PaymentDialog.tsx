@@ -233,6 +233,8 @@ export function PaymentDialog({
   const [conflictData, setConflictData] = useState<SubscriptionConflictInfo | null>(null);
   const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating'>('idle');
   const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
+  const [customerCreditMinor, setCustomerCreditMinor] = useState(0);
+  const [useCustomerCredit, setUseCustomerCredit] = useState(false);
   // Telegram link hooks
   const { data: telegramStatus, refetch: refetchTelegramStatus, isLoading: isTelegramStatusLoading } = useTelegramLinkStatus();
   const startTelegramLink = useStartTelegramLink();
@@ -277,6 +279,16 @@ export function PaymentDialog({
     }
   };
 
+  const loadCustomerCredit = async () => {
+    const { data, error } = await (supabase.rpc as any)('referral_get_my_customer_credit');
+    if (error) {
+      console.error('[PaymentDialog] loadCustomerCredit failed:', error);
+      setCustomerCreditMinor(0);
+      return;
+    }
+    setCustomerCreditMinor(Math.max(0, Number(data?.available_minor ?? 0)));
+  };
+
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
@@ -285,10 +297,13 @@ export function PaymentDialog({
         authInProgressRef.current = false;
         setExistingUserId(user.id);
         loadSavedCards(user.id);
+        loadCustomerCredit();
         return; // Skip full reset — keep formData, step, selectedOffer intact
       }
 
       setSavedCards([]);
+      setCustomerCreditMinor(0);
+      setUseCustomerCredit(false);
       setIsLoadingCard(false);
       setSelectedMethod('new_card');
       savedCardIdempotencyKeyRef.current = crypto.randomUUID();
@@ -319,6 +334,7 @@ export function PaymentDialog({
         
         // Check for saved payment method
         loadSavedCards(user.id);
+        loadCustomerCredit();
       } else {
         // User is not authenticated - start with email step
         setFormData({ email: "", firstName: "", lastName: "", phone: "+375", password: "" });
@@ -696,6 +712,7 @@ export function PaymentDialog({
           url_token: bridgeData.url_token,
           payment_method_id: paymentMethodId,
           idempotency_key,
+          customer_credit_requested_minor: useCustomerCredit ? customerCreditMinor : 0,
         }),
       });
       const data = await res.json();
@@ -883,6 +900,8 @@ export function PaymentDialog({
           isOneTime: isOneTimePayment,
           // PATCH-3: Signal MIT flow to avoid creating bePaid subscription
           useMitTokenization: shouldUseMitTokenization,
+          customerCreditRequestedMinor: useCustomerCredit ? customerCreditMinor : 0,
+          customerCreditCheckoutKey: savedCardIdempotencyKeyRef.current,
         },
       });
 
@@ -1495,6 +1514,26 @@ export function PaymentDialog({
                   Оплата сохранённой картой выполняется через защищённую сессию bePaid (может потребоваться 3-D Secure).
                 </p>
               </div>
+            )}
+
+            {customerCreditMinor > 0 && isOneTimeFlow && (
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-primary/5 p-3">
+                <Checkbox
+                  checked={useCustomerCredit}
+                  onCheckedChange={(checked) => setUseCustomerCredit(checked === true)}
+                  className="mt-0.5"
+                />
+                <span className="space-y-1">
+                  <span className="block text-sm font-medium">Использовать накопленную скидку</span>
+                  <span className="block text-xs text-muted-foreground">Доступно {(customerCreditMinor / 100).toFixed(2)} BYN</span>
+                </span>
+              </label>
+            )}
+
+            {customerCreditMinor > 0 && isSubscription && !isTrial && (
+              <p className="rounded-lg border border-amber-500/30 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-950/20 dark:text-amber-200">
+                Накопленная скидка не применяется к подписке с автоплатежом. Она доступна для разовых покупок и рассрочек.
+              </p>
             )}
 
             {/* PAY-I: сохранённые карты при subscription/trial — disabled, info-only */}

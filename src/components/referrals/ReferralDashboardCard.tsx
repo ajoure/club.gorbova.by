@@ -43,6 +43,16 @@ export function ReferralDashboardCard() {
     },
   });
 
+  const customerCreditQuery = useQuery({
+    queryKey: ['referral-customer-credit'],
+    enabled: partnerQuery.data?.enabled === true,
+    queryFn: async () => {
+      const { data, error } = await rpc('referral_get_my_customer_credit');
+      if (error) throw error;
+      return data as { available_minor: number; currency: 'BYN' };
+    },
+  });
+
   const attachMutation = useMutation({
     mutationFn: async ({ code, capturedAt }: { code: string; capturedAt: string }) => {
       const { data, error } = await rpc("referral_attach_current_profile", { p_partner_code: code, p_captured_at: capturedAt });
@@ -106,6 +116,7 @@ export function ReferralDashboardCard() {
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+          <Balance label="Накопленная скидка" value={formatBynMinor(Number(customerCreditQuery.data?.available_minor ?? 0))} />
           <Balance label="Ожидает" value={formatBynMinor(balances.pending_minor)} />
           <Balance label="К выплате" value={formatBynMinor(balances.available_minor)} />
           <Balance label="Внутренний бонус" value={formatBynMinor(balances.internal_minor)} />
