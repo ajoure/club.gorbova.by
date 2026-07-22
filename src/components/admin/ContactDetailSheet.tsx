@@ -895,7 +895,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
 
   // PATCH 7: Sync bePaid subscription mutation
   const syncBepaidSubMutation = useMutation({
-    mutationFn: async (providerSubId: string) => {
+    mutationFn: async ({ providerSubId }: { providerSubId: string; silent?: boolean }) => {
       const { data, error } = await supabase.functions.invoke('bepaid-get-subscription-details', {
         body: { subscription_id: providerSubId }
       });
@@ -905,13 +905,22 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       }
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact?.user_id] });
       queryClient.invalidateQueries({ queryKey: ['contact-payments', contact?.id] });
       queryClient.invalidateQueries({ queryKey: ['contact-deals'] });
-      toast.success('Подписка синхронизирована');
+      if (!variables.silent) toast.success('Подписка синхронизирована');
     },
-    onError: (error: Error) => {
+    onError: (error: Error, variables) => {
+      // Opening a contact must not show an action error for a best-effort
+      // background refresh. Manual sync remains explicit and visible.
+      if (variables.silent) {
+        console.warn('[contact-provider-subscriptions] background sync failed', {
+          provider_subscription_id: variables.providerSubId,
+          error: error.message,
+        });
+        return;
+      }
       toast.error('Ошибка синхронизации: ' + error.message);
     },
   });
@@ -938,6 +947,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
   const autoSyncedIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
+    autoSyncCountRef.current = 0;
+    autoSyncedIdsRef.current.clear();
+  }, [contact?.id]);
+
+  useEffect(() => {
     if (!contactProviderSubscriptions || contactProviderSubscriptions.length === 0) return;
     if (syncBepaidSubMutation.isPending) return;
 
@@ -958,7 +972,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       if (autoSyncCountRef.current >= 3) break;
       autoSyncCountRef.current++;
       autoSyncedIdsRef.current.add(sub.provider_subscription_id);
-      syncBepaidSubMutation.mutate(sub.provider_subscription_id);
+      syncBepaidSubMutation.mutate({ providerSubId: sub.provider_subscription_id, silent: true });
     }
   }, [contactProviderSubscriptions, syncBepaidSubMutation.isPending]);
   const createProviderSubAdminMutation = useMutation({
@@ -2608,7 +2622,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                                   variant="outline"
                                   size="sm"
                                   className="h-7 w-7 p-0 rounded-full"
-                                  onClick={() => syncBepaidSubMutation.mutate(sub.provider_subscription_id)}
+                                  onClick={() => syncBepaidSubMutation.mutate({ providerSubId: sub.provider_subscription_id })}
                                   disabled={syncBepaidSubMutation.isPending}
                                   title="Синхронизировать с bePaid"
                                 >
