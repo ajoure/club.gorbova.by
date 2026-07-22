@@ -28,6 +28,14 @@ describe("Telegram Business contact-centre wiring", () => {
     expect(adminChatSource).toContain("business_sender_not_available_for_dialog");
   });
 
+  it("clears older unread customer messages when the owner replies in Telegram", () => {
+    expect(webhookSource).toContain("isOwnerMessage && !update.edited_business_message");
+    expect(webhookSource).toContain("business_owner_reply_read_sync_failed");
+    expect(webhookSource).toContain(".eq('direction', 'incoming')");
+    expect(webhookSource).toContain(".eq('is_read', false)");
+    expect(webhookSource).toContain(".lt('message_id', ownerMessageId)");
+  });
+
   it("re-applies a configured webhook secret and preserves existing update types", () => {
     expect(botActionsSource).toContain("missingUpdates.length === 0 && !webhookSecret");
     expect(botActionsSource).toContain("[...new Set([...currentUpdates, ...businessRequiredUpdates])]");
