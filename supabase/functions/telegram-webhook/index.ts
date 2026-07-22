@@ -876,6 +876,46 @@ Deno.serve(async (req) => {
         }
       }
 
+      // A manual reply from the Business account owner resolves the pending
+      // CRM conversation too. Keep the full history, but clear every older
+      // unread customer message in this exact Business dialog. Telegram
+      // message_id is monotonic within the private chat, so it is a safer
+      // boundary than webhook receipt time when updates arrive out of order.
+      if (isOwnerMessage && !update.edited_business_message) {
+        const ownerMessageId = Number(msgAny.message_id);
+        if (!Number.isFinite(ownerMessageId)) {
+          return new Response(JSON.stringify({ ok: false, error: 'business_owner_message_id_missing' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        const { data: markedRead, error: markReadError } = await supabase
+          .from('telegram_messages')
+          .update({ is_read: true })
+          .eq('user_id', effectiveUserId)
+          .eq('business_account_id', connection.id)
+          .eq('business_connection_id', connectionId)
+          .eq('telegram_user_id', telegramUserId)
+          .eq('direction', 'incoming')
+          .eq('is_read', false)
+          .lt('message_id', ownerMessageId)
+          .select('id');
+
+        if (markReadError) {
+          console.error('[BUSINESS] owner reply failed to clear unread messages', markReadError);
+          return new Response(JSON.stringify({ ok: false, error: 'business_owner_reply_read_sync_failed' }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        console.log('[BUSINESS] owner reply cleared unread messages', {
+          user_id: effectiveUserId,
+          business_account_id: connection.id,
+          owner_message_id: ownerMessageId,
+          marked_count: markedRead?.length || 0,
+        });
+      }
+
       await supabase
         .from('telegram_business_connections')
         .update({ last_event_at: new Date().toISOString(), last_error: null, updated_at: new Date().toISOString() })
