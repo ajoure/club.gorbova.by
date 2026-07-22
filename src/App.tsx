@@ -11,6 +11,7 @@ import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { SectionGuard } from "@/components/layout/SectionGuard";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { GlobalPaymentHandler } from "@/components/payment/GlobalPaymentHandler";
+import { ReferralAttributionSync } from "@/components/referrals/ReferralAttributionSync";
 import { initExternalLinkKillSwitch, BUILD_MARKER } from "@/lib/externalLinkKillSwitch";
 import { LazyErrorBoundary } from "@/components/system/LazyErrorBoundary";
 
@@ -201,6 +202,7 @@ const App = () => {
             <HelpModeProvider>
               <ScrollToTop />
               <GlobalPaymentHandler />
+              <ReferralAttributionSync />
               <div className="impersonation-offset">
                 <Routes>
               {/* Public routes */}

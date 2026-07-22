@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- removed after Lovable regenerates Supabase types */
-import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Gift, Loader2, Users, WalletCards } from "lucide-react";
 import { toast } from "sonner";
@@ -7,7 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { buildReferralLink, formatBynMinor, readCapturedReferral, REFERRAL_STORAGE_KEY, referralStatusLabel } from "@/lib/referrals";
+import { buildReferralLink, formatBynMinor, referralStatusLabel } from "@/lib/referrals";
 
 type DashboardData = {
   partner: null | { id: string; public_id: string; partner_code: string; status: string };
@@ -53,18 +52,6 @@ export function ReferralDashboardCard() {
     },
   });
 
-  const attachMutation = useMutation({
-    mutationFn: async ({ code, capturedAt }: { code: string; capturedAt: string }) => {
-      const { data, error } = await rpc("referral_attach_current_profile", { p_partner_code: code, p_captured_at: capturedAt });
-      if (error) throw error;
-      return data as { attached: boolean; reason?: string };
-    },
-    onSettled: () => {
-      localStorage.removeItem(REFERRAL_STORAGE_KEY);
-      qc.invalidateQueries({ queryKey: ["referral-dashboard"] });
-    },
-  });
-
   const payoutMutation = useMutation({
     mutationFn: async () => {
       const raw = window.prompt("Введите сумму выплаты в BYN", (Number(dashboardQuery.data?.balances?.available_minor ?? 0) / 100).toFixed(2));
@@ -77,12 +64,6 @@ export function ReferralDashboardCard() {
     onSuccess: () => { toast.success("Заявка на выплату создана"); qc.invalidateQueries({ queryKey: ["referral-dashboard"] }); },
     onError: (error: Error) => toast.error(error.message),
   });
-
-  useEffect(() => {
-    if (partnerQuery.data?.enabled !== true || attachMutation.isPending) return;
-    const captured = readCapturedReferral();
-    if (captured) attachMutation.mutate(captured);
-  }, [partnerQuery.data?.enabled, attachMutation]);
 
   if (partnerQuery.isLoading || dashboardQuery.isLoading) {
     return <Card><CardContent className="py-8 flex justify-center"><Loader2 className="h-5 w-5 animate-spin" /></CardContent></Card>;
