@@ -43,6 +43,11 @@ Cloud остаётся рабочим источником: его код, ба�
    без отдельного dry-run и сверки его фактической схемы.
 3. CSV-экспорт не переносит пароли Auth, секреты Edge Functions, OAuth
    credentials, cron/vault configuration и storage files автоматически.
+4. Прямой доступ к source project через user-owned Supabase API отсутствует, а
+   API Lovable для создания экспортной задачи требует scope `projects:write`,
+   которого у подключённой интеграции нет. Это ограничивает только снятие
+   source export; не является основанием менять Lovable или подменять источник
+   старым target.
 
 ## Порядок исполнения параллельной копии
 
