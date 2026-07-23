@@ -1,16 +1,9 @@
 import {
+  _typeof
+} from "./chunk-SITVF2AJ.js";
+import {
   __publicField
 } from "./chunk-OL46QLBJ.js";
-
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/typeof.js
-function _typeof(o2) {
-  "@babel/helpers - typeof";
-  return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o3) {
-    return typeof o3;
-  } : function(o3) {
-    return o3 && "function" == typeof Symbol && o3.constructor === Symbol && o3 !== Symbol.prototype ? "symbol" : typeof o3;
-  }, _typeof(o2);
-}
 
 // node_modules/fflate/esm/browser.js
 var ch2 = {};
@@ -1820,12 +1813,12 @@ var Unzip = (function() {
   return Unzip2;
 })();
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/arrayWithHoles.js
+// node_modules/@babel/runtime/helpers/esm/arrayWithHoles.js
 function _arrayWithHoles(r) {
   if (Array.isArray(r)) return r;
 }
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/iterableToArrayLimit.js
+// node_modules/@babel/runtime/helpers/esm/iterableToArrayLimit.js
 function _iterableToArrayLimit(r, l2) {
   var t2 = null == r ? null : "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"];
   if (null != t2) {
@@ -1848,14 +1841,14 @@ function _iterableToArrayLimit(r, l2) {
   }
 }
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/arrayLikeToArray.js
+// node_modules/@babel/runtime/helpers/esm/arrayLikeToArray.js
 function _arrayLikeToArray(r, a2) {
   (null == a2 || a2 > r.length) && (a2 = r.length);
   for (var e = 0, n = Array(a2); e < a2; e++) n[e] = r[e];
   return n;
 }
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/unsupportedIterableToArray.js
+// node_modules/@babel/runtime/helpers/esm/unsupportedIterableToArray.js
 function _unsupportedIterableToArray(r, a2) {
   if (r) {
     if ("string" == typeof r) return _arrayLikeToArray(r, a2);
@@ -1864,12 +1857,12 @@ function _unsupportedIterableToArray(r, a2) {
   }
 }
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/nonIterableRest.js
+// node_modules/@babel/runtime/helpers/esm/nonIterableRest.js
 function _nonIterableRest() {
   throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.");
 }
 
-// node_modules/jspdf/node_modules/@babel/runtime/helpers/esm/slicedToArray.js
+// node_modules/@babel/runtime/helpers/esm/slicedToArray.js
 function _slicedToArray(r, e) {
   return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _unsupportedIterableToArray(r, e) || _nonIterableRest();
 }
@@ -14006,7 +13999,7 @@ function le() {
   var h2 = l2.getContext("2d");
   h2.fillStyle = "#fff", h2.fillRect(0, 0, l2.width, l2.height);
   var f2 = { ignoreMouse: true, ignoreAnimation: true, ignoreDimensions: true }, d2 = this;
-  return (i.canvg ? Promise.resolve(i.canvg) : import("./index.es-FW4WJFXU.js")).catch(function(t3) {
+  return (i.canvg ? Promise.resolve(i.canvg) : import("./index.es-EWNZLIPB.js")).catch(function(t3) {
     return Promise.reject(new Error("Could not load canvg: " + t3));
   }).then(function(t3) {
     return t3.default ? t3.default : t3;

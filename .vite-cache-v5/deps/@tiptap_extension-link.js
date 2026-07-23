@@ -7,11 +7,11 @@ import {
   getMarksBetween,
   markPasteRule,
   mergeAttributes
-} from "./chunk-6253ETEE.js";
+} from "./chunk-TN6A4YI7.js";
 import {
   Plugin,
   PluginKey
-} from "./chunk-DXKRVOGU.js";
+} from "./chunk-E5N3B3CE.js";
 import "./chunk-OL46QLBJ.js";
 
 // node_modules/linkifyjs/dist/linkify.mjs

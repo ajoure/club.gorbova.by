@@ -117,7 +117,7 @@ OrderedMap.from = function(value) {
 };
 var dist_default = OrderedMap;
 
-// node_modules/prosemirror-state/node_modules/prosemirror-model/dist/index.js
+// node_modules/prosemirror-model/dist/index.js
 function findDiffStart(a, b, pos) {
   for (let i = 0; ; i++) {
     if (i == a.childCount || i == b.childCount)
@@ -130,8 +130,11 @@ function findDiffStart(a, b, pos) {
     if (!childA.sameMarkup(childB))
       return pos;
     if (childA.isText && childA.text != childB.text) {
-      for (let j = 0; childA.text[j] == childB.text[j]; j++)
+      let tA = childA.text, tB = childB.text, j = 0;
+      for (; tA[j] == tB[j]; j++)
         pos++;
+      if (j && j < tA.length && j < tB.length && surrogateHigh(tA.charCodeAt(j - 1)) && surrogateLow(tA.charCodeAt(j)))
+        pos--;
       return pos;
     }
     if (childA.content.size || childB.content.size) {
@@ -155,11 +158,16 @@ function findDiffEnd(a, b, posA, posB) {
     if (!childA.sameMarkup(childB))
       return { a: posA, b: posB };
     if (childA.isText && childA.text != childB.text) {
-      let same = 0, minSize = Math.min(childA.text.length, childB.text.length);
-      while (same < minSize && childA.text[childA.text.length - same - 1] == childB.text[childB.text.length - same - 1]) {
-        same++;
+      let tA = childA.text, tB = childB.text, iA2 = tA.length, iB2 = tB.length;
+      while (iA2 > 0 && iB2 > 0 && tA[iA2 - 1] == tB[iB2 - 1]) {
+        iA2--;
+        iB2--;
         posA--;
         posB--;
+      }
+      if (iA2 && iB2 && iA2 < tA.length && surrogateHigh(tA.charCodeAt(iA2 - 1)) && surrogateLow(tA.charCodeAt(iA2))) {
+        posA++;
+        posB++;
       }
       return { a: posA, b: posB };
     }
@@ -171,6 +179,12 @@ function findDiffEnd(a, b, posA, posB) {
     posA -= size;
     posB -= size;
   }
+}
+function surrogateLow(ch) {
+  return ch >= 56320 && ch < 57344;
+}
+function surrogateHigh(ch) {
+  return ch >= 55296 && ch < 56320;
 }
 var Fragment = class _Fragment {
   /**
@@ -284,10 +298,10 @@ var Fragment = class _Fragment {
     let current = this.content[index];
     if (current == node)
       return this;
-    let copy = this.content.slice();
+    let copy2 = this.content.slice();
     let size = this.size + node.nodeSize - current.nodeSize;
-    copy[index] = node;
-    return new _Fragment(copy, size);
+    copy2[index] = node;
+    return new _Fragment(copy2, size);
   }
   /**
   Create a new fragment by prepending the given node to this
@@ -423,7 +437,7 @@ var Fragment = class _Fragment {
       return _Fragment.empty;
     if (!Array.isArray(value))
       throw new RangeError("Invalid input for Fragment.fromJSON");
-    return new _Fragment(value.map(schema.nodeFromJSON));
+    return _Fragment.fromArray(value.map(schema.nodeFromJSON));
   }
   /**
   Build a fragment from an array of nodes. Ensures that adjacent
@@ -511,32 +525,32 @@ var Mark = class _Mark {
   those are replaced by this one.
   */
   addToSet(set) {
-    let copy, placed = false;
+    let copy2, placed = false;
     for (let i = 0; i < set.length; i++) {
       let other = set[i];
       if (this.eq(other))
         return set;
       if (this.type.excludes(other.type)) {
-        if (!copy)
-          copy = set.slice(0, i);
+        if (!copy2)
+          copy2 = set.slice(0, i);
       } else if (other.type.excludes(this.type)) {
         return set;
       } else {
         if (!placed && other.type.rank > this.type.rank) {
-          if (!copy)
-            copy = set.slice(0, i);
-          copy.push(this);
+          if (!copy2)
+            copy2 = set.slice(0, i);
+          copy2.push(this);
           placed = true;
         }
-        if (copy)
-          copy.push(other);
+        if (copy2)
+          copy2.push(other);
       }
     }
-    if (!copy)
-      copy = set.slice();
+    if (!copy2)
+      copy2 = set.slice();
     if (!placed)
-      copy.push(this);
-    return copy;
+      copy2.push(this);
+    return copy2;
   }
   /**
   Remove this mark from the given set, returning a new set. If this
@@ -610,9 +624,9 @@ var Mark = class _Mark {
       return _Mark.none;
     if (marks instanceof _Mark)
       return [marks];
-    let copy = marks.slice();
-    copy.sort((a, b) => a.type.rank - b.type.rank);
-    return copy;
+    let copy2 = marks.slice();
+    copy2.sort((a, b) => a.type.rank - b.type.rank);
+    return copy2;
   }
 };
 Mark.none = [];
@@ -646,7 +660,7 @@ var Slice = class _Slice {
   @internal
   */
   insertAt(pos, fragment) {
-    let content = insertInto(this.content, pos + this.openStart, fragment);
+    let content = insertInto(this.content, pos + this.openStart, fragment, this.openStart + 1, this.openEnd + 1);
     return content && new _Slice(content, this.openStart, this.openEnd);
   }
   /**
@@ -717,14 +731,14 @@ function removeRange(content, from, to) {
     throw new RangeError("Removing non-flat range");
   return content.replaceChild(index, child.copy(removeRange(child.content, from - offset - 1, to - offset - 1)));
 }
-function insertInto(content, dist, insert, parent) {
+function insertInto(content, dist, insert, openStart, openEnd, parent) {
   let { index, offset } = content.findIndex(dist), child = content.maybeChild(index);
   if (offset == dist || child.isText) {
-    if (parent && !parent.canReplace(index, index, insert))
+    if (parent && openStart <= 0 && openEnd <= 0 && !parent.canReplace(index, index, insert))
       return null;
     return content.cut(0, dist).append(insert).append(content.cut(dist));
   }
-  let inner = insertInto(child.content, dist - offset - 1, insert, child);
+  let inner = insertInto(child.content, dist - offset - 1, insert, index == 0 ? openStart - 1 : 0, index == content.childCount - 1 ? openEnd - 1 : 0, child);
   return inner && content.replaceChild(index, child.copy(inner));
 }
 function replace($from, $to, slice) {
@@ -783,7 +797,8 @@ function addRange($start, $end, depth, target) {
     addNode($end.nodeBefore, target);
 }
 function close(node, content) {
-  node.type.checkContent(content);
+  if (!node.type.validContent(content))
+    throw new ReplaceError("Invalid content for node " + node.type.name);
   return node.copy(content);
 }
 function replaceThreeWay($from, $start, $end, $to, depth) {
@@ -1060,12 +1075,12 @@ var ResolvedPos = class _ResolvedPos {
   /**
   @internal
   */
-  static resolve(doc, pos) {
-    if (!(pos >= 0 && pos <= doc.content.size))
+  static resolve(doc2, pos) {
+    if (!(pos >= 0 && pos <= doc2.content.size))
       throw new RangeError("Position " + pos + " out of range");
     let path = [];
     let start = 0, parentOffset = pos;
-    for (let node = doc; ; ) {
+    for (let node = doc2; ; ) {
       let { index, offset } = node.content.findIndex(parentOffset);
       let rem = parentOffset - offset;
       path.push(node, index, start + offset);
@@ -1082,8 +1097,8 @@ var ResolvedPos = class _ResolvedPos {
   /**
   @internal
   */
-  static resolveCached(doc, pos) {
-    let cache = resolveCache.get(doc);
+  static resolveCached(doc2, pos) {
+    let cache = resolveCache.get(doc2);
     if (cache) {
       for (let i = 0; i < cache.elts.length; i++) {
         let elt = cache.elts[i];
@@ -1091,9 +1106,9 @@ var ResolvedPos = class _ResolvedPos {
           return elt;
       }
     } else {
-      resolveCache.set(doc, cache = new ResolveCache());
+      resolveCache.set(doc2, cache = new ResolveCache());
     }
-    let result = cache.elts[cache.i] = _ResolvedPos.resolve(doc, pos);
+    let result = cache.elts[cache.i] = _ResolvedPos.resolve(doc2, pos);
     cache.i = (cache.i + 1) % resolveCacheSize;
     return result;
   }
@@ -1202,10 +1217,11 @@ var Node = class _Node {
     this.content.forEach(f);
   }
   /**
-  Invoke a callback for all descendant nodes recursively between
+  Invoke a callback for all descendant nodes recursively overlapping
   the given two positions that are relative to start of this
-  node's content. The callback is invoked with the node, its
-  position relative to the original node (method receiver),
+  node's content. This includes all ancestors of the nodes
+  containing the two positions. The callback is invoked with the
+  node, its position relative to the original node (method receiver),
   its parent node, and its child index. When the callback returns
   false for a given node, that node's children will not be
   recursed over. The last parameter can be used to specify a
@@ -1502,13 +1518,13 @@ var Node = class _Node {
   check() {
     this.type.checkContent(this.content);
     this.type.checkAttrs(this.attrs);
-    let copy = Mark.none;
+    let copy2 = Mark.none;
     for (let i = 0; i < this.marks.length; i++) {
       let mark = this.marks[i];
       mark.type.checkAttrs(mark.attrs);
-      copy = mark.addToSet(copy);
+      copy2 = mark.addToSet(copy2);
     }
-    if (!Mark.sameSet(copy, this.marks))
+    if (!Mark.sameSet(copy2, this.marks))
       throw new RangeError(`Invalid collection of marks for node ${this.type.name}: ${this.marks.map((m) => m.type.name)}`);
     this.content.forEach((node) => node.check());
   }
@@ -1551,6 +1567,52 @@ var Node = class _Node {
   }
 };
 Node.prototype.text = void 0;
+var TextNode = class _TextNode extends Node {
+  /**
+  @internal
+  */
+  constructor(type, attrs, content, marks) {
+    super(type, attrs, null, marks);
+    if (!content)
+      throw new RangeError("Empty text nodes are not allowed");
+    this.text = content;
+  }
+  toString() {
+    if (this.type.spec.toDebugString)
+      return this.type.spec.toDebugString(this);
+    return wrapMarks(this.marks, JSON.stringify(this.text));
+  }
+  get textContent() {
+    return this.text;
+  }
+  textBetween(from, to) {
+    return this.text.slice(from, to);
+  }
+  get nodeSize() {
+    return this.text.length;
+  }
+  mark(marks) {
+    return marks == this.marks ? this : new _TextNode(this.type, this.attrs, this.text, marks);
+  }
+  withText(text) {
+    if (text == this.text)
+      return this;
+    return new _TextNode(this.type, this.attrs, text, this.marks);
+  }
+  cut(from = 0, to = this.text.length) {
+    if (from == 0 && to == this.text.length)
+      return this;
+    return this.withText(this.text.slice(from, to));
+  }
+  eq(other) {
+    return this.sameMarkup(other) && this.text == other.text;
+  }
+  toJSON() {
+    let base = super.toJSON();
+    base.text = this.text;
+    return base;
+  }
+};
 function wrapMarks(marks, str) {
   for (let i = marks.length - 1; i >= 0; i--)
     str = marks[i].type.name + "(" + str + ")";
@@ -1984,13 +2046,12 @@ function computeAttrs(attrs, value) {
   return built;
 }
 function checkAttrs(attrs, values, type, name) {
-  for (let name2 in values)
-    if (!(name2 in attrs))
-      throw new RangeError(`Unsupported attribute ${name2} for ${type} of type ${name2}`);
-  for (let name2 in attrs) {
-    let attr = attrs[name2];
-    if (attr.validate)
-      attr.validate(values[name2]);
+  for (let attr in values)
+    if (!(attr in attrs))
+      throw new RangeError(`Unsupported attribute ${attr} for ${type} of type ${name}`);
+  for (let attr in attrs) {
+    if (attrs[attr].validate)
+      attrs[attr].validate(values[attr]);
   }
 }
 function initAttrs(typeName, attrs) {
@@ -2000,6 +2061,211 @@ function initAttrs(typeName, attrs) {
       result[name] = new Attribute(typeName, name, attrs[name]);
   return result;
 }
+var NodeType = class _NodeType {
+  /**
+  @internal
+  */
+  constructor(name, schema, spec) {
+    this.name = name;
+    this.schema = schema;
+    this.spec = spec;
+    this.markSet = null;
+    this.groups = spec.group ? spec.group.split(" ") : [];
+    this.attrs = initAttrs(name, spec.attrs);
+    this.defaultAttrs = defaultAttrs(this.attrs);
+    this.contentMatch = null;
+    this.inlineContent = null;
+    this.isBlock = !(spec.inline || name == "text");
+    this.isText = name == "text";
+  }
+  /**
+  True if this is an inline type.
+  */
+  get isInline() {
+    return !this.isBlock;
+  }
+  /**
+  True if this is a textblock type, a block that contains inline
+  content.
+  */
+  get isTextblock() {
+    return this.isBlock && this.inlineContent;
+  }
+  /**
+  True for node types that allow no content.
+  */
+  get isLeaf() {
+    return this.contentMatch == ContentMatch.empty;
+  }
+  /**
+  True when this node is an atom, i.e. when it does not have
+  directly editable content.
+  */
+  get isAtom() {
+    return this.isLeaf || !!this.spec.atom;
+  }
+  /**
+  Return true when this node type is part of the given
+  [group](https://prosemirror.net/docs/ref/#model.NodeSpec.group).
+  */
+  isInGroup(group) {
+    return this.groups.indexOf(group) > -1;
+  }
+  /**
+  The node type's [whitespace](https://prosemirror.net/docs/ref/#model.NodeSpec.whitespace) option.
+  */
+  get whitespace() {
+    return this.spec.whitespace || (this.spec.code ? "pre" : "normal");
+  }
+  /**
+  Tells you whether this node type has any required attributes.
+  */
+  hasRequiredAttrs() {
+    for (let n in this.attrs)
+      if (this.attrs[n].isRequired)
+        return true;
+    return false;
+  }
+  /**
+  Indicates whether this node allows some of the same content as
+  the given node type.
+  */
+  compatibleContent(other) {
+    return this == other || this.contentMatch.compatible(other.contentMatch);
+  }
+  /**
+  @internal
+  */
+  computeAttrs(attrs) {
+    if (!attrs && this.defaultAttrs)
+      return this.defaultAttrs;
+    else
+      return computeAttrs(this.attrs, attrs);
+  }
+  /**
+  Create a `Node` of this type. The given attributes are
+  checked and defaulted (you can pass `null` to use the type's
+  defaults entirely, if no required attributes exist). `content`
+  may be a `Fragment`, a node, an array of nodes, or
+  `null`. Similarly `marks` may be `null` to default to the empty
+  set of marks.
+  */
+  create(attrs = null, content, marks) {
+    if (this.isText)
+      throw new Error("NodeType.create can't construct text nodes");
+    return new Node(this, this.computeAttrs(attrs), Fragment.from(content), Mark.setFrom(marks));
+  }
+  /**
+  Like [`create`](https://prosemirror.net/docs/ref/#model.NodeType.create), but check the given content
+  against the node type's content restrictions, and throw an error
+  if it doesn't match.
+  */
+  createChecked(attrs = null, content, marks) {
+    content = Fragment.from(content);
+    this.checkContent(content);
+    return new Node(this, this.computeAttrs(attrs), content, Mark.setFrom(marks));
+  }
+  /**
+  Like [`create`](https://prosemirror.net/docs/ref/#model.NodeType.create), but see if it is
+  necessary to add nodes to the start or end of the given fragment
+  to make it fit the node. If no fitting wrapping can be found,
+  return null. Note that, due to the fact that required nodes can
+  always be created, this will always succeed if you pass null or
+  `Fragment.empty` as content.
+  */
+  createAndFill(attrs = null, content, marks) {
+    attrs = this.computeAttrs(attrs);
+    content = Fragment.from(content);
+    if (content.size) {
+      let before = this.contentMatch.fillBefore(content);
+      if (!before)
+        return null;
+      content = before.append(content);
+    }
+    let matched = this.contentMatch.matchFragment(content);
+    let after = matched && matched.fillBefore(Fragment.empty, true);
+    if (!after)
+      return null;
+    return new Node(this, attrs, content.append(after), Mark.setFrom(marks));
+  }
+  /**
+  Returns true if the given fragment is valid content for this node
+  type.
+  */
+  validContent(content) {
+    let result = this.contentMatch.matchFragment(content);
+    if (!result || !result.validEnd)
+      return false;
+    for (let i = 0; i < content.childCount; i++)
+      if (!this.allowsMarks(content.child(i).marks))
+        return false;
+    return true;
+  }
+  /**
+  Throws a RangeError if the given fragment is not valid content for this
+  node type.
+  @internal
+  */
+  checkContent(content) {
+    if (!this.validContent(content))
+      throw new RangeError(`Invalid content for node ${this.name}: ${content.toString().slice(0, 50)}`);
+  }
+  /**
+  @internal
+  */
+  checkAttrs(attrs) {
+    checkAttrs(this.attrs, attrs, "node", this.name);
+  }
+  /**
+  Check whether the given mark type is allowed in this node.
+  */
+  allowsMarkType(markType) {
+    return this.markSet == null || this.markSet.indexOf(markType) > -1;
+  }
+  /**
+  Test whether the given set of marks are allowed in this node.
+  */
+  allowsMarks(marks) {
+    if (this.markSet == null)
+      return true;
+    for (let i = 0; i < marks.length; i++)
+      if (!this.allowsMarkType(marks[i].type))
+        return false;
+    return true;
+  }
+  /**
+  Removes the marks that are not allowed in this node from the given set.
+  */
+  allowedMarks(marks) {
+    if (this.markSet == null)
+      return marks;
+    let copy2;
+    for (let i = 0; i < marks.length; i++) {
+      if (!this.allowsMarkType(marks[i].type)) {
+        if (!copy2)
+          copy2 = marks.slice(0, i);
+      } else if (copy2) {
+        copy2.push(marks[i]);
+      }
+    }
+    return !copy2 ? marks : copy2.length ? copy2 : Mark.none;
+  }
+  /**
+  @internal
+  */
+  static compile(nodes, schema) {
+    let result = /* @__PURE__ */ Object.create(null);
+    nodes.forEach((name, spec) => result[name] = new _NodeType(name, schema, spec));
+    let topType = schema.spec.topNode || "doc";
+    if (!result[topType])
+      throw new RangeError("Schema is missing its top node type ('" + topType + "')");
+    if (!result.text)
+      throw new RangeError("Every schema needs a 'text' type");
+    for (let _ in result.text.attrs)
+      throw new RangeError("The text node type should not have attributes");
+    return result;
+  }
+};
 function validateType(typeName, attrName, type) {
   let types = type.split("|");
   return (value) => {
@@ -2084,8 +2350,991 @@ var MarkType = class _MarkType {
     return this.excluded.indexOf(other) > -1;
   }
 };
+var Schema = class {
+  /**
+  Construct a schema from a schema [specification](https://prosemirror.net/docs/ref/#model.SchemaSpec).
+  */
+  constructor(spec) {
+    this.linebreakReplacement = null;
+    this.cached = /* @__PURE__ */ Object.create(null);
+    let instanceSpec = this.spec = {};
+    for (let prop in spec)
+      instanceSpec[prop] = spec[prop];
+    instanceSpec.nodes = dist_default.from(spec.nodes), instanceSpec.marks = dist_default.from(spec.marks || {}), this.nodes = NodeType.compile(this.spec.nodes, this);
+    this.marks = MarkType.compile(this.spec.marks, this);
+    let contentExprCache = /* @__PURE__ */ Object.create(null);
+    for (let prop in this.nodes) {
+      if (prop in this.marks)
+        throw new RangeError(prop + " can not be both a node and a mark");
+      let type = this.nodes[prop], contentExpr = type.spec.content || "", markExpr = type.spec.marks;
+      type.contentMatch = contentExprCache[contentExpr] || (contentExprCache[contentExpr] = ContentMatch.parse(contentExpr, this.nodes));
+      type.inlineContent = type.contentMatch.inlineContent;
+      if (type.spec.linebreakReplacement) {
+        if (this.linebreakReplacement)
+          throw new RangeError("Multiple linebreak nodes defined");
+        if (!type.isInline || !type.isLeaf)
+          throw new RangeError("Linebreak replacement nodes must be inline leaf nodes");
+        this.linebreakReplacement = type;
+      }
+      type.markSet = markExpr == "_" ? null : markExpr ? gatherMarks(this, markExpr.split(" ")) : markExpr == "" || !type.inlineContent ? [] : null;
+    }
+    for (let prop in this.marks) {
+      let type = this.marks[prop], excl = type.spec.excludes;
+      type.excluded = excl == null ? [type] : excl == "" ? [] : gatherMarks(this, excl.split(" "));
+    }
+    this.nodeFromJSON = (json) => Node.fromJSON(this, json);
+    this.markFromJSON = (json) => Mark.fromJSON(this, json);
+    this.topNodeType = this.nodes[this.spec.topNode || "doc"];
+    this.cached.wrappings = /* @__PURE__ */ Object.create(null);
+  }
+  /**
+  Create a node in this schema. The `type` may be a string or a
+  `NodeType` instance. Attributes will be extended with defaults,
+  `content` may be a `Fragment`, `null`, a `Node`, or an array of
+  nodes.
+  */
+  node(type, attrs = null, content, marks) {
+    if (typeof type == "string")
+      type = this.nodeType(type);
+    else if (!(type instanceof NodeType))
+      throw new RangeError("Invalid node type: " + type);
+    else if (type.schema != this)
+      throw new RangeError("Node type from different schema used (" + type.name + ")");
+    return type.createChecked(attrs, content, marks);
+  }
+  /**
+  Create a text node in the schema. Empty text nodes are not
+  allowed.
+  */
+  text(text, marks) {
+    let type = this.nodes.text;
+    return new TextNode(type, type.defaultAttrs, text, Mark.setFrom(marks));
+  }
+  /**
+  Create a mark with the given type and attributes.
+  */
+  mark(type, attrs) {
+    if (typeof type == "string")
+      type = this.marks[type];
+    return type.create(attrs);
+  }
+  /**
+  @internal
+  */
+  nodeType(name) {
+    let found2 = this.nodes[name];
+    if (!found2)
+      throw new RangeError("Unknown node type: " + name);
+    return found2;
+  }
+};
+function gatherMarks(schema, marks) {
+  let found2 = [];
+  for (let i = 0; i < marks.length; i++) {
+    let name = marks[i], mark = schema.marks[name], ok = mark;
+    if (mark) {
+      found2.push(mark);
+    } else {
+      for (let prop in schema.marks) {
+        let mark2 = schema.marks[prop];
+        if (name == "_" || mark2.spec.group && mark2.spec.group.split(" ").indexOf(name) > -1)
+          found2.push(ok = mark2);
+      }
+    }
+    if (!ok)
+      throw new SyntaxError("Unknown mark type: '" + marks[i] + "'");
+  }
+  return found2;
+}
+function isTagRule(rule) {
+  return rule.tag != null;
+}
+function isStyleRule(rule) {
+  return rule.style != null;
+}
+var DOMParser = class _DOMParser {
+  /**
+  Create a parser that targets the given schema, using the given
+  parsing rules.
+  */
+  constructor(schema, rules) {
+    this.schema = schema;
+    this.rules = rules;
+    this.tags = [];
+    this.styles = [];
+    let matchedStyles = this.matchedStyles = [];
+    rules.forEach((rule) => {
+      if (isTagRule(rule)) {
+        this.tags.push(rule);
+      } else if (isStyleRule(rule)) {
+        let prop = /[^=]*/.exec(rule.style)[0];
+        if (matchedStyles.indexOf(prop) < 0)
+          matchedStyles.push(prop);
+        this.styles.push(rule);
+      }
+    });
+    this.normalizeLists = !this.tags.some((r) => {
+      if (!/^(ul|ol)\b/.test(r.tag) || !r.node)
+        return false;
+      let node = schema.nodes[r.node];
+      return node.contentMatch.matchType(node);
+    });
+  }
+  /**
+  Parse a document from the content of a DOM node.
+  */
+  parse(dom, options = {}) {
+    let context = new ParseContext(this, options, false);
+    context.addAll(dom, Mark.none, options.from, options.to);
+    return context.finish();
+  }
+  /**
+  Parses the content of the given DOM node, like
+  [`parse`](https://prosemirror.net/docs/ref/#model.DOMParser.parse), and takes the same set of
+  options. But unlike that method, which produces a whole node,
+  this one returns a slice that is open at the sides, meaning that
+  the schema constraints aren't applied to the start of nodes to
+  the left of the input and the end of nodes at the end.
+  */
+  parseSlice(dom, options = {}) {
+    let context = new ParseContext(this, options, true);
+    context.addAll(dom, Mark.none, options.from, options.to);
+    return Slice.maxOpen(context.finish());
+  }
+  /**
+  @internal
+  */
+  matchTag(dom, context, after) {
+    for (let i = after ? this.tags.indexOf(after) + 1 : 0; i < this.tags.length; i++) {
+      let rule = this.tags[i];
+      if (matches(dom, rule.tag) && (rule.namespace === void 0 || dom.namespaceURI == rule.namespace) && (!rule.context || context.matchesContext(rule.context))) {
+        if (rule.getAttrs) {
+          let result = rule.getAttrs(dom);
+          if (result === false)
+            continue;
+          rule.attrs = result || void 0;
+        }
+        return rule;
+      }
+    }
+  }
+  /**
+  @internal
+  */
+  matchStyle(prop, value, context, after) {
+    for (let i = after ? this.styles.indexOf(after) + 1 : 0; i < this.styles.length; i++) {
+      let rule = this.styles[i], style = rule.style;
+      if (style.indexOf(prop) != 0 || rule.context && !context.matchesContext(rule.context) || // Test that the style string either precisely matches the prop,
+      // or has an '=' sign after the prop, followed by the given
+      // value.
+      style.length > prop.length && (style.charCodeAt(prop.length) != 61 || style.slice(prop.length + 1) != value))
+        continue;
+      if (rule.getAttrs) {
+        let result = rule.getAttrs(value);
+        if (result === false)
+          continue;
+        rule.attrs = result || void 0;
+      }
+      return rule;
+    }
+  }
+  /**
+  @internal
+  */
+  static schemaRules(schema) {
+    let result = [];
+    function insert(rule) {
+      let priority = rule.priority == null ? 50 : rule.priority, i = 0;
+      for (; i < result.length; i++) {
+        let next = result[i], nextPriority = next.priority == null ? 50 : next.priority;
+        if (nextPriority < priority)
+          break;
+      }
+      result.splice(i, 0, rule);
+    }
+    for (let name in schema.marks) {
+      let rules = schema.marks[name].spec.parseDOM;
+      if (rules)
+        rules.forEach((rule) => {
+          insert(rule = copy(rule));
+          if (!(rule.mark || rule.ignore || rule.clearMark))
+            rule.mark = name;
+        });
+    }
+    for (let name in schema.nodes) {
+      let rules = schema.nodes[name].spec.parseDOM;
+      if (rules)
+        rules.forEach((rule) => {
+          insert(rule = copy(rule));
+          if (!(rule.node || rule.ignore || rule.mark))
+            rule.node = name;
+        });
+    }
+    return result;
+  }
+  /**
+  Construct a DOM parser using the parsing rules listed in a
+  schema's [node specs](https://prosemirror.net/docs/ref/#model.NodeSpec.parseDOM), reordered by
+  [priority](https://prosemirror.net/docs/ref/#model.GenericParseRule.priority).
+  */
+  static fromSchema(schema) {
+    return schema.cached.domParser || (schema.cached.domParser = new _DOMParser(schema, _DOMParser.schemaRules(schema)));
+  }
+};
+var blockTags = {
+  address: true,
+  article: true,
+  aside: true,
+  blockquote: true,
+  body: true,
+  canvas: true,
+  dd: true,
+  div: true,
+  dl: true,
+  fieldset: true,
+  figcaption: true,
+  figure: true,
+  footer: true,
+  form: true,
+  h1: true,
+  h2: true,
+  h3: true,
+  h4: true,
+  h5: true,
+  h6: true,
+  header: true,
+  hgroup: true,
+  hr: true,
+  li: true,
+  noscript: true,
+  ol: true,
+  output: true,
+  p: true,
+  pre: true,
+  section: true,
+  table: true,
+  tfoot: true,
+  ul: true
+};
+var ignoreTags = {
+  head: true,
+  noscript: true,
+  object: true,
+  script: true,
+  style: true,
+  title: true
+};
+var listTags = { ol: true, ul: true };
+var OPT_PRESERVE_WS = 1;
+var OPT_PRESERVE_WS_FULL = 2;
+var OPT_OPEN_LEFT = 4;
+function wsOptionsFor(type, preserveWhitespace, base) {
+  if (preserveWhitespace != null)
+    return (preserveWhitespace ? OPT_PRESERVE_WS : 0) | (preserveWhitespace === "full" ? OPT_PRESERVE_WS_FULL : 0);
+  return type && type.whitespace == "pre" ? OPT_PRESERVE_WS | OPT_PRESERVE_WS_FULL : base & ~OPT_OPEN_LEFT;
+}
+var NodeContext = class {
+  constructor(type, attrs, marks, solid, match, options) {
+    this.type = type;
+    this.attrs = attrs;
+    this.marks = marks;
+    this.solid = solid;
+    this.options = options;
+    this.content = [];
+    this.activeMarks = Mark.none;
+    this.match = match || (options & OPT_OPEN_LEFT ? null : type.contentMatch);
+  }
+  findWrapping(node) {
+    if (!this.match) {
+      if (!this.type)
+        return [];
+      let fill = this.type.contentMatch.fillBefore(Fragment.from(node));
+      if (fill) {
+        this.match = this.type.contentMatch.matchFragment(fill);
+      } else {
+        let start = this.type.contentMatch, wrap2;
+        if (wrap2 = start.findWrapping(node.type)) {
+          this.match = start;
+          return wrap2;
+        } else {
+          return null;
+        }
+      }
+    }
+    return this.match.findWrapping(node.type);
+  }
+  finish(openEnd) {
+    if (!(this.options & OPT_PRESERVE_WS)) {
+      let last = this.content[this.content.length - 1], m;
+      if (last && last.isText && (m = /[ \t\r\n\u000c]+$/.exec(last.text))) {
+        let text = last;
+        if (last.text.length == m[0].length)
+          this.content.pop();
+        else
+          this.content[this.content.length - 1] = text.withText(text.text.slice(0, text.text.length - m[0].length));
+      }
+    }
+    let content = Fragment.from(this.content);
+    if (!openEnd && this.match)
+      content = content.append(this.match.fillBefore(Fragment.empty, true));
+    return this.type ? this.type.create(this.attrs, content, this.marks) : content;
+  }
+  inlineContext(node) {
+    if (this.type)
+      return this.type.inlineContent;
+    if (this.content.length)
+      return this.content[0].isInline;
+    return node.parentNode && !blockTags.hasOwnProperty(node.parentNode.nodeName.toLowerCase());
+  }
+};
+var ParseContext = class {
+  constructor(parser, options, isOpen) {
+    this.parser = parser;
+    this.options = options;
+    this.isOpen = isOpen;
+    this.open = 0;
+    this.localPreserveWS = false;
+    let topNode = options.topNode, topContext;
+    let topOptions = wsOptionsFor(null, options.preserveWhitespace, 0) | (isOpen ? OPT_OPEN_LEFT : 0);
+    if (topNode)
+      topContext = new NodeContext(topNode.type, topNode.attrs, Mark.none, true, options.topMatch || topNode.type.contentMatch, topOptions);
+    else if (isOpen)
+      topContext = new NodeContext(null, null, Mark.none, true, null, topOptions);
+    else
+      topContext = new NodeContext(parser.schema.topNodeType, null, Mark.none, true, null, topOptions);
+    this.nodes = [topContext];
+    this.find = options.findPositions;
+    this.needsBlock = false;
+  }
+  get top() {
+    return this.nodes[this.open];
+  }
+  // Add a DOM node to the content. Text is inserted as text node,
+  // otherwise, the node is passed to `addElement` or, if it has a
+  // `style` attribute, `addElementWithStyles`.
+  addDOM(dom, marks) {
+    if (dom.nodeType == 3)
+      this.addTextNode(dom, marks);
+    else if (dom.nodeType == 1)
+      this.addElement(dom, marks);
+  }
+  addTextNode(dom, marks) {
+    let value = dom.nodeValue;
+    let top = this.top, preserveWS = top.options & OPT_PRESERVE_WS_FULL ? "full" : this.localPreserveWS || (top.options & OPT_PRESERVE_WS) > 0;
+    let { schema } = this.parser;
+    if (preserveWS === "full" || top.inlineContext(dom) || /[^ \t\r\n\u000c]/.test(value)) {
+      if (!preserveWS) {
+        value = value.replace(/[ \t\r\n\u000c]+/g, " ");
+        if (/^[ \t\r\n\u000c]/.test(value) && this.open == this.nodes.length - 1) {
+          let nodeBefore = top.content[top.content.length - 1];
+          let domNodeBefore = dom.previousSibling;
+          if (!nodeBefore || domNodeBefore && domNodeBefore.nodeName == "BR" || nodeBefore.isText && /[ \t\r\n\u000c]$/.test(nodeBefore.text))
+            value = value.slice(1);
+        }
+      } else if (preserveWS === "full") {
+        value = value.replace(/\r\n?/g, "\n");
+      } else if (schema.linebreakReplacement && /[\r\n]/.test(value) && this.top.findWrapping(schema.linebreakReplacement.create())) {
+        let lines = value.split(/\r?\n|\r/);
+        for (let i = 0; i < lines.length; i++) {
+          if (i)
+            this.insertNode(schema.linebreakReplacement.create(), marks, true);
+          if (lines[i])
+            this.insertNode(schema.text(lines[i]), marks, !/\S/.test(lines[i]));
+        }
+        value = "";
+      } else {
+        value = value.replace(/\r?\n|\r/g, " ");
+      }
+      if (value)
+        this.insertNode(schema.text(value), marks, !/\S/.test(value));
+      this.findInText(dom);
+    } else {
+      this.findInside(dom);
+    }
+  }
+  // Try to find a handler for the given tag and use that to parse. If
+  // none is found, the element's content nodes are added directly.
+  addElement(dom, marks, matchAfter) {
+    let outerWS = this.localPreserveWS, top = this.top;
+    if (dom.tagName == "PRE" || /pre/.test(dom.style && dom.style.whiteSpace))
+      this.localPreserveWS = true;
+    let name = dom.nodeName.toLowerCase(), ruleID;
+    if (listTags.hasOwnProperty(name) && this.parser.normalizeLists)
+      normalizeList(dom);
+    let rule = this.options.ruleFromNode && this.options.ruleFromNode(dom) || (ruleID = this.parser.matchTag(dom, this, matchAfter));
+    out: if (rule ? rule.ignore : ignoreTags.hasOwnProperty(name)) {
+      this.findInside(dom);
+      this.ignoreFallback(dom, marks);
+    } else if (!rule || rule.skip || rule.closeParent) {
+      if (rule && rule.closeParent)
+        this.open = Math.max(0, this.open - 1);
+      else if (rule && rule.skip.nodeType)
+        dom = rule.skip;
+      let sync, oldNeedsBlock = this.needsBlock;
+      if (blockTags.hasOwnProperty(name)) {
+        if (top.content.length && top.content[0].isInline && this.open) {
+          this.open--;
+          top = this.top;
+        }
+        sync = true;
+        if (!top.type)
+          this.needsBlock = true;
+      } else if (!dom.firstChild) {
+        this.leafFallback(dom, marks);
+        break out;
+      }
+      let innerMarks = rule && rule.skip ? marks : this.readStyles(dom, marks);
+      if (innerMarks)
+        this.addAll(dom, innerMarks);
+      if (sync)
+        this.sync(top);
+      this.needsBlock = oldNeedsBlock;
+    } else {
+      let innerMarks = this.readStyles(dom, marks);
+      if (innerMarks)
+        this.addElementByRule(dom, rule, innerMarks, rule.consuming === false ? ruleID : void 0);
+    }
+    this.localPreserveWS = outerWS;
+  }
+  // Called for leaf DOM nodes that would otherwise be ignored
+  leafFallback(dom, marks) {
+    if (dom.nodeName == "BR" && this.top.type && this.top.type.inlineContent)
+      this.addTextNode(dom.ownerDocument.createTextNode("\n"), marks);
+  }
+  // Called for ignored nodes
+  ignoreFallback(dom, marks) {
+    if (dom.nodeName == "BR" && (!this.top.type || !this.top.type.inlineContent))
+      this.findPlace(this.parser.schema.text("-"), marks, true);
+  }
+  // Run any style parser associated with the node's styles. Either
+  // return an updated array of marks, or null to indicate some of the
+  // styles had a rule with `ignore` set.
+  readStyles(dom, marks) {
+    let styles = dom.style;
+    if (styles && styles.length)
+      for (let i = 0; i < this.parser.matchedStyles.length; i++) {
+        let name = this.parser.matchedStyles[i], value = styles.getPropertyValue(name);
+        if (value)
+          for (let after = void 0; ; ) {
+            let rule = this.parser.matchStyle(name, value, this, after);
+            if (!rule)
+              break;
+            if (rule.ignore)
+              return null;
+            if (rule.clearMark)
+              marks = marks.filter((m) => !rule.clearMark(m));
+            else
+              marks = marks.concat(this.parser.schema.marks[rule.mark].create(rule.attrs));
+            if (rule.consuming === false)
+              after = rule;
+            else
+              break;
+          }
+      }
+    return marks;
+  }
+  // Look up a handler for the given node. If none are found, return
+  // false. Otherwise, apply it, use its return value to drive the way
+  // the node's content is wrapped, and return true.
+  addElementByRule(dom, rule, marks, continueAfter) {
+    let sync, nodeType;
+    if (rule.node) {
+      nodeType = this.parser.schema.nodes[rule.node];
+      if (!nodeType.isLeaf) {
+        let inner = this.enter(nodeType, rule.attrs || null, marks, rule.preserveWhitespace);
+        if (inner) {
+          sync = true;
+          marks = inner;
+        }
+      } else if (!this.insertNode(nodeType.create(rule.attrs), marks, dom.nodeName == "BR")) {
+        this.leafFallback(dom, marks);
+      }
+    } else {
+      let markType = this.parser.schema.marks[rule.mark];
+      marks = marks.concat(markType.create(rule.attrs));
+    }
+    let startIn = this.top;
+    if (nodeType && nodeType.isLeaf) {
+      this.findInside(dom);
+    } else if (continueAfter) {
+      this.addElement(dom, marks, continueAfter);
+    } else if (rule.getContent) {
+      this.findInside(dom);
+      rule.getContent(dom, this.parser.schema).forEach((node) => this.insertNode(node, marks, false));
+    } else {
+      let contentDOM = dom;
+      if (typeof rule.contentElement == "string")
+        contentDOM = dom.querySelector(rule.contentElement);
+      else if (typeof rule.contentElement == "function")
+        contentDOM = rule.contentElement(dom);
+      else if (rule.contentElement)
+        contentDOM = rule.contentElement;
+      this.findAround(dom, contentDOM, true);
+      this.addAll(contentDOM, marks);
+      this.findAround(dom, contentDOM, false);
+    }
+    if (sync && this.sync(startIn))
+      this.open--;
+  }
+  // Add all child nodes between `startIndex` and `endIndex` (or the
+  // whole node, if not given). If `sync` is passed, use it to
+  // synchronize after every block element.
+  addAll(parent, marks, startIndex, endIndex) {
+    let index = startIndex || 0;
+    for (let dom = startIndex ? parent.childNodes[startIndex] : parent.firstChild, end = endIndex == null ? null : parent.childNodes[endIndex]; dom != end; dom = dom.nextSibling, ++index) {
+      this.findAtPoint(parent, index);
+      this.addDOM(dom, marks);
+    }
+    this.findAtPoint(parent, index);
+  }
+  // Try to find a way to fit the given node type into the current
+  // context. May add intermediate wrappers and/or leave non-solid
+  // nodes that we're in.
+  findPlace(node, marks, cautious) {
+    let route, sync;
+    for (let depth = this.open, penalty = 0; depth >= 0; depth--) {
+      let cx = this.nodes[depth];
+      let found2 = cx.findWrapping(node);
+      if (found2 && (!route || route.length > found2.length + penalty)) {
+        route = found2;
+        sync = cx;
+        if (!found2.length)
+          break;
+      }
+      if (cx.solid) {
+        if (cautious)
+          break;
+        penalty += 2;
+      }
+    }
+    if (!route)
+      return null;
+    this.sync(sync);
+    for (let i = 0; i < route.length; i++)
+      marks = this.enterInner(route[i], null, marks, false);
+    return marks;
+  }
+  // Try to insert the given node, adjusting the context when needed.
+  insertNode(node, marks, cautious) {
+    if (node.isInline && this.needsBlock && !this.top.type) {
+      let block = this.textblockFromContext();
+      if (block)
+        marks = this.enterInner(block, null, marks);
+    }
+    let innerMarks = this.findPlace(node, marks, cautious);
+    if (innerMarks) {
+      this.closeExtra();
+      let top = this.top;
+      if (top.match)
+        top.match = top.match.matchType(node.type);
+      let nodeMarks = Mark.none;
+      for (let m of innerMarks.concat(node.marks))
+        if (top.type ? top.type.allowsMarkType(m.type) : markMayApply(m.type, node.type))
+          nodeMarks = m.addToSet(nodeMarks);
+      top.content.push(node.mark(nodeMarks));
+      return true;
+    }
+    return false;
+  }
+  // Try to start a node of the given type, adjusting the context when
+  // necessary.
+  enter(type, attrs, marks, preserveWS) {
+    let innerMarks = this.findPlace(type.create(attrs), marks, false);
+    if (innerMarks)
+      innerMarks = this.enterInner(type, attrs, marks, true, preserveWS);
+    return innerMarks;
+  }
+  // Open a node of the given type
+  enterInner(type, attrs, marks, solid = false, preserveWS) {
+    this.closeExtra();
+    let top = this.top;
+    top.match = top.match && top.match.matchType(type);
+    let options = wsOptionsFor(type, preserveWS, top.options);
+    if (top.options & OPT_OPEN_LEFT && top.content.length == 0)
+      options |= OPT_OPEN_LEFT;
+    let applyMarks = Mark.none;
+    marks = marks.filter((m) => {
+      if (top.type ? top.type.allowsMarkType(m.type) : markMayApply(m.type, type)) {
+        applyMarks = m.addToSet(applyMarks);
+        return false;
+      }
+      return true;
+    });
+    this.nodes.push(new NodeContext(type, attrs, applyMarks, solid, null, options));
+    this.open++;
+    return marks;
+  }
+  // Make sure all nodes above this.open are finished and added to
+  // their parents
+  closeExtra(openEnd = false) {
+    let i = this.nodes.length - 1;
+    if (i > this.open) {
+      for (; i > this.open; i--)
+        this.nodes[i - 1].content.push(this.nodes[i].finish(openEnd));
+      this.nodes.length = this.open + 1;
+    }
+  }
+  finish() {
+    this.open = 0;
+    this.closeExtra(this.isOpen);
+    return this.nodes[0].finish(!!(this.isOpen || this.options.topOpen));
+  }
+  sync(to) {
+    for (let i = this.open; i >= 0; i--) {
+      if (this.nodes[i] == to) {
+        this.open = i;
+        return true;
+      } else if (this.localPreserveWS) {
+        this.nodes[i].options |= OPT_PRESERVE_WS;
+      }
+    }
+    return false;
+  }
+  get currentPos() {
+    this.closeExtra();
+    let pos = 0;
+    for (let i = this.open; i >= 0; i--) {
+      let content = this.nodes[i].content;
+      for (let j = content.length - 1; j >= 0; j--)
+        pos += content[j].nodeSize;
+      if (i)
+        pos++;
+    }
+    return pos;
+  }
+  findAtPoint(parent, offset) {
+    if (this.find)
+      for (let i = 0; i < this.find.length; i++) {
+        if (this.find[i].node == parent && this.find[i].offset == offset)
+          this.find[i].pos = this.currentPos;
+      }
+  }
+  findInside(parent) {
+    if (this.find)
+      for (let i = 0; i < this.find.length; i++) {
+        if (this.find[i].pos == null && parent.nodeType == 1 && parent.contains(this.find[i].node))
+          this.find[i].pos = this.currentPos;
+      }
+  }
+  findAround(parent, content, before) {
+    if (parent != content && this.find)
+      for (let i = 0; i < this.find.length; i++) {
+        if (this.find[i].pos == null && parent.nodeType == 1 && parent.contains(this.find[i].node)) {
+          let pos = content.compareDocumentPosition(this.find[i].node);
+          if (pos & (before ? 2 : 4))
+            this.find[i].pos = this.currentPos;
+        }
+      }
+  }
+  findInText(textNode) {
+    if (this.find)
+      for (let i = 0; i < this.find.length; i++) {
+        if (this.find[i].node == textNode)
+          this.find[i].pos = this.currentPos - (textNode.nodeValue.length - this.find[i].offset);
+      }
+  }
+  // Determines whether the given context string matches this context.
+  matchesContext(context) {
+    if (context.indexOf("|") > -1)
+      return context.split(/\s*\|\s*/).some(this.matchesContext, this);
+    let parts = context.split("/");
+    let option = this.options.context;
+    let useRoot = !this.isOpen && (!option || option.parent.type == this.nodes[0].type);
+    let minDepth = -(option ? option.depth + 1 : 0) + (useRoot ? 0 : 1);
+    let match = (i, depth) => {
+      for (; i >= 0; i--) {
+        let part = parts[i];
+        if (part == "") {
+          if (i == parts.length - 1 || i == 0)
+            continue;
+          for (; depth >= minDepth; depth--)
+            if (match(i - 1, depth))
+              return true;
+          return false;
+        } else {
+          let next = depth > 0 || depth == 0 && useRoot ? this.nodes[depth].type : option && depth >= minDepth ? option.node(depth - minDepth).type : null;
+          if (!next || next.name != part && !next.isInGroup(part))
+            return false;
+          depth--;
+        }
+      }
+      return true;
+    };
+    return match(parts.length - 1, this.open);
+  }
+  textblockFromContext() {
+    let $context = this.options.context;
+    if ($context)
+      for (let d = $context.depth; d >= 0; d--) {
+        let deflt = $context.node(d).contentMatchAt($context.indexAfter(d)).defaultType;
+        if (deflt && deflt.isTextblock && deflt.defaultAttrs)
+          return deflt;
+      }
+    for (let name in this.parser.schema.nodes) {
+      let type = this.parser.schema.nodes[name];
+      if (type.isTextblock && type.defaultAttrs)
+        return type;
+    }
+  }
+};
+function normalizeList(dom) {
+  for (let child = dom.firstChild, prevItem = null; child; child = child.nextSibling) {
+    let name = child.nodeType == 1 ? child.nodeName.toLowerCase() : null;
+    if (name && listTags.hasOwnProperty(name) && prevItem) {
+      prevItem.appendChild(child);
+      child = prevItem;
+    } else if (name == "li") {
+      prevItem = child;
+    } else if (name) {
+      prevItem = null;
+    }
+  }
+}
+function matches(dom, selector) {
+  return (dom.matches || dom.msMatchesSelector || dom.webkitMatchesSelector || dom.mozMatchesSelector).call(dom, selector);
+}
+function copy(obj) {
+  let copy2 = {};
+  for (let prop in obj)
+    copy2[prop] = obj[prop];
+  return copy2;
+}
+function markMayApply(markType, nodeType) {
+  let nodes = nodeType.schema.nodes;
+  for (let name in nodes) {
+    let parent = nodes[name];
+    if (!parent.allowsMarkType(markType))
+      continue;
+    let seen = [], scan = (match) => {
+      seen.push(match);
+      for (let i = 0; i < match.edgeCount; i++) {
+        let { type, next } = match.edge(i);
+        if (type == nodeType)
+          return true;
+        if (seen.indexOf(next) < 0 && scan(next))
+          return true;
+      }
+    };
+    if (scan(parent.contentMatch))
+      return true;
+  }
+}
+var DOMSerializer = class _DOMSerializer {
+  /**
+  Create a serializer. `nodes` should map node names to functions
+  that take a node and return a description of the corresponding
+  DOM. `marks` does the same for mark names, but also gets an
+  argument that tells it whether the mark's content is block or
+  inline content (for typical use, it'll always be inline). A mark
+  serializer may be `null` to indicate that marks of that type
+  should not be serialized.
+  */
+  constructor(nodes, marks) {
+    this.nodes = nodes;
+    this.marks = marks;
+  }
+  /**
+  Serialize the content of this fragment to a DOM fragment. When
+  not in the browser, the `document` option, containing a DOM
+  document, should be passed so that the serializer can create
+  nodes.
+  */
+  serializeFragment(fragment, options = {}, target) {
+    if (!target)
+      target = doc(options).createDocumentFragment();
+    let top = target, active = [];
+    fragment.forEach((node) => {
+      if (active.length || node.marks.length) {
+        let keep = 0, rendered = 0;
+        while (keep < active.length && rendered < node.marks.length) {
+          let next = node.marks[rendered];
+          if (!this.marks[next.type.name]) {
+            rendered++;
+            continue;
+          }
+          if (!next.eq(active[keep][0]) || next.type.spec.spanning === false)
+            break;
+          keep++;
+          rendered++;
+        }
+        while (keep < active.length)
+          top = active.pop()[1];
+        while (rendered < node.marks.length) {
+          let add = node.marks[rendered++];
+          let markDOM = this.serializeMark(add, node.isInline, options);
+          if (markDOM) {
+            active.push([add, top]);
+            top.appendChild(markDOM.dom);
+            top = markDOM.contentDOM || markDOM.dom;
+          }
+        }
+      }
+      top.appendChild(this.serializeNodeInner(node, options));
+    });
+    return target;
+  }
+  /**
+  @internal
+  */
+  serializeNodeInner(node, options) {
+    if (node.isText)
+      return doc(options).createTextNode(node.text);
+    let { dom, contentDOM } = renderSpec(doc(options), this.nodes[node.type.name](node), null, node.attrs);
+    if (contentDOM) {
+      if (node.isLeaf)
+        throw new RangeError("Content hole not allowed in a leaf node spec");
+      this.serializeFragment(node.content, options, contentDOM);
+    }
+    return dom;
+  }
+  /**
+  Serialize this node to a DOM node. This can be useful when you
+  need to serialize a part of a document, as opposed to the whole
+  document. To serialize a whole document, use
+  [`serializeFragment`](https://prosemirror.net/docs/ref/#model.DOMSerializer.serializeFragment) on
+  its [content](https://prosemirror.net/docs/ref/#model.Node.content).
+  */
+  serializeNode(node, options = {}) {
+    let dom = this.serializeNodeInner(node, options);
+    for (let i = node.marks.length - 1; i >= 0; i--) {
+      let wrap2 = this.serializeMark(node.marks[i], node.isInline, options);
+      if (wrap2) {
+        (wrap2.contentDOM || wrap2.dom).appendChild(dom);
+        dom = wrap2.dom;
+      }
+    }
+    return dom;
+  }
+  /**
+  @internal
+  */
+  serializeMark(mark, inline, options = {}) {
+    let toDOM = this.marks[mark.type.name];
+    return toDOM && renderSpec(doc(options), toDOM(mark, inline), null, mark.attrs);
+  }
+  static renderSpec(doc2, structure, xmlNS = null, blockArraysIn) {
+    if (typeof structure == "string")
+      return { dom: doc2.createTextNode(structure) };
+    return renderSpec(doc2, structure, xmlNS, blockArraysIn);
+  }
+  /**
+  Build a serializer using the [`toDOM`](https://prosemirror.net/docs/ref/#model.NodeSpec.toDOM)
+  properties in a schema's node and mark specs.
+  */
+  static fromSchema(schema) {
+    return schema.cached.domSerializer || (schema.cached.domSerializer = new _DOMSerializer(this.nodesFromSchema(schema), this.marksFromSchema(schema)));
+  }
+  /**
+  Gather the serializers in a schema's node specs into an object.
+  This can be useful as a base to build a custom serializer from.
+  */
+  static nodesFromSchema(schema) {
+    let result = gatherToDOM(schema.nodes);
+    if (!result.text)
+      result.text = (node) => node.text;
+    return result;
+  }
+  /**
+  Gather the serializers in a schema's mark specs into an object.
+  */
+  static marksFromSchema(schema) {
+    return gatherToDOM(schema.marks);
+  }
+};
+function gatherToDOM(obj) {
+  let result = {};
+  for (let name in obj) {
+    let toDOM = obj[name].spec.toDOM;
+    if (toDOM)
+      result[name] = toDOM;
+  }
+  return result;
+}
+function doc(options) {
+  return options.document || window.document;
+}
+var suspiciousAttributeCache = /* @__PURE__ */ new WeakMap();
+function suspiciousAttributes(attrs) {
+  let value = suspiciousAttributeCache.get(attrs);
+  if (value === void 0)
+    suspiciousAttributeCache.set(attrs, value = suspiciousAttributesInner(attrs));
+  return value;
+}
+function suspiciousAttributesInner(attrs) {
+  let result = null;
+  function scan(value) {
+    if (value && typeof value == "object") {
+      if (Array.isArray(value)) {
+        if (typeof value[0] == "string") {
+          if (!result)
+            result = [];
+          result.push(value);
+        } else {
+          for (let i = 0; i < value.length; i++)
+            scan(value[i]);
+        }
+      } else {
+        for (let prop in value)
+          scan(value[prop]);
+      }
+    }
+  }
+  scan(attrs);
+  return result;
+}
+function renderSpec(doc2, structure, xmlNS, blockArraysIn) {
+  if (structure.nodeType == 1)
+    return { dom: structure };
+  if (structure.dom && structure.dom.nodeType == 1)
+    return structure;
+  let tagName = structure[0], suspicious;
+  if (typeof tagName != "string")
+    throw new RangeError("Invalid array passed to renderSpec");
+  if (blockArraysIn && (suspicious = suspiciousAttributes(blockArraysIn)) && suspicious.indexOf(structure) > -1)
+    throw new RangeError("Using an array from an attribute object as a DOM spec. This may be an attempted cross site scripting attack.");
+  let space = tagName.indexOf(" ");
+  if (space > 0) {
+    xmlNS = tagName.slice(0, space);
+    tagName = tagName.slice(space + 1);
+  }
+  let contentDOM;
+  let dom = xmlNS ? doc2.createElementNS(xmlNS, tagName) : doc2.createElement(tagName);
+  let attrs = structure[1], start = 1;
+  if (attrs && typeof attrs == "object" && attrs.nodeType == null && !Array.isArray(attrs)) {
+    start = 2;
+    for (let name in attrs)
+      if (attrs[name] != null) {
+        let space2 = name.indexOf(" ");
+        if (space2 > 0)
+          dom.setAttributeNS(name.slice(0, space2), name.slice(space2 + 1), attrs[name]);
+        else if (name == "style" && dom.style)
+          dom.style.cssText = attrs[name];
+        else
+          dom.setAttribute(name, attrs[name]);
+      }
+  }
+  for (let i = start; i < structure.length; i++) {
+    let child = structure[i];
+    if (child === 0) {
+      if (i < structure.length - 1 || i > start)
+        throw new RangeError("Content hole must be the only child of its parent node");
+      return { dom, contentDOM: dom };
+    } else if (typeof child == "string") {
+      dom.appendChild(doc2.createTextNode(child));
+    } else {
+      let { dom: inner, contentDOM: innerContent } = renderSpec(doc2, child, xmlNS, blockArraysIn);
+      dom.appendChild(inner);
+      if (innerContent) {
+        if (contentDOM)
+          throw new RangeError("Multiple content holes");
+        contentDOM = innerContent;
+      }
+    }
+  }
+  return { dom, contentDOM };
+}
 
-// node_modules/prosemirror-state/node_modules/prosemirror-transform/dist/index.js
+// node_modules/prosemirror-transform/dist/index.js
 var lower16 = 65535;
 var factor16 = Math.pow(2, 16);
 function makeRecover(index, offset) {
@@ -2416,15 +3665,15 @@ var StepResult = class _StepResult {
   /**
   @internal
   */
-  constructor(doc, failed) {
-    this.doc = doc;
+  constructor(doc2, failed) {
+    this.doc = doc2;
     this.failed = failed;
   }
   /**
   Create a successful step result.
   */
-  static ok(doc) {
-    return new _StepResult(doc, null);
+  static ok(doc2) {
+    return new _StepResult(doc2, null);
   }
   /**
   Create a failed step result.
@@ -2437,9 +3686,9 @@ var StepResult = class _StepResult {
   arguments. Create a successful result if it succeeds, and a
   failed one if it throws a `ReplaceError`.
   */
-  static fromReplace(doc, from, to, slice) {
+  static fromReplace(doc2, from, to, slice) {
     try {
-      return _StepResult.ok(doc.replace(from, to, slice));
+      return _StepResult.ok(doc2.replace(from, to, slice));
     } catch (e) {
       if (e instanceof ReplaceError)
         return _StepResult.fail(e.message);
@@ -2469,15 +3718,15 @@ var AddMarkStep = class _AddMarkStep extends Step {
     this.to = to;
     this.mark = mark;
   }
-  apply(doc) {
-    let oldSlice = doc.slice(this.from, this.to), $from = doc.resolve(this.from);
+  apply(doc2) {
+    let oldSlice = doc2.slice(this.from, this.to), $from = doc2.resolve(this.from);
     let parent = $from.node($from.sharedDepth(this.to));
     let slice = new Slice(mapFragment(oldSlice.content, (node, parent2) => {
       if (!node.isAtom || !parent2.type.allowsMarkType(this.mark.type))
         return node;
       return node.mark(this.mark.addToSet(node.marks));
     }, parent), oldSlice.openStart, oldSlice.openEnd);
-    return StepResult.fromReplace(doc, this.from, this.to, slice);
+    return StepResult.fromReplace(doc2, this.from, this.to, slice);
   }
   invert() {
     return new RemoveMarkStep(this.from, this.to, this.mark);
@@ -2521,12 +3770,12 @@ var RemoveMarkStep = class _RemoveMarkStep extends Step {
     this.to = to;
     this.mark = mark;
   }
-  apply(doc) {
-    let oldSlice = doc.slice(this.from, this.to);
+  apply(doc2) {
+    let oldSlice = doc2.slice(this.from, this.to);
     let slice = new Slice(mapFragment(oldSlice.content, (node) => {
       return node.mark(this.mark.removeFromSet(node.marks));
-    }, doc), oldSlice.openStart, oldSlice.openEnd);
-    return StepResult.fromReplace(doc, this.from, this.to, slice);
+    }, doc2), oldSlice.openStart, oldSlice.openEnd);
+    return StepResult.fromReplace(doc2, this.from, this.to, slice);
   }
   invert() {
     return new AddMarkStep(this.from, this.to, this.mark);
@@ -2569,15 +3818,15 @@ var AddNodeMarkStep = class _AddNodeMarkStep extends Step {
     this.pos = pos;
     this.mark = mark;
   }
-  apply(doc) {
-    let node = doc.nodeAt(this.pos);
+  apply(doc2) {
+    let node = doc2.nodeAt(this.pos);
     if (!node)
       return StepResult.fail("No node at mark step's position");
     let updated = node.type.create(node.attrs, null, this.mark.addToSet(node.marks));
-    return StepResult.fromReplace(doc, this.pos, this.pos + 1, new Slice(Fragment.from(updated), 0, node.isLeaf ? 0 : 1));
+    return StepResult.fromReplace(doc2, this.pos, this.pos + 1, new Slice(Fragment.from(updated), 0, node.isLeaf ? 0 : 1));
   }
-  invert(doc) {
-    let node = doc.nodeAt(this.pos);
+  invert(doc2) {
+    let node = doc2.nodeAt(this.pos);
     if (node) {
       let newSet = this.mark.addToSet(node.marks);
       if (newSet.length == node.marks.length) {
@@ -2615,15 +3864,15 @@ var RemoveNodeMarkStep = class _RemoveNodeMarkStep extends Step {
     this.pos = pos;
     this.mark = mark;
   }
-  apply(doc) {
-    let node = doc.nodeAt(this.pos);
+  apply(doc2) {
+    let node = doc2.nodeAt(this.pos);
     if (!node)
       return StepResult.fail("No node at mark step's position");
     let updated = node.type.create(node.attrs, null, this.mark.removeFromSet(node.marks));
-    return StepResult.fromReplace(doc, this.pos, this.pos + 1, new Slice(Fragment.from(updated), 0, node.isLeaf ? 0 : 1));
+    return StepResult.fromReplace(doc2, this.pos, this.pos + 1, new Slice(Fragment.from(updated), 0, node.isLeaf ? 0 : 1));
   }
-  invert(doc) {
-    let node = doc.nodeAt(this.pos);
+  invert(doc2) {
+    let node = doc2.nodeAt(this.pos);
     if (!node || !this.mark.isInSet(node.marks))
       return this;
     return new AddNodeMarkStep(this.pos, this.mark);
@@ -2662,19 +3911,20 @@ var ReplaceStep = class _ReplaceStep extends Step {
     this.slice = slice;
     this.structure = structure;
   }
-  apply(doc) {
-    if (this.structure && contentBetween(doc, this.from, this.to))
+  apply(doc2) {
+    if (this.structure && contentBetween(doc2, this.from, this.to))
       return StepResult.fail("Structure replace would overwrite content");
-    return StepResult.fromReplace(doc, this.from, this.to, this.slice);
+    return StepResult.fromReplace(doc2, this.from, this.to, this.slice);
   }
   getMap() {
     return new StepMap([this.from, this.to - this.from, this.slice.size]);
   }
-  invert(doc) {
-    return new _ReplaceStep(this.from, this.from + this.slice.size, doc.slice(this.from, this.to));
+  invert(doc2) {
+    return new _ReplaceStep(this.from, this.from + this.slice.size, doc2.slice(this.from, this.to));
   }
   map(mapping) {
-    let from = mapping.mapResult(this.from, 1), to = mapping.mapResult(this.to, -1);
+    let to = mapping.mapResult(this.to, -1);
+    let from = this.from == this.to && _ReplaceStep.MAP_BIAS < 0 ? to : mapping.mapResult(this.from, 1);
     if (from.deletedAcross && to.deletedAcross)
       return null;
     return new _ReplaceStep(from.pos, Math.max(from.pos, to.pos), this.slice, this.structure);
@@ -2709,6 +3959,7 @@ var ReplaceStep = class _ReplaceStep extends Step {
     return new _ReplaceStep(json.from, json.to, Slice.fromJSON(schema, json.slice), !!json.structure);
   }
 };
+ReplaceStep.MAP_BIAS = 1;
 Step.jsonID("replace", ReplaceStep);
 var ReplaceAroundStep = class _ReplaceAroundStep extends Step {
   /**
@@ -2727,16 +3978,16 @@ var ReplaceAroundStep = class _ReplaceAroundStep extends Step {
     this.insert = insert;
     this.structure = structure;
   }
-  apply(doc) {
-    if (this.structure && (contentBetween(doc, this.from, this.gapFrom) || contentBetween(doc, this.gapTo, this.to)))
+  apply(doc2) {
+    if (this.structure && (contentBetween(doc2, this.from, this.gapFrom) || contentBetween(doc2, this.gapTo, this.to)))
       return StepResult.fail("Structure gap-replace would overwrite content");
-    let gap = doc.slice(this.gapFrom, this.gapTo);
+    let gap = doc2.slice(this.gapFrom, this.gapTo);
     if (gap.openStart || gap.openEnd)
       return StepResult.fail("Gap is not a flat range");
     let inserted = this.slice.insertAt(this.insert, gap.content);
     if (!inserted)
       return StepResult.fail("Content does not fit in gap");
-    return StepResult.fromReplace(doc, this.from, this.to, inserted);
+    return StepResult.fromReplace(doc2, this.from, this.to, inserted);
   }
   getMap() {
     return new StepMap([
@@ -2748,9 +3999,9 @@ var ReplaceAroundStep = class _ReplaceAroundStep extends Step {
       this.slice.size - this.insert
     ]);
   }
-  invert(doc) {
+  invert(doc2) {
     let gap = this.gapTo - this.gapFrom;
-    return new _ReplaceAroundStep(this.from, this.from + this.slice.size + gap, this.from + this.insert, this.from + this.insert + gap, doc.slice(this.from, this.to).removeBetween(this.gapFrom - this.from, this.gapTo - this.from), this.gapFrom - this.from, this.structure);
+    return new _ReplaceAroundStep(this.from, this.from + this.slice.size + gap, this.from + this.insert, this.from + this.insert + gap, doc2.slice(this.from, this.to).removeBetween(this.gapFrom - this.from, this.gapTo - this.from), this.gapFrom - this.from, this.structure);
   }
   map(mapping) {
     let from = mapping.mapResult(this.from, 1), to = mapping.mapResult(this.to, -1);
@@ -2785,8 +4036,8 @@ var ReplaceAroundStep = class _ReplaceAroundStep extends Step {
   }
 };
 Step.jsonID("replaceAround", ReplaceAroundStep);
-function contentBetween(doc, from, to) {
-  let $from = doc.resolve(from), dist = to - from, depth = $from.depth;
+function contentBetween(doc2, from, to) {
+  let $from = doc2.resolve(from), dist = to - from, depth = $from.depth;
   while (dist > 0 && depth > 0 && $from.indexAfter(depth) == $from.node(depth).childCount) {
     depth--;
     dist--;
@@ -2899,6 +4150,26 @@ function clearIncompatible(tr, pos, parentType, match = parentType.contentMatch,
   for (let i = replSteps.length - 1; i >= 0; i--)
     tr.step(replSteps[i]);
 }
+function canCut(node, start, end) {
+  return (start == 0 || node.canReplace(start, node.childCount)) && (end == node.childCount || node.canReplace(0, end));
+}
+function liftTarget(range) {
+  let parent = range.parent;
+  let content = parent.content.cutByIndex(range.startIndex, range.endIndex);
+  for (let depth = range.depth, contentBefore = 0, contentAfter = 0; ; --depth) {
+    let node = range.$from.node(depth);
+    let index = range.$from.index(depth) + contentBefore, endIndex = range.$to.indexAfter(depth) - contentAfter;
+    if (depth < range.depth && node.canReplace(index, endIndex, content))
+      return depth;
+    if (depth == 0 || node.type.spec.isolating || !canCut(node, index, endIndex))
+      break;
+    if (index)
+      contentBefore = 1;
+    if (endIndex < node.childCount)
+      contentAfter = 1;
+  }
+  return null;
+}
 function lift(tr, range, target) {
   let { $from, $to, depth } = range;
   let gapStart = $from.before(depth + 1), gapEnd = $to.after(depth + 1);
@@ -2922,6 +4193,38 @@ function lift(tr, range, target) {
       end++;
     }
   tr.step(new ReplaceAroundStep(start, end, gapStart, gapEnd, new Slice(before.append(after), openStart, openEnd), before.size - openStart, true));
+}
+function findWrapping(range, nodeType, attrs = null, innerRange = range) {
+  let around = findWrappingOutside(range, nodeType);
+  let inner = around && findWrappingInside(innerRange, nodeType);
+  if (!inner)
+    return null;
+  return around.map(withAttrs).concat({ type: nodeType, attrs }).concat(inner.map(withAttrs));
+}
+function withAttrs(type) {
+  return { type, attrs: null };
+}
+function findWrappingOutside(range, type) {
+  let { parent, startIndex, endIndex } = range;
+  let around = parent.contentMatchAt(startIndex).findWrapping(type);
+  if (!around)
+    return null;
+  let outer = around.length ? around[0] : type;
+  return parent.canReplaceWith(startIndex, endIndex, outer) ? around : null;
+}
+function findWrappingInside(range, type) {
+  let { parent, startIndex, endIndex } = range;
+  let inner = parent.child(startIndex);
+  let inside = type.contentMatch.findWrapping(inner.type);
+  if (!inside)
+    return null;
+  let lastType = inside.length ? inside[inside.length - 1] : type;
+  let innerMatch = lastType.contentMatch;
+  for (let i = startIndex; innerMatch && i < endIndex; i++)
+    innerMatch = innerMatch.matchType(parent.child(i).type);
+  if (!innerMatch || !innerMatch.validEnd)
+    return null;
+  return inside;
 }
 function wrap(tr, range, wrappers) {
   let content = Fragment.empty;
@@ -2982,8 +4285,8 @@ function replaceLinebreaks(tr, node, pos, mapFrom) {
     }
   });
 }
-function canChangeType(doc, pos, type) {
-  let $pos = doc.resolve(pos), index = $pos.index();
+function canChangeType(doc2, pos, type) {
+  let $pos = doc2.resolve(pos), index = $pos.index();
   return $pos.parent.canReplaceWith(index, index + 1, type);
 }
 function setNodeMarkup(tr, pos, type, attrs, marks) {
@@ -2999,6 +4302,27 @@ function setNodeMarkup(tr, pos, type, attrs, marks) {
     throw new RangeError("Invalid content for node type " + type.name);
   tr.step(new ReplaceAroundStep(pos, pos + node.nodeSize, pos + 1, pos + node.nodeSize - 1, new Slice(Fragment.from(newNode), 0, 0), 1, true));
 }
+function canSplit(doc2, pos, depth = 1, typesAfter) {
+  let $pos = doc2.resolve(pos), base = $pos.depth - depth;
+  let innerType = typesAfter && typesAfter[typesAfter.length - 1] || $pos.parent;
+  if (base < 0 || $pos.parent.type.spec.isolating || !$pos.parent.canReplace($pos.index(), $pos.parent.childCount) || !innerType.type.validContent($pos.parent.content.cutByIndex($pos.index(), $pos.parent.childCount)))
+    return false;
+  for (let d = $pos.depth - 1, i = depth - 2; d > base; d--, i--) {
+    let node = $pos.node(d), index2 = $pos.index(d);
+    if (node.type.spec.isolating)
+      return false;
+    let rest = node.content.cutByIndex(index2, node.childCount);
+    let overrideChild = typesAfter && typesAfter[i + 1];
+    if (overrideChild)
+      rest = rest.replaceChild(0, overrideChild.type.create(overrideChild.attrs));
+    let after = typesAfter && typesAfter[i] || node;
+    if (!node.canReplace(index2 + 1, node.childCount) || !after.type.validContent(rest))
+      return false;
+  }
+  let index = $pos.indexAfter(base);
+  let baseType = typesAfter && typesAfter[0];
+  return $pos.node(base).canReplaceWith(index, index, baseType ? baseType.type : $pos.node(base + 1).type);
+}
 function split(tr, pos, depth = 1, typesAfter) {
   let $pos = tr.doc.resolve(pos), before = Fragment.empty, after = Fragment.empty;
   for (let d = $pos.depth, e = $pos.depth - depth, i = depth - 1; d > e; d--, i--) {
@@ -3007,6 +4331,51 @@ function split(tr, pos, depth = 1, typesAfter) {
     after = Fragment.from(typeAfter ? typeAfter.type.create(typeAfter.attrs, after) : $pos.node(d).copy(after));
   }
   tr.step(new ReplaceStep(pos, pos, new Slice(before.append(after), depth, depth), true));
+}
+function canJoin(doc2, pos) {
+  let $pos = doc2.resolve(pos), index = $pos.index();
+  return joinable2($pos.nodeBefore, $pos.nodeAfter) && $pos.parent.canReplace(index, index + 1);
+}
+function canAppendWithSubstitutedLinebreaks(a, b) {
+  if (!b.content.size)
+    a.type.compatibleContent(b.type);
+  let match = a.contentMatchAt(a.childCount);
+  let { linebreakReplacement } = a.type.schema;
+  for (let i = 0; i < b.childCount; i++) {
+    let child = b.child(i);
+    let type = child.type == linebreakReplacement ? a.type.schema.nodes.text : child.type;
+    match = match.matchType(type);
+    if (!match)
+      return false;
+    if (!a.type.allowsMarks(child.marks))
+      return false;
+  }
+  return match.validEnd;
+}
+function joinable2(a, b) {
+  return !!(a && b && !a.isLeaf && canAppendWithSubstitutedLinebreaks(a, b));
+}
+function joinPoint(doc2, pos, dir = -1) {
+  let $pos = doc2.resolve(pos);
+  for (let d = $pos.depth; ; d--) {
+    let before, after, index = $pos.index(d);
+    if (d == $pos.depth) {
+      before = $pos.nodeBefore;
+      after = $pos.nodeAfter;
+    } else if (dir > 0) {
+      before = $pos.node(d + 1);
+      index++;
+      after = $pos.node(d).maybeChild(index);
+    } else {
+      before = $pos.node(d).maybeChild(index - 1);
+      after = $pos.node(d + 1);
+    }
+    if (before && !before.isTextblock && joinable2(before, after) && $pos.node(d).canReplace(index, index + 1))
+      return pos;
+    if (d == 0)
+      break;
+    pos = dir < 0 ? $pos.before(d) : $pos.after(d);
+  }
 }
 function join(tr, pos, depth) {
   let convertNewlines = null;
@@ -3035,8 +4404,8 @@ function join(tr, pos, depth) {
   }
   return tr;
 }
-function insertPoint(doc, pos, nodeType) {
-  let $pos = doc.resolve(pos);
+function insertPoint(doc2, pos, nodeType) {
+  let $pos = doc2.resolve(pos);
   if ($pos.parent.canReplaceWith($pos.index(), $pos.index(), nodeType))
     return pos;
   if ($pos.parentOffset == 0)
@@ -3057,10 +4426,34 @@ function insertPoint(doc, pos, nodeType) {
     }
   return null;
 }
-function replaceStep(doc, from, to = from, slice = Slice.empty) {
+function dropPoint(doc2, pos, slice) {
+  let $pos = doc2.resolve(pos);
+  if (!slice.content.size)
+    return pos;
+  let content = slice.content;
+  for (let i = 0; i < slice.openStart; i++)
+    content = content.firstChild.content;
+  for (let pass = 1; pass <= (slice.openStart == 0 && slice.size ? 2 : 1); pass++) {
+    for (let d = $pos.depth; d >= 0; d--) {
+      let bias = d == $pos.depth ? 0 : $pos.pos <= ($pos.start(d + 1) + $pos.end(d + 1)) / 2 ? -1 : 1;
+      let insertPos = $pos.index(d) + (bias > 0 ? 1 : 0);
+      let parent = $pos.node(d), fits = false;
+      if (pass == 1) {
+        fits = parent.canReplace(insertPos, insertPos, content);
+      } else {
+        let wrapping = parent.contentMatchAt(insertPos).findWrapping(content.firstChild.type);
+        fits = wrapping && parent.canReplaceWith(insertPos, insertPos, wrapping[0]);
+      }
+      if (fits)
+        return bias == 0 ? $pos.pos : bias < 0 ? $pos.before(d + 1) : $pos.after(d + 1);
+    }
+  }
+  return null;
+}
+function replaceStep(doc2, from, to = from, slice = Slice.empty) {
   if (from == to && !slice.size)
     return null;
-  let $from = doc.resolve(from), $to = doc.resolve(to);
+  let $from = doc2.resolve(from), $to = doc2.resolve(to);
   if (fitsTrivially($from, $to, slice))
     return new ReplaceStep(from, to, slice);
   return new Fitter($from, $to, slice).fit();
@@ -3188,12 +4581,12 @@ var Fitter = class {
     }
     let openEndCount = fragment.size + sliceDepth - (slice.content.size - slice.openEnd);
     while (taken < fragment.childCount) {
-      let next = fragment.child(taken), matches = match.matchType(next.type);
-      if (!matches)
+      let next = fragment.child(taken), matches2 = match.matchType(next.type);
+      if (!matches2)
         break;
       taken++;
       if (taken > 1 || openStart == 0 || next.content.size) {
-        match = matches;
+        match = matches2;
         add.push(closeNodeStart(next.mark(type.allowedMarks(next.marks)), taken == 1 ? openStart : 0, taken == fragment.childCount ? openEndCount : -1));
       }
     }
@@ -3231,8 +4624,8 @@ var Fitter = class {
         continue;
       for (let d = i - 1; d >= 0; d--) {
         let { match: match2, type: type2 } = this.frontier[d];
-        let matches = contentAfterFits($to, d, type2, match2, true);
-        if (!matches || matches.childCount)
+        let matches2 = contentAfterFits($to, d, type2, match2, true);
+        if (!matches2 || matches2.childCount)
           continue scan;
       }
       return { depth: i, fit, move: dropInner ? $to.doc.resolve($to.after(i + 1)) : $to };
@@ -3396,6 +4789,23 @@ function replaceRangeWith(tr, from, to, node) {
 }
 function deleteRange(tr, from, to) {
   let $from = tr.doc.resolve(from), $to = tr.doc.resolve(to);
+  if ($from.parent.isTextblock && $to.parent.isTextblock && $from.start() != $to.start() && $from.parentOffset == 0 && $to.parentOffset == 0) {
+    let shared = $from.sharedDepth(to), isolated = false;
+    for (let d = $from.depth; d > shared; d--)
+      if ($from.node(d).type.spec.isolating)
+        isolated = true;
+    for (let d = $to.depth; d > shared; d--)
+      if ($to.node(d).type.spec.isolating)
+        isolated = true;
+    if (!isolated) {
+      for (let d = $from.depth; d > 0 && from == $from.start(d); d--)
+        from = $from.before(d);
+      for (let d = $to.depth; d > 0 && to == $to.start(d); d--)
+        to = $to.before(d);
+      $from = tr.doc.resolve(from);
+      $to = tr.doc.resolve(to);
+    }
+  }
   let covered = coveredDepths($from, $to);
   for (let i = 0; i < covered.length; i++) {
     let depth = covered[i], last = i == covered.length - 1;
@@ -3431,8 +4841,8 @@ var AttrStep = class _AttrStep extends Step {
     this.attr = attr;
     this.value = value;
   }
-  apply(doc) {
-    let node = doc.nodeAt(this.pos);
+  apply(doc2) {
+    let node = doc2.nodeAt(this.pos);
     if (!node)
       return StepResult.fail("No node at attribute step's position");
     let attrs = /* @__PURE__ */ Object.create(null);
@@ -3440,13 +4850,13 @@ var AttrStep = class _AttrStep extends Step {
       attrs[name] = node.attrs[name];
     attrs[this.attr] = this.value;
     let updated = node.type.create(attrs, null, node.marks);
-    return StepResult.fromReplace(doc, this.pos, this.pos + 1, new Slice(Fragment.from(updated), 0, node.isLeaf ? 0 : 1));
+    return StepResult.fromReplace(doc2, this.pos, this.pos + 1, new Slice(Fragment.from(updated), 0, node.isLeaf ? 0 : 1));
   }
   getMap() {
     return StepMap.empty;
   }
-  invert(doc) {
-    return new _AttrStep(this.pos, this.attr, doc.nodeAt(this.pos).attrs[this.attr]);
+  invert(doc2) {
+    return new _AttrStep(this.pos, this.attr, doc2.nodeAt(this.pos).attrs[this.attr]);
   }
   map(mapping) {
     let pos = mapping.mapResult(this.pos, 1);
@@ -3471,19 +4881,19 @@ var DocAttrStep = class _DocAttrStep extends Step {
     this.attr = attr;
     this.value = value;
   }
-  apply(doc) {
+  apply(doc2) {
     let attrs = /* @__PURE__ */ Object.create(null);
-    for (let name in doc.attrs)
-      attrs[name] = doc.attrs[name];
+    for (let name in doc2.attrs)
+      attrs[name] = doc2.attrs[name];
     attrs[this.attr] = this.value;
-    let updated = doc.type.create(attrs, doc.content, doc.marks);
+    let updated = doc2.type.create(attrs, doc2.content, doc2.marks);
     return StepResult.ok(updated);
   }
   getMap() {
     return StepMap.empty;
   }
-  invert(doc) {
-    return new _DocAttrStep(this.attr, doc.attrs[this.attr]);
+  invert(doc2) {
+    return new _DocAttrStep(this.attr, doc2.attrs[this.attr]);
   }
   map(mapping) {
     return this;
@@ -3512,8 +4922,8 @@ var Transform = class {
   /**
   Create a transform that starts with the given document.
   */
-  constructor(doc) {
-    this.doc = doc;
+  constructor(doc2) {
+    this.doc = doc2;
     this.steps = [];
     this.docs = [];
     this.mapping = new Mapping();
@@ -3575,11 +4985,11 @@ var Transform = class {
   /**
   @internal
   */
-  addStep(step, doc) {
+  addStep(step, doc2) {
     this.docs.push(this.doc);
     this.steps.push(step);
     this.mapping.appendMap(step.getMap());
-    this.doc = doc;
+    this.doc = doc2;
   }
   /**
   Replace the part of the document between `from` and `to` with the
@@ -3915,27 +5325,27 @@ var Selection = class {
   [`AllSelection`](https://prosemirror.net/docs/ref/#state.AllSelection) if no valid position
   exists.
   */
-  static atStart(doc) {
-    return findSelectionIn(doc, doc, 0, 0, 1) || new AllSelection(doc);
+  static atStart(doc2) {
+    return findSelectionIn(doc2, doc2, 0, 0, 1) || new AllSelection(doc2);
   }
   /**
   Find the cursor or leaf node selection closest to the end of the
   given document.
   */
-  static atEnd(doc) {
-    return findSelectionIn(doc, doc, doc.content.size, doc.childCount, -1) || new AllSelection(doc);
+  static atEnd(doc2) {
+    return findSelectionIn(doc2, doc2, doc2.content.size, doc2.childCount, -1) || new AllSelection(doc2);
   }
   /**
   Deserialize the JSON representation of a selection. Must be
   implemented for custom classes (as a static class method).
   */
-  static fromJSON(doc, json) {
+  static fromJSON(doc2, json) {
     if (!json || !json.type)
       throw new RangeError("Invalid input for Selection.fromJSON");
     let cls = classesById[json.type];
     if (!cls)
       throw new RangeError(`No selection type ${json.type} defined`);
-    return cls.fromJSON(doc, json);
+    return cls.fromJSON(doc2, json);
   }
   /**
   To be able to deserialize selections from JSON, custom selection
@@ -3996,11 +5406,11 @@ var TextSelection = class _TextSelection extends Selection {
   get $cursor() {
     return this.$anchor.pos == this.$head.pos ? this.$head : null;
   }
-  map(doc, mapping) {
-    let $head = doc.resolve(mapping.map(this.head));
+  map(doc2, mapping) {
+    let $head = doc2.resolve(mapping.map(this.head));
     if (!$head.parent.inlineContent)
       return Selection.near($head);
-    let $anchor = doc.resolve(mapping.map(this.anchor));
+    let $anchor = doc2.resolve(mapping.map(this.anchor));
     return new _TextSelection($anchor.parent.inlineContent ? $anchor : $head, $head);
   }
   replace(tr, content = Slice.empty) {
@@ -4023,17 +5433,17 @@ var TextSelection = class _TextSelection extends Selection {
   /**
   @internal
   */
-  static fromJSON(doc, json) {
+  static fromJSON(doc2, json) {
     if (typeof json.anchor != "number" || typeof json.head != "number")
       throw new RangeError("Invalid input for TextSelection.fromJSON");
-    return new _TextSelection(doc.resolve(json.anchor), doc.resolve(json.head));
+    return new _TextSelection(doc2.resolve(json.anchor), doc2.resolve(json.head));
   }
   /**
   Create a text selection from non-resolved positions.
   */
-  static create(doc, anchor, head = anchor) {
-    let $anchor = doc.resolve(anchor);
-    return new this($anchor, head == anchor ? $anchor : doc.resolve(head));
+  static create(doc2, anchor, head = anchor) {
+    let $anchor = doc2.resolve(anchor);
+    return new this($anchor, head == anchor ? $anchor : doc2.resolve(head));
   }
   /**
   Return a text selection that spans the given positions or, if
@@ -4075,8 +5485,8 @@ var TextBookmark = class _TextBookmark {
   map(mapping) {
     return new _TextBookmark(mapping.map(this.anchor), mapping.map(this.head));
   }
-  resolve(doc) {
-    return TextSelection.between(doc.resolve(this.anchor), doc.resolve(this.head));
+  resolve(doc2) {
+    return TextSelection.between(doc2.resolve(this.anchor), doc2.resolve(this.head));
   }
 };
 var NodeSelection = class _NodeSelection extends Selection {
@@ -4090,9 +5500,9 @@ var NodeSelection = class _NodeSelection extends Selection {
     super($pos, $end);
     this.node = node;
   }
-  map(doc, mapping) {
+  map(doc2, mapping) {
     let { deleted, pos } = mapping.mapResult(this.anchor);
-    let $pos = doc.resolve(pos);
+    let $pos = doc2.resolve(pos);
     if (deleted)
       return Selection.near($pos);
     return new _NodeSelection($pos);
@@ -4112,16 +5522,16 @@ var NodeSelection = class _NodeSelection extends Selection {
   /**
   @internal
   */
-  static fromJSON(doc, json) {
+  static fromJSON(doc2, json) {
     if (typeof json.anchor != "number")
       throw new RangeError("Invalid input for NodeSelection.fromJSON");
-    return new _NodeSelection(doc.resolve(json.anchor));
+    return new _NodeSelection(doc2.resolve(json.anchor));
   }
   /**
   Create a node selection from non-resolved positions.
   */
-  static create(doc, from) {
-    return new _NodeSelection(doc.resolve(from));
+  static create(doc2, from) {
+    return new _NodeSelection(doc2.resolve(from));
   }
   /**
   Determines whether the given node may be selected as a node
@@ -4141,8 +5551,8 @@ var NodeBookmark = class _NodeBookmark {
     let { deleted, pos } = mapping.mapResult(this.anchor);
     return deleted ? new TextBookmark(pos, pos) : new _NodeBookmark(pos);
   }
-  resolve(doc) {
-    let $pos = doc.resolve(this.anchor), node = $pos.nodeAfter;
+  resolve(doc2) {
+    let $pos = doc2.resolve(this.anchor), node = $pos.nodeAfter;
     if (node && NodeSelection.isSelectable(node))
       return new NodeSelection($pos);
     return Selection.near($pos);
@@ -4152,8 +5562,8 @@ var AllSelection = class _AllSelection extends Selection {
   /**
   Create an all-selection over the given document.
   */
-  constructor(doc) {
-    super(doc.resolve(0), doc.resolve(doc.content.size));
+  constructor(doc2) {
+    super(doc2.resolve(0), doc2.resolve(doc2.content.size));
   }
   replace(tr, content = Slice.empty) {
     if (content == Slice.empty) {
@@ -4171,11 +5581,11 @@ var AllSelection = class _AllSelection extends Selection {
   /**
   @internal
   */
-  static fromJSON(doc) {
-    return new _AllSelection(doc);
+  static fromJSON(doc2) {
+    return new _AllSelection(doc2);
   }
-  map(doc) {
-    return new _AllSelection(doc);
+  map(doc2) {
+    return new _AllSelection(doc2);
   }
   eq(other) {
     return other instanceof _AllSelection;
@@ -4189,21 +5599,21 @@ var AllBookmark = {
   map() {
     return this;
   },
-  resolve(doc) {
-    return new AllSelection(doc);
+  resolve(doc2) {
+    return new AllSelection(doc2);
   }
 };
-function findSelectionIn(doc, node, pos, index, dir, text = false) {
+function findSelectionIn(doc2, node, pos, index, dir, text = false) {
   if (node.inlineContent)
-    return TextSelection.create(doc, pos);
+    return TextSelection.create(doc2, pos);
   for (let i = index - (dir > 0 ? 0 : 1); dir > 0 ? i < node.childCount : i >= 0; i += dir) {
     let child = node.child(i);
     if (!child.isAtom) {
-      let inner = findSelectionIn(doc, child, pos + dir, dir < 0 ? child.childCount : 0, dir, text);
+      let inner = findSelectionIn(doc2, child, pos + dir, dir < 0 ? child.childCount : 0, dir, text);
       if (inner)
         return inner;
     } else if (!text && NodeSelection.isSelectable(child)) {
-      return NodeSelection.create(doc, pos - (dir < 0 ? child.nodeSize : 0));
+      return NodeSelection.create(doc2, pos - (dir < 0 ? child.nodeSize : 0));
     }
     pos += child.nodeSize * dir;
   }
@@ -4310,8 +5720,8 @@ var Transaction = class extends Transform {
   /**
   @internal
   */
-  addStep(step, doc) {
-    super.addStep(step, doc);
+  addStep(step, doc2) {
+    super.addStep(step, doc2);
     this.updated = this.updated & ~UPDATED_MARKS;
     this.storedMarks = null;
   }
@@ -4710,7 +6120,25 @@ var PluginKey = class {
 };
 
 export {
-  dist_default,
+  Fragment,
+  Mark,
+  Slice,
+  NodeRange,
+  Node,
+  Schema,
+  DOMParser,
+  DOMSerializer,
+  RemoveMarkStep,
+  ReplaceStep,
+  ReplaceAroundStep,
+  liftTarget,
+  findWrapping,
+  canSplit,
+  canJoin,
+  joinPoint,
+  dropPoint,
+  replaceStep,
+  Transform,
   Selection,
   SelectionRange,
   TextSelection,
@@ -4721,4 +6149,4 @@ export {
   Plugin,
   PluginKey
 };
-//# sourceMappingURL=chunk-DXKRVOGU.js.map
+//# sourceMappingURL=chunk-E5N3B3CE.js.map

@@ -1,4 +1,7 @@
 import {
+  _typeof
+} from "./chunk-SITVF2AJ.js";
+import {
   __commonJS,
   __toESM
 } from "./chunk-OL46QLBJ.js";
@@ -4227,16 +4230,6 @@ for (COLLECTION_NAME in DOMIterables) {
 }
 var COLLECTION_NAME;
 handlePrototype(DOMTokenListPrototype, "DOMTokenList");
-
-// node_modules/@babel/runtime/helpers/esm/typeof.js
-function _typeof(o2) {
-  "@babel/helpers - typeof";
-  return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o3) {
-    return typeof o3;
-  } : function(o3) {
-    return o3 && "function" == typeof Symbol && o3.constructor === Symbol && o3 !== Symbol.prototype ? "symbol" : typeof o3;
-  }, _typeof(o2);
-}
 
 // node_modules/@babel/runtime/helpers/esm/toPrimitive.js
 function toPrimitive(t2, r2) {
@@ -10424,4 +10417,4 @@ svg-pathdata/lib/SVGPathData.module.js:
   PERFORMANCE OF THIS SOFTWARE.
   ***************************************************************************** *)
 */
-//# sourceMappingURL=index.es-FW4WJFXU.js.map
+//# sourceMappingURL=index.es-EWNZLIPB.js.map

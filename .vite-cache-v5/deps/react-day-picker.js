@@ -1,3 +1,4 @@
+import "./chunk-XGVKVXNC.js";
 import {
   addDays,
   addMonths,
@@ -30,7 +31,6 @@ import {
   startOfYear,
   subDays
 } from "./chunk-GBQIMY3N.js";
-import "./chunk-XGVKVXNC.js";
 import {
   enUS,
   startOfWeek

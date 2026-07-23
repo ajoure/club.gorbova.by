@@ -1,9 +1,9 @@
 import {
-  dequal
-} from "./chunk-W2HZVVEF.js";
-import {
   invariant
 } from "./chunk-KDZ7CXOI.js";
+import {
+  dequal
+} from "./chunk-W2HZVVEF.js";
 import {
   clsx_default
 } from "./chunk-KDVGFZWC.js";

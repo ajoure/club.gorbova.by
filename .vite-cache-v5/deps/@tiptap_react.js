@@ -127,8 +127,8 @@ import {
   textblockTypeInputRule,
   updateMarkViewAttributes,
   wrappingInputRule
-} from "./chunk-6253ETEE.js";
-import "./chunk-DXKRVOGU.js";
+} from "./chunk-TN6A4YI7.js";
+import "./chunk-E5N3B3CE.js";
 import {
   require_shim
 } from "./chunk-PU3CAANW.js";
