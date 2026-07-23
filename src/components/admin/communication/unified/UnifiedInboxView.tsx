@@ -18,7 +18,10 @@ import { cn } from "@/lib/utils";
 import { Search, MessageSquare, RefreshCw, ArrowLeft, Check, Star, Pin } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { INBOX_DIALOGS_QK } from "@/constants/inboxQueryKeys";
+import {
+  INBOX_DIALOGS_QK,
+  UNREAD_MESSAGES_COUNT_QK,
+} from "@/constants/inboxQueryKeys";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   normalizeTelegramNumericSearch,
@@ -344,7 +347,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         );
         registerSelfMark(userId, 2500);
         try {
-          const { error } = await supabase.rpc("mark_dialog_read_v2" as any, {
+          const { data, error } = await supabase.rpc("mark_dialog_read_v2" as any, {
             p_user_id: userId,
             p_boundary: boundary,
           });
@@ -352,11 +355,44 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
             clearSelfMark(userId);
             throw error;
           }
+          const result = Array.isArray(data) ? data[0] : data;
+          if (!result) throw new Error("сервер не вернул результат");
+          const remainingUnread = Number((result as any).remaining_unread_count) || 0;
+
+          // UnifiedInbox uses a dedicated raw-RPC cache. Updating only
+          // INBOX_DIALOGS_QK leaves the unified row and its badges stale even
+          // though the database update succeeded.
+          queryClient.setQueriesData<any[]>(
+            { queryKey: ["unified-inbox-telegram"] },
+            (old) =>
+              Array.isArray(old)
+                ? old.map((dialog: any) =>
+                    dialog?.user_id === userId
+                      ? { ...dialog, unread_count: remainingUnread }
+                      : dialog,
+                  )
+                : old,
+          );
+          queryClient.setQueriesData<any[]>(
+            { queryKey: INBOX_DIALOGS_QK },
+            (old) =>
+              Array.isArray(old)
+                ? old.map((dialog: any) =>
+                    dialog?.user_id === userId
+                      ? { ...dialog, unread_count: remainingUnread }
+                      : dialog,
+                  )
+                : old,
+          );
         } catch (e) {
           clearSelfMark(userId);
           throw e;
         }
-        queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["unified-inbox-telegram"] }),
+          queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK }),
+          queryClient.invalidateQueries({ queryKey: UNREAD_MESSAGES_COUNT_QK }),
+        ]);
         toast.success("Отмечено прочитанным · Telegram");
         return;
       }
