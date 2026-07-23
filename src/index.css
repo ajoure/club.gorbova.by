@@ -144,6 +144,20 @@ All colors MUST be HSL.
   overscroll-behavior-y: auto;
 }
 
+/* Контакт-центр в iOS PWA: элементы управления не попадают под notch/home bar.
+   max() сохраняет обычные отступы и добавляет safe-area только при необходимости. */
+.contact-center-safe-top {
+  padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
+  padding-left: max(0.5rem, env(safe-area-inset-left, 0px));
+  padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
+}
+
+.contact-center-safe-bottom {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+}
+
 /* Горизонтальный scroll-контейнер таблиц.
    - инерционный скролл на iOS;
    - touch-action: pan-x pan-y — оба направления остаются жестами,
@@ -566,4 +580,3 @@ body.impersonation-active .impersonation-offset {
   font-size: 0.85em;
   border: 1px dashed hsl(20 90% 50% / 0.6);
 }
-

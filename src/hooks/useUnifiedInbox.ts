@@ -256,7 +256,9 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
           const { data, error } = await supabase.rpc("get_instagram_dialogs_v1", {
             p_account_id: accountId,
           });
-          if (error) return [] as any[];
+          if (error) {
+            throw new Error(`Instagram ${accountId}: ${error.message}`);
+          }
           return ((data || []) as any[]).map((d) => ({ ...d, __accountId: accountId }));
         }),
       );

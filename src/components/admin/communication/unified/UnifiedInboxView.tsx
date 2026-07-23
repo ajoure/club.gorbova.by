@@ -397,7 +397,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         return;
       }
       if (ch.source === "instagram") {
-        await supabase.functions.invoke("instagram-admin-chat", {
+        const { error } = await supabase.functions.invoke("instagram-admin-chat", {
           body: {
             action: "mark_read",
             instagram_account_id: sr.meta.instagramAccountId,
@@ -405,6 +405,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
             sender_id: sr.meta.instagramPeerId ?? undefined,
           },
         });
+        if (error) throw error;
         queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
         toast.success("Отмечено прочитанным · Instagram");
         return;
@@ -497,7 +498,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         )}
       </div>
 
-      <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto">
+      <div ref={parentRef} className="touch-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain">
         {isLoading ? (
           <div className="p-8 text-center text-muted-foreground">
             <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
@@ -662,7 +663,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
       <div className="h-full min-h-0 flex flex-col overflow-hidden">
         {selected ? (
           <>
-            <div className="p-2 border-b flex items-center gap-2 shrink-0">
+            <div className="contact-center-safe-top p-2 border-b flex items-center gap-2 shrink-0">
               <Button variant="ghost" size="icon" onClick={() => setSelectedKey(null)}>
                 <ArrowLeft className="h-4 w-4" />
               </Button>
@@ -671,7 +672,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                 <SourceBadge key={s} source={s} label={selected.channels[s]?.sourceRow.sourceLabel ?? null} />
               ))}
             </div>
-            <div className="flex-1 min-h-0 h-full max-h-full overflow-hidden">{rightPanel}</div>
+            <div className="flex-1 min-h-0 h-full max-h-full overflow-hidden touch-pan-y">{rightPanel}</div>
           </>
         ) : (
           dialogList

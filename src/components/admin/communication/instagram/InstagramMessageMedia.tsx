@@ -203,15 +203,8 @@ export function InstagramMessageMedia({
     setVideoError(false);
     setAudioError(false);
     setForceAudio(false);
-    if (isUnstable && (isAudio || isVideo)) {
-      setRehosting(true);
-      rehostMedia(messageId, url, isAudio ? "audio" : "video")
-        .then((stable) => {
-          if (stable) setResolvedUrl(stable);
-        })
-        .finally(() => setRehosting(false));
-    }
-  }, [url, isAudio, isVideo, isUnstable, messageId]);
+    setRehosting(false);
+  }, [url]);
 
   const tryLazyRehost = async (kind: "image" | "video" | "audio") => {
     if (resolvedUrl !== url) return;
