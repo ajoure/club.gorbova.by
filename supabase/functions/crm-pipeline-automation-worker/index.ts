@@ -563,13 +563,100 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      let errorBranchTaskId: string | null = null;
+      if (job.attempt_count >= 5) {
+        try {
+          const [{ data: errorRule, error: errorRuleError }, { data: errorDeal, error: errorDealError }] =
+            await Promise.all([
+              supabase
+                .from("crm_pipeline_automation_rules")
+                .select("*")
+                .eq("id", job.rule_id)
+                .single(),
+              supabase
+                .from("orders_v2")
+                .select(
+                  "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name",
+                )
+                .eq("id", job.deal_id)
+                .single(),
+            ]);
+          if (errorRuleError || !errorRule) {
+            throw new Error(`error_branch_rule_not_found:${errorRuleError?.message ?? job.rule_id}`);
+          }
+          if (errorDealError || !errorDeal) {
+            throw new Error(`error_branch_deal_not_found:${errorDealError?.message ?? job.deal_id}`);
+          }
+          if (errorRule.error_branch_task_type_id) {
+            const { data: existingErrorTask, error: existingErrorTaskError } = await supabase
+              .from("crm_tasks")
+              .select("id")
+              .eq("pipeline_automation_rule_id", errorRule.id)
+              .eq("deal_id", errorDeal.id)
+              .maybeSingle();
+            if (existingErrorTaskError) throw existingErrorTaskError;
+
+            if (existingErrorTask) {
+              errorBranchTaskId = existingErrorTask.id;
+            } else {
+              const assigneeUserId =
+                errorRule.error_branch_assignee_strategy === "fixed_user"
+                  ? errorRule.error_branch_assignee_user_id
+                  : errorDeal.responsible_user_id;
+              const dueAt = new Date(
+                Date.now() + Number(errorRule.error_branch_due_offset_minutes) * 60_000,
+              );
+              const { data: taskId, error: taskError } = await supabase.rpc("crm_task_create", {
+                payload: {
+                  task_type_id: errorRule.error_branch_task_type_id,
+                  title: renderTemplate(errorRule.error_branch_title_template, errorDeal),
+                  description: errorRule.error_branch_description_template
+                    ? renderTemplate(errorRule.error_branch_description_template, errorDeal)
+                    : null,
+                  assignee_user_id: assigneeUserId,
+                  due_at: dueAt.toISOString(),
+                  contact_id: errorDeal.profile_id,
+                  company_id: errorDeal.company_id,
+                  deal_id: errorDeal.id,
+                  order_id: errorDeal.id,
+                  pipeline_id: errorDeal.pipeline_id,
+                  pipeline_stage_id: errorDeal.pipeline_stage_id,
+                  offer_id: errorDeal.offer_id,
+                  product_id: errorDeal.product_id,
+                  tariff_id: errorDeal.tariff_id,
+                  source: "auto",
+                  pipeline_automation_rule_id: errorRule.id,
+                  meta: {
+                    pipeline_automation_rule_id: errorRule.id,
+                    pipeline_automation_logical_id: errorRule.logical_id,
+                    pipeline_automation_version: errorRule.version,
+                    pipeline_automation_job_id: job.id,
+                    pipeline_automation_branch: "error",
+                    primary_error: primaryError,
+                  },
+                },
+              });
+              if (taskError) throw taskError;
+              errorBranchTaskId = taskId;
+            }
+          }
+        } catch (error) {
+          const errorBranchError = error instanceof Error ? error.message : String(error);
+          fallbackError = fallbackError
+            ? `${fallbackError}; error_branch_failed:${errorBranchError}`
+            : `error_branch_failed:${errorBranchError}`;
+        }
+      }
+
       const message = fallbackError
         ? `${primaryError}; fallback_failed:${fallbackError}`
         : primaryError;
       await supabase.rpc("crm_pipeline_automation_complete_job", {
         _job_id: job.id,
         _succeeded: false,
-        _result: null,
+        _result: errorBranchTaskId
+          ? { error_branch_task_id: errorBranchTaskId, primary_error: primaryError }
+          : null,
         _error: message,
       });
       result.failed++;

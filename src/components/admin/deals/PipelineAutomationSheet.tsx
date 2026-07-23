@@ -7,6 +7,7 @@ import {
   CirclePause,
   Clock3,
   History,
+  Info,
   Loader2,
   Mail,
   MessageCircle,
@@ -39,7 +40,18 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import {
+  CRM_AUTOMATION_TRIGGER_CATALOG,
+  CRM_AUTOMATION_TRIGGER_CATEGORY_LABELS,
+} from "@/lib/crmAutomationTriggerCatalog";
 import { CrmPipeline, CrmPipelineStage } from "@/services/pipelineService";
 import { useCrmTaskTypes } from "@/hooks/useCrmTasks";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
@@ -114,6 +126,99 @@ function statusLabel(status: PipelineAutomationRule["status"]) {
   if (status === "active") return "Работает";
   if (status === "paused") return "Пауза";
   return "Черновик";
+}
+
+function TriggerCatalogPicker() {
+  const categories = ["deal", "field", "payment", "communication", "calendar", "system"] as const;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <Label className="text-[11px]">Триггер</Label>
+        <TooltipProvider delayDuration={180}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button type="button" className="text-muted-foreground hover:text-primary" aria-label="О триггерах">
+                <Info className="h-3 w-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-56 border-white/20 bg-background/90 text-[10px] leading-4 backdrop-blur-xl">
+              Доступны только триггеры с готовым событием и worker-контрактом. Остальные показаны как план развития, чтобы не сохранить неработающее правило.
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="flex h-9 w-full items-center justify-between rounded-xl border border-border/35 bg-background/45 px-3 text-left text-xs transition hover:border-primary/25 hover:bg-primary/[0.035]"
+          >
+            <span>После входа сделки в стадию</span>
+            <ArrowRight className="h-3.5 w-3.5 text-primary" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-[360px] border-white/25 bg-background/85 p-2.5 shadow-[0_18px_50px_rgba(15,23,42,0.14)] backdrop-blur-3xl"
+        >
+          <p className="px-1.5 pb-2 text-[10px] font-semibold text-foreground/75">Выберите момент запуска</p>
+          <div className="max-h-[390px] space-y-3 overflow-y-auto pr-1">
+            {categories.map((category) => {
+              const triggers = CRM_AUTOMATION_TRIGGER_CATALOG.filter(
+                (trigger) => trigger.category === category,
+              );
+              return (
+                <div key={category}>
+                  <p className="px-1.5 pb-1 text-[9px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+                    {CRM_AUTOMATION_TRIGGER_CATEGORY_LABELS[category]}
+                  </p>
+                  <div className="space-y-1">
+                    {triggers.map((trigger) => (
+                      <TooltipProvider key={trigger.id} delayDuration={180}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div
+                              className={cn(
+                                "flex rounded-xl border px-2.5 py-2 transition",
+                                trigger.availability === "available"
+                                  ? "cursor-default border-primary/20 bg-primary/[0.055]"
+                                  : "border-border/20 bg-background/30 opacity-65",
+                              )}
+                            >
+                              <div className="min-w-0">
+                                <p className="text-[11px] font-medium">{trigger.title}</p>
+                                <p className="mt-0.5 line-clamp-2 text-[9px] leading-3.5 text-muted-foreground">
+                                  {trigger.description}
+                                </p>
+                              </div>
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "ml-auto h-5 shrink-0 rounded-full px-1.5 text-[8px]",
+                                  trigger.availability === "available"
+                                    ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-600"
+                                    : "border-border/30 text-muted-foreground",
+                                )}
+                              >
+                                {trigger.availability === "available" ? "доступно" : "скоро"}
+                              </Badge>
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-64 border-white/20 bg-background/90 text-[10px] leading-4 backdrop-blur-xl">
+                            {trigger.description}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
 }
 
 function RuleCard({
@@ -221,6 +326,11 @@ function RuleCard({
             <ArrowRight className="h-3 w-3" /> если нет — задача
           </span>
         )}
+        {rule.error_branch_task_type_id && (
+          <span className="inline-flex items-center gap-1 text-rose-600">
+            <XCircle className="h-3 w-3" /> ошибка — задача
+          </span>
+        )}
       </div>
       {canEdit && (
         <div className="mt-3 flex items-center gap-1 border-t border-border/25 pt-2">
@@ -324,6 +434,12 @@ export function PipelineAutomationSheet({
   const [noBranchDescription, setNoBranchDescription] = useState("");
   const [noBranchAssignee, setNoBranchAssignee] = useState(OWNER);
   const [noBranchDueHours, setNoBranchDueHours] = useState(24);
+  const [errorBranchEnabled, setErrorBranchEnabled] = useState(false);
+  const [errorBranchTaskTypeId, setErrorBranchTaskTypeId] = useState("");
+  const [errorBranchTitle, setErrorBranchTitle] = useState("Проверить ошибку автоматизации {{deal_number}}");
+  const [errorBranchDescription, setErrorBranchDescription] = useState("");
+  const [errorBranchAssignee, setErrorBranchAssignee] = useState(OWNER);
+  const [errorBranchDueHours, setErrorBranchDueHours] = useState(24);
 
   useEffect(() => {
     if (!taskTypeId && taskTypes[0]?.id) setTaskTypeId(taskTypes[0].id);
@@ -331,6 +447,9 @@ export function PipelineAutomationSheet({
   useEffect(() => {
     if (!noBranchTaskTypeId && taskTypes[0]?.id) setNoBranchTaskTypeId(taskTypes[0].id);
   }, [noBranchTaskTypeId, taskTypes]);
+  useEffect(() => {
+    if (!errorBranchTaskTypeId && taskTypes[0]?.id) setErrorBranchTaskTypeId(taskTypes[0].id);
+  }, [errorBranchTaskTypeId, taskTypes]);
   useEffect(() => {
     if (!emailTemplateId && emailTemplates[0]?.id) setEmailTemplateId(emailTemplates[0].id);
   }, [emailTemplateId, emailTemplates]);
@@ -376,6 +495,11 @@ export function PipelineAutomationSheet({
     setNoBranchDescription("");
     setNoBranchAssignee(OWNER);
     setNoBranchDueHours(24);
+    setErrorBranchEnabled(false);
+    setErrorBranchTitle("Проверить ошибку автоматизации {{deal_number}}");
+    setErrorBranchDescription("");
+    setErrorBranchAssignee(OWNER);
+    setErrorBranchDueHours(24);
   };
 
   const submit = () => {
@@ -397,6 +521,7 @@ export function PipelineAutomationSheet({
       )
     ) return;
     if (noBranchEnabled && (!noBranchTaskTypeId || !noBranchTitle.trim())) return;
+    if (errorBranchEnabled && (!errorBranchTaskTypeId || !errorBranchTitle.trim())) return;
     const normalizedConditions = conditions.map((condition) => ({
       ...condition,
       value:
@@ -466,6 +591,14 @@ export function PipelineAutomationSheet({
         no_branch_assignee_user_id:
           noBranchEnabled && noBranchAssignee !== OWNER ? noBranchAssignee : null,
         no_branch_due_offset_minutes: noBranchEnabled ? noBranchDueHours * 60 : null,
+        error_branch_task_type_id: errorBranchEnabled ? errorBranchTaskTypeId : null,
+        error_branch_title_template: errorBranchEnabled ? errorBranchTitle : null,
+        error_branch_description_template: errorBranchEnabled ? errorBranchDescription : null,
+        error_branch_assignee_strategy:
+          errorBranchEnabled && errorBranchAssignee !== OWNER ? "fixed_user" : "deal_owner",
+        error_branch_assignee_user_id:
+          errorBranchEnabled && errorBranchAssignee !== OWNER ? errorBranchAssignee : null,
+        error_branch_due_offset_minutes: errorBranchEnabled ? errorBranchDueHours * 60 : null,
       },
       { onSuccess: resetEditor },
     );
@@ -557,7 +690,9 @@ export function PipelineAutomationSheet({
                                   : job.status === "pending"
                                     ? "Ожидает запуска"
                                     : job.status === "dead"
-                                      ? "Остановлено после ошибок"
+                                      ? job.result?.error_branch_task_id
+                                        ? "Ошибка: создана задача"
+                                        : "Остановлено после ошибок"
                                       : "Повтор после ошибки"}
                           </p>
                         </div>
@@ -661,6 +796,7 @@ export function PipelineAutomationSheet({
                 <Label className="text-[11px]">Название правила</Label>
                 <Input value={name} onChange={(event) => setName(event.target.value)} className="h-9 rounded-xl text-xs" />
               </div>
+              <TriggerCatalogPicker />
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Действие</Label>
                 <Select
@@ -1025,6 +1161,81 @@ export function PipelineAutomationSheet({
                   )}
                 </div>
               )}
+              <div className="space-y-3 rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] p-3">
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <Checkbox
+                    checked={errorBranchEnabled}
+                    onCheckedChange={(checked) => setErrorBranchEnabled(checked === true)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block text-[11px] font-medium">
+                      После окончательной ошибки — создать задачу
+                    </span>
+                    <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
+                      Сработает только после пяти попыток и не сработает, если резервный канал доставил сообщение.
+                    </span>
+                  </span>
+                </label>
+                {errorBranchEnabled && (
+                  <div className="space-y-2.5 border-t border-rose-500/15 pt-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px]">Тип задачи ветки</Label>
+                      <Select value={errorBranchTaskTypeId} onValueChange={setErrorBranchTaskTypeId}>
+                        <SelectTrigger className="h-8 rounded-lg text-[10px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {taskTypes.map((type) => (
+                            <SelectItem key={type.id} value={type.id}>{type.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px]">Заголовок задачи</Label>
+                      <Input
+                        value={errorBranchTitle}
+                        onChange={(event) => setErrorBranchTitle(event.target.value)}
+                        className="h-8 rounded-lg text-[10px]"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px]">Описание</Label>
+                      <Textarea
+                        value={errorBranchDescription}
+                        onChange={(event) => setErrorBranchDescription(event.target.value)}
+                        className="min-h-16 rounded-lg text-[10px]"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1.5">
+                        <Label className="text-[11px]">Исполнитель</Label>
+                        <Select value={errorBranchAssignee} onValueChange={setErrorBranchAssignee}>
+                          <SelectTrigger className="h-8 rounded-lg text-[10px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={OWNER}>Ответственный</SelectItem>
+                            {staff.map((person) => (
+                              <SelectItem key={person.user_id} value={person.user_id}>
+                                {person.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-[11px]">Срок, часов</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={8760}
+                          value={errorBranchDueHours}
+                          onChange={(event) => setErrorBranchDueHours(Number(event.target.value))}
+                          className="h-8 rounded-lg text-[10px]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Запустить через, минут</Label>
                 <Input type="number" min={0} max={525600} value={delayMinutes} onChange={(event) => setDelayMinutes(Number(event.target.value))} className="h-9 rounded-xl text-xs" />
