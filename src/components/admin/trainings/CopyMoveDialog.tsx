@@ -65,7 +65,16 @@ export function CopyMoveDialog({
         },
       });
 
-      if (error) throw error;
+      if (error) {
+        let message = error.message;
+        try {
+          const payload = await error.context?.json();
+          if (payload?.error) message = payload.error;
+        } catch {
+          // Keep the SDK message when the response body is unavailable.
+        }
+        throw new Error(message);
+      }
       if (data?.error) throw new Error(data.error);
 
       toast.success(
@@ -88,8 +97,8 @@ export function CopyMoveDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[min(90dvh,48rem)] w-[calc(100vw-2rem)] max-w-lg flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 px-6 pb-4 pt-6">
           <DialogTitle>
             {isCopy ? "Копировать" : "Переместить"} {sourceType === "module" ? "модуль" : "урок"}
           </DialogTitle>
@@ -98,7 +107,10 @@ export function CopyMoveDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5 py-2">
+        <div
+          className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-2"
+          data-testid="copy-move-scroll-area"
+        >
           {/* Toggle copy/move */}
           <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
             <Copy className="h-4 w-4 text-muted-foreground" />
@@ -148,7 +160,10 @@ export function CopyMoveDialog({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter
+          className="shrink-0 border-t bg-background px-6 py-4"
+          data-testid="copy-move-actions"
+        >
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
             Отмена
           </Button>
