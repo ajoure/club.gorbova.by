@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { parseBepaidTrackingId } from "../_shared/bepaid-tracking-id.ts";
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
@@ -238,13 +239,11 @@ serve(async (req) => {
         // Extract order_id from multiple possible locations
         let orderIdFromPayload = additionalData.order_id || null;
         
-        // Also try to extract from tracking_id (format: {order_id}_{offer_id})
+        // Parse every supported bePaid tracking format, including recurring
+        // `subv2:{subscription_id}:order:{order_id}`. The old underscore-only
+        // parser left recurring renewals unmatched forever.
         if (!orderIdFromPayload && item.tracking_id) {
-          const parts = item.tracking_id.split('_');
-          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-          if (parts.length >= 1 && uuidRegex.test(parts[0])) {
-            orderIdFromPayload = parts[0];
-          }
+          orderIdFromPayload = parseBepaidTrackingId(item.tracking_id).orderId;
         }
         
         // Extract transaction info from subscription webhooks
@@ -454,9 +453,13 @@ async function processQueueItem(supabase: any, item: any, order: any) {
   const now = new Date();
   const payload = item.raw_payload || {};
 
-  // Create payment record
-  await supabase.from("payments_v2").insert({
+  // Create the canonical payment before mutating the order/queue. Previously
+  // insert errors were ignored, so a queue row could be marked completed and
+  // its order paid while payments_v2 remained empty.
+  const paymentRow = {
     order_id: order.id,
+    user_id: order.user_id || null,
+    profile_id: item.matched_profile_id || null,
     amount: item.amount || order.final_price,
     currency: item.currency || "BYN",
     provider: "bepaid",
@@ -466,7 +469,31 @@ async function processQueueItem(supabase: any, item: any, order: any) {
     card_brand: payload.credit_card?.brand,
     card_last4: payload.credit_card?.last_4,
     provider_response: payload,
-  });
+    meta: {
+      source: "payments_reconcile",
+      queue_id: item.id,
+      tracking_id: item.tracking_id || null,
+    },
+  };
+
+  const { error: paymentError } = await supabase
+    .from("payments_v2")
+    .upsert(paymentRow, { onConflict: "provider,provider_payment_id", ignoreDuplicates: true });
+
+  if (paymentError) {
+    throw new Error(`payments_v2 write failed: ${paymentError.message}`);
+  }
+
+  const { data: persistedPayment, error: verifyError } = await supabase
+    .from("payments_v2")
+    .select("id,order_id")
+    .eq("provider", "bepaid")
+    .eq("provider_payment_id", item.bepaid_uid)
+    .maybeSingle();
+
+  if (verifyError || !persistedPayment) {
+    throw new Error(`payments_v2 verification failed: ${verifyError?.message || "row missing"}`);
+  }
 
   // Fix order and create subscription
   await fixOrderAndCreateSubscription(supabase, order, {
