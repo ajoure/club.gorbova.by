@@ -89,7 +89,7 @@ export default function EmbedFormPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <FormSection content={block.content} pageId={pageId} />
+      <FormSection content={block.content} pageId={pageId} blockId={blockId} />
     </div>
   );
 }

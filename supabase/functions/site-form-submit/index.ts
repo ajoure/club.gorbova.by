@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { resolveServerFormSettings } from "./form_settings.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -66,15 +67,10 @@ interface FormField {
 
 interface RequestBody {
   page_id: string;
+  /** Stable ID of the form block rendered on the public page. */
+  block_id?: string;
   fields: FormField[];
   redirect_url?: string;
-  product_id?: string;
-  tariff_id?: string;
-  auth_mode?: boolean;
-  product_binding_enabled?: boolean;
-  deal_creation_enabled?: boolean;
-  pipeline_id?: string;
-  pipeline_stage_id?: string;
   // Embed support (add-only, optional)
   embed_origin?: string;
   embed_block_id?: string;
@@ -92,16 +88,7 @@ Deno.serve(async (req) => {
     const body: RequestBody = await req.json();
     const {
       page_id, fields, redirect_url,
-      auth_mode,
-      product_binding_enabled,
-      deal_creation_enabled,
-      pipeline_id,
-      pipeline_stage_id,
     } = body;
-
-    // Guard: ignore product_id/tariff_id if product_binding not enabled
-    const productId = product_binding_enabled ? (body.product_id || undefined) : undefined;
-    const tariffId = product_binding_enabled ? (body.tariff_id || undefined) : undefined;
 
     if (!page_id || typeof page_id !== "string") {
       return json({ error: "page_id is required" }, 400);
@@ -115,10 +102,11 @@ Deno.serve(async (req) => {
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const admin = createClient(supabaseUrl, serviceKey);
 
-    // Get workspace_id from site_pages
+    // Load the published form configuration from the server. CRM routing and
+    // auth/product settings must never be selected by an untrusted browser.
     const { data: page, error: pageError } = await admin
       .from("site_pages")
-      .select("id, workspace_id")
+      .select("id, workspace_id, blocks")
       .eq("id", page_id)
       .single();
 
@@ -127,9 +115,22 @@ Deno.serve(async (req) => {
     }
 
     const workspaceId = page.workspace_id;
+    const formSettings = resolveServerFormSettings(page.blocks, body.block_id);
+    if (!formSettings) {
+      return json({ error: "Form configuration not found or ambiguous" }, 400);
+    }
+
+    const {
+      authMode,
+      productId,
+      tariffId,
+      dealCreationEnabled,
+      pipelineId,
+      pipelineStageId,
+    } = formSettings;
 
     // ─── AUTH MODE BRANCH ───
-    if (auth_mode) {
+    if (authMode) {
       return handleAuthModeSubmit(req, admin, {
         pageId: page_id,
         workspaceId,
@@ -137,9 +138,9 @@ Deno.serve(async (req) => {
         redirectUrl: redirect_url,
         productId,
         tariffId,
-        dealCreationEnabled: !!deal_creation_enabled,
-        pipelineId: pipeline_id || null,
-        pipelineStageId: pipeline_stage_id || null,
+        dealCreationEnabled,
+        pipelineId: pipelineId || null,
+        pipelineStageId: pipelineStageId || null,
         supabaseUrl,
         anonKey,
       });
@@ -208,10 +209,10 @@ Deno.serve(async (req) => {
     if (redirect_url) submissionMeta.redirect_url = redirect_url;
     if (productId) submissionMeta.product_id = productId;
     if (tariffId) submissionMeta.tariff_id = tariffId;
-    if (deal_creation_enabled) {
+    if (dealCreationEnabled) {
       submissionMeta.deal_creation_enabled = true;
-      if (pipeline_id) submissionMeta.pipeline_id = pipeline_id;
-      if (pipeline_stage_id) submissionMeta.pipeline_stage_id = pipeline_stage_id;
+      if (pipelineId) submissionMeta.pipeline_id = pipelineId;
+      if (pipelineStageId) submissionMeta.pipeline_stage_id = pipelineStageId;
     }
     // Embed metadata (add-only)
     if (body.embed_origin) submissionMeta.embed_origin = body.embed_origin;
@@ -251,7 +252,7 @@ Deno.serve(async (req) => {
         mapped_fields: Object.keys(mappedValues),
         product_id: productId || null,
         tariff_id: tariffId || null,
-        deal_creation_enabled: !!deal_creation_enabled,
+        deal_creation_enabled: dealCreationEnabled,
       },
       status: "pending",
     });
@@ -405,20 +406,20 @@ Deno.serve(async (req) => {
     // Product info is already in submissionMeta — no side effects needed here
 
     // ─── STAGE 4: Deal creation ───
-    if (deal_creation_enabled && profileId) {
+    if (dealCreationEnabled && profileId) {
       await handleDealCreation(admin, {
         submissionId: submission.id,
         profileId,
         productId: productId || null,
         tariffId: tariffId || null,
-        pipelineId: pipeline_id || null,
-        pipelineStageId: pipeline_stage_id || null,
+        pipelineId: pipelineId || null,
+        pipelineStageId: pipelineStageId || null,
         pageId: page_id,
         workspaceId,
         email,
         phone,
       });
-    } else if (deal_creation_enabled && !profileId) {
+    } else if (dealCreationEnabled && !profileId) {
       await admin.from("domain_executions").insert({
         event_type: "site_form_order_requested",
         entity_type: "site_form_submission",
@@ -427,7 +428,7 @@ Deno.serve(async (req) => {
         status: "skipped",
         result: { reason: "no_profile_resolved", resolve_status: resolveStatus },
       });
-    } else if (!deal_creation_enabled) {
+    } else if (!dealCreationEnabled) {
       // Explicitly log that deal creation was skipped because disabled
       await admin.from("audit_logs").insert({
         action: "site_form_deal_creation_skipped",
