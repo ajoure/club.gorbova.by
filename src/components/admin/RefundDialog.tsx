@@ -62,6 +62,12 @@ export function RefundDialog({
   const [groupItems, setGroupItems] = useState<GroupRefundItem[]>([]);
   const [selectedGroupItemId, setSelectedGroupItemId] = useState<string>("");
   const [refundRequestKey, setRefundRequestKey] = useState(() => crypto.randomUUID());
+  const selectedGroupItem = groupItems.find((item) => item.id === selectedGroupItemId);
+  const selectedAllocation = selectedGroupItem?.payment_allocations?.[0];
+  const selectedAvailable = selectedAllocation
+    ? Number(selectedAllocation.amount) - Number(selectedAllocation.refunded_amount || 0)
+    : null;
+  const isFullRefund = refundAmount >= (selectedAvailable ?? amount);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -87,17 +93,13 @@ export function RefundDialog({
 
   // Auto-set access action based on refund amount
   useEffect(() => {
-    if (refundAmount >= amount) {
+    const max = selectedAvailable ?? amount;
+    if (refundAmount >= max) {
       setAccessAction("revoke");
+    } else if (accessAction === "revoke") {
+      setAccessAction("reduce");
     }
-  }, [refundAmount, amount]);
-
-  const isFullRefund = refundAmount >= amount;
-  const selectedGroupItem = groupItems.find((item) => item.id === selectedGroupItemId);
-  const selectedAllocation = selectedGroupItem?.payment_allocations?.[0];
-  const selectedAvailable = selectedAllocation
-    ? Number(selectedAllocation.amount) - Number(selectedAllocation.refunded_amount || 0)
-    : null;
+  }, [refundAmount, amount, selectedAvailable, accessAction]);
 
   const handleRefund = async () => {
     if (!reason.trim()) {
@@ -193,7 +195,7 @@ export function RefundDialog({
                       onClick={() => {
                         setSelectedGroupItemId(item.id);
                         setRefundAmount(available);
-                        setAccessAction("keep");
+                        setAccessAction("revoke");
                         setRefundRequestKey(crypto.randomUUID());
                       }}
                       className={`w-full rounded-xl border p-3 text-left transition ${
@@ -272,10 +274,10 @@ export function RefundDialog({
               className="space-y-2"
             >
               <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="revoke" id="revoke" disabled={!isFullRefund || !!selectedGroupItemId} />
+                <RadioGroupItem value="revoke" id="revoke" disabled={!isFullRefund} />
                 <Label
                   htmlFor="revoke"
-                  className={`flex-1 cursor-pointer ${!isFullRefund || selectedGroupItemId ? "opacity-50" : ""}`}
+                  className={`flex-1 cursor-pointer ${!isFullRefund ? "opacity-50" : ""}`}
                 >
                   <div className="flex items-center gap-2">
                     <Ban className="w-4 h-4 text-red-500" />
@@ -288,7 +290,7 @@ export function RefundDialog({
               </div>
 
               <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="reduce" id="reduce" disabled={!!selectedGroupItemId} />
+                <RadioGroupItem value="reduce" id="reduce" />
                 <Label htmlFor="reduce" className="flex-1 cursor-pointer">
                   <div className="flex items-center gap-2">
                     <Calendar className="w-4 h-4 text-amber-500" />
@@ -316,7 +318,7 @@ export function RefundDialog({
               )}
 
               <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="keep_subscription" id="keep_subscription" disabled={!!selectedGroupItemId} />
+                <RadioGroupItem value="keep_subscription" id="keep_subscription" />
                 <Label htmlFor="keep_subscription" className="flex-1 cursor-pointer">
                   <div className="flex items-center gap-2">
                     <RefreshCcw className="w-4 h-4 text-blue-500" />

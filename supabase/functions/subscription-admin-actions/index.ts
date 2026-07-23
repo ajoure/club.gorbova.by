@@ -324,6 +324,7 @@ Deno.serve(async (req) => {
       const payments = order.payments_v2 as any[];
       const successfulPayment = payments?.find((p: any) => p.status === 'succeeded' && p.provider_payment_id);
       let composableRefundIntentId: string | null = null;
+      let composableAccessOrderId: string | null = null;
       if (order_group_item_id) {
         if (!successfulPayment?.provider_payment_id) {
           return new Response(JSON.stringify({
@@ -378,6 +379,7 @@ Deno.serve(async (req) => {
           });
         }
         composableRefundIntentId = intent.intent_id;
+        composableAccessOrderId = intent.item_order_id || null;
       }
       
       let bepaidRefundResult: any = null;
@@ -492,7 +494,7 @@ Deno.serve(async (req) => {
           const { data: relatedSub } = await supabase
             .from('subscriptions_v2')
             .select('*, products_v2(telegram_club_id)')
-            .eq('order_id', order_id)
+            .eq('order_id', composableAccessOrderId || order_id)
             .maybeSingle();
           if (relatedSub) {
             if (effective === 'revoke') {
@@ -891,7 +893,7 @@ Deno.serve(async (req) => {
       const { data: relatedSubscription } = await supabase
         .from('subscriptions_v2')
         .select('*, products_v2(telegram_club_id)')
-        .eq('order_id', order_id)
+        .eq('order_id', composableAccessOrderId || order_id)
         .maybeSingle();
 
       if (relatedSubscription) {
@@ -915,10 +917,10 @@ Deno.serve(async (req) => {
           let refundRevokeSourceEventKey: string | null = null;
           let refundRevokeExecutionKey: string | null = null;
           try {
-            refundRevokeSourceEventKey = `admin-refund-revoke:${relatedSubscription.id}:${order_id}`;
+            refundRevokeSourceEventKey = `admin-refund-revoke:${relatedSubscription.id}:${composableAccessOrderId || order_id}`;
             const revokeCtx: RevokeContext = {
               userId: order.user_id,
-              orderId: order_id,
+              orderId: composableAccessOrderId || order_id,
               targetType: 'subscription_tier',
               targetKey: `${order.user_id}:${relatedSubscription.tariff_id || relatedSubscription.product_id || 'unknown'}`,
               targetRef: relatedSubscription.product_id || null,
