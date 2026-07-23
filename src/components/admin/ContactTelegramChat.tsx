@@ -1865,7 +1865,7 @@ export function ContactTelegramChat({
     scrollToMessage(dbId);
   }, [scrollToMessage]);
 
-  const handleMediaRefresh = useCallback(async () => {
+  const handleMediaRefresh = useCallback(async (messageDbId: string) => {
     if (isRefreshingMedia) return;
     setIsRefreshingMedia(true);
     try {
@@ -1876,6 +1876,7 @@ export function ContactTelegramChat({
         body: {
           action: "process_media_jobs",
           user_id: userId,
+          db_message_id: messageDbId,
           limit: 20,
         },
       });

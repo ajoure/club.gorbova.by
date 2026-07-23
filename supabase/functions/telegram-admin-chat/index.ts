@@ -1624,6 +1624,7 @@ Deno.serve(async (req) => {
       case "process_media_jobs": {
         const limit = Math.min(Math.max(Number(payload.limit || 5), 1), 20);
         const filterUserId = payload.user_id || null;
+        const messageDbId = payload.db_message_id || null;
 
         const workerUrl = `${supabaseUrl}/functions/v1/telegram-media-worker`;
         const workerToken = Deno.env.get("TELEGRAM_MEDIA_WORKER_TOKEN");
@@ -1636,13 +1637,95 @@ Deno.serve(async (req) => {
         }
 
         try {
+          // Historical records may say `upload_status=pending` even when the
+          // original webhook failed before creating media_jobs. An explicit
+          // retry from the contact center repairs that missing queue item from
+          // the canonical Telegram message metadata.
+          if (messageDbId) {
+            const { data: sourceMessage, error: sourceError } = await supabase
+              .from("telegram_messages")
+              .select("id, user_id, bot_id, meta")
+              .eq("id", messageDbId)
+              .maybeSingle();
+
+            if (sourceError || !sourceMessage) {
+              return new Response(JSON.stringify({ error: "Message not found" }), {
+                status: 404,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              });
+            }
+            if (filterUserId && sourceMessage.user_id !== filterUserId) {
+              return new Response(JSON.stringify({ error: "Message does not belong to dialog" }), {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              });
+            }
+
+            const meta = (sourceMessage.meta || {}) as Record<string, unknown>;
+            const telegramFileId = String(meta.file_id || meta.telegram_file_id || "").trim();
+            if (!telegramFileId || !sourceMessage.bot_id) {
+              await supabase
+                .from("telegram_messages")
+                .update({
+                  meta: {
+                    ...meta,
+                    upload_status: "unavailable",
+                    upload_error: "legacy_file_reference_missing",
+                  },
+                })
+                .eq("id", messageDbId);
+              return new Response(JSON.stringify({
+                ok: true,
+                processed: 0,
+                unavailable: true,
+              }), {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              });
+            }
+
+            const { data: existingJob } = await supabase
+              .from("media_jobs")
+              .select("id, status")
+              .eq("message_db_id", messageDbId)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (!existingJob) {
+              const { error: insertJobError } = await supabase.from("media_jobs").insert({
+                message_db_id: messageDbId,
+                user_id: sourceMessage.user_id,
+                bot_id: sourceMessage.bot_id,
+                telegram_file_id: telegramFileId,
+                file_type: meta.file_type || null,
+                file_name: meta.file_name || null,
+              });
+              if (insertJobError) throw insertJobError;
+            } else if (existingJob.status !== "processing") {
+              const { error: resetJobError } = await supabase
+                .from("media_jobs")
+                .update({
+                  status: "pending",
+                  attempts: 0,
+                  last_error: null,
+                  locked_at: null,
+                })
+                .eq("id", existingJob.id);
+              if (resetJobError) throw resetJobError;
+            }
+          }
+
           const res = await fetch(workerUrl, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
               "X-Worker-Token": workerToken,
             },
-            body: JSON.stringify({ limit, user_id: filterUserId }),
+            body: JSON.stringify({
+              limit,
+              user_id: filterUserId,
+              message_db_id: messageDbId,
+            }),
           });
 
           const json = await res.json().catch(() => ({ ok: false, error: "bad_json" }));

@@ -11,6 +11,7 @@ import communicationPageSource from "../pages/admin/AdminCommunication.tsx?raw";
 import unifiedInboxHookSource from "../hooks/useUnifiedInbox.ts?raw";
 import realtimeInvalidationSource from "../hooks/useInboxRealtimeInvalidation.ts?raw";
 import telegramChatSource from "../components/admin/ContactTelegramChat.tsx?raw";
+import telegramAdminSource from "../../supabase/functions/telegram-admin-chat/index.ts?raw";
 
 describe("Contact-center safety and mobile performance", () => {
   it("aligns contact-center RLS and protects the atomic sender RPC", () => {
@@ -102,8 +103,12 @@ describe("Contact-center safety and mobile performance", () => {
     );
     expect(refreshHandler).toContain('action: "process_media_jobs"');
     expect(refreshHandler).toContain("user_id: userId");
+    expect(refreshHandler).toContain("db_message_id: messageDbId");
     expect(refreshHandler.indexOf("process_media_jobs")).toBeLessThan(
       refreshHandler.indexOf("refetchMessages"),
     );
+    expect(telegramAdminSource).toContain('upload_status: "unavailable"');
+    expect(telegramAdminSource).toContain('.from("media_jobs").insert');
+    expect(telegramAdminSource).toContain("message_db_id: messageDbId");
   });
 });
