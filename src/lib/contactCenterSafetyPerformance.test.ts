@@ -7,6 +7,7 @@ import ticketChatSource from "../components/support/TicketChat.tsx?raw";
 import unifiedInboxSource from "../components/admin/communication/unified/UnifiedInboxView.tsx?raw";
 import channelPickerSource from "../components/admin/communication/unified/ChannelPicker.tsx?raw";
 import instagramMediaSource from "../components/admin/communication/instagram/InstagramMessageMedia.tsx?raw";
+import communicationPageSource from "../pages/admin/AdminCommunication.tsx?raw";
 
 describe("Contact-center safety and mobile performance", () => {
   it("aligns contact-center RLS and protects the atomic sender RPC", () => {
@@ -63,5 +64,12 @@ describe("Contact-center safety and mobile performance", () => {
     );
     expect(resetEffect).not.toContain("rehostMedia(");
     expect(instagramMediaSource).toContain("void tryLazyRehost");
+  });
+
+  it("lazy-loads heavy contact-center panels instead of blocking the first render", () => {
+    expect(communicationPageSource).toContain("const InboxTabContent = lazy(");
+    expect(communicationPageSource).toContain("const UnifiedInboxView = lazy(");
+    expect(communicationPageSource).toContain("const BroadcastsTabContent = lazy(");
+    expect(communicationPageSource).toContain("<Suspense fallback=");
   });
 });
