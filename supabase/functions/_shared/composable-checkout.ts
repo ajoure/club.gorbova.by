@@ -42,7 +42,12 @@ export function priceQuoteItem(item: QuoteSourceItem): QuoteItem {
   if (!Number.isFinite(final) || final < 0 || final > list && item.pricing_mode === "percent_discount") {
     throw new Error("invalid_final_amount");
   }
-  return { ...item, list_amount: list, final_amount: final, discount_amount: money(list - final) };
+  return {
+    ...item,
+    list_amount: list,
+    final_amount: final,
+    discount_amount: money(Math.max(0, list - final)),
+  };
 }
 
 export function buildComposableQuote(

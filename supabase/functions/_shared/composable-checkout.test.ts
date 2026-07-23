@@ -25,3 +25,28 @@ Deno.test("calculates discounted, free and adjusted composite quote", () => {
 Deno.test("rejects duplicate offers", () => {
   assertThrows(() => buildComposableQuote([primary, { ...primary, role: "addon" }]), Error, "duplicate_offer");
 });
+
+Deno.test("fixed price above list does not create a negative discount", () => {
+  const result = buildComposableQuote([
+    primary,
+    {
+      ...primary,
+      role: "addon",
+      product_id: "p2",
+      offer_id: "o2",
+      list_amount: 400,
+      pricing_mode: "fixed_price",
+      fixed_amount: 500,
+    },
+  ]);
+  assertEquals(result.items[1].discount_amount, 0);
+  assertEquals(result.items[1].final_amount, 500);
+});
+
+Deno.test("rejects invalid percentage and negative total", () => {
+  assertThrows(() => buildComposableQuote([
+    primary,
+    { ...primary, role: "addon", offer_id: "o2", pricing_mode: "percent_discount", discount_percent: 120 },
+  ]), Error, "invalid_final_amount");
+  assertThrows(() => buildComposableQuote([primary], -1500.01), Error, "invalid_adjustment");
+});

@@ -26,4 +26,33 @@ describe("composable checkout quote", () => {
   it("rejects the same offer twice", () => {
     expect(() => buildComposableQuote([primary, { ...primary, role: "addon" }])).toThrow("duplicate_offer");
   });
+
+  it("supports a fixed module price above list without a negative discount", () => {
+    const quote = buildComposableQuote([
+      primary,
+      {
+        ...primary,
+        role: "addon",
+        product_id: "p2",
+        offer_id: "o2",
+        list_amount: 400,
+        pricing_mode: "fixed_price",
+        fixed_amount: 500,
+      },
+    ]);
+    expect(quote.items[1]).toMatchObject({
+      list_amount: 400,
+      final_amount: 500,
+      discount_amount: 0,
+    });
+    expect(quote.total).toBe(2000);
+  });
+
+  it("rejects invalid percentage discounts and totals below zero", () => {
+    expect(() => buildComposableQuote([
+      primary,
+      { ...primary, role: "addon", offer_id: "o2", pricing_mode: "percent_discount", discount_percent: 120 },
+    ])).toThrow("invalid_final_amount");
+    expect(() => buildComposableQuote([primary], -1500.01)).toThrow("invalid_adjustment");
+  });
 });
