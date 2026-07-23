@@ -639,7 +639,8 @@ Deno.serve(async (req) => {
   }
 
   // 8b) Push notifications to admins (only for incoming client messages, not dedupe path).
-  // Fire-and-forget: never break the 200 OK to ManyChat.
+  // Await the internal fan-out request: a bare fire-and-forget fetch can be
+  // terminated as soon as this Edge Function returns. Push remains non-fatal.
   if (normalized.direction === "inbound" && inserted?.id) {
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -698,7 +699,7 @@ Deno.serve(async (req) => {
       );
 
       if (adminUserIds.length > 0) {
-        fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+        const pushResponse = await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -711,7 +712,14 @@ Deno.serve(async (req) => {
             url: "/admin/communication",
             tag: `ig-msg-${accountId}-${normalized.subscriber_id}`,
           }),
-        }).catch((e) => console.error("[Push][instagram] send error", e));
+        });
+        if (!pushResponse.ok) {
+          console.error(
+            "[Push][instagram] send failed",
+            pushResponse.status,
+            await pushResponse.text(),
+          );
+        }
       }
     } catch (pushErr) {
       console.error("[manychat-inbound][push] error", pushErr);

@@ -1806,7 +1806,7 @@ Deno.serve(async (req) => {
                 fallback,
               }));
 
-              fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+              const pushResponse = await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -1819,7 +1819,14 @@ Deno.serve(async (req) => {
                   url: '/admin/communication',
                   tag: `tg-msg-${telegramUserId}`,
                 }),
-              }).catch(err => console.error('[Push] Send error:', err));
+              });
+              if (!pushResponse.ok) {
+                console.error(
+                  '[Push] Send failed:',
+                  pushResponse.status,
+                  await pushResponse.text(),
+                );
+              }
             }
           } catch (pushErr) {
             console.error('[Push] Admin notification error:', pushErr);
