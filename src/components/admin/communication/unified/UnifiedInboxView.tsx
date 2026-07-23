@@ -62,7 +62,15 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 250);
   const serverSearch = normalizeTelegramSearchInput(debouncedSearch);
-  const { contactRows, isLoading, errors, counts } = useUnifiedInbox({ enabled: true, search: serverSearch });
+  const {
+    contactRows,
+    isLoading,
+    errors,
+    counts,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useUnifiedInbox({ enabled: true, search: serverSearch });
   type FilterKind = "all" | "unread" | "favorite" | "pinned";
   const [filterKind, setFilterKind] = useState<FilterKind>("all");
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -155,6 +163,28 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     estimateSize: () => 88,
     overscan: 5,
   });
+  const virtualItems = virtualizer.getVirtualItems();
+
+  // Подгружаем следующую страницу до того, как оператор упрётся в конец.
+  // Список остаётся виртуализированным: количество DOM-узлов не растёт вместе
+  // с историей, поэтому длинная лента не блокирует скролл на iOS.
+  useEffect(() => {
+    const last = virtualItems[virtualItems.length - 1];
+    if (
+      last &&
+      last.index >= filtered.length - 8 &&
+      hasNextPage &&
+      !isFetchingNextPage
+    ) {
+      void fetchNextPage();
+    }
+  }, [
+    virtualItems,
+    filtered.length,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  ]);
 
   // Resolve selected: сначала пробуем текущий key; если исчез — ищем grouped
   // row, содержащую lastSelectedSourceKey (обработка attach IG → merge).
@@ -362,16 +392,24 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
           // UnifiedInbox uses a dedicated raw-RPC cache. Updating only
           // INBOX_DIALOGS_QK leaves the unified row and its badges stale even
           // though the database update succeeded.
-          queryClient.setQueriesData<any[]>(
+          queryClient.setQueriesData<any>(
             { queryKey: ["unified-inbox-telegram"] },
-            (old) =>
-              Array.isArray(old)
-                ? old.map((dialog: any) =>
-                    dialog?.user_id === userId
-                      ? { ...dialog, unread_count: remainingUnread }
-                      : dialog,
-                  )
-                : old,
+            (old) => {
+              if (!old?.pages) return old;
+              return {
+                ...old,
+                pages: old.pages.map((page: any) => ({
+                  ...page,
+                  rows: Array.isArray(page.rows)
+                    ? page.rows.map((dialog: any) =>
+                        dialog?.user_id === userId
+                          ? { ...dialog, unread_count: remainingUnread }
+                          : dialog,
+                      )
+                    : page.rows,
+                })),
+              };
+            },
           );
           queryClient.setQueriesData<any[]>(
             { queryKey: INBOX_DIALOGS_QK },
@@ -510,8 +548,11 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
             <p className="text-muted-foreground text-sm">Ничего не найдено</p>
           </div>
         ) : (
-          <div className="relative p-1.5" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-            {virtualizer.getVirtualItems().map((vr) => {
+          <div
+            className="relative p-1.5"
+            style={{ height: `${virtualizer.getTotalSize() + (isFetchingNextPage ? 36 : 0)}px` }}
+          >
+            {virtualItems.map((vr) => {
               const row = filtered[vr.index];
               const rowActiveSource: UnifiedSource =
                 row.key === selected?.key
@@ -612,6 +653,16 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                 </div>
               );
             })}
+            {isFetchingNextPage && (
+              <div
+                className="absolute inset-x-0 flex h-9 items-center justify-center text-muted-foreground"
+                style={{ transform: `translateY(${virtualizer.getTotalSize()}px)` }}
+                aria-live="polite"
+              >
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                <span className="text-[11px]">Загружаю ещё…</span>
+              </div>
+            )}
           </div>
         )}
       </div>

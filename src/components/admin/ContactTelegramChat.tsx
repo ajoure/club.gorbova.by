@@ -208,6 +208,7 @@ export function ContactTelegramChat({
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasOlderMessages, setHasOlderMessages] = useState(true);
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
+  const [isRefreshingMedia, setIsRefreshingMedia] = useState(false);
 
   // Fetch available bots
   const { data: telegramBots = [] } = useQuery({
@@ -1864,9 +1865,29 @@ export function ContactTelegramChat({
     scrollToMessage(dbId);
   }, [scrollToMessage]);
 
-  const handleMediaRefresh = useCallback(() => {
-    refetchMessages();
-  }, [refetchMessages]);
+  const handleMediaRefresh = useCallback(async () => {
+    if (isRefreshingMedia) return;
+    setIsRefreshingMedia(true);
+    try {
+      // Простого refetch недостаточно для старых pending-записей: он лишь
+      // повторно читает тот же статус. Сначала точечно запускаем защищённый
+      // worker для текущего диалога, затем обновляем кэш сообщений.
+      const { error } = await supabase.functions.invoke("telegram-admin-chat", {
+        body: {
+          action: "process_media_jobs",
+          user_id: userId,
+          limit: 20,
+        },
+      });
+      if (error) throw error;
+      await refetchMessages();
+    } catch (error) {
+      console.error("[ContactTelegramChat] media refresh failed", error);
+      toast.error("Не удалось обновить вложение");
+    } finally {
+      setIsRefreshingMedia(false);
+    }
+  }, [isRefreshingMedia, refetchMessages, userId]);
 
   if (!telegramUserId) {
     return (
