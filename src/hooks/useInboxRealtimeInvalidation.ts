@@ -106,15 +106,14 @@ export function useInboxRealtimeInvalidation(): void {
     const channel = supabase
       .channel("inbox-realtime-bus")
       .on(
-        "postgres_changes",
+        "postgres_changes" as unknown as "system",
         {
           event: "INSERT",
           schema: "public",
           table: "telegram_messages",
-          select: ["id", "direction", "user_id"],
-        },
-        (payload) => {
-          const row = payload.new as { direction?: string } | null;
+        } as never,
+        (payload: { new: { direction?: string } | null }) => {
+          const row = payload.new;
           markInbox();
           if (row?.direction === "incoming") {
             markUnread();
@@ -122,22 +121,16 @@ export function useInboxRealtimeInvalidation(): void {
         },
       )
       .on(
-        "postgres_changes",
+        "postgres_changes" as unknown as "system",
         {
           event: "UPDATE",
           schema: "public",
           table: "telegram_messages",
-          select: ["id", "direction", "is_read", "user_id"],
-        },
-        (payload) => {
-          const row = payload.new as
-            | { direction?: string; is_read?: boolean; user_id?: string }
-            | null;
-          // Coordinator-guard: если этот user_id только что был помечен
-          // нашей собственной mutation, RPC уже вернула remaining_unread_count
-          // и кэш точечно пропатчен. Realtime-эхо своего UPDATE не должен
-          // плодить параллельный refetch. Чужие изменения и любые INSERT
-          // продолжают инвалидировать как обычно.
+        } as never,
+        (payload: {
+          new: { direction?: string; is_read?: boolean; user_id?: string } | null;
+        }) => {
+          const row = payload.new;
           if (
             row?.direction === "incoming" &&
             row?.is_read === true &&
@@ -152,13 +145,12 @@ export function useInboxRealtimeInvalidation(): void {
         },
       )
       .on(
-        "postgres_changes",
+        "postgres_changes" as unknown as "system",
         {
           event: "DELETE",
           schema: "public",
           table: "telegram_messages",
-          select: ["id"],
-        },
+        } as never,
         () => {
           markInbox();
           markUnread();
