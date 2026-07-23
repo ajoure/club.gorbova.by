@@ -12,6 +12,71 @@ type AutomationJob = {
   attempt_count: number;
 };
 
+type AutomationCondition = {
+  field: string;
+  operator: string;
+  value?: unknown;
+  not?: boolean;
+};
+
+type AutomationConditions = {
+  logic: "and" | "or";
+  items: AutomationCondition[];
+};
+
+function conditionMatches(condition: AutomationCondition, deal: Record<string, unknown>): boolean {
+  const actual = deal[condition.field];
+  const expected = condition.value;
+  let matched = false;
+
+  switch (condition.operator) {
+    case "eq":
+      matched = String(actual ?? "") === String(expected ?? "");
+      break;
+    case "neq":
+      matched = String(actual ?? "") !== String(expected ?? "");
+      break;
+    case "contains":
+      matched = String(actual ?? "").toLocaleLowerCase().includes(
+        String(expected ?? "").toLocaleLowerCase(),
+      );
+      break;
+    case "not_contains":
+      matched = !String(actual ?? "").toLocaleLowerCase().includes(
+        String(expected ?? "").toLocaleLowerCase(),
+      );
+      break;
+    case "is_empty":
+      matched = actual == null || actual === "";
+      break;
+    case "is_not_empty":
+      matched = actual != null && actual !== "";
+      break;
+    case "gt":
+      matched = Number(actual) > Number(expected);
+      break;
+    case "gte":
+      matched = Number(actual) >= Number(expected);
+      break;
+    case "lt":
+      matched = Number(actual) < Number(expected);
+      break;
+    case "lte":
+      matched = Number(actual) <= Number(expected);
+      break;
+  }
+  return condition.not === true ? !matched : matched;
+}
+
+function conditionsMatch(conditions: unknown, deal: Record<string, unknown>): boolean {
+  if (!conditions || typeof conditions !== "object" || Object.keys(conditions).length === 0) {
+    return true;
+  }
+  const group = conditions as AutomationConditions;
+  const results = group.items.map((condition) => conditionMatches(condition, deal));
+  return group.logic === "or" ? results.some(Boolean) : results.every(Boolean);
+}
+
 function renderTemplate(template: string, deal: Record<string, unknown>): string {
   const values: Record<string, string> = {
     deal_id: String(deal.id ?? ""),
@@ -77,7 +142,7 @@ Deno.serve(async (req: Request) => {
           supabase
             .from("orders_v2")
             .select(
-              "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name,user_id",
+              "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name,user_id,status,currency,is_trial,paid_amount,final_price",
             )
             .eq("id", job.deal_id)
             .single(),
@@ -129,6 +194,26 @@ Deno.serve(async (req: Request) => {
         if (skipError) throw skipError;
         result.skipped++;
         result.jobs.push({ id: job.id, status: "skipped", reason: "deal_left_stage" });
+        continue;
+      }
+
+      if (!conditionsMatch(rule.conditions, deal)) {
+        const { error: skipError } = await supabase.rpc(
+          "crm_pipeline_automation_skip_job",
+          {
+            _job_id: job.id,
+            _reason: "conditions_not_met",
+            _result: {
+              condition_logic: rule.conditions?.logic ?? null,
+              condition_count: Array.isArray(rule.conditions?.items)
+                ? rule.conditions.items.length
+                : 0,
+            },
+          },
+        );
+        if (skipError) throw skipError;
+        result.skipped++;
+        result.jobs.push({ id: job.id, status: "skipped", reason: "conditions_not_met" });
         continue;
       }
 

@@ -4,6 +4,41 @@ import { supabase } from "@/integrations/supabase/client";
 
 export type PipelineAutomationStatus = "draft" | "active" | "paused" | "archived";
 
+export type PipelineAutomationConditionField =
+  | "status"
+  | "currency"
+  | "is_trial"
+  | "product_id"
+  | "tariff_id"
+  | "responsible_user_id"
+  | "customer_email"
+  | "paid_amount"
+  | "final_price";
+
+export type PipelineAutomationConditionOperator =
+  | "eq"
+  | "neq"
+  | "contains"
+  | "not_contains"
+  | "is_empty"
+  | "is_not_empty"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte";
+
+export interface PipelineAutomationCondition {
+  field: PipelineAutomationConditionField;
+  operator: PipelineAutomationConditionOperator;
+  value?: string | number | boolean;
+  not?: boolean;
+}
+
+export interface PipelineAutomationConditions {
+  logic: "and" | "or";
+  items: PipelineAutomationCondition[];
+}
+
 export interface PipelineAutomationRule {
   id: string;
   logical_id: string;
@@ -39,6 +74,7 @@ export interface PipelineAutomationRule {
   fallback_email_html_template: string | null;
   fallback_email_text_template: string | null;
   fallback_telegram_message_template: string | null;
+  conditions: PipelineAutomationConditions | Record<string, never>;
   created_at: string;
   updated_at: string;
 }
@@ -74,6 +110,7 @@ export interface CreatePipelineAutomationRule {
   fallback_email_html_template?: string | null;
   fallback_email_text_template?: string | null;
   fallback_telegram_message_template?: string | null;
+  conditions?: PipelineAutomationConditions | Record<string, never>;
 }
 
 export interface PipelineEmailTemplate {
@@ -259,6 +296,7 @@ export function useCreatePipelineAutomationRule() {
             payload.fallback_action_type === "send_telegram"
               ? payload.fallback_telegram_message_template?.trim()
               : null,
+          conditions: payload.conditions ?? {},
           recipient_strategy: "customer_email",
         })
         .select("*")

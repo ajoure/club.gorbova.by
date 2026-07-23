@@ -44,6 +44,9 @@ import { CrmPipeline, CrmPipelineStage } from "@/services/pipelineService";
 import { useCrmTaskTypes } from "@/hooks/useCrmTasks";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
 import {
+  PipelineAutomationCondition,
+  PipelineAutomationConditionField,
+  PipelineAutomationConditionOperator,
   PipelineAutomationRule,
   useCreatePipelineAutomationRule,
   usePipelineAutomationJobs,
@@ -62,6 +65,50 @@ interface Props {
 }
 
 const OWNER = "__deal_owner__";
+
+const CONDITION_FIELDS: Array<{ value: PipelineAutomationConditionField; label: string }> = [
+  { value: "status", label: "Статус сделки" },
+  { value: "currency", label: "Валюта" },
+  { value: "is_trial", label: "Пробная сделка" },
+  { value: "product_id", label: "Продукт" },
+  { value: "tariff_id", label: "Тариф" },
+  { value: "responsible_user_id", label: "Ответственный" },
+  { value: "customer_email", label: "Email клиента" },
+  { value: "paid_amount", label: "Оплаченная сумма" },
+  { value: "final_price", label: "Итоговая сумма" },
+];
+
+const CONDITION_OPERATORS: Array<{
+  value: PipelineAutomationConditionOperator;
+  label: string;
+}> = [
+  { value: "eq", label: "равно" },
+  { value: "neq", label: "не равно" },
+  { value: "contains", label: "содержит" },
+  { value: "not_contains", label: "не содержит" },
+  { value: "is_empty", label: "не заполнено" },
+  { value: "is_not_empty", label: "заполнено" },
+  { value: "gt", label: "больше" },
+  { value: "gte", label: "не меньше" },
+  { value: "lt", label: "меньше" },
+  { value: "lte", label: "не больше" },
+];
+
+function operatorsForField(field: PipelineAutomationConditionField) {
+  if (field === "paid_amount" || field === "final_price") {
+    return CONDITION_OPERATORS.filter(({ value }) =>
+      ["eq", "neq", "is_empty", "is_not_empty", "gt", "gte", "lt", "lte"].includes(value)
+    );
+  }
+  if (["status", "currency", "customer_email"].includes(field)) {
+    return CONDITION_OPERATORS.filter(({ value }) =>
+      ["eq", "neq", "contains", "not_contains", "is_empty", "is_not_empty"].includes(value)
+    );
+  }
+  return CONDITION_OPERATORS.filter(({ value }) =>
+    ["eq", "neq", "is_empty", "is_not_empty"].includes(value)
+  );
+}
 
 function statusLabel(status: PipelineAutomationRule["status"]) {
   if (status === "active") return "Работает";
@@ -164,6 +211,11 @@ function RuleCard({
             резерв: {rule.fallback_action_type === "send_email" ? "Email" : "Telegram"}
           </span>
         )}
+        {"items" in rule.conditions && rule.conditions.items.length > 0 && (
+          <span className="inline-flex items-center gap-1 text-violet-600">
+            <Workflow className="h-3 w-3" /> условий: {rule.conditions.items.length}
+          </span>
+        )}
       </div>
       {canEdit && (
         <div className="mt-3 flex items-center gap-1 border-t border-border/25 pt-2">
@@ -259,6 +311,8 @@ export function PipelineAutomationSheet({
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
   const [quietHoursStart, setQuietHoursStart] = useState("22:00");
   const [quietHoursEnd, setQuietHoursEnd] = useState("08:00");
+  const [conditionLogic, setConditionLogic] = useState<"and" | "or">("and");
+  const [conditions, setConditions] = useState<PipelineAutomationCondition[]>([]);
 
   useEffect(() => {
     if (!taskTypeId && taskTypes[0]?.id) setTaskTypeId(taskTypes[0].id);
@@ -301,6 +355,8 @@ export function PipelineAutomationSheet({
     setQuietHoursEnabled(false);
     setQuietHoursStart("22:00");
     setQuietHoursEnd("08:00");
+    setConditionLogic("and");
+    setConditions([]);
   };
 
   const submit = () => {
@@ -314,6 +370,20 @@ export function PipelineAutomationSheet({
     if (actionType === "send_telegram" && !telegramMessage.trim()) return;
     if (fallbackEnabled && actionType === "send_telegram" && !fallbackEmailTemplate) return;
     if (fallbackEnabled && actionType === "send_email" && !fallbackTelegramMessage.trim()) return;
+    if (
+      conditions.some(
+        (condition) =>
+          !["is_empty", "is_not_empty"].includes(condition.operator) &&
+          String(condition.value ?? "").trim() === "",
+      )
+    ) return;
+    const normalizedConditions = conditions.map((condition) => ({
+      ...condition,
+      value:
+        ["gt", "gte", "lt", "lte"].includes(condition.operator)
+          ? Number(condition.value)
+          : condition.value,
+    }));
     createRule.mutate(
       {
         pipeline_id: pipeline.id,
@@ -364,6 +434,10 @@ export function PipelineAutomationSheet({
           fallbackEnabled && actionType === "send_email"
             ? fallbackTelegramMessage
             : null,
+        conditions:
+          normalizedConditions.length > 0
+            ? { logic: conditionLogic, items: normalizedConditions }
+            : {},
       },
       { onSuccess: resetEditor },
     );
@@ -447,7 +521,9 @@ export function PipelineAutomationSheet({
                                 ? "Выполнено через резерв"
                                 : "Выполнено"
                               : job.status === "skipped"
-                                ? "Пропущено: сделка ушла"
+                                ? job.result?.skip_reason === "conditions_not_met"
+                                  ? "Пропущено: условия не совпали"
+                                  : "Пропущено: сделка ушла"
                                 : job.status === "running"
                                   ? "Выполняется"
                                   : job.status === "pending"
@@ -703,6 +779,147 @@ export function PipelineAutomationSheet({
               </div>
                 </>
               )}
+              <div className="space-y-2 rounded-2xl border border-border/30 bg-background/30 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[11px] font-medium">Условия запуска</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Пусто — выполнять для всех сделок
+                    </p>
+                  </div>
+                  {conditions.length > 1 && (
+                    <Select
+                      value={conditionLogic}
+                      onValueChange={(value: "and" | "or") => setConditionLogic(value)}
+                    >
+                      <SelectTrigger className="h-7 w-24 rounded-lg text-[10px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="and">Все AND</SelectItem>
+                        <SelectItem value="or">Любое OR</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+                {conditions.map((condition, index) => {
+                  const needsValue = !["is_empty", "is_not_empty"].includes(
+                    condition.operator,
+                  );
+                  return (
+                    <div
+                      key={`${index}-${condition.field}`}
+                      className="space-y-2 rounded-xl border border-border/25 bg-background/45 p-2.5"
+                    >
+                      <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                        <Select
+                          value={condition.field}
+                          onValueChange={(value: PipelineAutomationConditionField) =>
+                            setConditions((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? { ...item, field: value, operator: "eq" }
+                                  : item
+                              )
+                            )}
+                        >
+                          <SelectTrigger className="h-8 rounded-lg text-[10px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CONDITION_FIELDS.map((field) => (
+                              <SelectItem key={field.value} value={field.value}>
+                                {field.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={condition.operator}
+                          onValueChange={(value: PipelineAutomationConditionOperator) =>
+                            setConditions((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, operator: value } : item
+                              )
+                            )}
+                        >
+                          <SelectTrigger className="h-8 rounded-lg text-[10px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {operatorsForField(condition.field).map((operator) => (
+                              <SelectItem key={operator.value} value={operator.value}>
+                                {operator.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <button
+                          type="button"
+                          className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600"
+                          onClick={() =>
+                            setConditions((current) =>
+                              current.filter((_, itemIndex) => itemIndex !== index)
+                            )}
+                          title="Удалить условие"
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {needsValue && (
+                        <Input
+                          type={
+                            condition.field === "paid_amount" ||
+                              condition.field === "final_price"
+                              ? "number"
+                              : "text"
+                          }
+                          value={String(condition.value ?? "")}
+                          onChange={(event) =>
+                            setConditions((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? { ...item, value: event.target.value }
+                                  : item
+                              )
+                            )}
+                          placeholder="Значение"
+                          className="h-8 rounded-lg text-[10px]"
+                        />
+                      )}
+                      <label className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <Checkbox
+                          checked={condition.not === true}
+                          onCheckedChange={(checked) =>
+                            setConditions((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? { ...item, not: checked === true }
+                                  : item
+                              )
+                            )}
+                        />
+                        Инвертировать результат (NOT)
+                      </label>
+                    </div>
+                  );
+                })}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={conditions.length >= 10}
+                  className="h-7 rounded-lg px-2 text-[10px]"
+                  onClick={() =>
+                    setConditions((current) => [
+                      ...current,
+                      { field: "status", operator: "eq", value: "" },
+                    ])
+                  }
+                >
+                  <Plus className="mr-1 h-3 w-3" /> Добавить условие
+                </Button>
+              </div>
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Запустить через, минут</Label>
                 <Input type="number" min={0} max={525600} value={delayMinutes} onChange={(event) => setDelayMinutes(Number(event.target.value))} className="h-9 rounded-xl text-xs" />
