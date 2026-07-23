@@ -171,33 +171,30 @@ export function useInboxRealtimeInvalidation(): void {
       ? supabase
           .channel("inbox-realtime-bus-unified")
           .on(
-            "postgres_changes",
+            "postgres_changes" as unknown as "system",
             {
               event: "*",
               schema: "public",
               table: "instagram_messages",
-              select: ["id", "instagram_account_id"],
-            },
+            } as never,
             () => markIg(),
           )
           .on(
-            "postgres_changes",
+            "postgres_changes" as unknown as "system",
             {
               event: "*",
               schema: "public",
               table: "support_tickets",
-              select: ["id", "updated_at", "has_unread_admin"],
-            },
+            } as never,
             () => markSupport(),
           )
           .on(
-            "postgres_changes",
+            "postgres_changes" as unknown as "system",
             {
               event: "INSERT",
               schema: "public",
               table: "ticket_messages",
-              select: ["id", "ticket_id"],
-            },
+            } as never,
             () => markSupport(),
           )
           .subscribe((status) => {
