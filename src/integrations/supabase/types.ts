@@ -22449,7 +22449,6 @@ export type Database = {
       rr_get_or_create_pending_order: {
         Args: {
           _amount: number
-          _checkout_fingerprint?: string
           _crm_routing_snapshot?: Json
           _currency: string
           _customer_email: string
@@ -22470,10 +22469,6 @@ export type Database = {
           order_number: string
           was_reused: boolean
         }[]
-      }
-      settle_composable_order_group: {
-        Args: { _payment_id: string; _primary_order_id: string }
-        Returns: Json
       }
       rr_insert_idempotent_audit_event: {
         Args: { _event_type: string; _order_id: string; _payload: Json }
