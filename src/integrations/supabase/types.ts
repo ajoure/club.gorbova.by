@@ -5182,6 +5182,191 @@ export type Database = {
         }
         Relationships: []
       }
+      crm_pipeline_automation_jobs: {
+        Row: {
+          attempt_count: number
+          available_at: string
+          created_at: string
+          deal_id: string
+          event_key: string
+          event_payload: Json
+          finished_at: string | null
+          id: string
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          logical_id: string
+          result: Json | null
+          rule_id: string
+          rule_version: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          available_at?: string
+          created_at?: string
+          deal_id: string
+          event_key: string
+          event_payload?: Json
+          finished_at?: string | null
+          id?: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          logical_id: string
+          result?: Json | null
+          rule_id: string
+          rule_version: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          available_at?: string
+          created_at?: string
+          deal_id?: string
+          event_key?: string
+          event_payload?: Json
+          finished_at?: string | null
+          id?: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          logical_id?: string
+          result?: Json | null
+          rule_id?: string
+          rule_version?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_pipeline_automation_jobs_deal_id_fkey"
+            columns: ["deal_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_automation_jobs_rule_id_fkey"
+            columns: ["rule_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipeline_automation_rules"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_pipeline_automation_rules: {
+        Row: {
+          action_type: string
+          assignee_strategy: string
+          assignee_user_id: string | null
+          conditions: Json
+          created_at: string
+          created_by: string | null
+          description_template: string | null
+          due_offset_minutes: number
+          id: string
+          logical_id: string
+          metadata: Json
+          name: string
+          pipeline_id: string
+          published_at: string | null
+          reminder_offset_minutes: number | null
+          stage_id: string
+          status: string
+          task_type_id: string
+          title_template: string
+          trigger_type: string
+          updated_at: string
+          updated_by: string | null
+          version: number
+          workspace_id: string
+        }
+        Insert: {
+          action_type?: string
+          assignee_strategy?: string
+          assignee_user_id?: string | null
+          conditions?: Json
+          created_at?: string
+          created_by?: string | null
+          description_template?: string | null
+          due_offset_minutes?: number
+          id?: string
+          logical_id?: string
+          metadata?: Json
+          name: string
+          pipeline_id: string
+          published_at?: string | null
+          reminder_offset_minutes?: number | null
+          stage_id: string
+          status?: string
+          task_type_id: string
+          title_template: string
+          trigger_type?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+          workspace_id?: string
+        }
+        Update: {
+          action_type?: string
+          assignee_strategy?: string
+          assignee_user_id?: string | null
+          conditions?: Json
+          created_at?: string
+          created_by?: string | null
+          description_template?: string | null
+          due_offset_minutes?: number
+          id?: string
+          logical_id?: string
+          metadata?: Json
+          name?: string
+          pipeline_id?: string
+          published_at?: string | null
+          reminder_offset_minutes?: number | null
+          stage_id?: string
+          status?: string
+          task_type_id?: string
+          title_template?: string
+          trigger_type?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipeline_stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_task_type_id_fkey"
+            columns: ["task_type_id"]
+            isOneToOne: false
+            referencedRelation: "crm_task_types"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       crm_pipeline_product_bindings: {
         Row: {
           created_at: string
@@ -21675,6 +21860,43 @@ export type Database = {
         | { Args: { _arr: Json }; Returns: Json }
         | { Args: { _raw: string }; Returns: string }
       crm_phase4_worker_secret: { Args: never; Returns: string }
+      crm_pipeline_automation_claim_jobs: {
+        Args: { _limit?: number; _worker_id: string }
+        Returns: {
+          attempt_count: number
+          available_at: string
+          created_at: string
+          deal_id: string
+          event_key: string
+          event_payload: Json
+          finished_at: string | null
+          id: string
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          logical_id: string
+          result: Json | null
+          rule_id: string
+          rule_version: number
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "crm_pipeline_automation_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      crm_pipeline_automation_complete_job: {
+        Args: {
+          _error?: string
+          _job_id: string
+          _result?: Json
+          _succeeded: boolean
+        }
+        Returns: undefined
+      }
       crm_task_apply_automation: {
         Args: { _context?: Json; _deal_id: string; _offer_id: string }
         Returns: string[]
