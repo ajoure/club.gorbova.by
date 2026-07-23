@@ -21,6 +21,9 @@ export interface PipelineAutomationRule {
   reminder_offset_minutes: number | null;
   delay_minutes: number;
   require_same_stage: boolean;
+  timezone: string;
+  quiet_hours_start: string | null;
+  quiet_hours_end: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -38,6 +41,9 @@ export interface CreatePipelineAutomationRule {
   reminder_offset_minutes?: number | null;
   delay_minutes: number;
   require_same_stage: boolean;
+  timezone: string;
+  quiet_hours_start?: string | null;
+  quiet_hours_end?: string | null;
 }
 
 export type PipelineAutomationJobStatus =
@@ -100,6 +106,24 @@ export function usePipelineAutomationJobs(ruleIds: string[]) {
     },
     refetchInterval: 30_000,
     staleTime: 15_000,
+  });
+}
+
+export function useRetryPipelineAutomationJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string) => {
+      const { error } = await supabase.rpc("crm_pipeline_automation_retry_job" as never, {
+        _job_id: jobId,
+      } as never);
+      if (error) throw error;
+      return jobId;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["crm-pipeline-automation-jobs"] });
+      toast.success("Запуск поставлен в очередь повторно");
+    },
+    onError: (error: Error) => toast.error(error.message || "Не удалось повторить запуск"),
   });
 }
 

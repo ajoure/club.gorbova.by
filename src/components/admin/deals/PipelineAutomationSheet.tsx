@@ -9,6 +9,7 @@ import {
   History,
   Loader2,
   Plus,
+  RotateCcw,
   Sparkles,
   TimerReset,
   UserRound,
@@ -45,6 +46,7 @@ import {
   useCreatePipelineAutomationRule,
   usePipelineAutomationJobs,
   usePipelineAutomationRules,
+  useRetryPipelineAutomationJob,
   useSetPipelineAutomationStatus,
 } from "@/hooks/usePipelineAutomationRules";
 
@@ -197,6 +199,7 @@ export function PipelineAutomationSheet({
 }: Props) {
   const { data: rules = [], isLoading } = usePipelineAutomationRules(pipeline?.id ?? null);
   const { data: jobs = [] } = usePipelineAutomationJobs(rules.map((rule) => rule.id));
+  const retryJob = useRetryPipelineAutomationJob();
   const { data: taskTypes = [] } = useCrmTaskTypes();
   const { data: staff = [] } = useStaffOptions();
   const createRule = useCreatePipelineAutomationRule();
@@ -210,6 +213,10 @@ export function PipelineAutomationSheet({
   const [dueHours, setDueHours] = useState(24);
   const [delayMinutes, setDelayMinutes] = useState(0);
   const [requireSameStage, setRequireSameStage] = useState(true);
+  const [timezone, setTimezone] = useState("Europe/Warsaw");
+  const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
+  const [quietHoursStart, setQuietHoursStart] = useState("22:00");
+  const [quietHoursEnd, setQuietHoursEnd] = useState("08:00");
 
   useEffect(() => {
     if (!taskTypeId && taskTypes[0]?.id) setTaskTypeId(taskTypes[0].id);
@@ -232,6 +239,10 @@ export function PipelineAutomationSheet({
     setDueHours(24);
     setDelayMinutes(0);
     setRequireSameStage(true);
+    setTimezone("Europe/Warsaw");
+    setQuietHoursEnabled(false);
+    setQuietHoursStart("22:00");
+    setQuietHoursEnd("08:00");
   };
 
   const submit = () => {
@@ -250,6 +261,9 @@ export function PipelineAutomationSheet({
         reminder_offset_minutes: null,
         delay_minutes: delayMinutes,
         require_same_stage: requireSameStage,
+        timezone,
+        quiet_hours_start: quietHoursEnabled ? quietHoursStart : null,
+        quiet_hours_end: quietHoursEnabled ? quietHoursEnd : null,
       },
       { onSuccess: resetEditor },
     );
@@ -341,6 +355,17 @@ export function PipelineAutomationSheet({
                                       : "Повтор после ошибки"}
                           </p>
                         </div>
+                        {canEdit && failed && (
+                          <button
+                            type="button"
+                            className="ml-auto grid h-6 w-6 shrink-0 place-items-center rounded-lg text-muted-foreground transition hover:bg-primary/10 hover:text-primary disabled:opacity-50"
+                            title="Повторить запуск"
+                            disabled={retryJob.isPending}
+                            onClick={() => retryJob.mutate(job.id)}
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -470,6 +495,43 @@ export function PipelineAutomationSheet({
                   </span>
                 </span>
               </label>
+              <div className="space-y-1.5">
+                <Label className="text-[11px]">Часовой пояс</Label>
+                <Select value={timezone} onValueChange={setTimezone}>
+                  <SelectTrigger className="h-9 rounded-xl text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Europe/Warsaw">Europe/Warsaw</SelectItem>
+                    <SelectItem value="Europe/Minsk">Europe/Minsk</SelectItem>
+                    <SelectItem value="Europe/Moscow">Europe/Moscow</SelectItem>
+                    <SelectItem value="UTC">UTC</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-border/30 bg-background/35 p-3">
+                <Checkbox
+                  checked={quietHoursEnabled}
+                  onCheckedChange={(checked) => setQuietHoursEnabled(checked === true)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block text-[11px] font-medium">Не выполнять в тихие часы</span>
+                  <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
+                    Запуск автоматически переносится на конец тихого периода
+                  </span>
+                </span>
+              </label>
+              {quietHoursEnabled && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px]">Начало</Label>
+                    <Input type="time" value={quietHoursStart} onChange={(event) => setQuietHoursStart(event.target.value)} className="h-9 rounded-xl text-xs" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px]">Окончание</Label>
+                    <Input type="time" value={quietHoursEnd} onChange={(event) => setQuietHoursEnd(event.target.value)} className="h-9 rounded-xl text-xs" />
+                  </div>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Срок выполнения, часов</Label>
                 <Input type="number" min={0} max={8760} value={dueHours} onChange={(event) => setDueHours(Number(event.target.value))} className="h-9 rounded-xl text-xs" />

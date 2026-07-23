@@ -74,6 +74,31 @@ Deno.serve(async (req: Request) => {
       if (ruleError || !rule) throw new Error(`rule_not_found:${ruleError?.message ?? job.rule_id}`);
       if (dealError || !deal) throw new Error(`deal_not_found:${dealError?.message ?? job.deal_id}`);
       if (rule.action_type !== "create_task") throw new Error(`unsupported_action:${rule.action_type}`);
+
+      const { data: existingTask, error: existingTaskError } = await supabase
+        .from("crm_tasks")
+        .select("id")
+        .eq("automation_rule_id", rule.id)
+        .eq("deal_id", deal.id)
+        .maybeSingle();
+      if (existingTaskError) throw existingTaskError;
+      if (existingTask) {
+        await supabase.rpc("crm_pipeline_automation_complete_job", {
+          _job_id: job.id,
+          _succeeded: true,
+          _result: { task_id: existingTask.id, recovered_existing_side_effect: true },
+          _error: null,
+        });
+        result.succeeded++;
+        result.jobs.push({
+          id: job.id,
+          status: "succeeded",
+          task_id: existingTask.id,
+          recovered: true,
+        });
+        continue;
+      }
+
       if (rule.require_same_stage && deal.pipeline_stage_id !== rule.stage_id) {
         const { error: skipError } = await supabase.rpc(
           "crm_pipeline_automation_skip_job",
@@ -120,6 +145,7 @@ Deno.serve(async (req: Request) => {
           product_id: deal.product_id,
           tariff_id: deal.tariff_id,
           source: "auto",
+          automation_rule_id: rule.id,
           meta: {
             pipeline_automation_rule_id: rule.id,
             pipeline_automation_logical_id: rule.logical_id,
