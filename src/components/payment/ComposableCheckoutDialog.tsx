@@ -103,18 +103,18 @@ export function ComposableCheckoutDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto border-white/70 bg-[linear-gradient(145deg,rgba(255,255,255,.94),rgba(255,247,252,.88))] p-0 shadow-[0_30px_90px_rgba(112,57,91,.18)] backdrop-blur-2xl sm:max-w-2xl">
-        <div className="relative overflow-hidden rounded-[inherit] px-5 py-6 sm:px-8 sm:py-8">
+      <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain border-white/70 bg-[linear-gradient(145deg,rgba(255,255,255,.94),rgba(255,247,252,.88))] p-0 shadow-[0_30px_90px_rgba(112,57,91,.18)] backdrop-blur-2xl sm:max-h-[92vh] sm:max-w-2xl">
+        <div className="relative overflow-hidden rounded-[inherit] px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-5 sm:px-8 sm:py-8">
           <div className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-fuchsia-200/35 blur-3xl" />
           <div className="pointer-events-none absolute -bottom-28 -left-20 h-56 w-56 rounded-full bg-amber-100/55 blur-3xl" />
           <DialogHeader className="relative text-left">
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl border border-white/80 bg-white/65 text-fuchsia-600 shadow-sm backdrop-blur-xl">
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl border border-white/80 bg-white/65 text-fuchsia-600 shadow-sm backdrop-blur-xl sm:h-11 sm:w-11">
               <Sparkles className="h-5 w-5" />
             </div>
-            <DialogTitle className="text-2xl font-semibold tracking-tight text-slate-800 sm:text-3xl">
+            <DialogTitle className="pr-7 text-[1.45rem] font-semibold leading-tight tracking-tight text-slate-800 sm:pr-0 sm:text-3xl">
               Соберите свою программу
             </DialogTitle>
-            <DialogDescription className="max-w-xl text-sm leading-6 text-slate-500">
+            <DialogDescription className="max-w-xl text-sm leading-5 text-slate-500 sm:leading-6">
               {productName} · {tariffName}. Добавьте нужные отраслевые модули — всё оформится одной покупкой.
             </DialogDescription>
           </DialogHeader>
@@ -128,7 +128,7 @@ export function ComposableCheckoutDialog({
               {error}
             </div>
           ) : (
-            <div className="relative mt-7 space-y-3">
+            <div className="relative mt-5 space-y-3 sm:mt-7">
               {quote?.available_addons.map((addon) => {
                 const checked = selected.includes(addon.addon_offer_id) || addon.is_required;
                 const finalPrice = addon.pricing_mode === "free"
@@ -143,7 +143,7 @@ export function ComposableCheckoutDialog({
                     type="button"
                     key={addon.addon_offer_id}
                     onClick={() => toggle(addon.addon_offer_id)}
-                    className={`group flex w-full items-center gap-4 rounded-3xl border p-4 text-left transition-all sm:p-5 ${
+                    className={`group flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition-all sm:gap-4 sm:rounded-3xl sm:p-5 ${
                       checked
                         ? "border-fuchsia-200/90 bg-white/85 shadow-[0_12px_34px_rgba(196,74,154,.10)]"
                         : "border-white/80 bg-white/45 hover:border-fuchsia-100 hover:bg-white/75"
@@ -154,7 +154,7 @@ export function ComposableCheckoutDialog({
                       <div className="font-medium text-slate-800">{addon.addon_product_name}</div>
                       <div className="mt-1 text-xs text-slate-500">{addon.addon_tariff_name}</div>
                     </div>
-                    <div className="text-right">
+                    <div className="shrink-0 text-right">
                       {finalPrice === 0 ? (
                         <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">В подарок</span>
                       ) : (
@@ -172,11 +172,11 @@ export function ComposableCheckoutDialog({
                 </div>
               )}
 
-              <div className="mt-6 rounded-[28px] border border-white/80 bg-white/70 p-5 shadow-[0_16px_45px_rgba(83,57,75,.08)] backdrop-blur-xl sm:p-6">
+              <div className="mt-5 rounded-3xl border border-white/80 bg-white/70 p-4 shadow-[0_16px_45px_rgba(83,57,75,.08)] backdrop-blur-xl sm:mt-6 sm:rounded-[28px] sm:p-6">
                 <div className="flex items-end justify-between gap-4">
                   <div>
                     <div className="text-xs font-medium uppercase tracking-[.16em] text-slate-400">Итого</div>
-                    <div className="mt-1 text-3xl font-semibold tracking-tight text-slate-900">
+                    <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
                       {quote ? money(quote.total, quote.currency) : "—"}
                     </div>
                   </div>
