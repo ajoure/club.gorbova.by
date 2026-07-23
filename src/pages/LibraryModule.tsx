@@ -259,7 +259,7 @@ export default function LibraryModule() {
                     Тренинг «Бухгалтерия как бизнес» приобретается отдельно и доступен только участникам клуба на любом тарифе
                   </p>
                   <Button 
-                    onClick={() => window.location.href = 'https://business-training.gorbova.by'}
+                    onClick={() => window.location.href = 'https://gorbova.by/business-training'}
                     className="bg-amber-600 hover:bg-amber-700 text-white"
                   >
                     Подробнее о тренинге
