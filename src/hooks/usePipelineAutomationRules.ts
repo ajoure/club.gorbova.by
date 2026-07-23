@@ -12,7 +12,7 @@ export interface PipelineAutomationRule {
   stage_id: string;
   name: string;
   status: PipelineAutomationStatus;
-  action_type: "create_task" | "send_email";
+  action_type: "create_task" | "send_email" | "send_telegram";
   task_type_id: string | null;
   title_template: string | null;
   description_template: string | null;
@@ -31,6 +31,7 @@ export interface PipelineAutomationRule {
   email_html_template: string | null;
   email_text_template: string | null;
   recipient_strategy: "customer_email";
+  telegram_message_template: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -39,7 +40,7 @@ export interface CreatePipelineAutomationRule {
   pipeline_id: string;
   stage_id: string;
   name: string;
-  action_type: "create_task" | "send_email";
+  action_type: "create_task" | "send_email" | "send_telegram";
   task_type_id?: string | null;
   title_template?: string | null;
   description_template?: string | null;
@@ -58,6 +59,7 @@ export interface CreatePipelineAutomationRule {
   email_html_template?: string | null;
   email_text_template?: string | null;
   recipient_strategy?: "customer_email";
+  telegram_message_template?: string | null;
 }
 
 export interface PipelineEmailTemplate {
@@ -213,6 +215,10 @@ export function useCreatePipelineAutomationRule() {
           email_text_template:
             payload.action_type === "send_email"
               ? payload.email_text_template?.trim() || null
+              : null,
+          telegram_message_template:
+            payload.action_type === "send_telegram"
+              ? payload.telegram_message_template?.trim()
               : null,
           recipient_strategy: "customer_email",
         })

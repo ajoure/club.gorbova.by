@@ -9,6 +9,7 @@ import {
   History,
   Loader2,
   Mail,
+  MessageCircle,
   Plus,
   RotateCcw,
   Sparkles,
@@ -98,6 +99,8 @@ function RuleCard({
           >
             {rule.action_type === "send_email" ? (
               <Mail className="h-3.5 w-3.5" />
+            ) : rule.action_type === "send_telegram" ? (
+              <MessageCircle className="h-3.5 w-3.5" />
             ) : rule.status === "active" ? (
               <CheckCircle2 className="h-3.5 w-3.5" />
             ) : (
@@ -109,7 +112,9 @@ function RuleCard({
             <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
               {rule.action_type === "send_email"
                 ? rule.email_subject_template
-                : rule.title_template}
+                : rule.action_type === "send_telegram"
+                  ? rule.telegram_message_template
+                  : rule.title_template}
             </p>
           </div>
         </div>
@@ -144,9 +149,13 @@ function RuleCard({
               {rule.assignee_strategy === "deal_owner" ? "ответственный" : "сотрудник"}
             </span>
           </>
-        ) : (
+        ) : rule.action_type === "send_email" ? (
           <span className="inline-flex items-center gap-1">
             <Mail className="h-3 w-3" /> email клиента
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1">
+            <MessageCircle className="h-3 w-3" /> Telegram клиента
           </span>
         )}
       </div>
@@ -226,8 +235,13 @@ export function PipelineAutomationSheet({
   const [taskTypeId, setTaskTypeId] = useState("");
   const [assignee, setAssignee] = useState(OWNER);
   const [dueHours, setDueHours] = useState(24);
-  const [actionType, setActionType] = useState<"create_task" | "send_email">("create_task");
+  const [actionType, setActionType] = useState<
+    "create_task" | "send_email" | "send_telegram"
+  >("create_task");
   const [emailTemplateId, setEmailTemplateId] = useState("");
+  const [telegramMessage, setTelegramMessage] = useState(
+    "Здравствуйте, {{customer_name}}! Пишем Вам по сделке {{deal_number}}.",
+  );
   const [delayMinutes, setDelayMinutes] = useState(0);
   const [requireSameStage, setRequireSameStage] = useState(true);
   const [timezone, setTimezone] = useState("Europe/Warsaw");
@@ -258,6 +272,9 @@ export function PipelineAutomationSheet({
     setAssignee(OWNER);
     setDueHours(24);
     setActionType("create_task");
+    setTelegramMessage(
+      "Здравствуйте, {{customer_name}}! Пишем Вам по сделке {{deal_number}}.",
+    );
     setDelayMinutes(0);
     setRequireSameStage(true);
     setTimezone("Europe/Warsaw");
@@ -271,6 +288,7 @@ export function PipelineAutomationSheet({
     if (!pipeline || !selectedStageId || !name.trim()) return;
     if (actionType === "create_task" && (!taskTypeId || !title.trim())) return;
     if (actionType === "send_email" && !emailTemplate) return;
+    if (actionType === "send_telegram" && !telegramMessage.trim()) return;
     createRule.mutate(
       {
         pipeline_id: pipeline.id,
@@ -295,6 +313,8 @@ export function PipelineAutomationSheet({
         email_html_template: actionType === "send_email" ? emailTemplate!.body_html : null,
         email_text_template: null,
         recipient_strategy: "customer_email",
+        telegram_message_template:
+          actionType === "send_telegram" ? telegramMessage : null,
       },
       { onSuccess: resetEditor },
     );
@@ -473,7 +493,11 @@ export function PipelineAutomationSheet({
           <div className="absolute inset-y-0 right-0 z-20 w-full border-l border-white/30 bg-background/92 shadow-[-24px_0_70px_rgba(15,23,42,0.12)] backdrop-blur-3xl sm:w-[410px]">
             <div className="border-b border-border/25 px-5 py-4">
               <p className="text-sm font-semibold">
-                {actionType === "create_task" ? "Создать задачу" : "Отправить Email"}
+                {actionType === "create_task"
+                  ? "Создать задачу"
+                  : actionType === "send_email"
+                    ? "Отправить Email"
+                    : "Отправить Telegram"}
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground">После перехода сделки в стадию</p>
             </div>
@@ -486,12 +510,15 @@ export function PipelineAutomationSheet({
                 <Label className="text-[11px]">Действие</Label>
                 <Select
                   value={actionType}
-                  onValueChange={(value: "create_task" | "send_email") => setActionType(value)}
+                  onValueChange={(
+                    value: "create_task" | "send_email" | "send_telegram",
+                  ) => setActionType(value)}
                 >
                   <SelectTrigger className="h-9 rounded-xl text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="create_task">Создать задачу</SelectItem>
                     <SelectItem value="send_email">Отправить Email</SelectItem>
+                    <SelectItem value="send_telegram">Отправить Telegram</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -520,6 +547,26 @@ export function PipelineAutomationSheet({
                     </div>
                   )}
                 </>
+              )}
+              {actionType === "send_telegram" && (
+                <div className="space-y-1.5">
+                  <Label className="text-[11px]">Текст сообщения</Label>
+                  <Textarea
+                    value={telegramMessage}
+                    onChange={(event) => setTelegramMessage(event.target.value)}
+                    maxLength={4096}
+                    className="min-h-28 rounded-xl text-xs"
+                  />
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                    <span>
+                      Доступно: {"{{customer_name}}"}, {"{{deal_number}}"}, {"{{customer_email}}"}
+                    </span>
+                    <span>{telegramMessage.length}/4096</span>
+                  </div>
+                  <p className="text-[10px] leading-4 text-muted-foreground">
+                    Получатель определяется по пользователю сделки. Сообщение будет отражено в Contact Center.
+                  </p>
+                </div>
               )}
               {actionType === "create_task" && (
                 <>

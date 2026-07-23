@@ -73,7 +73,7 @@
 - [x] отдельный исход `skipped`, если сделка покинула стадию;
 - [x] quiet hours и timezone;
 - [x] Email как отдельное действие через существующий SMTP writer;
-- Telegram как отдельное действие;
+- [x] Telegram как отдельное действие;
 - fallback-ветка канала;
 - [x] retry/backoff и ручной повтор;
 - [x] восстановление уже созданной задачи после сбоя фиксации результата.
@@ -103,6 +103,16 @@ Email-действие:
 - использует уникальный `automation_idempotency_key`, поэтому повтор worker не
   отправляет второе письмо после уже принятого SMTP результата;
 - не использует Lovable transactional queue.
+
+Telegram-действие:
+
+- использует существующий `telegram-send-notification`;
+- доступно service-role только как специальный тип `crm_pipeline_automation`;
+- проверяет связку `running job → send_telegram rule → deal → user_id`;
+- принимает только idempotency key формата `crm-pipeline:{job_id}`;
+- сохраняет текст как snapshot опубликованной версии;
+- зеркалит успешное сообщение в `telegram_messages` для Contact Center;
+- сохраняет outbox, audit и `telegram_logs`, не создавая второго Telegram sender.
 
 ### 3. Условия и ветвления
 

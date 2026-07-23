@@ -8,6 +8,13 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+type TelegramClubRelation = {
+  id?: string | null;
+  club_name?: string | null;
+  bot_id?: string | null;
+  telegram_bots?: { bot_token_encrypted?: string | null } | null;
+};
+
 // Telegram API helper
 async function telegramRequest(botToken: string, method: string, params?: Record<string, unknown>) {
   const url = `https://api.telegram.org/bot${botToken}/${method}`;
@@ -27,6 +34,7 @@ const SERVICE_ROLE_ALLOWED_MESSAGE_TYPES = [
   'card_verification_failed',
   'access_revoked',
   'access_still_active_apology',
+  'crm_pipeline_automation',
 ];
 
 Deno.serve(async (req) => {
@@ -89,7 +97,17 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { user_id, message_type, custom_message, payment_method_meta, reply_markup } = body;
+    const {
+      user_id,
+      message_type,
+      custom_message,
+      payment_method_meta,
+      reply_markup,
+      idempotency_key: requestedIdempotencyKey,
+      automation_context: automationContext,
+    } = body;
+    const isCrmAutomation =
+      isServiceInvocation && message_type === 'crm_pipeline_automation';
 
     console.log(`[telegram-send-notification] Starting: user_id=${user_id}, type=${message_type}, isService=${isServiceInvocation}`);
 
@@ -126,6 +144,73 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ 
           success: false, 
           error: `message_type '${message_type}' is not allowed for service invocations` 
+        }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+    if (message_type === 'crm_pipeline_automation' && !isServiceInvocation) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'crm_pipeline_automation is service-only',
+      }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (isCrmAutomation) {
+      const jobId = automationContext?.job_id;
+      const ruleId = automationContext?.rule_id;
+      const dealId = automationContext?.deal_id;
+      if (
+        !jobId || !ruleId || !dealId ||
+        typeof custom_message !== 'string' ||
+        custom_message.trim().length < 1 ||
+        custom_message.length > 4096 ||
+        requestedIdempotencyKey !== `crm-pipeline:${jobId}`
+      ) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'invalid_crm_automation_context',
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const [
+        { data: automationJob },
+        { data: automationRule },
+        { data: automationDeal },
+      ] = await Promise.all([
+        supabase
+          .from('crm_pipeline_automation_jobs')
+          .select('id,rule_id,deal_id,status')
+          .eq('id', jobId)
+          .maybeSingle(),
+        supabase
+          .from('crm_pipeline_automation_rules')
+          .select('id,action_type')
+          .eq('id', ruleId)
+          .maybeSingle(),
+        supabase
+          .from('orders_v2')
+          .select('id,user_id')
+          .eq('id', dealId)
+          .maybeSingle(),
+      ]);
+      if (
+        automationJob?.status !== 'running' ||
+        automationJob.rule_id !== ruleId ||
+        automationJob.deal_id !== dealId ||
+        automationRule?.action_type !== 'send_telegram' ||
+        automationDeal?.user_id !== user_id
+      ) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'crm_automation_context_mismatch',
         }), {
           status: 403,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -226,7 +311,9 @@ Deno.serve(async (req) => {
     // Build idempotency key based on message_type
     let idempotencyKey: string;
     
-    if (SERVICE_ROLE_ALLOWED_MESSAGE_TYPES.includes(message_type) && payment_method_meta?.id) {
+    if (isCrmAutomation) {
+      idempotencyKey = requestedIdempotencyKey;
+    } else if (SERVICE_ROLE_ALLOWED_MESSAGE_TYPES.includes(message_type) && payment_method_meta?.id) {
       // For card_* types: include payment_method_id + verification_version
       // verification_version = verification_checked_at (passed in meta) OR current timestamp bucket
       const verificationVersion = payment_method_meta.verification_checked_at || bucket;
@@ -288,8 +375,10 @@ Deno.serve(async (req) => {
         });
 
         return new Response(JSON.stringify({ 
-          success: false, 
+          success: isCrmAutomation,
           skipped: true,
+          idempotent_replay: isCrmAutomation,
+          idempotency_key: idempotencyKey,
           error: 'Уведомление уже отправлено в последние 10 минут'
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -396,11 +485,11 @@ Deno.serve(async (req) => {
     let clubId: string | null = null;
 
     if (access?.telegram_clubs) {
-      const club = access.telegram_clubs as any;
-      botToken = club.telegram_bots?.bot_token_encrypted;
+      const club = access.telegram_clubs as unknown as TelegramClubRelation;
+      botToken = club.telegram_bots?.bot_token_encrypted ?? null;
       botId = club.bot_id ?? null;
       clubName = club.club_name || 'клубе';
-      clubId = (access as any).club_id ?? null;
+      clubId = access.club_id ?? null;
     }
 
     // If no access record, try to find any active bot
@@ -413,8 +502,8 @@ Deno.serve(async (req) => {
         .maybeSingle();
 
       if (anyClub) {
-        const club = anyClub as any;
-        botToken = club.telegram_bots?.bot_token_encrypted;
+        const club = anyClub as unknown as TelegramClubRelation;
+        botToken = club.telegram_bots?.bot_token_encrypted ?? null;
         botId = club.bot_id ?? null;
         clubName = club.club_name || 'клубе';
         clubId = club.id ?? null;
@@ -537,7 +626,10 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
     };
 
     // For service invocations with whitelisted types, ALWAYS use template (ignore custom_message)
-    if (isServiceInvocation && SERVICE_ROLE_ALLOWED_MESSAGE_TYPES.includes(message_type)) {
+    if (isCrmAutomation) {
+      message = custom_message.trim();
+      console.log('[telegram-send-notification] Using verified CRM automation message');
+    } else if (isServiceInvocation && SERVICE_ROLE_ALLOWED_MESSAGE_TYPES.includes(message_type)) {
       message = messageTemplates[message_type];
       console.log(`[telegram-send-notification] Using secure template for ${message_type}`);
     } else {
@@ -578,7 +670,11 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
     }
 
     // Mirror to admin chat (Contact Center) — only if buttons exist & message accepted by Telegram
-    const wasMirroredToMessages = !!(sendResult?.ok && sendResult?.result?.message_id && keyboard);
+    const wasMirroredToMessages = !!(
+      sendResult?.ok &&
+      sendResult?.result?.message_id &&
+      (keyboard || isCrmAutomation)
+    );
     if (wasMirroredToMessages) {
       await logAutomatedTelegramMessage({
         supabase,
@@ -679,7 +775,10 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
 
     return new Response(JSON.stringify({ 
       success: sendResult.ok,
-      error: sendResult.ok ? null : sendResult.description
+      error: sendResult.ok ? null : sendResult.description,
+      idempotency_key: idempotencyKey,
+      telegram_message_id: sendResult?.result?.message_id ?? null,
+      mirrored_to_telegram_messages: wasMirroredToMessages,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

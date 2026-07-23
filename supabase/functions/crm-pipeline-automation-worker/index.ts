@@ -76,14 +76,14 @@ Deno.serve(async (req: Request) => {
           supabase
             .from("orders_v2")
             .select(
-              "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name",
+              "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name,user_id",
             )
             .eq("id", job.deal_id)
             .single(),
         ]);
       if (ruleError || !rule) throw new Error(`rule_not_found:${ruleError?.message ?? job.rule_id}`);
       if (dealError || !deal) throw new Error(`deal_not_found:${dealError?.message ?? job.deal_id}`);
-      if (!["create_task", "send_email"].includes(rule.action_type)) {
+      if (!["create_task", "send_email", "send_telegram"].includes(rule.action_type)) {
         throw new Error(`unsupported_action:${rule.action_type}`);
       }
 
@@ -182,6 +182,48 @@ Deno.serve(async (req: Request) => {
         });
         result.succeeded++;
         result.jobs.push({ id: job.id, status: "succeeded", channel: "email" });
+        continue;
+      }
+
+      if (rule.action_type === "send_telegram") {
+        if (!deal.user_id) throw new Error("deal_user_id_missing");
+        const message = assertTemplateResolved(
+          renderTemplate(rule.telegram_message_template, deal),
+        );
+        const idempotencyKey = `crm-pipeline:${job.id}`;
+        const { data: telegramResult, error: telegramError } =
+          await supabase.functions.invoke("telegram-send-notification", {
+            body: {
+              user_id: deal.user_id,
+              message_type: "crm_pipeline_automation",
+              custom_message: message,
+              idempotency_key: idempotencyKey,
+              automation_context: {
+                job_id: job.id,
+                rule_id: rule.id,
+                deal_id: deal.id,
+              },
+            },
+          });
+        if (telegramError) throw telegramError;
+        if (!telegramResult?.success) {
+          throw new Error(telegramResult?.error || "telegram_send_failed");
+        }
+
+        await supabase.rpc("crm_pipeline_automation_complete_job", {
+          _job_id: job.id,
+          _succeeded: true,
+          _result: {
+            channel: "telegram",
+            telegram_message_id: telegramResult.telegram_message_id ?? null,
+            idempotent_replay: telegramResult.idempotent_replay ?? false,
+            mirrored_to_telegram_messages:
+              telegramResult.mirrored_to_telegram_messages ?? false,
+          },
+          _error: null,
+        });
+        result.succeeded++;
+        result.jobs.push({ id: job.id, status: "succeeded", channel: "telegram" });
         continue;
       }
 
