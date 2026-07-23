@@ -121,6 +121,7 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const auditSecret = Deno.env.get('AUDIT_SHAPE_SECRET') || '';
+  const telegramWebhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET') || '';
   const admin = createClient(supabaseUrl, serviceKey);
 
   // ---------- AUTH ----------
@@ -264,6 +265,18 @@ Deno.serve(async (req) => {
       500,
     );
   }
+  if (!telegramWebhookSecret) {
+    await recordRun(admin, {
+      actor_user_id: actorUserId,
+      scenario: scenario as Scenario,
+      status: 'error',
+      meta: { reason: 'telegram_webhook_secret_not_configured' },
+    });
+    return json(
+      { ok: false, error: 'internal', reason: 'telegram_webhook_secret_not_configured' },
+      500,
+    );
+  }
 
   // Pre-create a runner-side run row so we always have an id to correlate,
   // even if the webhook fails to insert its own row.
@@ -328,6 +341,7 @@ Deno.serve(async (req) => {
       headers: {
         'Content-Type': 'application/json',
         'x-audit-shape-secret': auditSecret,
+        'x-telegram-bot-api-secret-token': telegramWebhookSecret,
         // service-role for invoking the function endpoint itself
         Authorization: `Bearer ${serviceKey}`,
         apikey: serviceKey,

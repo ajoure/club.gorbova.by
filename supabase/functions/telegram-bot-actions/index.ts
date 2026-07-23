@@ -191,7 +191,16 @@ Deno.serve(async (req) => {
           ],
         };
         const webhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET');
-        if (webhookSecret) webhookPayload.secret_token = webhookSecret;
+        if (!webhookSecret) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'telegram_webhook_secret_not_configured',
+          }), {
+            status: 503,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        webhookPayload.secret_token = webhookSecret;
         const result = await telegramRequest(botToken, 'setWebhook', webhookPayload);
 
         // Log admin action
@@ -255,10 +264,20 @@ Deno.serve(async (req) => {
         const requiredUpdates = [...new Set([...currentUpdates, ...businessRequiredUpdates])];
         const webhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET');
 
+        if (!webhookSecret) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'telegram_webhook_secret_not_configured',
+          }), {
+            status: 503,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
         // Telegram does not expose whether secret_token is already installed.
         // If a secret is configured, always re-apply setWebhook so enabling or
         // rotating it cannot leave Telegram sending unsigned requests.
-        if (missingUpdates.length === 0 && !webhookSecret) {
+        if (missingUpdates.length === 0) {
           return new Response(JSON.stringify({
             success: true,
             no_op: true,
