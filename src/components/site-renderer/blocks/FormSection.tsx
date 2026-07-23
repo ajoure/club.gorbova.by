@@ -40,6 +40,8 @@ interface FormField {
 interface FormSectionProps {
   content: Record<string, unknown>;
   pageId?: string;
+  /** Stable published block ID, used by the server to resolve form settings. */
+  blockId?: string;
   /** True when rendered inside admin editor preview — disables real submit */
   isPreview?: boolean;
 }
@@ -84,7 +86,7 @@ const passwordSchema = z.string().min(
   `Пароль должен быть не менее ${USER_PASSWORD_MIN_LENGTH} символов`,
 );
 
-export function FormSection({ content, pageId, isPreview }: FormSectionProps) {
+export function FormSection({ content, pageId, blockId, isPreview }: FormSectionProps) {
   const title = (content.title as string) || "";
   const subtitle = (content.subtitle as string) || "";
   const buttonText = (content.buttonText as string) || "Отправить";
@@ -94,7 +96,7 @@ export function FormSection({ content, pageId, isPreview }: FormSectionProps) {
   const telegramLinkEnabled = (content.telegram_link as boolean) ?? false;
 
   if (!authMode) {
-    return <LegacyFormSection content={content} pageId={pageId} isPreview={isPreview} />;
+    return <LegacyFormSection content={content} pageId={pageId} blockId={blockId} isPreview={isPreview} />;
   }
 
   return (
@@ -106,6 +108,7 @@ export function FormSection({ content, pageId, isPreview }: FormSectionProps) {
       fields={fields}
       telegramLinkEnabled={telegramLinkEnabled}
       pageId={pageId}
+      blockId={blockId}
       content={content}
       isPreview={isPreview}
     />
@@ -113,7 +116,7 @@ export function FormSection({ content, pageId, isPreview }: FormSectionProps) {
 }
 
 // ─── Legacy form (auth_mode=false) — расширенный набор типов полей ───
-function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
+function LegacyFormSection({ content, pageId, blockId, isPreview }: FormSectionProps) {
   const title = (content.title as string) || "";
   const subtitle = (content.subtitle as string) || "";
   const buttonText = (content.buttonText as string) || "Отправить";
@@ -269,6 +272,7 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
 
       const payload: Record<string, unknown> = {
         page_id: pageId,
+        block_id: blockId,
         redirect_url: redirectUrl || undefined,
         fields: submissionFields,
         submission_token: submissionTokenRef.current,
@@ -648,6 +652,7 @@ interface AuthFormSectionProps {
   fields: FormField[];
   telegramLinkEnabled: boolean;
   pageId?: string;
+  blockId?: string;
   content: Record<string, unknown>;
   isPreview?: boolean;
 }
@@ -660,6 +665,7 @@ function AuthFormSection({
   fields,
   telegramLinkEnabled,
   pageId,
+  blockId,
   content,
   isPreview,
 }: AuthFormSectionProps) {
@@ -962,6 +968,7 @@ function AuthFormSection({
 
       const payload: Record<string, unknown> = {
         page_id: pageId,
+        block_id: blockId,
         auth_mode: true,
         redirect_url: redirectUrl || undefined,
         fields: submissionFields,
