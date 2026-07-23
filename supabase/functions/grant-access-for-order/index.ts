@@ -2556,7 +2556,9 @@ async function runGrantEligibilityShadow(params: {
 
     const paymentsQ = supabase
       .from('payments_v2')
-      .select('id, provider, provider_payment_id, transaction_type, status, amount, currency, refunded_amount, meta, deleted_at, order_id, parent_payment_id')
+      // Refund parent links are stored in `meta.parent_payment_id`; there is no
+      // physical `payments_v2.parent_payment_id` column in production.
+      .select('id, provider, provider_payment_id, transaction_type, status, amount, currency, refunded_amount, meta, deleted_at, order_id')
       .eq('order_id', orderId);
 
     const entitlementQ = (shadowUserId && shadowProductId)
