@@ -99,6 +99,8 @@ export default function Auth() {
   // Until then, recovery sessions are NOT allowed to navigate to /dashboard.
   const [passwordUpdated, setPasswordUpdated] = useState(false);
   const [email, setEmail] = useState(() => {
+    const emailParam = searchParams.get("email");
+    if (emailParam) return emailParam;
     try {
       return localStorage.getItem("last_login_email") || "";
     } catch {
@@ -747,8 +749,10 @@ export default function Auth() {
                 <div className="h-12 w-12 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-3">
                   <Mail className="h-6 w-6 text-amber-600" />
                 </div>
-                <p className="text-sm text-amber-800">
-                  Аккаунт с email <strong>{existingEmail}</strong> уже существует.
+                <p className="min-w-0 text-sm text-amber-800">
+                  Аккаунт с email{" "}
+                  <strong className="block break-all">{existingEmail}</strong>
+                  уже существует.
                   Войдите со своим паролем или восстановите доступ — мы отправим
                   ссылку для установки нового пароля на вашу почту.
                 </p>
@@ -947,10 +951,11 @@ export default function Auth() {
                 </div>
 
                 {mode === "login" && unconfirmedEmail && (
-                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  <div className="min-w-0 overflow-hidden rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
                     <p className="font-medium mb-1">Email не подтверждён</p>
                     <p className="text-amber-800 mb-2">
-                      На <span className="font-medium">{unconfirmedEmail}</span> отправлено письмо со ссылкой подтверждения.
+                      На <span className="block break-all font-medium">{unconfirmedEmail}</span>
+                      отправлено письмо со ссылкой подтверждения.
                       Если письма нет — проверьте папку «Спам» или отправьте ещё раз.
                     </p>
                     <button
@@ -990,7 +995,10 @@ export default function Auth() {
                       name={mode === "signup" ? "new-password" : "password"}
                       type={showPassword ? "text" : "password"}
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        setFieldErrors((current) => current.filter((error) => error.field !== "password"));
+                      }}
                       onBlur={() => handleBlur('password')}
                       className={`pl-10 pr-11 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('password') ? 'border-destructive' : ''}`}
                       placeholder="••••••••"

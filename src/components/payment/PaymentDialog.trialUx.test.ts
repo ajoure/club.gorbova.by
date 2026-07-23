@@ -23,4 +23,11 @@ describe("PaymentDialog trial UX", () => {
     );
     expect(source).not.toContain("Продолжите со скидкой!");
   });
+
+  it("collects a password before creating a no-card trial account", () => {
+    expect(source).toContain('id="dialog_signup_password"');
+    expect(source).toContain("customerPassword: existingUserId ? undefined : formData.password");
+    expect(source).toContain("trial account sign-in failed");
+    expect(source).toContain("После активации вы сразу войдёте в личный кабинет");
+  });
 });

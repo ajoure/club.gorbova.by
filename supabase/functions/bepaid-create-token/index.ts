@@ -17,6 +17,7 @@ interface CreateTokenRequest {
   customerPhone?: string;
   customerFirstName?: string;
   customerLastName?: string;
+  customerPassword?: string;
   existingUserId?: string | null;
   description?: string;
   tariffCode?: string; // For tariff identification: 'chat', 'full', 'business'
@@ -91,6 +92,7 @@ Deno.serve(async (req) => {
       customerPhone,
       customerFirstName,
       customerLastName,
+      customerPassword,
       existingUserId,
       description,
       tariffCode,
@@ -336,7 +338,14 @@ Deno.serve(async (req) => {
       } else {
         // Create new user
         console.log('Creating new user for email:', emailLower);
-        newUserPassword = generatePassword();
+        newUserPassword = customerPassword || generatePassword();
+
+        if (customerPassword && customerPassword.length < 6) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Пароль должен содержать минимум 6 символов' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
         
         const fullName = customerFirstName && customerLastName 
           ? `${customerFirstName} ${customerLastName}`.trim()
@@ -513,7 +522,6 @@ Deno.serve(async (req) => {
           customer_last_name: customerLastName || null,
           customer_phone: customerPhone || null,
           new_user_created: newUserCreated,
-          new_user_password: newUserCreated ? newUserPassword : null,
           requires_card_tokenization: false,
           auto_charge_after_trial: false,
           crm_routing_snapshot: ncSnapshot,
@@ -610,7 +618,6 @@ Deno.serve(async (req) => {
             redirectUrl,
             isTrialNoCard: true,
             newUserCreated,
-            newUserPassword: newUserCreated ? newUserPassword : null,
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -872,7 +879,6 @@ Deno.serve(async (req) => {
           customer_last_name: customerLastName,
           customer_phone: customerPhone,
           new_user_created: newUserCreated,
-          new_user_password: newUserCreated ? newUserPassword : null,
           tariff_code: tariffCode || null,
           is_trial: isTrial || false,
           trial_days: trialConfig?.trial_days || null,

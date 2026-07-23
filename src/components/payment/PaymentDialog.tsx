@@ -215,6 +215,7 @@ export function PaymentDialog({
   const [emailCheckResult, setEmailCheckResult] = useState<EmailCheckResult | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
   // PAY-I: список сохранённых карт; всегда disabled в PaymentDialog (см. mem://ui/payments/saved-card-client-policy).
   const [savedCards, setSavedCards] = useState<Array<{ id: string; brand: string; last4: string; exp_month: number | null; exp_year: number | null; is_default: boolean }>>([]);
   const [isLoadingCard, setIsLoadingCard] = useState(false);
@@ -559,6 +560,10 @@ export function PaymentDialog({
     if (!phoneValidation.success) {
       newErrors.phone = phoneValidation.error.errors[0].message;
     }
+    const passwordValidation = passwordSchema.safeParse(formData.password);
+    if (!passwordValidation.success) {
+      newErrors.password = passwordValidation.error.errors[0].message;
+    }
 
     if (!privacyConsent) {
       toast.error("Необходимо согласиться с Политикой конфиденциальности");
@@ -896,6 +901,9 @@ export function PaymentDialog({
           customerPhone: formData.phone,
           customerFirstName: formData.firstName,
           customerLastName: formData.lastName,
+          // Never retransmit an existing user's login password to a payment
+          // function. This field is only for creating a brand-new Auth user.
+          customerPassword: existingUserId ? undefined : formData.password,
           existingUserId,
           description: paymentDescription,
           tariffCode,
@@ -944,6 +952,24 @@ export function PaymentDialog({
         }
 
         throw new Error(data.error || "Ошибка создания платежа");
+      }
+
+      // The free no-card trial creates the Auth user server-side together with
+      // the paid order. Sign the new user in with the password chosen above so
+      // the success redirect opens the purchased content, not another signup.
+      if (isTrial && data.newUserCreated && formData.password) {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: formData.email.toLowerCase().trim(),
+          password: formData.password,
+        });
+        if (signInError) {
+          console.error("[PaymentDialog] trial account sign-in failed:", signInError);
+          const authUrl = new URL("/auth", window.location.origin);
+          authUrl.searchParams.set("redirectTo", data.redirectUrl || "/purchases");
+          authUrl.searchParams.set("email", formData.email.toLowerCase().trim());
+          window.location.href = authUrl.toString();
+          return;
+        }
       }
 
       // Redirect to bePaid checkout page
@@ -1211,8 +1237,48 @@ export function PaymentDialog({
               )}
             </div>
 
+            <div className="space-y-2">
+              <Label htmlFor="dialog_signup_password">Придумайте пароль</Label>
+              <div className="relative">
+                <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                <Input
+                  id="dialog_signup_password"
+                  name="dialog_signup_password"
+                  type={showSignupPassword ? "text" : "password"}
+                  placeholder={`Минимум ${USER_PASSWORD_MIN_LENGTH} символов`}
+                  value={formData.password}
+                  onChange={(e) => {
+                    setFormData(prev => ({ ...prev, password: e.target.value }));
+                    setErrors(prev => ({ ...prev, password: undefined }));
+                  }}
+                  required
+                  minLength={USER_PASSWORD_MIN_LENGTH}
+                  disabled={isLoading}
+                  allowAutofill
+                  autoComplete="new-password"
+                  className={`pl-10 pr-11 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${errors.password ? 'border-destructive' : ''}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSignupPassword((visible) => !visible)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label={showSignupPassword ? "Скрыть пароль" : "Показать пароль"}
+                  aria-pressed={showSignupPassword}
+                  disabled={isLoading}
+                >
+                  {showSignupPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              {errors.password && (
+                <p className="text-sm text-destructive">{errors.password}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Минимум {USER_PASSWORD_MIN_LENGTH} символов. Специальные символы не обязательны.
+              </p>
+            </div>
+
             <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-3 text-sm text-muted-foreground">
-              <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на указанный email.</p>
+              <p>После активации вы сразу войдёте в личный кабинет с этим email и паролем.</p>
             </div>
 
             {/* Privacy consent checkbox */}
