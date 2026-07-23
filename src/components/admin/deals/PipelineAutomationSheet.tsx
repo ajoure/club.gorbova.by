@@ -18,6 +18,7 @@ import {
   TimerReset,
   UserRound,
   Workflow,
+  X,
   XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -227,12 +228,12 @@ function TriggerCatalogPicker({
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          className="w-[360px] border-white/25 bg-background/85 p-2.5 shadow-[0_18px_50px_rgba(15,23,42,0.14)] backdrop-blur-3xl"
+          className="w-[calc(100vw-2rem)] max-w-[360px] border-white/25 bg-background/85 p-2.5 shadow-[0_18px_50px_rgba(15,23,42,0.14)] backdrop-blur-3xl"
         >
           <p className="px-1.5 pb-2 text-[10px] font-semibold text-foreground/75">
             Выберите момент запуска
           </p>
-          <div className="max-h-[390px] space-y-3 overflow-y-auto pr-1">
+          <div className="max-h-[calc(100dvh-11rem)] space-y-3 overflow-y-auto pr-1 sm:max-h-[390px]">
             {categories.map((category) => {
               const triggers = CRM_AUTOMATION_TRIGGER_CATALOG.filter(
                 (trigger) => trigger.category === category,
@@ -864,12 +865,18 @@ export function PipelineAutomationSheet({
   };
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) resetEditor();
+        onOpenChange(nextOpen);
+      }}
+    >
       <SheetContent
         side="right"
-        className="w-screen border-l border-white/30 bg-background/82 p-0 backdrop-blur-3xl sm:max-w-[92vw]"
+        className="h-[100dvh] w-full max-w-none border-l border-white/30 bg-background/82 p-0 backdrop-blur-3xl sm:w-[92vw] sm:max-w-[1180px]"
       >
-        <SheetHeader className="border-b border-border/25 bg-background/45 px-5 py-4 text-left">
+        <SheetHeader className="shrink-0 border-b border-border/25 bg-background/45 px-4 py-3 text-left sm:px-5 sm:py-4">
           <div className="flex items-center gap-2">
             <span className="grid h-8 w-8 place-items-center rounded-xl bg-gradient-to-br from-primary/20 to-violet-500/10 text-primary ring-1 ring-primary/15">
               <Sparkles className="h-4 w-4" />
@@ -885,9 +892,9 @@ export function PipelineAutomationSheet({
           </div>
         </SheetHeader>
 
-        <div className="h-[calc(100vh-77px)] overflow-hidden">
+        <div className="h-[calc(100dvh-69px)] overflow-hidden sm:h-[calc(100dvh-77px)]">
           <ScrollArea className="h-full">
-            <div className="min-w-max p-5">
+            <div className="min-w-max p-4 sm:p-5">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold text-foreground/85">
@@ -1055,34 +1062,45 @@ export function PipelineAutomationSheet({
         </div>
 
         {editing && (
-          <div className="absolute inset-y-0 right-0 z-20 w-full border-l border-white/30 bg-background/92 shadow-[-24px_0_70px_rgba(15,23,42,0.12)] backdrop-blur-3xl sm:w-[410px]">
-            <div className="border-b border-border/25 px-5 py-4">
-              <p className="text-sm font-semibold">
-                {actionType === "create_task"
-                  ? "Создать задачу"
-                  : actionType === "send_email"
-                    ? "Отправить Email"
-                    : "Отправить Telegram"}
-              </p>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {triggerType === "at_datetime"
-                  ? "Один раз для сделок, которые находятся в этой стадии в выбранный момент"
-                  : triggerType === "weekday"
-                    ? "Повтор для сделок, которые находятся в этой стадии в выбранные дни"
-                    : triggerType === "month_day"
-                      ? "Повтор для сделок, которые находятся в этой стадии в выбранный день месяца"
-                      : triggerType === "deal_left_stage"
-                        ? "После выхода сделки из выбранной стадии"
-                        : triggerType === "deal_created"
-                          ? "Один раз при создании сделки в выбранной стартовой стадии"
-                          : triggerType === "payment_received"
-                            ? "После подтверждённой оплаты по сделке в выбранной стадии"
-                            : triggerType === "deal_field_changed"
-                              ? "После изменения выбранного поля сделки в этой стадии"
-                            : "После перехода сделки в стадию"}
-              </p>
+          <div className="absolute inset-y-0 right-0 z-20 flex h-[100dvh] w-full min-h-0 flex-col border-l border-white/30 bg-background/95 shadow-[-24px_0_70px_rgba(15,23,42,0.12)] backdrop-blur-3xl sm:w-[410px]">
+            <div className="flex shrink-0 items-start gap-3 border-b border-border/25 px-4 py-3 sm:px-5 sm:py-4">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">
+                  {actionType === "create_task"
+                    ? "Создать задачу"
+                    : actionType === "send_email"
+                      ? "Отправить Email"
+                      : "Отправить Telegram"}
+                </p>
+                <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+                  {triggerType === "at_datetime"
+                    ? "Один раз для сделок, которые находятся в этой стадии в выбранный момент"
+                    : triggerType === "weekday"
+                      ? "Повтор для сделок, которые находятся в этой стадии в выбранные дни"
+                      : triggerType === "month_day"
+                        ? "Повтор для сделок, которые находятся в этой стадии в выбранный день месяца"
+                        : triggerType === "deal_left_stage"
+                          ? "После выхода сделки из выбранной стадии"
+                          : triggerType === "deal_created"
+                            ? "Один раз при создании сделки в выбранной стартовой стадии"
+                            : triggerType === "payment_received"
+                              ? "После подтверждённой оплаты по сделке в выбранной стадии"
+                              : triggerType === "deal_field_changed"
+                                ? "После изменения выбранного поля сделки в этой стадии"
+                                : "После перехода сделки в стадию"}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-border/30 bg-background/50 text-muted-foreground transition hover:border-primary/25 hover:bg-primary/[0.06] hover:text-primary"
+                onClick={resetEditor}
+                aria-label="Закрыть редактор автоматизации"
+                title="Закрыть редактор"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-            <div className="space-y-4 overflow-y-auto p-5">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4 pb-6 [&_[role=combobox]]:text-base [&_input]:text-base [&_textarea]:text-base sm:p-5 sm:[&_[role=combobox]]:text-xs sm:[&_input]:text-xs sm:[&_textarea]:text-xs">
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Название правила</Label>
                 <Input
@@ -1473,7 +1491,7 @@ export function PipelineAutomationSheet({
                       key={`${index}-${condition.field}`}
                       className="space-y-2 rounded-xl border border-border/25 bg-background/45 p-2.5"
                     >
-                      <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                      <div className="grid grid-cols-1 gap-2 min-[390px]:grid-cols-[1fr_1fr_auto]">
                         <Select
                           value={condition.field}
                           onValueChange={(
@@ -1947,18 +1965,18 @@ export function PipelineAutomationSheet({
                 </div>
               )}
             </div>
-            <div className="absolute inset-x-0 bottom-0 flex items-center justify-end gap-2 border-t border-border/25 bg-background/75 px-5 py-4 backdrop-blur-xl">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border/25 bg-background/85 px-4 py-3 backdrop-blur-xl sm:justify-end sm:px-5 sm:py-4">
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-8 rounded-xl text-xs"
+                className="h-9 rounded-xl px-2.5 text-xs sm:h-8"
                 onClick={resetEditor}
               >
                 Отмена
               </Button>
               <Button
                 size="sm"
-                className="h-8 rounded-xl px-4 text-xs"
+                className="h-9 rounded-xl px-3 text-xs sm:h-8 sm:px-4"
                 disabled={createRule.isPending}
                 onClick={submit}
               >
