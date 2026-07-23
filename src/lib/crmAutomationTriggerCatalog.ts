@@ -83,7 +83,7 @@ export const CRM_AUTOMATION_TRIGGER_CATALOG: CrmAutomationTriggerDefinition[] = 
     category: "calendar",
     title: "В конкретную дату и время",
     description: "Однократный запуск по выбранным дате, времени и часовому поясу.",
-    availability: "planned",
+    availability: "available",
     requiresSchedule: true,
   },
   {

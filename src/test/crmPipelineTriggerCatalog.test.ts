@@ -4,13 +4,17 @@ import {
 } from "@/lib/crmAutomationTriggerCatalog";
 
 describe("CRM pipeline trigger catalog", () => {
-  it("exposes the current stage entry trigger as the only selectable v1 trigger", () => {
+  it("exposes only triggers that have a database event contract and worker support", () => {
     const available = CRM_AUTOMATION_TRIGGER_CATALOG.filter(
       (trigger) => trigger.availability === "available",
     );
-    expect(available).toEqual([
-      expect.objectContaining({ id: "deal_entered_stage" }),
-    ]);
+    expect(available).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "deal_entered_stage" }),
+        expect.objectContaining({ id: "at_datetime", requiresSchedule: true }),
+      ]),
+    );
+    expect(available).toHaveLength(2);
   });
 
   it("documents the planned event and calendar trigger families", () => {

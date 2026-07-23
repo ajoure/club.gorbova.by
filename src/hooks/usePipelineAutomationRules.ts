@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
 export type PipelineAutomationStatus = "draft" | "active" | "paused" | "archived";
+export type PipelineAutomationTriggerType = "deal_entered_stage" | "at_datetime";
 
 export type PipelineAutomationConditionField =
   | "status"
@@ -47,6 +48,9 @@ export interface PipelineAutomationRule {
   stage_id: string;
   name: string;
   status: PipelineAutomationStatus;
+  trigger_type: PipelineAutomationTriggerType;
+  scheduled_local_at: string | null;
+  scheduled_fired_at: string | null;
   action_type: "create_task" | "send_email" | "send_telegram";
   task_type_id: string | null;
   title_template: string | null;
@@ -95,6 +99,8 @@ export interface CreatePipelineAutomationRule {
   pipeline_id: string;
   stage_id: string;
   name: string;
+  trigger_type: PipelineAutomationTriggerType;
+  scheduled_local_at?: string | null;
   action_type: "create_task" | "send_email" | "send_telegram";
   task_type_id?: string | null;
   title_template?: string | null;
@@ -275,7 +281,9 @@ export function useCreatePipelineAutomationRule() {
             payload.assignee_strategy === "fixed_user" ? payload.assignee_user_id : null,
           reminder_offset_minutes: payload.reminder_offset_minutes ?? null,
           status: "draft",
-          trigger_type: "deal_entered_stage",
+          trigger_type: payload.trigger_type,
+          scheduled_local_at:
+            payload.trigger_type === "at_datetime" ? payload.scheduled_local_at : null,
           action_type: payload.action_type,
           email_template_id:
             payload.action_type === "send_email" ? payload.email_template_id : null,

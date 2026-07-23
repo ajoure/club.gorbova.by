@@ -115,12 +115,24 @@ Deno.serve(async (req: Request) => {
   });
   const result = {
     ok: true,
+    scheduled_rules_fired: 0,
     claimed: 0,
     succeeded: 0,
     skipped: 0,
     failed: 0,
     jobs: [] as unknown[],
   };
+
+  const { data: scheduledRulesFired, error: scheduleError } = await supabase.rpc(
+    "crm_pipeline_automation_enqueue_due_schedules_v10",
+  );
+  if (scheduleError) {
+    return new Response(JSON.stringify({ ok: false, error: scheduleError.message }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  result.scheduled_rules_fired = Number(scheduledRulesFired ?? 0);
 
   const { data: jobs, error: claimError } = await supabase.rpc(
     "crm_pipeline_automation_claim_jobs",

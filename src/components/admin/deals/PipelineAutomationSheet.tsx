@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { format } from "date-fns";
 import {
   Archive,
   ArrowRight,
@@ -22,6 +23,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DateTimePicker } from "@/components/ui/datetime-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
@@ -60,6 +62,7 @@ import {
   PipelineAutomationConditionField,
   PipelineAutomationConditionOperator,
   PipelineAutomationRule,
+  PipelineAutomationTriggerType,
   useCreatePipelineAutomationRule,
   usePipelineAutomationJobs,
   usePipelineAutomationRules,
@@ -128,8 +131,16 @@ function statusLabel(status: PipelineAutomationRule["status"]) {
   return "Черновик";
 }
 
-function TriggerCatalogPicker() {
+function TriggerCatalogPicker({
+  value,
+  onChange,
+}: {
+  value: PipelineAutomationTriggerType;
+  onChange: (value: PipelineAutomationTriggerType) => void;
+}) {
   const categories = ["deal", "field", "payment", "communication", "calendar", "system"] as const;
+  const [open, setOpen] = useState(false);
+  const selected = CRM_AUTOMATION_TRIGGER_CATALOG.find((trigger) => trigger.id === value);
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-1.5">
@@ -147,13 +158,13 @@ function TriggerCatalogPicker() {
           </Tooltip>
         </TooltipProvider>
       </div>
-      <Popover>
+      <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"
             className="flex h-9 w-full items-center justify-between rounded-xl border border-border/35 bg-background/45 px-3 text-left text-xs transition hover:border-primary/25 hover:bg-primary/[0.035]"
           >
-            <span>После входа сделки в стадию</span>
+            <span>{selected?.title ?? "Выберите триггер"}</span>
             <ArrowRight className="h-3.5 w-3.5 text-primary" />
           </button>
         </PopoverTrigger>
@@ -177,12 +188,22 @@ function TriggerCatalogPicker() {
                       <TooltipProvider key={trigger.id} delayDuration={180}>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <div
+                            <button
+                              type="button"
+                              disabled={trigger.availability !== "available"}
+                              onClick={() => {
+                                if (trigger.availability === "available") {
+                                  onChange(trigger.id as PipelineAutomationTriggerType);
+                                  setOpen(false);
+                                }
+                              }}
                               className={cn(
-                                "flex rounded-xl border px-2.5 py-2 transition",
+                                "flex w-full rounded-xl border px-2.5 py-2 text-left transition",
                                 trigger.availability === "available"
-                                  ? "cursor-default border-primary/20 bg-primary/[0.055]"
-                                  : "border-border/20 bg-background/30 opacity-65",
+                                  ? value === trigger.id
+                                    ? "cursor-pointer border-primary/30 bg-primary/[0.09] shadow-sm"
+                                    : "cursor-pointer border-primary/15 bg-primary/[0.035] hover:border-primary/30 hover:bg-primary/[0.07]"
+                                  : "cursor-not-allowed border-border/20 bg-background/30 opacity-65",
                               )}
                             >
                               <div className="min-w-0">
@@ -202,7 +223,7 @@ function TriggerCatalogPicker() {
                               >
                                 {trigger.availability === "available" ? "доступно" : "скоро"}
                               </Badge>
-                            </div>
+                            </button>
                           </TooltipTrigger>
                           <TooltipContent className="max-w-64 border-white/20 bg-background/90 text-[10px] leading-4 backdrop-blur-xl">
                             {trigger.description}
@@ -284,9 +305,20 @@ function RuleCard({
       </div>
       <div className="mt-3 flex items-center gap-3 text-[10px] text-muted-foreground">
         <span className="inline-flex items-center gap-1">
-          <ArrowRight className="h-3 w-3" /> после входа
+          {rule.trigger_type === "at_datetime" ? (
+            <>
+              <CalendarClock className="h-3 w-3" />
+              {rule.scheduled_local_at
+                ? rule.scheduled_local_at.slice(0, 16).replace("T", " ")
+                : "по расписанию"}
+            </>
+          ) : (
+            <>
+              <ArrowRight className="h-3 w-3" /> после входа
+            </>
+          )}
         </span>
-        {rule.delay_minutes > 0 && (
+        {rule.trigger_type === "deal_entered_stage" && rule.delay_minutes > 0 && (
           <span className="inline-flex items-center gap-1">
             <Clock3 className="h-3 w-3" /> через {rule.delay_minutes} мин
           </span>
@@ -411,6 +443,11 @@ export function PipelineAutomationSheet({
   const [actionType, setActionType] = useState<
     "create_task" | "send_email" | "send_telegram"
   >("create_task");
+  const [triggerType, setTriggerType] = useState<PipelineAutomationTriggerType>(
+    "deal_entered_stage",
+  );
+  const [scheduledDate, setScheduledDate] = useState<Date | undefined>();
+  const [scheduledTime, setScheduledTime] = useState("09:00");
   const [emailTemplateId, setEmailTemplateId] = useState("");
   const [telegramMessage, setTelegramMessage] = useState(
     "Здравствуйте, {{customer_name}}! Пишем Вам по сделке {{deal_number}}.",
@@ -475,6 +512,9 @@ export function PipelineAutomationSheet({
     setAssignee(OWNER);
     setDueHours(24);
     setActionType("create_task");
+    setTriggerType("deal_entered_stage");
+    setScheduledDate(undefined);
+    setScheduledTime("09:00");
     setTelegramMessage(
       "Здравствуйте, {{customer_name}}! Пишем Вам по сделке {{deal_number}}.",
     );
@@ -508,6 +548,7 @@ export function PipelineAutomationSheet({
       (template) => template.id === fallbackEmailTemplateId,
     );
     if (!pipeline || !selectedStageId || !name.trim()) return;
+    if (triggerType === "at_datetime" && (!scheduledDate || !scheduledTime)) return;
     if (actionType === "create_task" && (!taskTypeId || !title.trim())) return;
     if (actionType === "send_email" && !emailTemplate) return;
     if (actionType === "send_telegram" && !telegramMessage.trim()) return;
@@ -534,6 +575,11 @@ export function PipelineAutomationSheet({
         pipeline_id: pipeline.id,
         stage_id: selectedStageId,
         name,
+        trigger_type: triggerType,
+        scheduled_local_at:
+          triggerType === "at_datetime" && scheduledDate
+            ? `${format(scheduledDate, "yyyy-MM-dd")} ${scheduledTime}:00`
+            : null,
         action_type: actionType,
         task_type_id: actionType === "create_task" ? taskTypeId : null,
         title_template: actionType === "create_task" ? title : null,
@@ -542,7 +588,7 @@ export function PipelineAutomationSheet({
         assignee_user_id: assignee === OWNER ? null : assignee,
         due_offset_minutes: dueHours * 60,
         reminder_offset_minutes: null,
-        delay_minutes: delayMinutes,
+        delay_minutes: triggerType === "deal_entered_stage" ? delayMinutes : 0,
         require_same_stage: requireSameStage,
         timezone,
         quiet_hours_start: quietHoursEnabled ? quietHoursStart : null,
@@ -789,14 +835,33 @@ export function PipelineAutomationSheet({
                     ? "Отправить Email"
                     : "Отправить Telegram"}
               </p>
-              <p className="mt-1 text-[11px] text-muted-foreground">После перехода сделки в стадию</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {triggerType === "at_datetime"
+                  ? "Один раз для сделок, которые находятся в этой стадии в выбранный момент"
+                  : "После перехода сделки в стадию"}
+              </p>
             </div>
             <div className="space-y-4 overflow-y-auto p-5">
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Название правила</Label>
                 <Input value={name} onChange={(event) => setName(event.target.value)} className="h-9 rounded-xl text-xs" />
               </div>
-              <TriggerCatalogPicker />
+              <TriggerCatalogPicker value={triggerType} onChange={setTriggerType} />
+              {triggerType === "at_datetime" && (
+                <div className="space-y-1.5 rounded-xl border border-primary/15 bg-primary/[0.035] p-3">
+                  <Label className="text-[11px]">Когда запустить</Label>
+                  <DateTimePicker
+                    date={scheduledDate}
+                    time={scheduledTime}
+                    onDateChange={setScheduledDate}
+                    onTimeChange={setScheduledTime}
+                    className="h-9 rounded-xl border-border/35 bg-background/55 text-xs"
+                  />
+                  <p className="text-[10px] leading-4 text-muted-foreground">
+                    Используется единый календарь CRM. Точное время обязательно; правило применится к текущим сделкам выбранной стадии.
+                  </p>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Действие</Label>
                 <Select
@@ -1236,11 +1301,11 @@ export function PipelineAutomationSheet({
                   </div>
                 )}
               </div>
-              <div className="space-y-1.5">
+              {triggerType === "deal_entered_stage" && <div className="space-y-1.5">
                 <Label className="text-[11px]">Запустить через, минут</Label>
                 <Input type="number" min={0} max={525600} value={delayMinutes} onChange={(event) => setDelayMinutes(Number(event.target.value))} className="h-9 rounded-xl text-xs" />
                 <p className="text-[10px] text-muted-foreground">0 — сразу после перехода в стадию</p>
-              </div>
+              </div>}
               <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-border/30 bg-background/35 p-3">
                 <Checkbox
                   checked={requireSameStage}
