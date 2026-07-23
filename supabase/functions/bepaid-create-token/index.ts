@@ -110,6 +110,14 @@ Deno.serve(async (req) => {
       customerCreditCheckoutKey,
     }: CreateTokenRequest = await req.json();
 
+    if (useMitTokenization) {
+      return jsonResponse({
+        success: false,
+        error: 'saved_cards_disabled',
+        message: 'Сохранение карты отключено. Используйте защищённую страницу оплаты.',
+      }, 410);
+    }
+
     if (!productId || !customerEmail) {
       return new Response(
         JSON.stringify({ success: false, error: 'Product ID and email are required' }),

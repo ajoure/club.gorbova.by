@@ -34,6 +34,7 @@ import {
 } from '../_shared/crm-routing.ts';
 import { referralDiscountMeta, resolveReferralCheckoutDiscount } from '../_shared/referral-checkout-discount.ts';
 import { reserveReferralCustomerCredit } from '../_shared/referral-customer-credit.ts';
+import { SAVED_CARDS_DISABLED, savedCardsDisabledResponse } from '../_shared/saved-cards-disabled.ts';
 
 // Active (non-final) payment statuses — verified against payments_v2 enum on 2026-04-26.
 // Real enum values: pending, processing, succeeded, failed, refunded, canceled.
@@ -52,6 +53,9 @@ Deno.serve(async (req) => {
   }
   if (req.method !== 'POST') {
     return errorResponse('Method not allowed', 405);
+  }
+  if (SAVED_CARDS_DISABLED) {
+    return savedCardsDisabledResponse(corsHeaders);
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;

@@ -544,7 +544,7 @@ export default function Auth() {
 
           toast({
             title: "Регистрация успешна!",
-            description: "Не забудьте привязать Telegram и добавить карту для оплаты",
+            description: "Не забудьте привязать Telegram для уведомлений и доступа",
           });
           navigate(redirectTo);
         }

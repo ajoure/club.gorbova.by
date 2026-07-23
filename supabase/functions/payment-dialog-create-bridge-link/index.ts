@@ -24,6 +24,7 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
+import { SAVED_CARDS_DISABLED, savedCardsDisabledResponse } from '../_shared/saved-cards-disabled.ts';
 
 interface BridgeRequest {
   product_id: string;
@@ -43,6 +44,7 @@ const FORBIDDEN_HOST_RE = /(lovable\.dev|lovable\.app|lovableproject\.com|localh
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
   if (req.method !== 'POST') return errorResponse('Method not allowed', 405);
+  if (SAVED_CARDS_DISABLED) return savedCardsDisabledResponse(corsHeaders);
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
