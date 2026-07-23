@@ -67,6 +67,7 @@ import {
   X,
   Pencil,
   Send,
+  Sparkles,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -103,6 +104,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { BulkCreateDealsDialog } from "@/components/admin/deals/BulkCreateDealsDialog";
 import { PipelineManagementPopover } from "@/components/admin/deals/PipelineManagementPopover";
+import { PipelineAutomationSheet } from "@/components/admin/deals/PipelineAutomationSheet";
 import { DealsFiltersBar } from "@/components/admin/deals/DealsFiltersBar";
 import { useDealsFilters, type DealsExtraFilters } from "@/hooks/useDealsFilters";
 import { applyExtraDealFilters } from "@/utils/applyExtraDealFilters";
@@ -871,6 +873,7 @@ export default function AdminDeals() {
   // Delete pipeline state
   const [deletePipelineTarget, setDeletePipelineTarget] = useState<{ id: string; name: string } | null>(null);
   const [isDeletingPipeline, setIsDeletingPipeline] = useState(false);
+  const [showPipelineAutomation, setShowPipelineAutomation] = useState(false);
 
   const handleCreatePipeline = async () => {
     if (!newPipelineName.trim()) return;
@@ -977,6 +980,18 @@ export default function AdminDeals() {
             dealCounts={pipelineDealCounts}
             boundPipelineIds={boundPipelineIds}
           />
+        )}
+
+        {activePipeline && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 rounded-xl border-primary/15 bg-gradient-to-r from-primary/[0.06] to-violet-500/[0.04] px-3 text-xs text-foreground/80 shadow-sm backdrop-blur-xl hover:border-primary/25 hover:bg-primary/[0.09]"
+            onClick={() => setShowPipelineAutomation(true)}
+          >
+            <Sparkles className="h-3.5 w-3.5 text-primary" />
+            Автоматизация
+          </Button>
         )}
 
         {/* Preset tabs (list mode only) */}
@@ -1212,6 +1227,14 @@ export default function AdminDeals() {
           )}
         </div>
       </div>
+
+      <PipelineAutomationSheet
+        open={showPipelineAutomation}
+        onOpenChange={setShowPipelineAutomation}
+        pipeline={activePipeline ?? null}
+        stages={activePipelineStages}
+        canEdit={canEdit}
+      />
 
       <CreateDealDialog
         open={showCreateDealDialog}
