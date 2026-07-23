@@ -74,6 +74,12 @@ export interface PipelineAutomationRule {
   fallback_email_html_template: string | null;
   fallback_email_text_template: string | null;
   fallback_telegram_message_template: string | null;
+  no_branch_task_type_id: string | null;
+  no_branch_title_template: string | null;
+  no_branch_description_template: string | null;
+  no_branch_assignee_strategy: "deal_owner" | "fixed_user" | null;
+  no_branch_assignee_user_id: string | null;
+  no_branch_due_offset_minutes: number | null;
   conditions: PipelineAutomationConditions | Record<string, never>;
   created_at: string;
   updated_at: string;
@@ -110,6 +116,12 @@ export interface CreatePipelineAutomationRule {
   fallback_email_html_template?: string | null;
   fallback_email_text_template?: string | null;
   fallback_telegram_message_template?: string | null;
+  no_branch_task_type_id?: string | null;
+  no_branch_title_template?: string | null;
+  no_branch_description_template?: string | null;
+  no_branch_assignee_strategy?: "deal_owner" | "fixed_user" | null;
+  no_branch_assignee_user_id?: string | null;
+  no_branch_due_offset_minutes?: number | null;
   conditions?: PipelineAutomationConditions | Record<string, never>;
 }
 
@@ -296,6 +308,24 @@ export function useCreatePipelineAutomationRule() {
             payload.fallback_action_type === "send_telegram"
               ? payload.fallback_telegram_message_template?.trim()
               : null,
+          no_branch_task_type_id: payload.no_branch_task_type_id ?? null,
+          no_branch_title_template: payload.no_branch_task_type_id
+            ? payload.no_branch_title_template?.trim()
+            : null,
+          no_branch_description_template: payload.no_branch_task_type_id
+            ? payload.no_branch_description_template?.trim() || null
+            : null,
+          no_branch_assignee_strategy: payload.no_branch_task_type_id
+            ? payload.no_branch_assignee_strategy ?? "deal_owner"
+            : null,
+          no_branch_assignee_user_id:
+            payload.no_branch_task_type_id &&
+              payload.no_branch_assignee_strategy === "fixed_user"
+              ? payload.no_branch_assignee_user_id
+              : null,
+          no_branch_due_offset_minutes: payload.no_branch_task_type_id
+            ? payload.no_branch_due_offset_minutes ?? 0
+            : null,
           conditions: payload.conditions ?? {},
           recipient_strategy: "customer_email",
         })

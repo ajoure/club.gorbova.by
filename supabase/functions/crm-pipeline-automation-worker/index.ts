@@ -157,7 +157,7 @@ Deno.serve(async (req: Request) => {
         const { data: existingTask, error: existingTaskError } = await supabase
           .from("crm_tasks")
           .select("id")
-          .eq("automation_rule_id", rule.id)
+          .eq("pipeline_automation_rule_id", rule.id)
           .eq("deal_id", deal.id)
           .maybeSingle();
         if (existingTaskError) throw existingTaskError;
@@ -198,6 +198,59 @@ Deno.serve(async (req: Request) => {
       }
 
       if (!conditionsMatch(rule.conditions, deal)) {
+        let noBranchTaskId: string | null = null;
+        if (rule.no_branch_task_type_id) {
+          const { data: existingNoBranchTask, error: existingNoBranchTaskError } = await supabase
+            .from("crm_tasks")
+            .select("id")
+            .eq("pipeline_automation_rule_id", rule.id)
+            .eq("deal_id", deal.id)
+            .maybeSingle();
+          if (existingNoBranchTaskError) throw existingNoBranchTaskError;
+
+          if (existingNoBranchTask) {
+            noBranchTaskId = existingNoBranchTask.id;
+          } else {
+            const assigneeUserId =
+              rule.no_branch_assignee_strategy === "fixed_user"
+                ? rule.no_branch_assignee_user_id
+                : deal.responsible_user_id;
+            const dueAt = new Date(
+              Date.now() + Number(rule.no_branch_due_offset_minutes) * 60_000,
+            );
+            const { data: taskId, error: taskError } = await supabase.rpc("crm_task_create", {
+              payload: {
+                task_type_id: rule.no_branch_task_type_id,
+                title: renderTemplate(rule.no_branch_title_template, deal),
+                description: rule.no_branch_description_template
+                  ? renderTemplate(rule.no_branch_description_template, deal)
+                  : null,
+                assignee_user_id: assigneeUserId,
+                due_at: dueAt.toISOString(),
+                contact_id: deal.profile_id,
+                company_id: deal.company_id,
+                deal_id: deal.id,
+                order_id: deal.id,
+                pipeline_id: deal.pipeline_id,
+                pipeline_stage_id: deal.pipeline_stage_id,
+                offer_id: deal.offer_id,
+                product_id: deal.product_id,
+                tariff_id: deal.tariff_id,
+                source: "auto",
+                pipeline_automation_rule_id: rule.id,
+                meta: {
+                  pipeline_automation_rule_id: rule.id,
+                  pipeline_automation_logical_id: rule.logical_id,
+                  pipeline_automation_version: rule.version,
+                  pipeline_automation_job_id: job.id,
+                  pipeline_automation_branch: "no",
+                },
+              },
+            });
+            if (taskError) throw taskError;
+            noBranchTaskId = taskId;
+          }
+        }
         const { error: skipError } = await supabase.rpc(
           "crm_pipeline_automation_skip_job",
           {
@@ -208,6 +261,7 @@ Deno.serve(async (req: Request) => {
               condition_count: Array.isArray(rule.conditions?.items)
                 ? rule.conditions.items.length
                 : 0,
+              no_branch_task_id: noBranchTaskId,
             },
           },
         );
@@ -341,7 +395,7 @@ Deno.serve(async (req: Request) => {
           product_id: deal.product_id,
           tariff_id: deal.tariff_id,
           source: "auto",
-          automation_rule_id: rule.id,
+          pipeline_automation_rule_id: rule.id,
           meta: {
             pipeline_automation_rule_id: rule.id,
             pipeline_automation_logical_id: rule.logical_id,

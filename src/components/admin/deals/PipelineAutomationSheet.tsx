@@ -216,6 +216,11 @@ function RuleCard({
             <Workflow className="h-3 w-3" /> условий: {rule.conditions.items.length}
           </span>
         )}
+        {rule.no_branch_task_type_id && (
+          <span className="inline-flex items-center gap-1 text-sky-600">
+            <ArrowRight className="h-3 w-3" /> если нет — задача
+          </span>
+        )}
       </div>
       {canEdit && (
         <div className="mt-3 flex items-center gap-1 border-t border-border/25 pt-2">
@@ -313,10 +318,19 @@ export function PipelineAutomationSheet({
   const [quietHoursEnd, setQuietHoursEnd] = useState("08:00");
   const [conditionLogic, setConditionLogic] = useState<"and" | "or">("and");
   const [conditions, setConditions] = useState<PipelineAutomationCondition[]>([]);
+  const [noBranchEnabled, setNoBranchEnabled] = useState(false);
+  const [noBranchTaskTypeId, setNoBranchTaskTypeId] = useState("");
+  const [noBranchTitle, setNoBranchTitle] = useState("Проверить сделку {{deal_number}}");
+  const [noBranchDescription, setNoBranchDescription] = useState("");
+  const [noBranchAssignee, setNoBranchAssignee] = useState(OWNER);
+  const [noBranchDueHours, setNoBranchDueHours] = useState(24);
 
   useEffect(() => {
     if (!taskTypeId && taskTypes[0]?.id) setTaskTypeId(taskTypes[0].id);
   }, [taskTypeId, taskTypes]);
+  useEffect(() => {
+    if (!noBranchTaskTypeId && taskTypes[0]?.id) setNoBranchTaskTypeId(taskTypes[0].id);
+  }, [noBranchTaskTypeId, taskTypes]);
   useEffect(() => {
     if (!emailTemplateId && emailTemplates[0]?.id) setEmailTemplateId(emailTemplates[0].id);
   }, [emailTemplateId, emailTemplates]);
@@ -357,6 +371,11 @@ export function PipelineAutomationSheet({
     setQuietHoursEnd("08:00");
     setConditionLogic("and");
     setConditions([]);
+    setNoBranchEnabled(false);
+    setNoBranchTitle("Проверить сделку {{deal_number}}");
+    setNoBranchDescription("");
+    setNoBranchAssignee(OWNER);
+    setNoBranchDueHours(24);
   };
 
   const submit = () => {
@@ -377,6 +396,7 @@ export function PipelineAutomationSheet({
           String(condition.value ?? "").trim() === "",
       )
     ) return;
+    if (noBranchEnabled && (!noBranchTaskTypeId || !noBranchTitle.trim())) return;
     const normalizedConditions = conditions.map((condition) => ({
       ...condition,
       value:
@@ -438,6 +458,14 @@ export function PipelineAutomationSheet({
           normalizedConditions.length > 0
             ? { logic: conditionLogic, items: normalizedConditions }
             : {},
+        no_branch_task_type_id: noBranchEnabled ? noBranchTaskTypeId : null,
+        no_branch_title_template: noBranchEnabled ? noBranchTitle : null,
+        no_branch_description_template: noBranchEnabled ? noBranchDescription : null,
+        no_branch_assignee_strategy:
+          noBranchEnabled && noBranchAssignee !== OWNER ? "fixed_user" : "deal_owner",
+        no_branch_assignee_user_id:
+          noBranchEnabled && noBranchAssignee !== OWNER ? noBranchAssignee : null,
+        no_branch_due_offset_minutes: noBranchEnabled ? noBranchDueHours * 60 : null,
       },
       { onSuccess: resetEditor },
     );
@@ -920,6 +948,83 @@ export function PipelineAutomationSheet({
                   <Plus className="mr-1 h-3 w-3" /> Добавить условие
                 </Button>
               </div>
+              {conditions.length > 0 && (
+                <div className="space-y-3 rounded-2xl border border-sky-500/20 bg-sky-500/[0.035] p-3">
+                  <label className="flex cursor-pointer items-start gap-2.5">
+                    <Checkbox
+                      checked={noBranchEnabled}
+                      onCheckedChange={(checked) => setNoBranchEnabled(checked === true)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="block text-[11px] font-medium">
+                        Если условия не совпали — создать задачу
+                      </span>
+                      <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
+                        Основное действие не запустится; задача попадёт в журнал этой ветки.
+                      </span>
+                    </span>
+                  </label>
+                  {noBranchEnabled && (
+                    <div className="space-y-2.5 border-t border-sky-500/15 pt-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-[11px]">Тип задачи ветки</Label>
+                        <Select value={noBranchTaskTypeId} onValueChange={setNoBranchTaskTypeId}>
+                          <SelectTrigger className="h-8 rounded-lg text-[10px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {taskTypes.map((type) => (
+                              <SelectItem key={type.id} value={type.id}>{type.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-[11px]">Заголовок задачи</Label>
+                        <Input
+                          value={noBranchTitle}
+                          onChange={(event) => setNoBranchTitle(event.target.value)}
+                          className="h-8 rounded-lg text-[10px]"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-[11px]">Описание</Label>
+                        <Textarea
+                          value={noBranchDescription}
+                          onChange={(event) => setNoBranchDescription(event.target.value)}
+                          className="min-h-16 rounded-lg text-[10px]"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1.5">
+                          <Label className="text-[11px]">Исполнитель</Label>
+                          <Select value={noBranchAssignee} onValueChange={setNoBranchAssignee}>
+                            <SelectTrigger className="h-8 rounded-lg text-[10px]"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={OWNER}>Ответственный</SelectItem>
+                              {staff.map((person) => (
+                                <SelectItem key={person.user_id} value={person.user_id}>
+                                  {person.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-[11px]">Срок, часов</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={8760}
+                            value={noBranchDueHours}
+                            onChange={(event) => setNoBranchDueHours(Number(event.target.value))}
+                            className="h-8 rounded-lg text-[10px]"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Запустить через, минут</Label>
                 <Input type="number" min={0} max={525600} value={delayMinutes} onChange={(event) => setDelayMinutes(Number(event.target.value))} className="h-9 rounded-xl text-xs" />
