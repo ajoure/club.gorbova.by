@@ -111,16 +111,6 @@ export function SupportTabContent() {
       .then(({ data }) => {
         const tgId = data?.telegram_user_id ?? null;
         setTicketTelegramUserId(tgId);
-        // Auto-prefill telegram_user_id and enable bridge if profile has TG
-        if (tgId && !(selectedTicket as any).telegram_user_id) {
-          updateTicket.mutate({
-            ticketId: selectedTicket.id,
-            updates: {
-              telegram_user_id: tgId,
-              telegram_bridge_enabled: true,
-            } as any,
-          });
-        }
       });
   }, [selectedTicket?.profile_id]);
 

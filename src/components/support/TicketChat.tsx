@@ -157,12 +157,10 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   // Show TG checkbox only for admin when user has telegram and bridge is on
   const canBridgeToTelegram = isAdmin && telegramBridgeEnabled && telegramUserId;
 
-  // Auto-enable sendToTelegram when bridge is available
+  // Telegram delivery is always an explicit per-message choice.
   useEffect(() => {
-    if (canBridgeToTelegram) {
-      setSendToTelegram(true);
-    }
-  }, [canBridgeToTelegram]);
+    setSendToTelegram(false);
+  }, [ticketId, canBridgeToTelegram]);
 
   // Voice preview URL lifecycle (cleanup revokes previous URL automatically)
   useEffect(() => {
@@ -341,7 +339,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
 
   return (
     <div className="flex flex-col h-full">
-      <ScrollArea className="flex-1 p-4 overflow-x-hidden">
+      <ScrollArea className="touch-scroll flex-1 p-4 overflow-x-hidden overscroll-contain">
         {visibleMessages?.map((msg) => (
           <TicketMessage
             key={msg.id}
@@ -370,7 +368,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
       </ScrollArea>
 
       {!isClosed && (
-        <div className="border-t p-4">
+        <div className="contact-center-safe-bottom border-t p-4 shrink-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
           {isAdmin && (
             <div className="flex items-center gap-4 mb-2 flex-wrap">
               {/* "Send as" dropdown */}
@@ -413,7 +411,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
                     onCheckedChange={(checked) => setSendToTelegram(checked as boolean)}
                   />
                   <Label htmlFor="send-telegram" className="text-sm text-muted-foreground">
-                    {telegramMode === "notify" ? "Уведомить в Telegram" : "Отправить в Telegram"}
+                    {telegramMode === "notify" ? "Дополнительно уведомить в Telegram" : "Дополнительно отправить в Telegram"}
                   </Label>
                 </div>
               )}

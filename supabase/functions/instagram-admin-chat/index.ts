@@ -57,9 +57,18 @@ Deno.serve(async (req) => {
 
   const userId = claimsData.claims.sub as string;
 
-  const { data: isAdmin } = await serviceClient.rpc('has_role_v2', { _user_id: userId, _role_code: 'admin' });
-  const { data: isSuperAdmin } = await serviceClient.rpc('has_role_v2', { _user_id: userId, _role_code: 'super_admin' });
-  if (!isAdmin && !isSuperAdmin) {
+  const requiredAccess = action === 'get_history' || action === 'get_accounts'
+    ? 'view'
+    : 'manage';
+  const { data: hasCommunicationAccess, error: accessError } = await serviceClient.rpc(
+    'has_admin_section_access',
+    {
+      _user_id: userId,
+      _section_code: 'communication',
+      _min_level: requiredAccess,
+    },
+  );
+  if (accessError || !hasCommunicationAccess) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
