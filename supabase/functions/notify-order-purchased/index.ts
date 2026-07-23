@@ -602,5 +602,19 @@ Deno.serve(async (req) => {
     results.telegram_admin = { error: e instanceof Error ? e.message : String(e) }
   }
 
+  // Referral sale notifications are deliberately fail-soft: a Telegram
+  // outage must never turn a successful payment into an error.
+  try {
+    const referralNotify = await supabase.functions.invoke('referral-notify', {
+      body: { event_type: 'sale', order_id: orderId },
+      headers: { Authorization: `Bearer ${svcKey}` },
+    })
+    results.telegram_referral = referralNotify.error
+      ? { error: referralNotify.error.message }
+      : referralNotify.data
+  } catch (e) {
+    results.telegram_referral = { error: e instanceof Error ? e.message : String(e) }
+  }
+
   return json({ success: true, ...results })
 })

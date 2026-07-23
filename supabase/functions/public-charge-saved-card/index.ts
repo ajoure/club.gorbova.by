@@ -45,6 +45,8 @@ interface ChargeBody {
   payment_method_id?: string;
   idempotency_key?: string;
   customer_credit_requested_minor?: number;
+  partner_bonus_requested_minor?: number;
+  partner_bonus_checkout_key?: string;
 }
 
 Deno.serve(async (req) => {
@@ -77,7 +79,7 @@ Deno.serve(async (req) => {
 
     // --- 2. Body validation ----------------------------------------------
     const body = (await req.json().catch(() => ({}))) as ChargeBody;
-    const { url_token, payment_method_id, idempotency_key, customer_credit_requested_minor } = body;
+    const { url_token, payment_method_id, idempotency_key, customer_credit_requested_minor, partner_bonus_requested_minor, partner_bonus_checkout_key } = body;
     if (!url_token || typeof url_token !== 'string') {
       return errorResponse('missing_url_token', 400);
     }
@@ -270,6 +272,16 @@ Deno.serve(async (req) => {
       checkoutKey: `saved-card:${idempotency_key || crypto.randomUUID()}`,
     });
     amountKopecks -= reservation.appliedMinor;
+    const bonusReservation = await supabase.rpc('referral_reserve_partner_bonus', {
+      p_user_id: targetUserId,
+      p_requested_minor: Math.max(0, Math.round(Number(partner_bonus_requested_minor ?? 0))),
+      p_charge_amount_minor: amountKopecks,
+      p_checkout_key: `saved-card:partner-bonus:${partner_bonus_checkout_key || idempotency_key || crypto.randomUUID()}`,
+      p_product_id: link.product_id,
+    });
+    if (bonusReservation.error) return errorResponse('partner_bonus_reservation_failed', 400);
+    const bonusAppliedMinor = Math.max(0, Math.round(Number(bonusReservation.data?.applied_minor ?? 0)));
+    amountKopecks = Math.max(100, amountKopecks - bonusAppliedMinor);
     const amountByn = amountKopecks / 100;
     const accessDays = tariff.access_days || 30;
     const nowDt = new Date();
@@ -301,6 +313,7 @@ Deno.serve(async (req) => {
     const orderMeta: Record<string, any> = {
       type: 'system_payment_link',
       description: link.description || null,
+      ...(bonusAppliedMinor > 0 ? { referral_partner_bonus_reservation_id: bonusReservation.data?.reservation_id, referral_partner_bonus_applied_minor: bonusAppliedMinor } : {}),
       created_by: null,
       product_name: product.name,
       tariff_name: tariff.name,

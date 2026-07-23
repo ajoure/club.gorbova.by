@@ -13,6 +13,7 @@ type DashboardData = {
   balances?: { pending_minor: number; internal_pending_minor: number; available_minor: number; internal_minor: number; held_minor: number; paid_minor: number; currency: "BYN" };
   payouts?: { enabled: boolean; minimum_payout_minor: number };
   terms?: { default_commission_percent_bps: number; default_customer_discount_percent_bps: number; split_60_40_enabled?: boolean; withdrawable_percent_bps?: number; terms_url?: string | null };
+  program_links?: Array<{ id: string; title: string; target_path: string; link_code: string; url: string }>;
   referrals?: Array<{ relationship_id: string; display_name: string; attached_at: string; sales_count: number; commission_minor: number }>;
   sales?: Array<{ id: string; public_id: string; created_at: string; status: string; basis_minor: number; commission_minor: number; reversed_minor: number; product_name: string }>;
 };
@@ -65,6 +66,20 @@ export function ReferralDashboardCard() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const createProgramLink = async () => {
+    try {
+      const title = window.prompt('Название бесплатной программы', 'Бесплатная программа');
+      const targetPath = window.prompt('Путь страницы на gorbova.by', '/programs/free');
+      if (!title || !targetPath) return;
+      const { error } = await rpc('referral_create_program_link', { p_title: title, p_target_path: targetPath });
+      if (error) throw error;
+      toast.success('Персональная ссылка создана');
+      qc.invalidateQueries({ queryKey: ['referral-dashboard'] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось создать ссылку');
+    }
+  };
+
   if (partnerQuery.isLoading || dashboardQuery.isLoading) {
     return <Card><CardContent className="py-8 flex justify-center"><Loader2 className="h-5 w-5 animate-spin" /></CardContent></Card>;
   }
@@ -88,7 +103,7 @@ export function ReferralDashboardCard() {
         <p className="text-sm text-muted-foreground">
           Получайте до {commissionPercent}% от отдельных покупок приглашённых. По вашей ссылке приглашённый может получить скидку до {discountPercent}%. Точные условия зависят от продукта, автопродления не учитываются.
         </p>
-        {data.terms?.split_60_40_enabled && <p className="text-xs text-muted-foreground">Сейчас действует правило 60/40: 60% вознаграждения можно вывести, 40% зачисляется как внутренний бонус.</p>}
+        {data.terms?.split_60_40_enabled && <p className="text-xs text-muted-foreground">Сейчас действует ограничение вывода: не более 40% начисления доступно к выплате, 60% остаётся внутренним бонусом.</p>}
       </CardHeader>
       <CardContent className="pt-5 space-y-5">
         <div className="flex flex-col sm:flex-row gap-2">
@@ -112,28 +127,39 @@ export function ReferralDashboardCard() {
           <section>
             <h3 className="font-medium flex items-center gap-2 mb-3"><Users className="h-4 w-4" /> Приглашённые</h3>
             <div className="space-y-2">
-              {(data.referrals ?? []).slice(0, 5).map((item) => (
+              <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
+              {(data.referrals ?? []).map((item) => (
                 <div key={item.relationship_id} className="rounded-md border p-3 flex justify-between gap-3 text-sm">
                   <div><p className="font-medium">{item.display_name}</p><p className="text-muted-foreground">Покупок: {item.sales_count}</p></div>
                   <span className="font-medium">{formatBynMinor(item.commission_minor)}</span>
                 </div>
               ))}
+              </div>
               {(data.referrals ?? []).length === 0 && <p className="text-sm text-muted-foreground">Пока никто не зарегистрировался по вашей ссылке.</p>}
             </div>
           </section>
           <section>
             <h3 className="font-medium flex items-center gap-2 mb-3"><WalletCards className="h-4 w-4" /> Последние продажи</h3>
             <div className="space-y-2">
-              {(data.sales ?? []).slice(0, 5).map((sale) => (
+              <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
+              {(data.sales ?? []).map((sale) => (
                 <div key={sale.id} className="rounded-md border p-3 text-sm">
                   <div className="flex justify-between gap-3"><p className="font-medium truncate">{sale.product_name}</p><span>{formatBynMinor(sale.commission_minor - sale.reversed_minor)}</span></div>
                   <Badge variant="secondary" className="mt-2">{referralStatusLabel(sale.status)}</Badge>
                 </div>
               ))}
+              </div>
               {(data.sales ?? []).length === 0 && <p className="text-sm text-muted-foreground">Продаж по вашей ссылке пока нет.</p>}
             </div>
           </section>
         </div>
+        <section>
+          <div className="mb-3 flex items-center justify-between gap-2"><h3 className="font-medium">Персональные ссылки на бесплатные программы</h3><Button variant="outline" size="sm" onClick={() => void createProgramLink()}>Добавить ссылку</Button></div>
+          {(data.program_links ?? []).length > 0 && <>
+          <div className="space-y-2">{data.program_links!.map((item) => <div key={item.id} className="flex items-center gap-2 rounded-md border p-3 text-sm"><span className="min-w-0 flex-1 truncate">{item.title} · {item.url}</span><Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(item.url).then(() => toast.success('Ссылка скопирована'))}>Копировать</Button></div>)}</div>
+          </>}
+          {(data.program_links ?? []).length === 0 && <p className="text-sm text-muted-foreground">Можно создать отдельную ссылку на бесплатную программу.</p>}
+        </section>
       </CardContent>
     </Card>
   );

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { formatBynMinor, referralStatusLabel } from "@/lib/referrals";
@@ -26,11 +27,21 @@ export default function AdminReferrals() {
     queryKey: ["admin-referrals-overview"],
     queryFn: async () => {
       const client = supabase as any;
+      const fetchAll = async (table: string, select: string, order: string) => {
+        const rows: any[] = [];
+        for (let page = 0; page < 100; page += 1) {
+          const { data, error } = await client.from(table).select(select).order(order, { ascending: false }).range(page * 1000, page * 1000 + 999);
+          if (error) throw error;
+          rows.push(...(data ?? []));
+          if (!data || data.length < 1000) break;
+        }
+        return rows;
+      };
       const [settings, products, relationships, sales, payouts, summary] = await Promise.all([
         client.from("referral_program_settings").select("*").eq("singleton", true).single(),
-        client.from("products_v2").select("id,name,referral_settings_mode,referral_commission_percent_bps,referral_customer_discount_percent_bps").order("name"),
-        client.from("referral_relationships").select("id,public_id,partner_id,attached_at,status,referred:referred_profile_id(full_name,email),partner:partner_id(partner_code,profiles:profile_id(full_name,email))").order("attached_at", { ascending: false }).limit(100),
-        client.from("referral_sale_attributions").select("id,public_id,partner_id,status,commission_percent_bps,commission_minor,reversed_minor,created_at,product:product_id(name)").order("created_at", { ascending: false }).limit(100),
+        client.from("products_v2").select("id,name,referral_settings_mode,referral_commission_percent_bps,referral_customer_discount_percent_bps,referral_commission_scheme,referral_bonus_eligible").order("name"),
+        fetchAll("referral_relationships", "id,public_id,partner_id,attached_at,status,referred:referred_profile_id(full_name,email),partner:partner_id(partner_code,profiles:profile_id(full_name,email))", "attached_at"),
+        fetchAll("referral_sale_attributions", "id,public_id,partner_id,status,commission_percent_bps,commission_minor,reversed_minor,created_at,product:product_id(name)", "created_at"),
         client.from("referral_payout_requests").select("id,public_id,partner_id,amount_minor,status,requested_at,payment_reference").order("requested_at", { ascending: false }).limit(100),
         client.rpc("referral_admin_get_summary"),
       ]);
@@ -163,10 +174,20 @@ export default function AdminReferrals() {
             <Setting label="Кабинет партнёра" checked={data.settings.partner_portal_enabled} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ partner_portal_enabled: value })} />
             <Setting label="Реальные начисления" checked={data.settings.accrual_enabled && !data.settings.shadow_mode} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ accrual_enabled: value, shadow_mode: !value })} />
             <Setting label="Заявки на выплату" checked={data.settings.payout_requests_enabled} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ payout_requests_enabled: value })} />
-            <Setting label="Разделение 60/40" checked={data.settings.split_60_40_enabled} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ split_60_40_enabled: value, withdrawable_percent_bps: 6000 })} />
+            <Setting label="Ограничение вывода 40%" checked={data.settings.split_60_40_enabled} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ split_60_40_enabled: value, withdrawable_percent_bps: value ? 4000 : 10000 })} />
+            <Setting label="Баллы партнёра включены" checked={data.settings.partner_bonus_enabled ?? true} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ partner_bonus_enabled: value })} />
+            <Setting label="Telegram-уведомления" checked={data.settings.telegram_notifications_enabled ?? true} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ telegram_notifications_enabled: value })} />
             <PercentageSetting label="Вознаграждение партнёру" valueBps={data.settings.commission_percent_bps} disabled={!canConfigure} onSave={(value) => updateSettings.mutate({ commission_percent_bps: value })} />
             <PercentageSetting label="Скидка приглашённому" valueBps={data.settings.customer_discount_percent_bps} disabled={!canConfigure} onSave={(value) => updateSettings.mutate({ customer_discount_percent_bps: value })} />
-            <p className="text-xs leading-relaxed text-muted-foreground sm:col-span-2">При включении правила 60/40 только новые начисления делятся: 60% доступны к выводу после периода ожидания, 40% учитываются как внутренний бонус. Старые начисления не пересчитываются.</p>
+            <SelectSetting label="Схема комиссий" value={data.settings.commission_scheme ?? "flat"} disabled={!canConfigure} options={[['flat','Единый процент'],['tiered','Ступени 10 / 20 / далее'],['club_first_payment','Club: только первый платёж']]} onSave={(value) => updateSettings.mutate({ commission_scheme: value })} />
+            <PercentageSetting label="Ступень 1" valueBps={data.settings.tier_1_commission_percent_bps ?? 1000} disabled={!canConfigure} onSave={(value) => updateSettings.mutate({ tier_1_commission_percent_bps: value })} />
+            <NumericSetting label="Лимит ступени 1" value={data.settings.tier_1_limit ?? 10} disabled={!canConfigure} onSave={(value) => updateSettings.mutate({ tier_1_limit: value })} />
+            <PercentageSetting label="Ступень 2" valueBps={data.settings.tier_2_commission_percent_bps ?? 2000} disabled={!canConfigure} onSave={(value) => updateSettings.mutate({ tier_2_commission_percent_bps: value })} />
+            <NumericSetting label="Лимит ступени 2" value={data.settings.tier_2_limit ?? 20} disabled={!canConfigure} onSave={(value) => updateSettings.mutate({ tier_2_limit: value })} />
+            <PercentageSetting label="Ступень 3 и далее" valueBps={data.settings.tier_3_commission_percent_bps ?? 3000} disabled={!canConfigure} onSave={(value) => updateSettings.mutate({ tier_3_commission_percent_bps: value })} />
+            <PercentageSetting label="Club: первый платёж" valueBps={data.settings.club_first_payment_percent_bps ?? 3000} disabled={!canConfigure} onSave={(value) => updateSettings.mutate({ club_first_payment_percent_bps: value })} />
+            <NumericSetting label="Минимальная выплата, BYN" value={Number(data.settings.minimum_payout_minor ?? 100000) / 100} step="0.01" disabled={!canConfigure} onSave={(value) => updateSettings.mutate({ minimum_payout_minor: Math.round(value * 100) })} />
+            <p className="text-xs leading-relaxed text-muted-foreground sm:col-span-2">Выплата ограничена 40% начисления, оставшиеся 60% сохраняются как внутренние баллы. Минимальная заявка — 1 000 BYN. Автопродления не начисляют комиссию.</p>
           </div>
         </Section>
       </TabsContent>
@@ -190,6 +211,14 @@ function Setting({ label, checked, disabled, onChange }: { label: string; checke
 
 function PercentageSetting({ label, valueBps, disabled, onSave }: { label: string; valueBps: number; disabled?: boolean; onSave(valueBps: number): void }) {
   return <div className="rounded-md border px-3 py-2"><Label className="text-xs font-medium">{label}</Label><div className="mt-1 flex items-center gap-2"><Input className="h-8 text-sm" key={valueBps} type="number" min="0" max="100" step="0.01" disabled={disabled} defaultValue={Number(valueBps ?? 0) / 100} onBlur={(event) => { const value = Math.round(Number(event.target.value.replace(",", ".")) * 100); if (Number.isInteger(value) && value >= 0 && value <= 10000 && value !== valueBps) onSave(value); }} /><span className="text-xs text-muted-foreground">%</span></div></div>;
+}
+
+function NumericSetting({ label, value, disabled, step = "1", onSave }: { label: string; value: number; disabled?: boolean; step?: string; onSave(value: number): void }) {
+  return <div className="rounded-md border px-3 py-2"><Label className="text-xs font-medium">{label}</Label><Input className="mt-1 h-8 text-sm" key={value} type="number" min="0" step={step} disabled={disabled} defaultValue={value} onBlur={(event) => { const next = Number(event.target.value.replace(",", ".")); if (Number.isFinite(next) && next >= 0 && next !== value) onSave(next); }} /></div>;
+}
+
+function SelectSetting({ label, value, disabled, options, onSave }: { label: string; value: string; disabled?: boolean; options: Array<[string, string]>; onSave(value: string): void }) {
+  return <div className="rounded-md border px-3 py-2"><Label className="text-xs font-medium">{label}</Label><Select value={value} disabled={disabled} onValueChange={onSave}><SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger><SelectContent>{options.map(([option, title]) => <SelectItem key={option} value={option}>{title}</SelectItem>)}</SelectContent></Select></div>;
 }
 
 function Summary({ label, value }: { label: string; value: string }) {

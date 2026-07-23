@@ -36,6 +36,11 @@ verify_jwt = false
 [functions.notify-order-purchased]
 verify_jwt = true
 
+# Referral notifications accept an authenticated referral registration call
+# and a service-role sale event from the paid-order pipeline.
+[functions.referral-notify]
+verify_jwt = false
+
 [functions.autoweb-session-heartbeat]
 verify_jwt = true
 
