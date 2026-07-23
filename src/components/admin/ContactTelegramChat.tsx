@@ -206,6 +206,8 @@ export function ContactTelegramChat({
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [isNearBottomState, setIsNearBottomState] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [hasOlderMessages, setHasOlderMessages] = useState(true);
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
 
   // Fetch available bots
   const { data: telegramBots = [] } = useQuery({
@@ -525,6 +527,69 @@ export function ContactTelegramChat({
   // `messagesLoading` is bound to Stage 1 only — Stage 2 never blocks paint.
   const messages = fullData ?? leanData;
   const messagesLoading = leanLoading && !leanData && !fullData;
+
+  useEffect(() => {
+    setHasOlderMessages(true);
+    setIsLoadingOlderMessages(false);
+  }, [userId]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (isLoadingOlderMessages || !messages?.length) return;
+
+    const persistedMessages = messages.filter(
+      (item) => item.id && !item.id.startsWith("temp-") && item.created_at,
+    );
+    if (persistedMessages.length === 0) {
+      setHasOlderMessages(false);
+      return;
+    }
+
+    const oldest = persistedMessages.reduce((candidate, item) => {
+      const candidateTime = new Date(candidate.created_at).getTime();
+      const itemTime = new Date(item.created_at).getTime();
+      if (itemTime !== candidateTime) return itemTime < candidateTime ? item : candidate;
+      return item.id < candidate.id ? item : candidate;
+    });
+
+    const viewport = scrollRef.current?.querySelector(
+      "[data-radix-scroll-area-viewport]",
+    ) as HTMLElement | null;
+    const previousHeight = viewport?.scrollHeight ?? 0;
+    const previousTop = viewport?.scrollTop ?? 0;
+
+    setIsLoadingOlderMessages(true);
+    try {
+      const { data, error } = await supabase.rpc(
+        "admin_get_telegram_messages_page_v2" as any,
+        {
+          p_user_id: userId,
+          p_before_created_at: oldest.created_at,
+          p_before_id: oldest.id,
+          p_limit: 100,
+        } as any,
+      );
+      if (error) throw error;
+
+      const older = mapRowsToMessages((data || []) as any[]);
+      queryClient.setQueryData(
+        ["telegram-messages", userId],
+        (current: TelegramMessage[] | undefined) =>
+          mergeByIdPreferEnriched(current || messages, older),
+      );
+      setHasOlderMessages(older.length === 100);
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!viewport) return;
+          viewport.scrollTop = previousTop + (viewport.scrollHeight - previousHeight);
+        });
+      });
+    } catch (error) {
+      toast.error("Не удалось загрузить предыдущие сообщения: " + formatChatError(error));
+    } finally {
+      setIsLoadingOlderMessages(false);
+    }
+  }, [isLoadingOlderMessages, messages, queryClient, userId]);
 
   // Fetch events from telegram_logs - optimized
   const { data: events, isLoading: eventsLoading, refetch: refetchEvents } = useQuery({
@@ -1838,6 +1903,23 @@ export function ContactTelegramChat({
               </div>
             ) : (
               <div className="space-y-3 px-3 w-full max-w-full box-border" data-testid="telegram-message-list">
+                {hasOlderMessages && (
+                  <div className="flex justify-center pb-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={loadOlderMessages}
+                      disabled={isLoadingOlderMessages}
+                      data-testid="telegram-load-older-messages"
+                    >
+                      {isLoadingOlderMessages && (
+                        <RefreshCw className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      )}
+                      Показать предыдущие сообщения
+                    </Button>
+                  </div>
+                )}
                 {chatItemsWithMeta.map(({ key, showDateSeparator, dateLabel, bubble }) => (
                   <div key={key}>
                     {showDateSeparator && (

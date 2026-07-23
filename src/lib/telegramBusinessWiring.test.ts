@@ -3,6 +3,7 @@ import webhookSource from "../../supabase/functions/telegram-webhook/index.ts?ra
 import botActionsSource from "../../supabase/functions/telegram-bot-actions/index.ts?raw";
 import adminChatSource from "../../supabase/functions/telegram-admin-chat/index.ts?raw";
 import migrationSource from "../../supabase/migrations/20260721183552_c27995d4-a65d-4202-b4aa-add4bd025ea1.sql?raw";
+import historyRbacMigrationSource from "../../supabase/migrations/20260723063657_contact_center_telegram_history_rbac.sql?raw";
 
 describe("Telegram Business contact-centre wiring", () => {
   it("subscribes and handles every Business update family", () => {
@@ -47,5 +48,26 @@ describe("Telegram Business contact-centre wiring", () => {
     expect(migrationSource).toContain("ENABLE ROW LEVEL SECURITY");
     expect(migrationSource).toContain("telegram_messages_business_dedupe_idx");
     expect(migrationSource).toContain("GRANT SELECT ON public.telegram_business_connections TO authenticated");
+  });
+
+  it("allows every contact-center viewer to read the complete Telegram history", () => {
+    expect(historyRbacMigrationSource).toContain(
+      "CREATE OR REPLACE FUNCTION public.admin_get_telegram_messages_fast_v1",
+    );
+    expect(historyRbacMigrationSource).toContain(
+      "CREATE OR REPLACE FUNCTION public.admin_get_telegram_messages_lean_v1",
+    );
+    expect(historyRbacMigrationSource).toContain(
+      "CREATE OR REPLACE FUNCTION public.admin_get_telegram_messages_page_v2",
+    );
+    expect(historyRbacMigrationSource).toContain(
+      "OR (m.created_at, m.id) < (p_before_created_at, p_before_id)",
+    );
+    expect(historyRbacMigrationSource.match(/public\.has_admin_section_access\(/g)).toHaveLength(3);
+    expect(historyRbacMigrationSource.match(/'communication'/g)).toHaveLength(3);
+    expect(historyRbacMigrationSource).toContain("'view'");
+    expect(historyRbacMigrationSource).not.toContain(
+      "public.has_role(auth.uid(), 'admin'::app_role)",
+    );
   });
 });
