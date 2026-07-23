@@ -80,6 +80,12 @@ interface Props {
 }
 
 const OWNER = "__deal_owner__";
+const DELAY_UNITS = [
+  { value: "minutes", label: "минуты", minutes: 1 },
+  { value: "hours", label: "часы", minutes: 60 },
+  { value: "days", label: "дни", minutes: 1440 },
+  { value: "weeks", label: "недели", minutes: 10080 },
+] as const;
 
 const CONDITION_FIELDS: Array<{ value: PipelineAutomationConditionField; label: string }> = [
   { value: "status", label: "Статус сделки" },
@@ -314,11 +320,12 @@ function RuleCard({
             </>
           ) : (
             <>
-              <ArrowRight className="h-3 w-3" /> после входа
+              <ArrowRight className="h-3 w-3" />
+              {rule.trigger_type === "after_event" ? "после входа" : "после входа"}
             </>
           )}
         </span>
-        {rule.trigger_type === "deal_entered_stage" && rule.delay_minutes > 0 && (
+        {rule.trigger_type !== "at_datetime" && rule.delay_minutes > 0 && (
           <span className="inline-flex items-center gap-1">
             <Clock3 className="h-3 w-3" /> через {rule.delay_minutes} мин
           </span>
@@ -458,6 +465,7 @@ export function PipelineAutomationSheet({
     "Здравствуйте, {{customer_name}}! Не удалось связаться по email. Пишем Вам по сделке {{deal_number}}.",
   );
   const [delayMinutes, setDelayMinutes] = useState(0);
+  const [delayUnit, setDelayUnit] = useState<(typeof DELAY_UNITS)[number]["value"]>("minutes");
   const [requireSameStage, setRequireSameStage] = useState(true);
   const [timezone, setTimezone] = useState("Europe/Warsaw");
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
@@ -523,6 +531,7 @@ export function PipelineAutomationSheet({
       "Здравствуйте, {{customer_name}}! Не удалось связаться по email. Пишем Вам по сделке {{deal_number}}.",
     );
     setDelayMinutes(0);
+    setDelayUnit("minutes");
     setRequireSameStage(true);
     setTimezone("Europe/Warsaw");
     setQuietHoursEnabled(false);
@@ -542,6 +551,16 @@ export function PipelineAutomationSheet({
     setErrorBranchDueHours(24);
   };
 
+  const selectTrigger = (value: PipelineAutomationTriggerType) => {
+    setTriggerType(value);
+    if (value === "after_event" && delayMinutes === 0) {
+      setDelayMinutes(60);
+      setDelayUnit("hours");
+    }
+  };
+
+  const delayUnitMinutes = DELAY_UNITS.find((unit) => unit.value === delayUnit)?.minutes ?? 1;
+
   const submit = () => {
     const emailTemplate = emailTemplates.find((template) => template.id === emailTemplateId);
     const fallbackEmailTemplate = emailTemplates.find(
@@ -549,6 +568,7 @@ export function PipelineAutomationSheet({
     );
     if (!pipeline || !selectedStageId || !name.trim()) return;
     if (triggerType === "at_datetime" && (!scheduledDate || !scheduledTime)) return;
+    if (triggerType === "after_event" && delayMinutes < 1) return;
     if (actionType === "create_task" && (!taskTypeId || !title.trim())) return;
     if (actionType === "send_email" && !emailTemplate) return;
     if (actionType === "send_telegram" && !telegramMessage.trim()) return;
@@ -588,7 +608,7 @@ export function PipelineAutomationSheet({
         assignee_user_id: assignee === OWNER ? null : assignee,
         due_offset_minutes: dueHours * 60,
         reminder_offset_minutes: null,
-        delay_minutes: triggerType === "deal_entered_stage" ? delayMinutes : 0,
+        delay_minutes: triggerType === "at_datetime" ? 0 : delayMinutes,
         require_same_stage: requireSameStage,
         timezone,
         quiet_hours_start: quietHoursEnabled ? quietHoursStart : null,
@@ -846,7 +866,7 @@ export function PipelineAutomationSheet({
                 <Label className="text-[11px]">Название правила</Label>
                 <Input value={name} onChange={(event) => setName(event.target.value)} className="h-9 rounded-xl text-xs" />
               </div>
-              <TriggerCatalogPicker value={triggerType} onChange={setTriggerType} />
+              <TriggerCatalogPicker value={triggerType} onChange={selectTrigger} />
               {triggerType === "at_datetime" && (
                 <div className="space-y-1.5 rounded-xl border border-primary/15 bg-primary/[0.035] p-3">
                   <Label className="text-[11px]">Когда запустить</Label>
@@ -1301,10 +1321,36 @@ export function PipelineAutomationSheet({
                   </div>
                 )}
               </div>
-              {triggerType === "deal_entered_stage" && <div className="space-y-1.5">
-                <Label className="text-[11px]">Запустить через, минут</Label>
-                <Input type="number" min={0} max={525600} value={delayMinutes} onChange={(event) => setDelayMinutes(Number(event.target.value))} className="h-9 rounded-xl text-xs" />
-                <p className="text-[10px] text-muted-foreground">0 — сразу после перехода в стадию</p>
+              {triggerType !== "at_datetime" && <div className="space-y-1.5">
+                <Label className="text-[11px]">
+                  {triggerType === "after_event" ? "Период после события" : "Запустить через"}
+                </Label>
+                <div className="grid grid-cols-[1fr_116px] gap-2">
+                  <Input
+                    type="number"
+                    min={triggerType === "after_event" ? 1 : 0}
+                    max={525600 / delayUnitMinutes}
+                    value={delayMinutes / delayUnitMinutes}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      if (Number.isFinite(next)) setDelayMinutes(Math.round(next * delayUnitMinutes));
+                    }}
+                    className="h-9 rounded-xl text-xs"
+                  />
+                  <Select value={delayUnit} onValueChange={(value) => setDelayUnit(value as typeof delayUnit)}>
+                    <SelectTrigger className="h-9 rounded-xl text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {DELAY_UNITS.map((unit) => (
+                        <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  {triggerType === "after_event"
+                    ? "Период отсчитывается с момента входа сделки в эту стадию"
+                    : "0 — сразу после перехода в стадию"}
+                </p>
               </div>}
               <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-border/30 bg-background/35 p-3">
                 <Checkbox

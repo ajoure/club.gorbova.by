@@ -3,7 +3,10 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
 export type PipelineAutomationStatus = "draft" | "active" | "paused" | "archived";
-export type PipelineAutomationTriggerType = "deal_entered_stage" | "at_datetime";
+export type PipelineAutomationTriggerType =
+  | "deal_entered_stage"
+  | "after_event"
+  | "at_datetime";
 
 export type PipelineAutomationConditionField =
   | "status"

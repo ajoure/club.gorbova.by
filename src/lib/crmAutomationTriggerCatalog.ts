@@ -90,8 +90,8 @@ export const CRM_AUTOMATION_TRIGGER_CATALOG: CrmAutomationTriggerDefinition[] = 
     id: "after_event",
     category: "calendar",
     title: "Через период после события",
-    description: "Запуск через минуты, часы, дни или недели после входа в стадию либо другого события.",
-    availability: "planned",
+    description: "В первой версии — запуск через период после входа сделки в выбранную стадию; новые события будут добавляться тем же контрактом.",
+    availability: "available",
     requiresSchedule: true,
   },
   {
