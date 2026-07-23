@@ -24,7 +24,6 @@ describe("CRM automation one-off date/time trigger", () => {
     );
     expect(CRM_AUTOMATION_TRIGGER_CATALOG).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "weekday", availability: "planned" }),
         expect.objectContaining({ id: "business_day", availability: "planned" }),
       ]),
     );

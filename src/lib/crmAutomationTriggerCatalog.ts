@@ -99,7 +99,7 @@ export const CRM_AUTOMATION_TRIGGER_CATALOG: CrmAutomationTriggerDefinition[] = 
     category: "calendar",
     title: "В день недели",
     description: "Повторяет запуск в выбранные дни недели в часовом поясе правила.",
-    availability: "planned",
+    availability: "available",
     requiresSchedule: true,
   },
   {

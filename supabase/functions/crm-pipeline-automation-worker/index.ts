@@ -116,6 +116,7 @@ Deno.serve(async (req: Request) => {
   const result = {
     ok: true,
     scheduled_rules_fired: 0,
+    recurring_rules_fired: 0,
     claimed: 0,
     succeeded: 0,
     skipped: 0,
@@ -133,6 +134,17 @@ Deno.serve(async (req: Request) => {
     });
   }
   result.scheduled_rules_fired = Number(scheduledRulesFired ?? 0);
+
+  const { data: recurringRulesFired, error: recurrenceError } = await supabase.rpc(
+    "crm_pipeline_automation_enqueue_due_weekdays_v12",
+  );
+  if (recurrenceError) {
+    return new Response(JSON.stringify({ ok: false, error: recurrenceError.message }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  result.recurring_rules_fired = Number(recurringRulesFired ?? 0);
 
   const { data: jobs, error: claimError } = await supabase.rpc(
     "crm_pipeline_automation_claim_jobs",

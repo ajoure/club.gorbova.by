@@ -6,6 +6,7 @@ export type PipelineAutomationStatus = "draft" | "active" | "paused" | "archived
 export type PipelineAutomationTriggerType =
   | "deal_entered_stage"
   | "after_event"
+  | "weekday"
   | "at_datetime";
 
 export type PipelineAutomationConditionField =
@@ -54,6 +55,8 @@ export interface PipelineAutomationRule {
   trigger_type: PipelineAutomationTriggerType;
   scheduled_local_at: string | null;
   scheduled_fired_at: string | null;
+  recurrence_weekdays: number[] | null;
+  recurrence_local_time: string | null;
   action_type: "create_task" | "send_email" | "send_telegram";
   task_type_id: string | null;
   title_template: string | null;
@@ -104,6 +107,8 @@ export interface CreatePipelineAutomationRule {
   name: string;
   trigger_type: PipelineAutomationTriggerType;
   scheduled_local_at?: string | null;
+  recurrence_weekdays?: number[] | null;
+  recurrence_local_time?: string | null;
   action_type: "create_task" | "send_email" | "send_telegram";
   task_type_id?: string | null;
   title_template?: string | null;
@@ -287,6 +292,10 @@ export function useCreatePipelineAutomationRule() {
           trigger_type: payload.trigger_type,
           scheduled_local_at:
             payload.trigger_type === "at_datetime" ? payload.scheduled_local_at : null,
+          recurrence_weekdays:
+            payload.trigger_type === "weekday" ? payload.recurrence_weekdays : null,
+          recurrence_local_time:
+            payload.trigger_type === "weekday" ? payload.recurrence_local_time : null,
           action_type: payload.action_type,
           email_template_id:
             payload.action_type === "send_email" ? payload.email_template_id : null,

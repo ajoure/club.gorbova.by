@@ -86,6 +86,10 @@ const DELAY_UNITS = [
   { value: "days", label: "дни", minutes: 1440 },
   { value: "weeks", label: "недели", minutes: 10080 },
 ] as const;
+const WEEKDAYS = [
+  { value: 1, label: "Пн" }, { value: 2, label: "Вт" }, { value: 3, label: "Ср" },
+  { value: 4, label: "Чт" }, { value: 5, label: "Пт" }, { value: 6, label: "Сб" }, { value: 7, label: "Вс" },
+];
 
 const CONDITION_FIELDS: Array<{ value: PipelineAutomationConditionField; label: string }> = [
   { value: "status", label: "Статус сделки" },
@@ -455,6 +459,8 @@ export function PipelineAutomationSheet({
   );
   const [scheduledDate, setScheduledDate] = useState<Date | undefined>();
   const [scheduledTime, setScheduledTime] = useState("09:00");
+  const [recurrenceWeekdays, setRecurrenceWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [recurrenceTime, setRecurrenceTime] = useState("09:00");
   const [emailTemplateId, setEmailTemplateId] = useState("");
   const [telegramMessage, setTelegramMessage] = useState(
     "Здравствуйте, {{customer_name}}! Пишем Вам по сделке {{deal_number}}.",
@@ -523,6 +529,8 @@ export function PipelineAutomationSheet({
     setTriggerType("deal_entered_stage");
     setScheduledDate(undefined);
     setScheduledTime("09:00");
+    setRecurrenceWeekdays([1, 2, 3, 4, 5]);
+    setRecurrenceTime("09:00");
     setTelegramMessage(
       "Здравствуйте, {{customer_name}}! Пишем Вам по сделке {{deal_number}}.",
     );
@@ -569,6 +577,7 @@ export function PipelineAutomationSheet({
     if (!pipeline || !selectedStageId || !name.trim()) return;
     if (triggerType === "at_datetime" && (!scheduledDate || !scheduledTime)) return;
     if (triggerType === "after_event" && delayMinutes < 1) return;
+    if (triggerType === "weekday" && (!recurrenceWeekdays.length || !recurrenceTime)) return;
     if (actionType === "create_task" && (!taskTypeId || !title.trim())) return;
     if (actionType === "send_email" && !emailTemplate) return;
     if (actionType === "send_telegram" && !telegramMessage.trim()) return;
@@ -600,6 +609,8 @@ export function PipelineAutomationSheet({
           triggerType === "at_datetime" && scheduledDate
             ? `${format(scheduledDate, "yyyy-MM-dd")} ${scheduledTime}:00`
             : null,
+        recurrence_weekdays: triggerType === "weekday" ? recurrenceWeekdays : null,
+        recurrence_local_time: triggerType === "weekday" ? recurrenceTime : null,
         action_type: actionType,
         task_type_id: actionType === "create_task" ? taskTypeId : null,
         title_template: actionType === "create_task" ? title : null,
@@ -858,6 +869,8 @@ export function PipelineAutomationSheet({
               <p className="mt-1 text-[11px] text-muted-foreground">
                 {triggerType === "at_datetime"
                   ? "Один раз для сделок, которые находятся в этой стадии в выбранный момент"
+                  : triggerType === "weekday"
+                    ? "Повтор для сделок, которые находятся в этой стадии в выбранные дни"
                   : "После перехода сделки в стадию"}
               </p>
             </div>
@@ -880,6 +893,19 @@ export function PipelineAutomationSheet({
                   <p className="text-[10px] leading-4 text-muted-foreground">
                     Используется единый календарь CRM. Точное время обязательно; правило применится к текущим сделкам выбранной стадии.
                   </p>
+                </div>
+              )}
+              {triggerType === "weekday" && (
+                <div className="space-y-2 rounded-xl border border-primary/15 bg-primary/[0.035] p-3">
+                  <Label className="text-[11px]">Повторять по дням</Label>
+                  <div className="grid grid-cols-7 gap-1">
+                    {WEEKDAYS.map((day) => {
+                      const selected = recurrenceWeekdays.includes(day.value);
+                      return <button key={day.value} type="button" onClick={() => setRecurrenceWeekdays((current) => selected ? current.filter((item) => item !== day.value) : [...current, day.value].sort())} className={cn("h-8 rounded-lg border text-[10px] transition", selected ? "border-primary/30 bg-primary/10 text-primary" : "border-border/30 bg-background/40 text-muted-foreground hover:border-primary/20")}>{day.label}</button>;
+                    })}
+                  </div>
+                  <div className="flex items-center gap-2"><Label className="shrink-0 text-[10px] text-muted-foreground">Время</Label><Input type="time" value={recurrenceTime} onChange={(event) => setRecurrenceTime(event.target.value)} className="h-8 rounded-lg text-xs" /></div>
+                  <p className="text-[10px] leading-4 text-muted-foreground">Для сделок, которые находятся в этой стадии в момент запуска. Время — в часовом поясе правила.</p>
                 </div>
               )}
               <div className="space-y-1.5">
@@ -1321,7 +1347,7 @@ export function PipelineAutomationSheet({
                   </div>
                 )}
               </div>
-              {triggerType !== "at_datetime" && <div className="space-y-1.5">
+              {triggerType !== "at_datetime" && triggerType !== "weekday" && <div className="space-y-1.5">
                 <Label className="text-[11px]">
                   {triggerType === "after_event" ? "Период после события" : "Запустить через"}
                 </Label>
