@@ -6,6 +6,12 @@ import {
 const source = await Deno.readTextFile(
   new URL("./index.ts", import.meta.url),
 );
+const autoProcessSource = await Deno.readTextFile(
+  new URL("../bepaid-auto-process/index.ts", import.meta.url),
+);
+const queueCronSource = await Deno.readTextFile(
+  new URL("../bepaid-queue-cron/index.ts", import.meta.url),
+);
 
 Deno.test("recurring bePaid tracking IDs use the shared parser", () => {
   assertStringIncludes(source, "parseBepaidTrackingId(item.tracking_id).orderId");
@@ -20,4 +26,16 @@ Deno.test("queue completion is blocked until payments_v2 is persisted", () => {
   assert(writer >= 0, "canonical payments_v2 upsert is required");
   assert(verification > writer, "persistence verification must follow the write");
   assert(completion > verification, "queue may complete only after persistence verification");
+});
+
+Deno.test("bePaid auto-process verifies payments_v2 before completing queue", () => {
+  assertStringIncludes(autoProcessSource, "await ensureCanonicalPayment(");
+  assertStringIncludes(autoProcessSource, "payments_v2 verification failed:");
+  assert(!autoProcessSource.includes("await supabase.from('payments_v2').insert({"));
+});
+
+Deno.test("queue cron forwards its internal credential and supports exact recovery", () => {
+  assertStringIncludes(queueCronSource, 'headers: { "x-internal-key": cronSecret }');
+  assertStringIncludes(queueCronSource, 'query = query.eq("id", queueItemId)');
+  assertStringIncludes(queueCronSource, "queueItemId ? 1 : batchSize");
 });
