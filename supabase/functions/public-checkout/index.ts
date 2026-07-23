@@ -7,6 +7,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { resolveProviderChoice, isValidProviderChoice, type CustomerProvider } from '../_shared/resolve-provider-choice.ts';
+import { materializeComposableOrderGroup } from '../_shared/materialize-composable-order-group.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -461,24 +462,21 @@ Deno.serve(async (req) => {
 
     let orderGroupId: string | null = null;
     if (composableCheckout && Array.isArray(composableCheckout.items) && composableCheckout.items.length > 0) {
-      const { data: groupId, error: groupError } = await supabase.rpc(
-        'materialize_composable_order_group',
-        {
-          _primary_order_id: result.order_id,
-          _quote: composableCheckout,
-          _source: 'admin_payment_link',
-          _idempotency_key: `payment_link:${link.id}:order:${result.order_id}`,
-        },
-      );
-      if (groupError || !groupId) {
+      try {
+        orderGroupId = await materializeComposableOrderGroup(supabase, {
+          primaryOrderId: result.order_id,
+          quote: composableCheckout,
+          source: 'admin_payment_link',
+          idempotencyKey: `payment_link:${link.id}:order:${result.order_id}`,
+        });
+      } catch (groupError) {
         console.error('[public-checkout] composable group materialization failed', {
           payment_link_id: link.id,
           order_id: result.order_id,
-          error: groupError?.message,
+          error: (groupError as Error).message,
         });
         return errorResponse('composable_order_materialization_failed', 500);
       }
-      orderGroupId = groupId as string;
       await supabase.from('payment_links').update({ order_group_id: orderGroupId }).eq('id', link.id);
     }
 

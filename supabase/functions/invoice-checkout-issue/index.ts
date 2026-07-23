@@ -34,6 +34,11 @@ import {
   SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { resolveOfferRouting } from "../_shared/crm-routing.ts";
+import {
+  ComposableCheckoutError,
+  resolveComposableCheckout,
+} from "../_shared/resolve-composable-checkout.ts";
+import { materializeComposableOrderGroup } from "../_shared/materialize-composable-order-group.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -52,6 +57,7 @@ function json(body: unknown, status = 200) {
 interface IssueBody {
   product_id: string;
   offer_id: string;
+  addon_offer_ids?: string[];
   legal_details_id?: string;
   requisites_id?: string; // legacy alias
 }
@@ -123,6 +129,23 @@ Deno.serve(async (req) => {
   const legalDetailsId = body.legal_details_id || body.requisites_id;
   if (!body?.product_id || !body?.offer_id || !legalDetailsId) {
     return json({ error: "missing_fields" }, 400);
+  }
+
+  let composableQuote;
+  try {
+    composableQuote = await resolveComposableCheckout(admin, {
+      parentOfferId: body.offer_id,
+      addonOfferIds: body.addon_offer_ids ?? [],
+    });
+  } catch (error) {
+    if (error instanceof ComposableCheckoutError) {
+      return json({ error: error.code }, error.status);
+    }
+    return json({ error: "quote_failed" }, 500);
+  }
+  const primaryQuoteItem = composableQuote.items[0];
+  if (primaryQuoteItem.product_id !== body.product_id) {
+    return json({ error: "quote_product_mismatch" }, 400);
   }
 
   // 1. Профиль пользователя (profiles.user_id = auth.user.id).
@@ -201,12 +224,26 @@ Deno.serve(async (req) => {
       requisites: requisitesSnapshot,
       captured_at: new Date().toISOString(),
     },
+    composable_checkout: composableQuote,
     // Подсказка для canonical-document-generate-strict: он умеет брать
     // client_legal_details по _provenance.customer_legal_details_id.
     document_data: {
+      service_name: composableQuote.items.map((item) =>
+        [item.product_name, item.tariff_name].filter(Boolean).join(" — ")
+      ).join("; "),
+      unit: "комплект",
+      quantity: 1,
+      unit_price: composableQuote.total,
+      amount: composableQuote.total,
+      currency: composableQuote.currency,
+      line_items: composableQuote.items,
+      subtotal: composableQuote.subtotal,
+      adjustment_amount: composableQuote.adjustment_amount,
+      adjustment_reason: composableQuote.adjustment_reason,
       _provenance: {
         customer_legal_details_id: ld.id,
         source: "invoice_checkout",
+        service_name_source: "composable_checkout",
       },
     },
   };
@@ -219,9 +256,9 @@ Deno.serve(async (req) => {
     product_id: product.id,
     tariff_id: tariff.id,
     offer_id: offer.id,
-    base_price: offer.amount ?? 0,
-    final_price: offer.amount ?? 0,
-    currency: product.currency || "BYN",
+    base_price: composableQuote.subtotal,
+    final_price: composableQuote.total,
+    currency: composableQuote.currency || product.currency || "BYN",
     status: "draft",
     payer_type: payerType,
     customer_email: profile.email,
@@ -242,6 +279,28 @@ Deno.serve(async (req) => {
     return json({ error: "create_order_failed", message: orderErr?.message }, 500);
   }
 
+  let orderGroupId: string | null = null;
+  if (composableQuote.items.length > 1 || composableQuote.adjustment_amount !== 0) {
+    try {
+      orderGroupId = await materializeComposableOrderGroup(admin, {
+        primaryOrderId: newOrder.id,
+        quote: composableQuote,
+        source: "invoice_checkout",
+        idempotencyKey: `invoice:${newOrder.id}`,
+      });
+    } catch (error) {
+      await admin.from("orders_v2").update({
+        status: "cancelled",
+        meta: {
+          ...orderMeta,
+          composable_materialization_error: (error as Error).message,
+          manual_review_required: true,
+        },
+      }).eq("id", newOrder.id);
+      return json({ error: "composable_order_materialization_failed" }, 500);
+    }
+  }
+
   // 7. Аудит.
   await admin.from("audit_logs").insert({
     actor_user_id: user.id,
@@ -255,6 +314,9 @@ Deno.serve(async (req) => {
       product_id: product.id,
       legal_details_id: ld.id,
       payer_type: payerType,
+      order_group_id: orderGroupId,
+      quote_total: composableQuote.total,
+      quote_items_count: composableQuote.items.length,
       routing_ok: routing.ok,
       routing_reason: routing.ok ? null : (routing as any).reason,
     },
@@ -377,6 +439,7 @@ Deno.serve(async (req) => {
 
   return json({
     order_id: newOrder.id,
+    order_group_id: orderGroupId,
     order_number: newOrder.order_number,
     invoice_number: invoiceNumber,
     document_id: documentId,
@@ -387,4 +450,3 @@ Deno.serve(async (req) => {
     telegram_sent: telegramSent,
   });
 });
-

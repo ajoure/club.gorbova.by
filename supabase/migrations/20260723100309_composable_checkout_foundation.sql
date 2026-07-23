@@ -36,6 +36,9 @@ CREATE TABLE public.offer_addons (
 CREATE INDEX offer_addons_parent_active_idx
   ON public.offer_addons(parent_offer_id, sort_order)
   WHERE is_active;
+CREATE INDEX offer_addons_product_idx ON public.offer_addons(addon_product_id);
+CREATE INDEX offer_addons_tariff_idx ON public.offer_addons(addon_tariff_id);
+CREATE INDEX offer_addons_offer_idx ON public.offer_addons(addon_offer_id);
 
 CREATE TABLE public.order_groups (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -63,6 +66,11 @@ CREATE TABLE public.order_groups (
 
 CREATE INDEX order_groups_profile_created_idx
   ON public.order_groups(profile_id, created_at DESC);
+CREATE INDEX order_groups_user_created_idx ON public.order_groups(user_id, created_at DESC);
+CREATE INDEX order_groups_primary_order_idx ON public.order_groups(primary_order_id)
+  WHERE primary_order_id IS NOT NULL;
+CREATE INDEX order_groups_created_by_idx ON public.order_groups(created_by)
+  WHERE created_by IS NOT NULL;
 
 CREATE TABLE public.order_group_items (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -84,6 +92,9 @@ CREATE TABLE public.order_group_items (
 
 CREATE INDEX order_group_items_group_idx ON public.order_group_items(order_group_id, sort_order);
 CREATE INDEX order_group_items_order_idx ON public.order_group_items(order_id) WHERE order_id IS NOT NULL;
+CREATE INDEX order_group_items_product_idx ON public.order_group_items(product_id);
+CREATE INDEX order_group_items_tariff_idx ON public.order_group_items(tariff_id);
+CREATE INDEX order_group_items_offer_idx ON public.order_group_items(offer_id);
 
 CREATE TABLE public.payment_allocations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -99,9 +110,13 @@ CREATE TABLE public.payment_allocations (
 );
 
 CREATE INDEX payment_allocations_group_idx ON public.payment_allocations(order_group_id);
+CREATE INDEX payment_allocations_payment_idx ON public.payment_allocations(payment_id);
+CREATE INDEX payment_allocations_item_idx ON public.payment_allocations(order_group_item_id);
 
 ALTER TABLE public.payment_links
   ADD COLUMN IF NOT EXISTS order_group_id uuid REFERENCES public.order_groups(id) ON DELETE SET NULL;
+CREATE INDEX payment_links_order_group_idx ON public.payment_links(order_group_id)
+  WHERE order_group_id IS NOT NULL;
 
 ALTER TABLE public.offer_addons ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.order_groups ENABLE ROW LEVEL SECURITY;
@@ -112,6 +127,7 @@ CREATE POLICY offer_addons_staff_select ON public.offer_addons
   FOR SELECT TO authenticated
   USING (
     public.has_role_v2((SELECT auth.uid()), 'manager')
+    OR public.has_role_v2((SELECT auth.uid()), 'menedzher')
     OR public.has_role_v2((SELECT auth.uid()), 'admin')
     OR public.has_role_v2((SELECT auth.uid()), 'super_admin')
   );
@@ -143,6 +159,7 @@ CREATE POLICY order_groups_owner_select ON public.order_groups
   USING (
     user_id = (SELECT auth.uid())
     OR public.has_role_v2((SELECT auth.uid()), 'manager')
+    OR public.has_role_v2((SELECT auth.uid()), 'menedzher')
     OR public.has_role_v2((SELECT auth.uid()), 'admin')
     OR public.has_role_v2((SELECT auth.uid()), 'super_admin')
   );
@@ -155,6 +172,7 @@ CREATE POLICY order_group_items_owner_select ON public.order_group_items
         AND (
           g.user_id = (SELECT auth.uid())
           OR public.has_role_v2((SELECT auth.uid()), 'manager')
+          OR public.has_role_v2((SELECT auth.uid()), 'menedzher')
           OR public.has_role_v2((SELECT auth.uid()), 'admin')
           OR public.has_role_v2((SELECT auth.uid()), 'super_admin')
         )
@@ -164,6 +182,7 @@ CREATE POLICY payment_allocations_staff_select ON public.payment_allocations
   FOR SELECT TO authenticated
   USING (
     public.has_role_v2((SELECT auth.uid()), 'manager')
+    OR public.has_role_v2((SELECT auth.uid()), 'menedzher')
     OR public.has_role_v2((SELECT auth.uid()), 'admin')
     OR public.has_role_v2((SELECT auth.uid()), 'super_admin')
   );
@@ -206,9 +225,11 @@ BEGIN
   IF jsonb_typeof(_quote->'items') <> 'array' OR jsonb_array_length(_quote->'items') < 1 THEN
     RAISE EXCEPTION 'quote_items_required';
   END IF;
-
-  SELECT id INTO v_group_id FROM public.order_groups WHERE idempotency_key = _idempotency_key;
-  IF v_group_id IS NOT NULL THEN RETURN v_group_id; END IF;
+  IF ((_quote->'items'->0->>'product_id')::uuid IS DISTINCT FROM v_primary.product_id)
+     OR ((_quote->'items'->0->>'tariff_id')::uuid IS DISTINCT FROM v_primary.tariff_id)
+     OR ((_quote->'items'->0->>'offer_id')::uuid IS DISTINCT FROM v_primary.offer_id) THEN
+    RAISE EXCEPTION 'primary_quote_order_mismatch';
+  END IF;
 
   INSERT INTO public.order_groups (
     group_number, profile_id, user_id, primary_order_id, payer_type, status,
@@ -225,7 +246,15 @@ BEGIN
     NULLIF(_quote->>'adjustment_reason', ''),
     v_primary.meta->>'payment_method', _source, _idempotency_key, _quote,
     jsonb_build_object('single_crm_deal', true, 'separate_entitlements', true)
-  ) RETURNING id INTO v_group_id;
+  )
+  ON CONFLICT (idempotency_key) DO NOTHING
+  RETURNING id INTO v_group_id;
+  IF v_group_id IS NULL THEN
+    SELECT id INTO v_group_id
+    FROM public.order_groups
+    WHERE idempotency_key = _idempotency_key;
+    RETURN v_group_id;
+  END IF;
 
   FOR v_item IN SELECT value FROM jsonb_array_elements(_quote->'items')
   LOOP

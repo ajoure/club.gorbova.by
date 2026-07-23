@@ -262,23 +262,41 @@ export async function snapshotOrderDocumentData(
       return null;
     };
 
-    const liveAmount = order.final_price != null ? Number(order.final_price) : null;
+    const composableCheckout = orderMetaAny?.composable_checkout &&
+        Array.isArray(orderMetaAny.composable_checkout.items)
+      ? orderMetaAny.composable_checkout
+      : null;
+    const composableItems = composableCheckout?.items ?? [];
+    const composableServiceName = composableItems.length > 0
+      ? composableItems.map((item: any) =>
+        [item.product_name, item.tariff_name].filter(Boolean).join(' — ')
+      ).filter(Boolean).join('; ')
+      : null;
+    const composableTotal = composableCheckout?.total != null &&
+        Number.isFinite(Number(composableCheckout.total))
+      ? Number(composableCheckout.total)
+      : null;
+    const liveAmount = composableTotal ??
+      (order.final_price != null ? Number(order.final_price) : null);
     const liveCurrencyRaw = order.currency || pick<string>('currency') || 'BYN';
     const normCurrency = normalizeCurrency(liveCurrencyRaw) === 'UNKNOWN'
       ? liveCurrencyRaw
       : normalizeCurrency(liveCurrencyRaw);
 
-    const overrideAmount = offerDefaults?.amount_manual_override === true
+    const overrideAmount = !composableCheckout &&
+        offerDefaults?.amount_manual_override === true
       ? (offerDefaults?.amount ?? null)
       : null;
     const amount = overrideAmount != null ? Number(overrideAmount) : liveAmount;
 
     const quantity = (() => {
+      if (composableCheckout) return 1;
       const q = pick<number>('quantity');
       return q != null && Number(q) > 0 ? Number(q) : 1;
     })();
 
     const unitPrice = (() => {
+      if (composableCheckout && amount != null) return amount;
       const u = pick<number>('unit_price');
       if (u != null && Number(u) > 0) return Number(u);
       if (amount != null && quantity > 0) return Number((amount / quantity).toFixed(2));
@@ -456,9 +474,9 @@ export async function snapshotOrderDocumentData(
       },
       template_id: finalTemplateId,
       executor_id: explicitExecutorIdLayered,
-      service_name: pick<string>('service_name'),
+      service_name: composableServiceName || pick<string>('service_name'),
       service_description: pick<string>('service_description'),
-      unit: pick<string>('unit') || 'услуга',
+      unit: composableCheckout ? 'комплект' : (pick<string>('unit') || 'услуга'),
       quantity,
       unit_price: unitPrice,
       amount,
@@ -478,6 +496,11 @@ export async function snapshotOrderDocumentData(
       bank_credit_price: pick<number>('bank_credit_price') ?? amount,
       final_payment: pick<number>('final_payment') ?? 0,
       comment: pick<string>('comment') ?? null,
+      line_items: composableItems,
+      line_items_text: composableServiceName,
+      subtotal: composableCheckout?.subtotal ?? amount,
+      adjustment_amount: composableCheckout?.adjustment_amount ?? 0,
+      adjustment_reason: composableCheckout?.adjustment_reason ?? null,
       // Sprint A — payment.* SOT block (read-only snapshot of succeeded payments_v2 row).
       payment: paymentBlock,
       _provenance: {
@@ -521,7 +544,8 @@ export async function snapshotOrderDocumentData(
         // понять, какие тарифы упали на product.name-фоллбэк и требуют
         // заполнения document_defaults.service_name в кнопке.
         service_name_source:
-          (offerDefaults?.service_name ? 'offer'
+          (composableServiceName ? 'composable_checkout'
+            : offerDefaults?.service_name ? 'offer'
             : tariffDefaults?.service_name ? 'tariff'
             : productDefaults?.service_name ? 'product'
             : (productRow?.name ? 'fallback_product_name' : 'empty')),
