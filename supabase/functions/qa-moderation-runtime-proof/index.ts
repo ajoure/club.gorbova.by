@@ -24,8 +24,8 @@
  *
  * Security
  * --------
- * - Hard-coded for QA accounts only; refuses to run if target user is
- *   not a known QA account (qa_account flag in profiles).
+ * - Restricted to a super_admin caller and the QA kill-switch.
+ * - The QA password exists only as an Edge Function secret, never in source.
  * - Service-role key is read from env, never from request.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -38,8 +38,6 @@ const corsHeaders = {
 
 const LIVE_EVENT_ID = "1514525a-e693-4791-93c7-8f00ff76fe40";
 const QA_USER_EMAIL = "qa.user@gorbova.test";
-const QA_USER_PASSWORD = "QaUser!2026";
-const QA_ADMIN_USER_ID_FALLBACK = "913bc4cf-c68c-4a1b-a98d-adf778ef02d1";
 
 interface StepResult {
   step: string;
@@ -56,8 +54,47 @@ Deno.serve(async (req: Request) => {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
-
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
+
+  // The gateway JWT setting is not a sufficient authorization boundary for a
+  // service-role QA endpoint. Verify the caller and role in code first.
+  const authHeader = req.headers.get("Authorization") ?? "";
+  if (!authHeader.startsWith("Bearer ")) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  const token = authHeader.replace("Bearer ", "");
+  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+    global: { headers: { Authorization: authHeader } },
+  });
+  const { data: claims, error: claimsErr } = await userClient.auth.getClaims(token);
+  if (claimsErr || !claims?.claims?.sub) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  const callerId = claims.claims.sub as string;
+
+  const { data: isSuper } = await admin.rpc("has_role_v2", {
+    _user_id: callerId,
+    _role_code: "super_admin",
+  });
+  if (!isSuper) {
+    return json({ error: "forbidden_not_super_admin" }, 403);
+  }
+
+  const { data: flag } = await admin
+    .from("app_settings")
+    .select("value")
+    .eq("key", "qa_test_helper_enabled")
+    .maybeSingle();
+  const enabled = flag?.value === true || (flag?.value as unknown) === "true";
+  if (!enabled) {
+    return json({ error: "helper_disabled" }, 403);
+  }
+
+  const qaUserPassword = Deno.env.get("QA_MODERATION_PROOF_PASSWORD");
+  if (!qaUserPassword) {
+    return json({ error: "qa_proof_password_not_configured" }, 503);
+  }
+
   const steps: StepResult[] = [];
   const insertedCommentIds: string[] = [];
 
@@ -80,7 +117,7 @@ Deno.serve(async (req: Request) => {
   const { data: signIn, error: signInErr } =
     await userClientForLogin.auth.signInWithPassword({
       email: QA_USER_EMAIL,
-      password: QA_USER_PASSWORD,
+      password: qaUserPassword,
     });
   if (signInErr || !signIn?.session) {
     steps.push({ step: "sign_in", ok: false, error: signInErr?.message });
@@ -130,7 +167,7 @@ Deno.serve(async (req: Request) => {
         user_id: qaUserId,
         action_type: actionType,
         reason: `qa-proof: ${actionType}`,
-        created_by: QA_ADMIN_USER_ID_FALLBACK,
+        created_by: callerId,
       });
     steps.push({
       step: label,
@@ -216,3 +253,10 @@ Deno.serve(async (req: Request) => {
     },
   );
 });
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
