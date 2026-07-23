@@ -276,7 +276,9 @@ async function getHistory(supabase: any, body: any) {
     .from('instagram_messages')
     .select('*')
     .eq('instagram_account_id', instagram_account_id)
-    .order('created_at', { ascending: true })
+    // Page from newest to oldest so offset=0 always contains the live tail.
+    // Reverse before returning to preserve the chat's chronological rendering.
+    .order('created_at', { ascending: false })
     .range(offset, offset + lim - 1);
 
   if (thread_id) {
@@ -288,7 +290,12 @@ async function getHistory(supabase: any, body: any) {
   const { data, error } = await query;
   if (error) throw error;
 
-  return new Response(JSON.stringify({ messages: data }), {
+  const page = [...(data || [])].reverse();
+  return new Response(JSON.stringify({
+    messages: page,
+    has_more: page.length === lim,
+    next_offset: offset + page.length,
+  }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 }

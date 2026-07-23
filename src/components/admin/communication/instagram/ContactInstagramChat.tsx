@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
@@ -43,6 +43,15 @@ interface ContactInstagramChatProps {
   hideHeader?: boolean;
 }
 
+function mergeInstagramMessages(current: Message[] | undefined, incoming: Message[]) {
+  const byId = new Map<string, Message>();
+  for (const item of current || []) byId.set(item.id, item);
+  for (const item of incoming) byId.set(item.id, { ...byId.get(item.id), ...item });
+  return Array.from(byId.values()).sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  );
+}
+
 export function ContactInstagramChat({
   accountId,
   senderId,
@@ -56,10 +65,16 @@ export function ContactInstagramChat({
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const didInitialScrollRef = useRef(false);
+  const shouldStickToBottomRef = useRef(true);
+
+  const chatQueryKey = ["instagram-chat", accountId, senderId, threadId] as const;
 
   const { data: messages, isLoading } = useQuery({
-    queryKey: ["instagram-chat", accountId, senderId, threadId],
+    queryKey: chatQueryKey,
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke("instagram-admin-chat", {
         body: {
@@ -71,10 +86,58 @@ export function ContactInstagramChat({
         },
       });
       if (error) throw error;
-      return (data.messages || []) as Message[];
+      setHasOlderMessages(Boolean(data?.has_more));
+      const latest = (data.messages || []) as Message[];
+      // A safety refetch must not discard history pages already loaded by the
+      // operator. Merge the live tail into the existing cache instead.
+      return mergeInstagramMessages(
+        queryClient.getQueryData<Message[]>(chatQueryKey),
+        latest,
+      );
     },
-    refetchInterval: 10000,
+    refetchInterval: 60_000,
   });
+
+  useEffect(() => {
+    didInitialScrollRef.current = false;
+    shouldStickToBottomRef.current = true;
+    setHasOlderMessages(true);
+    setLoadingOlder(false);
+  }, [accountId, senderId, threadId]);
+
+  const loadOlderMessages = async () => {
+    if (loadingOlder || !messages?.length) return;
+    const viewport = scrollRef.current;
+    const previousHeight = viewport?.scrollHeight ?? 0;
+    const previousTop = viewport?.scrollTop ?? 0;
+    setLoadingOlder(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("instagram-admin-chat", {
+        body: {
+          action: "get_history",
+          instagram_account_id: accountId,
+          sender_id: senderId,
+          thread_id: threadId,
+          limit: 100,
+          offset: messages.length,
+        },
+      });
+      if (error) throw error;
+      const older = (data?.messages || []) as Message[];
+      queryClient.setQueryData<Message[]>(chatQueryKey, (current) =>
+        mergeInstagramMessages(current, older),
+      );
+      setHasOlderMessages(Boolean(data?.has_more));
+      requestAnimationFrame(() => {
+        if (!viewport) return;
+        viewport.scrollTop = previousTop + (viewport.scrollHeight - previousHeight);
+      });
+    } catch (error: any) {
+      toast.error("Не удалось загрузить предыдущие сообщения: " + (error?.message || "ошибка"));
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   // Realtime
   useEffect(() => {
@@ -91,7 +154,11 @@ export function ContactInstagramChat({
         (payload) => {
           const msg = payload.new as any;
           if (msg?.peer_id === senderId) {
-            queryClient.invalidateQueries({ queryKey: ["instagram-chat", accountId, senderId, threadId] });
+            queryClient.setQueryData<Message[]>(chatQueryKey, (current) =>
+              mergeInstagramMessages(current, [msg as Message]),
+            );
+            queryClient.invalidateQueries({ queryKey: ["instagram-dialogs"] });
+            queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
           }
         }
       )
@@ -106,7 +173,11 @@ export function ContactInstagramChat({
         (payload) => {
           const msg = payload.new as any;
           if (msg?.peer_id === senderId) {
-            queryClient.invalidateQueries({ queryKey: ["instagram-chat", accountId, senderId, threadId] });
+            queryClient.setQueryData<Message[]>(chatQueryKey, (current) =>
+              mergeInstagramMessages(current, [msg as Message]),
+            );
+            queryClient.invalidateQueries({ queryKey: ["instagram-dialogs"] });
+            queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
           }
         }
       )
@@ -115,12 +186,29 @@ export function ContactInstagramChat({
     return () => { supabase.removeChannel(channel); };
   }, [accountId, senderId, threadId, queryClient]);
 
-  // Auto-scroll
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  // Initial open lands at the live tail. Later updates follow only while the
+  // operator remains near the bottom; reading older messages is never hijacked.
+  useLayoutEffect(() => {
+    const viewport = scrollRef.current;
+    if (!viewport || isLoading) return;
+    const nearBottom =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 160;
+    if (!didInitialScrollRef.current || (shouldStickToBottomRef.current && nearBottom)) {
+      viewport.scrollTop = viewport.scrollHeight;
+      didInitialScrollRef.current = true;
     }
-  }, [messages]);
+  }, [messages?.length, isLoading]);
+
+  useEffect(() => {
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+    const onScroll = () => {
+      shouldStickToBottomRef.current =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 160;
+    };
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, [accountId, senderId, threadId]);
 
   const handleSend = async () => {
     if (!message.trim() || sending) return;
@@ -248,7 +336,23 @@ export function ContactInstagramChat({
         ) : !messages?.length ? (
           <p className="text-center text-xs text-muted-foreground">Нет сообщений</p>
         ) : (
-          messages.map((msg) => {
+          <>
+            {hasOlderMessages && (
+              <div className="flex justify-center pb-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={loadOlderMessages}
+                  disabled={loadingOlder}
+                  data-testid="instagram-load-older-messages"
+                >
+                  {loadingOlder && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                  Показать предыдущие сообщения
+                </Button>
+              </div>
+            )}
+            {messages.map((msg) => {
             // P5/P6: media resolution с legacy repair на render-layer.
             // Если media_url пуст, но message_text — это URL вложения (legacy записи),
             // лечим прямо здесь, БЕЗ изменения БД.
@@ -300,8 +404,9 @@ export function ContactInstagramChat({
                   {renderStatusBadge(msg)}
                 </div>
               </div>
-            );
-          })
+              );
+            })}
+          </>
         )}
       </div>
 

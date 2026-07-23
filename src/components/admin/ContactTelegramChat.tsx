@@ -1647,12 +1647,19 @@ export function ContactTelegramChat({
       bottomRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
     };
 
-    // 1) Sticky-loop первые 1.5 секунды: на КАЖДЫЙ кадр прижимаем к низу,
-    //    пока контент (картинки, события, медиа) догружается и меняет высоту.
-    //    Это самый надёжный способ — даже если ResizeObserver/onload не сработает,
-    //    rAF-цикл всё равно поймает рост высоты.
+    // 1) Пока первая раскладка и медиа догружаются, держим ленту у конца.
+    // Любой явный жест пользователя немедленно отменяет автопрокрутку:
+    // интерфейс не должен "отбирать" скролл в первые секунды после открытия.
     let stickyActive = !didInitialScrollRef.current;
     const stickyDeadline = performance.now() + 1500;
+    const releaseInitialPin = () => {
+      stickyActive = false;
+      didInitialScrollRef.current = true;
+      shouldStickToBottomRef.current = false;
+    };
+    viewport.addEventListener("wheel", releaseInitialPin, { passive: true });
+    viewport.addEventListener("touchstart", releaseInitialPin, { passive: true });
+    viewport.addEventListener("pointerdown", releaseInitialPin, { passive: true });
     const stickyLoop = () => {
       if (!stickyActive) return;
       pinToBottom();
@@ -1723,6 +1730,9 @@ export function ContactTelegramChat({
 
     return () => {
       stickyActive = false;
+      viewport.removeEventListener("wheel", releaseInitialPin);
+      viewport.removeEventListener("touchstart", releaseInitialPin);
+      viewport.removeEventListener("pointerdown", releaseInitialPin);
       ro.disconnect();
       mo.disconnect();
     };
@@ -1740,7 +1750,13 @@ export function ContactTelegramChat({
       const near =
         viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 200;
       setIsNearBottomState(near);
-      if (near) setUnreadCount(0);
+      if (near) {
+        setUnreadCount(0);
+      } else {
+        // A manual scroll away from the end always wins over any active
+        // sticky loop started by realtime/media updates.
+        shouldStickToBottomRef.current = false;
+      }
     };
 
     onScroll();
