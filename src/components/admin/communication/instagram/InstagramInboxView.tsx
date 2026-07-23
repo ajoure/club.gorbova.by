@@ -21,6 +21,7 @@ import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { resolveInstagramAccountDisplayName } from "@/lib/resolveInstagramSourceLabel";
+import { sanitizeExternalDisplayName } from "@/lib/sanitizeExternalDisplayName";
 
 interface InstagramDialog {
   thread_key: string;
@@ -246,7 +247,10 @@ export function InstagramInboxView() {
 
 
   const getDisplayName = (d: InstagramDialog) =>
-    d.full_name || d.sender_name || d.instagram_username || d.peer_id;
+    sanitizeExternalDisplayName(d.full_name) ||
+    sanitizeExternalDisplayName(d.sender_name) ||
+    sanitizeExternalDisplayName(d.instagram_username) ||
+    d.peer_id;
 
   if (!accounts || accounts.length === 0) {
     return (
