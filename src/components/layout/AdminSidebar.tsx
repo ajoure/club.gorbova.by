@@ -6,7 +6,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useRbac } from "@/hooks/useRbac";
 import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
 import { useUnreadEmailCount } from "@/hooks/useUnreadEmailCount";
-import { useUnmappedProductsCount } from "@/hooks/useUnmappedProductsCount";
 import { useAdminMenuSettings, MENU_ICONS, MenuItem, MenuGroup } from "@/hooks/useAdminMenuSettings";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { resolveAdminSectionForPath } from "@/lib/adminMenuRegistry";
@@ -59,7 +58,6 @@ export function AdminSidebar() {
   const adminAccess = useAdminAccess();
   const unreadMessagesCount = useUnreadMessagesCount();
   const { data: unreadEmailCount = 0 } = useUnreadEmailCount();
-  const { data: unmappedProductsCount = 0 } = useUnmappedProductsCount();
   const totalUnread = (unreadMessagesCount || 0) + (unreadEmailCount || 0);
   const collapsed = state === "collapsed";
   
@@ -175,10 +173,6 @@ export function AdminSidebar() {
   const getBadge = (item: MenuItem): { count: number; show: boolean } => {
     if (item.badge === "unread") return { count: totalUnread, show: totalUnread > 0 };
     if (item.badge === "duplicates") return { count: duplicateCount || 0, show: (duplicateCount || 0) > 0 };
-    // Show badge for payments page when there are unmapped products
-    if (item.path === "/admin/payments" && unmappedProductsCount > 0) {
-      return { count: unmappedProductsCount, show: true };
-    }
     return { count: 0, show: false };
   };
 
