@@ -54,6 +54,7 @@ import {
 } from "../_shared/crm-routing.ts";
 import { ComposableCheckoutError, resolveComposableCheckout } from "../_shared/resolve-composable-checkout.ts";
 import { materializeComposableOrderGroup } from "../_shared/materialize-composable-order-group.ts";
+import { allocateComposablePayableTotal } from "../_shared/composable-checkout.ts";
 import { referralDiscountMeta, resolveReferralCheckoutDiscount } from "../_shared/referral-checkout-discount.ts";
 import { reserveReferralCustomerCredit } from "../_shared/referral-customer-credit.ts";
 
@@ -382,34 +383,11 @@ Deno.serve(async (req: Request) => {
     payable_total: amountNumeric,
     currency: composableQuote.currency,
   }));
-  const materializationQuote = amountNumeric === Number(composableQuote.total)
-    ? composableQuote
-    : (() => {
-      const payableMinor = Math.round(amountNumeric * 100);
-      const quotedMinor = Math.round(Number(composableQuote.total) * 100);
-      let allocatedMinor = 0;
-      const items = composableQuote.items.map((item, index) => {
-        const itemQuotedMinor = Math.round(Number(item.final_amount) * 100);
-        const itemPayableMinor = index === composableQuote.items.length - 1
-          ? payableMinor - allocatedMinor
-          : Math.round((itemQuotedMinor / quotedMinor) * payableMinor);
-        allocatedMinor += itemPayableMinor;
-        const finalAmount = itemPayableMinor / 100;
-        return {
-          ...item,
-          final_amount: finalAmount,
-          discount_amount: Number((Number(item.list_amount) - finalAmount).toFixed(2)),
-        };
-      });
-      return {
-        ...composableQuote,
-        items,
-        adjustment_amount: Number((amountNumeric - Number(composableQuote.subtotal)).toFixed(2)),
-        adjustment_reason: "referral_discount_or_customer_credit",
-        total: amountNumeric,
-        original_quote: composableQuote,
-      };
-    })();
+  const materializationQuote = allocateComposablePayableTotal(
+    composableQuote,
+    amountNumeric,
+    "referral_discount_or_customer_credit",
+  );
 
   let cfg;
   try {

@@ -67,3 +67,59 @@ export function buildComposableQuote(
   if (!Number.isFinite(adjustment) || total < 0) throw new Error("invalid_adjustment");
   return { items, subtotal, adjustment_amount: adjustment, total };
 }
+
+export function allocateComposablePayableTotal(
+  quote: ReturnType<typeof buildComposableQuote>,
+  payableTotal: number,
+  adjustmentReason: string,
+) {
+  const payableMinor = Math.round(Number(payableTotal) * 100);
+  const quotedMinor = Math.round(Number(quote.total) * 100);
+  if (!Number.isFinite(payableMinor) || payableMinor <= 0 || quotedMinor <= 0) {
+    throw new Error("invalid_payable_total");
+  }
+  if (!adjustmentReason.trim()) throw new Error("adjustment_reason_required");
+  if (payableMinor === quotedMinor) return quote;
+
+  const weighted = quote.items.map((item, index) => {
+    const quotedItemMinor = Math.round(Number(item.final_amount) * 100);
+    const exact = quotedItemMinor * payableMinor / quotedMinor;
+    return {
+      index,
+      allocatedMinor: Math.floor(exact),
+      remainder: exact - Math.floor(exact),
+    };
+  });
+  let remainderMinor = payableMinor -
+    weighted.reduce((sum, item) => sum + item.allocatedMinor, 0);
+  for (
+    const allocation of weighted
+      .slice()
+      .sort((a, b) => b.remainder - a.remainder || a.index - b.index)
+  ) {
+    if (remainderMinor <= 0) break;
+    allocation.allocatedMinor += 1;
+    remainderMinor -= 1;
+  }
+
+  const allocatedByIndex = new Map(
+    weighted.map((item) => [item.index, item.allocatedMinor]),
+  );
+  const items = quote.items.map((item, index) => {
+    const finalAmount = (allocatedByIndex.get(index) ?? 0) / 100;
+    return {
+      ...item,
+      final_amount: finalAmount,
+      discount_amount: money(Math.max(0, Number(item.list_amount) - finalAmount)),
+    };
+  });
+
+  return {
+    ...quote,
+    items,
+    adjustment_amount: money(payableTotal - quote.subtotal),
+    adjustment_reason: adjustmentReason.trim(),
+    total: money(payableTotal),
+    original_quote: quote,
+  };
+}
