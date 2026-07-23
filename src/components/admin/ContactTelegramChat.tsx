@@ -420,7 +420,7 @@ export function ContactTelegramChat({
   // Two-step read for chat first paint.
   //   Stage 1 (lean): last 20 messages, message_text ≤ 4KB, no reply_markup/meta.
   //     Drives `isLoading` — the only critical path.
-  //   Stage 2 (full): last 50 messages, full text/meta. Runs after Stage 1
+  //   Stage 2 (full): last 200 messages, full text/meta. Runs after Stage 1
   //     lands, enriches the cache. Never blocks first paint.
   // Both stages fill the same `["telegram-messages", userId]` cache; downstream
   // optimistic writes (send/edit/delete) keep pointing at that single key.
@@ -496,16 +496,20 @@ export function ContactTelegramChat({
     queryFn: async () => {
       const { data, error } = await supabase.rpc("admin_get_telegram_messages_fast_v1", {
         p_user_id: userId,
-        p_limit: 50,
+        p_limit: 200,
       });
       if (error) throw error;
       const nextMessages = mapRowsToMessages((data || []) as any[]);
+      setHasOlderMessages(nextMessages.length === 200);
       const prevMessages =
         (queryClient.getQueryData(["telegram-messages", userId]) as TelegramMessage[] | undefined) || [];
       return mergeByIdPreferEnriched(prevMessages, nextMessages);
     },
     enabled: !!userId && fullEnabled,
-    staleTime: 60_000,
+    // The lean stage seeds this same cache key. It must be stale when Stage 2
+    // becomes enabled, otherwise React Query treats the 20-row lean seed as a
+    // complete fresh result and silently skips the full-history request.
+    staleTime: 0,
     gcTime: 10 * 60_000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
