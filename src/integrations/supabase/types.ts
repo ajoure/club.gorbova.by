@@ -20349,6 +20349,36 @@ export type Database = {
           user_id: string
         }[]
       }
+      admin_get_telegram_messages_page_v2: {
+        Args: {
+          p_before_created_at?: string
+          p_before_id?: string
+          p_limit?: number
+          p_user_id: string
+        }
+        Returns: {
+          admin_avatar_url: string
+          admin_full_name: string
+          bot_id: string
+          bot_name: string
+          bot_username: string
+          created_at: string
+          direction: string
+          error_message: string
+          id: string
+          is_favorite: boolean
+          is_pinned: boolean
+          is_read: boolean
+          message_id: number
+          message_text: string
+          meta: Json
+          reply_to_message_id: number
+          sent_by_admin: string
+          status: string
+          telegram_user_id: number
+          user_id: string
+        }[]
+      }
       admin_lookup_contact_duplicate: {
         Args: {
           p_email?: string
