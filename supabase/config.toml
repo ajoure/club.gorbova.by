@@ -101,6 +101,11 @@ verify_jwt = false
 [functions.amocrm-webhook]
 verify_jwt = false
 
+[functions.vochi-webhook]
+# VOCHI is an external provider and cannot send a Supabase JWT. The handler
+# requires integration_credentials.secrets.webhook_token for every request.
+verify_jwt = false
+
 [functions.payment-methods-webhook]
 verify_jwt = false
 
