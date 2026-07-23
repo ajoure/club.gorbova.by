@@ -6,6 +6,7 @@ export type PipelineAutomationStatus =
   "draft" | "active" | "paused" | "archived";
 export type PipelineAutomationTriggerType =
   | "deal_entered_stage"
+  | "deal_left_stage"
   | "after_event"
   | "weekday"
   | "month_day"

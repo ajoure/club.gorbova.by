@@ -30,8 +30,8 @@ export const CRM_AUTOMATION_TRIGGER_CATALOG: CrmAutomationTriggerDefinition[] =
       category: "deal",
       title: "Сделка покинула стадию",
       description:
-        "Реагирует на выход из выбранной стадии, например для отмены ожидания.",
-      availability: "planned",
+        "Запускает правило, когда сделка выходит из выбранной стадии; полезно для отмены ожидания или передачи задачи.",
+      availability: "available",
     },
     {
       id: "deal_created",

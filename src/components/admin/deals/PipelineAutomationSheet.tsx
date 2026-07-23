@@ -394,8 +394,8 @@ function RuleCard({
           ) : (
             <>
               <ArrowRight className="h-3 w-3" />
-              {rule.trigger_type === "after_event"
-                ? "после входа"
+              {rule.trigger_type === "deal_left_stage"
+                ? "после выхода"
                 : "после входа"}
             </>
           )}
@@ -660,6 +660,7 @@ export function PipelineAutomationSheet({
       setDelayMinutes(60);
       setDelayUnit("hours");
     }
+    if (value === "deal_left_stage") setRequireSameStage(false);
   };
 
   const delayUnitMinutes =
@@ -760,7 +761,8 @@ export function PipelineAutomationSheet({
           triggerType === "month_day"
             ? 0
             : delayMinutes,
-        require_same_stage: requireSameStage,
+        require_same_stage:
+          triggerType === "deal_left_stage" ? false : requireSameStage,
         timezone,
         quiet_hours_start: quietHoursEnabled ? quietHoursStart : null,
         quiet_hours_end: quietHoursEnabled ? quietHoursEnd : null,
@@ -1052,6 +1054,8 @@ export function PipelineAutomationSheet({
                     ? "Повтор для сделок, которые находятся в этой стадии в выбранные дни"
                     : triggerType === "month_day"
                       ? "Повтор для сделок, которые находятся в этой стадии в выбранный день месяца"
+                      : triggerType === "deal_left_stage"
+                        ? "После выхода сделки из выбранной стадии"
                       : "После перехода сделки в стадию"}
               </p>
             </div>
@@ -1807,24 +1811,31 @@ export function PipelineAutomationSheet({
                     </p>
                   </div>
                 )}
-              <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-border/30 bg-background/35 p-3">
-                <Checkbox
-                  checked={requireSameStage}
-                  onCheckedChange={(checked) =>
-                    setRequireSameStage(checked === true)
-                  }
-                  className="mt-0.5"
-                />
-                <span>
-                  <span className="block text-[11px] font-medium">
-                    Проверить стадию перед запуском
+              {triggerType === "deal_left_stage" ? (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.035] p-3 text-[10px] leading-4 text-muted-foreground">
+                  Для этого события проверка текущей стадии отключена: сделка уже
+                  вышла из выбранной стадии, и действие должно быть выполнено для неё.
+                </div>
+              ) : (
+                <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-border/30 bg-background/35 p-3">
+                  <Checkbox
+                    checked={requireSameStage}
+                    onCheckedChange={(checked) =>
+                      setRequireSameStage(checked === true)
+                    }
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block text-[11px] font-medium">
+                      Проверить стадию перед запуском
+                    </span>
+                    <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
+                      Если сделка уже ушла дальше, действие будет безопасно
+                      пропущено
+                    </span>
                   </span>
-                  <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
-                    Если сделка уже ушла дальше, действие будет безопасно
-                    пропущено
-                  </span>
-                </span>
-              </label>
+                </label>
+              )}
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Часовой пояс</Label>
                 <Select value={timezone} onValueChange={setTimezone}>
