@@ -113,6 +113,23 @@ Deno.serve(async (req) => {
       );
     }
 
+    // `skipRedirect` is an internal test path. It creates order records while
+    // deliberately bypassing the provider checkout, so it must never be
+    // callable by a public/anonymous checkout request.
+    if (skipRedirect) {
+      if (!authUserId) {
+        return jsonResponse({ error: 'Unauthorized', code: 'test_payment_requires_super_admin' }, 401);
+      }
+
+      const { data: isSuperAdmin, error: roleError } = await supabase.rpc('has_role_v2', {
+        _user_id: authUserId,
+        _role_code: 'super_admin',
+      });
+      if (roleError || !isSuperAdmin) {
+        return jsonResponse({ error: 'Forbidden', code: 'test_payment_requires_super_admin' }, 403);
+      }
+    }
+
     const emailLower = customerEmail.toLowerCase().trim();
 
     // Try to get product from products_v2 first (new system), then fallback to products (legacy)
