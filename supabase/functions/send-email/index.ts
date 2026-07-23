@@ -20,6 +20,7 @@ interface EmailRequest {
   text?: string;
   account_id?: string; // Optional: specify which email account to use
   product_id?: string; // Optional: use email account mapped to this product
+  idempotency_key?: string; // Optional: prevents duplicate automated sends
   attachments?: EmailAttachment[]; // Optional PDF/file attachments
   // Context for logging
   context?: {
@@ -63,6 +64,8 @@ function parseSmtpCode(response: string): number {
   return m ? Number(m[1]) : 0;
 }
 
+// Legacy helper accepts the ungenerated service-role client shape.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getEmailAccount(supabase: any, accountId?: string, productId?: string): Promise<EmailAccount | null> {
   // Helper to find password from email_accounts by email
   async function findPasswordByEmail(email: string): Promise<string | null> {
@@ -450,12 +453,26 @@ const handler = async (req: Request): Promise<Response> => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  let parsedRequest: EmailRequest | null = null;
+  let reservationId: string | null = null;
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { to, subject, html, text, account_id, product_id, attachments, context }: EmailRequest = await req.json();
+    parsedRequest = await req.json() as EmailRequest;
+    const {
+      to,
+      subject,
+      html,
+      text,
+      account_id,
+      product_id,
+      idempotency_key,
+      attachments,
+      context,
+    } = parsedRequest;
 
     // PATCH-6: Log the received context for debugging - single source of truth
     const ctx = context ?? null;
@@ -478,6 +495,66 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`Using email account: ${account.email} (${account.from_name || "no name"})`);
 
+    if (idempotency_key) {
+      if (idempotency_key.length > 200) throw new Error("idempotency_key_too_long");
+      const reservationMeta = {
+        ...(ctx?.meta || {}),
+        event_type: ctx?.event_type || null,
+        subscription_id: ctx?.subscription_id || null,
+        automation_idempotency_key: idempotency_key,
+      };
+      const { data: reservation, error: reservationError } = await supabase
+        .from("email_logs")
+        .insert({
+          user_id: ctx?.user_id || null,
+          profile_id: ctx?.profile_id || null,
+          company_id: ctx?.company_id || null,
+          direction: "outgoing",
+          from_email: account.from_email || account.email,
+          to_email: to,
+          subject,
+          body_html: html,
+          body_text: text || null,
+          provider: "yandex_smtp",
+          status: "pending",
+          meta: reservationMeta,
+        })
+        .select("id")
+        .single();
+
+      if (reservationError?.code === "23505") {
+        const { data: existing, error: existingError } = await supabase
+          .from("email_logs")
+          .select("id,status,provider_message_id,from_email,to_email")
+          .eq("meta->>automation_idempotency_key", idempotency_key)
+          .single();
+        if (existingError) throw existingError;
+        if (existing.status === "sent" || existing.status === "delivered") {
+          return new Response(JSON.stringify({
+            success: true,
+            idempotent_replay: true,
+            log_id: existing.id,
+            queue_id: existing.provider_message_id,
+            from: existing.from_email,
+            to: existing.to_email,
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+        return new Response(JSON.stringify({
+          error: "email_delivery_already_reserved",
+          status: existing.status,
+          log_id: existing.id,
+        }), {
+          status: 409,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      if (reservationError) throw reservationError;
+      reservationId = reservation.id;
+    }
+
     const sendResult = await sendEmailViaSMTP({ to, subject, html, text, account, attachments });
 
 
@@ -497,9 +574,9 @@ const handler = async (req: Request): Promise<Response> => {
         event_type: emailLogMeta.event_type,
       }));
       
-      const { error: logError } = await supabase.from('email_logs').insert({
+      const logPayload = {
         user_id: ctx?.user_id || null,
-      profile_id: ctx?.profile_id || null,
+        profile_id: ctx?.profile_id || null,
         company_id: ctx?.company_id || null,
         direction: 'outgoing',
         from_email: account.from_email || account.email,
@@ -510,8 +587,14 @@ const handler = async (req: Request): Promise<Response> => {
         provider: 'yandex_smtp',
         provider_message_id: sendResult.queueId || null,
         status: 'sent',
-        meta: emailLogMeta,
-      });
+        meta: {
+          ...emailLogMeta,
+          ...(idempotency_key ? { automation_idempotency_key: idempotency_key } : {}),
+        },
+      };
+      const { error: logError } = reservationId
+        ? await supabase.from('email_logs').update(logPayload).eq('id', reservationId)
+        : await supabase.from('email_logs').insert(logPayload);
       
       if (logError) {
         console.error('[send-email] Failed to log email:', logError);
@@ -531,13 +614,15 @@ const handler = async (req: Request): Promise<Response> => {
       smtp_host: sendResult.smtpHost,
       smtp_port: sendResult.smtpPort,
       queue_id: sendResult.queueId,
+      log_id: reservationId,
       note: "Доставка может занять время. Проверьте Спам/Промоакции. Ответ 250 означает, что SMTP сервер принял письмо в очередь.",
     }), {
       status: 200,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error sending email:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
     
     // Log failed email attempt
     try {
@@ -545,32 +630,40 @@ const handler = async (req: Request): Promise<Response> => {
       const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
       const supabaseForLog = createClient(supabaseUrl, supabaseKey);
       
-      // Try to extract context from request body (best effort)
-      const bodyText = await req.text().catch(() => '{}');
-      let parsedBody: any = {};
-      try { parsedBody = JSON.parse(bodyText); } catch {}
-      
-      await supabaseForLog.from('email_logs').insert({
-        user_id: parsedBody?.context?.user_id || null,
-        profile_id: parsedBody?.context?.profile_id || null,
-        company_id: parsedBody?.context?.company_id || null,
+      const failedPayload = {
+        user_id: parsedRequest?.context?.user_id || null,
+        profile_id: parsedRequest?.context?.profile_id || null,
+        company_id: parsedRequest?.context?.company_id || null,
         direction: 'outgoing',
         from_email: 'unknown',
-        to_email: parsedBody?.to || 'unknown',
-        subject: parsedBody?.subject || null,
+        to_email: parsedRequest?.to || 'unknown',
+        subject: parsedRequest?.subject || null,
         status: 'failed',
-        error_message: error?.message || 'Unknown error',
+        error_message: errorMessage,
         meta: {
-          event_type: parsedBody?.context?.event_type || null,
-          subscription_id: parsedBody?.context?.subscription_id || null,
-          error_details: error?.message,
+          ...(parsedRequest?.context?.meta || {}),
+          event_type: parsedRequest?.context?.event_type || null,
+          subscription_id: parsedRequest?.context?.subscription_id || null,
+          automation_idempotency_key: reservationId
+            ? parsedRequest?.idempotency_key || null
+            : null,
+          error_details: errorMessage,
         },
-      });
+      };
+      if (reservationId) {
+        await supabaseForLog.from('email_logs').update({
+          status: failedPayload.status,
+          error_message: failedPayload.error_message,
+          meta: failedPayload.meta,
+        }).eq('id', reservationId);
+      } else {
+        await supabaseForLog.from('email_logs').insert(failedPayload);
+      }
     } catch (logErr) {
       console.error('Failed to log email error:', logErr);
     }
     
-    return new Response(JSON.stringify({ error: error?.message || "Unknown error" }), {
+    return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });

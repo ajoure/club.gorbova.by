@@ -12,8 +12,9 @@ export interface PipelineAutomationRule {
   stage_id: string;
   name: string;
   status: PipelineAutomationStatus;
-  task_type_id: string;
-  title_template: string;
+  action_type: "create_task" | "send_email";
+  task_type_id: string | null;
+  title_template: string | null;
   description_template: string | null;
   assignee_strategy: "deal_owner" | "fixed_user";
   assignee_user_id: string | null;
@@ -24,6 +25,12 @@ export interface PipelineAutomationRule {
   timezone: string;
   quiet_hours_start: string | null;
   quiet_hours_end: string | null;
+  email_template_id: string | null;
+  email_account_id: string | null;
+  email_subject_template: string | null;
+  email_html_template: string | null;
+  email_text_template: string | null;
+  recipient_strategy: "customer_email";
   created_at: string;
   updated_at: string;
 }
@@ -32,8 +39,9 @@ export interface CreatePipelineAutomationRule {
   pipeline_id: string;
   stage_id: string;
   name: string;
-  task_type_id: string;
-  title_template: string;
+  action_type: "create_task" | "send_email";
+  task_type_id?: string | null;
+  title_template?: string | null;
   description_template?: string | null;
   assignee_strategy: "deal_owner" | "fixed_user";
   assignee_user_id?: string | null;
@@ -44,6 +52,20 @@ export interface CreatePipelineAutomationRule {
   timezone: string;
   quiet_hours_start?: string | null;
   quiet_hours_end?: string | null;
+  email_template_id?: string | null;
+  email_account_id?: string | null;
+  email_subject_template?: string | null;
+  email_html_template?: string | null;
+  email_text_template?: string | null;
+  recipient_strategy?: "customer_email";
+}
+
+export interface PipelineEmailTemplate {
+  id: string;
+  name: string;
+  subject: string;
+  body_html: string;
+  variables: unknown;
 }
 
 export type PipelineAutomationJobStatus =
@@ -86,6 +108,37 @@ export function usePipelineAutomationRules(pipelineId: string | null) {
       return (data ?? []) as PipelineAutomationRule[];
     },
     staleTime: 30_000,
+  });
+}
+
+export function usePipelineEmailTemplates() {
+  return useQuery({
+    queryKey: ["crm-pipeline-email-templates"],
+    queryFn: async (): Promise<PipelineEmailTemplate[]> => {
+      const { data, error } = await supabase
+        .from("email_templates")
+        .select("id,name,subject,body_html,variables")
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      const supportedVariables = new Set([
+        "deal_id",
+        "deal_number",
+        "customer_email",
+        "customer_name",
+        "orderId",
+        "email",
+        "name",
+        "appName",
+      ]);
+      return (data ?? []).filter((template) => {
+        if (!Array.isArray(template.variables)) return true;
+        return template.variables.every(
+          (variable) => typeof variable === "string" && supportedVariables.has(variable),
+        );
+      });
+    },
+    staleTime: 60_000,
   });
 }
 
@@ -137,14 +190,31 @@ export function useCreatePipelineAutomationRule() {
         .insert({
           ...payload,
           name: payload.name.trim(),
-          title_template: payload.title_template.trim(),
+          task_type_id: payload.action_type === "create_task" ? payload.task_type_id : null,
+          title_template:
+            payload.action_type === "create_task" ? payload.title_template?.trim() : null,
           description_template: payload.description_template?.trim() || null,
           assignee_user_id:
             payload.assignee_strategy === "fixed_user" ? payload.assignee_user_id : null,
           reminder_offset_minutes: payload.reminder_offset_minutes ?? null,
           status: "draft",
           trigger_type: "deal_entered_stage",
-          action_type: "create_task",
+          action_type: payload.action_type,
+          email_template_id:
+            payload.action_type === "send_email" ? payload.email_template_id : null,
+          email_account_id:
+            payload.action_type === "send_email" ? payload.email_account_id : null,
+          email_subject_template:
+            payload.action_type === "send_email"
+              ? payload.email_subject_template?.trim()
+              : null,
+          email_html_template:
+            payload.action_type === "send_email" ? payload.email_html_template?.trim() : null,
+          email_text_template:
+            payload.action_type === "send_email"
+              ? payload.email_text_template?.trim() || null
+              : null,
+          recipient_strategy: "customer_email",
         })
         .select("*")
         .single();

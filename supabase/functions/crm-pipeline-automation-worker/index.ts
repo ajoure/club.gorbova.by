@@ -16,11 +16,21 @@ function renderTemplate(template: string, deal: Record<string, unknown>): string
     deal_id: String(deal.id ?? ""),
     deal_number: String(deal.order_number ?? ""),
     customer_email: String(deal.customer_email ?? ""),
+    customer_name: String(deal.customer_name ?? ""),
+    orderId: String(deal.order_number ?? ""),
+    email: String(deal.customer_email ?? ""),
+    name: String(deal.customer_name ?? ""),
+    appName: "Gorbova.by",
   };
-  return template.replace(
-    /\{\{\s*(deal_id|deal_number|customer_email)\s*\}\}/g,
-    (_, key) => values[key] ?? "",
+  return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (token, key) =>
+    Object.hasOwn(values, key) ? values[key] : token
   );
+}
+
+function assertTemplateResolved(value: string): string {
+  const unresolved = value.match(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/);
+  if (unresolved) throw new Error(`email_template_variable_unresolved:${unresolved[1]}`);
+  return value;
 }
 
 Deno.serve(async (req: Request) => {
@@ -66,37 +76,41 @@ Deno.serve(async (req: Request) => {
           supabase
             .from("orders_v2")
             .select(
-              "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email",
+              "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name",
             )
             .eq("id", job.deal_id)
             .single(),
         ]);
       if (ruleError || !rule) throw new Error(`rule_not_found:${ruleError?.message ?? job.rule_id}`);
       if (dealError || !deal) throw new Error(`deal_not_found:${dealError?.message ?? job.deal_id}`);
-      if (rule.action_type !== "create_task") throw new Error(`unsupported_action:${rule.action_type}`);
+      if (!["create_task", "send_email"].includes(rule.action_type)) {
+        throw new Error(`unsupported_action:${rule.action_type}`);
+      }
 
-      const { data: existingTask, error: existingTaskError } = await supabase
-        .from("crm_tasks")
-        .select("id")
-        .eq("automation_rule_id", rule.id)
-        .eq("deal_id", deal.id)
-        .maybeSingle();
-      if (existingTaskError) throw existingTaskError;
-      if (existingTask) {
-        await supabase.rpc("crm_pipeline_automation_complete_job", {
-          _job_id: job.id,
-          _succeeded: true,
-          _result: { task_id: existingTask.id, recovered_existing_side_effect: true },
-          _error: null,
-        });
-        result.succeeded++;
-        result.jobs.push({
-          id: job.id,
-          status: "succeeded",
-          task_id: existingTask.id,
-          recovered: true,
-        });
-        continue;
+      if (rule.action_type === "create_task") {
+        const { data: existingTask, error: existingTaskError } = await supabase
+          .from("crm_tasks")
+          .select("id")
+          .eq("automation_rule_id", rule.id)
+          .eq("deal_id", deal.id)
+          .maybeSingle();
+        if (existingTaskError) throw existingTaskError;
+        if (existingTask) {
+          await supabase.rpc("crm_pipeline_automation_complete_job", {
+            _job_id: job.id,
+            _succeeded: true,
+            _result: { task_id: existingTask.id, recovered_existing_side_effect: true },
+            _error: null,
+          });
+          result.succeeded++;
+          result.jobs.push({
+            id: job.id,
+            status: "succeeded",
+            task_id: existingTask.id,
+            recovered: true,
+          });
+          continue;
+        }
       }
 
       if (rule.require_same_stage && deal.pipeline_stage_id !== rule.stage_id) {
@@ -114,6 +128,60 @@ Deno.serve(async (req: Request) => {
         if (skipError) throw skipError;
         result.skipped++;
         result.jobs.push({ id: job.id, status: "skipped", reason: "deal_left_stage" });
+        continue;
+      }
+
+      if (rule.action_type === "send_email") {
+        if (!deal.customer_email) throw new Error("deal_customer_email_missing");
+        const idempotencyKey = `crm-pipeline:${job.id}`;
+        const { data: emailResult, error: emailError } = await supabase.functions.invoke(
+          "send-email",
+          {
+            body: {
+              to: deal.customer_email,
+              subject: assertTemplateResolved(
+                renderTemplate(rule.email_subject_template, deal),
+              ),
+              html: assertTemplateResolved(renderTemplate(rule.email_html_template, deal)),
+              text: rule.email_text_template
+                ? assertTemplateResolved(renderTemplate(rule.email_text_template, deal))
+                : undefined,
+              account_id: rule.email_account_id ?? undefined,
+              product_id: deal.product_id ?? undefined,
+              idempotency_key: idempotencyKey,
+              context: {
+                profile_id: deal.profile_id ?? undefined,
+                company_id: deal.company_id ?? undefined,
+                event_type: "crm_pipeline_automation",
+                meta: {
+                  deal_id: deal.id,
+                  pipeline_id: deal.pipeline_id,
+                  pipeline_stage_id: deal.pipeline_stage_id,
+                  automation_rule_id: rule.id,
+                  automation_job_id: job.id,
+                  email_template_id: rule.email_template_id,
+                },
+              },
+            },
+          },
+        );
+        if (emailError) throw emailError;
+        if (emailResult?.error) throw new Error(emailResult.error);
+
+        await supabase.rpc("crm_pipeline_automation_complete_job", {
+          _job_id: job.id,
+          _succeeded: true,
+          _result: {
+            channel: "email",
+            to: deal.customer_email,
+            log_id: emailResult?.log_id ?? null,
+            queue_id: emailResult?.queue_id ?? null,
+            idempotent_replay: emailResult?.idempotent_replay ?? false,
+          },
+          _error: null,
+        });
+        result.succeeded++;
+        result.jobs.push({ id: job.id, status: "succeeded", channel: "email" });
         continue;
       }
 

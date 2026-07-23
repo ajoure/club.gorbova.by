@@ -8,6 +8,7 @@ import {
   Clock3,
   History,
   Loader2,
+  Mail,
   Plus,
   RotateCcw,
   Sparkles,
@@ -46,6 +47,7 @@ import {
   useCreatePipelineAutomationRule,
   usePipelineAutomationJobs,
   usePipelineAutomationRules,
+  usePipelineEmailTemplates,
   useRetryPipelineAutomationJob,
   useSetPipelineAutomationStatus,
 } from "@/hooks/usePipelineAutomationRules";
@@ -94,7 +96,9 @@ function RuleCard({
                 : "bg-primary/10 text-primary",
             )}
           >
-            {rule.status === "active" ? (
+            {rule.action_type === "send_email" ? (
+              <Mail className="h-3.5 w-3.5" />
+            ) : rule.status === "active" ? (
               <CheckCircle2 className="h-3.5 w-3.5" />
             ) : (
               <Workflow className="h-3.5 w-3.5" />
@@ -103,7 +107,9 @@ function RuleCard({
           <div className="min-w-0">
             <p className="truncate text-xs font-semibold text-foreground/90">{rule.name}</p>
             <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
-              {rule.title_template}
+              {rule.action_type === "send_email"
+                ? rule.email_subject_template
+                : rule.title_template}
             </p>
           </div>
         </div>
@@ -128,13 +134,21 @@ function RuleCard({
             <Clock3 className="h-3 w-3" /> через {rule.delay_minutes} мин
           </span>
         )}
-        <span className="inline-flex items-center gap-1">
-          <CalendarClock className="h-3 w-3" /> {rule.due_offset_minutes / 60} ч
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <UserRound className="h-3 w-3" />
-          {rule.assignee_strategy === "deal_owner" ? "ответственный" : "сотрудник"}
-        </span>
+        {rule.action_type === "create_task" ? (
+          <>
+            <span className="inline-flex items-center gap-1">
+              <CalendarClock className="h-3 w-3" /> {rule.due_offset_minutes / 60} ч
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <UserRound className="h-3 w-3" />
+              {rule.assignee_strategy === "deal_owner" ? "ответственный" : "сотрудник"}
+            </span>
+          </>
+        ) : (
+          <span className="inline-flex items-center gap-1">
+            <Mail className="h-3 w-3" /> email клиента
+          </span>
+        )}
       </div>
       {canEdit && (
         <div className="mt-3 flex items-center gap-1 border-t border-border/25 pt-2">
@@ -201,6 +215,7 @@ export function PipelineAutomationSheet({
   const { data: jobs = [] } = usePipelineAutomationJobs(rules.map((rule) => rule.id));
   const retryJob = useRetryPipelineAutomationJob();
   const { data: taskTypes = [] } = useCrmTaskTypes();
+  const { data: emailTemplates = [] } = usePipelineEmailTemplates();
   const { data: staff = [] } = useStaffOptions();
   const createRule = useCreatePipelineAutomationRule();
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
@@ -211,6 +226,8 @@ export function PipelineAutomationSheet({
   const [taskTypeId, setTaskTypeId] = useState("");
   const [assignee, setAssignee] = useState(OWNER);
   const [dueHours, setDueHours] = useState(24);
+  const [actionType, setActionType] = useState<"create_task" | "send_email">("create_task");
+  const [emailTemplateId, setEmailTemplateId] = useState("");
   const [delayMinutes, setDelayMinutes] = useState(0);
   const [requireSameStage, setRequireSameStage] = useState(true);
   const [timezone, setTimezone] = useState("Europe/Warsaw");
@@ -221,6 +238,9 @@ export function PipelineAutomationSheet({
   useEffect(() => {
     if (!taskTypeId && taskTypes[0]?.id) setTaskTypeId(taskTypes[0].id);
   }, [taskTypeId, taskTypes]);
+  useEffect(() => {
+    if (!emailTemplateId && emailTemplates[0]?.id) setEmailTemplateId(emailTemplates[0].id);
+  }, [emailTemplateId, emailTemplates]);
 
   const rulesByStage = useMemo(() => {
     const grouped = new Map<string, PipelineAutomationRule[]>();
@@ -237,6 +257,7 @@ export function PipelineAutomationSheet({
     setDescription("");
     setAssignee(OWNER);
     setDueHours(24);
+    setActionType("create_task");
     setDelayMinutes(0);
     setRequireSameStage(true);
     setTimezone("Europe/Warsaw");
@@ -246,15 +267,19 @@ export function PipelineAutomationSheet({
   };
 
   const submit = () => {
-    if (!pipeline || !selectedStageId || !taskTypeId || !name.trim() || !title.trim()) return;
+    const emailTemplate = emailTemplates.find((template) => template.id === emailTemplateId);
+    if (!pipeline || !selectedStageId || !name.trim()) return;
+    if (actionType === "create_task" && (!taskTypeId || !title.trim())) return;
+    if (actionType === "send_email" && !emailTemplate) return;
     createRule.mutate(
       {
         pipeline_id: pipeline.id,
         stage_id: selectedStageId,
         name,
-        task_type_id: taskTypeId,
-        title_template: title,
-        description_template: description,
+        action_type: actionType,
+        task_type_id: actionType === "create_task" ? taskTypeId : null,
+        title_template: actionType === "create_task" ? title : null,
+        description_template: actionType === "create_task" ? description : null,
         assignee_strategy: assignee === OWNER ? "deal_owner" : "fixed_user",
         assignee_user_id: assignee === OWNER ? null : assignee,
         due_offset_minutes: dueHours * 60,
@@ -264,6 +289,12 @@ export function PipelineAutomationSheet({
         timezone,
         quiet_hours_start: quietHoursEnabled ? quietHoursStart : null,
         quiet_hours_end: quietHoursEnabled ? quietHoursEnd : null,
+        email_template_id: actionType === "send_email" ? emailTemplate!.id : null,
+        email_account_id: null,
+        email_subject_template: actionType === "send_email" ? emailTemplate!.subject : null,
+        email_html_template: actionType === "send_email" ? emailTemplate!.body_html : null,
+        email_text_template: null,
+        recipient_strategy: "customer_email",
       },
       { onSuccess: resetEditor },
     );
@@ -441,7 +472,9 @@ export function PipelineAutomationSheet({
         {editing && (
           <div className="absolute inset-y-0 right-0 z-20 w-full border-l border-white/30 bg-background/92 shadow-[-24px_0_70px_rgba(15,23,42,0.12)] backdrop-blur-3xl sm:w-[410px]">
             <div className="border-b border-border/25 px-5 py-4">
-              <p className="text-sm font-semibold">Создать задачу</p>
+              <p className="text-sm font-semibold">
+                {actionType === "create_task" ? "Создать задачу" : "Отправить Email"}
+              </p>
               <p className="mt-1 text-[11px] text-muted-foreground">После перехода сделки в стадию</p>
             </div>
             <div className="space-y-4 overflow-y-auto p-5">
@@ -449,6 +482,47 @@ export function PipelineAutomationSheet({
                 <Label className="text-[11px]">Название правила</Label>
                 <Input value={name} onChange={(event) => setName(event.target.value)} className="h-9 rounded-xl text-xs" />
               </div>
+              <div className="space-y-1.5">
+                <Label className="text-[11px]">Действие</Label>
+                <Select
+                  value={actionType}
+                  onValueChange={(value: "create_task" | "send_email") => setActionType(value)}
+                >
+                  <SelectTrigger className="h-9 rounded-xl text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="create_task">Создать задачу</SelectItem>
+                    <SelectItem value="send_email">Отправить Email</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {actionType === "send_email" && (
+                <>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px]">Шаблон письма</Label>
+                    <Select value={emailTemplateId} onValueChange={setEmailTemplateId}>
+                      <SelectTrigger className="h-9 rounded-xl text-xs"><SelectValue placeholder="Выберите шаблон" /></SelectTrigger>
+                      <SelectContent>
+                        {emailTemplates.map((template) => (
+                          <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {emailTemplates.find((template) => template.id === emailTemplateId) && (
+                    <div className="rounded-xl border border-border/30 bg-background/35 p-3">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Тема</p>
+                      <p className="mt-1 text-[11px] font-medium">
+                        {emailTemplates.find((template) => template.id === emailTemplateId)?.subject}
+                      </p>
+                      <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+                        Получатель: email из карточки сделки. Содержимое сохраняется в версии правила.
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+              {actionType === "create_task" && (
+                <>
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Тип задачи</Label>
                 <Select value={taskTypeId} onValueChange={setTaskTypeId}>
@@ -477,6 +551,8 @@ export function PipelineAutomationSheet({
                   </SelectContent>
                 </Select>
               </div>
+                </>
+              )}
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Запустить через, минут</Label>
                 <Input type="number" min={0} max={525600} value={delayMinutes} onChange={(event) => setDelayMinutes(Number(event.target.value))} className="h-9 rounded-xl text-xs" />
@@ -532,10 +608,10 @@ export function PipelineAutomationSheet({
                   </div>
                 </div>
               )}
-              <div className="space-y-1.5">
+              {actionType === "create_task" && <div className="space-y-1.5">
                 <Label className="text-[11px]">Срок выполнения, часов</Label>
                 <Input type="number" min={0} max={8760} value={dueHours} onChange={(event) => setDueHours(Number(event.target.value))} className="h-9 rounded-xl text-xs" />
-              </div>
+              </div>}
             </div>
             <div className="absolute inset-x-0 bottom-0 flex items-center justify-end gap-2 border-t border-border/25 bg-background/75 px-5 py-4 backdrop-blur-xl">
               <Button variant="ghost" size="sm" className="h-8 rounded-xl text-xs" onClick={resetEditor}>Отмена</Button>
