@@ -20,6 +20,7 @@ import {
   detectBranch,
   enforceBranchPolicy,
 } from './caller_auth.ts';
+import { resolveStaleAccessPolicy } from './stale_access_policy.ts';
 import { evaluateGrantEligibility, type Branch as EligibilityBranch, type CallerType as EligibilityCallerType } from '../_shared/grant-eligibility.ts';
 
 
@@ -1824,12 +1825,15 @@ Deno.serve(async (req) => {
       // GUARD A (PATCH-KOROLYOVA): If accessEndAt is stale (in the past),
       // set a safe 48h placeholder to prevent immediate revoke by cron
       // before bePaid sync can update the real date.
-      let safeAccessEndAt = accessEndAt;
-      const STALE_GUARD_HOURS = 48;
-      if (accessEndAt < now) {
-        const placeholder = new Date(now.getTime() + STALE_GUARD_HOURS * 60 * 60 * 1000);
-        console.warn(`[grant-access-for-order] GUARD A: accessEndAt ${accessEndAt.toISOString()} is in the past. Overriding to ${placeholder.toISOString()} (${STALE_GUARD_HOURS}h safe placeholder)`);
-        safeAccessEndAt = placeholder;
+      const staleAccessPolicy = resolveStaleAccessPolicy({
+        canonicalAccessEndAt: accessEndAt,
+        now,
+        context: _body.context,
+        shouldAutoRenew,
+      });
+      const safeAccessEndAt = staleAccessPolicy.accessEndAt;
+      if (staleAccessPolicy.placeholderApplied) {
+        console.warn(`[grant-access-for-order] GUARD A: accessEndAt ${accessEndAt.toISOString()} is in the past. Overriding to ${safeAccessEndAt.toISOString()} (48h safe placeholder)`);
 
         await supabase.from('audit_logs').insert({
           action: 'subscription.stale_date_overridden',
@@ -1838,7 +1842,7 @@ Deno.serve(async (req) => {
           meta: {
             order_id: orderId,
             original_access_end_at: accessEndAt.toISOString(),
-            overridden_to: placeholder.toISOString(),
+            overridden_to: safeAccessEndAt.toISOString(),
             reason: 'stale_provider_date_guard',
             guard: 'GUARD_A_KOROLYOVA',
           },
@@ -1936,10 +1940,10 @@ Deno.serve(async (req) => {
           order_id: orderId,
           product_id: productId,
           tariff_id: tariffId,
-          status: "active",
+          status: staleAccessPolicy.status,
           access_start_at: accessStartAt.toISOString(),
           access_end_at: safeAccessEndAt.toISOString(),
-          next_charge_at: accessEndAt.toISOString(),
+          next_charge_at: staleAccessPolicy.nextChargeAt?.toISOString() ?? null,
           payment_method_id: hasPaymentMethod ? userPaymentMethod.id : null,
           auto_renew: shouldAutoRenew, // PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX: from payment_flow, not hardcoded
           meta: {
