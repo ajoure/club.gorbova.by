@@ -41,6 +41,16 @@ Deno.test("recurring recovery resolves catalog from subscriptions_v2", () => {
   assertStringIncludes(autoProcessSource, "matchedBy = 'subscription_tracking_id'");
 });
 
+Deno.test("bePaid recovery writer stays aligned with production schema", () => {
+  const canonicalWriter = autoProcessSource.slice(
+    autoProcessSource.indexOf("async function ensureCanonicalPayment"),
+    autoProcessSource.indexOf("// Transliterate Latin name"),
+  );
+  assert(!canonicalWriter.includes('payment_method:'));
+  assert(!autoProcessSource.includes(".eq('tracking_id', item.tracking_id)"));
+  assertStringIncludes(autoProcessSource, ".eq('meta->>tracking_id', item.tracking_id)");
+});
+
 Deno.test("queue cron forwards its internal credential and supports exact recovery", () => {
   assertStringIncludes(queueCronSource, 'headers: { "x-internal-key": cronSecret }');
   assertStringIncludes(queueCronSource, 'query = query.eq("id", queueItemId)');

@@ -65,7 +65,6 @@ async function ensureCanonicalPayment(
     status: "succeeded",
     provider: "bepaid",
     provider_payment_id: item.bepaid_uid,
-    payment_method: "card",
     paid_at: paidAt,
     card_last4: item.card_last4,
     card_brand: item.card_brand,
@@ -312,7 +311,7 @@ Deno.serve(async (req) => {
               const { data: orderByTracking } = await supabase
                 .from('orders_v2')
                 .select('id, order_number, profile_id, user_id')
-                .eq('tracking_id', item.tracking_id)
+                .eq('meta->>tracking_id', item.tracking_id)
                 .maybeSingle();
               
               if (orderByTracking) {
@@ -781,7 +780,7 @@ Deno.serve(async (req) => {
           const { data } = await supabase
             .from('orders_v2')
             .select('id, order_number, profile_id, final_price, currency')
-            .eq('tracking_id', item.tracking_id)
+            .eq('meta->>tracking_id', item.tracking_id)
             .maybeSingle();
           existingOrder = data;
         }
