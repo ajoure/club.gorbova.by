@@ -40,6 +40,72 @@ interface QueueItem {
   raw_payload: any;
 }
 
+async function ensureCanonicalPayment(
+  supabase: any,
+  item: QueueItem,
+  order: { id: string; profile_id?: string | null; final_price?: number | null; currency?: string | null },
+  profileId: string | null,
+  paidAt: string,
+) {
+  if (!item.bepaid_uid) {
+    throw new Error(`Queue item ${item.id} has no bePaid UID`);
+  }
+
+  const amount = item.amount ?? order.final_price;
+  if (!amount || amount <= 0) {
+    throw new Error(`Queue item ${item.id} has invalid payment amount`);
+  }
+
+  const paymentRow = {
+    order_id: order.id,
+    profile_id: profileId || order.profile_id || null,
+    amount,
+    currency: item.currency || order.currency || "BYN",
+    status: "succeeded",
+    provider: "bepaid",
+    provider_payment_id: item.bepaid_uid,
+    payment_method: "card",
+    paid_at: paidAt,
+    card_last4: item.card_last4,
+    card_brand: item.card_brand,
+    provider_response: item.raw_payload || {
+      card_last4: item.card_last4,
+      card_holder: item.card_holder,
+      card_brand: item.card_brand,
+    },
+    meta: {
+      source: "bepaid_auto_process",
+      queue_id: item.id,
+      tracking_id: item.tracking_id,
+      customer_email: item.customer_email,
+    },
+  };
+
+  const { error: writeError } = await supabase
+    .from("payments_v2")
+    .upsert(paymentRow, {
+      onConflict: "provider,provider_payment_id",
+      ignoreDuplicates: true,
+    });
+
+  if (writeError) {
+    throw new Error(`payments_v2 write failed: ${writeError.message}`);
+  }
+
+  const { data: persisted, error: verifyError } = await supabase
+    .from("payments_v2")
+    .select("id,order_id")
+    .eq("provider", "bepaid")
+    .eq("provider_payment_id", item.bepaid_uid)
+    .maybeSingle();
+
+  if (verifyError || !persisted) {
+    throw new Error(`payments_v2 verification failed: ${verifyError?.message || "row missing"}`);
+  }
+
+  return persisted;
+}
+
 // Transliterate Latin name to Cyrillic for matching
 function transliterateToCyrillic(name: string): string {
   const map: Record<string, string> = {
@@ -641,7 +707,7 @@ Deno.serve(async (req) => {
         if (item.tracking_id) {
           const { data } = await supabase
             .from('orders_v2')
-            .select('id, order_number')
+            .select('id, order_number, profile_id, final_price, currency')
             .eq('tracking_id', item.tracking_id)
             .maybeSingle();
           existingOrder = data;
@@ -650,7 +716,7 @@ Deno.serve(async (req) => {
         if (!existingOrder && item.bepaid_uid) {
           const { data } = await supabase
             .from('orders_v2')
-            .select('id, order_number')
+            .select('id, order_number, profile_id, final_price, currency')
             .contains('purchase_snapshot', { bepaid_uid: item.bepaid_uid })
             .maybeSingle();
           existingOrder = data;
@@ -660,6 +726,14 @@ Deno.serve(async (req) => {
           console.log(`[BEPAID-AUTO-PROCESS] Order already exists: ${existingOrder.order_number}`);
           
           if (!dryRun) {
+            const existingPaidAt = item.paid_at || item.created_at_bepaid || item.created_at;
+            await ensureCanonicalPayment(
+              supabase,
+              item,
+              existingOrder,
+              profileId,
+              existingPaidAt,
+            );
             await supabase
               .from('payment_reconcile_queue')
               .update({ 
@@ -770,30 +844,8 @@ Deno.serve(async (req) => {
 
           console.log(`[BEPAID-AUTO-PROCESS] Created order: ${newOrder.order_number}`);
 
-          // Create payment record with REAL payment date
-          await supabase.from('payments_v2').insert({
-            order_id: newOrder.id,
-            profile_id: profileId,
-            amount: finalAmount,
-            currency: item.currency || 'BYN',
-            status: 'succeeded',
-            provider: 'bepaid',
-            provider_payment_id: item.bepaid_uid,
-            payment_method: 'card',
-            paid_at: paidAt, // Use real payment date!
-            provider_response: {
-              card_last4: item.card_last4,
-              card_holder: item.card_holder,
-              card_brand: item.card_brand,
-            },
-            meta: {
-              customer_full_name: customerFullName,
-              customer_email: item.customer_email,
-              customer_phone: item.customer_phone,
-              ip_address: item.ip_address,
-              description: item.description,
-            },
-          });
+          // Persist and verify the canonical payment before any queue success.
+          await ensureCanonicalPayment(supabase, item, newOrder, profileId, paidAt);
 
           // Calculate access period (used for both subscription and entitlement)
           let trialDays = 0;
