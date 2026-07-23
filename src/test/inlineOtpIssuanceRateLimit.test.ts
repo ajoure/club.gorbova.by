@@ -15,6 +15,8 @@ describe("inline OTP issuance rate limits", () => {
     expect(migrationSource).toContain("pg_advisory_xact_lock");
     expect(migrationSource).toContain("'inline_otp:email:' || p_email");
     expect(migrationSource).toContain("'inline_otp:ip:' || p_ip");
+    expect(migrationSource).toContain("WHERE ip = p_ip::inet");
+    expect(migrationSource).toContain("p_meta, p_ip::inet,");
     expect(migrationSource).toContain("UPDATE public.inline_otp_codes");
     expect(migrationSource).toContain("INSERT INTO public.inline_otp_codes");
     expect(migrationSource).toContain("SECURITY INVOKER");

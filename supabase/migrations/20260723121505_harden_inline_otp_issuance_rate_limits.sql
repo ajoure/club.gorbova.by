@@ -67,7 +67,7 @@ BEGIN
     SELECT count(*)::integer
     INTO v_ip_count
     FROM public.inline_otp_codes
-    WHERE ip = p_ip
+    WHERE ip = p_ip::inet
       AND created_at >= v_now - interval '1 hour';
     IF v_ip_count >= 20 THEN
       RETURN QUERY SELECT 'rate_limited'::text, 900, NULL::timestamptz;
@@ -86,7 +86,7 @@ BEGIN
     email, code_hash, salt, flow_id, purpose, meta, ip, user_agent,
     expires_at, last_send_at
   ) VALUES (
-    p_email, p_code_hash, p_salt, p_flow_id, p_purpose, p_meta, p_ip,
+    p_email, p_code_hash, p_salt, p_flow_id, p_purpose, p_meta, p_ip::inet,
     p_user_agent, v_expires_at, v_now
   );
 
