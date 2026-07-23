@@ -12,6 +12,10 @@ import unifiedInboxHookSource from "../hooks/useUnifiedInbox.ts?raw";
 import realtimeInvalidationSource from "../hooks/useInboxRealtimeInvalidation.ts?raw";
 import telegramChatSource from "../components/admin/ContactTelegramChat.tsx?raw";
 import telegramAdminSource from "../../supabase/functions/telegram-admin-chat/index.ts?raw";
+import incomingAlertSource from "../hooks/useIncomingMessageAlert.ts?raw";
+import pushHookSource from "../hooks/usePushNotifications.ts?raw";
+import manychatInboundSource from "../../supabase/functions/manychat-inbound/index.ts?raw";
+import telegramWebhookSource from "../../supabase/functions/telegram-webhook/index.ts?raw";
 
 describe("Contact-center safety and mobile performance", () => {
   it("aligns contact-center RLS and protects the atomic sender RPC", () => {
@@ -110,5 +114,29 @@ describe("Contact-center safety and mobile performance", () => {
     expect(telegramAdminSource).toContain('upload_status: "unavailable"');
     expect(telegramAdminSource).toContain('.from("media_jobs").insert');
     expect(telegramAdminSource).toContain("message_db_id: messageDbId");
+  });
+
+  it("keeps browser notification subscriptions deliverable and provides a realtime fallback", () => {
+    expect(pushHookSource).toContain('supabase.from("push_subscriptions" as any).upsert');
+    expect(pushHookSource).toContain("[Push] Subscription reconciliation failed:");
+    expect(pushHookSource).toContain("if (!cancelled) setState(\"subscribed\")");
+    expect(incomingAlertSource).toContain("hasPushSubscriptionRef");
+    expect(incomingAlertSource).toContain("new Notification(title");
+    expect(incomingAlertSource).toContain("Notification.permission !== \"granted\"");
+  });
+
+  it("awaits Instagram and Telegram push fan-out before webhook completion", () => {
+    expect(manychatInboundSource).toContain(
+      "const pushResponse = await fetch(`${supabaseUrl}/functions/v1/send-push-notification`",
+    );
+    expect(telegramWebhookSource).toContain(
+      "const pushResponse = await fetch(`${supabaseUrl}/functions/v1/send-push-notification`",
+    );
+    expect(manychatInboundSource).not.toContain(
+      "}).catch((e) => console.error(\"[Push][instagram] send error\", e))",
+    );
+    expect(telegramWebhookSource).not.toContain(
+      "}).catch(err => console.error('[Push] Send error:', err))",
+    );
   });
 });
