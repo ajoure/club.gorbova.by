@@ -32,6 +32,13 @@ export interface PipelineAutomationRule {
   email_text_template: string | null;
   recipient_strategy: "customer_email";
   telegram_message_template: string | null;
+  fallback_action_type: "send_email" | "send_telegram" | null;
+  fallback_email_template_id: string | null;
+  fallback_email_account_id: string | null;
+  fallback_email_subject_template: string | null;
+  fallback_email_html_template: string | null;
+  fallback_email_text_template: string | null;
+  fallback_telegram_message_template: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -60,6 +67,13 @@ export interface CreatePipelineAutomationRule {
   email_text_template?: string | null;
   recipient_strategy?: "customer_email";
   telegram_message_template?: string | null;
+  fallback_action_type?: "send_email" | "send_telegram" | null;
+  fallback_email_template_id?: string | null;
+  fallback_email_account_id?: string | null;
+  fallback_email_subject_template?: string | null;
+  fallback_email_html_template?: string | null;
+  fallback_email_text_template?: string | null;
+  fallback_telegram_message_template?: string | null;
 }
 
 export interface PipelineEmailTemplate {
@@ -219,6 +233,31 @@ export function useCreatePipelineAutomationRule() {
           telegram_message_template:
             payload.action_type === "send_telegram"
               ? payload.telegram_message_template?.trim()
+              : null,
+          fallback_action_type: payload.fallback_action_type ?? null,
+          fallback_email_template_id:
+            payload.fallback_action_type === "send_email"
+              ? payload.fallback_email_template_id
+              : null,
+          fallback_email_account_id:
+            payload.fallback_action_type === "send_email"
+              ? payload.fallback_email_account_id
+              : null,
+          fallback_email_subject_template:
+            payload.fallback_action_type === "send_email"
+              ? payload.fallback_email_subject_template?.trim()
+              : null,
+          fallback_email_html_template:
+            payload.fallback_action_type === "send_email"
+              ? payload.fallback_email_html_template?.trim()
+              : null,
+          fallback_email_text_template:
+            payload.fallback_action_type === "send_email"
+              ? payload.fallback_email_text_template?.trim() || null
+              : null,
+          fallback_telegram_message_template:
+            payload.fallback_action_type === "send_telegram"
+              ? payload.fallback_telegram_message_template?.trim()
               : null,
           recipient_strategy: "customer_email",
         })

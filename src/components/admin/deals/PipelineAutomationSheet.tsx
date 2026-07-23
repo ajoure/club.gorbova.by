@@ -158,6 +158,12 @@ function RuleCard({
             <MessageCircle className="h-3 w-3" /> Telegram клиента
           </span>
         )}
+        {rule.fallback_action_type && (
+          <span className="inline-flex items-center gap-1 text-amber-600">
+            <RotateCcw className="h-3 w-3" />
+            резерв: {rule.fallback_action_type === "send_email" ? "Email" : "Telegram"}
+          </span>
+        )}
       </div>
       {canEdit && (
         <div className="mt-3 flex items-center gap-1 border-t border-border/25 pt-2">
@@ -242,6 +248,11 @@ export function PipelineAutomationSheet({
   const [telegramMessage, setTelegramMessage] = useState(
     "Здравствуйте, {{customer_name}}! Пишем Вам по сделке {{deal_number}}.",
   );
+  const [fallbackEnabled, setFallbackEnabled] = useState(false);
+  const [fallbackEmailTemplateId, setFallbackEmailTemplateId] = useState("");
+  const [fallbackTelegramMessage, setFallbackTelegramMessage] = useState(
+    "Здравствуйте, {{customer_name}}! Не удалось связаться по email. Пишем Вам по сделке {{deal_number}}.",
+  );
   const [delayMinutes, setDelayMinutes] = useState(0);
   const [requireSameStage, setRequireSameStage] = useState(true);
   const [timezone, setTimezone] = useState("Europe/Warsaw");
@@ -255,6 +266,11 @@ export function PipelineAutomationSheet({
   useEffect(() => {
     if (!emailTemplateId && emailTemplates[0]?.id) setEmailTemplateId(emailTemplates[0].id);
   }, [emailTemplateId, emailTemplates]);
+  useEffect(() => {
+    if (!fallbackEmailTemplateId && emailTemplates[0]?.id) {
+      setFallbackEmailTemplateId(emailTemplates[0].id);
+    }
+  }, [fallbackEmailTemplateId, emailTemplates]);
 
   const rulesByStage = useMemo(() => {
     const grouped = new Map<string, PipelineAutomationRule[]>();
@@ -275,6 +291,10 @@ export function PipelineAutomationSheet({
     setTelegramMessage(
       "Здравствуйте, {{customer_name}}! Пишем Вам по сделке {{deal_number}}.",
     );
+    setFallbackEnabled(false);
+    setFallbackTelegramMessage(
+      "Здравствуйте, {{customer_name}}! Не удалось связаться по email. Пишем Вам по сделке {{deal_number}}.",
+    );
     setDelayMinutes(0);
     setRequireSameStage(true);
     setTimezone("Europe/Warsaw");
@@ -285,10 +305,15 @@ export function PipelineAutomationSheet({
 
   const submit = () => {
     const emailTemplate = emailTemplates.find((template) => template.id === emailTemplateId);
+    const fallbackEmailTemplate = emailTemplates.find(
+      (template) => template.id === fallbackEmailTemplateId,
+    );
     if (!pipeline || !selectedStageId || !name.trim()) return;
     if (actionType === "create_task" && (!taskTypeId || !title.trim())) return;
     if (actionType === "send_email" && !emailTemplate) return;
     if (actionType === "send_telegram" && !telegramMessage.trim()) return;
+    if (fallbackEnabled && actionType === "send_telegram" && !fallbackEmailTemplate) return;
+    if (fallbackEnabled && actionType === "send_email" && !fallbackTelegramMessage.trim()) return;
     createRule.mutate(
       {
         pipeline_id: pipeline.id,
@@ -315,6 +340,30 @@ export function PipelineAutomationSheet({
         recipient_strategy: "customer_email",
         telegram_message_template:
           actionType === "send_telegram" ? telegramMessage : null,
+        fallback_action_type:
+          fallbackEnabled && actionType === "send_email"
+            ? "send_telegram"
+            : fallbackEnabled && actionType === "send_telegram"
+              ? "send_email"
+              : null,
+        fallback_email_template_id:
+          fallbackEnabled && actionType === "send_telegram"
+            ? fallbackEmailTemplate!.id
+            : null,
+        fallback_email_account_id: null,
+        fallback_email_subject_template:
+          fallbackEnabled && actionType === "send_telegram"
+            ? fallbackEmailTemplate!.subject
+            : null,
+        fallback_email_html_template:
+          fallbackEnabled && actionType === "send_telegram"
+            ? fallbackEmailTemplate!.body_html
+            : null,
+        fallback_email_text_template: null,
+        fallback_telegram_message_template:
+          fallbackEnabled && actionType === "send_email"
+            ? fallbackTelegramMessage
+            : null,
       },
       { onSuccess: resetEditor },
     );
@@ -394,7 +443,9 @@ export function PipelineAutomationSheet({
                           <p className="truncate text-[10px] font-medium">{rule?.name ?? "Автоматизация"}</p>
                           <p className="mt-0.5 text-[9px] text-muted-foreground">
                             {job.status === "succeeded"
-                              ? "Выполнено"
+                              ? job.result?.fallback_used === true
+                                ? "Выполнено через резерв"
+                                : "Выполнено"
                               : job.status === "skipped"
                                 ? "Пропущено: сделка ушла"
                                 : job.status === "running"
@@ -567,6 +618,58 @@ export function PipelineAutomationSheet({
                     Получатель определяется по пользователю сделки. Сообщение будет отражено в Contact Center.
                   </p>
                 </div>
+              )}
+              {actionType !== "create_task" && (
+                <>
+                  <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3">
+                    <Checkbox
+                      checked={fallbackEnabled}
+                      onCheckedChange={(checked) => setFallbackEnabled(checked === true)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="block text-[11px] font-medium">Резервный канал</span>
+                      <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
+                        После пяти неудачных попыток отправить через{" "}
+                        {actionType === "send_email" ? "Telegram" : "Email"}
+                      </span>
+                    </span>
+                  </label>
+                  {fallbackEnabled && actionType === "send_telegram" && (
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px]">Резервный шаблон Email</Label>
+                      <Select
+                        value={fallbackEmailTemplateId}
+                        onValueChange={setFallbackEmailTemplateId}
+                      >
+                        <SelectTrigger className="h-9 rounded-xl text-xs">
+                          <SelectValue placeholder="Выберите шаблон" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {emailTemplates.map((template) => (
+                            <SelectItem key={template.id} value={template.id}>
+                              {template.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {fallbackEnabled && actionType === "send_email" && (
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px]">Резервное сообщение Telegram</Label>
+                      <Textarea
+                        value={fallbackTelegramMessage}
+                        onChange={(event) => setFallbackTelegramMessage(event.target.value)}
+                        maxLength={4096}
+                        className="min-h-24 rounded-xl text-xs"
+                      />
+                      <p className="text-right text-[10px] text-muted-foreground">
+                        {fallbackTelegramMessage.length}/4096
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
               {actionType === "create_task" && (
                 <>

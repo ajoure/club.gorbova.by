@@ -9,6 +9,7 @@ type AutomationJob = {
   id: string;
   rule_id: string;
   deal_id: string;
+  attempt_count: number;
 };
 
 function renderTemplate(template: string, deal: Record<string, unknown>): string {
@@ -275,7 +276,157 @@ Deno.serve(async (req: Request) => {
       result.succeeded++;
       result.jobs.push({ id: job.id, status: "succeeded", task_id: taskId });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const primaryError = error instanceof Error ? error.message : String(error);
+      let fallbackError: string | null = null;
+
+      if (job.attempt_count >= 5) {
+        try {
+          const [{ data: fallbackRule, error: fallbackRuleError }, {
+            data: fallbackDeal,
+            error: fallbackDealError,
+          }] = await Promise.all([
+            supabase
+              .from("crm_pipeline_automation_rules")
+              .select("*")
+              .eq("id", job.rule_id)
+              .single(),
+            supabase
+              .from("orders_v2")
+              .select(
+                "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,product_id,customer_email,customer_name,user_id",
+              )
+              .eq("id", job.deal_id)
+              .single(),
+          ]);
+          if (fallbackRuleError || !fallbackRule) {
+            throw new Error(`fallback_rule_not_found:${fallbackRuleError?.message ?? job.rule_id}`);
+          }
+          if (fallbackDealError || !fallbackDeal) {
+            throw new Error(`fallback_deal_not_found:${fallbackDealError?.message ?? job.deal_id}`);
+          }
+
+          if (fallbackRule.fallback_action_type === "send_email") {
+            if (!fallbackDeal.customer_email) throw new Error("fallback_customer_email_missing");
+            const { data: emailResult, error: emailError } = await supabase.functions.invoke(
+              "send-email",
+              {
+                body: {
+                  to: fallbackDeal.customer_email,
+                  subject: assertTemplateResolved(
+                    renderTemplate(fallbackRule.fallback_email_subject_template, fallbackDeal),
+                  ),
+                  html: assertTemplateResolved(
+                    renderTemplate(fallbackRule.fallback_email_html_template, fallbackDeal),
+                  ),
+                  text: fallbackRule.fallback_email_text_template
+                    ? assertTemplateResolved(
+                      renderTemplate(fallbackRule.fallback_email_text_template, fallbackDeal),
+                    )
+                    : undefined,
+                  account_id: fallbackRule.fallback_email_account_id ?? undefined,
+                  product_id: fallbackDeal.product_id ?? undefined,
+                  idempotency_key: `crm-pipeline:${job.id}`,
+                  context: {
+                    profile_id: fallbackDeal.profile_id ?? undefined,
+                    company_id: fallbackDeal.company_id ?? undefined,
+                    event_type: "crm_pipeline_automation_fallback",
+                    meta: {
+                      deal_id: fallbackDeal.id,
+                      pipeline_id: fallbackDeal.pipeline_id,
+                      pipeline_stage_id: fallbackDeal.pipeline_stage_id,
+                      automation_rule_id: fallbackRule.id,
+                      automation_job_id: job.id,
+                      email_template_id: fallbackRule.fallback_email_template_id,
+                      primary_error: primaryError,
+                    },
+                  },
+                },
+              },
+            );
+            if (emailError) throw emailError;
+            if (emailResult?.error) throw new Error(emailResult.error);
+
+            await supabase.rpc("crm_pipeline_automation_complete_job", {
+              _job_id: job.id,
+              _succeeded: true,
+              _result: {
+                channel: "email",
+                fallback_used: true,
+                primary_channel: fallbackRule.action_type,
+                primary_error: primaryError,
+                log_id: emailResult?.log_id ?? null,
+                queue_id: emailResult?.queue_id ?? null,
+                idempotent_replay: emailResult?.idempotent_replay ?? false,
+              },
+              _error: null,
+            });
+            result.succeeded++;
+            result.jobs.push({
+              id: job.id,
+              status: "succeeded",
+              channel: "email",
+              fallback_used: true,
+            });
+            continue;
+          }
+
+          if (fallbackRule.fallback_action_type === "send_telegram") {
+            if (!fallbackDeal.user_id) throw new Error("fallback_deal_user_id_missing");
+            const message = assertTemplateResolved(
+              renderTemplate(fallbackRule.fallback_telegram_message_template, fallbackDeal),
+            );
+            const { data: telegramResult, error: telegramError } =
+              await supabase.functions.invoke("telegram-send-notification", {
+                body: {
+                  user_id: fallbackDeal.user_id,
+                  message_type: "crm_pipeline_automation",
+                  custom_message: message,
+                  idempotency_key: `crm-pipeline:${job.id}`,
+                  automation_context: {
+                    job_id: job.id,
+                    rule_id: fallbackRule.id,
+                    deal_id: fallbackDeal.id,
+                    fallback: true,
+                  },
+                },
+              });
+            if (telegramError) throw telegramError;
+            if (!telegramResult?.success) {
+              throw new Error(telegramResult?.error || "fallback_telegram_send_failed");
+            }
+
+            await supabase.rpc("crm_pipeline_automation_complete_job", {
+              _job_id: job.id,
+              _succeeded: true,
+              _result: {
+                channel: "telegram",
+                fallback_used: true,
+                primary_channel: fallbackRule.action_type,
+                primary_error: primaryError,
+                telegram_message_id: telegramResult.telegram_message_id ?? null,
+                idempotent_replay: telegramResult.idempotent_replay ?? false,
+                mirrored_to_telegram_messages:
+                  telegramResult.mirrored_to_telegram_messages ?? false,
+              },
+              _error: null,
+            });
+            result.succeeded++;
+            result.jobs.push({
+              id: job.id,
+              status: "succeeded",
+              channel: "telegram",
+              fallback_used: true,
+            });
+            continue;
+          }
+        } catch (error) {
+          fallbackError = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      const message = fallbackError
+        ? `${primaryError}; fallback_failed:${fallbackError}`
+        : primaryError;
       await supabase.rpc("crm_pipeline_automation_complete_job", {
         _job_id: job.id,
         _succeeded: false,

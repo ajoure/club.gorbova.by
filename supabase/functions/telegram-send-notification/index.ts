@@ -164,6 +164,7 @@ Deno.serve(async (req) => {
       const jobId = automationContext?.job_id;
       const ruleId = automationContext?.rule_id;
       const dealId = automationContext?.deal_id;
+      const isFallback = automationContext?.fallback === true;
       if (
         !jobId || !ruleId || !dealId ||
         typeof custom_message !== 'string' ||
@@ -187,12 +188,12 @@ Deno.serve(async (req) => {
       ] = await Promise.all([
         supabase
           .from('crm_pipeline_automation_jobs')
-          .select('id,rule_id,deal_id,status')
+          .select('id,rule_id,deal_id,status,attempt_count')
           .eq('id', jobId)
           .maybeSingle(),
         supabase
           .from('crm_pipeline_automation_rules')
-          .select('id,action_type')
+          .select('id,action_type,fallback_action_type')
           .eq('id', ruleId)
           .maybeSingle(),
         supabase
@@ -205,7 +206,12 @@ Deno.serve(async (req) => {
         automationJob?.status !== 'running' ||
         automationJob.rule_id !== ruleId ||
         automationJob.deal_id !== dealId ||
-        automationRule?.action_type !== 'send_telegram' ||
+        (
+          isFallback
+            ? automationJob.attempt_count < 5 ||
+              automationRule?.fallback_action_type !== 'send_telegram'
+            : automationRule?.action_type !== 'send_telegram'
+        ) ||
         automationDeal?.user_id !== user_id
       ) {
         return new Response(JSON.stringify({
