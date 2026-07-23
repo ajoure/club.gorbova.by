@@ -119,10 +119,14 @@ Deno.serve(async (req) => {
   if (credErr) return json({ error: "credentials_lookup_failed", detail: credErr.message }, 500);
   if (!credRow) return json({ error: "integration_not_configured" }, 401);
 
-  const expected = (credRow.secrets as any)?.webhook_token ?? null;
-  // If no webhook_token is configured, accept any inbound (panel has no header support
-  // and operator opted into URL-only mode). Otherwise require match via header or ?token=.
-  if (expected && token !== expected) {
+  const expectedRaw = (credRow.secrets as any)?.webhook_token;
+  const expected = typeof expectedRaw === "string" ? expectedRaw.trim() : "";
+  // VOCHI may carry the shared token in the URL, but a missing server-side
+  // token must never turn this public endpoint into an unsigned webhook.
+  if (!expected) {
+    return json({ error: "webhook_token_not_configured" }, 401);
+  }
+  if (!token || token !== expected) {
     return json({ error: "invalid_signature" }, 401);
   }
 
