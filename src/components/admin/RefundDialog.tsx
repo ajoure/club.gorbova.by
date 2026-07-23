@@ -79,7 +79,7 @@ export function RefundDialog({
       setRefundRequestKey(crypto.randomUUID());
       setGroupItems([]);
       setSelectedGroupItemId("");
-      void supabase
+      void (supabase as any)
         .from("order_group_items")
         .select("id,role,order_id,final_amount,item_snapshot,payment_allocations(amount,refunded_amount),order_group:order_groups!inner(primary_order_id)")
         .eq("order_group.primary_order_id", orderId)

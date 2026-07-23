@@ -74,7 +74,7 @@ describe("composable checkout quote", () => {
     expect(allocated.items.reduce((sum, item) => sum + item.final_amount, 0)).toBeCloseTo(1000.01, 2);
     expect(allocated.total).toBe(1000.01);
     expect(allocated.adjustment_amount).toBe(-1249.99);
-    expect(allocated.original_quote.total).toBe(2250);
+    expect((allocated as any).original_quote.total).toBe(2250);
   });
 
   it("uses deterministic largest-remainder rounding for a one-cent payment", () => {
