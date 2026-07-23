@@ -60,6 +60,7 @@ CREATE TABLE public.order_groups (
   quote_snapshot jsonb NOT NULL,
   meta jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  paid_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -307,5 +308,6 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.materialize_composable_order_group(uuid, jsonb, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.materialize_composable_order_group(uuid, jsonb, text, text)
+  FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.materialize_composable_order_group(uuid, jsonb, text, text) TO service_role;
