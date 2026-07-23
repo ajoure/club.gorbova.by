@@ -2,7 +2,7 @@
 
 Дата: 2026-07-23  
 PR: https://github.com/ajoure/club.gorbova.by/pull/112  
-Preview project: `dqmblbfhtmcvanasvjpr` (disposable)
+Preview project: `dqmblbfhtmcvanasvjpr` (disposable, deleted after tests)
 
 ## Подтверждено
 
@@ -39,8 +39,15 @@ Preview project: `dqmblbfhtmcvanasvjpr` (disposable)
 
 - Реальные списания у acquiring/RR не выполнялись.
 - Production database и production Edge Functions не изменялись.
-- Supabase preview воспроизводит только зарегистрированную migration history.
-  Фактическая production-схема содержит значительный schema drift; для
-  приёмки использовался минимальный disposable fixture зависимостей.
+- Preview был создан от доступного через connector проекта
+  `ypwsuumurrtkxatoyqhk`, но конфигурация приложения указывает на фактический
+  project ref `hdjgkjceownmmnrqqtuz`. Поэтому тест подтверждает поведение
+  миграций и функций на реальном Supabase PostgreSQL, но не доказывает parity
+  с целевым production.
+- Текущая CLI-учётная запись не имеет прав читать целевой project ref
+  `hdjgkjceownmmnrqqtuz`; production preflight остаётся обязательным gate.
+- У доступного connector-проекта migration history расходится с фактической
+  схемой; для приёмки использовался минимальный disposable fixture
+  зависимостей.
 - Production rollout требует отдельного разрешения и preflight фактической
   схемы перед применением DDL.
