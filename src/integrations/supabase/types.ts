@@ -4587,6 +4587,105 @@ export type Database = {
         }
         Relationships: []
       }
+      composable_refund_intents: {
+        Row: {
+          access_action: string
+          amount: number
+          created_at: string
+          created_by: string | null
+          currency: string
+          id: string
+          meta: Json
+          order_group_id: string
+          order_group_item_id: string
+          payment_id: string
+          primary_order_id: string
+          provider_refund_id: string | null
+          reason: string
+          reduce_days: number | null
+          refund_payment_id: string | null
+          request_key: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          access_action?: string
+          amount: number
+          created_at?: string
+          created_by?: string | null
+          currency: string
+          id?: string
+          meta?: Json
+          order_group_id: string
+          order_group_item_id: string
+          payment_id: string
+          primary_order_id: string
+          provider_refund_id?: string | null
+          reason: string
+          reduce_days?: number | null
+          refund_payment_id?: string | null
+          request_key: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          access_action?: string
+          amount?: number
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          id?: string
+          meta?: Json
+          order_group_id?: string
+          order_group_item_id?: string
+          payment_id?: string
+          primary_order_id?: string
+          provider_refund_id?: string | null
+          reason?: string
+          reduce_days?: number | null
+          refund_payment_id?: string | null
+          request_key?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "composable_refund_intents_order_group_id_fkey"
+            columns: ["order_group_id"]
+            isOneToOne: false
+            referencedRelation: "order_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "composable_refund_intents_order_group_item_id_fkey"
+            columns: ["order_group_item_id"]
+            isOneToOne: false
+            referencedRelation: "order_group_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "composable_refund_intents_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "composable_refund_intents_primary_order_id_fkey"
+            columns: ["primary_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "composable_refund_intents_refund_payment_id_fkey"
+            columns: ["refund_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       consent_logs: {
         Row: {
           consent_type: string
@@ -11912,6 +12011,272 @@ export type Database = {
         }
         Relationships: []
       }
+      offer_addons: {
+        Row: {
+          addon_offer_id: string
+          addon_product_id: string
+          addon_tariff_id: string
+          allow_repurchase_after_expiry: boolean
+          created_at: string
+          discount_percent: number | null
+          fixed_amount: number | null
+          id: string
+          is_active: boolean
+          is_default_selected: boolean
+          is_required: boolean
+          meta: Json
+          parent_offer_id: string
+          pricing_mode: string
+          sort_order: number
+          updated_at: string
+          visible_from: string | null
+          visible_to: string | null
+        }
+        Insert: {
+          addon_offer_id: string
+          addon_product_id: string
+          addon_tariff_id: string
+          allow_repurchase_after_expiry?: boolean
+          created_at?: string
+          discount_percent?: number | null
+          fixed_amount?: number | null
+          id?: string
+          is_active?: boolean
+          is_default_selected?: boolean
+          is_required?: boolean
+          meta?: Json
+          parent_offer_id: string
+          pricing_mode?: string
+          sort_order?: number
+          updated_at?: string
+          visible_from?: string | null
+          visible_to?: string | null
+        }
+        Update: {
+          addon_offer_id?: string
+          addon_product_id?: string
+          addon_tariff_id?: string
+          allow_repurchase_after_expiry?: boolean
+          created_at?: string
+          discount_percent?: number | null
+          fixed_amount?: number | null
+          id?: string
+          is_active?: boolean
+          is_default_selected?: boolean
+          is_required?: boolean
+          meta?: Json
+          parent_offer_id?: string
+          pricing_mode?: string
+          sort_order?: number
+          updated_at?: string
+          visible_from?: string | null
+          visible_to?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "offer_addons_addon_offer_id_fkey"
+            columns: ["addon_offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "offer_addons_addon_product_id_fkey"
+            columns: ["addon_product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "offer_addons_addon_tariff_id_fkey"
+            columns: ["addon_tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "offer_addons_parent_offer_id_fkey"
+            columns: ["parent_offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      order_group_items: {
+        Row: {
+          created_at: string
+          discount_amount: number
+          final_amount: number
+          id: string
+          item_snapshot: Json
+          list_amount: number
+          offer_id: string
+          order_group_id: string
+          order_id: string | null
+          product_id: string
+          quantity: number
+          role: string
+          sort_order: number
+          tariff_id: string
+        }
+        Insert: {
+          created_at?: string
+          discount_amount?: number
+          final_amount: number
+          id?: string
+          item_snapshot: Json
+          list_amount: number
+          offer_id: string
+          order_group_id: string
+          order_id?: string | null
+          product_id: string
+          quantity?: number
+          role: string
+          sort_order?: number
+          tariff_id: string
+        }
+        Update: {
+          created_at?: string
+          discount_amount?: number
+          final_amount?: number
+          id?: string
+          item_snapshot?: Json
+          list_amount?: number
+          offer_id?: string
+          order_group_id?: string
+          order_id?: string | null
+          product_id?: string
+          quantity?: number
+          role?: string
+          sort_order?: number
+          tariff_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_group_items_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_group_items_order_group_id_fkey"
+            columns: ["order_group_id"]
+            isOneToOne: false
+            referencedRelation: "order_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_group_items_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_group_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_group_items_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      order_groups: {
+        Row: {
+          adjustment_amount: number
+          adjustment_reason: string | null
+          created_at: string
+          created_by: string | null
+          currency: string
+          group_number: string
+          id: string
+          idempotency_key: string
+          meta: Json
+          paid_at: string | null
+          payer_type: string | null
+          payment_method: string | null
+          primary_order_id: string | null
+          profile_id: string | null
+          quote_snapshot: Json
+          source: string
+          status: string
+          subtotal: number
+          total_amount: number
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          adjustment_amount?: number
+          adjustment_reason?: string | null
+          created_at?: string
+          created_by?: string | null
+          currency: string
+          group_number: string
+          id?: string
+          idempotency_key: string
+          meta?: Json
+          paid_at?: string | null
+          payer_type?: string | null
+          payment_method?: string | null
+          primary_order_id?: string | null
+          profile_id?: string | null
+          quote_snapshot: Json
+          source: string
+          status?: string
+          subtotal: number
+          total_amount: number
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          adjustment_amount?: number
+          adjustment_reason?: string | null
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          group_number?: string
+          id?: string
+          idempotency_key?: string
+          meta?: Json
+          paid_at?: string | null
+          payer_type?: string | null
+          payment_method?: string | null
+          primary_order_id?: string | null
+          profile_id?: string | null
+          quote_snapshot?: Json
+          source?: string
+          status?: string
+          subtotal?: number
+          total_amount?: number
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_groups_primary_order_id_fkey"
+            columns: ["primary_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_groups_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       order_notification_deliveries: {
         Row: {
           channel: string
@@ -12258,6 +12623,61 @@ export type Database = {
           },
         ]
       }
+      payment_allocations: {
+        Row: {
+          amount: number
+          created_at: string
+          id: string
+          order_group_id: string
+          order_group_item_id: string
+          payment_id: string
+          refunded_amount: number
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          id?: string
+          order_group_id: string
+          order_group_item_id: string
+          payment_id: string
+          refunded_amount?: number
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          id?: string
+          order_group_id?: string
+          order_group_item_id?: string
+          payment_id?: string
+          refunded_amount?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_allocations_order_group_id_fkey"
+            columns: ["order_group_id"]
+            isOneToOne: false
+            referencedRelation: "order_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_allocations_order_group_item_id_fkey"
+            columns: ["order_group_item_id"]
+            isOneToOne: false
+            referencedRelation: "order_group_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_allocations_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_delete_operations: {
         Row: {
           access_decisions: Json
@@ -12342,6 +12762,7 @@ export type Database = {
           max_uses: number | null
           meta: Json
           offer_id: string | null
+          order_group_id: string | null
           payment_type: string
           product_id: string
           profile_code: string | null
@@ -12368,6 +12789,7 @@ export type Database = {
           max_uses?: number | null
           meta?: Json
           offer_id?: string | null
+          order_group_id?: string | null
           payment_type?: string
           product_id: string
           profile_code?: string | null
@@ -12394,6 +12816,7 @@ export type Database = {
           max_uses?: number | null
           meta?: Json
           offer_id?: string | null
+          order_group_id?: string | null
           payment_type?: string
           product_id?: string
           profile_code?: string | null
@@ -12412,6 +12835,13 @@ export type Database = {
             columns: ["offer_id"]
             isOneToOne: false
             referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_links_order_group_id_fkey"
+            columns: ["order_group_id"]
+            isOneToOne: false
+            referencedRelation: "order_groups"
             referencedColumns: ["id"]
           },
           {
@@ -20699,6 +21129,10 @@ export type Database = {
         Args: { _ban_case_id: string; _identifiers: Json }
         Returns: number
       }
+      bind_composable_refund_provider_id: {
+        Args: { _intent_id: string; _provider_refund_id: string }
+        Returns: Json
+      }
       bulk_mark_dialogs_read_atomic: {
         Args: { p_boundary?: string; p_user_ids: string[] }
         Returns: number
@@ -20923,6 +21357,19 @@ export type Database = {
       contact_note_delete: { Args: { _note_id: string }; Returns: boolean }
       convert_preorder_on_pay_atomic: {
         Args: { p_paid_order_id: string }
+        Returns: Json
+      }
+      create_composable_refund_intent: {
+        Args: {
+          _access_action: string
+          _amount: number
+          _created_by: string
+          _order_group_item_id: string
+          _primary_order_id: string
+          _reason: string
+          _reduce_days: number
+          _request_key: string
+        }
         Returns: Json
       }
       create_feedback_ticket: {
@@ -21336,7 +21783,15 @@ export type Database = {
         Args: { batch_limit?: number }
         Returns: number
       }
+      fail_composable_refund_intent: {
+        Args: { _error: string; _intent_id: string }
+        Returns: undefined
+      }
       fill_order_from_queue: { Args: never; Returns: number }
+      finalize_composable_refund_allocation: {
+        Args: { _provider_refund_id: string }
+        Returns: Json
+      }
       find_bought_not_joined_users: {
         Args: never
         Returns: {
@@ -22126,6 +22581,15 @@ export type Database = {
           remaining_unread_count: number
         }[]
       }
+      materialize_composable_order_group: {
+        Args: {
+          _idempotency_key: string
+          _primary_order_id: string
+          _quote: Json
+          _source: string
+        }
+        Returns: string
+      }
       move_to_dlq: {
         Args: {
           dlq_name: string
@@ -22449,6 +22913,7 @@ export type Database = {
       rr_get_or_create_pending_order: {
         Args: {
           _amount: number
+          _checkout_fingerprint?: string
           _crm_routing_snapshot?: Json
           _currency: string
           _customer_email: string
@@ -22682,6 +23147,10 @@ export type Database = {
       set_site_home_page: {
         Args: { p_domain: string; p_page_id: string }
         Returns: undefined
+      }
+      settle_composable_order_group: {
+        Args: { _payment_id: string; _primary_order_id: string }
+        Returns: Json
       }
       subscription_has_payment_token: {
         Args: { p_subscription_id: string }
