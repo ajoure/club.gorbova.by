@@ -1060,7 +1060,9 @@ export function PipelineAutomationSheet({
                         ? "После выхода сделки из выбранной стадии"
                         : triggerType === "deal_created"
                           ? "Один раз при создании сделки в выбранной стартовой стадии"
-                      : "После перехода сделки в стадию"}
+                          : triggerType === "payment_received"
+                            ? "После подтверждённой оплаты по сделке в выбранной стадии"
+                            : "После перехода сделки в стадию"}
               </p>
             </div>
             <div className="space-y-4 overflow-y-auto p-5">

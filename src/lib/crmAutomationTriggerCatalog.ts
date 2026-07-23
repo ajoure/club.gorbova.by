@@ -54,7 +54,7 @@ export const CRM_AUTOMATION_TRIGGER_CATALOG: CrmAutomationTriggerDefinition[] =
       title: "Получена оплата",
       description:
         "Запускается после подтверждённой оплаты, привязанной к сделке.",
-      availability: "planned",
+      availability: "available",
     },
     {
       id: "payment_overdue",

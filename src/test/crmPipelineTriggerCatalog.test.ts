@@ -11,13 +11,14 @@ describe("CRM pipeline trigger catalog", () => {
         expect.objectContaining({ id: "deal_entered_stage" }),
         expect.objectContaining({ id: "deal_left_stage" }),
         expect.objectContaining({ id: "deal_created" }),
+        expect.objectContaining({ id: "payment_received" }),
         expect.objectContaining({ id: "at_datetime", requiresSchedule: true }),
         expect.objectContaining({ id: "after_event", requiresSchedule: true }),
         expect.objectContaining({ id: "weekday", requiresSchedule: true }),
         expect.objectContaining({ id: "month_day", requiresSchedule: true }),
       ]),
     );
-    expect(available).toHaveLength(7);
+    expect(available).toHaveLength(8);
   });
 
   it("documents the planned event and calendar trigger families", () => {
