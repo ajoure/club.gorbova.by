@@ -52,6 +52,9 @@ import {
   buildNegativeSnapshot,
   resolveOrderRouting,
 } from "../_shared/crm-routing.ts";
+import { ComposableCheckoutError, resolveComposableCheckout } from "../_shared/resolve-composable-checkout.ts";
+import { materializeComposableOrderGroup } from "../_shared/materialize-composable-order-group.ts";
+import { allocateComposablePayableTotal } from "../_shared/composable-checkout.ts";
 import { referralDiscountMeta, resolveReferralCheckoutDiscount } from "../_shared/referral-checkout-discount.ts";
 import { reserveReferralCustomerCredit } from "../_shared/referral-customer-credit.ts";
 
@@ -61,6 +64,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface InitiatePayload {
   tariff_offer_id?: string;
+  addon_offer_ids?: string[];
   name?: string;
   phone?: string;
   email?: string;
@@ -143,7 +147,8 @@ async function auditEvent(
     | "recovery_blocked_no_url"
     | "create_order_recovered"
     | "local_state_unconfirmed"
-    | "audit_write_failed",
+    | "audit_write_failed"
+    | "composable_materialization_failed",
   payload: Record<string, unknown>,
 ): Promise<void> {
   const { error } = await supabaseAdmin.rpc(
@@ -250,8 +255,14 @@ Deno.serve(async (req: Request) => {
   const email = emailRaw.toLowerCase();
   const commentRaw = body.comment == null ? null : String(body.comment);
   const comment = commentRaw == null ? null : stripHtml(commentRaw);
+  const addonOfferIds = Array.isArray(body.addon_offer_ids)
+    ? body.addon_offer_ids.map((id) => String(id).trim())
+    : [];
 
   if (!UUID_RE.test(offerId)) return errorResponse("tariff_offer_id_invalid", 400);
+  if (addonOfferIds.some((id) => !UUID_RE.test(id))) {
+    return errorResponse("addon_offer_id_invalid", 400);
+  }
   if (nameRaw.length < 1) return errorResponse("name_invalid", 400);
   const phoneNorm = normalizePhone(phoneRaw);
   if (phoneNorm.length < 9 || phoneNorm.length > 15) {
@@ -283,7 +294,8 @@ Deno.serve(async (req: Request) => {
 
   const contactHash = await sha256Hex(`${phoneNorm}|${email}`);
   const ipHash = await sha256Hex(ip);
-  const offerContactHash = await sha256Hex(`${offerId}|${phoneNorm}|${email}`);
+  const requestedFingerprint = await sha256Hex([offerId, ...addonOfferIds.slice().sort()].join("|"));
+  const offerContactHash = await sha256Hex(`${requestedFingerprint}|${phoneNorm}|${email}`);
   const rl = await rateLimitOrDeny(supabaseAdmin, [
     { key: `rr_initiate:ip:${ipHash}`, window: 60, max: 20 },
     { key: `rr_initiate:contact:${contactHash}`, window: 60, max: 5 },
@@ -319,11 +331,23 @@ Deno.serve(async (req: Request) => {
   if (!tariff?.is_active) return errorResponse("tariff_inactive", 403);
   if (!product?.is_active) return errorResponse("product_inactive", 403);
 
-  let amountNumeric = Number(offer.amount);
+  let composableQuote;
+  try {
+    composableQuote = await resolveComposableCheckout(supabaseAdmin, {
+      parentOfferId: offerId,
+      addonOfferIds,
+    });
+  } catch (error) {
+    if (error instanceof ComposableCheckoutError) {
+      return errorResponse(error.code, error.status);
+    }
+    return errorResponse("quote_failed", 500);
+  }
+  let amountNumeric = Number(composableQuote.total);
   if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
     return errorResponse("amount_invalid", 500);
   }
-  const currency = String(product.currency || "BYN").toUpperCase();
+  const currency = composableQuote.currency;
   let amountMinor = Math.round(amountNumeric * 100);
   let referralCreditMeta: Record<string, unknown> = {};
   if (userId) {
@@ -349,6 +373,21 @@ Deno.serve(async (req: Request) => {
       } : {}),
     };
   }
+  if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
+    return errorResponse("amount_fully_covered_or_invalid", 400);
+  }
+  const checkoutFingerprint = await sha256Hex(JSON.stringify({
+    parent_offer_id: offerId,
+    selected_addon_offer_ids: composableQuote.selected_addon_offer_ids.slice().sort(),
+    quoted_total: composableQuote.total,
+    payable_total: amountNumeric,
+    currency: composableQuote.currency,
+  }));
+  const materializationQuote = allocateComposablePayableTotal(
+    composableQuote,
+    amountNumeric,
+    "referral_discount_or_customer_credit",
+  );
 
   let cfg;
   try {
@@ -438,6 +477,8 @@ Deno.serve(async (req: Request) => {
     crm_success_skip: true,
     // B.0 invariant: snapshot embedded atomically at INSERT.
     crm_routing_snapshot: crmSnapshot,
+    checkout_fingerprint: checkoutFingerprint,
+    composable_checkout: materializationQuote,
     ...referralCreditMeta,
     rr: {
       runtime: "sprintB",
@@ -477,6 +518,7 @@ Deno.serve(async (req: Request) => {
       _crm_routing_snapshot: crmSnapshot,
       _pipeline_id: crmRoutingOk ? crmSnapshot.pipeline_id : null,
       _pipeline_stage_id: crmRoutingOk ? crmSnapshot.stage_on_pending : null,
+      _checkout_fingerprint: checkoutFingerprint,
     },
   );
 
@@ -486,6 +528,20 @@ Deno.serve(async (req: Request) => {
     );
   }
   const { order_id: externalId, was_reused: wasReused } = rpcData[0] as any;
+  try {
+    await materializeComposableOrderGroup(supabaseAdmin, {
+      primaryOrderId: externalId,
+      quote: materializationQuote,
+      source: "rr_installment",
+      idempotencyKey: `rr:${externalId}:${checkoutFingerprint}`,
+    });
+  } catch (error) {
+    await auditEvent(supabaseAdmin, externalId, "composable_materialization_failed", {
+      error: (error as Error).message,
+      checkout_fingerprint: checkoutFingerprint,
+    });
+    return errorResponse("composable_order_materialization_failed", 500);
+  }
 
 
   // ============== REUSE ==============
@@ -699,13 +755,9 @@ Deno.serve(async (req: Request) => {
     : `${Deno.env.get("SUPABASE_URL")}/functions/v1/rr-webhook`;
 
   // 3. Вызов РР (pre-call marker уже durable записан).
-  const productDisplayName = String(
-    (product as any)?.public_title || (product as any)?.name || "",
-  ).trim();
-  const tariffDisplayName = String((tariff as any)?.name || "").trim();
-  const itemNameRaw = [productDisplayName, tariffDisplayName]
-    .filter(Boolean)
-    .join(" — ") || "Оплата заказа";
+  const itemNameRaw = composableQuote.items.map((item) =>
+    [item.product_name, item.tariff_name].filter(Boolean).join(" — ")
+  ).filter(Boolean).join("; ") || "Оплата заказа";
   const itemName = itemNameRaw.slice(0, 128);
 
   const rrRes = await rrCreateOrder(cfg, {

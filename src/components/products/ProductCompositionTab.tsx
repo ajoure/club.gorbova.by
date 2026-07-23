@@ -17,6 +17,7 @@ import {
   RELATION_TYPE_LABELS,
   RELATION_TYPES,
 } from "@/hooks/useProductRelations";
+import { OfferAddonsEditor } from "./OfferAddonsEditor";
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Активный",
@@ -97,6 +98,8 @@ export function ProductCompositionTab({ productId }: ProductCompositionTabProps)
 
   return (
     <div className="space-y-4">
+      <OfferAddonsEditor productId={productId} />
+      <div className="border-t pt-4" />
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-lg font-semibold">Состав продукта</h2>

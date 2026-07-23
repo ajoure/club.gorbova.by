@@ -17,6 +17,7 @@ import { PublicPageFetchError } from "@/components/site-renderer/PublicPageFetch
 import { useSitePricingData } from "@/hooks/useSitePricingData";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { ComposableCheckoutDialog } from "@/components/payment/ComposableCheckoutDialog";
 import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
@@ -56,6 +57,12 @@ type Flow = (typeof ACTION_TO_FLOW)[keyof typeof ACTION_TO_FLOW];
 interface PendingOffer {
   productId: string;
   offerId: string;
+}
+
+interface CheckoutSelection {
+  addonOfferIds: string[];
+  total: number;
+  currency: string;
 }
 
 /**
@@ -178,6 +185,7 @@ export default function SitePageBySlug() {
   // ─── site-action bridge: open offer ───
   const [pending, setPending] = useState<PendingOffer | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [checkoutSelection, setCheckoutSelection] = useState<CheckoutSelection | null>(null);
   const [preregOpen, setPreregOpen] = useState(false);
   const [preregOfferId, setPreregOfferId] = useState<string | null>(null);
   const [leadPickerOpen, setLeadPickerOpen] = useState(false);
@@ -503,6 +511,29 @@ export default function SitePageBySlug() {
       />
 
       {resolved && (() => {
+        const selection = checkoutSelection ?? {
+          addonOfferIds: [],
+          total: Number(resolved.offer.amount || 0),
+          currency: resolved.product.currency || "BYN",
+        };
+        if (!checkoutSelection && resolved.offer.offer_type !== "lead") {
+          return (
+            <ComposableCheckoutDialog
+              open={paymentOpen}
+              onOpenChange={(v) => {
+                setPaymentOpen(v);
+                if (!v) {
+                  setPending(null);
+                  setCheckoutSelection(null);
+                }
+              }}
+              offerId={resolved.offer.id}
+              productName={resolved.product.public_title || resolved.product.name}
+              tariffName={resolved.tariff.name}
+              onContinue={setCheckoutSelection}
+            />
+          );
+        }
         if (resolved.offer.offer_type === "lead" || resolved.offer.offer_type === "bank_installment") {
           const bank = resolved.offer.offer_type === "bank_installment"
             ? readBankInstallmentMeta(resolved.offer)
@@ -512,9 +543,13 @@ export default function SitePageBySlug() {
               open={paymentOpen}
               onOpenChange={(v) => {
                 setPaymentOpen(v);
-                if (!v) setPending(null);
+                if (!v) {
+                  setPending(null);
+                  setCheckoutSelection(null);
+                }
               }}
               offerId={resolved.offer.id}
+              addonOfferIds={selection.addonOfferIds}
               offerLabel={resolved.offer.button_label}
               productName={resolved.product.public_title || resolved.product.name}
               tariffName={resolved.tariff.name}
@@ -531,14 +566,18 @@ export default function SitePageBySlug() {
               open={paymentOpen}
               onOpenChange={(v) => {
                 setPaymentOpen(v);
-                if (!v) setPending(null);
+                if (!v) {
+                  setPending(null);
+                  setCheckoutSelection(null);
+                }
               }}
               productId={resolved.product.id}
               productName={resolved.product.public_title || resolved.product.name}
               tariffName={resolved.tariff.name}
               offerId={resolved.offer.id}
-              amount={resolved.offer.amount}
-              currency={resolved.product.currency || "BYN"}
+              addonOfferIds={selection.addonOfferIds}
+              amount={selection.total}
+              currency={selection.currency}
             />
           );
         }
@@ -547,15 +586,19 @@ export default function SitePageBySlug() {
             open={paymentOpen}
             onOpenChange={(v) => {
               setPaymentOpen(v);
-              if (!v) setPending(null);
+              if (!v) {
+                setPending(null);
+                setCheckoutSelection(null);
+              }
             }}
             productId={resolved.product.id}
             productName={resolved.product.public_title || resolved.product.name}
             tariffName={resolved.tariff.name}
-            currency={resolved.product.currency || "BYN"}
-            price={String(resolved.offer.amount)}
+            currency={selection.currency}
+            price={String(selection.total)}
             tariffCode={resolved.tariff.code}
             offerId={resolved.offer.id}
+            addonOfferIds={selection.addonOfferIds}
             isTrial={resolved.offer.offer_type === "trial"}
             trialDays={resolved.offer.trial_days ?? undefined}
             isClubProduct={!!resolved.product.telegram_club_id}
@@ -566,7 +609,7 @@ export default function SitePageBySlug() {
             paymentMethod={resolved.offer.payment_method}
             installmentMaxMonths={resolved.offer.installment_count ?? null}
             installmentIntervalDays={(resolved.offer as any).installment_interval_days ?? null}
-            installmentTotalAmountKopecks={Math.round(Number(resolved.offer.amount) * 100)}
+            installmentTotalAmountKopecks={Math.round(selection.total * 100)}
           />
         );
       })()}
