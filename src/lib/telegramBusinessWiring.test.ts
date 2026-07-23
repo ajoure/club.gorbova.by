@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import webhookSource from "../../supabase/functions/telegram-webhook/index.ts?raw";
 import botActionsSource from "../../supabase/functions/telegram-bot-actions/index.ts?raw";
 import adminChatSource from "../../supabase/functions/telegram-admin-chat/index.ts?raw";
+import auditShapeRunnerSource from "../../supabase/functions/telegram-audit-shape-runner/index.ts?raw";
 import migrationSource from "../../supabase/migrations/20260721183552_c27995d4-a65d-4202-b4aa-add4bd025ea1.sql?raw";
 import historyRbacMigrationSource from "../../supabase/migrations/20260723063657_contact_center_telegram_history_rbac.sql?raw";
 import contactTelegramChatSource from "../components/admin/ContactTelegramChat.tsx?raw";
@@ -39,9 +40,15 @@ describe("Telegram Business contact-centre wiring", () => {
   });
 
   it("re-applies a configured webhook secret and preserves existing update types", () => {
-    expect(botActionsSource).toContain("missingUpdates.length === 0 && !webhookSecret");
+    expect(botActionsSource).toContain("missingUpdates.length === 0");
     expect(botActionsSource).toContain("[...new Set([...currentUpdates, ...businessRequiredUpdates])]");
     expect(botActionsSource).toContain("updatePayload.secret_token = webhookSecret");
+  });
+
+  it("fails closed when the Telegram webhook secret is absent", () => {
+    expect(webhookSource).toContain("if (!webhookSecret || suppliedWebhookSecret !== webhookSecret)");
+    expect(botActionsSource).toContain("telegram_webhook_secret_not_configured");
+    expect(auditShapeRunnerSource).toContain("'x-telegram-bot-api-secret-token': telegramWebhookSecret");
   });
 
   it("creates a secured connection table and message dedupe index", () => {

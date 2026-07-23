@@ -507,7 +507,10 @@ Deno.serve(async (req) => {
   try {
     const webhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET') || '';
     const suppliedWebhookSecret = req.headers.get('x-telegram-bot-api-secret-token') || '';
-    if (webhookSecret && suppliedWebhookSecret !== webhookSecret) {
+    // This function deliberately has verify_jwt = false because Telegram cannot
+    // send a Supabase JWT. Never turn that into an unsigned public write path:
+    // both a configured secret and an exact provider header are required.
+    if (!webhookSecret || suppliedWebhookSecret !== webhookSecret) {
       return new Response(JSON.stringify({ ok: false, error: 'invalid_webhook_secret' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
