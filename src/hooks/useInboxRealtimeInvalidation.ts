@@ -107,7 +107,12 @@ export function useInboxRealtimeInvalidation(): void {
       .channel("inbox-realtime-bus")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "telegram_messages" },
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "telegram_messages",
+          select: ["id", "direction", "user_id"],
+        },
         (payload) => {
           const row = payload.new as { direction?: string } | null;
           markInbox();
@@ -118,7 +123,12 @@ export function useInboxRealtimeInvalidation(): void {
       )
       .on(
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "telegram_messages" },
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "telegram_messages",
+          select: ["id", "direction", "is_read", "user_id"],
+        },
         (payload) => {
           const row = payload.new as
             | { direction?: string; is_read?: boolean; user_id?: string }
@@ -143,7 +153,12 @@ export function useInboxRealtimeInvalidation(): void {
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "telegram_messages" },
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "telegram_messages",
+          select: ["id"],
+        },
         () => {
           markInbox();
           markUnread();
@@ -165,17 +180,32 @@ export function useInboxRealtimeInvalidation(): void {
           .channel("inbox-realtime-bus-unified")
           .on(
             "postgres_changes",
-            { event: "*", schema: "public", table: "instagram_messages" },
+            {
+              event: "*",
+              schema: "public",
+              table: "instagram_messages",
+              select: ["id", "instagram_account_id"],
+            },
             () => markIg(),
           )
           .on(
             "postgres_changes",
-            { event: "*", schema: "public", table: "support_tickets" },
+            {
+              event: "*",
+              schema: "public",
+              table: "support_tickets",
+              select: ["id", "updated_at", "has_unread_admin"],
+            },
             () => markSupport(),
           )
           .on(
             "postgres_changes",
-            { event: "INSERT", schema: "public", table: "ticket_messages" },
+            {
+              event: "INSERT",
+              schema: "public",
+              table: "ticket_messages",
+              select: ["id", "ticket_id"],
+            },
             () => markSupport(),
           )
           .subscribe((status) => {

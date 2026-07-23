@@ -8,6 +8,9 @@ import unifiedInboxSource from "../components/admin/communication/unified/Unifie
 import channelPickerSource from "../components/admin/communication/unified/ChannelPicker.tsx?raw";
 import instagramMediaSource from "../components/admin/communication/instagram/InstagramMessageMedia.tsx?raw";
 import communicationPageSource from "../pages/admin/AdminCommunication.tsx?raw";
+import unifiedInboxHookSource from "../hooks/useUnifiedInbox.ts?raw";
+import realtimeInvalidationSource from "../hooks/useInboxRealtimeInvalidation.ts?raw";
+import telegramChatSource from "../components/admin/ContactTelegramChat.tsx?raw";
 
 describe("Contact-center safety and mobile performance", () => {
   it("aligns contact-center RLS and protects the atomic sender RPC", () => {
@@ -71,5 +74,36 @@ describe("Contact-center safety and mobile performance", () => {
     expect(communicationPageSource).toContain("const UnifiedInboxView = lazy(");
     expect(communicationPageSource).toContain("const BroadcastsTabContent = lazy(");
     expect(communicationPageSource).toContain("<Suspense fallback=");
+  });
+
+  it("paginates and virtualizes the unified inbox without a fixed 200-row ceiling", () => {
+    expect(unifiedInboxHookSource).toContain("useInfiniteQuery");
+    expect(unifiedInboxHookSource).toContain("getNextPageParam");
+    expect(unifiedInboxHookSource).toContain("fetchNextPage");
+    expect(unifiedInboxHookSource).not.toContain("perSourceLimit = 200");
+    expect(unifiedInboxSource).toContain("last.index >= filtered.length - 8");
+    expect(unifiedInboxSource).toContain("virtualizer.getTotalSize()");
+  });
+
+  it("requests narrow realtime payloads for contact-center invalidation", () => {
+    expect(realtimeInvalidationSource).toContain('select: ["id", "direction", "user_id"]');
+    expect(realtimeInvalidationSource).toContain(
+      'select: ["id", "direction", "is_read", "user_id"]',
+    );
+    expect(realtimeInvalidationSource).toContain(
+      'select: ["id", "instagram_account_id"]',
+    );
+  });
+
+  it("runs the Telegram media worker before refreshing a stuck attachment", () => {
+    const refreshHandler = telegramChatSource.slice(
+      telegramChatSource.indexOf("const handleMediaRefresh"),
+      telegramChatSource.indexOf("if (!telegramUserId)"),
+    );
+    expect(refreshHandler).toContain('action: "process_media_jobs"');
+    expect(refreshHandler).toContain("user_id: userId");
+    expect(refreshHandler.indexOf("process_media_jobs")).toBeLessThan(
+      refreshHandler.indexOf("refetchMessages"),
+    );
   });
 });
