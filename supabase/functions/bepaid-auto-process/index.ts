@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -414,6 +415,57 @@ Deno.serve(async (req) => {
         let profileId = item.matched_profile_id;
         let profileUserId: string | null = null;
         let matchedBy = null;
+        const parsedTracking = parseBepaidTrackingId(item.tracking_id);
+        let subscriptionContext: {
+          id: string;
+          profile_id: string | null;
+          user_id: string | null;
+          product_id: string | null;
+          tariff_id: string | null;
+          offer_id: string | null;
+          order_id: string | null;
+        } | null = null;
+
+        // Recurring recoveries already carry the canonical subscriptions_v2 ID
+        // in tracking_id. Resolve identity and catalog IDs from that record
+        // before any fuzzy email/name/product matching.
+        if (parsedTracking.subscriptionV2Id) {
+          const { data: resolvedSubscription, error: subscriptionError } = await supabase
+            .from('subscriptions_v2')
+            .select('id, profile_id, user_id, product_id, tariff_id, order_id')
+            .eq('id', parsedTracking.subscriptionV2Id)
+            .maybeSingle();
+
+          if (subscriptionError) {
+            throw new Error(`Subscription resolver failed: ${subscriptionError.message}`);
+          }
+
+          if (resolvedSubscription) {
+            let resolvedOfferId: string | null = null;
+            if (resolvedSubscription.order_id) {
+              const { data: sourceOrder } = await supabase
+                .from('orders_v2')
+                .select('offer_id')
+                .eq('id', resolvedSubscription.order_id)
+                .maybeSingle();
+              resolvedOfferId = sourceOrder?.offer_id || null;
+            }
+
+            subscriptionContext = {
+              ...resolvedSubscription,
+              offer_id: resolvedOfferId,
+            };
+            profileId = profileId || resolvedSubscription.profile_id;
+            // The profile is canonical for identity. Historical subscriptions
+            // may carry a pre-migration/orphan user_id, so let the normal
+            // profile loader below resolve the current user_id.
+            profileUserId = null;
+            matchedBy = 'subscription_tracking_id';
+            console.log(
+              `[BEPAID-AUTO-PROCESS] Resolved recurring context from subscription ${resolvedSubscription.id}`,
+            );
+          }
+        }
 
         // 1a. Try email match
         if (!profileId && item.customer_email) {
@@ -573,17 +625,38 @@ Deno.serve(async (req) => {
         // Step 2: Find product mapping - PRIORITY: offer_id > plan_title > fuzzy
         let mapping = null;
         const planTitle = item.product_name || item.tariff_name;
+
+        // 2a. CANONICAL recurring resolution: the active subscription is the
+        // source of truth for product/tariff/offer. Prefer an existing mapping,
+        // but synthesize the minimal writer context when plan-title mappings
+        // are absent or stale.
+        if (subscriptionContext?.product_id && subscriptionContext?.tariff_id) {
+          mapping = (allMappings || []).find((candidate) =>
+            candidate.product_id === subscriptionContext!.product_id &&
+            candidate.tariff_id === subscriptionContext!.tariff_id &&
+            (!subscriptionContext!.offer_id || candidate.offer_id === subscriptionContext!.offer_id)
+          ) || {
+            product_id: subscriptionContext.product_id,
+            tariff_id: subscriptionContext.tariff_id,
+            offer_id: subscriptionContext.offer_id,
+            auto_create_order: true,
+            bepaid_plan_title: 'resolved_from_subscriptions_v2',
+          };
+          console.log(
+            `[BEPAID-AUTO-PROCESS] Matched recurring catalog from subscriptions_v2: product=${subscriptionContext.product_id}, tariff=${subscriptionContext.tariff_id}`,
+          );
+        }
         
-        // 2a. PRIORITY 1: Extract offer_id from tracking_id
+        // 2b. PRIORITY 1: Extract offer_id from tracking_id
         const offerIdFromTracking = extractOfferIdFromTrackingId(item.tracking_id);
-        if (offerIdFromTracking) {
+        if (!mapping && offerIdFromTracking) {
           mapping = (allMappings || []).find(m => m.offer_id === offerIdFromTracking);
           if (mapping) {
             console.log(`[BEPAID-AUTO-PROCESS] Matched by offer_id from tracking_id: ${offerIdFromTracking}`);
           }
         }
         
-        // 2b. PRIORITY 2: Try exact match by plan_title (только если offer_id не найден)
+        // 2c. PRIORITY 2: Try exact match by plan_title (только если offer_id не найден)
         if (!mapping && planTitle) {
           mapping = (allMappings || []).find(m => 
             m.bepaid_plan_title === planTitle ||
@@ -594,7 +667,7 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 2c. PRIORITY 3: Try fuzzy match on description
+        // 2d. PRIORITY 3: Try fuzzy match on description
         if (!mapping && item.description) {
           const { tariffType, isTrial } = parseTariffFromDescription(item.description);
           console.log(`[BEPAID-AUTO-PROCESS] Parsed description: tariffType=${tariffType}, isTrial=${isTrial}`);
@@ -621,7 +694,7 @@ Deno.serve(async (req) => {
           }
         }
 
-        // 2d. PATCH-ID-FIRST: If still no mapping, try to resolve by tracking_id order → product_id
+        // 2e. PATCH-ID-FIRST: If still no mapping, try to resolve by tracking_id order → product_id
         // Instead of text-matching 'клуб'/'club', use ID-based resolution
         if (!mapping && item.tracking_id) {
           // Extract order_id from tracking_id formats: "link:order:{uuid}" or "{order_uuid}_{offer_uuid}"
@@ -651,7 +724,7 @@ Deno.serve(async (req) => {
           }
         }
 
-        // 2e. Legacy fallback: description-based club matching (deprecated, for unlinked historical transactions only)
+        // 2f. Legacy fallback: description-based club matching (deprecated, for unlinked historical transactions only)
         if (!mapping && item.description) {
           const descLower = item.description.toLowerCase();
           if (descLower.includes('клуб') || descLower.includes('club')) {
