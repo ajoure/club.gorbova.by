@@ -17,6 +17,10 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
+import {
+  ComposableCheckoutError,
+  resolveComposableCheckout,
+} from '../_shared/resolve-composable-checkout.ts';
 import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
 import {
   resolveInstallmentRetryPolicy,
@@ -699,11 +703,38 @@ Deno.serve(async (req) => {
     const public_url = `${canonicalOrigin}/pay/${url_token}`;
 
     // Для installment ссылка хранит per_payment в amount; полная сумма — в meta.installment.
+    let canonicalComposableQuote: Record<string, unknown> | null = null;
+    if (rawComposableQuote && typeof rawComposableQuote === 'object') {
+      const selectedAddonOfferIds = Array.isArray(rawComposableQuote.selected_addon_offer_ids)
+        ? rawComposableQuote.selected_addon_offer_ids.map((id) => String(id))
+        : [];
+      try {
+        const baseQuote = await resolveComposableCheckout(supabase, {
+          parentOfferId: offer_id,
+          addonOfferIds: selectedAddonOfferIds,
+        });
+        const requestedTotal = amount / 100;
+        canonicalComposableQuote = await resolveComposableCheckout(supabase, {
+          parentOfferId: offer_id,
+          addonOfferIds: selectedAddonOfferIds,
+          adjustmentAmount: Math.round((requestedTotal - baseQuote.subtotal) * 100) / 100,
+          adjustmentReason: typeof rawComposableQuote.adjustment_reason === 'string'
+            ? rawComposableQuote.adjustment_reason
+            : null,
+        });
+      } catch (error) {
+        if (error instanceof ComposableCheckoutError) {
+          return errorResponse(error.code, error.status);
+        }
+        return errorResponse('composable_quote_validation_failed', 400);
+      }
+    }
+
     const linkAmountKopecks =
       installmentLinkAmountKopecks !== null ? installmentLinkAmountKopecks : amount;
     const linkMeta: Record<string, unknown> = {};
-    if (rawComposableQuote && typeof rawComposableQuote === 'object') {
-      linkMeta.composable_checkout = rawComposableQuote;
+    if (canonicalComposableQuote) {
+      linkMeta.composable_checkout = canonicalComposableQuote;
     }
     if (installmentBlock) {
       linkMeta.installment = installmentBlock;

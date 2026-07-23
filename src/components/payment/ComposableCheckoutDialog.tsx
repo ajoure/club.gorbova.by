@@ -10,7 +10,7 @@ type Addon = {
   addon_product_name: string;
   addon_tariff_name: string;
   list_amount: number;
-  pricing_mode: "list_price" | "fixed_price" | "discount_percent" | "free";
+  pricing_mode: "offer_price" | "fixed_price" | "percent_discount" | "free";
   fixed_amount: number | null;
   discount_percent: number | null;
   is_required: boolean;
@@ -135,7 +135,7 @@ export function ComposableCheckoutDialog({
                   ? 0
                   : addon.pricing_mode === "fixed_price"
                     ? Number(addon.fixed_amount ?? addon.list_amount)
-                    : addon.pricing_mode === "discount_percent"
+                    : addon.pricing_mode === "percent_discount"
                       ? addon.list_amount * (1 - Number(addon.discount_percent ?? 0) / 100)
                       : addon.list_amount;
                 return (
