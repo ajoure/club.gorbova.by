@@ -34,6 +34,13 @@ Deno.test("bePaid auto-process verifies payments_v2 before completing queue", ()
   assert(!autoProcessSource.includes("await supabase.from('payments_v2').insert({"));
 });
 
+Deno.test("recurring recovery resolves catalog from subscriptions_v2", () => {
+  assertStringIncludes(autoProcessSource, "parseBepaidTrackingId(item.tracking_id)");
+  assertStringIncludes(autoProcessSource, ".from('subscriptions_v2')");
+  assertStringIncludes(autoProcessSource, "resolved_from_subscriptions_v2");
+  assertStringIncludes(autoProcessSource, "matchedBy = 'subscription_tracking_id'");
+});
+
 Deno.test("queue cron forwards its internal credential and supports exact recovery", () => {
   assertStringIncludes(queueCronSource, 'headers: { "x-internal-key": cronSecret }');
   assertStringIncludes(queueCronSource, 'query = query.eq("id", queueItemId)');
