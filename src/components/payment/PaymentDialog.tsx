@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { SAVED_CARD_PAYMENTS_ENABLED } from "@/config/paymentFeatures";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -255,6 +256,11 @@ export function PaymentDialog({
 
   // PAY-I: грузим список активных bePaid-карт. Селектим только нечувствительные поля.
   const loadSavedCards = async (userId: string) => {
+    if (!SAVED_CARD_PAYMENTS_ENABLED) {
+      setSavedCards([]);
+      setSelectedMethod('new_card');
+      return;
+    }
     setIsLoadingCard(true);
     try {
       const { data, error } = await supabase
@@ -364,7 +370,7 @@ export function PaymentDialog({
   // Для subscription/trial — всегда 'new_card' (карты disabled, PAY-I behavior).
   const isOneTimeFlow = !isSubscription && !isTrial;
   useEffect(() => {
-    if (!isOneTimeFlow || savedCards.length === 0) {
+    if (!SAVED_CARD_PAYMENTS_ENABLED || !isOneTimeFlow || savedCards.length === 0) {
       if (selectedMethod !== 'new_card') setSelectedMethod('new_card');
       return;
     }

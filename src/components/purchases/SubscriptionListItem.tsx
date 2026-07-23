@@ -1,6 +1,7 @@
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { ChevronRight, CheckCircle, XCircle, Clock, CreditCard } from "lucide-react";
+import { SAVED_CARD_PAYMENTS_ENABLED } from "@/config/paymentFeatures";
 import { Badge } from "@/components/ui/badge";
 import { getSubscriptionStatusLabel } from "@/lib/subscriptionStatusLabels";
 
@@ -110,7 +111,7 @@ export function SubscriptionListItem({ subscription, onClick }: SubscriptionList
           {subscription.access_end_at && (
             <span>Действует до: {formatShortDate(subscription.access_end_at)}</span>
           )}
-          {!isInactive && subscription.payment_methods?.brand && subscription.payment_methods?.last4 && (
+          {SAVED_CARD_PAYMENTS_ENABLED && !isInactive && subscription.payment_methods?.brand && subscription.payment_methods?.last4 && (
             <span className="flex items-center gap-1">
               <CreditCard className="h-3.5 w-3.5" />
               **** {subscription.payment_methods.last4}

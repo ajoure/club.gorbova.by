@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { ru } from "date-fns/locale";
 import { CreditCard, Download, Ban, RotateCcw, CheckCircle, XCircle, Clock, FileText, ChevronRight, ExternalLink, AlertTriangle, ShoppingCart } from "lucide-react";
+import { SAVED_CARD_PAYMENTS_ENABLED } from "@/config/paymentFeatures";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -318,7 +319,7 @@ export function SubscriptionDetailSheet({
               </div>
             )}
 
-            {subscription.payment_methods?.brand && subscription.payment_methods?.last4 && (
+            {SAVED_CARD_PAYMENTS_ENABLED && subscription.payment_methods?.brand && subscription.payment_methods?.last4 && (
               <div className="flex items-center justify-between gap-3 px-4 py-3">
                 <span className="text-xs sm:text-sm text-muted-foreground shrink-0">Способ оплаты</span>
                 <div className="flex items-center gap-2 text-sm font-medium">

@@ -67,7 +67,6 @@ const PaymentResultPage = lazy(() => import("./pages/PaymentResultPage"));
 const Documentation = lazy(() => import("./pages/Documentation"));
 const Help = lazy(() => import("./pages/Help"));
 const ProfileSettings = lazy(() => import("./pages/settings/Profile"));
-const PaymentMethodsSettings = lazy(() => import("./pages/settings/PaymentMethods"));
 const ConsentsSettings = lazy(() => import("./pages/settings/Consents"));
 const LegalDetailsSettings = lazy(() => import("./pages/settings/LegalDetails"));
 const UserRequisitesSettings = lazy(() => import("./pages/settings/UserRequisites"));
@@ -277,7 +276,7 @@ const App = () => {
               {/* Settings routes */}
               <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
               <Route path="/settings/profile" element={<ProtectedRoute><LazyRoute><ProfileSettings /></LazyRoute></ProtectedRoute>} />
-              <Route path="/settings/payment-methods" element={<ProtectedRoute><LazyRoute><PaymentMethodsSettings /></LazyRoute></ProtectedRoute>} />
+              <Route path="/settings/payment-methods" element={<Navigate to="/purchases" replace />} />
               <Route path="/settings/legal-details" element={<ProtectedRoute><LazyRoute><LegalDetailsSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/user-requisites" element={<ProtectedRoute><LazyRoute><UserRequisitesSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/consents" element={<ProtectedRoute><LazyRoute><ConsentsSettings /></LazyRoute></ProtectedRoute>} />

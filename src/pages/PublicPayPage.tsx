@@ -19,6 +19,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { normalizeEdgeFunctionError } from '@/utils/normalizeEdgeFunctionError';
+import { SAVED_CARD_PAYMENTS_ENABLED } from '@/config/paymentFeatures';
 import { LandingHeader } from '@/components/landing/LandingHeader';
 import { LandingFooter } from '@/components/landing/LandingFooter';
 import { GlassCard } from '@/components/ui/GlassCard';
@@ -150,7 +151,7 @@ export default function PublicPayPage() {
       if (error) throw error;
       return (data || []) as SavedCard[];
     },
-    enabled: !!user?.id,
+    enabled: SAVED_CARD_PAYMENTS_ENABLED && !!user?.id,
     retry: false,
   });
 
@@ -177,6 +178,7 @@ export default function PublicPayPage() {
     !!linkInfo &&
     (linkInfo.link_user_id === null || linkInfo.link_user_id === user.id);
   const _showSavedCardSelectorEarly =
+    SAVED_CARD_PAYMENTS_ENABLED &&
     _ownsOrPublicEarly &&
     !_isSubscriptionEarly &&
     !_isInstallmentEarly &&
@@ -432,6 +434,7 @@ export default function PublicPayPage() {
     (linkInfo.link_user_id === null || linkInfo.link_user_id === user.id);
   // PAY-D: saved-card selector — one_time only (subscription handled by PAY-E).
   const showSavedCardSelector =
+    SAVED_CARD_PAYMENTS_ENABLED &&
     ownsOrPublic &&
     !isSubscription &&
     !isInstallment &&
@@ -443,12 +446,14 @@ export default function PublicPayPage() {
   const isStripeSubscription = isSubscription && linkInfo.provider === 'stripe';
   // PAY-E-LITE: для bePaid subscription показываем сохранённые карты в disabled-режиме + уведомление.
   const showSubscriptionDisabledCards =
+    SAVED_CARD_PAYMENTS_ENABLED &&
     ownsOrPublic &&
     isSubscription &&
     !isStripeSubscription &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
-  const showSubscriptionFallbackHint = ownsOrPublic && isSubscription && !isStripeSubscription;
+  const showSubscriptionFallbackHint =
+    SAVED_CARD_PAYMENTS_ENABLED && ownsOrPublic && isSubscription && !isStripeSubscription;
   const showStripeSubscriptionHint = ownsOrPublic && isStripeSubscription;
 
 

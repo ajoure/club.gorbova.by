@@ -12,8 +12,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { MessageCircle, CreditCard, CheckCircle2, ExternalLink, HelpCircle } from "lucide-react";
-import { Link } from "react-router-dom";
+import { MessageCircle, CheckCircle2, ExternalLink, HelpCircle } from "lucide-react";
 
 const REMIND_LATER_DAYS = 7;
 
@@ -59,14 +58,7 @@ export function WelcomeOnboardingModal() {
 
       if (subscriptions && subscriptions.length > 0) return true;
 
-      const { data: paymentMethods } = await supabase
-        .from("payment_methods")
-        .select("id")
-        .eq("user_id", user.id)
-        .eq("status", "active")
-        .limit(1);
-
-      return paymentMethods && paymentMethods.length > 0;
+      return false;
     },
     enabled: shouldCheckSetup,
     staleTime: 5 * 60 * 1000,
@@ -184,27 +176,6 @@ export function WelcomeOnboardingModal() {
                   ✓ Telegram привязан
                 </p>
               )}
-            </div>
-          </div>
-
-          {/* Step 2: Card */}
-          <div className="flex items-start gap-3 p-3 rounded-lg border bg-muted/50 border-border">
-            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-              <CreditCard className="w-5 h-5 text-primary-foreground" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h4 className="font-medium text-foreground">2. Добавьте карту для оплаты</h4>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Для автоматического продления подписки
-              </p>
-              <div className="mt-2">
-                <Button size="sm" variant="outline" asChild onClick={handleComplete}>
-                  <Link to="/settings/payment-methods">
-                    <CreditCard className="w-4 h-4 mr-1.5" />
-                    Перейти к настройкам
-                  </Link>
-                </Button>
-              </div>
             </div>
           </div>
 
