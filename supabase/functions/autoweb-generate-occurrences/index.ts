@@ -197,12 +197,10 @@ Deno.serve(async (req) => {
       const blackout = (cfg?.schedule?.blackout_dates ?? []) as string[];
       const tz = (cfg?.schedule?.timezone as string) ?? (ev as any).event_timezone ?? 'Europe/Minsk';
       const duration = Number(cfg?.video?.duration_seconds ?? 3600);
-      const replayDelay = Number(cfg?.replay?.delay_minutes ?? 0);
-      const replayWindow = Number(cfg?.replay?.window_hours ?? 0);
 
       let occurrences: OccurrencePreview[] = [];
       try {
-        occurrences = expandRules(rules, windowDays, blackout, duration * 1000, replayDelay, replayWindow, tz);
+        occurrences = expandRules(rules, windowDays, blackout, duration * 1000, tz);
       } catch (e) {
         console.error(`[autoweb-generate-occurrences] bad rrules for ${ev.id}`, e);
         continue;
