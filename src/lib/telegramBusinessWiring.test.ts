@@ -4,6 +4,7 @@ import botActionsSource from "../../supabase/functions/telegram-bot-actions/inde
 import adminChatSource from "../../supabase/functions/telegram-admin-chat/index.ts?raw";
 import migrationSource from "../../supabase/migrations/20260721183552_c27995d4-a65d-4202-b4aa-add4bd025ea1.sql?raw";
 import historyRbacMigrationSource from "../../supabase/migrations/20260723063657_contact_center_telegram_history_rbac.sql?raw";
+import contactTelegramChatSource from "../components/admin/ContactTelegramChat.tsx?raw";
 
 describe("Telegram Business contact-centre wiring", () => {
   it("subscribes and handles every Business update family", () => {
@@ -68,6 +69,15 @@ describe("Telegram Business contact-centre wiring", () => {
     expect(historyRbacMigrationSource).toContain("'view'");
     expect(historyRbacMigrationSource).not.toContain(
       "public.has_role(auth.uid(), 'admin'::app_role)",
+    );
+  });
+
+  it("does not mistake the 20-row lean cache seed for complete chat history", () => {
+    expect(contactTelegramChatSource).toContain("p_limit: 20");
+    expect(contactTelegramChatSource).toContain("p_limit: 200");
+    expect(contactTelegramChatSource).toContain("staleTime: 0");
+    expect(contactTelegramChatSource).toContain(
+      "setHasOlderMessages(nextMessages.length === 200)",
     );
   });
 });
