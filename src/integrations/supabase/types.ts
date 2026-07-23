@@ -5265,19 +5265,59 @@ export type Database = {
           conditions: Json
           created_at: string
           created_by: string | null
+          delay_minutes: number
           description_template: string | null
           due_offset_minutes: number
+          email_account_id: string | null
+          email_html_template: string | null
+          email_subject_template: string | null
+          email_template_id: string | null
+          email_text_template: string | null
+          error_branch_assignee_strategy: string | null
+          error_branch_assignee_user_id: string | null
+          error_branch_description_template: string | null
+          error_branch_due_offset_minutes: number | null
+          error_branch_task_type_id: string | null
+          error_branch_title_template: string | null
+          fallback_action_type: string | null
+          fallback_email_account_id: string | null
+          fallback_email_html_template: string | null
+          fallback_email_subject_template: string | null
+          fallback_email_template_id: string | null
+          fallback_email_text_template: string | null
+          fallback_telegram_message_template: string | null
           id: string
           logical_id: string
           metadata: Json
           name: string
+          no_branch_assignee_strategy: string | null
+          no_branch_assignee_user_id: string | null
+          no_branch_description_template: string | null
+          no_branch_due_offset_minutes: number | null
+          no_branch_task_type_id: string | null
+          no_branch_title_template: string | null
           pipeline_id: string
           published_at: string | null
+          quiet_hours_end: string | null
+          quiet_hours_start: string | null
+          recipient_strategy: string
+          recurrence_last_key: string | null
+          recurrence_local_time: string | null
+          recurrence_month_day: number | null
+          recurrence_month_key: string | null
+          recurrence_month_last: boolean | null
+          recurrence_weekdays: number[] | null
           reminder_offset_minutes: number | null
+          require_same_stage: boolean
+          scheduled_fired_at: string | null
+          scheduled_local_at: string | null
           stage_id: string
           status: string
-          task_type_id: string
-          title_template: string
+          task_type_id: string | null
+          telegram_message_template: string | null
+          timezone: string
+          title_template: string | null
+          trigger_field: string | null
           trigger_type: string
           updated_at: string
           updated_by: string | null
@@ -5291,19 +5331,59 @@ export type Database = {
           conditions?: Json
           created_at?: string
           created_by?: string | null
+          delay_minutes?: number
           description_template?: string | null
           due_offset_minutes?: number
+          email_account_id?: string | null
+          email_html_template?: string | null
+          email_subject_template?: string | null
+          email_template_id?: string | null
+          email_text_template?: string | null
+          error_branch_assignee_strategy?: string | null
+          error_branch_assignee_user_id?: string | null
+          error_branch_description_template?: string | null
+          error_branch_due_offset_minutes?: number | null
+          error_branch_task_type_id?: string | null
+          error_branch_title_template?: string | null
+          fallback_action_type?: string | null
+          fallback_email_account_id?: string | null
+          fallback_email_html_template?: string | null
+          fallback_email_subject_template?: string | null
+          fallback_email_template_id?: string | null
+          fallback_email_text_template?: string | null
+          fallback_telegram_message_template?: string | null
           id?: string
           logical_id?: string
           metadata?: Json
           name: string
+          no_branch_assignee_strategy?: string | null
+          no_branch_assignee_user_id?: string | null
+          no_branch_description_template?: string | null
+          no_branch_due_offset_minutes?: number | null
+          no_branch_task_type_id?: string | null
+          no_branch_title_template?: string | null
           pipeline_id: string
           published_at?: string | null
+          quiet_hours_end?: string | null
+          quiet_hours_start?: string | null
+          recipient_strategy?: string
+          recurrence_last_key?: string | null
+          recurrence_local_time?: string | null
+          recurrence_month_day?: number | null
+          recurrence_month_key?: string | null
+          recurrence_month_last?: boolean | null
+          recurrence_weekdays?: number[] | null
           reminder_offset_minutes?: number | null
+          require_same_stage?: boolean
+          scheduled_fired_at?: string | null
+          scheduled_local_at?: string | null
           stage_id: string
           status?: string
-          task_type_id: string
-          title_template: string
+          task_type_id?: string | null
+          telegram_message_template?: string | null
+          timezone?: string
+          title_template?: string | null
+          trigger_field?: string | null
           trigger_type?: string
           updated_at?: string
           updated_by?: string | null
@@ -5317,19 +5397,59 @@ export type Database = {
           conditions?: Json
           created_at?: string
           created_by?: string | null
+          delay_minutes?: number
           description_template?: string | null
           due_offset_minutes?: number
+          email_account_id?: string | null
+          email_html_template?: string | null
+          email_subject_template?: string | null
+          email_template_id?: string | null
+          email_text_template?: string | null
+          error_branch_assignee_strategy?: string | null
+          error_branch_assignee_user_id?: string | null
+          error_branch_description_template?: string | null
+          error_branch_due_offset_minutes?: number | null
+          error_branch_task_type_id?: string | null
+          error_branch_title_template?: string | null
+          fallback_action_type?: string | null
+          fallback_email_account_id?: string | null
+          fallback_email_html_template?: string | null
+          fallback_email_subject_template?: string | null
+          fallback_email_template_id?: string | null
+          fallback_email_text_template?: string | null
+          fallback_telegram_message_template?: string | null
           id?: string
           logical_id?: string
           metadata?: Json
           name?: string
+          no_branch_assignee_strategy?: string | null
+          no_branch_assignee_user_id?: string | null
+          no_branch_description_template?: string | null
+          no_branch_due_offset_minutes?: number | null
+          no_branch_task_type_id?: string | null
+          no_branch_title_template?: string | null
           pipeline_id?: string
           published_at?: string | null
+          quiet_hours_end?: string | null
+          quiet_hours_start?: string | null
+          recipient_strategy?: string
+          recurrence_last_key?: string | null
+          recurrence_local_time?: string | null
+          recurrence_month_day?: number | null
+          recurrence_month_key?: string | null
+          recurrence_month_last?: boolean | null
+          recurrence_weekdays?: number[] | null
           reminder_offset_minutes?: number | null
+          require_same_stage?: boolean
+          scheduled_fired_at?: string | null
+          scheduled_local_at?: string | null
           stage_id?: string
           status?: string
-          task_type_id?: string
-          title_template?: string
+          task_type_id?: string | null
+          telegram_message_template?: string | null
+          timezone?: string
+          title_template?: string | null
+          trigger_field?: string | null
           trigger_type?: string
           updated_at?: string
           updated_by?: string | null
@@ -5337,6 +5457,62 @@ export type Database = {
           workspace_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_email_account_id_fkey"
+            columns: ["email_account_id"]
+            isOneToOne: false
+            referencedRelation: "email_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_email_account_id_fkey"
+            columns: ["email_account_id"]
+            isOneToOne: false
+            referencedRelation: "email_accounts_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_email_template_id_fkey"
+            columns: ["email_template_id"]
+            isOneToOne: false
+            referencedRelation: "email_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_error_branch_task_type_id_fkey"
+            columns: ["error_branch_task_type_id"]
+            isOneToOne: false
+            referencedRelation: "crm_task_types"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_fallback_email_account_id_fkey"
+            columns: ["fallback_email_account_id"]
+            isOneToOne: false
+            referencedRelation: "email_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_fallback_email_account_id_fkey"
+            columns: ["fallback_email_account_id"]
+            isOneToOne: false
+            referencedRelation: "email_accounts_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_fallback_email_template_id_fkey"
+            columns: ["fallback_email_template_id"]
+            isOneToOne: false
+            referencedRelation: "email_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_automation_rules_no_branch_task_type_id_fkey"
+            columns: ["no_branch_task_type_id"]
+            isOneToOne: false
+            referencedRelation: "crm_task_types"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "crm_pipeline_automation_rules_pipeline_id_fkey"
             columns: ["pipeline_id"]
@@ -5727,6 +5903,7 @@ export type Database = {
           meta: Json
           offer_id: string | null
           order_id: string | null
+          pipeline_automation_rule_id: string | null
           pipeline_id: string | null
           pipeline_stage_id: string | null
           product_id: string | null
@@ -5758,6 +5935,7 @@ export type Database = {
           meta?: Json
           offer_id?: string | null
           order_id?: string | null
+          pipeline_automation_rule_id?: string | null
           pipeline_id?: string | null
           pipeline_stage_id?: string | null
           product_id?: string | null
@@ -5789,6 +5967,7 @@ export type Database = {
           meta?: Json
           offer_id?: string | null
           order_id?: string | null
+          pipeline_automation_rule_id?: string | null
           pipeline_id?: string | null
           pipeline_stage_id?: string | null
           product_id?: string | null
@@ -5838,6 +6017,13 @@ export type Database = {
             columns: ["order_id"]
             isOneToOne: false
             referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_tasks_pipeline_automation_rule_id_fkey"
+            columns: ["pipeline_automation_rule_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipeline_automation_rules"
             referencedColumns: ["id"]
           },
           {
@@ -21897,6 +22083,40 @@ export type Database = {
         }
         Returns: undefined
       }
+      crm_pipeline_automation_conditions_valid: {
+        Args: { _conditions: Json }
+        Returns: boolean
+      }
+      crm_pipeline_automation_enqueue_due_month_days_v13: {
+        Args: never
+        Returns: number
+      }
+      crm_pipeline_automation_enqueue_due_schedules_v10: {
+        Args: never
+        Returns: number
+      }
+      crm_pipeline_automation_enqueue_due_weekdays_v12: {
+        Args: never
+        Returns: number
+      }
+      crm_pipeline_automation_next_available_at: {
+        Args: {
+          _base: string
+          _delay_minutes: number
+          _quiet_end: string
+          _quiet_start: string
+          _timezone: string
+        }
+        Returns: string
+      }
+      crm_pipeline_automation_retry_job: {
+        Args: { _job_id: string }
+        Returns: undefined
+      }
+      crm_pipeline_automation_skip_job: {
+        Args: { _job_id: string; _reason: string; _result?: Json }
+        Returns: undefined
+      }
       crm_task_apply_automation: {
         Args: { _context?: Json; _deal_id: string; _offer_id: string }
         Returns: string[]
@@ -21933,6 +22153,7 @@ export type Database = {
           meta: Json
           offer_id: string | null
           order_id: string | null
+          pipeline_automation_rule_id: string | null
           pipeline_id: string | null
           pipeline_stage_id: string | null
           product_id: string | null
