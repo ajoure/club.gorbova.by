@@ -97,8 +97,6 @@ Deno.serve(async (req) => {
 
     const cfg = (event.autoweb_config ?? {}) as Record<string, any>;
     const duration = Number(cfg?.video?.duration_seconds ?? 3600);
-    const replayWindowH = Number(cfg?.replay?.window_hours ?? 0);
-    const replayDelayMin = Number(cfg?.replay?.delay_minutes ?? 0);
 
     let startsAt: Date;
     let chosenOffset = 0;
@@ -121,9 +119,13 @@ Deno.serve(async (req) => {
       startsAt = event.scheduled_at ? new Date(event.scheduled_at as string) : new Date();
     }
 
-    const endsAt = new Date(
-      startsAt.getTime() + duration * 1000 + replayDelayMin * 60_000 + replayWindowH * 3600_000,
-    );
+    // `live_event_sessions.ends_at` — граница именно живой фазы сессии.
+    // Окно replay вычисляется отдельно в autoweb-room-state из конфигурации
+    // события. Нельзя включать его сюда: heartbeat и server self-heal опираются
+    // на ends_at, а room-state заканчивает live-фазу после длительности видео.
+    // Иначе одна и та же сессия одновременно выглядит завершённой в комнате,
+    // но остаётся live/pending в lifecycle до конца replay-окна.
+    const endsAt = new Date(startsAt.getTime() + duration * 1000);
 
     // --- DEDUPE ---
     const nowIso = new Date().toISOString();

@@ -57,8 +57,6 @@ function expandSingleRRule(
   windowDays: number,
   blackoutDates: string[],
   durationMs: number,
-  replayDelayMin: number,
-  replayWindowH: number,
   timezone: string,
 ): OccurrencePreview[] {
   const now = new Date();
@@ -72,9 +70,9 @@ function expandSingleRRule(
 
   return dates.map((d) => {
     const startIso = d.toISOString();
-    const endIso = new Date(
-      d.getTime() + durationMs + replayDelayMin * 60_000 + replayWindowH * 3600_000,
-    ).toISOString();
+    // `ends_at` is the end of the live phase. Replay availability is derived
+    // separately by autoweb-room-state from the event configuration.
+    const endIso = new Date(d.getTime() + durationMs).toISOString();
     const dateKey = dateKeyInTz(d, timezone);
     return {
       starts_at: startIso,
@@ -90,8 +88,6 @@ function expandRules(
   windowDays: number,
   blackoutDates: string[],
   durationMs: number,
-  replayDelayMin: number,
-  replayWindowH: number,
   timezone: string,
 ): OccurrencePreview[] {
   const merged = new Map<string, OccurrencePreview>();
@@ -99,7 +95,7 @@ function expandRules(
     if (!r) continue;
     let occ: OccurrencePreview[] = [];
     try {
-      occ = expandSingleRRule(r, windowDays, blackoutDates, durationMs, replayDelayMin, replayWindowH, timezone);
+      occ = expandSingleRRule(r, windowDays, blackoutDates, durationMs, timezone);
     } catch (e) {
       console.error('[autoweb-generate-occurrences] bad rule, skipping', r, e);
       continue;
@@ -151,8 +147,6 @@ Deno.serve(async (req) => {
       const blackout = (cfg?.schedule?.blackout_dates ?? []) as string[];
       const tz = (cfg?.schedule?.timezone as string) ?? 'Europe/Minsk';
       const duration = Number(cfg?.video?.duration_seconds ?? 3600);
-      const replayDelay = Number(cfg?.replay?.delay_minutes ?? 0);
-      const replayWindow = Number(cfg?.replay?.window_hours ?? 0);
 
       const rules = previewRrules && previewRrules.length > 0 ? previewRrules : [previewRrule!];
       try {
@@ -161,8 +155,6 @@ Deno.serve(async (req) => {
           windowDays,
           blackout,
           duration * 1000,
-          replayDelay,
-          replayWindow,
           tz,
         ).slice(0, previewLimit);
         return jsonRes({ status: 'ok', preview: occ, timezone: tz, source_rules: rules.length });
@@ -205,12 +197,10 @@ Deno.serve(async (req) => {
       const blackout = (cfg?.schedule?.blackout_dates ?? []) as string[];
       const tz = (cfg?.schedule?.timezone as string) ?? (ev as any).event_timezone ?? 'Europe/Minsk';
       const duration = Number(cfg?.video?.duration_seconds ?? 3600);
-      const replayDelay = Number(cfg?.replay?.delay_minutes ?? 0);
-      const replayWindow = Number(cfg?.replay?.window_hours ?? 0);
 
       let occurrences: OccurrencePreview[] = [];
       try {
-        occurrences = expandRules(rules, windowDays, blackout, duration * 1000, replayDelay, replayWindow, tz);
+        occurrences = expandRules(rules, windowDays, blackout, duration * 1000, tz);
       } catch (e) {
         console.error(`[autoweb-generate-occurrences] bad rrules for ${ev.id}`, e);
         continue;
