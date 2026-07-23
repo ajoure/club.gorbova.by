@@ -76,6 +76,17 @@ verify_jwt = false
 [functions.instagram-webhook]
 verify_jwt = false
 
+[functions.manychat-inbound]
+# External ManyChat calls authenticate inside the function with the
+# per-instance X-ManyChat-Token shared secret.
+verify_jwt = false
+
+[functions.instagram-admin-chat]
+verify_jwt = true
+
+[functions.instagram-media-proxy]
+verify_jwt = true
+
 [functions.getcourse-webhook]
 verify_jwt = false
 

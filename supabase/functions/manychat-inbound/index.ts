@@ -311,6 +311,31 @@ async function logIntegrationEvent(
   }
 }
 
+async function markManyChatIngressHealth(
+  supabase: any,
+  instanceId: string,
+  successful: boolean,
+) {
+  const now = new Date().toISOString();
+  const payload: Record<string, unknown> = {
+    last_check_at: now,
+  };
+  if (successful) {
+    payload.last_successful_sync_at = now;
+    payload.status = "connected";
+    payload.error_message = null;
+  }
+  try {
+    const { error } = await supabase
+      .from("integration_instances")
+      .update(payload)
+      .eq("id", instanceId);
+    if (error) console.error("[manychat-inbound] health_update_failed", error.message);
+  } catch (e) {
+    console.error("[manychat-inbound] health_update_failed", e);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -410,6 +435,10 @@ Deno.serve(async (req) => {
     );
     return jsonResponse({ success: false, error: "unauthorized" }, 401);
   }
+
+  // A correctly authenticated request proves that ManyChat reached our edge.
+  // It is distinct from a successful message persistence watermark below.
+  await markManyChatIngressHealth(supabase, instance.id, false);
 
   // 4.5) P3: backfill manychat_page_name в config, если payload его содержит, но его ещё нет.
   if (normalized.manychat_page_name && !instance.config?.manychat_page_name) {
@@ -563,6 +592,7 @@ Deno.serve(async (req) => {
       msgErr.code === "23505" ||
       (msgErr.message ?? "").includes("duplicate key");
     if (isDup) {
+      await markManyChatIngressHealth(supabase, instance.id, true);
       await logIntegrationEvent(
         supabase,
         instance.id,
@@ -610,7 +640,7 @@ Deno.serve(async (req) => {
 
   // 8b) Push notifications to admins (only for incoming client messages, not dedupe path).
   // Fire-and-forget: never break the 200 OK to ManyChat.
-  if (normalized.direction === "incoming" && inserted?.id) {
+  if (normalized.direction === "inbound" && inserted?.id) {
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
       const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -701,6 +731,7 @@ Deno.serve(async (req) => {
       has_media: !!normalized.media_url,
     },
   );
+  await markManyChatIngressHealth(supabase, instance.id, true);
 
   return jsonResponse({
     success: true,
