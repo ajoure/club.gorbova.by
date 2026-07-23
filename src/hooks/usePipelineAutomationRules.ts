@@ -9,6 +9,7 @@ export type PipelineAutomationTriggerType =
   | "deal_left_stage"
   | "deal_created"
   | "payment_received"
+  | "deal_field_changed"
   | "after_event"
   | "weekday"
   | "month_day"
@@ -64,6 +65,7 @@ export interface PipelineAutomationRule {
   recurrence_local_time: string | null;
   recurrence_month_day: number | null;
   recurrence_month_last: boolean | null;
+  trigger_field: PipelineAutomationConditionField | null;
   action_type: "create_task" | "send_email" | "send_telegram";
   task_type_id: string | null;
   title_template: string | null;
@@ -118,6 +120,7 @@ export interface CreatePipelineAutomationRule {
   recurrence_local_time?: string | null;
   recurrence_month_day?: number | null;
   recurrence_month_last?: boolean | null;
+  trigger_field?: PipelineAutomationConditionField | null;
   action_type: "create_task" | "send_email" | "send_telegram";
   task_type_id?: string | null;
   title_template?: string | null;
@@ -331,6 +334,10 @@ export function useCreatePipelineAutomationRule() {
           recurrence_month_last:
             payload.trigger_type === "month_day"
               ? payload.recurrence_month_last
+              : null,
+          trigger_field:
+            payload.trigger_type === "deal_field_changed"
+              ? payload.trigger_field
               : null,
           action_type: payload.action_type,
           email_template_id:

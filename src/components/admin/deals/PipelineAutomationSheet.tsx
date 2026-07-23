@@ -163,6 +163,10 @@ function operatorsForField(field: PipelineAutomationConditionField) {
   );
 }
 
+function conditionFieldLabel(field: string | null) {
+  return CONDITION_FIELDS.find((item) => item.value === field)?.label ?? "поле сделки";
+}
+
 function statusLabel(status: PipelineAutomationRule["status"]) {
   if (status === "active") return "Работает";
   if (status === "paused") return "Пауза";
@@ -391,6 +395,11 @@ function RuleCard({
                 ? `, ${rule.recurrence_local_time.slice(0, 5)}`
                 : ""}
             </>
+          ) : rule.trigger_type === "deal_field_changed" ? (
+            <>
+              <Workflow className="h-3 w-3" />
+              {conditionFieldLabel(rule.trigger_field)}
+            </>
           ) : (
             <>
               <ArrowRight className="h-3 w-3" />
@@ -546,6 +555,8 @@ export function PipelineAutomationSheet({
   const [recurrenceTime, setRecurrenceTime] = useState("09:00");
   const [recurrenceMonthDay, setRecurrenceMonthDay] = useState("1");
   const [recurrenceMonthLast, setRecurrenceMonthLast] = useState(false);
+  const [triggerField, setTriggerField] =
+    useState<PipelineAutomationConditionField>("status");
   const [emailTemplateId, setEmailTemplateId] = useState("");
   const [telegramMessage, setTelegramMessage] = useState(
     "Здравствуйте, {{customer_name}}! Пишем Вам по сделке {{deal_number}}.",
@@ -628,6 +639,7 @@ export function PipelineAutomationSheet({
     setRecurrenceTime("09:00");
     setRecurrenceMonthDay("1");
     setRecurrenceMonthLast(false);
+    setTriggerField("status");
     setTelegramMessage(
       "Здравствуйте, {{customer_name}}! Пишем Вам по сделке {{deal_number}}.",
     );
@@ -684,6 +696,7 @@ export function PipelineAutomationSheet({
       (!recurrenceWeekdays.length || !recurrenceTime)
     )
       return;
+    if (triggerType === "deal_field_changed" && !triggerField) return;
     if (
       triggerType === "month_day" &&
       (!recurrenceTime ||
@@ -749,6 +762,8 @@ export function PipelineAutomationSheet({
             : null,
         recurrence_month_last:
           triggerType === "month_day" ? recurrenceMonthLast : null,
+        trigger_field:
+          triggerType === "deal_field_changed" ? triggerField : null,
         action_type: actionType,
         task_type_id: actionType === "create_task" ? taskTypeId : null,
         title_template: actionType === "create_task" ? title : null,
@@ -1062,6 +1077,8 @@ export function PipelineAutomationSheet({
                           ? "Один раз при создании сделки в выбранной стартовой стадии"
                           : triggerType === "payment_received"
                             ? "После подтверждённой оплаты по сделке в выбранной стадии"
+                            : triggerType === "deal_field_changed"
+                              ? "После изменения выбранного поля сделки в этой стадии"
                             : "После перехода сделки в стадию"}
               </p>
             </div>
@@ -1198,6 +1215,23 @@ export function PipelineAutomationSheet({
                     только в месяцах, где этот день существует; «Последний день»
                     работает и в коротких месяцах.
                   </p>
+                </div>
+              )}
+              {triggerType === "deal_field_changed" && (
+                <div className="space-y-1.5 rounded-xl border border-primary/15 bg-primary/[0.035] p-3">
+                  <Label className="text-[11px]">Какое поле отслеживать</Label>
+                  <Select
+                    value={triggerField}
+                    onValueChange={(value) => setTriggerField(value as PipelineAutomationConditionField)}
+                  >
+                    <SelectTrigger className="h-8 rounded-lg text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {CONDITION_FIELDS.map((field) => (
+                        <SelectItem key={field.value} value={field.value}>{field.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] leading-4 text-muted-foreground">Доступны только канонические поля сделки. Правило сработает, когда значение реально изменилось, пока сделка находится в этой стадии.</p>
                 </div>
               )}
               <div className="space-y-1.5">

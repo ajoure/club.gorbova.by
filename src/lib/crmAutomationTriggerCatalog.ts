@@ -46,7 +46,7 @@ export const CRM_AUTOMATION_TRIGGER_CATALOG: CrmAutomationTriggerDefinition[] =
       title: "Изменилось поле сделки",
       description:
         "Реагирует на смену ответственного, суммы, продукта, тарифа или другого выбранного поля.",
-      availability: "planned",
+      availability: "available",
     },
     {
       id: "payment_received",
