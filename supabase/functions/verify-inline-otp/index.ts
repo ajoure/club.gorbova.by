@@ -6,10 +6,7 @@
 // admin.generateLink НЕ отправляет письмо — только возвращает link/hash.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import {
-  constantTimeEquals,
-  hmacOtp,
-} from "../_shared/inline-otp-crypto.ts";
+import { hmacOtp } from "../_shared/inline-otp-crypto.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -76,37 +73,34 @@ Deno.serve(async (req) => {
   }
   if (!row) return json({ error: "no_active_code" }, 400);
 
-  const now = Date.now();
-  if (new Date(row.expires_at).getTime() < now) {
-    return json({ error: "expired" }, 400);
-  }
-  if ((row.attempts || 0) >= MAX_ATTEMPTS) {
-    return json({ error: "locked" }, 429);
-  }
-
   const candidate = await hmacOtp(code, row.salt, pepper);
-  if (!constantTimeEquals(candidate, row.code_hash)) {
-    await supabase
-      .from("inline_otp_codes")
-      .update({ attempts: (row.attempts || 0) + 1 })
-      .eq("id", row.id);
-    return json({
-      error: "invalid_code",
-      attempts_left: Math.max(0, MAX_ATTEMPTS - ((row.attempts || 0) + 1)),
-    }, 400);
-  }
-
-  // Mark used BEFORE mutations so a race can't double-consume.
-  const nowIso = new Date().toISOString();
-  const { error: markErr } = await supabase
-    .from("inline_otp_codes")
-    .update({ used_at: nowIso })
-    .eq("id", row.id)
-    .is("used_at", null);
-  if (markErr) {
-    console.error("[verify-inline-otp] mark used failed:", markErr);
+  // The comparison and state transition are serialized in Postgres. A plain
+  // read/update here loses attempts under concurrent invalid guesses and can
+  // issue more than one session for the same code.
+  const { data: consumeRows, error: consumeErr } = await supabase.rpc(
+    "consume_inline_otp_attempt",
+    {
+      p_code_id: row.id,
+      p_code_hash: candidate,
+      p_max_attempts: MAX_ATTEMPTS,
+    },
+  );
+  if (consumeErr) {
+    console.error("[verify-inline-otp] atomic consume failed:", consumeErr);
     return json({ error: "internal_error" }, 500);
   }
+  const consume = Array.isArray(consumeRows) ? consumeRows[0] : null;
+  if (!consume) return json({ error: "no_active_code" }, 400);
+
+  if (consume.status === "invalid") {
+    return json({
+      error: "invalid_code",
+      attempts_left: Math.max(0, MAX_ATTEMPTS - Number(consume.attempts || 0)),
+    }, 400);
+  }
+  if (consume.status === "locked") return json({ error: "locked" }, 429);
+  if (consume.status === "expired") return json({ error: "expired" }, 400);
+  if (consume.status !== "consumed") return json({ error: "no_active_code" }, 400);
 
   const meta = (row.meta || {}) as Record<string, string | undefined>;
   const fullName =
