@@ -119,7 +119,11 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return handleCorsPreflightRequest();
 
   const authHeader = req.headers.get("Authorization") ?? "";
-  if (authHeader !== `Bearer ${serviceRoleKey}`) {
+  const workerSecret = Deno.env.get("CRM_AUTOMATION_WORKER_SECRET") ?? "";
+  const providedSecret = req.headers.get("X-Worker-Secret") ?? "";
+  const serviceOk = authHeader === `Bearer ${serviceRoleKey}`;
+  const secretOk = workerSecret.length > 0 && providedSecret === workerSecret;
+  if (!serviceOk && !secretOk) {
     return new Response(JSON.stringify({ ok: false, error: "forbidden" }), {
       status: 403,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
