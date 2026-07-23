@@ -159,6 +159,24 @@ const INVARIANT_TRANSLATIONS: Record<string, {
     action: 'Проверить provider_subscriptions.state/charge dates и корректность reconciliation',
     urlPath: '/admin/subscriptions-v2',
   },
+  'INV-23': {
+    title: 'Нет webhook от bePaid (24ч)',
+    explain: 'За сутки не получено ни одного события bePaid — возможен обрыв доставки',
+    action: 'Проверить notification URL и доставку webhook в кабинете bePaid',
+    urlPath: '/admin/payments?tab=diagnostics',
+  },
+  'INV-24': {
+    title: 'Очередь закрыта без платежа',
+    explain: 'Техническая очередь помечена завершённой, но payments_v2 не создан',
+    action: 'Запустить точечное восстановление по bePaid UID',
+    urlPath: '/admin/payments?tab=diagnostics',
+  },
+  'INV-25': {
+    title: 'Зависла обработка платежей',
+    explain: 'Строки очереди находятся в processing более двух часов',
+    action: 'Проверить queue cron и последний текст ошибки',
+    urlPath: '/admin/payments?tab=diagnostics',
+  },
   'INV-SITE-1': {
     title: 'Невалидные опубликованные страницы',
     explain: 'Опубликованные страницы с пустыми или невалидными блоками (без id/type/version)',

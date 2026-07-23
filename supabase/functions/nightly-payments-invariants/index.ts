@@ -490,6 +490,98 @@ Deno.serve(async (req) => {
       console.error("[INV-22-AUDIT] check failed", e);
     }
 
+    // INV-23: bePaid webhook delivery silence (24h).
+    // This catches transport outages before a customer reports a missing renewal.
+    const webhookCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { count: recentBepaidWebhookCount, error: webhookCountError } = await supabase
+      .from("webhook_events")
+      .select("id", { count: "exact", head: true })
+      .eq("provider", "bepaid")
+      .gte("created_at", webhookCutoff);
+
+    const webhookSilence = !webhookCountError && (recentBepaidWebhookCount || 0) === 0;
+    invariants.push({
+      name: "INV-23: bePaid webhook silence (24h)",
+      passed: !webhookCountError && !webhookSilence,
+      count: webhookCountError || webhookSilence ? 1 : 0,
+      samples: webhookSilence ? [{ since: webhookCutoff }] : [],
+      description: webhookCountError
+        ? `Could not count bePaid webhook events: ${webhookCountError.message}`
+        : `${recentBepaidWebhookCount || 0} bePaid webhook event(s) received in the last 24h.`,
+    });
+
+    // INV-24: queue rows must never be terminal without canonical payments_v2.
+    const terminalCutoff = new Date(Date.now() - 35 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: terminalQueueRows, error: terminalQueueError } = await supabase
+      .from("payment_reconcile_queue")
+      .select("id,bepaid_uid,status,processed_order_id,processed_at,updated_at")
+      .in("status", ["materialized", "successful", "completed"])
+      .not("bepaid_uid", "is", null)
+      .gte("updated_at", terminalCutoff)
+      .limit(500);
+
+    let terminalWithoutPayment: any[] = [];
+    if (!terminalQueueError && terminalQueueRows?.length) {
+      const terminalUids = [...new Set(
+        terminalQueueRows.map((row: any) => row.bepaid_uid).filter(Boolean),
+      )];
+      const existingPaymentUids = new Set<string>();
+
+      for (let offset = 0; offset < terminalUids.length; offset += 100) {
+        const batch = terminalUids.slice(offset, offset + 100);
+        const { data: paymentRows } = await supabase
+          .from("payments_v2")
+          .select("provider_payment_id")
+          .eq("provider", "bepaid")
+          .in("provider_payment_id", batch);
+        for (const payment of paymentRows || []) {
+          if (payment.provider_payment_id) existingPaymentUids.add(payment.provider_payment_id);
+        }
+      }
+
+      terminalWithoutPayment = terminalQueueRows.filter(
+        (row: any) => !existingPaymentUids.has(row.bepaid_uid),
+      );
+    }
+
+    invariants.push({
+      name: "INV-24: terminal bePaid queue without payments_v2 (35d)",
+      passed: !terminalQueueError && terminalWithoutPayment.length === 0,
+      count: terminalQueueError ? 1 : terminalWithoutPayment.length,
+      samples: terminalWithoutPayment.slice(0, 5).map((row: any) => ({
+        queue_id: row.id,
+        bepaid_uid: row.bepaid_uid,
+        status: row.status,
+      })),
+      description: terminalQueueError
+        ? `Could not inspect terminal queue: ${terminalQueueError.message}`
+        : `${terminalWithoutPayment.length} terminal queue row(s) lack a canonical payment.`,
+    });
+
+    // INV-25: processing rows must not remain stuck for hours.
+    const processingCutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const { data: staleProcessingRows, error: processingError } = await supabase
+      .from("payment_reconcile_queue")
+      .select("id,bepaid_uid,source,last_attempt_at,updated_at")
+      .eq("status", "processing")
+      .lt("updated_at", processingCutoff)
+      .limit(100);
+
+    invariants.push({
+      name: "INV-25: stale payment queue processing (2h)",
+      passed: !processingError && (staleProcessingRows || []).length === 0,
+      count: processingError ? 1 : (staleProcessingRows || []).length,
+      samples: (staleProcessingRows || []).slice(0, 5).map((row: any) => ({
+        queue_id: row.id,
+        bepaid_uid: row.bepaid_uid,
+        source: row.source,
+        last_attempt_at: row.last_attempt_at,
+      })),
+      description: processingError
+        ? `Could not inspect processing queue: ${processingError.message}`
+        : `${(staleProcessingRows || []).length} processing row(s) are older than two hours.`,
+    });
+
     // Regress guard: log unknown provider/reconcile_source combos (info, not failed)
     try {
       const { data: sourceBreakdown } = await supabase.rpc('execute_readonly_query', {
