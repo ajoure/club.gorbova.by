@@ -216,9 +216,15 @@ Deno.serve(async (req) => {
       // Process single item by ID
       query = query.eq('id', queueItemId);
     } else {
-      // Process batch of pending items - skip manually_linked and those with matched_order_id
+      // Retry rows abandoned in "processing" after a worker interruption.
+      // Fresh processing rows stay excluded so concurrent workers cannot claim them.
+      const staleProcessingCutoff = new Date(
+        Date.now() - 2 * 60 * 60 * 1000,
+      ).toISOString();
       query = query
-        .in('status', ['pending', 'error'])
+        .or(
+          `status.in.(pending,error),and(status.eq.processing,updated_at.lt.${staleProcessingCutoff})`,
+        )
         .is('matched_order_id', null) // Skip already linked payments
         .lt('attempts', 5)
         .order('created_at', { ascending: true })
