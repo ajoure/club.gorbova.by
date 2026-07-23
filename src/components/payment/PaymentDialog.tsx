@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Info, AlertTriangle, Repeat, Shield } from "lucide-react";
+import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Info, AlertTriangle, Repeat, Shield, Eye, EyeOff } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -36,6 +36,7 @@ import {
   cancelOldSubscriptionForReplacement,
   type SubscriptionConflictInfo,
 } from "@/lib/subscriptionReplacement";
+import { USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
 
 interface SubscriptionMessage {
   title?: string;           // "Ежемесячная подписка" / "Подписка на Клуб"
@@ -73,7 +74,10 @@ const emailSchema = z.string().email("Введите корректный email"
 const phoneSchema = z.string().refine((val) => isValidPhoneNumber(val), {
   message: "Введите корректный номер телефона",
 });
-const passwordSchema = z.string().min(6, "Пароль должен быть не менее 6 символов");
+const passwordSchema = z.string().min(
+  USER_PASSWORD_MIN_LENGTH,
+  `Пароль должен быть не менее ${USER_PASSWORD_MIN_LENGTH} символов`,
+);
 
 // Translate payment errors to Russian
 function translatePaymentError(error: string): string {
@@ -210,6 +214,7 @@ export function PaymentDialog({
   const [existingUserId, setExistingUserId] = useState<string | null>(null);
   const [emailCheckResult, setEmailCheckResult] = useState<EmailCheckResult | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   // PAY-I: список сохранённых карт; всегда disabled в PaymentDialog (см. mem://ui/payments/saved-card-client-policy).
   const [savedCards, setSavedCards] = useState<Array<{ id: string; brand: string; last4: string; exp_month: number | null; exp_year: number | null; is_default: boolean }>>([]);
   const [isLoadingCard, setIsLoadingCard] = useState(false);
@@ -927,7 +932,9 @@ export function PaymentDialog({
 
         const fallbackMessage = isOneTimePayment
           ? "Не удалось открыть страницу оплаты. Попробуйте ещё раз."
-          : "Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.";
+          : isTrial
+            ? data?.error || "Не удалось активировать демо-доступ. Попробуйте ещё раз."
+            : "Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.";
 
         if (data?.fallback) {
           setPaymentError(fallbackMessage);
@@ -1051,23 +1058,36 @@ export function PaymentDialog({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password">Пароль</Label>
-              <Input
-                id="dialog_auth_password"
-                name="dialog_auth_password"
-                type="password"
-                placeholder="••••••••"
-                value={formData.password}
-                onChange={(e) => {
-                  setFormData(prev => ({ ...prev, password: e.target.value }));
-                  setErrors(prev => ({ ...prev, password: undefined }));
-                  setLoginError(null);
-                }}
-                required
-                disabled={isLoading}
-                allowAutofill
-                autoComplete="current-password"
-              />
+              <Label htmlFor="dialog_auth_password">Пароль</Label>
+              <div className="relative">
+                <Input
+                  id="dialog_auth_password"
+                  name="dialog_auth_password"
+                  type={showLoginPassword ? "text" : "password"}
+                  placeholder="••••••"
+                  value={formData.password}
+                  onChange={(e) => {
+                    setFormData(prev => ({ ...prev, password: e.target.value }));
+                    setErrors(prev => ({ ...prev, password: undefined }));
+                    setLoginError(null);
+                  }}
+                  required
+                  disabled={isLoading}
+                  allowAutofill
+                  autoComplete="current-password"
+                  className="pr-11"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword((visible) => !visible)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label={showLoginPassword ? "Скрыть пароль" : "Показать пароль"}
+                  aria-pressed={showLoginPassword}
+                  disabled={isLoading}
+                >
+                  {showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
               {errors.password && (
                 <p className="text-sm text-destructive">{errors.password}</p>
               )}
@@ -1325,7 +1345,9 @@ export function PaymentDialog({
             {paymentError && (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Не удалось продолжить оплату</AlertTitle>
+                <AlertTitle>
+                  {isTrial ? "Не удалось активировать демо-доступ" : "Не удалось продолжить оплату"}
+                </AlertTitle>
                 <AlertDescription>{paymentError}</AlertDescription>
               </Alert>
             )}
@@ -1680,36 +1702,24 @@ export function PaymentDialog({
           
           <div className="space-y-4">
             <p className="text-muted-foreground">
-              Вы уже воспользовались бесплатным пробным периодом для этого продукта.
+              Бесплатный демо-доступ к этому продукту можно активировать только один раз.
             </p>
             
-            <div className="rounded-lg bg-primary/10 border border-primary/20 p-4 space-y-2">
-              <div className="flex items-center gap-2 text-primary">
-                <CheckCircle className="h-5 w-5" />
-                <span className="font-medium">Продолжите со скидкой!</span>
+            <div className="rounded-lg bg-muted/60 border border-border p-4 space-y-2">
+              <div className="flex items-center gap-2 text-foreground">
+                <Info className="h-5 w-5" />
+                <span className="font-medium">Не успели воспользоваться доступом?</span>
               </div>
               <p className="text-sm text-muted-foreground">
-                Оформите полную подписку, чтобы продолжить пользоваться всеми возможностями {productName}.
+                Обратитесь в поддержку. Сотрудник сможет проверить ситуацию и при необходимости разрешить повторную активацию.
               </p>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex justify-end">
               <Button
-                variant="outline"
                 onClick={() => setShowTrialUsedModal(false)}
-                className="flex-1"
               >
-                Закрыть
-              </Button>
-              <Button
-                onClick={() => {
-                  setShowTrialUsedModal(false);
-                  // Navigate to product page or stay with current flow (without trial)
-                  // The user can still purchase without trial option from the same dialog
-                }}
-                className="flex-1"
-              >
-                Купить полный тариф
+                Понятно
               </Button>
             </div>
           </div>

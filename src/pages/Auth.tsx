@@ -7,12 +7,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
-import { Loader2, Mail, Lock, User, ArrowRight, ArrowLeft, Check, X } from "lucide-react";
+import { Loader2, Mail, Lock, User, ArrowRight, ArrowLeft, Check, X, Eye, EyeOff } from "lucide-react";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 import logoImage from "@/assets/logo.png";
 import { getLastRoute, clearLastRoute, shouldIgnoreLastRouteOnIOS, overwriteLastRoute } from "@/hooks/useLastRoute";
 import { CONSENT_POLICY_VERSION as CURRENT_POLICY_VERSION } from "@/lib/legalVersions";
+import {
+  getUserPasswordRequirementText,
+  USER_PASSWORD_MIN_LENGTH,
+  validateUserPassword,
+} from "@/lib/passwordPolicy";
 
 const loginSchema = z.object({
   email: z.string().email("Введите корректный email"),
@@ -20,20 +25,6 @@ const loginSchema = z.object({
 });
 
 // Password requirements
-const passwordRequirements = {
-  minLength: 8,
-  hasDigit: /\d/,
-  hasSpecial: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/,
-};
-
-const validatePassword = (password: string) => {
-  return {
-    minLength: password.length >= passwordRequirements.minLength,
-    hasDigit: passwordRequirements.hasDigit.test(password),
-    hasSpecial: passwordRequirements.hasSpecial.test(password),
-  };
-};
-
 const signupSchema = z.object({
   firstName: z.string().trim().min(2, "Имя должно содержать минимум 2 символа"),
   lastName: z.string().trim().min(2, "Фамилия должна содержать минимум 2 символа"),
@@ -42,20 +33,12 @@ const signupSchema = z.object({
   }),
   email: z.string().email("Введите корректный email"),
   password: z.string()
-    .min(passwordRequirements.minLength, `Пароль должен содержать минимум ${passwordRequirements.minLength} символов`)
-    .regex(passwordRequirements.hasDigit, "Пароль должен содержать минимум 1 цифру")
-    .regex(passwordRequirements.hasSpecial, "Пароль должен содержать минимум 1 спецсимвол"),
-  confirmPassword: z.string(),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "Пароли не совпадают",
-  path: ["confirmPassword"],
+    .min(USER_PASSWORD_MIN_LENGTH, `Пароль должен содержать минимум ${USER_PASSWORD_MIN_LENGTH} символов`),
 });
 
 const passwordSchema = z.object({
   password: z.string()
-    .min(passwordRequirements.minLength, `Пароль должен содержать минимум ${passwordRequirements.minLength} символов`)
-    .regex(passwordRequirements.hasDigit, "Пароль должен содержать минимум 1 цифру")
-    .regex(passwordRequirements.hasSpecial, "Пароль должен содержать минимум 1 спецсимвол"),
+    .min(USER_PASSWORD_MIN_LENGTH, `Пароль должен содержать минимум ${USER_PASSWORD_MIN_LENGTH} символов`),
   confirmPassword: z.string(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Пароли не совпадают",
@@ -124,6 +107,8 @@ export default function Auth() {
   });
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("+375");
@@ -174,7 +159,7 @@ export default function Auth() {
   const redirectTo = searchParams.get("redirectTo") || "/dashboard";
 
   // Password validation state
-  const passwordValidation = useMemo(() => validatePassword(password), [password]);
+  const passwordValidation = useMemo(() => validateUserPassword(password), [password]);
   const passwordsMatch = password === confirmPassword;
 
   // Set initial mode from URL param (signup-only — recovery is handled
@@ -462,7 +447,6 @@ export default function Auth() {
         const validation = signupSchema.safeParse({ 
           email, 
           password, 
-          confirmPassword,
           firstName: firstName.trim(), 
           lastName: lastName.trim(),
           phone 
@@ -499,7 +483,7 @@ export default function Auth() {
                      (errorMessage.includes("weak") || errorMessage.includes("short") || errorMessage.includes("length"))) {
             setFieldErrors([{ 
               field: "password", 
-              message: "Пароль слишком слабый. Используйте минимум 8 символов, цифру и спецсимвол." 
+              message: `Пароль слишком короткий. Используйте минимум ${USER_PASSWORD_MIN_LENGTH} символов.`
             }]);
           } else if (errorMessage.includes("email") && 
                      (errorMessage.includes("invalid") || errorMessage.includes("format"))) {
@@ -586,16 +570,9 @@ export default function Auth() {
     <div className="mt-2 space-y-1 text-xs">
       <div className={`flex items-center gap-1.5 ${passwordValidation.minLength ? 'text-green-600' : 'text-muted-foreground'}`}>
         {passwordValidation.minLength ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
-        <span>Минимум 8 символов</span>
+        <span>{getUserPasswordRequirementText()}</span>
       </div>
-      <div className={`flex items-center gap-1.5 ${passwordValidation.hasDigit ? 'text-green-600' : 'text-muted-foreground'}`}>
-        {passwordValidation.hasDigit ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
-        <span>Минимум 1 цифра</span>
-      </div>
-      <div className={`flex items-center gap-1.5 ${passwordValidation.hasSpecial ? 'text-green-600' : 'text-muted-foreground'}`}>
-        {passwordValidation.hasSpecial ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
-        <span>Минимум 1 спецсимвол (!@#$%^&* и т.п.)</span>
-      </div>
+      <p className="pl-4 text-muted-foreground">Цифры и специальные символы не обязательны.</p>
     </div>
   );
 
@@ -685,15 +662,25 @@ export default function Auth() {
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                     <Input
                       id="password"
-                      type="password"
+                      type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('password') ? 'border-destructive' : ''}`}
+                      className={`pl-10 pr-11 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('password') ? 'border-destructive' : ''}`}
                       placeholder="••••••••"
                       required
+                      minLength={USER_PASSWORD_MIN_LENGTH}
                       allowAutofill
                       autoComplete="new-password"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((visible) => !visible)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+                      aria-pressed={showPassword}
+                    >
+                      {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
                   </div>
                   {getFieldError('password') && (
                     <p className="text-sm text-destructive">{getFieldError('password')}</p>
@@ -709,16 +696,25 @@ export default function Auth() {
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                     <Input
                       id="confirmPassword"
-                      type="password"
+                      type={showConfirmPassword ? "text" : "password"}
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       onBlur={() => handleBlur('confirmPassword')}
-                      className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('confirmPassword') || (touched.confirmPassword && !passwordsMatch && confirmPassword) ? 'border-destructive' : ''}`}
+                      className={`pl-10 pr-11 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('confirmPassword') || (touched.confirmPassword && !passwordsMatch && confirmPassword) ? 'border-destructive' : ''}`}
                       placeholder="••••••••"
                       required
                       allowAutofill
                       autoComplete="new-password"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((visible) => !visible)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      aria-label={showConfirmPassword ? "Скрыть повтор пароля" : "Показать повтор пароля"}
+                      aria-pressed={showConfirmPassword}
+                    >
+                      {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
                   </div>
                   {getFieldError('confirmPassword') && (
                     <p className="text-sm text-destructive">{getFieldError('confirmPassword')}</p>
@@ -992,53 +988,32 @@ export default function Auth() {
                     <Input
                       id="password"
                       name={mode === "signup" ? "new-password" : "password"}
-                      type="password"
+                      type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       onBlur={() => handleBlur('password')}
-                      className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('password') ? 'border-destructive' : ''}`}
+                      className={`pl-10 pr-11 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('password') ? 'border-destructive' : ''}`}
                       placeholder="••••••••"
                       required
+                      minLength={mode === "signup" ? USER_PASSWORD_MIN_LENGTH : undefined}
                       allowAutofill
                       autoComplete={mode === "signup" ? "new-password" : "current-password"}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((visible) => !visible)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+                      aria-pressed={showPassword}
+                    >
+                      {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
                   </div>
                   {getFieldError('password') && (
                     <p className="text-sm text-destructive">{getFieldError('password')}</p>
                   )}
                   {mode === "signup" && <PasswordRequirements />}
                 </div>
-
-                {/* Confirm Password for signup */}
-                {mode === "signup" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="confirmPassword" className="text-foreground">
-                      Повторите пароль
-                    </Label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                      <Input
-                        id="confirmPassword"
-                        name="confirm-password"
-                        type="password"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        onBlur={() => handleBlur('confirmPassword')}
-                        allowAutofill
-                        autoComplete="new-password"
-                        className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('confirmPassword') || (touched.confirmPassword && !passwordsMatch && confirmPassword) ? 'border-destructive' : ''}`}
-                        placeholder="••••••••"
-                        required
-                      />
-                    </div>
-                    {getFieldError('confirmPassword') && (
-                      <p className="text-sm text-destructive">{getFieldError('confirmPassword')}</p>
-                    )}
-                {touched.confirmPassword && !passwordsMatch && confirmPassword && !getFieldError('confirmPassword') && (
-                  <p className="text-sm text-destructive">Пароли не совпадают</p>
-                )}
-                  </div>
-                )}
 
                 {/* Privacy consent checkbox for signup */}
                 {mode === "signup" && (
