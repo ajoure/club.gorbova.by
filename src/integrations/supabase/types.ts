@@ -22661,6 +22661,16 @@ export type Database = {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: Json
       }
+      send_ticket_message_v2: {
+        Args: {
+          p_attachments?: Json
+          p_display_user_id?: string
+          p_is_internal?: boolean
+          p_message: string
+          p_ticket_id: string
+        }
+        Returns: Json
+      }
       set_default_individual_requisites: {
         Args: { p_id: string }
         Returns: Json
