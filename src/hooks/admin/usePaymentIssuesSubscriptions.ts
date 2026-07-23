@@ -40,7 +40,6 @@ export function usePaymentIssuesSubscriptions(filter: PaymentIssuesFilter = "all
         .select(
           "id, user_id, product_id, tariff_id, status, cancel_at, cancel_reason, updated_at, meta",
         )
-        .eq("provider", "stripe")
         .not("meta->stripe->>dunning_status", "is", null)
         .order("updated_at", { ascending: false })
         .limit(500);
