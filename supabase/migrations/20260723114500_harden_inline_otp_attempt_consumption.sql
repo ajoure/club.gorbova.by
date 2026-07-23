@@ -57,7 +57,7 @@ BEGIN
   END IF;
 
   UPDATE public.inline_otp_codes
-  SET attempts = attempts + 1
+  SET attempts = public.inline_otp_codes.attempts + 1
   WHERE id = v_code.id
   RETURNING inline_otp_codes.attempts INTO v_attempts;
 

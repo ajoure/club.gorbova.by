@@ -12,6 +12,7 @@ describe("inline OTP atomic consumption", () => {
 
   it("locks the code row and exposes the privileged RPC only to service_role", () => {
     expect(migrationSource).toContain("FOR UPDATE;");
+    expect(migrationSource).toContain("SET attempts = public.inline_otp_codes.attempts + 1");
     expect(migrationSource).toContain("SECURITY DEFINER");
     expect(migrationSource).toContain("SET search_path = ''");
     expect(migrationSource).toContain("REVOKE EXECUTE ON FUNCTION public.consume_inline_otp_attempt(uuid, text, integer) FROM PUBLIC;");
