@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import telegramChatSource from "../components/admin/ContactTelegramChat.tsx?raw";
 import instagramChatSource from "../components/admin/communication/instagram/ContactInstagramChat.tsx?raw";
 import instagramAdminSource from "../../supabase/functions/instagram-admin-chat/index.ts?raw";
+import manychatInboundSource from "../../supabase/functions/manychat-inbound/index.ts?raw";
+import integrationHealthcheckSource from "../../supabase/functions/integration-healthcheck/index.ts?raw";
 import supabaseConfigSource from "../../supabase/config.toml?raw";
 
 describe("Contact-center realtime and history performance", () => {
@@ -30,6 +32,22 @@ describe("Contact-center realtime and history performance", () => {
     expect(supabaseConfigSource).toContain("[functions.manychat-inbound]");
     expect(supabaseConfigSource).toMatch(
       /\[functions\.manychat-inbound\][\s\S]*?verify_jwt = false/,
+    );
+  });
+
+  it("records authenticated ManyChat ingress health and sends inbound notifications", () => {
+    expect(manychatInboundSource).toContain("last_successful_sync_at");
+    expect(manychatInboundSource).toContain(
+      'normalized.direction === "inbound" && inserted?.id',
+    );
+    expect(manychatInboundSource).not.toContain(
+      'normalized.direction === "incoming" && inserted?.id',
+    );
+  });
+
+  it("records successful integration healthchecks as synchronization watermarks", () => {
+    expect(integrationHealthcheckSource).toContain(
+      "updatePayload.last_successful_sync_at = new Date().toISOString()",
     );
   });
 });
