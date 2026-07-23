@@ -24,7 +24,10 @@ type AutomationConditions = {
   items: AutomationCondition[];
 };
 
-function conditionMatches(condition: AutomationCondition, deal: Record<string, unknown>): boolean {
+function conditionMatches(
+  condition: AutomationCondition,
+  deal: Record<string, unknown>,
+): boolean {
   const actual = deal[condition.field];
   const expected = condition.value;
   let matched = false;
@@ -37,14 +40,14 @@ function conditionMatches(condition: AutomationCondition, deal: Record<string, u
       matched = String(actual ?? "") !== String(expected ?? "");
       break;
     case "contains":
-      matched = String(actual ?? "").toLocaleLowerCase().includes(
-        String(expected ?? "").toLocaleLowerCase(),
-      );
+      matched = String(actual ?? "")
+        .toLocaleLowerCase()
+        .includes(String(expected ?? "").toLocaleLowerCase());
       break;
     case "not_contains":
-      matched = !String(actual ?? "").toLocaleLowerCase().includes(
-        String(expected ?? "").toLocaleLowerCase(),
-      );
+      matched = !String(actual ?? "")
+        .toLocaleLowerCase()
+        .includes(String(expected ?? "").toLocaleLowerCase());
       break;
     case "is_empty":
       matched = actual == null || actual === "";
@@ -68,16 +71,28 @@ function conditionMatches(condition: AutomationCondition, deal: Record<string, u
   return condition.not === true ? !matched : matched;
 }
 
-function conditionsMatch(conditions: unknown, deal: Record<string, unknown>): boolean {
-  if (!conditions || typeof conditions !== "object" || Object.keys(conditions).length === 0) {
+function conditionsMatch(
+  conditions: unknown,
+  deal: Record<string, unknown>,
+): boolean {
+  if (
+    !conditions ||
+    typeof conditions !== "object" ||
+    Object.keys(conditions).length === 0
+  ) {
     return true;
   }
   const group = conditions as AutomationConditions;
-  const results = group.items.map((condition) => conditionMatches(condition, deal));
+  const results = group.items.map((condition) =>
+    conditionMatches(condition, deal),
+  );
   return group.logic === "or" ? results.some(Boolean) : results.every(Boolean);
 }
 
-function renderTemplate(template: string, deal: Record<string, unknown>): string {
+function renderTemplate(
+  template: string,
+  deal: Record<string, unknown>,
+): string {
   const values: Record<string, string> = {
     deal_id: String(deal.id ?? ""),
     deal_number: String(deal.order_number ?? ""),
@@ -89,13 +104,14 @@ function renderTemplate(template: string, deal: Record<string, unknown>): string
     appName: "Gorbova.by",
   };
   return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (token, key) =>
-    Object.hasOwn(values, key) ? values[key] : token
+    Object.hasOwn(values, key) ? values[key] : token,
   );
 }
 
 function assertTemplateResolved(value: string): string {
   const unresolved = value.match(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/);
-  if (unresolved) throw new Error(`email_template_variable_unresolved:${unresolved[1]}`);
+  if (unresolved)
+    throw new Error(`email_template_variable_unresolved:${unresolved[1]}`);
   return value;
 }
 
@@ -117,6 +133,7 @@ Deno.serve(async (req: Request) => {
     ok: true,
     scheduled_rules_fired: 0,
     recurring_rules_fired: 0,
+    monthly_rules_fired: 0,
     claimed: 0,
     succeeded: 0,
     skipped: 0,
@@ -124,56 +141,87 @@ Deno.serve(async (req: Request) => {
     jobs: [] as unknown[],
   };
 
-  const { data: scheduledRulesFired, error: scheduleError } = await supabase.rpc(
-    "crm_pipeline_automation_enqueue_due_schedules_v10",
-  );
+  const { data: scheduledRulesFired, error: scheduleError } =
+    await supabase.rpc("crm_pipeline_automation_enqueue_due_schedules_v10");
   if (scheduleError) {
-    return new Response(JSON.stringify({ ok: false, error: scheduleError.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ ok: false, error: scheduleError.message }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
   result.scheduled_rules_fired = Number(scheduledRulesFired ?? 0);
 
-  const { data: recurringRulesFired, error: recurrenceError } = await supabase.rpc(
-    "crm_pipeline_automation_enqueue_due_weekdays_v12",
-  );
+  const { data: recurringRulesFired, error: recurrenceError } =
+    await supabase.rpc("crm_pipeline_automation_enqueue_due_weekdays_v12");
   if (recurrenceError) {
-    return new Response(JSON.stringify({ ok: false, error: recurrenceError.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ ok: false, error: recurrenceError.message }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
   result.recurring_rules_fired = Number(recurringRulesFired ?? 0);
+  const { data: monthlyRulesFired, error: monthError } = await supabase.rpc(
+    "crm_pipeline_automation_enqueue_due_month_days_v13",
+  );
+  if (monthError)
+    return new Response(
+      JSON.stringify({ ok: false, error: monthError.message }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  result.monthly_rules_fired = Number(monthlyRulesFired ?? 0);
 
   const { data: jobs, error: claimError } = await supabase.rpc(
     "crm_pipeline_automation_claim_jobs",
     { _worker_id: workerId, _limit: 25 },
   );
   if (claimError) {
-    return new Response(JSON.stringify({ ok: false, error: claimError.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ ok: false, error: claimError.message }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
   result.claimed = jobs?.length ?? 0;
 
   for (const job of (jobs ?? []) as AutomationJob[]) {
     try {
-      const [{ data: rule, error: ruleError }, { data: deal, error: dealError }] =
-        await Promise.all([
-          supabase.from("crm_pipeline_automation_rules").select("*").eq("id", job.rule_id).single(),
-          supabase
-            .from("orders_v2")
-            .select(
-              "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name,user_id,status,currency,is_trial,paid_amount,final_price",
-            )
-            .eq("id", job.deal_id)
-            .single(),
-        ]);
-      if (ruleError || !rule) throw new Error(`rule_not_found:${ruleError?.message ?? job.rule_id}`);
-      if (dealError || !deal) throw new Error(`deal_not_found:${dealError?.message ?? job.deal_id}`);
-      if (!["create_task", "send_email", "send_telegram"].includes(rule.action_type)) {
+      const [
+        { data: rule, error: ruleError },
+        { data: deal, error: dealError },
+      ] = await Promise.all([
+        supabase
+          .from("crm_pipeline_automation_rules")
+          .select("*")
+          .eq("id", job.rule_id)
+          .single(),
+        supabase
+          .from("orders_v2")
+          .select(
+            "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name,user_id,status,currency,is_trial,paid_amount,final_price",
+          )
+          .eq("id", job.deal_id)
+          .single(),
+      ]);
+      if (ruleError || !rule)
+        throw new Error(`rule_not_found:${ruleError?.message ?? job.rule_id}`);
+      if (dealError || !deal)
+        throw new Error(`deal_not_found:${dealError?.message ?? job.deal_id}`);
+      if (
+        !["create_task", "send_email", "send_telegram"].includes(
+          rule.action_type,
+        )
+      ) {
         throw new Error(`unsupported_action:${rule.action_type}`);
       }
 
@@ -189,7 +237,10 @@ Deno.serve(async (req: Request) => {
           await supabase.rpc("crm_pipeline_automation_complete_job", {
             _job_id: job.id,
             _succeeded: true,
-            _result: { task_id: existingTask.id, recovered_existing_side_effect: true },
+            _result: {
+              task_id: existingTask.id,
+              recovered_existing_side_effect: true,
+            },
             _error: null,
           });
           result.succeeded++;
@@ -217,14 +268,21 @@ Deno.serve(async (req: Request) => {
         );
         if (skipError) throw skipError;
         result.skipped++;
-        result.jobs.push({ id: job.id, status: "skipped", reason: "deal_left_stage" });
+        result.jobs.push({
+          id: job.id,
+          status: "skipped",
+          reason: "deal_left_stage",
+        });
         continue;
       }
 
       if (!conditionsMatch(rule.conditions, deal)) {
         let noBranchTaskId: string | null = null;
         if (rule.no_branch_task_type_id) {
-          const { data: existingNoBranchTask, error: existingNoBranchTaskError } = await supabase
+          const {
+            data: existingNoBranchTask,
+            error: existingNoBranchTaskError,
+          } = await supabase
             .from("crm_tasks")
             .select("id")
             .eq("pipeline_automation_rule_id", rule.id)
@@ -242,35 +300,38 @@ Deno.serve(async (req: Request) => {
             const dueAt = new Date(
               Date.now() + Number(rule.no_branch_due_offset_minutes) * 60_000,
             );
-            const { data: taskId, error: taskError } = await supabase.rpc("crm_task_create", {
-              payload: {
-                task_type_id: rule.no_branch_task_type_id,
-                title: renderTemplate(rule.no_branch_title_template, deal),
-                description: rule.no_branch_description_template
-                  ? renderTemplate(rule.no_branch_description_template, deal)
-                  : null,
-                assignee_user_id: assigneeUserId,
-                due_at: dueAt.toISOString(),
-                contact_id: deal.profile_id,
-                company_id: deal.company_id,
-                deal_id: deal.id,
-                order_id: deal.id,
-                pipeline_id: deal.pipeline_id,
-                pipeline_stage_id: deal.pipeline_stage_id,
-                offer_id: deal.offer_id,
-                product_id: deal.product_id,
-                tariff_id: deal.tariff_id,
-                source: "auto",
-                pipeline_automation_rule_id: rule.id,
-                meta: {
+            const { data: taskId, error: taskError } = await supabase.rpc(
+              "crm_task_create",
+              {
+                payload: {
+                  task_type_id: rule.no_branch_task_type_id,
+                  title: renderTemplate(rule.no_branch_title_template, deal),
+                  description: rule.no_branch_description_template
+                    ? renderTemplate(rule.no_branch_description_template, deal)
+                    : null,
+                  assignee_user_id: assigneeUserId,
+                  due_at: dueAt.toISOString(),
+                  contact_id: deal.profile_id,
+                  company_id: deal.company_id,
+                  deal_id: deal.id,
+                  order_id: deal.id,
+                  pipeline_id: deal.pipeline_id,
+                  pipeline_stage_id: deal.pipeline_stage_id,
+                  offer_id: deal.offer_id,
+                  product_id: deal.product_id,
+                  tariff_id: deal.tariff_id,
+                  source: "auto",
                   pipeline_automation_rule_id: rule.id,
-                  pipeline_automation_logical_id: rule.logical_id,
-                  pipeline_automation_version: rule.version,
-                  pipeline_automation_job_id: job.id,
-                  pipeline_automation_branch: "no",
+                  meta: {
+                    pipeline_automation_rule_id: rule.id,
+                    pipeline_automation_logical_id: rule.logical_id,
+                    pipeline_automation_version: rule.version,
+                    pipeline_automation_job_id: job.id,
+                    pipeline_automation_branch: "no",
+                  },
                 },
               },
-            });
+            );
             if (taskError) throw taskError;
             noBranchTaskId = taskId;
           }
@@ -291,24 +352,32 @@ Deno.serve(async (req: Request) => {
         );
         if (skipError) throw skipError;
         result.skipped++;
-        result.jobs.push({ id: job.id, status: "skipped", reason: "conditions_not_met" });
+        result.jobs.push({
+          id: job.id,
+          status: "skipped",
+          reason: "conditions_not_met",
+        });
         continue;
       }
 
       if (rule.action_type === "send_email") {
-        if (!deal.customer_email) throw new Error("deal_customer_email_missing");
+        if (!deal.customer_email)
+          throw new Error("deal_customer_email_missing");
         const idempotencyKey = `crm-pipeline:${job.id}`;
-        const { data: emailResult, error: emailError } = await supabase.functions.invoke(
-          "send-email",
-          {
+        const { data: emailResult, error: emailError } =
+          await supabase.functions.invoke("send-email", {
             body: {
               to: deal.customer_email,
               subject: assertTemplateResolved(
                 renderTemplate(rule.email_subject_template, deal),
               ),
-              html: assertTemplateResolved(renderTemplate(rule.email_html_template, deal)),
+              html: assertTemplateResolved(
+                renderTemplate(rule.email_html_template, deal),
+              ),
               text: rule.email_text_template
-                ? assertTemplateResolved(renderTemplate(rule.email_text_template, deal))
+                ? assertTemplateResolved(
+                    renderTemplate(rule.email_text_template, deal),
+                  )
                 : undefined,
               account_id: rule.email_account_id ?? undefined,
               product_id: deal.product_id ?? undefined,
@@ -327,8 +396,7 @@ Deno.serve(async (req: Request) => {
                 },
               },
             },
-          },
-        );
+          });
         if (emailError) throw emailError;
         if (emailResult?.error) throw new Error(emailResult.error);
 
@@ -387,47 +455,60 @@ Deno.serve(async (req: Request) => {
           _error: null,
         });
         result.succeeded++;
-        result.jobs.push({ id: job.id, status: "succeeded", channel: "telegram" });
+        result.jobs.push({
+          id: job.id,
+          status: "succeeded",
+          channel: "telegram",
+        });
         continue;
       }
 
       const assigneeUserId =
-        rule.assignee_strategy === "fixed_user" ? rule.assignee_user_id : deal.responsible_user_id;
-      const dueAt = new Date(Date.now() + Number(rule.due_offset_minutes) * 60_000);
+        rule.assignee_strategy === "fixed_user"
+          ? rule.assignee_user_id
+          : deal.responsible_user_id;
+      const dueAt = new Date(
+        Date.now() + Number(rule.due_offset_minutes) * 60_000,
+      );
       const remindAt =
         rule.reminder_offset_minutes == null
           ? null
-          : new Date(dueAt.getTime() - Number(rule.reminder_offset_minutes) * 60_000);
+          : new Date(
+              dueAt.getTime() - Number(rule.reminder_offset_minutes) * 60_000,
+            );
 
-      const { data: taskId, error: taskError } = await supabase.rpc("crm_task_create", {
-        payload: {
-          task_type_id: rule.task_type_id,
-          title: renderTemplate(rule.title_template, deal),
-          description: rule.description_template
-            ? renderTemplate(rule.description_template, deal)
-            : null,
-          assignee_user_id: assigneeUserId,
-          due_at: dueAt.toISOString(),
-          remind_at: remindAt?.toISOString() ?? null,
-          contact_id: deal.profile_id,
-          company_id: deal.company_id,
-          deal_id: deal.id,
-          order_id: deal.id,
-          pipeline_id: deal.pipeline_id,
-          pipeline_stage_id: deal.pipeline_stage_id,
-          offer_id: deal.offer_id,
-          product_id: deal.product_id,
-          tariff_id: deal.tariff_id,
-          source: "auto",
-          pipeline_automation_rule_id: rule.id,
-          meta: {
+      const { data: taskId, error: taskError } = await supabase.rpc(
+        "crm_task_create",
+        {
+          payload: {
+            task_type_id: rule.task_type_id,
+            title: renderTemplate(rule.title_template, deal),
+            description: rule.description_template
+              ? renderTemplate(rule.description_template, deal)
+              : null,
+            assignee_user_id: assigneeUserId,
+            due_at: dueAt.toISOString(),
+            remind_at: remindAt?.toISOString() ?? null,
+            contact_id: deal.profile_id,
+            company_id: deal.company_id,
+            deal_id: deal.id,
+            order_id: deal.id,
+            pipeline_id: deal.pipeline_id,
+            pipeline_stage_id: deal.pipeline_stage_id,
+            offer_id: deal.offer_id,
+            product_id: deal.product_id,
+            tariff_id: deal.tariff_id,
+            source: "auto",
             pipeline_automation_rule_id: rule.id,
-            pipeline_automation_logical_id: rule.logical_id,
-            pipeline_automation_version: rule.version,
-            pipeline_automation_job_id: job.id,
+            meta: {
+              pipeline_automation_rule_id: rule.id,
+              pipeline_automation_logical_id: rule.logical_id,
+              pipeline_automation_version: rule.version,
+              pipeline_automation_job_id: job.id,
+            },
           },
         },
-      });
+      );
       if (taskError) throw taskError;
 
       await supabase.rpc("crm_pipeline_automation_complete_job", {
@@ -439,15 +520,16 @@ Deno.serve(async (req: Request) => {
       result.succeeded++;
       result.jobs.push({ id: job.id, status: "succeeded", task_id: taskId });
     } catch (error) {
-      const primaryError = error instanceof Error ? error.message : String(error);
+      const primaryError =
+        error instanceof Error ? error.message : String(error);
       let fallbackError: string | null = null;
 
       if (job.attempt_count >= 5) {
         try {
-          const [{ data: fallbackRule, error: fallbackRuleError }, {
-            data: fallbackDeal,
-            error: fallbackDealError,
-          }] = await Promise.all([
+          const [
+            { data: fallbackRule, error: fallbackRuleError },
+            { data: fallbackDeal, error: fallbackDealError },
+          ] = await Promise.all([
             supabase
               .from("crm_pipeline_automation_rules")
               .select("*")
@@ -462,31 +544,45 @@ Deno.serve(async (req: Request) => {
               .single(),
           ]);
           if (fallbackRuleError || !fallbackRule) {
-            throw new Error(`fallback_rule_not_found:${fallbackRuleError?.message ?? job.rule_id}`);
+            throw new Error(
+              `fallback_rule_not_found:${fallbackRuleError?.message ?? job.rule_id}`,
+            );
           }
           if (fallbackDealError || !fallbackDeal) {
-            throw new Error(`fallback_deal_not_found:${fallbackDealError?.message ?? job.deal_id}`);
+            throw new Error(
+              `fallback_deal_not_found:${fallbackDealError?.message ?? job.deal_id}`,
+            );
           }
 
           if (fallbackRule.fallback_action_type === "send_email") {
-            if (!fallbackDeal.customer_email) throw new Error("fallback_customer_email_missing");
-            const { data: emailResult, error: emailError } = await supabase.functions.invoke(
-              "send-email",
-              {
+            if (!fallbackDeal.customer_email)
+              throw new Error("fallback_customer_email_missing");
+            const { data: emailResult, error: emailError } =
+              await supabase.functions.invoke("send-email", {
                 body: {
                   to: fallbackDeal.customer_email,
                   subject: assertTemplateResolved(
-                    renderTemplate(fallbackRule.fallback_email_subject_template, fallbackDeal),
+                    renderTemplate(
+                      fallbackRule.fallback_email_subject_template,
+                      fallbackDeal,
+                    ),
                   ),
                   html: assertTemplateResolved(
-                    renderTemplate(fallbackRule.fallback_email_html_template, fallbackDeal),
+                    renderTemplate(
+                      fallbackRule.fallback_email_html_template,
+                      fallbackDeal,
+                    ),
                   ),
                   text: fallbackRule.fallback_email_text_template
                     ? assertTemplateResolved(
-                      renderTemplate(fallbackRule.fallback_email_text_template, fallbackDeal),
-                    )
+                        renderTemplate(
+                          fallbackRule.fallback_email_text_template,
+                          fallbackDeal,
+                        ),
+                      )
                     : undefined,
-                  account_id: fallbackRule.fallback_email_account_id ?? undefined,
+                  account_id:
+                    fallbackRule.fallback_email_account_id ?? undefined,
                   product_id: fallbackDeal.product_id ?? undefined,
                   idempotency_key: `crm-pipeline:${job.id}`,
                   context: {
@@ -499,13 +595,13 @@ Deno.serve(async (req: Request) => {
                       pipeline_stage_id: fallbackDeal.pipeline_stage_id,
                       automation_rule_id: fallbackRule.id,
                       automation_job_id: job.id,
-                      email_template_id: fallbackRule.fallback_email_template_id,
+                      email_template_id:
+                        fallbackRule.fallback_email_template_id,
                       primary_error: primaryError,
                     },
                   },
                 },
-              },
-            );
+              });
             if (emailError) throw emailError;
             if (emailResult?.error) throw new Error(emailResult.error);
 
@@ -534,9 +630,13 @@ Deno.serve(async (req: Request) => {
           }
 
           if (fallbackRule.fallback_action_type === "send_telegram") {
-            if (!fallbackDeal.user_id) throw new Error("fallback_deal_user_id_missing");
+            if (!fallbackDeal.user_id)
+              throw new Error("fallback_deal_user_id_missing");
             const message = assertTemplateResolved(
-              renderTemplate(fallbackRule.fallback_telegram_message_template, fallbackDeal),
+              renderTemplate(
+                fallbackRule.fallback_telegram_message_template,
+                fallbackDeal,
+              ),
             );
             const { data: telegramResult, error: telegramError } =
               await supabase.functions.invoke("telegram-send-notification", {
@@ -555,7 +655,9 @@ Deno.serve(async (req: Request) => {
               });
             if (telegramError) throw telegramError;
             if (!telegramResult?.success) {
-              throw new Error(telegramResult?.error || "fallback_telegram_send_failed");
+              throw new Error(
+                telegramResult?.error || "fallback_telegram_send_failed",
+              );
             }
 
             await supabase.rpc("crm_pipeline_automation_complete_job", {
@@ -583,41 +685,49 @@ Deno.serve(async (req: Request) => {
             continue;
           }
         } catch (error) {
-          fallbackError = error instanceof Error ? error.message : String(error);
+          fallbackError =
+            error instanceof Error ? error.message : String(error);
         }
       }
 
       let errorBranchTaskId: string | null = null;
       if (job.attempt_count >= 5) {
         try {
-          const [{ data: errorRule, error: errorRuleError }, { data: errorDeal, error: errorDealError }] =
-            await Promise.all([
-              supabase
-                .from("crm_pipeline_automation_rules")
-                .select("*")
-                .eq("id", job.rule_id)
-                .single(),
-              supabase
-                .from("orders_v2")
-                .select(
-                  "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name",
-                )
-                .eq("id", job.deal_id)
-                .single(),
-            ]);
+          const [
+            { data: errorRule, error: errorRuleError },
+            { data: errorDeal, error: errorDealError },
+          ] = await Promise.all([
+            supabase
+              .from("crm_pipeline_automation_rules")
+              .select("*")
+              .eq("id", job.rule_id)
+              .single(),
+            supabase
+              .from("orders_v2")
+              .select(
+                "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name",
+              )
+              .eq("id", job.deal_id)
+              .single(),
+          ]);
           if (errorRuleError || !errorRule) {
-            throw new Error(`error_branch_rule_not_found:${errorRuleError?.message ?? job.rule_id}`);
+            throw new Error(
+              `error_branch_rule_not_found:${errorRuleError?.message ?? job.rule_id}`,
+            );
           }
           if (errorDealError || !errorDeal) {
-            throw new Error(`error_branch_deal_not_found:${errorDealError?.message ?? job.deal_id}`);
+            throw new Error(
+              `error_branch_deal_not_found:${errorDealError?.message ?? job.deal_id}`,
+            );
           }
           if (errorRule.error_branch_task_type_id) {
-            const { data: existingErrorTask, error: existingErrorTaskError } = await supabase
-              .from("crm_tasks")
-              .select("id")
-              .eq("pipeline_automation_rule_id", errorRule.id)
-              .eq("deal_id", errorDeal.id)
-              .maybeSingle();
+            const { data: existingErrorTask, error: existingErrorTaskError } =
+              await supabase
+                .from("crm_tasks")
+                .select("id")
+                .eq("pipeline_automation_rule_id", errorRule.id)
+                .eq("deal_id", errorDeal.id)
+                .maybeSingle();
             if (existingErrorTaskError) throw existingErrorTaskError;
 
             if (existingErrorTask) {
@@ -628,44 +738,55 @@ Deno.serve(async (req: Request) => {
                   ? errorRule.error_branch_assignee_user_id
                   : errorDeal.responsible_user_id;
               const dueAt = new Date(
-                Date.now() + Number(errorRule.error_branch_due_offset_minutes) * 60_000,
+                Date.now() +
+                  Number(errorRule.error_branch_due_offset_minutes) * 60_000,
               );
-              const { data: taskId, error: taskError } = await supabase.rpc("crm_task_create", {
-                payload: {
-                  task_type_id: errorRule.error_branch_task_type_id,
-                  title: renderTemplate(errorRule.error_branch_title_template, errorDeal),
-                  description: errorRule.error_branch_description_template
-                    ? renderTemplate(errorRule.error_branch_description_template, errorDeal)
-                    : null,
-                  assignee_user_id: assigneeUserId,
-                  due_at: dueAt.toISOString(),
-                  contact_id: errorDeal.profile_id,
-                  company_id: errorDeal.company_id,
-                  deal_id: errorDeal.id,
-                  order_id: errorDeal.id,
-                  pipeline_id: errorDeal.pipeline_id,
-                  pipeline_stage_id: errorDeal.pipeline_stage_id,
-                  offer_id: errorDeal.offer_id,
-                  product_id: errorDeal.product_id,
-                  tariff_id: errorDeal.tariff_id,
-                  source: "auto",
-                  pipeline_automation_rule_id: errorRule.id,
-                  meta: {
+              const { data: taskId, error: taskError } = await supabase.rpc(
+                "crm_task_create",
+                {
+                  payload: {
+                    task_type_id: errorRule.error_branch_task_type_id,
+                    title: renderTemplate(
+                      errorRule.error_branch_title_template,
+                      errorDeal,
+                    ),
+                    description: errorRule.error_branch_description_template
+                      ? renderTemplate(
+                          errorRule.error_branch_description_template,
+                          errorDeal,
+                        )
+                      : null,
+                    assignee_user_id: assigneeUserId,
+                    due_at: dueAt.toISOString(),
+                    contact_id: errorDeal.profile_id,
+                    company_id: errorDeal.company_id,
+                    deal_id: errorDeal.id,
+                    order_id: errorDeal.id,
+                    pipeline_id: errorDeal.pipeline_id,
+                    pipeline_stage_id: errorDeal.pipeline_stage_id,
+                    offer_id: errorDeal.offer_id,
+                    product_id: errorDeal.product_id,
+                    tariff_id: errorDeal.tariff_id,
+                    source: "auto",
                     pipeline_automation_rule_id: errorRule.id,
-                    pipeline_automation_logical_id: errorRule.logical_id,
-                    pipeline_automation_version: errorRule.version,
-                    pipeline_automation_job_id: job.id,
-                    pipeline_automation_branch: "error",
-                    primary_error: primaryError,
+                    meta: {
+                      pipeline_automation_rule_id: errorRule.id,
+                      pipeline_automation_logical_id: errorRule.logical_id,
+                      pipeline_automation_version: errorRule.version,
+                      pipeline_automation_job_id: job.id,
+                      pipeline_automation_branch: "error",
+                      primary_error: primaryError,
+                    },
                   },
                 },
-              });
+              );
               if (taskError) throw taskError;
               errorBranchTaskId = taskId;
             }
           }
         } catch (error) {
-          const errorBranchError = error instanceof Error ? error.message : String(error);
+          const errorBranchError =
+            error instanceof Error ? error.message : String(error);
           fallbackError = fallbackError
             ? `${fallbackError}; error_branch_failed:${errorBranchError}`
             : `error_branch_failed:${errorBranchError}`;
@@ -679,7 +800,10 @@ Deno.serve(async (req: Request) => {
         _job_id: job.id,
         _succeeded: false,
         _result: errorBranchTaskId
-          ? { error_branch_task_id: errorBranchTaskId, primary_error: primaryError }
+          ? {
+              error_branch_task_id: errorBranchTaskId,
+              primary_error: primaryError,
+            }
           : null,
         _error: message,
       });

@@ -19,8 +19,8 @@ describe("CRM automation conditions", () => {
 
   it("skips a non-matching job without treating it as an execution failure", () => {
     expect(worker).toContain('_reason: "conditions_not_met"');
-    expect(worker).toContain(
-      'status: "skipped", reason: "conditions_not_met"',
+    expect(worker).toMatch(
+      /status:\s*"skipped",\s*reason:\s*"conditions_not_met"/,
     );
   });
 

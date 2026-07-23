@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  CRM_AUTOMATION_TRIGGER_CATALOG,
-} from "@/lib/crmAutomationTriggerCatalog";
+import { CRM_AUTOMATION_TRIGGER_CATALOG } from "@/lib/crmAutomationTriggerCatalog";
 
 describe("CRM pipeline trigger catalog", () => {
   it("exposes only triggers that have a database event contract and worker support", () => {
@@ -14,9 +12,10 @@ describe("CRM pipeline trigger catalog", () => {
         expect.objectContaining({ id: "at_datetime", requiresSchedule: true }),
         expect.objectContaining({ id: "after_event", requiresSchedule: true }),
         expect.objectContaining({ id: "weekday", requiresSchedule: true }),
+        expect.objectContaining({ id: "month_day", requiresSchedule: true }),
       ]),
     );
-    expect(available).toHaveLength(4);
+    expect(available).toHaveLength(5);
   });
 
   it("documents the planned event and calendar trigger families", () => {

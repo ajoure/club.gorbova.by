@@ -2,11 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
-export type PipelineAutomationStatus = "draft" | "active" | "paused" | "archived";
+export type PipelineAutomationStatus =
+  "draft" | "active" | "paused" | "archived";
 export type PipelineAutomationTriggerType =
   | "deal_entered_stage"
   | "after_event"
   | "weekday"
+  | "month_day"
   | "at_datetime";
 
 export type PipelineAutomationConditionField =
@@ -57,6 +59,8 @@ export interface PipelineAutomationRule {
   scheduled_fired_at: string | null;
   recurrence_weekdays: number[] | null;
   recurrence_local_time: string | null;
+  recurrence_month_day: number | null;
+  recurrence_month_last: boolean | null;
   action_type: "create_task" | "send_email" | "send_telegram";
   task_type_id: string | null;
   title_template: string | null;
@@ -109,6 +113,8 @@ export interface CreatePipelineAutomationRule {
   scheduled_local_at?: string | null;
   recurrence_weekdays?: number[] | null;
   recurrence_local_time?: string | null;
+  recurrence_month_day?: number | null;
+  recurrence_month_last?: boolean | null;
   action_type: "create_task" | "send_email" | "send_telegram";
   task_type_id?: string | null;
   title_template?: string | null;
@@ -160,12 +166,7 @@ export interface PipelineEmailTemplate {
 }
 
 export type PipelineAutomationJobStatus =
-  | "pending"
-  | "running"
-  | "succeeded"
-  | "skipped"
-  | "failed"
-  | "dead";
+  "pending" | "running" | "succeeded" | "skipped" | "failed" | "dead";
 
 export interface PipelineAutomationJob {
   id: string;
@@ -180,7 +181,10 @@ export interface PipelineAutomationJob {
   finished_at: string | null;
 }
 
-const rulesKey = (pipelineId: string | null) => ["crm-pipeline-automation-rules", pipelineId];
+const rulesKey = (pipelineId: string | null) => [
+  "crm-pipeline-automation-rules",
+  pipelineId,
+];
 
 export function usePipelineAutomationRules(pipelineId: string | null) {
   return useQuery({
@@ -225,7 +229,8 @@ export function usePipelineEmailTemplates() {
       return (data ?? []).filter((template) => {
         if (!Array.isArray(template.variables)) return true;
         return template.variables.every(
-          (variable) => typeof variable === "string" && supportedVariables.has(variable),
+          (variable) =>
+            typeof variable === "string" && supportedVariables.has(variable),
         );
       });
     },
@@ -241,7 +246,9 @@ export function usePipelineAutomationJobs(ruleIds: string[]) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error } = await (supabase as any)
         .from("crm_pipeline_automation_jobs")
-        .select("id,rule_id,deal_id,status,attempt_count,available_at,result,last_error,created_at,finished_at")
+        .select(
+          "id,rule_id,deal_id,status,attempt_count,available_at,result,last_error,created_at,finished_at",
+        )
         .in("rule_id", ruleIds)
         .order("created_at", { ascending: false })
         .limit(30);
@@ -257,17 +264,23 @@ export function useRetryPipelineAutomationJob() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (jobId: string) => {
-      const { error } = await supabase.rpc("crm_pipeline_automation_retry_job" as never, {
-        _job_id: jobId,
-      } as never);
+      const { error } = await supabase.rpc(
+        "crm_pipeline_automation_retry_job" as never,
+        {
+          _job_id: jobId,
+        } as never,
+      );
       if (error) throw error;
       return jobId;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["crm-pipeline-automation-jobs"] });
+      queryClient.invalidateQueries({
+        queryKey: ["crm-pipeline-automation-jobs"],
+      });
       toast.success("Запуск поставлен в очередь повторно");
     },
-    onError: (error: Error) => toast.error(error.message || "Не удалось повторить запуск"),
+    onError: (error: Error) =>
+      toast.error(error.message || "Не удалось повторить запуск"),
   });
 }
 
@@ -281,32 +294,58 @@ export function useCreatePipelineAutomationRule() {
         .insert({
           ...payload,
           name: payload.name.trim(),
-          task_type_id: payload.action_type === "create_task" ? payload.task_type_id : null,
+          task_type_id:
+            payload.action_type === "create_task" ? payload.task_type_id : null,
           title_template:
-            payload.action_type === "create_task" ? payload.title_template?.trim() : null,
+            payload.action_type === "create_task"
+              ? payload.title_template?.trim()
+              : null,
           description_template: payload.description_template?.trim() || null,
           assignee_user_id:
-            payload.assignee_strategy === "fixed_user" ? payload.assignee_user_id : null,
+            payload.assignee_strategy === "fixed_user"
+              ? payload.assignee_user_id
+              : null,
           reminder_offset_minutes: payload.reminder_offset_minutes ?? null,
           status: "draft",
           trigger_type: payload.trigger_type,
           scheduled_local_at:
-            payload.trigger_type === "at_datetime" ? payload.scheduled_local_at : null,
+            payload.trigger_type === "at_datetime"
+              ? payload.scheduled_local_at
+              : null,
           recurrence_weekdays:
-            payload.trigger_type === "weekday" ? payload.recurrence_weekdays : null,
+            payload.trigger_type === "weekday"
+              ? payload.recurrence_weekdays
+              : null,
           recurrence_local_time:
-            payload.trigger_type === "weekday" ? payload.recurrence_local_time : null,
+            payload.trigger_type === "weekday" ||
+            payload.trigger_type === "month_day"
+              ? payload.recurrence_local_time
+              : null,
+          recurrence_month_day:
+            payload.trigger_type === "month_day"
+              ? payload.recurrence_month_day
+              : null,
+          recurrence_month_last:
+            payload.trigger_type === "month_day"
+              ? payload.recurrence_month_last
+              : null,
           action_type: payload.action_type,
           email_template_id:
-            payload.action_type === "send_email" ? payload.email_template_id : null,
+            payload.action_type === "send_email"
+              ? payload.email_template_id
+              : null,
           email_account_id:
-            payload.action_type === "send_email" ? payload.email_account_id : null,
+            payload.action_type === "send_email"
+              ? payload.email_account_id
+              : null,
           email_subject_template:
             payload.action_type === "send_email"
               ? payload.email_subject_template?.trim()
               : null,
           email_html_template:
-            payload.action_type === "send_email" ? payload.email_html_template?.trim() : null,
+            payload.action_type === "send_email"
+              ? payload.email_html_template?.trim()
+              : null,
           email_text_template:
             payload.action_type === "send_email"
               ? payload.email_text_template?.trim() || null
@@ -348,15 +387,15 @@ export function useCreatePipelineAutomationRule() {
             ? payload.no_branch_description_template?.trim() || null
             : null,
           no_branch_assignee_strategy: payload.no_branch_task_type_id
-            ? payload.no_branch_assignee_strategy ?? "deal_owner"
+            ? (payload.no_branch_assignee_strategy ?? "deal_owner")
             : null,
           no_branch_assignee_user_id:
             payload.no_branch_task_type_id &&
-              payload.no_branch_assignee_strategy === "fixed_user"
+            payload.no_branch_assignee_strategy === "fixed_user"
               ? payload.no_branch_assignee_user_id
               : null,
           no_branch_due_offset_minutes: payload.no_branch_task_type_id
-            ? payload.no_branch_due_offset_minutes ?? 0
+            ? (payload.no_branch_due_offset_minutes ?? 0)
             : null,
           error_branch_task_type_id: payload.error_branch_task_type_id ?? null,
           error_branch_title_template: payload.error_branch_task_type_id
@@ -366,15 +405,15 @@ export function useCreatePipelineAutomationRule() {
             ? payload.error_branch_description_template?.trim() || null
             : null,
           error_branch_assignee_strategy: payload.error_branch_task_type_id
-            ? payload.error_branch_assignee_strategy ?? "deal_owner"
+            ? (payload.error_branch_assignee_strategy ?? "deal_owner")
             : null,
           error_branch_assignee_user_id:
             payload.error_branch_task_type_id &&
-              payload.error_branch_assignee_strategy === "fixed_user"
+            payload.error_branch_assignee_strategy === "fixed_user"
               ? payload.error_branch_assignee_user_id
               : null,
           error_branch_due_offset_minutes: payload.error_branch_task_type_id
-            ? payload.error_branch_due_offset_minutes ?? 0
+            ? (payload.error_branch_due_offset_minutes ?? 0)
             : null,
           conditions: payload.conditions ?? {},
           recipient_strategy: "customer_email",
@@ -388,7 +427,8 @@ export function useCreatePipelineAutomationRule() {
       queryClient.invalidateQueries({ queryKey: rulesKey(rule.pipeline_id) });
       toast.success("Черновик автоматизации создан");
     },
-    onError: (error: Error) => toast.error(error.message || "Не удалось создать автоматизацию"),
+    onError: (error: Error) =>
+      toast.error(error.message || "Не удалось создать автоматизацию"),
   });
 }
 
@@ -426,6 +466,7 @@ export function useSetPipelineAutomationStatus() {
               : "Статус обновлён",
       );
     },
-    onError: (error: Error) => toast.error(error.message || "Не удалось изменить статус"),
+    onError: (error: Error) =>
+      toast.error(error.message || "Не удалось изменить статус"),
   });
 }
