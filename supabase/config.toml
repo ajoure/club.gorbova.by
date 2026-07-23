@@ -62,6 +62,11 @@ verify_jwt = true
 [functions.grant-access-for-order]
 verify_jwt = true
 
+# Historical acquiring recovery is an admin-only mutation. The platform JWT
+# wall is backed by an in-function has_role_v2(admin|super_admin) check.
+[functions.admin-backfill-2026-orders]
+verify_jwt = true
+
 # External providers call these endpoints directly. Each function performs
 # its own provider-specific validation before processing a request.
 [functions.stripe-webhook]
