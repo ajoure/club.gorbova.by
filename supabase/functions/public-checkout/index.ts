@@ -385,6 +385,13 @@ Deno.serve(async (req) => {
     });
 
     if (!result.success) {
+      if (result.error === 'already_has_active_subscription' && result.conflict) {
+        return jsonResponse({
+          success: false,
+          error: 'already_has_active_subscription',
+          conflict: result.conflict,
+        });
+      }
       if (result.error === 'existing_subscription_conflict' && result.conflict) {
         return jsonResponse({
           success: false,

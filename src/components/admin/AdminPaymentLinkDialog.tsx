@@ -784,14 +784,20 @@ ${amountLine}
   const selectedProduct = products?.find((p) => p.id === selectedProductId);
   const selectedTariff = tariffs?.find((t) => t.id === selectedTariffId);
   const amount = parseFloat(customAmount) || 0;
+  const composableSubtotal = Number(composableQuote?.subtotal ?? 0);
+  const composableCurrency = composableQuote?.currency ?? previewCurrency;
+  const composableItems = Array.isArray(composableQuote?.items) ? composableQuote.items : [];
+  const composableAvailableAddons = Array.isArray(composableQuote?.available_addons)
+    ? composableQuote.available_addons
+    : [];
   const composableAdjustment = composableQuote
-    ? Math.round((amount - Number(composableQuote.subtotal || 0)) * 100) / 100
+    ? Math.round((amount - composableSubtotal) * 100) / 100
     : 0;
   const composableSnapshot = composableQuote ? {
     version: 1,
-    currency: composableQuote.currency,
-    items: composableQuote.items,
-    subtotal: composableQuote.subtotal,
+    currency: composableCurrency,
+    items: composableItems,
+    subtotal: composableSubtotal,
     adjustment_amount: composableAdjustment,
     adjustment_reason: composableAdjustment === 0 ? null : adjustmentReason.trim(),
     total: amount,
@@ -1659,7 +1665,7 @@ ${amountLine}
                 </div>
               )}
 
-              {effectiveOffer && (composableQuote?.available_addons?.length > 0 || composableQuoteLoading) && (
+              {effectiveOffer && (composableAvailableAddons.length > 0 || composableQuoteLoading) && (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
                   <div>
                     <p className="text-sm font-medium">Дополнительные продукты</p>
@@ -1669,15 +1675,15 @@ ${amountLine}
                   </div>
                   {composableQuoteLoading ? (
                     <Skeleton className="h-12 w-full" />
-                  ) : composableQuote.available_addons.map((addon: any) => {
+                  ) : composableAvailableAddons.map((addon: any) => {
                     const checked = addon.is_required || selectedAddonOfferIds.includes(addon.addon_offer_id);
                     const priceLabel = addon.pricing_mode === "free"
                       ? "бесплатно"
                       : addon.pricing_mode === "percent_discount"
                         ? `скидка ${addon.discount_percent}%`
                         : addon.pricing_mode === "fixed_price"
-                          ? `${addon.fixed_amount} ${composableQuote.currency}`
-                          : `${addon.list_amount} ${composableQuote.currency}`;
+                          ? `${addon.fixed_amount} ${composableCurrency}`
+                          : `${addon.list_amount} ${composableCurrency}`;
                     return (
                       <label key={addon.addon_offer_id} className="flex items-center gap-3 rounded-md border p-3">
                         <input
@@ -1700,7 +1706,7 @@ ${amountLine}
                   })}
                   <div className="flex justify-between border-t pt-2 text-sm font-medium">
                     <span>Сумма комплекта до ручной корректировки</span>
-                    <span>{composableQuote.subtotal} {composableQuote.currency}</span>
+                    <span>{composableSubtotal} {composableCurrency}</span>
                   </div>
                 </div>
               )}

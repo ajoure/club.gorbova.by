@@ -108,6 +108,7 @@ export default function PublicPayPage() {
   const [error, setError] = useState<string | null>(null);
   const [identityError, setIdentityError] = useState<string | null>(null);
   const [conflictData, setConflictData] = useState<SubscriptionConflictInfo | null>(null);
+  const [activeSubscriptionData, setActiveSubscriptionData] = useState<SubscriptionConflictInfo | null>(null);
   const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
   const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating'>('idle');
   const [useCustomerCredit, setUseCustomerCredit] = useState(false);
@@ -205,6 +206,7 @@ export default function PublicPayPage() {
     setIsProcessing(true);
     setError(null);
     setIdentityError(null);
+    setActiveSubscriptionData(null);
 
     try {
       const body: Record<string, unknown> = { url_token: token };
@@ -230,6 +232,11 @@ export default function PublicPayPage() {
       });
 
       const data = await res.json();
+      if (data?.error === 'already_has_active_subscription' && data?.conflict) {
+        setActiveSubscriptionData(data.conflict as SubscriptionConflictInfo);
+        setIsProcessing(false);
+        return;
+      }
       if (data?.error === 'existing_subscription_conflict' && data?.conflict) {
         setConflictData(data.conflict as SubscriptionConflictInfo);
         setIsProcessing(false);
@@ -427,6 +434,14 @@ export default function PublicPayPage() {
   const customerCreditToApply = canUseCustomerCredit && useCustomerCredit
     ? Math.min(customerCreditAvailable, Math.max(0, linkInfo.amount - 100))
     : 0;
+  const activeUntil = activeSubscriptionData?.access_end_at
+    ? new Intl.DateTimeFormat('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        timeZone: 'Europe/Minsk',
+      }).format(new Date(activeSubscriptionData.access_end_at))
+    : null;
 
   // PAY-D visibility: NULL OR equal — public link OR personal link of current user.
   const ownsOrPublic =
@@ -602,6 +617,19 @@ export default function PublicPayPage() {
               </div>
             )}
 
+            {activeSubscriptionData && linkInfo.payment_type === 'subscription' && (
+              <Alert className="mb-4 border-emerald-500/50 bg-emerald-50 dark:bg-emerald-950/20">
+                <CheckCircle className="h-4 w-4 text-emerald-600" />
+                <AlertTitle className="text-emerald-800 dark:text-emerald-200">
+                  Подписка уже оплачена и активна
+                </AlertTitle>
+                <AlertDescription className="text-emerald-800 dark:text-emerald-200">
+                  Повторное списание не выполнялось.
+                  {activeUntil ? ` Доступ действует до ${activeUntil}.` : ' Доступ уже продлён.'}
+                </AlertDescription>
+              </Alert>
+            )}
+
             {conflictData && linkInfo.payment_type === 'subscription' && (
               <Alert className="mb-4 border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
                 <Repeat className="h-4 w-4 text-amber-600" />
@@ -695,7 +723,7 @@ export default function PublicPayPage() {
               </Alert>
             )}
 
-            {!needsIdentity && !needsProviderChoice && !isProviderMisconfigured && (
+            {!needsIdentity && !needsProviderChoice && !isProviderMisconfigured && !activeSubscriptionData && (
               <Button
                 size="lg"
                 className="w-full"
