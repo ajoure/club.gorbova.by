@@ -3,6 +3,8 @@ import { resolveUserIds, getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { resolveOrderRouting, buildNegativeSnapshot, auditNegativeSnapshot } from '../_shared/crm-routing.ts';
+import { resolveComposableCheckout } from '../_shared/resolve-composable-checkout.ts';
+import { materializeComposableOrderGroup } from '../_shared/materialize-composable-order-group.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -23,6 +25,7 @@ interface CreateTokenRequest {
   isTrial?: boolean; // Trial payment flag
   trialDays?: number; // Trial duration in days
   offerId?: string; // Offer ID for virtual card blocking check
+  addonOfferIds?: string[];
   isOneTime?: boolean; // One-time payment (no subscription/recurring), e.g., consultations
   // PATCH-2: MIT flow control - if true, use checkout payment API (NOT subscriptions API)
   // This saves the card token for future MIT charges without creating a bePaid subscription
@@ -95,6 +98,7 @@ Deno.serve(async (req) => {
       isTrial,
       trialDays,
       offerId,
+      addonOfferIds = [],
       isOneTime,
       useMitTokenization, // PATCH-2: MIT flow - use checkout API instead of subscriptions
     }: CreateTokenRequest = await req.json();
@@ -673,14 +677,22 @@ Deno.serve(async (req) => {
       }
 
       const origin = req.headers.get('origin') || 'https://lovable.app';
+      const composableQuote = offerId
+        ? await resolveComposableCheckout(supabase, {
+            parentOfferId: offerId,
+            addonOfferIds,
+          })
+        : null;
       const checkoutResult = await createPaymentCheckout({
         supabase,
         user_id: userId as string,
         product_id: productId,
         tariff_id: tariffIdForCheckout,
-        amount: Math.round(productInfo.price * 100),
+        amount: Math.round((composableQuote?.total ?? productInfo.price) * 100),
         payment_type: 'one_time',
-        description: description || productInfo.name,
+        description: composableQuote
+          ? composableQuote.items.map((item) => item.product_name).join('; ')
+          : (description || productInfo.name),
         offer_id: offerId,
         origin,
         actor_type: 'system',
@@ -688,6 +700,7 @@ Deno.serve(async (req) => {
         account_code: effectiveAccountCode,
         currency: productInfo.currency || (effectiveProvider === 'stripe' ? 'BYN' : undefined),
         meta_extra: {
+          composable_checkout: composableQuote,
           provider_choice_resolution: {
             mode: 'fixed',
             chosen: effectiveProvider,
@@ -705,6 +718,22 @@ Deno.serve(async (req) => {
           offerId: offerId || null,
           provider: effectiveProvider,
         });
+      }
+      if (composableQuote && checkoutResult.order_id) {
+        try {
+          await materializeComposableOrderGroup(supabase, {
+            primaryOrderId: checkoutResult.order_id,
+            quote: composableQuote,
+            source: 'public_card_checkout',
+            idempotencyKey: `card:${checkoutResult.order_id}`,
+          });
+        } catch (error) {
+          console.error('[bepaid-create-token] composable materialization failed', error);
+          return paymentFallbackResponse('Не удалось сохранить состав покупки. Платёж не начат.', {
+            flow: 'one_time_checkout_early',
+            orderId: checkoutResult.order_id,
+          });
+        }
       }
 
       return new Response(

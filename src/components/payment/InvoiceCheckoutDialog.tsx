@@ -52,6 +52,7 @@ export interface InvoiceCheckoutDialogProps {
   productName: string;
   tariffName?: string;
   offerId: string;
+  addonOfferIds?: string[];
   amount: number;
   currency?: string;
 }
@@ -93,6 +94,7 @@ export function InvoiceCheckoutDialog({
   productName,
   tariffName,
   offerId,
+  addonOfferIds = [],
   amount,
   currency = "BYN",
 }: InvoiceCheckoutDialogProps) {
@@ -198,6 +200,7 @@ export function InvoiceCheckoutDialog({
           body: JSON.stringify({
             product_id: productId,
             offer_id: offerId,
+            addon_offer_ids: addonOfferIds,
             legal_details_id: selectedPayer.id,
           }),
         },

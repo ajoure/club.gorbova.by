@@ -26,6 +26,7 @@ interface LeadRequestDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   offerId: string;
+  addonOfferIds?: string[];
   offerLabel?: string;
   /** Название продукта — показывается в подзаголовке шапки как контекст. */
   productName?: string;
@@ -68,6 +69,7 @@ export function LeadRequestDialog({
   open,
   onOpenChange,
   offerId,
+  addonOfferIds = [],
   offerLabel,
   productName,
   tariffName,
@@ -161,6 +163,7 @@ export function LeadRequestDialog({
         try {
           const res = await startBankInstallment({
             offerId,
+            addonOfferIds,
             runtime: bankInstallmentRuntime,
             legacyBankLinkUrl: bankLinkUrl,
             legacyBankLinkLabel: bankLinkLabel,

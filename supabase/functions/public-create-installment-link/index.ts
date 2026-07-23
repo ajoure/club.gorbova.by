@@ -41,11 +41,13 @@ import {
   InstallmentPlanError,
   kopecksToDecimal,
 } from '../_shared/calculate-installment-plan.ts';
+import { resolveComposableCheckout } from '../_shared/resolve-composable-checkout.ts';
 
 interface CreateInstallmentLinkRequest {
   product_id: string;
   tariff_id?: string | null;
   offer_id: string;
+  addon_offer_ids?: string[];
   // B9. Публичный клиент выбирает N платежей. Если max=2 и поле отсутствует —
   // берём 2. Если max>2 и поле отсутствует — 400 installment_months_required.
   selected_installment_months?: number | null;
@@ -75,7 +77,7 @@ Deno.serve(async (req) => {
     }
 
     const body = (await req.json().catch(() => ({}))) as CreateInstallmentLinkRequest;
-    const { product_id, tariff_id: tariffIdInput, offer_id } = body;
+    const { product_id, tariff_id: tariffIdInput, offer_id, addon_offer_ids = [] } = body;
 
     if (!product_id || typeof product_id !== 'string') {
       return errorResponse('missing_product_id', 400);
@@ -139,7 +141,11 @@ Deno.serve(async (req) => {
     const selectedMonths = publicCycles;
 
 
-    const totalByn = Number(offer.amount);
+    const composableQuote = await resolveComposableCheckout(supabase, {
+      parentOfferId: offer_id,
+      addonOfferIds: addon_offer_ids,
+    });
+    const totalByn = Number(composableQuote.total);
     if (!Number.isFinite(totalByn) || totalByn < 1) {
       return errorResponse('invalid_offer_amount', 500);
     }
@@ -315,6 +321,7 @@ Deno.serve(async (req) => {
       internal: false,
       // Stage 1 canonical marker at link.meta root — payment_flow не трогаем.
       payment_method: 'internal_installment',
+      composable_checkout: composableQuote,
       installment: installmentBlock,
     };
 

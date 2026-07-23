@@ -54,6 +54,7 @@ interface PaymentDialogProps {
   currency?: string;
   tariffCode?: string;
   offerId?: string;
+  addonOfferIds?: string[];
   isTrial?: boolean;
   trialDays?: number;
   isClubProduct?: boolean;
@@ -150,6 +151,7 @@ export function PaymentDialog({
   currency,
   tariffCode,
   offerId,
+  addonOfferIds = [],
   isTrial,
   trialDays,
   isClubProduct,
@@ -757,6 +759,7 @@ export function PaymentDialog({
           body: {
             product_id: productId,
             offer_id: offerId,
+            addon_offer_ids: addonOfferIds,
             // Публичный клиент не выбирает N — сервер берёт точное значение из
             // tariff_offers.installment_count. Поле оставлено для совместимости
             // и игнорируется сервером на публичном пути.
@@ -878,6 +881,7 @@ export function PaymentDialog({
           description: paymentDescription,
           tariffCode,
           offerId,
+          addonOfferIds,
           isTrial,
           trialDays,
           isOneTime: isOneTimePayment,
