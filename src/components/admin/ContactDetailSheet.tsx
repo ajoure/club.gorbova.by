@@ -204,7 +204,7 @@ interface ContactDetailSheetProps {
 export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOpenCompany }: ContactDetailSheetProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { hasPermission, isSuperAdmin, isAdmin } = usePermissions();
+  const { hasPermission, isSuperAdmin, isAdmin, canWrite } = usePermissions();
   const { role: authRole } = useAuth();
   const { startImpersonation, resetPassword } = useAdminUsers();
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
@@ -2803,7 +2803,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                                     }
                                   </span>
                                 </div>
-                                {(isSuperAdmin() || hasPermission("users.impersonate")) && trial.product_id && (
+                                {canWrite("contacts") && trial.product_id && (
                                   <div className="mt-2 flex justify-end">
                                     <Button
                                       variant="ghost"

@@ -932,7 +932,9 @@ export function PaymentDialog({
 
         const fallbackMessage = isOneTimePayment
           ? "Не удалось открыть страницу оплаты. Попробуйте ещё раз."
-          : "Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.";
+          : isTrial
+            ? data?.error || "Не удалось активировать демо-доступ. Попробуйте ещё раз."
+            : "Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.";
 
         if (data?.fallback) {
           setPaymentError(fallbackMessage);
@@ -1343,7 +1345,9 @@ export function PaymentDialog({
             {paymentError && (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Не удалось продолжить оплату</AlertTitle>
+                <AlertTitle>
+                  {isTrial ? "Не удалось активировать демо-доступ" : "Не удалось продолжить оплату"}
+                </AlertTitle>
                 <AlertDescription>{paymentError}</AlertDescription>
               </Alert>
             )}
@@ -1698,36 +1702,24 @@ export function PaymentDialog({
           
           <div className="space-y-4">
             <p className="text-muted-foreground">
-              Вы уже воспользовались бесплатным пробным периодом для этого продукта.
+              Бесплатный демо-доступ к этому продукту можно активировать только один раз.
             </p>
             
-            <div className="rounded-lg bg-primary/10 border border-primary/20 p-4 space-y-2">
-              <div className="flex items-center gap-2 text-primary">
-                <CheckCircle className="h-5 w-5" />
-                <span className="font-medium">Продолжите со скидкой!</span>
+            <div className="rounded-lg bg-muted/60 border border-border p-4 space-y-2">
+              <div className="flex items-center gap-2 text-foreground">
+                <Info className="h-5 w-5" />
+                <span className="font-medium">Не успели воспользоваться доступом?</span>
               </div>
               <p className="text-sm text-muted-foreground">
-                Оформите полную подписку, чтобы продолжить пользоваться всеми возможностями {productName}.
+                Обратитесь в поддержку. Сотрудник сможет проверить ситуацию и при необходимости разрешить повторную активацию.
               </p>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex justify-end">
               <Button
-                variant="outline"
                 onClick={() => setShowTrialUsedModal(false)}
-                className="flex-1"
               >
-                Закрыть
-              </Button>
-              <Button
-                onClick={() => {
-                  setShowTrialUsedModal(false);
-                  // Navigate to product page or stay with current flow (without trial)
-                  // The user can still purchase without trial option from the same dialog
-                }}
-                className="flex-1"
-              >
-                Купить полный тариф
+                Понятно
               </Button>
             </div>
           </div>
