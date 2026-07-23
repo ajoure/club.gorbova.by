@@ -275,7 +275,11 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { action, subscription_id, order_id, days, new_end_date, refund_amount, refund_reason, access_action, reduce_days } = body;
+    const {
+      action, subscription_id, order_id, days, new_end_date, refund_amount,
+      refund_reason, access_action, reduce_days, order_group_item_id,
+      refund_request_key,
+    } = body;
 
     console.log(`Admin ${adminUserId} performing ${action}`);
 
@@ -319,6 +323,62 @@ Deno.serve(async (req) => {
       const actualRefundAmount = refund_amount || order.final_price;
       const payments = order.payments_v2 as any[];
       const successfulPayment = payments?.find((p: any) => p.status === 'succeeded' && p.provider_payment_id);
+      let composableRefundIntentId: string | null = null;
+      if (order_group_item_id) {
+        if (!successfulPayment?.provider_payment_id) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'composable_refund_requires_provider_payment',
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        if (!refund_request_key || typeof refund_request_key !== 'string') {
+          return new Response(JSON.stringify({
+            success: false, error: 'refund_request_key required for composable refund',
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        const { data: intent, error: intentError } = await supabase.rpc(
+          'create_composable_refund_intent',
+          {
+            _primary_order_id: order_id,
+            _order_group_item_id: order_group_item_id,
+            _amount: actualRefundAmount,
+            _reason: refund_reason,
+            _access_action: access_action || 'keep',
+            _reduce_days: reduce_days || null,
+            _request_key: refund_request_key,
+            _created_by: adminUserId,
+          },
+        );
+        if (intentError || intent?.ok !== true) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: intentError?.message || intent?.error || 'composable_refund_intent_failed',
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        if (intent.idempotent === true) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'composable_refund_request_already_exists',
+            intent_id: intent.intent_id,
+            intent_status: intent.status,
+            provider_refund_id: intent.provider_refund_id || null,
+            manual_review_required: intent.status !== 'allocated',
+          }), {
+            status: 409,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        composableRefundIntentId = intent.intent_id;
+      }
       
       let bepaidRefundResult: any = null;
       let bepaidRefundError: string | null = null;
@@ -366,6 +426,26 @@ Deno.serve(async (req) => {
 
         const effective = access_action || 'keep';
         const stripeOk = !stripeRefundError && stripeRefundResp?.ok === true;
+        if (stripeOk && composableRefundIntentId && stripeRefundResp?.refund_id) {
+          const { error: bindError } = await supabase.rpc(
+            'bind_composable_refund_provider_id',
+            {
+              _intent_id: composableRefundIntentId,
+              _provider_refund_id: stripeRefundResp.refund_id,
+            },
+          );
+          if (bindError) {
+            return new Response(JSON.stringify({
+              success: false,
+              error: `refund_succeeded_but_allocation_bind_failed:${bindError.message}`,
+              refund_id: stripeRefundResp.refund_id,
+              manual_review_required: true,
+            }), {
+              status: 200,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        }
 
         await supabase.from('audit_logs').insert({
           actor_user_id: adminUserId,
@@ -390,6 +470,12 @@ Deno.serve(async (req) => {
         });
 
         if (!stripeOk) {
+          if (composableRefundIntentId) {
+            await supabase.rpc('fail_composable_refund_intent', {
+              _intent_id: composableRefundIntentId,
+              _error: stripeRefundError || 'stripe_refund_failed',
+            });
+          }
           return new Response(JSON.stringify({
             success: false,
             error: stripeRefundError || 'Stripe refund failed',
@@ -622,6 +708,12 @@ Deno.serve(async (req) => {
       // If there was a bePaid payment and refund failed, return error - don't update order
       if (hasBepaidPayment && !bepaidRefundSuccessful) {
         console.error(`bePaid refund failed for order ${order_id}, NOT marking as refunded`);
+        if (composableRefundIntentId) {
+          await supabase.rpc('fail_composable_refund_intent', {
+            _intent_id: composableRefundIntentId,
+            _error: bepaidRefundError || 'bepaid_refund_failed',
+          });
+        }
 
         await supabase.from('audit_logs').insert({
           actor_user_id: adminUserId,
@@ -699,6 +791,34 @@ Deno.serve(async (req) => {
             status: 500,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
+        }
+        if (composableRefundIntentId) {
+          const refundUid = bepaidRefundResult.transaction.uid;
+          const { error: bindError } = await supabase.rpc(
+            'bind_composable_refund_provider_id',
+            {
+              _intent_id: composableRefundIntentId,
+              _provider_refund_id: refundUid,
+            },
+          );
+          const { data: allocation, error: allocationError } = bindError
+            ? { data: null, error: bindError }
+            : await supabase.rpc('finalize_composable_refund_allocation', {
+                _provider_refund_id: refundUid,
+              });
+          if (allocationError || allocation?.ok !== true) {
+            return new Response(JSON.stringify({
+              success: false,
+              error: `refund_succeeded_but_item_allocation_failed:${
+                allocationError?.message || allocation?.error || 'not_confirmed'
+              }`,
+              refund_payment_uid: refundUid,
+              manual_review_required: true,
+            }), {
+              status: 200,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
         }
 
         refundStatus = (rpcResult?.refund_status as 'partial' | 'full') || 'partial';

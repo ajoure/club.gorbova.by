@@ -736,6 +736,22 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
         results.push({ refund_id: refund.id, inserted: false, error: rpcErr.message });
         continue;
       }
+      const { error: allocationError } = await supabase.rpc(
+        'finalize_composable_refund_allocation',
+        { _provider_refund_id: refund.id },
+      );
+      if (allocationError) {
+        await supabase.from('audit_logs').insert({
+          action: 'stripe.refund.composable_allocation_failed',
+          entity_type: 'orders_v2', entity_id: order_id_meta,
+          meta: {
+            error: allocationError.message,
+            refund_id: refund.id,
+            parent_payment_id,
+            manual_review_required: true,
+          },
+        });
+      }
       const rpcObj = (rpcData ?? {}) as { idempotent?: boolean };
       const inserted = rpcObj.idempotent === false;
       results.push({ refund_id: refund.id, inserted });

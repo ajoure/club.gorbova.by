@@ -16,6 +16,21 @@ import { AlertTriangle, CreditCard, Ban, Calendar, RefreshCcw } from "lucide-rea
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
+interface GroupRefundItem {
+  id: string;
+  role: "primary" | "addon";
+  order_id: string | null;
+  final_amount: number;
+  item_snapshot: {
+    product_name?: string;
+    tariff_name?: string;
+  } | null;
+  payment_allocations?: Array<{
+    amount: number;
+    refunded_amount: number;
+  }>;
+}
+
 interface RefundDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -44,6 +59,9 @@ export function RefundDialog({
   const [isProcessing, setIsProcessing] = useState(false);
   const [accessAction, setAccessAction] = useState<AccessAction>("revoke");
   const [reduceDays, setReduceDays] = useState(30);
+  const [groupItems, setGroupItems] = useState<GroupRefundItem[]>([]);
+  const [selectedGroupItemId, setSelectedGroupItemId] = useState<string>("");
+  const [refundRequestKey, setRefundRequestKey] = useState(() => crypto.randomUUID());
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -52,6 +70,18 @@ export function RefundDialog({
       setReason("");
       setAccessAction(refundAmount >= amount ? "revoke" : "reduce");
       setReduceDays(30);
+      setRefundRequestKey(crypto.randomUUID());
+      setGroupItems([]);
+      setSelectedGroupItemId("");
+      void supabase
+        .from("order_group_items")
+        .select("id,role,order_id,final_amount,item_snapshot,payment_allocations(amount,refunded_amount),order_group:order_groups!inner(primary_order_id)")
+        .eq("order_group.primary_order_id", orderId)
+        .order("sort_order")
+        .then(({ data }) => {
+          const items = (data ?? []) as unknown as GroupRefundItem[];
+          setGroupItems(items);
+        });
     }
   }, [open, amount]);
 
@@ -63,6 +93,11 @@ export function RefundDialog({
   }, [refundAmount, amount]);
 
   const isFullRefund = refundAmount >= amount;
+  const selectedGroupItem = groupItems.find((item) => item.id === selectedGroupItemId);
+  const selectedAllocation = selectedGroupItem?.payment_allocations?.[0];
+  const selectedAvailable = selectedAllocation
+    ? Number(selectedAllocation.amount) - Number(selectedAllocation.refunded_amount || 0)
+    : null;
 
   const handleRefund = async () => {
     if (!reason.trim()) {
@@ -70,7 +105,8 @@ export function RefundDialog({
       return;
     }
 
-    if (refundAmount <= 0 || refundAmount > amount) {
+    const maxRefundAmount = selectedAvailable ?? amount;
+    if (refundAmount <= 0 || refundAmount > maxRefundAmount) {
       toast.error("Некорректная сумма возврата");
       return;
     }
@@ -90,6 +126,8 @@ export function RefundDialog({
           refund_reason: reason.trim(),
           access_action: accessAction,
           reduce_days: accessAction === "reduce" ? reduceDays : undefined,
+          order_group_item_id: selectedGroupItemId || undefined,
+          refund_request_key: selectedGroupItemId ? refundRequestKey : undefined,
         },
       });
 
@@ -137,6 +175,55 @@ export function RefundDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
+          {groupItems.length > 0 && (
+            <div className="rounded-2xl border border-white/70 bg-gradient-to-br from-white/90 to-fuchsia-50/60 p-4 shadow-[0_12px_35px_rgba(112,57,91,.08)] backdrop-blur-xl">
+              <Label className="text-slate-700">Позиция комплекта</Label>
+              <div className="mt-3 space-y-2">
+                {groupItems.map((item) => {
+                  const allocation = item.payment_allocations?.[0];
+                  const available = allocation
+                    ? Number(allocation.amount) - Number(allocation.refunded_amount || 0)
+                    : 0;
+                  const selected = selectedGroupItemId === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      disabled={available <= 0}
+                      onClick={() => {
+                        setSelectedGroupItemId(item.id);
+                        setRefundAmount(available);
+                        setAccessAction("keep");
+                        setRefundRequestKey(crypto.randomUUID());
+                      }}
+                      className={`w-full rounded-xl border p-3 text-left transition ${
+                        selected
+                          ? "border-fuchsia-300 bg-white shadow-sm"
+                          : "border-white/80 bg-white/55 hover:bg-white/85"
+                      } disabled:opacity-45`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-medium text-slate-800">
+                            {item.item_snapshot?.product_name || (item.role === "primary" ? "Основной продукт" : "Дополнительный модуль")}
+                          </div>
+                          {item.item_snapshot?.tariff_name && (
+                            <div className="mt-0.5 text-xs text-slate-500">{item.item_snapshot.tariff_name}</div>
+                          )}
+                        </div>
+                        <div className="text-sm font-semibold text-slate-700">
+                          {formatAmount(available)}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-xs leading-5 text-slate-500">
+                Выберите позицию, если возврат относится к конкретному модулю. Денежный возврат проводится по общему платежу, а распределение фиксируется отдельно.
+              </p>
+            </div>
+          )}
           {paymentProvider === 'stripe' ? (
             <div className="flex items-start gap-3 p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800">
               <AlertTriangle className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
@@ -168,12 +255,12 @@ export function RefundDialog({
               type="number"
               value={refundAmount}
               onChange={(e) => setRefundAmount(parseFloat(e.target.value) || 0)}
-              max={amount}
+              max={selectedAvailable ?? amount}
               min={0.01}
               step={0.01}
             />
             <p className="text-xs text-muted-foreground">
-              Максимум: {formatAmount(amount)}
+              Максимум: {formatAmount(selectedAvailable ?? amount)}
             </p>
           </div>
 
@@ -185,10 +272,10 @@ export function RefundDialog({
               className="space-y-2"
             >
               <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="revoke" id="revoke" disabled={!isFullRefund} />
+                <RadioGroupItem value="revoke" id="revoke" disabled={!isFullRefund || !!selectedGroupItemId} />
                 <Label
                   htmlFor="revoke"
-                  className={`flex-1 cursor-pointer ${!isFullRefund ? "opacity-50" : ""}`}
+                  className={`flex-1 cursor-pointer ${!isFullRefund || selectedGroupItemId ? "opacity-50" : ""}`}
                 >
                   <div className="flex items-center gap-2">
                     <Ban className="w-4 h-4 text-red-500" />
@@ -201,7 +288,7 @@ export function RefundDialog({
               </div>
 
               <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="reduce" id="reduce" />
+                <RadioGroupItem value="reduce" id="reduce" disabled={!!selectedGroupItemId} />
                 <Label htmlFor="reduce" className="flex-1 cursor-pointer">
                   <div className="flex items-center gap-2">
                     <Calendar className="w-4 h-4 text-amber-500" />
@@ -213,7 +300,7 @@ export function RefundDialog({
                 </Label>
               </div>
 
-              {!isFullRefund && (
+              {(!isFullRefund || !!selectedGroupItemId) && (
                 <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
                   <RadioGroupItem value="keep" id="keep" />
                   <Label htmlFor="keep" className="flex-1 cursor-pointer">
@@ -229,7 +316,7 @@ export function RefundDialog({
               )}
 
               <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="keep_subscription" id="keep_subscription" />
+                <RadioGroupItem value="keep_subscription" id="keep_subscription" disabled={!!selectedGroupItemId} />
                 <Label htmlFor="keep_subscription" className="flex-1 cursor-pointer">
                   <div className="flex items-center gap-2">
                     <RefreshCcw className="w-4 h-4 text-blue-500" />
