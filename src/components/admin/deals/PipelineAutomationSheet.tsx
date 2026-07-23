@@ -396,7 +396,9 @@ function RuleCard({
               <ArrowRight className="h-3 w-3" />
               {rule.trigger_type === "deal_left_stage"
                 ? "после выхода"
-                : "после входа"}
+                : rule.trigger_type === "deal_created"
+                  ? "после создания"
+                  : "после входа"}
             </>
           )}
         </span>
@@ -1056,6 +1058,8 @@ export function PipelineAutomationSheet({
                       ? "Повтор для сделок, которые находятся в этой стадии в выбранный день месяца"
                       : triggerType === "deal_left_stage"
                         ? "После выхода сделки из выбранной стадии"
+                        : triggerType === "deal_created"
+                          ? "Один раз при создании сделки в выбранной стартовой стадии"
                       : "После перехода сделки в стадию"}
               </p>
             </div>

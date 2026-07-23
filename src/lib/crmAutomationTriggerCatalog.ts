@@ -38,7 +38,7 @@ export const CRM_AUTOMATION_TRIGGER_CATALOG: CrmAutomationTriggerDefinition[] =
       category: "deal",
       title: "Создана сделка",
       description: "Срабатывает один раз при появлении новой сделки в воронке.",
-      availability: "planned",
+      availability: "available",
     },
     {
       id: "deal_field_changed",

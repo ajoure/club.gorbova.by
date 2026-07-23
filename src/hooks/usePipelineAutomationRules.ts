@@ -7,6 +7,7 @@ export type PipelineAutomationStatus =
 export type PipelineAutomationTriggerType =
   | "deal_entered_stage"
   | "deal_left_stage"
+  | "deal_created"
   | "after_event"
   | "weekday"
   | "month_day"
