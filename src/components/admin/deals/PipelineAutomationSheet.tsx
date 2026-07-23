@@ -5,14 +5,19 @@ import {
   CalendarClock,
   CheckCircle2,
   CirclePause,
+  Clock3,
+  History,
   Loader2,
   Plus,
   Sparkles,
+  TimerReset,
   UserRound,
   Workflow,
+  XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
@@ -38,6 +43,7 @@ import { useStaffOptions } from "@/hooks/useStaffOptions";
 import {
   PipelineAutomationRule,
   useCreatePipelineAutomationRule,
+  usePipelineAutomationJobs,
   usePipelineAutomationRules,
   useSetPipelineAutomationStatus,
 } from "@/hooks/usePipelineAutomationRules";
@@ -115,6 +121,11 @@ function RuleCard({
         <span className="inline-flex items-center gap-1">
           <ArrowRight className="h-3 w-3" /> после входа
         </span>
+        {rule.delay_minutes > 0 && (
+          <span className="inline-flex items-center gap-1">
+            <Clock3 className="h-3 w-3" /> через {rule.delay_minutes} мин
+          </span>
+        )}
         <span className="inline-flex items-center gap-1">
           <CalendarClock className="h-3 w-3" /> {rule.due_offset_minutes / 60} ч
         </span>
@@ -185,6 +196,7 @@ export function PipelineAutomationSheet({
   canEdit,
 }: Props) {
   const { data: rules = [], isLoading } = usePipelineAutomationRules(pipeline?.id ?? null);
+  const { data: jobs = [] } = usePipelineAutomationJobs(rules.map((rule) => rule.id));
   const { data: taskTypes = [] } = useCrmTaskTypes();
   const { data: staff = [] } = useStaffOptions();
   const createRule = useCreatePipelineAutomationRule();
@@ -196,6 +208,8 @@ export function PipelineAutomationSheet({
   const [taskTypeId, setTaskTypeId] = useState("");
   const [assignee, setAssignee] = useState(OWNER);
   const [dueHours, setDueHours] = useState(24);
+  const [delayMinutes, setDelayMinutes] = useState(0);
+  const [requireSameStage, setRequireSameStage] = useState(true);
 
   useEffect(() => {
     if (!taskTypeId && taskTypes[0]?.id) setTaskTypeId(taskTypes[0].id);
@@ -216,6 +230,8 @@ export function PipelineAutomationSheet({
     setDescription("");
     setAssignee(OWNER);
     setDueHours(24);
+    setDelayMinutes(0);
+    setRequireSameStage(true);
   };
 
   const submit = () => {
@@ -232,6 +248,8 @@ export function PipelineAutomationSheet({
         assignee_user_id: assignee === OWNER ? null : assignee,
         due_offset_minutes: dueHours * 60,
         reminder_offset_minutes: null,
+        delay_minutes: delayMinutes,
+        require_same_stage: requireSameStage,
       },
       { onSuccess: resetEditor },
     );
@@ -271,6 +289,63 @@ export function PipelineAutomationSheet({
                   {rules.filter((rule) => rule.status === "active").length} активных
                 </Badge>
               </div>
+
+              {jobs.length > 0 && (
+                <div className="mb-4 flex max-w-[calc(92vw-40px)] items-center gap-2 overflow-x-auto rounded-2xl border border-white/35 bg-white/35 p-2.5 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/30">
+                  <div className="flex shrink-0 items-center gap-1.5 px-1 text-[10px] font-semibold text-foreground/70">
+                    <History className="h-3.5 w-3.5" /> Последние запуски
+                  </div>
+                  {jobs.slice(0, 8).map((job) => {
+                    const rule = rules.find((item) => item.id === job.rule_id);
+                    const failed = job.status === "failed" || job.status === "dead";
+                    const waiting = job.status === "pending" || job.status === "running";
+                    return (
+                      <div
+                        key={job.id}
+                        className="flex min-w-[170px] shrink-0 items-center gap-2 rounded-xl border border-border/25 bg-background/50 px-2.5 py-2"
+                        title={job.last_error ?? undefined}
+                      >
+                        <span
+                          className={cn(
+                            "grid h-6 w-6 shrink-0 place-items-center rounded-lg",
+                            failed
+                              ? "bg-rose-500/10 text-rose-600"
+                              : waiting
+                                ? "bg-amber-500/10 text-amber-600"
+                                : job.status === "skipped"
+                                  ? "bg-slate-500/10 text-slate-500"
+                                  : "bg-emerald-500/10 text-emerald-600",
+                          )}
+                        >
+                          {failed ? (
+                            <XCircle className="h-3.5 w-3.5" />
+                          ) : waiting ? (
+                            <TimerReset className="h-3.5 w-3.5" />
+                          ) : (
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          )}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-[10px] font-medium">{rule?.name ?? "Автоматизация"}</p>
+                          <p className="mt-0.5 text-[9px] text-muted-foreground">
+                            {job.status === "succeeded"
+                              ? "Выполнено"
+                              : job.status === "skipped"
+                                ? "Пропущено: сделка ушла"
+                                : job.status === "running"
+                                  ? "Выполняется"
+                                  : job.status === "pending"
+                                    ? "Ожидает запуска"
+                                    : job.status === "dead"
+                                      ? "Остановлено после ошибок"
+                                      : "Повтор после ошибки"}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               <div className="flex gap-3">
                 {stages.map((stage) => (
@@ -377,6 +452,24 @@ export function PipelineAutomationSheet({
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-1.5">
+                <Label className="text-[11px]">Запустить через, минут</Label>
+                <Input type="number" min={0} max={525600} value={delayMinutes} onChange={(event) => setDelayMinutes(Number(event.target.value))} className="h-9 rounded-xl text-xs" />
+                <p className="text-[10px] text-muted-foreground">0 — сразу после перехода в стадию</p>
+              </div>
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-border/30 bg-background/35 p-3">
+                <Checkbox
+                  checked={requireSameStage}
+                  onCheckedChange={(checked) => setRequireSameStage(checked === true)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block text-[11px] font-medium">Проверить стадию перед запуском</span>
+                  <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
+                    Если сделка уже ушла дальше, действие будет безопасно пропущено
+                  </span>
+                </span>
+              </label>
               <div className="space-y-1.5">
                 <Label className="text-[11px]">Срок выполнения, часов</Label>
                 <Input type="number" min={0} max={8760} value={dueHours} onChange={(event) => setDueHours(Number(event.target.value))} className="h-9 rounded-xl text-xs" />

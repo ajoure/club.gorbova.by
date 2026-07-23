@@ -68,11 +68,22 @@
 
 ### 2. Время и каналы
 
-- задержки и «всё ещё в стадии»;
+- [x] задержки и «всё ещё в стадии»;
+- [x] журнал последних запусков в настройках воронки;
+- [x] отдельный исход `skipped`, если сделка покинула стадию;
 - quiet hours и timezone;
 - Email и Telegram как отдельные действия;
 - fallback-ветка канала;
 - retry/backoff и ручной повтор.
+
+Инвентаризация каналов:
+
+- канонический Email writer — Edge Function `send-email`, журнал — `email_logs`;
+- канонический Telegram writer — `telegram-send-notification`, журнал —
+  `telegram_messages`;
+- произвольный CRM-текст пока не подключается к Telegram: service-role контракт
+  writer ограничивает допустимые `message_type`. Расширение должно сохранить
+  whitelist, шаблоны, idempotency и зеркалирование, а не создавать второй sender.
 
 ### 3. Условия и ветвления
 

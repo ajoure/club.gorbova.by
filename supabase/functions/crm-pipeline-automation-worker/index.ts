@@ -37,7 +37,14 @@ Deno.serve(async (req: Request) => {
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const result = { ok: true, claimed: 0, succeeded: 0, failed: 0, jobs: [] as unknown[] };
+  const result = {
+    ok: true,
+    claimed: 0,
+    succeeded: 0,
+    skipped: 0,
+    failed: 0,
+    jobs: [] as unknown[],
+  };
 
   const { data: jobs, error: claimError } = await supabase.rpc(
     "crm_pipeline_automation_claim_jobs",
@@ -67,6 +74,23 @@ Deno.serve(async (req: Request) => {
       if (ruleError || !rule) throw new Error(`rule_not_found:${ruleError?.message ?? job.rule_id}`);
       if (dealError || !deal) throw new Error(`deal_not_found:${dealError?.message ?? job.deal_id}`);
       if (rule.action_type !== "create_task") throw new Error(`unsupported_action:${rule.action_type}`);
+      if (rule.require_same_stage && deal.pipeline_stage_id !== rule.stage_id) {
+        const { error: skipError } = await supabase.rpc(
+          "crm_pipeline_automation_skip_job",
+          {
+            _job_id: job.id,
+            _reason: "deal_left_stage",
+            _result: {
+              expected_stage_id: rule.stage_id,
+              current_stage_id: deal.pipeline_stage_id,
+            },
+          },
+        );
+        if (skipError) throw skipError;
+        result.skipped++;
+        result.jobs.push({ id: job.id, status: "skipped", reason: "deal_left_stage" });
+        continue;
+      }
 
       const assigneeUserId =
         rule.assignee_strategy === "fixed_user" ? rule.assignee_user_id : deal.responsible_user_id;

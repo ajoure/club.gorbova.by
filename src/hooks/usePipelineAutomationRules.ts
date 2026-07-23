@@ -19,6 +19,8 @@ export interface PipelineAutomationRule {
   assignee_user_id: string | null;
   due_offset_minutes: number;
   reminder_offset_minutes: number | null;
+  delay_minutes: number;
+  require_same_stage: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -34,6 +36,29 @@ export interface CreatePipelineAutomationRule {
   assignee_user_id?: string | null;
   due_offset_minutes: number;
   reminder_offset_minutes?: number | null;
+  delay_minutes: number;
+  require_same_stage: boolean;
+}
+
+export type PipelineAutomationJobStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "skipped"
+  | "failed"
+  | "dead";
+
+export interface PipelineAutomationJob {
+  id: string;
+  rule_id: string;
+  deal_id: string;
+  status: PipelineAutomationJobStatus;
+  attempt_count: number;
+  available_at: string;
+  result: Record<string, unknown> | null;
+  last_error: string | null;
+  created_at: string;
+  finished_at: string | null;
 }
 
 const rulesKey = (pipelineId: string | null) => ["crm-pipeline-automation-rules", pipelineId];
@@ -55,6 +80,26 @@ export function usePipelineAutomationRules(pipelineId: string | null) {
       return (data ?? []) as PipelineAutomationRule[];
     },
     staleTime: 30_000,
+  });
+}
+
+export function usePipelineAutomationJobs(ruleIds: string[]) {
+  return useQuery({
+    queryKey: ["crm-pipeline-automation-jobs", [...ruleIds].sort().join(",")],
+    enabled: ruleIds.length > 0,
+    queryFn: async (): Promise<PipelineAutomationJob[]> => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from("crm_pipeline_automation_jobs")
+        .select("id,rule_id,deal_id,status,attempt_count,available_at,result,last_error,created_at,finished_at")
+        .in("rule_id", ruleIds)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      if (error) throw error;
+      return (data ?? []) as PipelineAutomationJob[];
+    },
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 }
 
