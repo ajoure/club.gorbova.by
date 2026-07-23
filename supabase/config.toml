@@ -1,5 +1,8 @@
 project_id = "hdjgkjceownmmnrqqtuz"
 
+[functions.composable-checkout-quote]
+verify_jwt = false
+
 
 
 

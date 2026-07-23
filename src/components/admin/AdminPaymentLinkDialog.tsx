@@ -193,6 +193,8 @@ export function AdminPaymentLinkDialog({
   const [combinedPending, setCombinedPending] = useState(false);
   // Stage L: выбранный срок рассрочки (только для installment-офферов)
   const [selectedInstallmentMonths, setSelectedInstallmentMonths] = useState<number | null>(null);
+  const [selectedAddonOfferIds, setSelectedAddonOfferIds] = useState<string[]>([]);
+  const [adjustmentReason, setAdjustmentReason] = useState("");
   // Phase 4.1 — provider routing UI state
   const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
   const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
@@ -344,6 +346,30 @@ export function AdminPaymentLinkDialog({
     }
     return resolved.offer;
   }, [resolved, selectedOfferId, allOffers]);
+
+  const { data: composableQuote, isFetching: composableQuoteLoading } = useQuery({
+    queryKey: ["composable-checkout-quote", effectiveOffer?.id, selectedAddonOfferIds],
+    enabled: !!effectiveOffer?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke("composable-checkout-quote", {
+        body: { parent_offer_id: effectiveOffer!.id, addon_offer_ids: selectedAddonOfferIds },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Не удалось рассчитать комплект");
+      return data as any;
+    },
+  });
+
+  useEffect(() => {
+    setSelectedAddonOfferIds([]);
+    setAdjustmentReason("");
+  }, [effectiveOffer?.id]);
+
+  useEffect(() => {
+    if (composableQuote?.subtotal != null) {
+      setCustomAmount(String(composableQuote.subtotal));
+    }
+  }, [composableQuote?.subtotal]);
 
   // Hotfix-1 — авто-default Stripe-валюты от offer.currency / offer.meta.currency / 'BYN'.
   // Не перетирает выбор админа, если он уже вручную поменял валюту.
@@ -757,6 +783,19 @@ ${amountLine}
   const selectedProduct = products?.find((p) => p.id === selectedProductId);
   const selectedTariff = tariffs?.find((t) => t.id === selectedTariffId);
   const amount = parseFloat(customAmount) || 0;
+  const composableAdjustment = composableQuote
+    ? Math.round((amount - Number(composableQuote.subtotal || 0)) * 100) / 100
+    : 0;
+  const composableSnapshot = composableQuote ? {
+    version: 1,
+    currency: composableQuote.currency,
+    items: composableQuote.items,
+    subtotal: composableQuote.subtotal,
+    adjustment_amount: composableAdjustment,
+    adjustment_reason: composableAdjustment === 0 ? null : adjustmentReason.trim(),
+    total: amount,
+    selected_addon_offer_ids: selectedAddonOfferIds,
+  } : null;
 
   // CTA #1: «Создать ссылку и открыть оплату» → admin-create-payment-link
   //   (создаёт orders_v2 + bePaid checkout, возвращает redirect_url для немедленной оплаты)
@@ -774,6 +813,12 @@ ${amountLine}
       }
       if (amount <= 0) {
         throw new Error("Введите корректную сумму");
+      }
+      if (composableAdjustment !== 0 && !adjustmentReason.trim()) {
+        throw new Error("Укажите причину скидки или наценки");
+      }
+      if (selectedAddonOfferIds.length > 0) {
+        throw new Error("Для комплекта используйте кнопку «Создать ссылку»: состав заказа фиксируется в платёжной ссылке.");
       }
       // Stage L: installment-офферы не поддерживаются writer'ом admin-create-payment-link.
       // Используйте «Создать ссылку» (admin-create-public-link) — там реализован полный installment-flow.
@@ -849,6 +894,9 @@ ${amountLine}
       if (amount <= 0) {
         throw new Error("Введите корректную сумму");
       }
+      if (composableAdjustment !== 0 && !adjustmentReason.trim()) {
+        throw new Error("Укажите причину скидки или наценки");
+      }
 
       const { data, error } = await supabase.functions.invoke(
         "admin-create-public-link",
@@ -867,6 +915,7 @@ ${amountLine}
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "admin_manual",
             cta_contract_version: 1,
+            composable_quote: composableSnapshot,
             // Stage L: installment payload (writer ignore-ит, если поля null/false).
             ...(isInstallmentOffer && selectedInstallmentMonths
               ? {
@@ -961,6 +1010,10 @@ ${amountLine}
   // ссылка ВСЁ РАВНО создана и видна пользователю (ничего не теряется).
   const handleCreateAndSendTelegram = async () => {
     if (!selectedProductId || !selectedTariffId || !effectiveOffer || amount <= 0) return;
+    if (composableAdjustment !== 0 && !adjustmentReason.trim()) {
+      toast.error("Укажите причину скидки или наценки");
+      return;
+    }
     setCombinedPending(true);
     try {
       const { data, error } = await supabase.functions.invoke(
@@ -979,6 +1032,7 @@ ${amountLine}
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "telegram_combined",
             cta_contract_version: 1,
+            composable_quote: composableSnapshot,
             ...(isInstallmentOffer && selectedInstallmentMonths
               ? {
                   installment_offer: true,
@@ -1604,6 +1658,52 @@ ${amountLine}
                 </div>
               )}
 
+              {effectiveOffer && (composableQuote?.available_addons?.length > 0 || composableQuoteLoading) && (
+                <div className="rounded-lg border bg-card p-4 space-y-3">
+                  <div>
+                    <p className="text-sm font-medium">Дополнительные продукты</p>
+                    <p className="text-xs text-muted-foreground">
+                      Они войдут в одну сделку и общую сумму, а доступ будет выдан отдельно по каждой позиции.
+                    </p>
+                  </div>
+                  {composableQuoteLoading ? (
+                    <Skeleton className="h-12 w-full" />
+                  ) : composableQuote.available_addons.map((addon: any) => {
+                    const checked = addon.is_required || selectedAddonOfferIds.includes(addon.addon_offer_id);
+                    const priceLabel = addon.pricing_mode === "free"
+                      ? "бесплатно"
+                      : addon.pricing_mode === "percent_discount"
+                        ? `скидка ${addon.discount_percent}%`
+                        : addon.pricing_mode === "fixed_price"
+                          ? `${addon.fixed_amount} ${composableQuote.currency}`
+                          : `${addon.list_amount} ${composableQuote.currency}`;
+                    return (
+                      <label key={addon.addon_offer_id} className="flex items-center gap-3 rounded-md border p-3">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={addon.is_required}
+                          onChange={(e) => setSelectedAddonOfferIds((prev) =>
+                            e.target.checked
+                              ? [...new Set([...prev, addon.addon_offer_id])]
+                              : prev.filter((id) => id !== addon.addon_offer_id)
+                          )}
+                        />
+                        <span className="flex-1 text-sm">
+                          <span className="font-medium">{addon.addon_product_name}</span>
+                          <span className="block text-xs text-muted-foreground">{addon.addon_tariff_name}</span>
+                        </span>
+                        <Badge variant="outline">{priceLabel}</Badge>
+                      </label>
+                    );
+                  })}
+                  <div className="flex justify-between border-t pt-2 text-sm font-medium">
+                    <span>Сумма комплекта до ручной корректировки</span>
+                    <span>{composableQuote.subtotal} {composableQuote.currency}</span>
+                  </div>
+                </div>
+              )}
+
               {/* Сумма */}
               {selectedTariffId && (
                 <div className="rounded-lg border bg-card p-4 space-y-2">
@@ -1627,6 +1727,24 @@ ${amountLine}
                     <p className="text-xs text-muted-foreground">
                       Это полная стоимость продукта. Сумма каждого платежа рассчитывается автоматически по выбранному сроку рассрочки ниже.
                     </p>
+                  )}
+                  {composableQuote && composableAdjustment !== 0 && (
+                    <div className="space-y-2 pt-2">
+                      <Label htmlFor="adjustment-reason">
+                        Причина {composableAdjustment < 0 ? "скидки" : "наценки"}
+                      </Label>
+                      <Input
+                        id="adjustment-reason"
+                        value={adjustmentReason}
+                        onChange={(e) => setAdjustmentReason(e.target.value)}
+                        placeholder="Например: персональная скидка 10%"
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Корректировка: {composableAdjustment > 0 ? "+" : ""}{composableAdjustment} {previewCurrency}.
+                        Она применяется к общей сумме комплекта.
+                      </p>
+                    </div>
                   )}
                 </div>
               )}

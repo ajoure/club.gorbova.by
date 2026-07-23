@@ -109,6 +109,7 @@ Deno.serve(async (req) => {
         // Phase 5-C — provider_mode + allowed_payment_providers для пользовательского выбора.
         provider_mode: (link as any).provider_mode ?? 'fixed',
         allowed_payment_providers: allowedPaymentProviders ?? null,
+        composable_checkout: linkMetaGet.composable_checkout ?? null,
       });
     }
 
@@ -315,6 +316,10 @@ Deno.serve(async (req) => {
     // Stage L3: пробрасываем installment-meta из payment_links.meta.installment в orders_v2.meta.
     // Webhook bepaid (LINK-ORDER) использует эти поля для материализации installment_payments.
     const linkMeta = (link.meta || {}) as Record<string, any>;
+    const composableCheckout =
+      linkMeta.composable_checkout && typeof linkMeta.composable_checkout === 'object'
+        ? linkMeta.composable_checkout as Record<string, any>
+        : null;
     const linkInstallment = (linkMeta.installment || null) as Record<string, any> | null;
     const hasInstallment = !!linkInstallment && Number(linkInstallment.selected_installment_months) >= 2;
     // PATCH INSTALLMENT-RETRY-POLICY: legacy-ссылки могли быть созданы с payment_type='one_time',
@@ -397,6 +402,7 @@ Deno.serve(async (req) => {
         payment_link_id: link.id,
         ...installmentMetaExtra,
         ...recurringMetaExtra,
+        ...(composableCheckout ? { composable_checkout: composableCheckout } : {}),
         // Phase 5-C — фиксируем фактический выбор в audit-trail order'а.
         provider_choice_resolution: {
           mode: providerMode,
@@ -453,6 +459,29 @@ Deno.serve(async (req) => {
       });
     }
 
+    let orderGroupId: string | null = null;
+    if (composableCheckout && Array.isArray(composableCheckout.items) && composableCheckout.items.length > 0) {
+      const { data: groupId, error: groupError } = await supabase.rpc(
+        'materialize_composable_order_group',
+        {
+          _primary_order_id: result.order_id,
+          _quote: composableCheckout,
+          _source: 'admin_payment_link',
+          _idempotency_key: `payment_link:${link.id}:order:${result.order_id}`,
+        },
+      );
+      if (groupError || !groupId) {
+        console.error('[public-checkout] composable group materialization failed', {
+          payment_link_id: link.id,
+          order_id: result.order_id,
+          error: groupError?.message,
+        });
+        return errorResponse('composable_order_materialization_failed', 500);
+      }
+      orderGroupId = groupId as string;
+      await supabase.from('payment_links').update({ order_group_id: orderGroupId }).eq('id', link.id);
+    }
+
     // Audit log (создание checkout-сессии). Счётчик НЕ инкрементируем здесь — это делает webhook.
     await supabase.from('audit_logs').insert({
       actor_type: 'system',
@@ -462,6 +491,7 @@ Deno.serve(async (req) => {
       meta: {
         payment_link_id: link.id,
         order_id: result.order_id,
+        order_group_id: orderGroupId,
         amount: link.amount,
         payment_type: link.payment_type,
       },
@@ -471,6 +501,7 @@ Deno.serve(async (req) => {
       success: true,
       redirect_url: result.redirect_url,
       order_id: result.order_id,
+      order_group_id: orderGroupId,
     });
 
   } catch (error) {

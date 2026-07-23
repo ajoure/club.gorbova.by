@@ -13,7 +13,7 @@
  *   /pay/:token → public-checkout (POST) → _shared/create-payment-checkout.ts
  * Это тот же canonical downstream-path. Второй payment-path не вводится.
  *
- * AUTH: JWT обязателен. Требуется роль admin или super_admin.
+ * AUTH: JWT обязателен. Требуется роль manager/menedzher, admin или super_admin.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
@@ -73,6 +73,7 @@ interface CreatePublicLinkRequest {
   // Phase 6 hot-patch: explicit business_stream override на ссылку (низший приоритет в резолвере).
   // SOT остаётся offer.meta → product.meta (см. shared resolveBusinessStream).
   business_stream?: string | null;
+  composable_quote?: Record<string, unknown> | null;
 }
 
 // Phase 7-EXEC — Canonical resolver SOT.
@@ -99,10 +100,13 @@ Deno.serve(async (req) => {
     const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
     if (userErr || !user) return errorResponse('Invalid token', 401);
 
-    const { data: isAdmin } = await supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' });
-    const { data: isSuper } = await supabase.rpc('has_role', { _user_id: user.id, _role: 'super_admin' });
-    if (!isAdmin && !isSuper) {
-      return errorResponse('Access denied: admin role required', 403);
+    const roleChecks = await Promise.all(
+      ['manager', 'menedzher', 'admin', 'super_admin'].map(async (role) =>
+        (await supabase.rpc('has_role_v2', { _user_id: user.id, _role_code: role })).data === true
+      ),
+    );
+    if (!roleChecks.some(Boolean)) {
+      return errorResponse('Access denied: staff role required', 403);
     }
 
     const body: CreatePublicLinkRequest = await req.json();
@@ -120,6 +124,7 @@ Deno.serve(async (req) => {
       allowed_payment_providers: rawAllowedProvidersExplicit,
       stripe_currency: rawStripeCurrency,
       business_stream: rawBusinessStream = null,
+      composable_quote: rawComposableQuote = null,
     } = body;
     let payment_type: 'one_time' | 'subscription' = rawPaymentType;
     const providerMode: 'fixed' | 'customer_choice' =
@@ -697,6 +702,9 @@ Deno.serve(async (req) => {
     const linkAmountKopecks =
       installmentLinkAmountKopecks !== null ? installmentLinkAmountKopecks : amount;
     const linkMeta: Record<string, unknown> = {};
+    if (rawComposableQuote && typeof rawComposableQuote === 'object') {
+      linkMeta.composable_checkout = rawComposableQuote;
+    }
     if (installmentBlock) {
       linkMeta.installment = installmentBlock;
       // Stage 1 canonical marker at link.meta root — не перезаписываем payment_flow.

@@ -73,6 +73,21 @@ interface PaymentLinkInfo {
   provider?: 'bepaid' | 'stripe' | null;
   provider_mode?: 'fixed' | 'customer_choice' | null;
   allowed_payment_providers?: ('bepaid' | 'stripe')[] | null;
+  composable_checkout?: {
+    currency: string;
+    subtotal: number;
+    adjustment_amount: number;
+    adjustment_reason?: string | null;
+    total: number;
+    items: Array<{
+      role: 'primary' | 'addon';
+      product_name: string;
+      tariff_name: string;
+      list_amount: number;
+      discount_amount: number;
+      final_amount: number;
+    }>;
+  } | null;
 }
 
 interface SavedCard {
@@ -446,6 +461,34 @@ export default function PublicPayPage() {
             {linkInfo.description && (
               <p className="text-center text-muted-foreground mb-6">{linkInfo.description}</p>
             )}
+
+            {linkInfo.composable_checkout?.items?.length ? (
+              <div className="rounded-lg border bg-card/50 p-4 mb-6 space-y-2">
+                <p className="text-sm font-medium">Состав покупки</p>
+                {linkInfo.composable_checkout.items.map((item, index) => (
+                  <div key={`${item.product_name}-${index}`} className="flex items-start justify-between gap-3 text-sm">
+                    <span>
+                      <span className="font-medium">{item.product_name}</span>
+                      <span className="block text-xs text-muted-foreground">{item.tariff_name}</span>
+                    </span>
+                    <span className="whitespace-nowrap">{item.final_amount} {linkInfo.composable_checkout!.currency}</span>
+                  </div>
+                ))}
+                {linkInfo.composable_checkout.adjustment_amount !== 0 && (
+                  <div className="flex justify-between border-t pt-2 text-sm text-muted-foreground">
+                    <span>{linkInfo.composable_checkout.adjustment_reason || "Корректировка менеджера"}</span>
+                    <span>
+                      {linkInfo.composable_checkout.adjustment_amount > 0 ? "+" : ""}
+                      {linkInfo.composable_checkout.adjustment_amount} {linkInfo.composable_checkout.currency}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between border-t pt-2 font-semibold">
+                  <span>Итого</span>
+                  <span>{linkInfo.composable_checkout.total} {linkInfo.composable_checkout.currency}</span>
+                </div>
+              </div>
+            ) : null}
 
             <div className="space-y-3 mb-8">
               <div className="flex items-center gap-3 text-sm">
