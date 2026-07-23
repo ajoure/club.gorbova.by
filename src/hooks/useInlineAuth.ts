@@ -15,6 +15,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
 
 export type InlineAuthStep =
   | "email"               // Initial: enter email
@@ -204,7 +205,7 @@ export function useInlineAuth(initialStep: InlineAuthStep = "email"): UseInlineA
         if (/already registered|already exists|user already/i.test(msg)) {
           setError("Аккаунт с этим email уже существует. Войдите или восстановите пароль.");
         } else if (/password/i.test(msg) && /(weak|short|length|pwned|leaked)/i.test(msg)) {
-          setError("Пароль слишком слабый. Используйте минимум 8 символов, цифру и спецсимвол.");
+          setError(`Пароль слишком короткий. Используйте минимум ${USER_PASSWORD_MIN_LENGTH} символов.`);
         } else if (/email/i.test(msg) && /(invalid|format)/i.test(msg)) {
           setError("Некорректный формат email.");
         } else if (/rate|limit|too many/i.test(msg)) {

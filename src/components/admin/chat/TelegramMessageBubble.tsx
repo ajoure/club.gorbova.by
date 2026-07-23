@@ -163,7 +163,7 @@ function TelegramMessageBubbleImpl(props: MessageBubbleProps) {
                     storageBucket={data.storageBucket}
                     storagePath={data.storagePath}
                     uploadStatus={data.uploadStatus}
-                    onRefresh={onMediaRefresh}
+                    onRefresh={() => onMediaRefresh(data.id)}
                   />
                 </div>
               )}

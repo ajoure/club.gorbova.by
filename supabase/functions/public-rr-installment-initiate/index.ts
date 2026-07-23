@@ -54,6 +54,8 @@ import {
 } from "../_shared/crm-routing.ts";
 import { ComposableCheckoutError, resolveComposableCheckout } from "../_shared/resolve-composable-checkout.ts";
 import { materializeComposableOrderGroup } from "../_shared/materialize-composable-order-group.ts";
+import { referralDiscountMeta, resolveReferralCheckoutDiscount } from "../_shared/referral-checkout-discount.ts";
+import { reserveReferralCustomerCredit } from "../_shared/referral-customer-credit.ts";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -67,6 +69,7 @@ interface InitiatePayload {
   email?: string;
   comment?: string | null;
   website?: string;
+  customer_credit_requested_minor?: number;
 }
 
 function normalizePhone(raw: string): string {
@@ -143,7 +146,8 @@ async function auditEvent(
     | "recovery_blocked_no_url"
     | "create_order_recovered"
     | "local_state_unconfirmed"
-    | "audit_write_failed",
+    | "audit_write_failed"
+    | "composable_materialization_failed",
   payload: Record<string, unknown>,
 ): Promise<void> {
   const { error } = await supabaseAdmin.rpc(
@@ -338,18 +342,74 @@ Deno.serve(async (req: Request) => {
     }
     return errorResponse("quote_failed", 500);
   }
-  const checkoutFingerprint = await sha256Hex(JSON.stringify({
-    parent_offer_id: offerId,
-    selected_addon_offer_ids: composableQuote.selected_addon_offer_ids.slice().sort(),
-    total: composableQuote.total,
-    currency: composableQuote.currency,
-  }));
-  const amountNumeric = Number(composableQuote.total);
+  let amountNumeric = Number(composableQuote.total);
   if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
     return errorResponse("amount_invalid", 500);
   }
   const currency = composableQuote.currency;
-  const amountMinor = Math.round(amountNumeric * 100);
+  let amountMinor = Math.round(amountNumeric * 100);
+  let referralCreditMeta: Record<string, unknown> = {};
+  if (userId) {
+    const referralQuote = await resolveReferralCheckoutDiscount({
+      supabase: supabaseAdmin, userId, productId: product.id, amountMinor, allowImmediateDiscount: true,
+    });
+    amountMinor = referralQuote.finalAmountMinor;
+    const reservation = await reserveReferralCustomerCredit({
+      supabase: supabaseAdmin,
+      userId,
+      chargeAmountMinor: amountMinor,
+      requestedMinor: Math.max(0, Math.round(Number(body.customer_credit_requested_minor ?? 0))),
+      checkoutKey: `rr:${offerContactHash}`,
+    });
+    amountMinor -= reservation.appliedMinor;
+    amountNumeric = amountMinor / 100;
+    referralCreditMeta = {
+      payment_type: 'one_time',
+      ...referralDiscountMeta(referralQuote),
+      ...(reservation.appliedMinor > 0 ? {
+        referral_customer_credit_applied_minor: reservation.appliedMinor,
+        referral_customer_credit_reservation_id: reservation.reservationId,
+      } : {}),
+    };
+  }
+  if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
+    return errorResponse("amount_fully_covered_or_invalid", 400);
+  }
+  const checkoutFingerprint = await sha256Hex(JSON.stringify({
+    parent_offer_id: offerId,
+    selected_addon_offer_ids: composableQuote.selected_addon_offer_ids.slice().sort(),
+    quoted_total: composableQuote.total,
+    payable_total: amountNumeric,
+    currency: composableQuote.currency,
+  }));
+  const materializationQuote = amountNumeric === Number(composableQuote.total)
+    ? composableQuote
+    : (() => {
+      const payableMinor = Math.round(amountNumeric * 100);
+      const quotedMinor = Math.round(Number(composableQuote.total) * 100);
+      let allocatedMinor = 0;
+      const items = composableQuote.items.map((item, index) => {
+        const itemQuotedMinor = Math.round(Number(item.final_amount) * 100);
+        const itemPayableMinor = index === composableQuote.items.length - 1
+          ? payableMinor - allocatedMinor
+          : Math.round((itemQuotedMinor / quotedMinor) * payableMinor);
+        allocatedMinor += itemPayableMinor;
+        const finalAmount = itemPayableMinor / 100;
+        return {
+          ...item,
+          final_amount: finalAmount,
+          discount_amount: Number((Number(item.list_amount) - finalAmount).toFixed(2)),
+        };
+      });
+      return {
+        ...composableQuote,
+        items,
+        adjustment_amount: Number((amountNumeric - Number(composableQuote.subtotal)).toFixed(2)),
+        adjustment_reason: "referral_discount_or_customer_credit",
+        total: amountNumeric,
+        original_quote: composableQuote,
+      };
+    })();
 
   let cfg;
   try {
@@ -440,7 +500,8 @@ Deno.serve(async (req: Request) => {
     // B.0 invariant: snapshot embedded atomically at INSERT.
     crm_routing_snapshot: crmSnapshot,
     checkout_fingerprint: checkoutFingerprint,
-    composable_checkout: composableQuote,
+    composable_checkout: materializationQuote,
+    ...referralCreditMeta,
     rr: {
       runtime: "sprintB",
       mode: cfg.mode,
@@ -492,7 +553,7 @@ Deno.serve(async (req: Request) => {
   try {
     await materializeComposableOrderGroup(supabaseAdmin, {
       primaryOrderId: externalId,
-      quote: composableQuote,
+      quote: materializationQuote,
       source: "rr_installment",
       idempotencyKey: `rr:${externalId}:${checkoutFingerprint}`,
     });

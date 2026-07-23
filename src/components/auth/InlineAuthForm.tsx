@@ -16,9 +16,10 @@ import { useInlineAuth } from "@/hooks/useInlineAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Mail, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Loader2, Mail, AlertCircle, CheckCircle2, Eye, EyeOff } from "lucide-react";
 import { INLINE_AUTH_MODE } from "@/lib/inlineAuth/mode";
 import { InlineEmailOtpForm } from "@/components/auth/InlineEmailOtpForm";
+import { getUserPasswordRequirementText, USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
 
 
 export interface InlineAuthFormProps {
@@ -66,6 +67,7 @@ export function InlineAuthForm({
 
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
@@ -164,15 +166,27 @@ export function InlineAuthForm({
           />
           <div>
             <Label htmlFor="iaf-password">Пароль</Label>
-            <Input
-              id="iaf-password"
-              name="password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-            />
+            <div className="relative">
+              <Input
+                id="iaf-password"
+                name="password"
+                type={showPassword ? "text" : "password"}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                className="pr-11"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+                aria-pressed={showPassword}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
           <Button type="submit" size="lg" className="w-full" disabled={isBusy}>
             {isBusy ? (
@@ -232,16 +246,29 @@ export function InlineAuthForm({
           </div>
           <div>
             <Label htmlFor="iaf-pw-new">Пароль</Label>
-            <Input
-              id="iaf-pw-new"
-              name="new-password"
-              type="password"
-              required
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-            />
+            <div className="relative">
+              <Input
+                id="iaf-pw-new"
+                name="new-password"
+                type={showPassword ? "text" : "password"}
+                required
+                minLength={USER_PASSWORD_MIN_LENGTH}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
+                className="pr-11"
+                placeholder={getUserPasswordRequirementText()}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+                aria-pressed={showPassword}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
           <Button type="submit" size="lg" className="w-full" disabled={isBusy}>
             {isBusy ? (

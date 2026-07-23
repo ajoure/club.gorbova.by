@@ -1,348 +1,434 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { buildPurchaseSnapshot } from "../_shared/build-purchase-snapshot.ts";
+import { classifyPayment } from "./classifier.ts";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-interface BackfillRequest {
+type RecoveryAction =
+  | "create_order_and_fulfill"
+  | "resume_fulfillment"
+  | "already_complete"
+  | "manual_review"
+  | "error";
+
+interface RecoveryRequest {
   dry_run?: boolean;
-  limit?: number;
+  payment_ids?: string[];
 }
 
-interface BackfillResult {
-  success: boolean;
-  dry_run: boolean;
-  // Flat fields for UI compatibility
-  total_candidates: number;
-  processed: number;
-  created: number;
-  skipped: number;
-  failed: number;
-  needs_mapping: number;
-  sample_ids: string[];
-  created_orders: string[];
-  errors: string[];
-  // Original nested structure (kept for backward compatibility)
-  stats: {
-    scanned: number;
-    created: number;
-    needs_mapping: number;
-    skipped: number;
-    errors: number;
-  };
-  samples: Array<{
-    payment_id: string;
-    profile_id: string | null;
-    amount: number;
-    order_id: string | null;
-    result: 'created' | 'needs_mapping' | 'skipped' | 'error';
-    error?: string;
-  }>;
-  warnings: string[];
-  duration_ms: number;
+interface Mapping {
+  product_id: string;
+  tariff_id: string;
+  offer_id: string | null;
+  source: string;
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function nonEmpty(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isSaleTransaction(value: unknown): boolean {
+  if (value == null) return true;
+  const normalized = String(value).trim().toLowerCase();
+  return [
+    "payment",
+    "subscription",
+    "оплата",
+    "платеж",
+    "платёж",
+    "рекуррентная транзакция",
+  ].includes(normalized);
+}
+
+async function resolveMapping(supabase: any, payment: any): Promise<
+  { mapping: Mapping | null; reason: string | null }
+> {
+  const meta = payment.meta || {};
+  const response = payment.provider_response || {};
+  const directProduct = nonEmpty(meta.product_id) || nonEmpty(response.product_id);
+  const directTariff = nonEmpty(meta.tariff_id) || nonEmpty(response.tariff_id);
+  const directOffer = nonEmpty(meta.offer_id) || nonEmpty(response.offer_id);
+
+  if (directProduct && directTariff) {
+    return {
+      mapping: {
+        product_id: directProduct,
+        tariff_id: directTariff,
+        offer_id: directOffer,
+        source: "payment_metadata",
+      },
+      reason: null,
+    };
   }
 
-  const startTime = Date.now();
+  if (
+    String(payment.provider || "").toLowerCase() === "bepaid" &&
+    payment.provider_payment_id
+  ) {
+    const { data: queueRows, error } = await supabase
+      .from("payment_reconcile_queue")
+      .select(
+        "id,transaction_type,matched_product_id,matched_tariff_id,raw_payload,tracking_id",
+      )
+      .eq("bepaid_uid", payment.provider_payment_id)
+      .limit(2);
+    if (error) return { mapping: null, reason: `queue_lookup_failed:${error.message}` };
+    if ((queueRows || []).length !== 1) {
+      return {
+        mapping: null,
+        reason: (queueRows || []).length > 1
+          ? "ambiguous_queue_rows"
+          : "missing_provider_evidence",
+      };
+    }
+    const queue = queueRows[0];
+    if (!isSaleTransaction(queue.transaction_type)) {
+      return { mapping: null, reason: "queue_transaction_is_not_sale" };
+    }
+    const productId = nonEmpty(queue.matched_product_id);
+    const tariffId = nonEmpty(queue.matched_tariff_id);
+    const offerId =
+      nonEmpty(queue.raw_payload?.offer_id) ||
+      nonEmpty(queue.raw_payload?.meta?.offer_id);
+    if (!productId || !tariffId) {
+      return { mapping: null, reason: "queue_mapping_incomplete" };
+    }
+
+    if (offerId) {
+      return {
+        mapping: {
+          product_id: productId,
+          tariff_id: tariffId,
+          offer_id: offerId,
+          source: "payment_reconcile_queue",
+        },
+        reason: null,
+      };
+    }
+
+    const { data: mappings, error: mappingError } = await supabase
+      .from("bepaid_product_mappings")
+      .select("offer_id")
+      .eq("product_id", productId)
+      .eq("tariff_id", tariffId)
+      .eq("auto_create_order", true);
+    if (mappingError) {
+      return { mapping: null, reason: `mapping_lookup_failed:${mappingError.message}` };
+    }
+    const offers = [...new Set((mappings || []).map((row: any) => row.offer_id).filter(Boolean))];
+    if (offers.length !== 1) {
+      return {
+        mapping: null,
+        reason: offers.length > 1 ? "ambiguous_offer_mapping" : "offer_mapping_missing",
+      };
+    }
+    return {
+      mapping: {
+        product_id: productId,
+        tariff_id: tariffId,
+        offer_id: offers[0] as string,
+        source: "payment_reconcile_queue+bepaid_product_mappings",
+      },
+      reason: null,
+    };
+  }
+
+  return { mapping: null, reason: "missing_exact_product_mapping" };
+}
+
+async function invokeFulfillment(
+  supabase: any,
+  orderId: string,
+): Promise<{ ok: boolean; grant: unknown; getcourse: unknown; error?: string }> {
+  const { data: grant, error: grantError } = await supabase.functions.invoke(
+    "grant-access-for-order",
+    {
+      body: {
+        orderId,
+        grantTelegram: true,
+        grantGetcourse: false,
+        source: "admin-backfill-2026-orders",
+        context: "historical_payment_recovery",
+      },
+    },
+  );
+  if (grantError) {
+    return { ok: false, grant: null, getcourse: null, error: grantError.message };
+  }
+  if ((grant as any)?.success === false || (grant as any)?.error) {
+    return {
+      ok: false,
+      grant,
+      getcourse: null,
+      error: (grant as any)?.error || "grant_access_failed",
+    };
+  }
+
+  const { data: getcourse, error: gcError } = await supabase.functions.invoke(
+    "getcourse-grant-access",
+    { body: { order_id: orderId } },
+  );
+  return {
+    ok: true,
+    grant,
+    getcourse: gcError ? { ok: false, error: gcError.message } : getcourse,
+  };
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const startedAt = Date.now();
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return json({ error: "Unauthorized" }, 401);
 
-    // Auth check - require super_admin
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid token' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Check superadmin permission (enum value is 'superadmin' not 'super_admin')
-    const { data: isSuperAdmin } = await supabase.rpc('has_role', { 
-      _user_id: user.id, 
-      _role: 'superadmin' 
+    const authClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
     });
+    const { data: authData, error: authError } = await authClient.auth.getUser();
+    if (authError || !authData.user) return json({ error: "Invalid token" }, 401);
 
-    if (!isSuperAdmin) {
-      // Diagnostic payload: helps detect “silent impersonation” / wrong session in the browser.
-      // Safe enough for this admin-only tool; still does NOT reveal any secrets.
-      return new Response(JSON.stringify({
-        error: 'Super admin permission required',
-        debug: {
-          authenticated_user_id: user.id,
-          authenticated_email: user.email,
-          role_checked: 'superadmin',
-        },
-      }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    const supabase = createClient(supabaseUrl, serviceKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const [adminResult, superAdminResult] = await Promise.all([
+      supabase.rpc("has_role_v2", {
+        _user_id: authData.user.id,
+        _role_code: "admin",
+      }),
+      supabase.rpc("has_role_v2", {
+        _user_id: authData.user.id,
+        _role_code: "super_admin",
+      }),
+    ]);
+    if (!adminResult.data && !superAdminResult.data) {
+      return json({ error: "Admin access required" }, 403);
     }
 
-    const body: BackfillRequest = await req.json().catch(() => ({}));
-    const dryRun = body.dry_run !== false; // default true
-    const limit = Math.min(Math.max(body.limit || 20, 1), 100);
-
-    // Accumulators for flat response fields
-    const createdOrderIds: string[] = [];
-    const errorMessages: string[] = [];
-
-    const result: BackfillResult = {
-      success: true,
-      dry_run: dryRun,
-      // Flat fields (will be populated at the end)
-      total_candidates: 0,
-      processed: 0,
-      created: 0,
-      skipped: 0,
-      failed: 0,
-      needs_mapping: 0,
-      sample_ids: [],
-      created_orders: [],
-      errors: [],
-      // Nested stats (backward compatibility)
-      stats: {
-        scanned: 0,
-        created: 0,
-        needs_mapping: 0,
-        skipped: 0,
-        errors: 0,
-      },
-      samples: [],
-      warnings: [],
-      duration_ms: 0,
-    };
-
-    // Find orphan payments 2026+ that need orders
-    const { data: orphanPayments, error: fetchError } = await supabase
-      .from('payments_v2')
-      .select('id, profile_id, amount, currency, paid_at, provider_payment_id, meta')
-      .gte('paid_at', '2026-01-01T00:00:00Z')
-      .eq('status', 'succeeded')
-      .gt('amount', 0)
-      .not('profile_id', 'is', null)
-      .not('provider_payment_id', 'is', null)
-      .is('order_id', null)
-      .order('paid_at', { ascending: true })
-      .limit(limit);
-
-    if (fetchError) {
-      throw new Error(`Failed to fetch orphan payments: ${fetchError.message}`);
+    const body: RecoveryRequest = await req.json().catch(() => ({}));
+    const dryRun = body.dry_run !== false;
+    const paymentIds = [...new Set(body.payment_ids || [])];
+    if (
+      paymentIds.length === 0 ||
+      paymentIds.length > 50 ||
+      paymentIds.some((id) => typeof id !== "string" || !id)
+    ) {
+      return json({
+        error: "payment_ids must contain 1..50 exact payments_v2 IDs",
+        code: "EXACT_PAYMENT_IDS_REQUIRED",
+      }, 400);
     }
 
-    result.stats.scanned = orphanPayments?.length || 0;
+    const { data: payments, error: paymentsError } = await supabase
+      .from("payments_v2")
+      .select(
+        "id,order_id,profile_id,user_id,amount,currency,status,provider,provider_payment_id,paid_at,meta,provider_response",
+      )
+      .in("id", paymentIds);
+    if (paymentsError) throw new Error(paymentsError.message);
 
-    if (!orphanPayments || orphanPayments.length === 0) {
-      result.duration_ms = Date.now() - startTime;
-      return new Response(JSON.stringify(result), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    const found = new Set((payments || []).map((payment: any) => payment.id));
+    const results: any[] = paymentIds
+      .filter((id) => !found.has(id))
+      .map((id) => ({
+        payment_id: id,
+        action: "manual_review" as RecoveryAction,
+        reason: "payment_not_found",
+      }));
 
-    // Process each orphan payment
-    for (const payment of orphanPayments) {
-      const sampleEntry = {
+    for (const payment of payments || []) {
+      const row: any = {
         payment_id: payment.id,
-        profile_id: payment.profile_id,
-        amount: payment.amount,
-        order_id: null as string | null,
-        result: 'created' as 'created' | 'needs_mapping' | 'skipped' | 'error',
-        error: undefined as string | undefined,
+        provider: payment.provider,
+        provider_payment_id: payment.provider_payment_id,
+        action: "manual_review" as RecoveryAction,
       };
-
       try {
-        // Get user_id from profile
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('user_id')
-          .eq('id', payment.profile_id)
-          .maybeSingle();
-
-        if (!profile?.user_id) {
-          sampleEntry.result = 'skipped';
-          sampleEntry.error = 'No user_id for profile';
-          result.stats.skipped++;
-          if (result.samples.length < 10) result.samples.push(sampleEntry);
+        const classificationReason = classifyPayment(payment);
+        if (classificationReason) {
+          row.reason = classificationReason;
+          results.push(row);
           continue;
         }
 
-        // Try to find product/tariff from subscription or recent orders
-        let productId: string | null = null;
-        let tariffId: string | null = null;
-
-        // Try 1: Active subscription for this user
-        const { data: activeSub } = await supabase
-          .from('subscriptions_v2')
-          .select('product_id, tariff_id')
-          .eq('user_id', profile.user_id)
-          .in('status', ['active', 'trial', 'grace'])
-          .order('created_at', { ascending: false })
-          .limit(1)
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("id,user_id,email")
+          .eq("id", payment.profile_id)
           .maybeSingle();
-
-        if (activeSub) {
-          productId = activeSub.product_id;
-          tariffId = activeSub.tariff_id;
+        if (profileError || !profile?.user_id) {
+          row.reason = "profile_or_user_missing";
+          results.push(row);
+          continue;
         }
 
-        // Try 2: Last paid order for this user
-        if (!productId) {
-          const { data: lastOrder } = await supabase
-            .from('orders_v2')
-            .select('product_id, tariff_id')
-            .eq('user_id', profile.user_id)
-            .eq('status', 'paid')
-            .order('created_at', { ascending: false })
-            .limit(1)
+        let orderId = payment.order_id as string | null;
+        if (!orderId) {
+          const { data: recoveredOrder } = await supabase
+            .from("orders_v2")
+            .select("id")
+            .eq("meta->>historical_recovery_payment_id", payment.id)
             .maybeSingle();
+          orderId = recoveredOrder?.id || null;
+        }
 
-          if (lastOrder) {
-            productId = lastOrder.product_id;
-            tariffId = lastOrder.tariff_id;
+        if (!orderId) {
+          const mappingResult = await resolveMapping(supabase, payment);
+          if (!mappingResult.mapping) {
+            row.reason = mappingResult.reason;
+            results.push(row);
+            continue;
+          }
+          row.mapping = mappingResult.mapping;
+          row.action = "create_order_and_fulfill";
+          if (dryRun) {
+            results.push(row);
+            continue;
+          }
+
+          const { data: orderNumber, error: numberError } = await supabase.rpc(
+            "generate_order_number",
+          );
+          if (numberError) throw new Error(`order_number:${numberError.message}`);
+          const mapping = mappingResult.mapping;
+          const { data: order, error: orderError } = await supabase
+            .from("orders_v2")
+            .insert({
+              order_number: orderNumber,
+              user_id: profile.user_id,
+              profile_id: profile.id,
+              product_id: mapping.product_id,
+              tariff_id: mapping.tariff_id,
+              offer_id: mapping.offer_id,
+              status: "paid",
+              base_price: payment.amount,
+              final_price: payment.amount,
+              paid_amount: payment.amount,
+              currency: payment.currency || "BYN",
+              customer_email: profile.email,
+              provider: payment.provider,
+              provider_payment_id: payment.provider_payment_id,
+              reconcile_source: "historical_payment_recovery",
+              created_at: payment.paid_at,
+              purchase_snapshot: buildPurchaseSnapshot({
+                product_id: mapping.product_id,
+                tariff_id: mapping.tariff_id,
+                offer_id: mapping.offer_id,
+                price: payment.amount,
+                currency: payment.currency || "BYN",
+                reconcile_source: "historical_payment_recovery",
+                extra: {
+                  provider: payment.provider,
+                  provider_payment_id: payment.provider_payment_id,
+                  original_paid_at: payment.paid_at,
+                },
+              }),
+              meta: {
+                source: "admin-backfill-2026-orders",
+                historical_recovery_payment_id: payment.id,
+                mapping_source: mapping.source,
+                recovered_at: new Date().toISOString(),
+              },
+            })
+            .select("id,order_number")
+            .single();
+          if (orderError) throw new Error(`order_create:${orderError.message}`);
+          orderId = order.id;
+          row.order_id = orderId;
+          row.order_number = order.order_number;
+
+          const { data: linked, error: linkError } = await supabase
+            .from("payments_v2")
+            .update({
+              order_id: orderId,
+              user_id: profile.user_id,
+              meta: {
+                ...(payment.meta || {}),
+                historical_recovery_order_id: orderId,
+                historical_recovery_at: new Date().toISOString(),
+              },
+            })
+            .eq("id", payment.id)
+            .is("order_id", null)
+            .select("id,order_id")
+            .maybeSingle();
+          if (linkError || linked?.order_id !== orderId) {
+            throw new Error(`payment_link:${linkError?.message || "concurrent_update"}`);
+          }
+        } else {
+          row.action = "resume_fulfillment";
+          row.order_id = orderId;
+          if (dryRun) {
+            results.push(row);
+            continue;
           }
         }
 
-        const needsMapping = !productId;
-
-        if (dryRun) {
-          sampleEntry.result = needsMapping ? 'needs_mapping' : 'created';
-          if (needsMapping) result.stats.needs_mapping++;
-          else result.stats.created++;
-          if (result.samples.length < 10) result.samples.push(sampleEntry);
-          continue;
+        if (!orderId) throw new Error("order_id_missing_after_materialization");
+        const fulfillment = await invokeFulfillment(supabase, orderId);
+        row.fulfillment = fulfillment;
+        if (!fulfillment.ok) {
+          row.action = "error";
+          row.reason = `fulfillment_failed:${fulfillment.error}`;
+        } else {
+          row.action = "already_complete";
         }
-
-        // Generate order number
-        const { data: ordNum } = await supabase.rpc('generate_order_number');
-        const orderNumber = ordNum || `BF26-${Date.now().toString(36).toUpperCase()}`;
-
-        // Create order with payment date as created_at
-        const { data: newOrder, error: insertError } = await supabase
-          .from('orders_v2')
-          .insert({
-            order_number: orderNumber,
-            user_id: profile.user_id,
-            profile_id: payment.profile_id,
-            status: 'paid',
-            currency: payment.currency || 'BYN',
-            base_price: payment.amount,
-            final_price: payment.amount,
-            paid_amount: payment.amount,
-            is_trial: false,
-            product_id: productId,
-            tariff_id: tariffId,
-            created_at: payment.paid_at,  // Use payment date, not now()
-            meta: {
-              source: 'admin-backfill-2026-orders',
-              backfill_payment_id: payment.id,
-              backfill_at: new Date().toISOString(),
-              bepaid_uid: payment.provider_payment_id,
-              needs_mapping: needsMapping,
-            },
-          })
-          .select('id, order_number')
-          .single();
-
-        if (insertError) {
-          sampleEntry.result = 'error';
-          sampleEntry.error = insertError.message;
-          result.stats.errors++;
-          if (result.samples.length < 10) result.samples.push(sampleEntry);
-          continue;
-        }
-
-        // Link payment to order
-        await supabase
-          .from('payments_v2')
-          .update({ order_id: newOrder.id })
-          .eq('id', payment.id);
-
-        sampleEntry.order_id = newOrder.id;
-        sampleEntry.result = needsMapping ? 'needs_mapping' : 'created';
-        createdOrderIds.push(newOrder.id);
-        
-        if (needsMapping) result.stats.needs_mapping++;
-        else result.stats.created++;
-        
-        if (result.samples.length < 10) result.samples.push(sampleEntry);
-
-      } catch (err: any) {
-        sampleEntry.result = 'error';
-        sampleEntry.error = err.message;
-        result.stats.errors++;
-        if (errorMessages.length < 50) {
-          errorMessages.push(`Payment ${payment.id}: ${err.message}`);
-        }
-        if (result.samples.length < 10) result.samples.push(sampleEntry);
+        results.push(row);
+      } catch (error) {
+        row.action = "error";
+        row.reason = error instanceof Error ? error.message : String(error);
+        results.push(row);
       }
     }
 
-    // Populate flat fields from stats and samples
-    result.total_candidates = result.stats.scanned;
-    result.processed = result.stats.scanned;
-    result.created = result.stats.created;
-    result.skipped = result.stats.skipped;
-    result.failed = result.stats.errors;
-    result.needs_mapping = result.stats.needs_mapping;
-    result.sample_ids = result.samples.slice(0, 10).map(s => s.payment_id);
-    result.created_orders = createdOrderIds.slice(0, 50);
-    result.errors = errorMessages;
-
-    // Write audit log with enhanced meta
-    await supabase.from('audit_logs').insert({
-      actor_type: 'system',
-      actor_user_id: null,
-      actor_label: 'admin-backfill-2026-orders',
-      action: dryRun ? 'subscription.renewal_backfill_2026_dry_run' : 'subscription.renewal_backfill_2026',
+    const stats = results.reduce((acc: Record<string, number>, row: any) => {
+      acc[row.action] = (acc[row.action] || 0) + 1;
+      return acc;
+    }, {});
+    await supabase.from("audit_logs").insert({
+      actor_type: "user",
+      actor_user_id: authData.user.id,
+      actor_label: "admin-backfill-2026-orders",
+      action: dryRun
+        ? "payment.historical_recovery_dry_run"
+        : "payment.historical_recovery_executed",
       meta: {
-        requested_by_user_id: user.id,
-        requested_by_email: user.email,
         dry_run: dryRun,
-        limit,
-        stats: result.stats,
-        total_candidates: result.stats.scanned,
-        created_count: result.stats.created,
-        needs_mapping_count: result.stats.needs_mapping,
-        skipped_count: result.stats.skipped,
-        error_count: result.stats.errors,
-        sample_payment_ids: result.samples.slice(0, 5).map(s => s.payment_id),
-        created_order_ids: createdOrderIds.slice(0, 10),
+        payment_ids: paymentIds,
+        stats,
+        duration_ms: Date.now() - startedAt,
       },
     });
 
-    result.duration_ms = Date.now() - startTime;
-
-    return new Response(JSON.stringify(result), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    return json({
+      success: !results.some((row) => row.action === "error"),
+      dry_run: dryRun,
+      stats,
+      results,
+      duration_ms: Date.now() - startedAt,
     });
-
-  } catch (error: any) {
-    console.error('Backfill 2026 error:', error);
-    return new Response(JSON.stringify({
+  } catch (error) {
+    console.error("[admin-backfill-2026-orders]", error);
+    return json({
       success: false,
-      error: error.message,
-      duration_ms: Date.now() - startTime,
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+      error: error instanceof Error ? error.message : String(error),
+      duration_ms: Date.now() - startedAt,
+    }, 500);
   }
 });

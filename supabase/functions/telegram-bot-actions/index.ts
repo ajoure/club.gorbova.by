@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { TELEGRAM_BUSINESS_ALLOWED_UPDATES } from '../_shared/telegram-business.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -181,10 +182,17 @@ Deno.serve(async (req) => {
         }
 
         const webhookUrl = `${supabaseUrl}/functions/v1/telegram-webhook?bot_id=${bot_id}`;
-        const result = await telegramRequest(botToken, 'setWebhook', {
+        const webhookPayload: Record<string, unknown> = {
           url: webhookUrl,
-          allowed_updates: ['message', 'message_reaction', 'message_reaction_count', 'my_chat_member', 'callback_query'],
-        });
+          allowed_updates: [
+            'message', 'message_reaction', 'message_reaction_count', 'chat_member',
+            'my_chat_member', 'chat_join_request', 'callback_query',
+            ...TELEGRAM_BUSINESS_ALLOWED_UPDATES,
+          ],
+        };
+        const webhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET');
+        if (webhookSecret) webhookPayload.secret_token = webhookSecret;
+        const result = await telegramRequest(botToken, 'setWebhook', webhookPayload);
 
         // Log admin action
         await supabase.from('audit_logs').insert({
@@ -238,10 +246,19 @@ Deno.serve(async (req) => {
         // Idempotent: check current webhook info first
         const webhookInfo = await telegramRequest(botToken, 'getWebhookInfo', {});
         const currentUpdates: string[] = webhookInfo.result?.allowed_updates || [];
-        const requiredUpdates = ['message', 'message_reaction', 'message_reaction_count', 'chat_member', 'my_chat_member', 'chat_join_request', 'callback_query'];
-        const missingUpdates = requiredUpdates.filter(u => !currentUpdates.includes(u));
+        const businessRequiredUpdates = [
+          'message', 'message_reaction', 'message_reaction_count', 'chat_member',
+          'my_chat_member', 'chat_join_request', 'callback_query',
+          ...TELEGRAM_BUSINESS_ALLOWED_UPDATES,
+        ];
+        const missingUpdates = businessRequiredUpdates.filter(u => !currentUpdates.includes(u));
+        const requiredUpdates = [...new Set([...currentUpdates, ...businessRequiredUpdates])];
+        const webhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET');
 
-        if (missingUpdates.length === 0) {
+        // Telegram does not expose whether secret_token is already installed.
+        // If a secret is configured, always re-apply setWebhook so enabling or
+        // rotating it cannot leave Telegram sending unsigned requests.
+        if (missingUpdates.length === 0 && !webhookSecret) {
           return new Response(JSON.stringify({
             success: true,
             no_op: true,
@@ -260,10 +277,12 @@ Deno.serve(async (req) => {
           });
         }
 
-        const updateResult = await telegramRequest(botToken, 'setWebhook', {
+        const updatePayload: Record<string, unknown> = {
           url: currentUrl,
           allowed_updates: requiredUpdates,
-        });
+        };
+        if (webhookSecret) updatePayload.secret_token = webhookSecret;
+        const updateResult = await telegramRequest(botToken, 'setWebhook', updatePayload);
 
         if (updateResult.ok) {
           await supabase.from('audit_logs').insert({

@@ -29,6 +29,8 @@ import {
   resolveChargeNotificationSnapshotForWriter,
   serializeChargeNotificationPolicy,
 } from './charge-notification-policy.ts';
+import { referralDiscountMeta, resolveReferralCheckoutDiscount } from './referral-checkout-discount.ts';
+import { reserveReferralCustomerCredit } from './referral-customer-credit.ts';
 
 export interface CreateCheckoutParams {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -63,6 +65,10 @@ export interface CreateCheckoutParams {
   account_code?: string | null;
   /** Phase 4.1 — валюта для Stripe-ветки (BYN/EUR/PLN/USD). bePaid игнорирует. */
   currency?: string;
+  /** Optional accumulated customer discount credit, in minor units. Never allowed for open-ended subscriptions. */
+  customer_credit_requested_minor?: number;
+  /** Stable per checkout attempt. Prevents repeated clicks from reserving the wallet twice. */
+  customer_credit_checkout_key?: string;
 }
 
 export interface CreateCheckoutSuccess {
@@ -105,22 +111,74 @@ export type CreateCheckoutResult = CreateCheckoutSuccess | CreateCheckoutError;
 
 export async function createPaymentCheckout(params: CreateCheckoutParams): Promise<CreateCheckoutResult> {
   const {
-    supabase, user_id, product_id, tariff_id, amount,
+    supabase, user_id, product_id, tariff_id, amount: requestedAmount,
     payment_type, description, offer_id, origin, actor_user_id, actor_type,
     replacement_of_subscription_v2_id,
     meta_extra,
   } = params;
-  const extraMeta = meta_extra && typeof meta_extra === 'object' ? meta_extra : {};
+  let extraMeta = meta_extra && typeof meta_extra === 'object' ? meta_extra : {};
 
   // === STOP-GUARD: validate required fields ===
-  if (!user_id || !product_id || !tariff_id || !amount) {
+  if (!user_id || !product_id || !tariff_id || !requestedAmount) {
     console.error('[create-payment-checkout] STOP-GUARD: missing required fields', {
       has_user_id: !!user_id,
       has_product_id: !!product_id,
       has_tariff_id: !!tariff_id,
-      has_amount: !!amount,
+      has_amount: !!requestedAmount,
     });
     return { success: false, error: 'Missing required fields: user_id, product_id, tariff_id, amount' };
+  }
+  let referralQuote;
+  const isFiniteInstallment = Number((extraMeta as any)?.installment?.billing_cycles ?? 0) >= 2;
+  const allowsImmediateDiscount = payment_type === 'one_time' || isFiniteInstallment;
+  try {
+    referralQuote = await resolveReferralCheckoutDiscount({
+      supabase, userId: user_id, productId: product_id, amountMinor: requestedAmount,
+      allowImmediateDiscount: allowsImmediateDiscount,
+    });
+  } catch (error) {
+    console.error('[create-payment-checkout] referral discount lookup failed; checkout stopped', error);
+    return { success: false, error: 'Could not safely calculate referral discount' };
+  }
+  let amount = referralQuote.finalAmountMinor;
+  const baseAmountByn = referralQuote.baseAmountMinor / 100;
+  extraMeta = { ...extraMeta, payment_type, ...referralDiscountMeta(referralQuote) };
+  const requestedCreditMinor = Math.max(0, Math.round(Number(params.customer_credit_requested_minor ?? 0)));
+  if (requestedCreditMinor > 0 && !allowsImmediateDiscount) {
+    return { success: false, error: 'Customer credit cannot be used for recurring subscriptions' };
+  }
+  if (requestedCreditMinor > 0) {
+    try {
+      const creditCycles = isFiniteInstallment
+        ? Math.max(2, Math.round(Number((extraMeta as any)?.installment?.billing_cycles ?? 2)))
+        : 1;
+      const maxCreditAcrossCharges = Math.max(0, (amount - 100) * creditCycles);
+      const reservableCreditMinor = Math.min(
+        Math.floor(requestedCreditMinor / creditCycles) * creditCycles,
+        maxCreditAcrossCharges,
+      );
+      const reservation = await reserveReferralCustomerCredit({
+        supabase,
+        userId: user_id,
+        chargeAmountMinor: amount * creditCycles,
+        requestedMinor: reservableCreditMinor,
+        checkoutKey: `checkout:${params.customer_credit_checkout_key || crypto.randomUUID()}`,
+      });
+      const perChargeCreditMinor = Math.floor(reservation.appliedMinor / creditCycles);
+      amount -= perChargeCreditMinor;
+      if (reservation.appliedMinor > 0) {
+        extraMeta = {
+          ...extraMeta,
+          referral_customer_credit_applied_minor: reservation.appliedMinor,
+          referral_customer_credit_per_charge_minor: perChargeCreditMinor,
+          referral_customer_credit_charge_count: creditCycles,
+          referral_customer_credit_reservation_id: reservation.reservationId,
+        };
+      }
+    } catch (error) {
+      console.error('[create-payment-checkout] customer credit reservation failed; checkout stopped', error);
+      return { success: false, error: 'Could not safely reserve customer discount credit' };
+    }
   }
   // ============================================================
   // Phase 4.1 — provider dispatch (default 'bepaid' = байт-в-байт legacy path).
@@ -165,7 +223,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     };
   }
 
-  if (amount < 100) {
+  if (requestedAmount < 100) {
     return { success: false, error: 'Minimum amount is 100 kopecks (1 BYN)' };
   }
 
@@ -342,7 +400,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         product_id,
         tariff_id,
         offer_id: offer_id || null,
-        base_price: amountByn,
+        base_price: baseAmountByn,
         final_price: amountByn,
         paid_amount: 0,
         currency: 'BYN',
@@ -870,7 +928,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         product_id,
         tariff_id,
         offer_id: offer_id || null,
-        base_price: amountByn,
+        base_price: baseAmountByn,
         final_price: amountByn,
         paid_amount: 0,
         currency: 'BYN',

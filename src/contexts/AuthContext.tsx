@@ -149,7 +149,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (email: string, password: string, firstName: string, lastName: string, phone: string) => {
     const redirectUrl = `${window.location.origin}/`;
-    
+
+    // Carry any captured referral code into auth user_metadata so attribution
+    // survives cross-browser email confirmation (localStorage would be lost).
+    let referralMetadata: { referral_code?: string; referral_captured_at?: string } = {};
+    try {
+      const raw = localStorage.getItem("gorbova_referral_code");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.code && parsed?.capturedAt) {
+          referralMetadata = { referral_code: String(parsed.code), referral_captured_at: String(parsed.capturedAt) };
+        }
+      }
+    } catch { /* ignore malformed capture */ }
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -160,9 +173,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           last_name: lastName,
           full_name: `${firstName} ${lastName}`.trim(),
           phone: phone,
+          ...referralMetadata,
         },
       },
     });
+
     
     if (data?.user && !data?.session && data?.user?.identities?.length === 0) {
       return { 

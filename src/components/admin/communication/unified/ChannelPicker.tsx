@@ -40,7 +40,7 @@ export function ChannelPicker({ contact, activeSource, onChange, onRequestCreate
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex items-center gap-1 px-2 py-1 border-b border-border/10 bg-muted/20">
+      <div className="touch-scroll flex items-center gap-1 px-2 py-1 border-b border-border/10 bg-muted/20 overflow-x-auto">
         <span className="text-[10px] text-muted-foreground mr-1">Канал:</span>
         {OPTIONS.map(({ source, label, Icon }) => {
           const present = !!contact.channels[source];

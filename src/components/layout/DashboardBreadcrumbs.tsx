@@ -45,6 +45,7 @@ const routeLabels: Record<string, string> = {
   "/settings/payment-methods": "Оплата и карты",
   "/settings/legal-details": "Реквизиты",
   "/settings/consents": "Согласия",
+  "/settings/partnership": "Партнёрство",
   
   // Admin - CRM
   "/admin": "Администрирование",

@@ -4,6 +4,7 @@ import {
   validateReplacementSubscription,
   classifySameProductState,
 } from '../_shared/subscription-conflict.ts';
+import { referralDiscountMeta, resolveReferralCheckoutDiscount } from '../_shared/referral-checkout-discount.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -284,6 +285,14 @@ Deno.serve(async (req) => {
       });
     }
 
+    const referralQuote = await resolveReferralCheckoutDiscount({
+      supabase, userId: userId!, productId, amountMinor: amountCents,
+      allowImmediateDiscount: false,
+    });
+    const baseAmountCents = amountCents;
+    amountCents = referralQuote.finalAmountMinor;
+    const referralMeta = referralDiscountMeta(referralQuote);
+
     // === PATCH PAYMENT-CONFLICT: shared exact-pair guard + replacement validation ===
     if (!userId || !productId || !tariff?.id) {
       console.error('[bepaid-sub-checkout] STOP-guard: missing user/product/tariff for conflict check', {
@@ -414,7 +423,7 @@ Deno.serve(async (req) => {
         tariff_id: tariff.id,
         offer_id: effectiveOfferId || null,
         order_number: orderNumber,
-        base_price: amountMoney,
+        base_price: baseAmountCents / 100,
         final_price: amountMoney,
         is_trial: false,
         paid_amount: 0,
@@ -422,9 +431,11 @@ Deno.serve(async (req) => {
         status: 'pending',
         deal_date: new Date().toISOString(),
         meta: {
+          payment_type: 'subscription',
           payment_flow: 'provider_managed_checkout',
           source: 'bepaid-create-subscription-checkout',
           expected_amount: amountMoney,
+          ...referralMeta,
         },
         purchase_snapshot: buildPurchaseSnapshot({
           product_id: productId,

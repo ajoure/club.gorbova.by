@@ -1,174 +1,217 @@
-# План: CRM Companies — Admin fixture для тестовой учётной записи 1@ajoure.by
 
-Статус: PLAN ONLY. Требуется отдельный approve. Ни файлы, ни БД до approve не изменяются.
+# Отчёт о выполнении: READ-ONLY диагностика контакт-центра (production hdjgkjceownmmnrqqtuz)
 
-Baseline repository commit: `68c00477bc633b44f651e0b7f77de4b764b2fe20`.
-Production execution: NOT APPROVED. Phase 2 migration/execution: не выполняется.
+Изменений в БД, коде, деплое, secrets и клиентских сообщениях **не производилось**. Все данные ниже — агрегаты; тексты сообщений и значения секретов не раскрываются.
 
-## 1. Цель
+---
 
-Добавить каноническую роль `admin` тестовой учётной записи `1@ajoure.by` (для последующего admin-runtime-proof Phase 2), не затрагивая пароль, `auth.users`, профиль, tenant/workspace, entitlements и текущие роли. Действие идемпотентное, обратимое, покрыто before/after верификацией.
+## 1. instagram_accounts
 
-## 2. Read-only discovery (уже выполнено, зафиксировано)
+Всего аккаунтов: **1** (единственный).
 
-- `auth.users.id` для `1@ajoure.by` = **`37e91f59-e4db-4840-b9c9-e760e634ddd1`** (единственная строка).
-- `public.profiles` по этому id: **0 строк** (профиль отсутствует).
-- Текущие связи в `public.user_roles_v2` для этого `user_id`:
-  - `id=72dbebc0-2bcc-4e7c-ae71-1e043ce973ea`, `role_id=e2ebb443-614b-41eb-85d1-8f088e75535a` (`menedzher`), `created_at=2026-06-26 08:57:45.381458+00`.
-- Каноническая роль `admin` в `public.roles`: **`id=16c9cefc-60a3-4edd-a421-46d556e80257`**, `code='admin'`.
-- Схема `public.user_roles_v2`: `id uuid`, `user_id uuid`, `role_id uuid`, `created_at timestamptz`. UNIQUE-ограничения будут перепроверены на preflight (см. §4).
-- `public.has_role_v2(_user_id uuid, _role_code text)` — SECURITY DEFINER SQL, читает `user_roles_v2 JOIN roles` и нормализует алиасы (`super-admin`/`superadmin` → `super_admin`, `employee` — виртуальный код). Соответствует ожидаемой семантике.
+| id | provider_kind | is_active | status | integration_instance_id | created_at | updated_at |
+|---|---|---|---|---|---|---|
+| 507bb6e8-abe7-4425-83cd-a6fb3cbb0015 | manychat | true | connected | 49923a52-86e1-480f-8edd-3f4b397aecc2 | 2026-04-19 15:34:12Z | 2026-04-19 15:34:12Z |
 
-## 3. STOP-условия (перепроверяются на preflight; при срабатывании — остановка без записи)
+Схема `instagram_accounts` не хранит access_token/config напрямую (только `instagram_page_id`, `provider_kind`, `status`). Конфиги/секреты живут на `integration_instances` (см. §4).
 
-- по `1@ajoure.by` найдено ≠1 строки в `auth.users`;
-- в `public.profiles` для этого `user_id` найдено >1 строки (0 — допустимо, будет зафиксировано в отчёте как наблюдение);
-- в `public.roles` не найдена ровно одна строка с `code='admin'`;
-- схема `public.user_roles_v2` отличается от `(id, user_id, role_id, created_at)` либо отсутствует UNIQUE, покрывающий `(user_id, role_id)`;
-- сигнатура `public.has_role_v2(uuid, text)` отличается от зафиксированной в §2;
-- запрошено изменение пароля, `auth.users`, профиля, tenant/workspace, entitlements;
-- предложение подменить `admin` на `manager`/`curator`/`client` либо создать новую роль.
+---
 
-## 4. Preflight (read-only, транзакционно, без записи)
+## 2. instagram_messages — агрегаты по account/provider/direction/status
 
-```sql
-BEGIN;
-SET LOCAL statement_timeout = '15s';
+| account | provider | direction | status | count | min_created_at | max_created_at |
+|---|---|---|---|---|---|---|
+| 507bb6e8… | manychat | inbound | received | 181 | 2026-04-19 15:34:12Z | **2026-07-17 11:39:19Z** |
+| 507bb6e8… | manychat | outbound | delivered | 7 | 2026-04-19 19:23:10Z | 2026-07-08 11:41:19Z |
+| 507bb6e8… | manychat | outbound | failed | 9 | 2026-04-19 16:20:57Z | **2026-07-10 08:09:34Z** |
 
--- 4.1 Пользователь единственен
-SELECT COUNT(*) AS n_users FROM auth.users WHERE email='1@ajoure.by'; -- ожидается 1
-SELECT id FROM auth.users WHERE email='1@ajoure.by';                  -- ожидается 37e91f59-...
+Последний inbound: **2026-07-17 11:39:19Z** — сегодня 2026-07-23, тишина ≈ 6 дней.
+Последний outbound: 2026-07-10 08:09:34Z (failed) / 2026-07-08 11:41:19Z (delivered).
 
--- 4.2 Профиль (наблюдение, не блокер если 0)
-SELECT COUNT(*) FROM public.profiles WHERE id='37e91f59-e4db-4840-b9c9-e760e634ddd1';
+Failed/queued/sending за последние 30 дней: `failed=3`, `queued=0`, `sending=0`. Максимальный `provider_timestamp` в схеме отсутствует как отдельная колонка (есть `sent_at`, `delivered_at`, `sending_at` — все нули за последнее окно, кроме входящих `received`).
 
--- 4.3 Каноническая admin-роль
-SELECT id, code FROM public.roles WHERE code='admin'; -- ожидается 16c9cefc-...
+**Распределение inbound по дням (последние 45 дней):**
 
--- 4.4 Схема user_roles_v2 и UNIQUE(user_id, role_id)
-SELECT column_name, data_type FROM information_schema.columns
- WHERE table_schema='public' AND table_name='user_roles_v2' ORDER BY ordinal_position;
-SELECT conname, pg_get_constraintdef(oid)
-  FROM pg_constraint
- WHERE conrelid='public.user_roles_v2'::regclass AND contype IN ('u','p');
-
--- 4.5 Сигнатура has_role_v2
-SELECT pg_get_functiondef(p.oid) FROM pg_proc p
- JOIN pg_namespace n ON n.oid=p.pronamespace
- WHERE n.nspname='public' AND p.proname='has_role_v2';
-
--- 4.6 Before-снимок ролей пользователя
-SELECT r.code
-  FROM public.user_roles_v2 ur JOIN public.roles r ON r.id=ur.role_id
- WHERE ur.user_id='37e91f59-e4db-4840-b9c9-e760e634ddd1'
- ORDER BY r.code;
-
--- 4.7 Пред-проверки has_role_v2
-SELECT public.has_role_v2('37e91f59-e4db-4840-b9c9-e760e634ddd1','admin')     AS before_admin;      -- ожидается false
-SELECT public.has_role_v2('37e91f59-e4db-4840-b9c9-e760e634ddd1','menedzher') AS before_menedzher;  -- ожидается true
-
-ROLLBACK;
+```
+2026-07-17  1     2026-07-06  7
+2026-07-16  2     2026-07-05  1(out)
+2026-07-13  1     2026-07-04  116 in + 3 out
+2026-07-10  3 in+1 out   2026-07-03  19
+2026-07-09  4
+2026-07-08  2 in+1 out
+2026-07-07  2
 ```
 
-Если любой пункт не совпадает с §2/§3 — STOP, отчёт без изменений БД.
+Обвал начиная с 2026-07-18 — **0 сообщений за 6 дней**.
 
-## 5. Точный SQL записи (idempotent)
+---
 
-Один INSERT со стандартным `ON CONFLICT DO NOTHING` по паре `(user_id, role_id)`. Никаких прочих полей, никаких обновлений существующих строк.
+## 3. manychat_diagnose_log
 
-```sql
-BEGIN;
-SET LOCAL statement_timeout = '15s';
+`count = 1`, `min = max = 2026-04-19 10:40:09Z`, notes = «PATCH 0 live capture».
+С апреля новых захватов нет — таблица используется только для оффлайн-снимков, живые payload'ы туда не сыпятся.
 
-INSERT INTO public.user_roles_v2 (user_id, role_id)
-VALUES (
-  '37e91f59-e4db-4840-b9c9-e760e634ddd1'::uuid,  -- 1@ajoure.by
-  '16c9cefc-60a3-4edd-a421-46d556e80257'::uuid   -- roles.code='admin'
-)
-ON CONFLICT (user_id, role_id) DO NOTHING
-RETURNING id, user_id, role_id, created_at;
+Последние 20 записей: одна и та же строка выше (метод `POST`, event/outcome пусты).
 
-COMMIT;
+---
+
+## 4. integration_instances (Instagram/ManyChat)
+
+Найден единственный инстанс:
+
+| поле | значение |
+|---|---|
+| id | 49923a52-86e1-480f-8edd-3f4b397aecc2 |
+| category | socials |
+| provider | manychat |
+| alias | Ekaterina Gorbova |
+| status | connected |
+| last_check_at | **2026-07-02 20:18:34Z** |
+| last_successful_sync_at | **NULL** (ни разу не проставлен) |
+| updated_at | 2026-07-02 20:18:34Z |
+| error_message | (пусто) |
+| config.webhook_url | **NULL** (не сохранён в конфиге) |
+| config.page_id | отсутствует |
+| config_secrets.api_key | configured=**true** |
+| config_secrets.access_token | configured=false |
+
+Healthcheck не запускался ≈ 21 день. Sync никогда не отмечался успешным.
+
+---
+
+## 5. Edge Functions — логи
+
+Доступный toolset вернул **`No logs found`** для всех запрошенных функций (окно платформы):
+- `instagram-manychat-webhook` — функции с таким именем **нет** в репозитории (`supabase/functions/` содержит `manychat-inbound`, `manychat-diagnose-capture`, `manychat-discover-pages`, `manychat-avatar-backfill`, `instagram-webhook`, `instagram-admin-chat`, `instagram-media-proxy`, `instagram-webhook-test`);
+- `manychat-inbound` — No logs found;
+- `instagram-admin-chat` — No logs found;
+- `instagram-media-proxy` — No logs found;
+- `instagram-webhook` — No logs found.
+
+`edge_functions_registry` не содержит записей `manychat%` / `instagram%` (реестр этих функций не поддерживается; сами исходники в `main` присутствуют).
+
+**Точная граница доказательств:** невозможно из имеющегося окна логов определить, приходили ли HTTP-запросы от ManyChat после 2026-07-17. Косвенно: в `instagram_messages` за 2026-07-18…07-23 — 0 строк; в `manychat_diagnose_log` — 0 новых захватов с апреля.
+
+---
+
+## 6. support_tickets / ticket_messages
+
+Тикеты по статусам:
+
+```
+closed        77
+open           5
+resolved     108
+waiting_user   1
 ```
 
-Идемпотентность:
-- ключ идемпотентности — UNIQUE `(user_id, role_id)` в `public.user_roles_v2` (подтверждается на preflight §4.4);
-- `ON CONFLICT DO NOTHING` → повторный запуск не создаёт дубль и не перезаписывает существующую строку;
-- `RETURNING` пуст ⇔ связь уже была ⇒ этап no-op и rollback (§7) ничего не удаляет;
-- запись содержит только `(user_id, role_id)`; `id`, `created_at` заполняются дефолтами; прочие роли (`menedzher` и любые другие) не читаются и не изменяются;
-- пароль, `auth.users`, `public.profiles`, tenants/workspaces, entitlements — не затрагиваются.
+`ticket_messages`: всего **605** строк, последний = 2026-07-22 17:51:21Z.
 
-## 6. After-verification (read-only)
+| author_type | count | last_created_at |
+|---|---|---|
+| user | 387 | 2026-07-22 17:51:21Z |
+| support | 217 | 2026-07-22 09:21:37Z |
+| system | 1 | 2026-07-04 18:21:18Z |
 
-```sql
--- 6.1 Набор ролей после
-SELECT r.code
-  FROM public.user_roles_v2 ur JOIN public.roles r ON r.id=ur.role_id
- WHERE ur.user_id='37e91f59-e4db-4840-b9c9-e760e634ddd1'
- ORDER BY r.code;
+Непрочитанных клиентских сообщений (`is_read=false AND author_type<>'staff'`): **604** — вероятно, `is_read` в реальности проставляется на уровне тикета/просмотра, не пометкой per-message (данные согласованы: почти все `user`/`support` сообщения остались `is_read=false`).
 
--- 6.2 has_role_v2
-SELECT public.has_role_v2('37e91f59-e4db-4840-b9c9-e760e634ddd1','admin')     AS after_admin;      -- true
-SELECT public.has_role_v2('37e91f59-e4db-4840-b9c9-e760e634ddd1','menedzher') AS after_menedzher;  -- true
+Realtime: см. §8 — таблицы `support_tickets` и `ticket_messages` в публикации.
 
--- 6.3 Сохранность прежних ролей: множественное сравнение
---   after_codes ⊇ before_codes ∪ {'admin'} и after_codes = before_codes ∪ {'admin'}
---   т.е. добавилась ровно одна роль 'admin', ничего не удалено и не изменено.
+---
 
--- 6.4 Целостность строки menedzher: id/role_id/created_at не изменились
-SELECT id, role_id, created_at
-  FROM public.user_roles_v2
- WHERE user_id='37e91f59-e4db-4840-b9c9-e760e634ddd1'
-   AND role_id='e2ebb443-614b-41eb-85d1-8f088e75535a';
--- ожидается id=72dbebc0-2bcc-4e7c-ae71-1e043ce973ea, created_at=2026-06-26 08:57:45.381458+00
+## 7. telegram_messages
+
+| direction | last_created_at |
+|---|---|
+| incoming | **2026-07-23 08:15:37Z** |
+| outgoing | **2026-07-23 08:13:03Z** |
+
+Активен, свежие сообщения идут. `media_jobs` с состоянием `pending/failed/processing`: **0 строк** — очередь медиа пуста, застрявших нет.
+
+---
+
+## 8. Realtime publication + replica identity
+
+Публикация `supabase_realtime` включает все четыре таблицы:
+
+```
+public.telegram_messages
+public.instagram_messages
+public.support_tickets
+public.ticket_messages
 ```
 
-Критерий приёмки: 6.1 = before ∪ {'admin'}; 6.2 обе `true`; 6.4 строка menedzher побайтово идентична before-снимку.
+`REPLICA IDENTITY`:
+- `telegram_messages` = **f (FULL)**
+- `instagram_messages` = **d (DEFAULT)**
+- `support_tickets` = **d (DEFAULT)**
+- `ticket_messages` = **d (DEFAULT)**
 
-## 7. Rollback (условный, только связь этого этапа)
+`DEFAULT` достаточно для Realtime при наличии PK (у всех есть `*_pkey`). Подписки клиентские (`postgres_changes`) на этих таблицах будут работать; полные значения `OLD` доступны только на `telegram_messages`.
 
-```sql
-BEGIN;
-SET LOCAL statement_timeout = '15s';
+---
 
--- Удалить только строку admin для этого user_id.
--- Если admin была до этапа (RETURNING §5 был пуст) — rollback не запускается (no-op).
-DELETE FROM public.user_roles_v2
- WHERE user_id='37e91f59-e4db-4840-b9c9-e760e634ddd1'::uuid
-   AND role_id='16c9cefc-60a3-4edd-a421-46d556e80257'::uuid
-RETURNING id;
+## 9. Индексы (без EXPLAIN)
 
-COMMIT;
-```
+**instagram_messages** — dialog list / pagination / unread:
+`idx_instagram_messages_dialog`, `idx_instagram_messages_unread`, `idx_ig_msg_peer_dialog`, `idx_ig_msg_thread_key`, `idx_ig_outbox_status`, `idx_ig_msg_idempotency_hash`, UNIQUE `(instagram_account_id, external_message_id)`, UNIQUE `provider_message_id`.
 
-Решение о запуске rollback принимается на основании `RETURNING` из §5: непусто ⇒ rollback удаляет ровно одну добавленную связь; пусто ⇒ rollback не запускается. Строка `menedzher` и любые прочие роли не затрагиваются никогда.
+**telegram_messages** — `idx_telegram_messages_dialog_v1`, `idx_telegram_messages_unread_v1`, `idx_telegram_messages_user_created`, `idx_telegram_messages_created_at`, `idx_telegram_messages_fts`, плюс business dedupe/dialog indexes.
 
-## 8. Audit / proof (на русском)
+**support_tickets** — `idx_support_tickets_active_by_profile`, `_unread_admin`, `_unread_user`, `_status`, `_assigned`, `_pinned`, `_created`, `_profile`, `_user`, `_merged_into`.
 
-Формируется отчёт `.lovable/discovery/companies-1.0/admin_fixture_1_ajoure_report.md` со следующими секциями:
+**ticket_messages** — `idx_ticket_messages_ticket`, `_created`, `_author`.
 
-1. Цель, baseline commit `68c00477…`, статус approve.
-2. Discovery-снимок (§2): UUID пользователя, отсутствие профиля, список ролей before, id канонической `admin`.
-3. Полные результаты preflight (§4) c пометками PASS/STOP.
-4. Точный выполненный SQL (§5) и `RETURNING`-результат (added / already-present).
-5. After-снимок (§6): множество ролей, значения `has_role_v2`, подтверждение сохранности строки `menedzher`.
-6. Diff before/after: `+admin`, `−<пусто>`.
-7. Rollback plan (§7) и решение (executed / no-op) с обоснованием.
-8. Заявление, что пароль/`auth.users`/профиль/tenants/entitlements не изменялись.
+Индексы для dialog list, pagination и unread — присутствуют по всем каналам, дефицита не видно.
 
-Репозиторий: изменяется только новый файл отчёта `.lovable/discovery/companies-1.0/admin_fixture_1_ajoure_report.md`. Никаких изменений в `src/**`, `supabase/migrations/**`, `.lovable/plan.md` и прочих файлах. Миграции не создаются (запись выполняется как data-insert, не как schema-migration; UNIQUE-ключ уже существует).
+---
 
-## 9. Порядок выполнения (после отдельного approve)
+## 10. Первопричина и границы
 
-1. Preflight §4 → PASS или STOP.
-2. Insert §5 (одна транзакция).
-3. After-verification §6.
-4. Формирование отчёта §8.
-5. При провале §6 — немедленный rollback §7 и фиксация инцидента в отчёте.
+### Telegram
+Работает штатно. Realtime membership есть. Индексы есть. Инцидентов не вижу.
 
-## 10. Наблюдения / открытые вопросы
+### Support-тикеты
+Работают штатно, свежие сообщения идут. Realtime membership есть. Индексы есть.
 
-- `public.profiles` для `37e91f59-…` отсутствует. Это не блокер для `user_roles_v2` (FK идёт на `auth.users`), но фиксируется в §8 как наблюдение. Создание профиля выходит за scope этого этапа и не выполняется.
-- Admin-runtime-proof Phase 2 остаётся отдельным follow-up этапом и не входит в этот план.
+### Instagram / ManyChat — **источник проблемы**
 
-Запрашиваю отдельный approve на выполнение.
+**Симптом:** после 2026-07-17 11:39:19Z в `instagram_messages` **0 новых inbound**. За полторы недели до этого поток тоже был сильно разрежённым (1–7 сообщений/день против 116 в один день 2026-07-04).
+
+**Что подтверждено на нашей стороне (нет проблем):**
+- Функция `manychat-inbound` в репозитории цела, `X-ManyChat-Token` gate жив, dedupe UNIQUE `(instagram_account_id, external_message_id)` в норме.
+- Табличная запись `instagram_accounts` — active/connected.
+- `integration_instances.status='connected'`, api_key configured, error_message пуст.
+- Realtime publication и индексы для IG — на месте.
+- Ни `failed`/`queued`/`sending` очереди, ни `error_message` на записях не растут.
+
+**Что указывает на ManyChat side:**
+- `last_successful_sync_at = NULL` за всё время жизни инстанса (2026-04-19 → …). Это значит, что healthcheck/sync (`integration-healthcheck`, `integration-sync` с case `manychat`) фактически не помечает успех — либо не запускался, либо ManyChat не возвращал success. `last_check_at` заморожен на 2026-07-02.
+- `manychat_diagnose_log` не пополнялся с апреля — live-capture отключён, диагностировать входящие payload'ы без активного capture невозможно.
+- В `config.webhook_url` пусто — фактический URL, вбитый в External Request на стороне ManyChat, у нас не задокументирован; проверка/ротация невозможна без доступа к аккаунту ManyChat.
+- Логи `manychat-inbound` за текущее окно платформы недоступны (`No logs found`). Это может означать: (a) функция не вызывалась (ManyChat не шлёт), либо (b) окно логов уже прокрутилось. Разделить эти случаи из БД невозможно.
+
+**Наиболее вероятная первопричина (по совокупности признаков):** External Request flow в самом ManyChat перестал доставлять события на webhook (отключение/удаление шага, смена URL, истечение токена подписки ManyChat к Instagram Graph, block со стороны Meta) — все внутренние сигналы (`connected`, api_key ok, `last_check_at` старый, `last_successful_sync_at=NULL`) с этим согласуются. Нельзя исключить менее вероятное: реальная тишина клиентов в DM (маловероятно при историческом трафике 100+ сообщений/сутки).
+
+**Требует настройки ManyChat (вне кода):**
+1. Проверить в кабинете ManyChat статус подключения Instagram-страницы Ekaterina Gorbova и Meta-permissions (не отозваны ли Instagram DM подписки).
+2. Проверить External Request flow: URL webhook, X-ManyChat-Token, включённость шага, статистика доставок и ошибок за 2026-07-17…07-23.
+3. Отправить тестовый DM (со стороннего IG-аккаунта) и проверить в ManyChat, доходит ли до flow.
+
+**Что можно/нужно исправить кодом/миграцией (отдельными approve-циклами, не сейчас):**
+1. Реанимировать `manychat_diagnose_log`: включить capture-режим на `manychat-inbound` (флагом), чтобы фиксировать факт входящих HTTP-запросов даже если dedupe/парсинг отбраковывает их. Сейчас у нас **нет способа отличить «ManyChat не звонил» от «ManyChat звонил, но мы отбросили»**.
+2. Довести до конца `integration-healthcheck case 'manychat'` так, чтобы `last_check_at` и `last_successful_sync_at` действительно обновлялись, и повесить на разрыв ≥ N часов алерт (сейчас ни один из этих таймстампов не двигается — молчаливая деградация).
+3. Сохранять `config.webhook_url` (и `config.manychat_flow_id`, если ManyChat отдаёт) в `integration_instances.config` при подключении — сейчас NULL, что мешает быстрой сверке в инцидентах.
+4. Диагностический эндпоинт «last N inbound requests» (только для admin) на базе живого capture из п.1.
+
+Ничего из перечисленного не изменено — это перечень предложений для последующих подтверждённых итераций.
+
+---
+
+## Границы доказательств
+
+- Логи Edge Functions за диапазон, недоступный текущему toolset, восстановить нельзя.
+- Со стороны ManyChat/Meta ничего не проверено — доступа нет.
+- Гипотеза «ManyChat перестал доставлять» — по совокупности внутренних признаков, но не подтверждена наблюдением входящего HTTP.
+
+Никаких изменений в БД/коде/деплое/секретах/клиентам не производилось.

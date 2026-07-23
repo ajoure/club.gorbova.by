@@ -14062,6 +14062,9 @@ export type Database = {
           public_id: string | null
           public_subtitle: string | null
           public_title: string | null
+          referral_commission_percent_bps: number | null
+          referral_customer_discount_percent_bps: number | null
+          referral_settings_mode: string
           slug: string | null
           status: string
           telegram_club_id: string | null
@@ -14084,6 +14087,9 @@ export type Database = {
           public_id?: string | null
           public_subtitle?: string | null
           public_title?: string | null
+          referral_commission_percent_bps?: number | null
+          referral_customer_discount_percent_bps?: number | null
+          referral_settings_mode?: string
           slug?: string | null
           status?: string
           telegram_club_id?: string | null
@@ -14106,6 +14112,9 @@ export type Database = {
           public_id?: string | null
           public_subtitle?: string | null
           public_title?: string | null
+          referral_commission_percent_bps?: number | null
+          referral_customer_discount_percent_bps?: number | null
+          referral_settings_mode?: string
           slug?: string | null
           status?: string
           telegram_club_id?: string | null
@@ -14802,6 +14811,553 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      referral_balance_entries: {
+        Row: {
+          amount_minor: number
+          bucket: string
+          created_at: string
+          id: string
+          partner_id: string
+          transaction_id: string
+        }
+        Insert: {
+          amount_minor: number
+          bucket: string
+          created_at?: string
+          id?: string
+          partner_id: string
+          transaction_id: string
+        }
+        Update: {
+          amount_minor?: number
+          bucket?: string
+          created_at?: string
+          id?: string
+          partner_id?: string
+          transaction_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_balance_entries_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_balance_entries_transaction_id_fkey"
+            columns: ["transaction_id"]
+            isOneToOne: false
+            referencedRelation: "referral_balance_transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_balance_transactions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          currency: string
+          description: string | null
+          id: string
+          idempotency_key: string
+          metadata: Json
+          partner_id: string
+          public_id: string
+          source_id: string | null
+          source_type: string
+          transaction_type: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          description?: string | null
+          id?: string
+          idempotency_key: string
+          metadata?: Json
+          partner_id: string
+          public_id?: string
+          source_id?: string | null
+          source_type: string
+          transaction_type: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          description?: string | null
+          id?: string
+          idempotency_key?: string
+          metadata?: Json
+          partner_id?: string
+          public_id?: string
+          source_id?: string | null
+          source_type?: string
+          transaction_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_balance_transactions_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_customer_credit_entries: {
+        Row: {
+          amount_minor: number
+          applied_order_id: string | null
+          checkout_key: string | null
+          created_at: string
+          entry_type: string
+          expires_at: string | null
+          id: string
+          metadata: Json
+          profile_id: string
+          reversal_of_entry_id: string | null
+          source_order_id: string | null
+          source_payment_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amount_minor: number
+          applied_order_id?: string | null
+          checkout_key?: string | null
+          created_at?: string
+          entry_type: string
+          expires_at?: string | null
+          id?: string
+          metadata?: Json
+          profile_id: string
+          reversal_of_entry_id?: string | null
+          source_order_id?: string | null
+          source_payment_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amount_minor?: number
+          applied_order_id?: string | null
+          checkout_key?: string | null
+          created_at?: string
+          entry_type?: string
+          expires_at?: string | null
+          id?: string
+          metadata?: Json
+          profile_id?: string
+          reversal_of_entry_id?: string | null
+          source_order_id?: string | null
+          source_payment_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_customer_credit_entries_applied_order_id_fkey"
+            columns: ["applied_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_customer_credit_entries_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_customer_credit_entries_reversal_of_entry_id_fkey"
+            columns: ["reversal_of_entry_id"]
+            isOneToOne: true
+            referencedRelation: "referral_customer_credit_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_customer_credit_entries_source_order_id_fkey"
+            columns: ["source_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_customer_credit_entries_source_payment_id_fkey"
+            columns: ["source_payment_id"]
+            isOneToOne: true
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_partners: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          joined_at: string
+          metadata: Json
+          partner_code: string
+          profile_id: string
+          public_id: string
+          status: string
+          status_reason: string | null
+          terms_accepted_at: string | null
+          terms_version: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          joined_at?: string
+          metadata?: Json
+          partner_code: string
+          profile_id: string
+          public_id?: string
+          status?: string
+          status_reason?: string | null
+          terms_accepted_at?: string | null
+          terms_version?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          joined_at?: string
+          metadata?: Json
+          partner_code?: string
+          profile_id?: string
+          public_id?: string
+          status?: string
+          status_reason?: string | null
+          terms_accepted_at?: string | null
+          terms_version?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_partners_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_payout_requests: {
+        Row: {
+          amount_minor: number
+          created_at: string
+          currency: string
+          decided_at: string | null
+          decided_by: string | null
+          decision_reason: string | null
+          id: string
+          paid_at: string | null
+          partner_id: string
+          payment_reference: string | null
+          public_id: string
+          requested_at: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amount_minor: number
+          created_at?: string
+          currency?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_reason?: string | null
+          id?: string
+          paid_at?: string | null
+          partner_id: string
+          payment_reference?: string | null
+          public_id?: string
+          requested_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amount_minor?: number
+          created_at?: string
+          currency?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_reason?: string | null
+          id?: string
+          paid_at?: string | null
+          partner_id?: string
+          payment_reference?: string | null
+          public_id?: string
+          requested_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_payout_requests_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_program_settings: {
+        Row: {
+          accrual_enabled: boolean
+          base_currency: string
+          commission_percent_bps: number
+          created_at: string
+          customer_discount_percent_bps: number
+          enabled_at: string | null
+          hold_days: number
+          id: string
+          is_enabled: boolean
+          minimum_payout_minor: number
+          partner_portal_enabled: boolean
+          payout_requests_enabled: boolean
+          shadow_mode: boolean
+          singleton: boolean
+          split_60_40_enabled: boolean
+          terms_url: string | null
+          terms_version: string | null
+          tracking_enabled: boolean
+          updated_at: string
+          updated_by: string | null
+          withdrawable_percent_bps: number
+        }
+        Insert: {
+          accrual_enabled?: boolean
+          base_currency?: string
+          commission_percent_bps?: number
+          created_at?: string
+          customer_discount_percent_bps?: number
+          enabled_at?: string | null
+          hold_days?: number
+          id?: string
+          is_enabled?: boolean
+          minimum_payout_minor?: number
+          partner_portal_enabled?: boolean
+          payout_requests_enabled?: boolean
+          shadow_mode?: boolean
+          singleton?: boolean
+          split_60_40_enabled?: boolean
+          terms_url?: string | null
+          terms_version?: string | null
+          tracking_enabled?: boolean
+          updated_at?: string
+          updated_by?: string | null
+          withdrawable_percent_bps?: number
+        }
+        Update: {
+          accrual_enabled?: boolean
+          base_currency?: string
+          commission_percent_bps?: number
+          created_at?: string
+          customer_discount_percent_bps?: number
+          enabled_at?: string | null
+          hold_days?: number
+          id?: string
+          is_enabled?: boolean
+          minimum_payout_minor?: number
+          partner_portal_enabled?: boolean
+          payout_requests_enabled?: boolean
+          shadow_mode?: boolean
+          singleton?: boolean
+          split_60_40_enabled?: boolean
+          terms_url?: string | null
+          terms_version?: string | null
+          tracking_enabled?: boolean
+          updated_at?: string
+          updated_by?: string | null
+          withdrawable_percent_bps?: number
+        }
+        Relationships: []
+      }
+      referral_relationships: {
+        Row: {
+          attached_at: string
+          created_at: string
+          id: string
+          manual_actor_user_id: string | null
+          manual_reason: string | null
+          metadata: Json
+          partner_id: string
+          public_id: string
+          referred_profile_id: string
+          revoked_at: string | null
+          source: string
+          status: string
+        }
+        Insert: {
+          attached_at?: string
+          created_at?: string
+          id?: string
+          manual_actor_user_id?: string | null
+          manual_reason?: string | null
+          metadata?: Json
+          partner_id: string
+          public_id?: string
+          referred_profile_id: string
+          revoked_at?: string | null
+          source?: string
+          status?: string
+        }
+        Update: {
+          attached_at?: string
+          created_at?: string
+          id?: string
+          manual_actor_user_id?: string | null
+          manual_reason?: string | null
+          metadata?: Json
+          partner_id?: string
+          public_id?: string
+          referred_profile_id?: string
+          revoked_at?: string | null
+          source?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_relationships_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_relationships_referred_profile_id_fkey"
+            columns: ["referred_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      referral_sale_attributions: {
+        Row: {
+          available_at: string
+          commission_basis_currency: string
+          commission_basis_minor: number
+          commission_minor: number
+          commission_percent_bps: number
+          created_at: string
+          id: string
+          metadata: Json
+          offer_id: string | null
+          order_id: string
+          order_snapshot: Json
+          partner_id: string
+          payment_id: string | null
+          product_id: string | null
+          public_id: string
+          relationship_id: string
+          reversed_minor: number
+          rule_snapshot: Json
+          status: string
+          tariff_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          available_at: string
+          commission_basis_currency: string
+          commission_basis_minor: number
+          commission_minor: number
+          commission_percent_bps: number
+          created_at?: string
+          id?: string
+          metadata?: Json
+          offer_id?: string | null
+          order_id: string
+          order_snapshot: Json
+          partner_id: string
+          payment_id?: string | null
+          product_id?: string | null
+          public_id?: string
+          relationship_id: string
+          reversed_minor?: number
+          rule_snapshot: Json
+          status?: string
+          tariff_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          available_at?: string
+          commission_basis_currency?: string
+          commission_basis_minor?: number
+          commission_minor?: number
+          commission_percent_bps?: number
+          created_at?: string
+          id?: string
+          metadata?: Json
+          offer_id?: string | null
+          order_id?: string
+          order_snapshot?: Json
+          partner_id?: string
+          payment_id?: string | null
+          product_id?: string | null
+          public_id?: string
+          relationship_id?: string
+          reversed_minor?: number
+          rule_snapshot?: Json
+          status?: string
+          tariff_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_sale_attributions_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: true
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_sale_attributions_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_sale_attributions_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_sale_attributions_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_sale_attributions_relationship_id_fkey"
+            columns: ["relationship_id"]
+            isOneToOne: false
+            referencedRelation: "referral_relationships"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_sale_attributions_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       rejected_card_attempts: {
         Row: {
@@ -17392,6 +17948,81 @@ export type Database = {
         }
         Relationships: []
       }
+      telegram_business_connections: {
+        Row: {
+          bot_id: string
+          business_user_id: number
+          can_reply: boolean
+          connected_at: string
+          connection_id: string
+          created_at: string
+          disconnected_at: string | null
+          first_name: string | null
+          id: string
+          is_enabled: boolean
+          last_error: string | null
+          last_event_at: string
+          last_name: string | null
+          rights: Json
+          updated_at: string
+          user_chat_id: number | null
+          username: string | null
+        }
+        Insert: {
+          bot_id: string
+          business_user_id: number
+          can_reply?: boolean
+          connected_at?: string
+          connection_id: string
+          created_at?: string
+          disconnected_at?: string | null
+          first_name?: string | null
+          id?: string
+          is_enabled?: boolean
+          last_error?: string | null
+          last_event_at?: string
+          last_name?: string | null
+          rights?: Json
+          updated_at?: string
+          user_chat_id?: number | null
+          username?: string | null
+        }
+        Update: {
+          bot_id?: string
+          business_user_id?: number
+          can_reply?: boolean
+          connected_at?: string
+          connection_id?: string
+          created_at?: string
+          disconnected_at?: string | null
+          first_name?: string | null
+          id?: string
+          is_enabled?: boolean
+          last_error?: string | null
+          last_event_at?: string
+          last_name?: string | null
+          rights?: Json
+          updated_at?: string
+          user_chat_id?: number | null
+          username?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_business_connections_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_business_connections_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_club_members: {
         Row: {
           access_status: string
@@ -17920,6 +18551,8 @@ export type Database = {
       telegram_messages: {
         Row: {
           bot_id: string | null
+          business_account_id: string | null
+          business_connection_id: string | null
           created_at: string
           direction: string
           error_message: string | null
@@ -17928,16 +18561,20 @@ export type Database = {
           is_pinned: boolean | null
           is_read: boolean | null
           message_id: number | null
+          message_origin: string | null
           message_text: string | null
           meta: Json | null
           reply_to_message_id: number | null
           sent_by_admin: string | null
           status: string
           telegram_user_id: number
+          transport: string
           user_id: string
         }
         Insert: {
           bot_id?: string | null
+          business_account_id?: string | null
+          business_connection_id?: string | null
           created_at?: string
           direction: string
           error_message?: string | null
@@ -17946,16 +18583,20 @@ export type Database = {
           is_pinned?: boolean | null
           is_read?: boolean | null
           message_id?: number | null
+          message_origin?: string | null
           message_text?: string | null
           meta?: Json | null
           reply_to_message_id?: number | null
           sent_by_admin?: string | null
           status?: string
           telegram_user_id: number
+          transport?: string
           user_id: string
         }
         Update: {
           bot_id?: string | null
+          business_account_id?: string | null
+          business_connection_id?: string | null
           created_at?: string
           direction?: string
           error_message?: string | null
@@ -17964,12 +18605,14 @@ export type Database = {
           is_pinned?: boolean | null
           is_read?: boolean | null
           message_id?: number | null
+          message_origin?: string | null
           message_text?: string | null
           meta?: Json | null
           reply_to_message_id?: number | null
           sent_by_admin?: string | null
           status?: string
           telegram_user_id?: number
+          transport?: string
           user_id?: string
         }
         Relationships: [
@@ -17985,6 +18628,13 @@ export type Database = {
             columns: ["bot_id"]
             isOneToOne: false
             referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_messages_business_account_id_fkey"
+            columns: ["business_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_business_connections"
             referencedColumns: ["id"]
           },
           {
@@ -19696,6 +20346,36 @@ export type Database = {
           telegram_user_id: number
           thumbnail_url: string
           upload_status: string
+          user_id: string
+        }[]
+      }
+      admin_get_telegram_messages_page_v2: {
+        Args: {
+          p_before_created_at?: string
+          p_before_id?: string
+          p_limit?: number
+          p_user_id: string
+        }
+        Returns: {
+          admin_avatar_url: string
+          admin_full_name: string
+          bot_id: string
+          bot_name: string
+          bot_username: string
+          created_at: string
+          direction: string
+          error_message: string
+          id: string
+          is_favorite: boolean
+          is_pinned: boolean
+          is_read: boolean
+          message_id: number
+          message_text: string
+          meta: Json
+          reply_to_message_id: number
+          sent_by_admin: string
+          status: string
+          telegram_user_id: number
           user_id: string
         }[]
       }
@@ -21561,6 +22241,64 @@ export type Database = {
         }
         Returns: Json
       }
+      referral_admin_attach_profile: {
+        Args: {
+          p_partner_profile_id: string
+          p_reason: string
+          p_referred_profile_id: string
+        }
+        Returns: string
+      }
+      referral_admin_decide_payout: {
+        Args: {
+          p_decision: string
+          p_payment_reference?: string
+          p_reason?: string
+          p_request_id: string
+        }
+        Returns: undefined
+      }
+      referral_admin_ensure_partner: {
+        Args: { p_profile_id: string }
+        Returns: string
+      }
+      referral_admin_get_summary: { Args: never; Returns: Json }
+      referral_attach_current_profile: {
+        Args: { p_captured_at: string; p_partner_code: string }
+        Returns: Json
+      }
+      referral_create_payout_request: {
+        Args: { p_amount_minor: number }
+        Returns: string
+      }
+      referral_customer_credit_available: {
+        Args: { p_profile_id: string }
+        Returns: number
+      }
+      referral_emit_event: {
+        Args: { p_entity_id: string; p_event_type: string; p_payload?: Json }
+        Returns: string
+      }
+      referral_ensure_current_partner: { Args: never; Returns: Json }
+      referral_get_my_customer_credit: { Args: never; Returns: Json }
+      referral_get_my_dashboard: { Args: never; Returns: Json }
+      referral_is_admin: { Args: { p_user_id: string }; Returns: boolean }
+      referral_mature_due_commissions: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
+      referral_process_order: { Args: { p_order_id: string }; Returns: string }
+      referral_process_refund: { Args: { p_order_id: string }; Returns: number }
+      referral_reconcile_orders: { Args: { p_limit?: number }; Returns: Json }
+      referral_reserve_customer_credit: {
+        Args: {
+          p_charge_amount_minor: number
+          p_checkout_key: string
+          p_requested_minor: number
+          p_user_id: string
+        }
+        Returns: Json
+      }
       release_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
       reorder_tariff_offers: {
         Args: { p_ordered_ids: string[]; p_tariff_id: string }
@@ -21926,6 +22664,16 @@ export type Database = {
       }
       search_global: {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
+        Returns: Json
+      }
+      send_ticket_message_v2: {
+        Args: {
+          p_attachments?: Json
+          p_display_user_id?: string
+          p_is_internal?: boolean
+          p_message: string
+          p_ticket_id: string
+        }
         Returns: Json
       }
       set_default_individual_requisites: {

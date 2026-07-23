@@ -59,10 +59,12 @@ import {
   MoreHorizontal,
   RefreshCw,
   Radio,
+  ShieldAlert,
   Trash2,
   Users,
   Video,
 } from "lucide-react";
+
 
 // Минимальный contract эфира для таблицы (страница даёт более широкий тип).
 export interface LiveEventRow {
@@ -91,7 +93,16 @@ interface Props {
   onSelectionChange?: (selectedIds: Set<string>) => void;
   /** Reset selection signal (filters changed). Resetting also runs on rowset signature change. */
   selectionResetKey?: string;
+  /**
+   * ACCESS-RULE GUARD: Set из event.id, у которых есть >=1 access rule.
+   * Undefined = данные ещё загружаются (guard временно не применяется).
+   * Строки без правил визуально помечаются, кнопки lifecycle блокируются.
+   */
+  eventsWithAccessRule?: Set<string>;
+  /** Открыть карточку эфира сразу на вкладке «Доступ» (CTA из guard-предупреждения). */
+  onEditAccess?: (event: LiveEventRow) => void;
 }
+
 
 const platformStatusLabels: Record<string, string> = {
   draft: "Черновик",
@@ -159,8 +170,14 @@ export function LiveEventsTable({
   onDelete,
   onSelectionChange,
   selectionResetKey,
+  eventsWithAccessRule,
+  onEditAccess,
 }: Props) {
+
   const { visibleColumns, handleColumnResize, handleDragEnd } = useLiveEventsColumns();
+  const accessRuleFlagsReady = eventsWithAccessRule !== undefined;
+  const hasRule = (id: string) => !accessRuleFlagsReady || eventsWithAccessRule!.has(id);
+
 
   // PATCH: explicit total width = sum of visible column widths.
   // tableLayout:fixed + width:max-content alone не давал корректную итоговую ширину
@@ -242,13 +259,30 @@ export function LiveEventsTable({
             />
           </TableCell>
         );
-      case "title":
+      case "title": {
+        const missingRule = !hasRule(event.id);
         return (
           <TableCell key={col.key} style={{ width: col.width }} className="font-medium">
             <div className="truncate" title={event.title}>{event.title}</div>
             <div className="text-xs text-muted-foreground truncate" title={event.slug}>{event.slug}</div>
+            {missingRule && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEditAccess?.(event);
+                }}
+                className="mt-1 inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive hover:bg-destructive/15 transition-colors"
+                title="Без правила доступа non-admin получают access_denied. Настройте правило перед открытием комнаты."
+              >
+                <ShieldAlert className="h-3 w-3" />
+                Нет правила доступа
+              </button>
+            )}
           </TableCell>
         );
+      }
+
       case "type":
         return (
           <TableCell key={col.key} style={{ width: col.width }}>
@@ -311,9 +345,12 @@ export function LiveEventsTable({
               eventId={event.id}
               roomState={parseRoomState(event.room_state)}
               layout="admin"
+              hasAccessRule={accessRuleFlagsReady ? hasRule(event.id) : undefined}
+              onRequestAccessSetup={onEditAccess ? () => onEditAccess(event) : undefined}
             />
           </TableCell>
         );
+
       case "actions":
         return (
           <TableCell key={col.key} style={{ width: col.width }} onClick={(e) => e.stopPropagation()}>

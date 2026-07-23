@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { classifyBusinessMessage } from '../_shared/telegram-business.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -8,6 +9,22 @@ const corsHeaders = {
 
 interface TelegramUpdate {
   update_id: number;
+  business_connection?: {
+    id: string;
+    user: { id: number; first_name: string; last_name?: string; username?: string };
+    user_chat_id: number;
+    date: number;
+    can_reply?: boolean;
+    is_enabled: boolean;
+    rights?: Record<string, unknown>;
+  };
+  business_message?: Record<string, any>;
+  edited_business_message?: Record<string, any>;
+  deleted_business_messages?: {
+    business_connection_id: string;
+    chat: { id: number; type: string };
+    message_ids: number[];
+  };
   message?: {
     message_id: number;
     from: { id: number; is_bot: boolean; first_name: string; last_name?: string; username?: string };
@@ -488,6 +505,14 @@ Deno.serve(async (req) => {
   __auditShapeBlockedCalls.length = 0;
 
   try {
+    const webhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET') || '';
+    const suppliedWebhookSecret = req.headers.get('x-telegram-bot-api-secret-token') || '';
+    if (webhookSecret && suppliedWebhookSecret !== webhookSecret) {
+      return new Response(JSON.stringify({ ok: false, error: 'invalid_webhook_secret' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const realSupabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -593,7 +618,329 @@ Deno.serve(async (req) => {
     const botToken = bot.bot_token_encrypted;
     const update: TelegramUpdate = rawBody as TelegramUpdate;
 
-    console.log('Telegram update:', JSON.stringify(update, null, 2));
+    if (update.business_connection || update.business_message || update.edited_business_message || update.deleted_business_messages) {
+      console.log('[BUSINESS] update received', {
+        update_id: update.update_id,
+        kind: update.business_connection ? 'business_connection'
+          : update.business_message ? 'business_message'
+          : update.edited_business_message ? 'edited_business_message'
+          : 'deleted_business_messages',
+      });
+    } else {
+      console.log('Telegram update:', JSON.stringify(update, null, 2));
+    }
+
+    // ==========================================
+    // Telegram Business / Secretary Mode
+    // ==========================================
+    if (update.business_connection) {
+      const connection = update.business_connection;
+      const connectedAt = new Date(connection.date * 1000).toISOString();
+      const { error: connectionError } = await supabase
+        .from('telegram_business_connections')
+        .upsert({
+          bot_id: botId,
+          connection_id: connection.id,
+          business_user_id: connection.user.id,
+          user_chat_id: connection.user_chat_id,
+          first_name: connection.user.first_name || null,
+          last_name: connection.user.last_name || null,
+          username: connection.user.username || null,
+          can_reply: connection.can_reply === true || (connection.rights as any)?.can_reply === true,
+          is_enabled: connection.is_enabled,
+          rights: connection.rights || {},
+          connected_at: connectedAt,
+          last_event_at: new Date().toISOString(),
+          disconnected_at: connection.is_enabled ? null : new Date().toISOString(),
+          last_error: null,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'bot_id,connection_id' });
+
+      if (connectionError) {
+        console.error('[BUSINESS] connection upsert failed', connectionError);
+        return new Response(JSON.stringify({ ok: false, error: 'business_connection_persist_failed' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_label: 'telegram-webhook',
+        action: connection.is_enabled ? 'telegram.business.connected' : 'telegram.business.disconnected',
+        meta: { bot_id: botId, connection_id: connection.id, business_user_id: connection.user.id },
+      });
+
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    const businessMessage = update.business_message || update.edited_business_message;
+    if (businessMessage) {
+      const connectionId = String(businessMessage.business_connection_id || '');
+      if (!connectionId) {
+        return new Response(JSON.stringify({ ok: false, error: 'business_connection_id_missing' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      let { data: connection } = await supabase
+        .from('telegram_business_connections')
+        .select('id, business_user_id, is_enabled')
+        .eq('bot_id', botId)
+        .eq('connection_id', connectionId)
+        .maybeSingle();
+
+      if (!connection) {
+        // The account may have been connected before this deployment enabled
+        // business_connection updates. Recover the authoritative snapshot from
+        // Telegram instead of dropping the first customer message.
+        const recovered = await telegramRequest(botToken, 'getBusinessConnection', {
+          business_connection_id: connectionId,
+        });
+        const rc = recovered?.result;
+        if (!recovered?.ok || !rc?.user?.id) {
+          console.warn('[BUSINESS] unable to recover connection snapshot', { botId, connectionId, recovered });
+          return new Response(JSON.stringify({ ok: false, error: 'business_connection_unknown' }), {
+            status: 409,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        const { data: recoveredRow, error: recoverError } = await supabase
+          .from('telegram_business_connections')
+          .upsert({
+            bot_id: botId,
+            connection_id: rc.id,
+            business_user_id: rc.user.id,
+            user_chat_id: rc.user_chat_id,
+            first_name: rc.user.first_name || null,
+            last_name: rc.user.last_name || null,
+            username: rc.user.username || null,
+            can_reply: rc.can_reply === true || rc.rights?.can_reply === true,
+            is_enabled: rc.is_enabled !== false,
+            rights: rc.rights || {},
+            last_event_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'bot_id,connection_id' })
+          .select('id, business_user_id, is_enabled')
+          .single();
+        if (recoverError || !recoveredRow) {
+          console.error('[BUSINESS] recovered connection persist failed', recoverError);
+          return new Response(JSON.stringify({ ok: false, error: 'business_connection_recovery_failed' }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        connection = recoveredRow;
+      }
+
+      const { isOwnerMessage, remote, telegramUserId } = classifyBusinessMessage(
+        businessMessage,
+        connection.business_user_id,
+      );
+      if (telegramUserId === null) {
+        return new Response(JSON.stringify({ ok: false, error: 'business_peer_missing' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      let { data: profile } = await supabase
+        .from('profiles')
+        .select('id, user_id')
+        .eq('telegram_user_id', telegramUserId)
+        .maybeSingle();
+
+      if (!profile) {
+        const firstName = String(remote?.first_name || '').trim() || null;
+        const lastName = String(remote?.last_name || '').trim() || null;
+        const username = String(remote?.username || '').trim() || null;
+        const fullName = [firstName, lastName].filter(Boolean).join(' ')
+          || (username ? `@${username}` : `Telegram ${telegramUserId}`);
+        const { data: guest, error: guestError } = await supabase
+          .from('profiles')
+          .insert({
+            user_id: null,
+            source: 'telegram_bot',
+            telegram_user_id: telegramUserId,
+            telegram_username: username,
+            first_name: firstName,
+            last_name: lastName,
+            full_name: fullName,
+            telegram_link_bot_id: botId,
+            telegram_link_status: 'guest',
+            telegram_linked_at: new Date().toISOString(),
+          })
+          .select('id, user_id')
+          .single();
+        if (guestError) {
+          console.error('[BUSINESS] guest creation failed', guestError);
+          return new Response(JSON.stringify({ ok: false, error: 'business_contact_create_failed' }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        profile = guest;
+      }
+
+      const effectiveUserId = profile.user_id || profile.id;
+      const msgAny = businessMessage as any;
+      const file = msgAny.photo?.length ? msgAny.photo[msgAny.photo.length - 1]
+        : msgAny.video || msgAny.video_note || msgAny.audio || msgAny.voice || msgAny.document || msgAny.sticker || null;
+      const fileType = msgAny.photo?.length ? 'photo'
+        : msgAny.video ? 'video'
+        : msgAny.video_note ? 'video_note'
+        : msgAny.audio ? 'audio'
+        : msgAny.voice ? 'voice'
+        : msgAny.document ? 'document'
+        : msgAny.sticker ? 'sticker'
+        : null;
+      const messageOrigin = isOwnerMessage ? 'owner_manual' : 'client';
+      const messageRow = {
+        user_id: effectiveUserId,
+        telegram_user_id: telegramUserId,
+        bot_id: botId,
+        direction: isOwnerMessage ? 'outgoing' : 'incoming',
+        message_text: msgAny.text || msgAny.caption || null,
+        message_id: msgAny.message_id,
+        reply_to_message_id: msgAny.reply_to_message?.message_id || null,
+        status: 'sent',
+        is_read: isOwnerMessage,
+        transport: 'business',
+        business_connection_id: connectionId,
+        business_account_id: connection.id,
+        message_origin: messageOrigin,
+        meta: {
+          source: 'telegram_business',
+          message_origin: messageOrigin,
+          edited: !!update.edited_business_message,
+          sender_business_bot_id: msgAny.sender_business_bot?.id || null,
+          file_type: fileType,
+          file_name: msgAny.document?.file_name || null,
+          file_id: file?.file_id || null,
+          upload_status: file?.file_id ? 'pending' : null,
+          raw: msgAny,
+        },
+      };
+
+      if (update.edited_business_message) {
+        const { data: existingMessage } = await supabase
+          .from('telegram_messages')
+          .select('id, meta')
+          .eq('bot_id', botId)
+          .eq('business_connection_id', connectionId)
+          .eq('telegram_user_id', telegramUserId)
+          .eq('message_id', msgAny.message_id)
+          .maybeSingle();
+        const editMutation = existingMessage?.id
+          ? supabase
+              .from('telegram_messages')
+              .update({
+                message_text: messageRow.message_text,
+                meta: { ...(existingMessage.meta || {}), ...messageRow.meta, edited: true },
+              })
+              .eq('id', existingMessage.id)
+          : supabase
+              .from('telegram_messages')
+              .upsert(messageRow, {
+                onConflict: 'bot_id,business_connection_id,telegram_user_id,message_id',
+                ignoreDuplicates: false,
+              });
+        const { error: editError } = await editMutation;
+        if (editError) console.error('[BUSINESS] edit sync failed', editError);
+      } else {
+        const { data: inserted, error: insertError } = await supabase
+          .from('telegram_messages')
+          .upsert(messageRow, {
+            onConflict: 'bot_id,business_connection_id,telegram_user_id,message_id',
+            ignoreDuplicates: true,
+          })
+          .select('id')
+          .maybeSingle();
+        if (insertError) {
+          console.error('[BUSINESS] message persist failed', insertError);
+          return new Response(JSON.stringify({ ok: false, error: 'business_message_persist_failed' }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        if (inserted?.id && file?.file_id) {
+          await supabase.from('media_jobs').insert({
+            message_db_id: inserted.id,
+            user_id: effectiveUserId,
+            bot_id: botId,
+            telegram_file_id: file.file_id,
+            file_type: fileType,
+            file_name: msgAny.document?.file_name || null,
+          });
+        }
+      }
+
+      // A manual reply from the Business account owner resolves the pending
+      // CRM conversation too. Keep the full history, but clear every older
+      // unread customer message in this exact Business dialog. Telegram
+      // message_id is monotonic within the private chat, so it is a safer
+      // boundary than webhook receipt time when updates arrive out of order.
+      if (isOwnerMessage && !update.edited_business_message) {
+        const ownerMessageId = Number(msgAny.message_id);
+        if (!Number.isFinite(ownerMessageId)) {
+          return new Response(JSON.stringify({ ok: false, error: 'business_owner_message_id_missing' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        const { data: markedRead, error: markReadError } = await supabase
+          .from('telegram_messages')
+          .update({ is_read: true })
+          .eq('user_id', effectiveUserId)
+          .eq('business_account_id', connection.id)
+          .eq('business_connection_id', connectionId)
+          .eq('telegram_user_id', telegramUserId)
+          .eq('direction', 'incoming')
+          .eq('is_read', false)
+          .lt('message_id', ownerMessageId)
+          .select('id');
+
+        if (markReadError) {
+          console.error('[BUSINESS] owner reply failed to clear unread messages', markReadError);
+          return new Response(JSON.stringify({ ok: false, error: 'business_owner_reply_read_sync_failed' }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        console.log('[BUSINESS] owner reply cleared unread messages', {
+          user_id: effectiveUserId,
+          business_account_id: connection.id,
+          owner_message_id: ownerMessageId,
+          marked_count: markedRead?.length || 0,
+        });
+      }
+
+      await supabase
+        .from('telegram_business_connections')
+        .update({ last_event_at: new Date().toISOString(), last_error: null, updated_at: new Date().toISOString() })
+        .eq('id', connection.id);
+
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (update.deleted_business_messages) {
+      const deleted = update.deleted_business_messages;
+      const { data: rows } = await supabase
+        .from('telegram_messages')
+        .select('id, meta')
+        .eq('bot_id', botId)
+        .eq('business_connection_id', deleted.business_connection_id)
+        .eq('telegram_user_id', deleted.chat.id)
+        .in('message_id', deleted.message_ids);
+      for (const row of rows || []) {
+        await supabase.from('telegram_messages').update({
+          message_text: null,
+          meta: { ...(row.meta || {}), deleted: true, deleted_via: 'telegram_business' },
+        }).eq('id', row.id);
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     // ==========================================
     // Handle chat_join_request - CRITICAL FOR SECURITY
@@ -1459,7 +1806,7 @@ Deno.serve(async (req) => {
                 fallback,
               }));
 
-              fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+              const pushResponse = await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -1472,7 +1819,14 @@ Deno.serve(async (req) => {
                   url: '/admin/communication',
                   tag: `tg-msg-${telegramUserId}`,
                 }),
-              }).catch(err => console.error('[Push] Send error:', err));
+              });
+              if (!pushResponse.ok) {
+                console.error(
+                  '[Push] Send failed:',
+                  pushResponse.status,
+                  await pushResponse.text(),
+                );
+              }
             }
           } catch (pushErr) {
             console.error('[Push] Admin notification error:', pushErr);

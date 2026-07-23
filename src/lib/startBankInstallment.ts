@@ -21,6 +21,7 @@ export interface StartBankInstallmentInput {
     email: string;
     comment?: string | null;
   };
+  customerCreditRequestedMinor?: number;
 }
 
 export type StartBankInstallmentResult =
@@ -52,6 +53,7 @@ export async function startBankInstallment(
           phone: input.contact.phone,
           email: input.contact.email,
           comment: input.contact.comment ?? null,
+          customer_credit_requested_minor: Math.max(0, Math.round(Number(input.customerCreditRequestedMinor ?? 0))),
         },
       },
     );

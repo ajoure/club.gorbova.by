@@ -1,9 +1,10 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { INBOX_DIALOGS_QK } from "@/constants/inboxQueryKeys";
 import { useAuth } from "@/contexts/AuthContext";
 import { normalizeTelegramSearchInput } from "@/lib/telegramSearch";
+import { sanitizeExternalDisplayName } from "@/lib/sanitizeExternalDisplayName";
 
 /**
  * useUnifiedInbox — фронтенд-нормализация трёх источников
@@ -149,7 +150,7 @@ interface Options {
   search?: string;
 }
 
-export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: Options) {
+export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: Options) {
   const { user } = useAuth();
   const serverSearch = normalizeTelegramSearchInput(search);
   const effectiveTelegramLimit = serverSearch ? 100 : perSourceLimit;
@@ -160,22 +161,34 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
   // сырые RPC-строки. Общий ключ приводил к тому, что при переключении
   // вкладок «Все» / «Telegram» компонент читал чужую форму данных из кэша
   // и показывал «Неизвестный» / пустой preview до следующего refetch.
-  const tg = useQuery({
+  const tg = useInfiniteQuery({
     queryKey: ["unified-inbox-telegram", effectiveTelegramLimit, serverSearch],
     enabled,
     staleTime: 30_000,
-    refetchInterval: 30_000,
     refetchOnWindowFocus: false,
-    queryFn: async () => {
+    queryFn: async ({ pageParam }) => {
       const { data, error } = await supabase.rpc("get_inbox_dialogs_v1", {
         p_limit: effectiveTelegramLimit,
-        p_offset: 0,
+        p_offset: pageParam,
         p_search: serverSearch || null,
       });
       if (error) throw error;
-      return (data || []) as any[];
+      const rows = (data || []) as any[];
+      return {
+        rows,
+        nextOffset:
+          rows.length === effectiveTelegramLimit
+            ? pageParam + effectiveTelegramLimit
+            : undefined,
+      };
     },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextOffset,
   });
+  const tgRows = useMemo(
+    () => tg.data?.pages.flatMap((page) => page.rows) || [],
+    [tg.data],
+  );
 
   // --- Telegram: параллельно тянем chat_preferences (pin/fav) для оператора ---
   const tgPrefs = useQuery({
@@ -194,8 +207,8 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
 
   // --- Telegram profile enrichment (avatar/name) для user_id, которых нет в telegram_messages payload ---
   const tgUserIds = useMemo(
-    () => (tg.data || []).map((d: any) => d.user_id),
-    [tg.data],
+    () => tgRows.map((d: any) => d.user_id),
+    [tgRows],
   );
   const tgProfiles = useQuery({
     queryKey: ["unified-tg-profiles", tgUserIds],
@@ -256,7 +269,9 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
           const { data, error } = await supabase.rpc("get_instagram_dialogs_v1", {
             p_account_id: accountId,
           });
-          if (error) return [] as any[];
+          if (error) {
+            throw new Error(`Instagram ${accountId}: ${error.message}`);
+          }
           return ((data || []) as any[]).map((d) => ({ ...d, __accountId: accountId }));
         }),
       );
@@ -329,13 +344,12 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
   }, [igPrefs.data]);
 
   // --- Support: тикеты, отсортированные по last_activity ---
-  const support = useQuery({
+  const support = useInfiniteQuery({
     queryKey: ["unified-support-tickets"],
     enabled,
     staleTime: 15_000,
-    refetchInterval: 30_000,
     refetchOnWindowFocus: false,
-    queryFn: async () => {
+    queryFn: async ({ pageParam }) => {
       const { data, error } = await supabase
         .from("support_tickets")
         .select(
@@ -344,22 +358,36 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
         .not("status", "in", "(closed,resolved)")
         .is("merged_into_ticket_id", null)
         .order("updated_at", { ascending: false })
-        .limit(perSourceLimit);
+        .order("id", { ascending: false })
+        .range(pageParam, pageParam + perSourceLimit - 1);
       if (error) throw error;
-      return (data || []) as any[];
+      const rows = (data || []) as any[];
+      return {
+        rows,
+        nextOffset:
+          rows.length === perSourceLimit
+            ? pageParam + perSourceLimit
+            : undefined,
+      };
     },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextOffset,
   });
+  const supportRows = useMemo(
+    () => support.data?.pages.flatMap((page) => page.rows) || [],
+    [support.data],
+  );
 
   const supportProfileIds = useMemo(
     () =>
       Array.from(
         new Set(
-          (support.data || [])
+          supportRows
             .map((t: any) => t.profile_id)
             .filter((x: any): x is string => !!x),
         ),
       ),
-    [support.data],
+    [supportRows],
   );
 
   const supportProfiles = useQuery({
@@ -398,7 +426,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
     const out: UnifiedDialog[] = [];
 
     // Telegram
-    for (const d of tg.data || []) {
+    for (const d of tgRows) {
       const p = tgProfileMap.get(d.user_id);
       const pref = tgPrefMap.get(d.user_id);
       out.push({
@@ -438,7 +466,11 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
         source: "instagram",
         sourceId: `${d.__accountId}:${d.thread_key || d.peer_id}`,
         sourceLabel: accountLabel ? `@${accountLabel}` : null,
-        displayName: d.full_name || d.sender_name || d.instagram_username || "Instagram",
+        displayName:
+          sanitizeExternalDisplayName(d.full_name) ||
+          sanitizeExternalDisplayName(d.sender_name) ||
+          sanitizeExternalDisplayName(d.instagram_username) ||
+          "Instagram",
         avatarUrl: d.avatar_url || null,
         lastMessage: d.last_message || (d.last_media_url ? "[медиа]" : ""),
         lastMessageAt: d.last_at,
@@ -455,13 +487,13 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
           instagramPeerId: d.peer_id,
           instagramUserId: d.peer_id,
           instagramContactId: igContactMap.get(`${d.__accountId}:${d.peer_id}`)?.id ?? null,
-          instagramSenderName: d.sender_name,
+          instagramSenderName: sanitizeExternalDisplayName(d.sender_name),
         },
       });
     }
 
     // Support
-    for (const t of support.data || []) {
+    for (const t of supportRows) {
       const p = t.profile_id ? supportProfileMap.get(t.profile_id) : null;
       const unread = t.has_unread_admin ? 1 : 0;
       out.push({
@@ -502,14 +534,14 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
     return out;
   }, [
     enabled,
-    tg.data,
+    tgRows,
     tgProfiles.data,
     tgPrefs.data,
     igDialogs.data,
     igAccountLabel,
     igContactMap,
     igPrefMap,
-    support.data,
+    supportRows,
     supportProfiles.data,
   ]);
 
@@ -632,7 +664,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
       support: support.error as Error | null,
     },
     counts: {
-      telegramUnread: (tg.data || []).reduce(
+      telegramUnread: tgRows.reduce(
         (s: number, d: any) => s + (Number(d.unread_count) || 0),
         0,
       ),
@@ -640,7 +672,15 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 200, search = "" }: 
         (s: number, d: any) => s + (Number(d.unread_count) || 0),
         0,
       ),
-      supportUnread: (support.data || []).filter((t: any) => t.has_unread_admin).length,
+      supportUnread: supportRows.filter((t: any) => t.has_unread_admin).length,
+    },
+    hasNextPage: !!tg.hasNextPage || !!support.hasNextPage,
+    isFetchingNextPage: tg.isFetchingNextPage || support.isFetchingNextPage,
+    fetchNextPage: async () => {
+      await Promise.all([
+        tg.hasNextPage ? tg.fetchNextPage() : Promise.resolve(),
+        support.hasNextPage ? support.fetchNextPage() : Promise.resolve(),
+      ]);
     },
   };
 }

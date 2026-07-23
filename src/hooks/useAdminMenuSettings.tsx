@@ -37,6 +37,7 @@ import {
   Video,
   KeyRound,
   Phone,
+  Gift,
   LucideIcon,
 } from "lucide-react";
 
@@ -97,6 +98,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   Video,
   KeyRound,
   Phone,
+  Gift,
 };
 
 // Default menu configuration - Reorganized structure
@@ -119,6 +121,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "entitlements", label: "Доступы", path: "/admin/entitlements", icon: "KeyRound", order: 6, permission: "entitlements.view" },
       { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 7, permission: "entitlements.view" },
       { id: "forms-hub", label: "Анкеты и данные", path: "/admin/forms", icon: "ClipboardList", order: 8, permission: "users.view" },
+      { id: "referrals", label: "Реферальная программа", path: "/admin/referrals", icon: "Gift", order: 9, permission: "users.view" },
 
     ],
   },

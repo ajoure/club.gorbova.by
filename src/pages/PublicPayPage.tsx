@@ -40,6 +40,7 @@ import { cancelOldSubscriptionForReplacement, type SubscriptionConflictInfo } fr
 import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Repeat, Plus } from 'lucide-react';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { CustomerProviderChoice } from '@/components/payments/CustomerProviderChoice';
 import { resolveProviderChoice, type CustomerProvider } from '@/utils/resolveCustomerProviderChoice';
 
@@ -108,6 +109,7 @@ export default function PublicPayPage() {
   const [conflictData, setConflictData] = useState<SubscriptionConflictInfo | null>(null);
   const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
   const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating'>('idle');
+  const [useCustomerCredit, setUseCustomerCredit] = useState(false);
 
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
@@ -147,6 +149,17 @@ export default function PublicPayPage() {
         .order('created_at', { ascending: false });
       if (error) throw error;
       return (data || []) as SavedCard[];
+    },
+    enabled: !!user?.id,
+    retry: false,
+  });
+
+  const { data: customerCredit } = useQuery({
+    queryKey: ['referral-customer-credit', user?.id],
+    queryFn: async (): Promise<{ available_minor: number; currency: string }> => {
+      const { data, error } = await (supabase.rpc as any)('referral_get_my_customer_credit');
+      if (error) throw error;
+      return data ?? { available_minor: 0, currency: 'BYN' };
     },
     enabled: !!user?.id,
     retry: false,
@@ -196,6 +209,10 @@ export default function PublicPayPage() {
       if (payerEmail) body.email = payerEmail;
       if (replacementId) body.replacement_of_subscription_v2_id = replacementId;
       if (providerChoice) body.provider_choice = providerChoice;
+      if (useCustomerCredit && customerCredit?.available_minor) {
+        body.customer_credit_requested_minor = customerCredit.available_minor;
+        body.customer_credit_checkout_key = savedCardIdempotencyKeyRef.current;
+      }
 
       // ALWAYS read access token immediately before POST (post-inline-login session)
       const { data: { session } } = await supabase.auth.getSession();
@@ -289,6 +306,10 @@ export default function PublicPayPage() {
           url_token: token,
           payment_method_id: paymentMethodId,
           idempotency_key,
+          customer_credit_requested_minor:
+            useCustomerCredit && customerCredit?.available_minor
+              ? customerCredit.available_minor
+              : 0,
         }),
       });
       const data = await res.json();
@@ -399,6 +420,11 @@ export default function PublicPayPage() {
   const priceFormatted = formatPrice(linkInfo.amount, linkInfo.currency);
   const needsIdentity = linkInfo.requires_identity_input && !user;
   const isSubscription = linkInfo.payment_type === 'subscription';
+  const customerCreditAvailable = Number(customerCredit?.available_minor ?? 0);
+  const canUseCustomerCredit = !!user && (!isSubscription || isInstallment) && customerCreditAvailable > 0;
+  const customerCreditToApply = canUseCustomerCredit && useCustomerCredit
+    ? Math.min(customerCreditAvailable, Math.max(0, linkInfo.amount - 100))
+    : 0;
 
   // PAY-D visibility: NULL OR equal — public link OR personal link of current user.
   const ownsOrPublic =
@@ -537,6 +563,31 @@ export default function PublicPayPage() {
                 </>
               )}
             </div>
+
+            {canUseCustomerCredit && (
+              <label className="mb-6 flex cursor-pointer items-start gap-3 rounded-lg border bg-primary/5 p-4 text-left">
+                <Checkbox
+                  checked={useCustomerCredit}
+                  onCheckedChange={(checked) => setUseCustomerCredit(checked === true)}
+                  className="mt-0.5"
+                />
+                <span className="space-y-1">
+                  <span className="block text-sm font-medium">Использовать накопленную скидку</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Доступно {(customerCreditAvailable / 100).toFixed(2)} BYN
+                    {useCustomerCredit && customerCreditToApply > 0
+                      ? ` · к оплате будет зачтено ${(customerCreditToApply / 100).toFixed(2)} BYN`
+                      : ''}
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {isSubscription && !isInstallment && customerCreditAvailable > 0 && (
+              <p className="mb-6 rounded-lg border border-amber-500/30 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-950/20 dark:text-amber-200">
+                Накопленная скидка не применяется к подписке с автоплатежом. Её можно использовать при следующей разовой покупке или рассрочке.
+              </p>
+            )}
 
             {/* Non-identity payment errors only — identity errors stay inside form */}
             {error && (

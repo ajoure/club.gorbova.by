@@ -115,7 +115,7 @@ export function OrderListItem({ order }: OrderListItemProps) {
   const generateDoc = async () => {
     setIsGenerating(true);
     try {
-      const { data, error } = await invokeAuthenticatedFunction(
+      const { data, error } = await invokeAuthenticatedFunction<{ error?: string; document_id?: string; file_mime?: string }>(
         "canonical-document-generate-strict",
         { order_id: order.id, mode: "generate" },
       );

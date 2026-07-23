@@ -963,6 +963,9 @@ serve(async (req) => {
       last_check_at: new Date().toISOString(),
       error_message: errorMessage,
     };
+    if (success) {
+      updatePayload.last_successful_sync_at = new Date().toISOString();
+    }
     if (provider === "rr") {
       if (rrOverall === "connected") {
         updatePayload.status = "connected";

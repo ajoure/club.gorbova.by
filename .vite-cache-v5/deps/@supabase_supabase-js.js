@@ -120,7 +120,9 @@ var FunctionsClient = class {
    * @category Edge Functions
    *
    * @remarks
-   * - Requires an Authorization header.
+   * - The API key is sent in the `apikey` header. The `Authorization` header is reserved
+   *   for the signed-in user's JWT (or a custom auth token) — when there is no session, a
+   *   new-format API key (`sb_publishable_…` / `sb_secret_…`) is not sent as a Bearer token.
    * - Invoke params generally match the [Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) spec.
    * - When you pass in a body to your function, we automatically attach the Content-Type header for `Blob`, `ArrayBuffer`, `File`, `FormData` and `String`. If it doesn't match any of these types we assume the payload is `json`, serialize it and attach the `Content-Type` header as `application/json`. You can override this behavior by passing in a `Content-Type` header of your own.
    * - Responses are automatically parsed as `json`, `blob` and `form-data` depending on the `Content-Type` header sent by your function. Responses are parsed as `text` by default.
@@ -249,7 +251,8 @@ var FunctionsClient = class {
           url.searchParams.set("forceFunctionRegion", region);
         }
         let body;
-        if (functionArgs && (headers && !Object.prototype.hasOwnProperty.call(headers, "Content-Type") || !headers)) {
+        const hasContentTypeHeader = !!headers && Object.keys(headers).some((key) => key.toLowerCase() === "content-type");
+        if (functionArgs && !hasContentTypeHeader) {
           if (typeof Blob !== "undefined" && functionArgs instanceof Blob || functionArgs instanceof ArrayBuffer) {
             _headers["Content-Type"] = "application/octet-stream";
             body = functionArgs;
@@ -1774,434 +1777,54 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
     this.url.searchParams.append(column, `neq.${value}`);
     return this;
   }
-  /**
-  * Match only rows where `column` is greater than `value`.
-  *
-  * @param column - The column to filter on
-  * @param value - The value to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @exampleDescription With `select()`
-  * When using [reserved words](https://www.postgresql.org/docs/current/sql-keywords-appendix.html) for column names you need
-  * to add double quotes e.g. `.gt('"order"', 2)`
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('characters')
-  *   .select()
-  *   .gt('id', 2)
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   characters (id int8 primary key, name text);
-  *
-  * insert into
-  *   characters (id, name)
-  * values
-  *   (1, 'Luke'),
-  *   (2, 'Leia'),
-  *   (3, 'Han');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 3,
-  *       "name": "Han"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   gt(column, value) {
     this.url.searchParams.append(column, `gt.${value}`);
     return this;
   }
-  /**
-  * Match only rows where `column` is greater than or equal to `value`.
-  *
-  * @param column - The column to filter on
-  * @param value - The value to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('characters')
-  *   .select()
-  *   .gte('id', 2)
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   characters (id int8 primary key, name text);
-  *
-  * insert into
-  *   characters (id, name)
-  * values
-  *   (1, 'Luke'),
-  *   (2, 'Leia'),
-  *   (3, 'Han');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 2,
-  *       "name": "Leia"
-  *     },
-  *     {
-  *       "id": 3,
-  *       "name": "Han"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   gte(column, value) {
     this.url.searchParams.append(column, `gte.${value}`);
     return this;
   }
-  /**
-  * Match only rows where `column` is less than `value`.
-  *
-  * @param column - The column to filter on
-  * @param value - The value to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('characters')
-  *   .select()
-  *   .lt('id', 2)
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   characters (id int8 primary key, name text);
-  *
-  * insert into
-  *   characters (id, name)
-  * values
-  *   (1, 'Luke'),
-  *   (2, 'Leia'),
-  *   (3, 'Han');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 1,
-  *       "name": "Luke"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   lt(column, value) {
     this.url.searchParams.append(column, `lt.${value}`);
     return this;
   }
-  /**
-  * Match only rows where `column` is less than or equal to `value`.
-  *
-  * @param column - The column to filter on
-  * @param value - The value to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('characters')
-  *   .select()
-  *   .lte('id', 2)
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   characters (id int8 primary key, name text);
-  *
-  * insert into
-  *   characters (id, name)
-  * values
-  *   (1, 'Luke'),
-  *   (2, 'Leia'),
-  *   (3, 'Han');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 1,
-  *       "name": "Luke"
-  *     },
-  *     {
-  *       "id": 2,
-  *       "name": "Leia"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   lte(column, value) {
     this.url.searchParams.append(column, `lte.${value}`);
     return this;
   }
-  /**
-  * Match only rows where `column` matches `pattern` case-sensitively.
-  *
-  * @param column - The column to filter on
-  * @param pattern - The pattern to match with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('characters')
-  *   .select()
-  *   .like('name', '%Lu%')
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   characters (id int8 primary key, name text);
-  *
-  * insert into
-  *   characters (id, name)
-  * values
-  *   (1, 'Luke'),
-  *   (2, 'Leia'),
-  *   (3, 'Han');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 1,
-  *       "name": "Luke"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   like(column, pattern) {
     this.url.searchParams.append(column, `like.${pattern}`);
     return this;
   }
-  /**
-  * Match only rows where `column` matches all of `patterns` case-sensitively.
-  *
-  * @param column - The column to filter on
-  * @param patterns - The patterns to match with
-  *
-  * @category Database
-  * @subcategory Using filters
-  */
   likeAllOf(column, patterns) {
     this.url.searchParams.append(column, `like(all).{${patterns.join(",")}}`);
     return this;
   }
-  /**
-  * Match only rows where `column` matches any of `patterns` case-sensitively.
-  *
-  * @param column - The column to filter on
-  * @param patterns - The patterns to match with
-  *
-  * @category Database
-  * @subcategory Using filters
-  */
   likeAnyOf(column, patterns) {
     this.url.searchParams.append(column, `like(any).{${patterns.join(",")}}`);
     return this;
   }
-  /**
-  * Match only rows where `column` matches `pattern` case-insensitively.
-  *
-  * @param column - The column to filter on
-  * @param pattern - The pattern to match with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('characters')
-  *   .select()
-  *   .ilike('name', '%lu%')
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   characters (id int8 primary key, name text);
-  *
-  * insert into
-  *   characters (id, name)
-  * values
-  *   (1, 'Luke'),
-  *   (2, 'Leia'),
-  *   (3, 'Han');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 1,
-  *       "name": "Luke"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   ilike(column, pattern) {
     this.url.searchParams.append(column, `ilike.${pattern}`);
     return this;
   }
-  /**
-  * Match only rows where `column` matches all of `patterns` case-insensitively.
-  *
-  * @param column - The column to filter on
-  * @param patterns - The patterns to match with
-  *
-  * @category Database
-  * @subcategory Using filters
-  */
   ilikeAllOf(column, patterns) {
     this.url.searchParams.append(column, `ilike(all).{${patterns.join(",")}}`);
     return this;
   }
-  /**
-  * Match only rows where `column` matches any of `patterns` case-insensitively.
-  *
-  * @param column - The column to filter on
-  * @param patterns - The patterns to match with
-  *
-  * @category Database
-  * @subcategory Using filters
-  */
   ilikeAnyOf(column, patterns) {
     this.url.searchParams.append(column, `ilike(any).{${patterns.join(",")}}`);
     return this;
   }
-  /**
-  * Match only rows where `column` matches the PostgreSQL regex `pattern`
-  * case-sensitively (using the `~` operator).
-  *
-  * @param column - The column to filter on
-  * @param pattern - The PostgreSQL regular expression pattern to match with
-  */
   regexMatch(column, pattern) {
     this.url.searchParams.append(column, `match.${pattern}`);
     return this;
   }
-  /**
-  * Match only rows where `column` matches the PostgreSQL regex `pattern`
-  * case-insensitively (using the `~*` operator).
-  *
-  * @param column - The column to filter on
-  * @param pattern - The PostgreSQL regular expression pattern to match with
-  */
   regexIMatch(column, pattern) {
     this.url.searchParams.append(column, `imatch.${pattern}`);
     return this;
   }
-  /**
-  * Match only rows where `column` IS `value`.
-  *
-  * For non-boolean columns, this is only relevant for checking if the value of
-  * `column` is NULL by setting `value` to `null`.
-  *
-  * For boolean columns, you can also set `value` to `true` or `false` and it
-  * will behave the same way as `.eq()`.
-  *
-  * @param column - The column to filter on
-  * @param value - The value to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @exampleDescription Checking for nullness, true or false
-  * Using the `eq()` filter doesn't work when filtering for `null`.
-  *
-  * Instead, you need to use `is()`.
-  *
-  * @example Checking for nullness, true or false
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('countries')
-  *   .select()
-  *   .is('name', null)
-  * ```
-  *
-  * @exampleSql Checking for nullness, true or false
-  * ```sql
-  * create table
-  *   countries (id int8 primary key, name text);
-  *
-  * insert into
-  *   countries (id, name)
-  * values
-  *   (1, 'null'),
-  *   (2, null);
-  * ```
-  *
-  * @exampleResponse Checking for nullness, true or false
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 2,
-  *       "name": "null"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   is(column, value) {
     this.url.searchParams.append(column, `is.${value}`);
     return this;
@@ -2290,779 +1913,43 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
     this.url.searchParams.append(column, `not.in.(${cleanedValues})`);
     return this;
   }
-  /**
-  * Only relevant for jsonb, array, and range columns. Match only rows where
-  * `column` contains every element appearing in `value`.
-  *
-  * @param column - The jsonb, array, or range column to filter on
-  * @param value - The jsonb, array, or range value to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @example On array columns
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('issues')
-  *   .select()
-  *   .contains('tags', ['is:open', 'priority:low'])
-  * ```
-  *
-  * @exampleSql On array columns
-  * ```sql
-  * create table
-  *   issues (
-  *     id int8 primary key,
-  *     title text,
-  *     tags text[]
-  *   );
-  *
-  * insert into
-  *   issues (id, title, tags)
-  * values
-  *   (1, 'Cache invalidation is not working', array['is:open', 'severity:high', 'priority:low']),
-  *   (2, 'Use better names', array['is:open', 'severity:low', 'priority:medium']);
-  * ```
-  *
-  * @exampleResponse On array columns
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "title": "Cache invalidation is not working"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  *
-  * @exampleDescription On range columns
-  * Postgres supports a number of [range
-  * types](https://www.postgresql.org/docs/current/rangetypes.html). You
-  * can filter on range columns using the string representation of range
-  * values.
-  *
-  * @example On range columns
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('reservations')
-  *   .select()
-  *   .contains('during', '[2000-01-01 13:00, 2000-01-01 13:30)')
-  * ```
-  *
-  * @exampleSql On range columns
-  * ```sql
-  * create table
-  *   reservations (
-  *     id int8 primary key,
-  *     room_name text,
-  *     during tsrange
-  *   );
-  *
-  * insert into
-  *   reservations (id, room_name, during)
-  * values
-  *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'),
-  *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)');
-  * ```
-  *
-  * @exampleResponse On range columns
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 1,
-  *       "room_name": "Emerald",
-  *       "during": "[\"2000-01-01 13:00:00\",\"2000-01-01 15:00:00\")"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  *
-  * @example On `jsonb` columns
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('users')
-  *   .select('name')
-  *   .contains('address', { postcode: 90210 })
-  * ```
-  *
-  * @exampleSql On `jsonb` columns
-  * ```sql
-  * create table
-  *   users (
-  *     id int8 primary key,
-  *     name text,
-  *     address jsonb
-  *   );
-  *
-  * insert into
-  *   users (id, name, address)
-  * values
-  *   (1, 'Michael', '{ "postcode": 90210, "street": "Melrose Place" }'),
-  *   (2, 'Jane', '{}');
-  * ```
-  *
-  * @exampleResponse On `jsonb` columns
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "name": "Michael"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   contains(column, value) {
     if (typeof value === "string") this.url.searchParams.append(column, `cs.${value}`);
     else if (Array.isArray(value)) this.url.searchParams.append(column, `cs.{${value.join(",")}}`);
     else this.url.searchParams.append(column, `cs.${JSON.stringify(value)}`);
     return this;
   }
-  /**
-  * Only relevant for jsonb, array, and range columns. Match only rows where
-  * every element appearing in `column` is contained by `value`.
-  *
-  * @param column - The jsonb, array, or range column to filter on
-  * @param value - The jsonb, array, or range value to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @example On array columns
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('classes')
-  *   .select('name')
-  *   .containedBy('days', ['monday', 'tuesday', 'wednesday', 'friday'])
-  * ```
-  *
-  * @exampleSql On array columns
-  * ```sql
-  * create table
-  *   classes (
-  *     id int8 primary key,
-  *     name text,
-  *     days text[]
-  *   );
-  *
-  * insert into
-  *   classes (id, name, days)
-  * values
-  *   (1, 'Chemistry', array['monday', 'friday']),
-  *   (2, 'History', array['monday', 'wednesday', 'thursday']);
-  * ```
-  *
-  * @exampleResponse On array columns
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "name": "Chemistry"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  *
-  * @exampleDescription On range columns
-  * Postgres supports a number of [range
-  * types](https://www.postgresql.org/docs/current/rangetypes.html). You
-  * can filter on range columns using the string representation of range
-  * values.
-  *
-  * @example On range columns
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('reservations')
-  *   .select()
-  *   .containedBy('during', '[2000-01-01 00:00, 2000-01-01 23:59)')
-  * ```
-  *
-  * @exampleSql On range columns
-  * ```sql
-  * create table
-  *   reservations (
-  *     id int8 primary key,
-  *     room_name text,
-  *     during tsrange
-  *   );
-  *
-  * insert into
-  *   reservations (id, room_name, during)
-  * values
-  *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'),
-  *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)');
-  * ```
-  *
-  * @exampleResponse On range columns
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 1,
-  *       "room_name": "Emerald",
-  *       "during": "[\"2000-01-01 13:00:00\",\"2000-01-01 15:00:00\")"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  *
-  * @example On `jsonb` columns
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('users')
-  *   .select('name')
-  *   .containedBy('address', {})
-  * ```
-  *
-  * @exampleSql On `jsonb` columns
-  * ```sql
-  * create table
-  *   users (
-  *     id int8 primary key,
-  *     name text,
-  *     address jsonb
-  *   );
-  *
-  * insert into
-  *   users (id, name, address)
-  * values
-  *   (1, 'Michael', '{ "postcode": 90210, "street": "Melrose Place" }'),
-  *   (2, 'Jane', '{}');
-  * ```
-  *
-  * @exampleResponse On `jsonb` columns
-  * ```json
-  *   {
-  *     "data": [
-  *       {
-  *         "name": "Jane"
-  *       }
-  *     ],
-  *     "status": 200,
-  *     "statusText": "OK"
-  *   }
-  *
-  * ```
-  */
   containedBy(column, value) {
     if (typeof value === "string") this.url.searchParams.append(column, `cd.${value}`);
     else if (Array.isArray(value)) this.url.searchParams.append(column, `cd.{${value.join(",")}}`);
     else this.url.searchParams.append(column, `cd.${JSON.stringify(value)}`);
     return this;
   }
-  /**
-  * Only relevant for range columns. Match only rows where every element in
-  * `column` is greater than any element in `range`.
-  *
-  * @param column - The range column to filter on
-  * @param range - The range to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @exampleDescription With `select()`
-  * Postgres supports a number of [range
-  * types](https://www.postgresql.org/docs/current/rangetypes.html). You
-  * can filter on range columns using the string representation of range
-  * values.
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('reservations')
-  *   .select()
-  *   .rangeGt('during', '[2000-01-02 08:00, 2000-01-02 09:00)')
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   reservations (
-  *     id int8 primary key,
-  *     room_name text,
-  *     during tsrange
-  *   );
-  *
-  * insert into
-  *   reservations (id, room_name, during)
-  * values
-  *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'),
-  *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  *   {
-  *     "data": [
-  *       {
-  *         "id": 2,
-  *         "room_name": "Topaz",
-  *         "during": "[\"2000-01-02 09:00:00\",\"2000-01-02 10:00:00\")"
-  *       }
-  *     ],
-  *     "status": 200,
-  *     "statusText": "OK"
-  *   }
-  *
-  * ```
-  */
   rangeGt(column, range) {
     this.url.searchParams.append(column, `sr.${range}`);
     return this;
   }
-  /**
-  * Only relevant for range columns. Match only rows where every element in
-  * `column` is either contained in `range` or greater than any element in
-  * `range`.
-  *
-  * @param column - The range column to filter on
-  * @param range - The range to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @exampleDescription With `select()`
-  * Postgres supports a number of [range
-  * types](https://www.postgresql.org/docs/current/rangetypes.html). You
-  * can filter on range columns using the string representation of range
-  * values.
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('reservations')
-  *   .select()
-  *   .rangeGte('during', '[2000-01-02 08:30, 2000-01-02 09:30)')
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   reservations (
-  *     id int8 primary key,
-  *     room_name text,
-  *     during tsrange
-  *   );
-  *
-  * insert into
-  *   reservations (id, room_name, during)
-  * values
-  *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'),
-  *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  *   {
-  *     "data": [
-  *       {
-  *         "id": 2,
-  *         "room_name": "Topaz",
-  *         "during": "[\"2000-01-02 09:00:00\",\"2000-01-02 10:00:00\")"
-  *       }
-  *     ],
-  *     "status": 200,
-  *     "statusText": "OK"
-  *   }
-  *
-  * ```
-  */
   rangeGte(column, range) {
     this.url.searchParams.append(column, `nxl.${range}`);
     return this;
   }
-  /**
-  * Only relevant for range columns. Match only rows where every element in
-  * `column` is less than any element in `range`.
-  *
-  * @param column - The range column to filter on
-  * @param range - The range to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @exampleDescription With `select()`
-  * Postgres supports a number of [range
-  * types](https://www.postgresql.org/docs/current/rangetypes.html). You
-  * can filter on range columns using the string representation of range
-  * values.
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('reservations')
-  *   .select()
-  *   .rangeLt('during', '[2000-01-01 15:00, 2000-01-01 16:00)')
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   reservations (
-  *     id int8 primary key,
-  *     room_name text,
-  *     during tsrange
-  *   );
-  *
-  * insert into
-  *   reservations (id, room_name, during)
-  * values
-  *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'),
-  *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 1,
-  *       "room_name": "Emerald",
-  *       "during": "[\"2000-01-01 13:00:00\",\"2000-01-01 15:00:00\")"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   rangeLt(column, range) {
     this.url.searchParams.append(column, `sl.${range}`);
     return this;
   }
-  /**
-  * Only relevant for range columns. Match only rows where every element in
-  * `column` is either contained in `range` or less than any element in
-  * `range`.
-  *
-  * @param column - The range column to filter on
-  * @param range - The range to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @exampleDescription With `select()`
-  * Postgres supports a number of [range
-  * types](https://www.postgresql.org/docs/current/rangetypes.html). You
-  * can filter on range columns using the string representation of range
-  * values.
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('reservations')
-  *   .select()
-  *   .rangeLte('during', '[2000-01-01 14:00, 2000-01-01 16:00)')
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   reservations (
-  *     id int8 primary key,
-  *     room_name text,
-  *     during tsrange
-  *   );
-  *
-  * insert into
-  *   reservations (id, room_name, during)
-  * values
-  *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'),
-  *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  *   {
-  *     "data": [
-  *       {
-  *         "id": 1,
-  *         "room_name": "Emerald",
-  *         "during": "[\"2000-01-01 13:00:00\",\"2000-01-01 15:00:00\")"
-  *       }
-  *     ],
-  *     "status": 200,
-  *     "statusText": "OK"
-  *   }
-  *
-  * ```
-  */
   rangeLte(column, range) {
     this.url.searchParams.append(column, `nxr.${range}`);
     return this;
   }
-  /**
-  * Only relevant for range columns. Match only rows where `column` is
-  * mutually exclusive to `range` and there can be no element between the two
-  * ranges.
-  *
-  * @param column - The range column to filter on
-  * @param range - The range to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @exampleDescription With `select()`
-  * Postgres supports a number of [range
-  * types](https://www.postgresql.org/docs/current/rangetypes.html). You
-  * can filter on range columns using the string representation of range
-  * values.
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('reservations')
-  *   .select()
-  *   .rangeAdjacent('during', '[2000-01-01 12:00, 2000-01-01 13:00)')
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   reservations (
-  *     id int8 primary key,
-  *     room_name text,
-  *     during tsrange
-  *   );
-  *
-  * insert into
-  *   reservations (id, room_name, during)
-  * values
-  *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'),
-  *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 1,
-  *       "room_name": "Emerald",
-  *       "during": "[\"2000-01-01 13:00:00\",\"2000-01-01 15:00:00\")"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   rangeAdjacent(column, range) {
     this.url.searchParams.append(column, `adj.${range}`);
     return this;
   }
-  /**
-  * Only relevant for array and range columns. Match only rows where
-  * `column` and `value` have an element in common.
-  *
-  * @param column - The array or range column to filter on
-  * @param value - The array or range value to filter with
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @example On array columns
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('issues')
-  *   .select('title')
-  *   .overlaps('tags', ['is:closed', 'severity:high'])
-  * ```
-  *
-  * @exampleSql On array columns
-  * ```sql
-  * create table
-  *   issues (
-  *     id int8 primary key,
-  *     title text,
-  *     tags text[]
-  *   );
-  *
-  * insert into
-  *   issues (id, title, tags)
-  * values
-  *   (1, 'Cache invalidation is not working', array['is:open', 'severity:high', 'priority:low']),
-  *   (2, 'Use better names', array['is:open', 'severity:low', 'priority:medium']);
-  * ```
-  *
-  * @exampleResponse On array columns
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "title": "Cache invalidation is not working"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  *
-  * @exampleDescription On range columns
-  * Postgres supports a number of [range
-  * types](https://www.postgresql.org/docs/current/rangetypes.html). You
-  * can filter on range columns using the string representation of range
-  * values.
-  *
-  * @example On range columns
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('reservations')
-  *   .select()
-  *   .overlaps('during', '[2000-01-01 12:45, 2000-01-01 13:15)')
-  * ```
-  *
-  * @exampleSql On range columns
-  * ```sql
-  * create table
-  *   reservations (
-  *     id int8 primary key,
-  *     room_name text,
-  *     during tsrange
-  *   );
-  *
-  * insert into
-  *   reservations (id, room_name, during)
-  * values
-  *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'),
-  *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)');
-  * ```
-  *
-  * @exampleResponse On range columns
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 1,
-  *       "room_name": "Emerald",
-  *       "during": "[\"2000-01-01 13:00:00\",\"2000-01-01 15:00:00\")"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   overlaps(column, value) {
     if (typeof value === "string") this.url.searchParams.append(column, `ov.${value}`);
     else this.url.searchParams.append(column, `ov.{${value.join(",")}}`);
     return this;
   }
-  /**
-  * Only relevant for text and tsvector columns. Match only rows where
-  * `column` matches the query string in `query`.
-  *
-  * @param column - The text or tsvector column to filter on
-  * @param query - The query text to match with
-  * @param options - Named parameters
-  * @param options.config - The text search configuration to use
-  * @param options.type - Change how the `query` text is interpreted
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @remarks
-  * - For more information, see [Postgres full text search](/docs/guides/database/full-text-search).
-  *
-  * @example Text search
-  * ```ts
-  * const result = await supabase
-  *   .from("texts")
-  *   .select("content")
-  *   .textSearch("content", `'eggs' & 'ham'`, {
-  *     config: "english",
-  *   });
-  * ```
-  *
-  * @exampleSql Text search
-  * ```sql
-  * create table texts (
-  *   id      bigint
-  *           primary key
-  *           generated always as identity,
-  *   content text
-  * );
-  *
-  * insert into texts (content) values
-  *     ('Four score and seven years ago'),
-  *     ('The road goes ever on and on'),
-  *     ('Green eggs and ham')
-  * ;
-  * ```
-  *
-  * @exampleResponse Text search
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "content": "Green eggs and ham"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  *
-  * @exampleDescription Basic normalization
-  * Uses PostgreSQL's `plainto_tsquery` function.
-  *
-  * @example Basic normalization
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('quotes')
-  *   .select('catchphrase')
-  *   .textSearch('catchphrase', `'fat' & 'cat'`, {
-  *     type: 'plain',
-  *     config: 'english'
-  *   })
-  * ```
-  *
-  * @exampleDescription Full normalization
-  * Uses PostgreSQL's `phraseto_tsquery` function.
-  *
-  * @example Full normalization
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('quotes')
-  *   .select('catchphrase')
-  *   .textSearch('catchphrase', `'fat' & 'cat'`, {
-  *     type: 'phrase',
-  *     config: 'english'
-  *   })
-  * ```
-  *
-  * @exampleDescription Websearch
-  * Uses PostgreSQL's `websearch_to_tsquery` function.
-  * This function will never raise syntax errors, which makes it possible to use raw user-supplied input for search, and can be used
-  * with advanced operators.
-  *
-  * - `unquoted text`: text not inside quote marks will be converted to terms separated by & operators, as if processed by plainto_tsquery.
-  * - `"quoted text"`: text inside quote marks will be converted to terms separated by `<->` operators, as if processed by phraseto_tsquery.
-  * - `OR`: the word “or” will be converted to the | operator.
-  * - `-`: a dash will be converted to the ! operator.
-  *
-  * @example Websearch
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('quotes')
-  *   .select('catchphrase')
-  *   .textSearch('catchphrase', `'fat or cat'`, {
-  *     type: 'websearch',
-  *     config: 'english'
-  *   })
-  * ```
-  */
   textSearch(column, query, { config, type } = {}) {
     let typePart = "";
     if (type === "plain") typePart = "pl";
@@ -3072,50 +1959,6 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
     this.url.searchParams.append(column, `${typePart}fts${configPart}.${query}`);
     return this;
   }
-  /**
-  * Match only rows where each column in `query` keys is equal to its
-  * associated value. Shorthand for multiple `.eq()`s.
-  *
-  * @param query - The object to filter with, with column names as keys mapped
-  * to their filter values
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('characters')
-  *   .select('name')
-  *   .match({ id: 2, name: 'Leia' })
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   characters (id int8 primary key, name text);
-  *
-  * insert into
-  *   characters (id, name)
-  * values
-  *   (1, 'Luke'),
-  *   (2, 'Leia'),
-  *   (3, 'Han');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "name": "Leia"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   match(query) {
     Object.entries(query).filter(([_, value]) => value !== void 0).forEach(([column, value]) => {
       this.url.searchParams.append(column, `eq.${value}`);
@@ -3341,119 +2184,6 @@ var PostgrestFilterBuilder = class extends PostgrestTransformBuilder {
     this.url.searchParams.append(key, `(${filters})`);
     return this;
   }
-  /**
-  * Match only rows which satisfy the filter. This is an escape hatch - you
-  * should use the specific filter methods wherever possible.
-  *
-  * Unlike most filters, `opearator` and `value` are used as-is and need to
-  * follow [PostgREST
-  * syntax](https://postgrest.org/en/stable/api.html#operators). You also need
-  * to make sure they are properly sanitized.
-  *
-  * @param column - The column to filter on
-  * @param operator - The operator to filter with, following PostgREST syntax
-  * @param value - The value to filter with, following PostgREST syntax
-  *
-  * @category Database
-  * @subcategory Using filters
-  *
-  * @remarks
-  * filter() expects you to use the raw PostgREST syntax for the filter values.
-  *
-  * ```ts
-  * .filter('id', 'in', '(5,6,7)')  // Use `()` for `in` filter
-  * .filter('arraycol', 'cs', '{"a","b"}')  // Use `cs` for `contains()`, `{}` for array values
-  * ```
-  *
-  * @example With `select()`
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('characters')
-  *   .select()
-  *   .filter('name', 'in', '("Han","Yoda")')
-  * ```
-  *
-  * @exampleSql With `select()`
-  * ```sql
-  * create table
-  *   characters (id int8 primary key, name text);
-  *
-  * insert into
-  *   characters (id, name)
-  * values
-  *   (1, 'Luke'),
-  *   (2, 'Leia'),
-  *   (3, 'Han');
-  * ```
-  *
-  * @exampleResponse With `select()`
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "id": 3,
-  *       "name": "Han"
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  *
-  * @example On a referenced table
-  * ```ts
-  * const { data, error } = await supabase
-  *   .from('orchestral_sections')
-  *   .select(`
-  *     name,
-  *     instruments!inner (
-  *       name
-  *     )
-  *   `)
-  *   .filter('instruments.name', 'eq', 'flute')
-  * ```
-  *
-  * @exampleSql On a referenced table
-  * ```sql
-  * create table
-  *   orchestral_sections (id int8 primary key, name text);
-  * create table
-  *    instruments (
-  *     id int8 primary key,
-  *     section_id int8 not null references orchestral_sections,
-  *     name text
-  *   );
-  *
-  * insert into
-  *   orchestral_sections (id, name)
-  * values
-  *   (1, 'strings'),
-  *   (2, 'woodwinds');
-  * insert into
-  *   instruments (id, section_id, name)
-  * values
-  *   (1, 2, 'flute'),
-  *   (2, 1, 'violin');
-  * ```
-  *
-  * @exampleResponse On a referenced table
-  * ```json
-  * {
-  *   "data": [
-  *     {
-  *       "name": "woodwinds",
-  *       "instruments": [
-  *         {
-  *           "name": "flute"
-  *         }
-  *       ]
-  *     }
-  *   ],
-  *   "status": 200,
-  *   "statusText": "OK"
-  * }
-  * ```
-  */
   filter(column, operator, value) {
     this.url.searchParams.append(column, `${operator}.${value}`);
     return this;
@@ -5151,13 +3881,6 @@ var PostgrestClient = class PostgrestClient2 {
     else this.fetch = originalFetch;
     this.retry = retry;
   }
-  /**
-  * Perform a query on a table or a view.
-  *
-  * @param relation - The table or view name to query
-  *
-  * @category Database
-  */
   from(relation) {
     if (!relation || typeof relation !== "string" || relation.trim() === "") throw new Error("Invalid relation name: relation must be a non-empty string.");
     return new PostgrestQueryBuilder(new URL(`${this.url}/${relation}`), {
@@ -5424,22 +4147,10 @@ var WebSocketFactory = class {
     if (_process) {
       const processVersions = _process["versions"];
       if (processVersions && processVersions["node"]) {
-        const versionString = processVersions["node"];
-        const nodeVersion = parseInt(versionString.replace(/^v/, "").split(".")[0]);
-        if (nodeVersion >= 22) {
-          if (typeof globalThis.WebSocket !== "undefined") {
-            return { type: "native", wsConstructor: globalThis.WebSocket };
-          }
-          return {
-            type: "unsupported",
-            error: `Node.js ${nodeVersion} detected but native WebSocket not found.`,
-            workaround: "Provide a WebSocket implementation via the transport option."
-          };
-        }
         return {
           type: "unsupported",
-          error: `Node.js ${nodeVersion} detected without native WebSocket support.`,
-          workaround: 'For Node.js < 22, install "ws" package and provide it via the transport option:\nimport ws from "ws"\nnew RealtimeClient(url, { transport: ws })'
+          error: "Node.js detected but native WebSocket not found.",
+          workaround: "Ensure you are running Node.js 22+ or provide a WebSocket implementation via the transport option."
         };
       }
     }
@@ -5493,7 +4204,7 @@ Suggested solution: ${env.workaround}`;
   static isWebSocketSupported() {
     try {
       const env = this.detectEnvironment();
-      return env.type === "native" || env.type === "ws";
+      return env.type === "native";
     } catch (_a) {
       return false;
     }
@@ -5502,7 +4213,7 @@ Suggested solution: ${env.workaround}`;
 var websocket_factory_default = WebSocketFactory;
 
 // node_modules/@supabase/realtime-js/dist/module/lib/version.js
-var version = "2.108.2";
+var version = "2.110.7";
 
 // node_modules/@supabase/realtime-js/dist/module/lib/constants.js
 var DEFAULT_VERSION = `realtime-js/${version}`;
@@ -5574,12 +4285,13 @@ var Serializer = class {
   }
   _encodeUserBroadcastPush(message, encodingType, encodedPayload) {
     var _a, _b;
-    const topic = message.topic;
-    const ref = (_a = message.ref) !== null && _a !== void 0 ? _a : "";
-    const joinRef = (_b = message.join_ref) !== null && _b !== void 0 ? _b : "";
-    const userEvent = message.payload.event;
+    const encoder = new TextEncoder();
+    const topic = encoder.encode(message.topic);
+    const ref = encoder.encode((_a = message.ref) !== null && _a !== void 0 ? _a : "");
+    const joinRef = encoder.encode((_b = message.join_ref) !== null && _b !== void 0 ? _b : "");
+    const userEvent = encoder.encode(message.payload.event);
     const rest = this.allowedMetadataKeys ? this._pick(message.payload, this.allowedMetadataKeys) : {};
-    const metadata = Object.keys(rest).length === 0 ? "" : JSON.stringify(rest);
+    const metadata = encoder.encode(Object.keys(rest).length === 0 ? "" : JSON.stringify(rest));
     if (joinRef.length > 255) {
       throw new Error(`joinRef length ${joinRef.length} exceeds maximum of 255`);
     }
@@ -5597,7 +4309,8 @@ var Serializer = class {
     }
     const metaLength = this.USER_BROADCAST_PUSH_META_LENGTH + joinRef.length + ref.length + topic.length + userEvent.length + metadata.length;
     const header = new ArrayBuffer(this.HEADER_LENGTH + metaLength);
-    let view = new DataView(header);
+    const view = new DataView(header);
+    const bytes = new Uint8Array(header);
     let offset = 0;
     view.setUint8(offset++, this.KINDS.userBroadcastPush);
     view.setUint8(offset++, joinRef.length);
@@ -5606,11 +4319,16 @@ var Serializer = class {
     view.setUint8(offset++, userEvent.length);
     view.setUint8(offset++, metadata.length);
     view.setUint8(offset++, encodingType);
-    Array.from(joinRef, (char) => view.setUint8(offset++, char.charCodeAt(0)));
-    Array.from(ref, (char) => view.setUint8(offset++, char.charCodeAt(0)));
-    Array.from(topic, (char) => view.setUint8(offset++, char.charCodeAt(0)));
-    Array.from(userEvent, (char) => view.setUint8(offset++, char.charCodeAt(0)));
-    Array.from(metadata, (char) => view.setUint8(offset++, char.charCodeAt(0)));
+    bytes.set(joinRef, offset);
+    offset += joinRef.length;
+    bytes.set(ref, offset);
+    offset += ref.length;
+    bytes.set(topic, offset);
+    offset += topic.length;
+    bytes.set(userEvent, offset);
+    offset += userEvent.length;
+    bytes.set(metadata, offset);
+    offset += metadata.length;
     var combined = new Uint8Array(header.byteLength + encodedPayload.byteLength);
     combined.set(new Uint8Array(header), 0);
     combined.set(new Uint8Array(encodedPayload), header.byteLength);
@@ -5856,6 +4574,7 @@ var global2 = globalSelf || phxWindow || globalThis;
 var DEFAULT_VSN2 = "2.0.0";
 var DEFAULT_TIMEOUT2 = 1e4;
 var WS_CLOSE_NORMAL = 1e3;
+var MAX_LONGPOLL_BATCH_SIZE = 100;
 var SOCKET_STATES = (
   /** @type {const} */
   { connecting: 0, open: 1, closing: 2, closed: 3 }
@@ -6574,16 +5293,22 @@ var LongPoll = class {
       }, 0);
     }
   }
-  batchSend(messages) {
+  batchSend(messages, offset = 0) {
     this.awaitingBatchAck = true;
-    this.ajax("POST", { "Content-Type": "application/x-ndjson" }, messages.join("\n"), () => this.onerror("timeout"), (resp) => {
-      this.awaitingBatchAck = false;
+    const next = offset + MAX_LONGPOLL_BATCH_SIZE;
+    const batch = messages.slice(offset, next);
+    this.ajax("POST", { "Content-Type": "application/x-ndjson" }, batch.join("\n"), () => this.onerror("timeout"), (resp) => {
       if (!resp || resp.status !== 200) {
+        this.awaitingBatchAck = false;
         this.onerror(resp && resp.status);
         this.closeAndRetry(1011, "internal server error", false);
+      } else if (next < messages.length) {
+        this.batchSend(messages, next);
       } else if (this.batchBuffer.length > 0) {
         this.batchSend(this.batchBuffer);
         this.batchBuffer = [];
+      } else {
+        this.awaitingBatchAck = false;
       }
     });
   }
@@ -6626,7 +5351,7 @@ var Presence = class _Presence {
   constructor(channel, opts = {}) {
     let events = opts.events || /** @type {PresenceEvents} */
     { state: "presence_state", diff: "presence_diff" };
-    this.state = {};
+    this.state = /* @__PURE__ */ Object.create(null);
     this.pendingDiffs = [];
     this.channel = channel;
     this.joinRef = null;
@@ -6705,9 +5430,10 @@ var Presence = class _Presence {
    * @returns {Record<string, PresenceState>}
    */
   static syncState(currentState, newState, onJoin, onLeave) {
-    let state = this.clone(currentState);
-    let joins = {};
-    let leaves = {};
+    let state = this.toNullProtoObj(this.clone(currentState));
+    newState = this.toNullProtoObj(newState);
+    let joins = /* @__PURE__ */ Object.create(null);
+    let leaves = /* @__PURE__ */ Object.create(null);
     this.map(state, (key, presence) => {
       if (!newState[key]) {
         leaves[key] = presence;
@@ -6749,6 +5475,7 @@ var Presence = class _Presence {
    * @returns {Record<string, PresenceState>}
    */
   static syncDiff(state, diff, onJoin, onLeave) {
+    state = this.toNullProtoObj(state);
     let { joins, leaves } = this.clone(diff);
     if (!onJoin) {
       onJoin = function() {
@@ -6812,6 +5539,22 @@ var Presence = class _Presence {
   static map(obj, func) {
     return Object.getOwnPropertyNames(obj).map((key) => func(key, obj[key]));
   }
+  // Presence keys are chosen on the server and may collide with
+  // Object.prototype properties ("__proto__", "constructor", ...), so any
+  // object indexed by presence key must not have a prototype chain
+  //
+  // TODO: replace the null-prototype objects with Maps in Phoenix 2.0
+  // (breaking change for the lower-level static API)
+  static toNullProtoObj(obj) {
+    if (Object.getPrototypeOf(obj) === null) {
+      return obj;
+    }
+    let cleaned = /* @__PURE__ */ Object.create(null);
+    Object.getOwnPropertyNames(obj).forEach((key) => {
+      cleaned[key] = obj[key];
+    });
+    return cleaned;
+  }
   /**
   * @template T
   * @param {T} obj
@@ -6856,23 +5599,42 @@ var serializer_default = {
   /** @private */
   binaryEncode(message) {
     let { join_ref, ref, event, topic, payload } = message;
-    let metaLength = this.META_LENGTH + join_ref.length + ref.length + topic.length + event.length;
+    let encoder = new TextEncoder();
+    let joinRefBytes = encoder.encode(join_ref);
+    let refBytes = encoder.encode(ref);
+    let topicBytes = encoder.encode(topic);
+    let eventBytes = encoder.encode(event);
+    this.assertFieldSize(joinRefBytes.byteLength, "join_ref");
+    this.assertFieldSize(refBytes.byteLength, "ref");
+    this.assertFieldSize(topicBytes.byteLength, "topic");
+    this.assertFieldSize(eventBytes.byteLength, "event");
+    let metaLength = this.META_LENGTH + joinRefBytes.byteLength + refBytes.byteLength + topicBytes.byteLength + eventBytes.byteLength;
     let header = new ArrayBuffer(this.HEADER_LENGTH + metaLength);
+    let headerBytes = new Uint8Array(header);
     let view = new DataView(header);
     let offset = 0;
     view.setUint8(offset++, this.KINDS.push);
-    view.setUint8(offset++, join_ref.length);
-    view.setUint8(offset++, ref.length);
-    view.setUint8(offset++, topic.length);
-    view.setUint8(offset++, event.length);
-    Array.from(join_ref, (char) => view.setUint8(offset++, char.charCodeAt(0)));
-    Array.from(ref, (char) => view.setUint8(offset++, char.charCodeAt(0)));
-    Array.from(topic, (char) => view.setUint8(offset++, char.charCodeAt(0)));
-    Array.from(event, (char) => view.setUint8(offset++, char.charCodeAt(0)));
+    view.setUint8(offset++, joinRefBytes.byteLength);
+    view.setUint8(offset++, refBytes.byteLength);
+    view.setUint8(offset++, topicBytes.byteLength);
+    view.setUint8(offset++, eventBytes.byteLength);
+    headerBytes.set(joinRefBytes, offset);
+    offset += joinRefBytes.byteLength;
+    headerBytes.set(refBytes, offset);
+    offset += refBytes.byteLength;
+    headerBytes.set(topicBytes, offset);
+    offset += topicBytes.byteLength;
+    headerBytes.set(eventBytes, offset);
+    offset += eventBytes.byteLength;
     var combined = new Uint8Array(header.byteLength + payload.byteLength);
-    combined.set(new Uint8Array(header), 0);
+    combined.set(headerBytes, 0);
     combined.set(new Uint8Array(payload), header.byteLength);
     return combined.buffer;
+  },
+  assertFieldSize(size, name) {
+    if (size > 255) {
+      throw new Error(`unable to convert ${name} to binary: must be less than or equal to 255 bytes, but is ${size} bytes`);
+    }
   },
   /**
   * @private
@@ -7051,7 +5813,7 @@ var Socket = class {
         this.connect();
       });
     }, this.reconnectAfterMs);
-    this.authToken = opts.authToken;
+    this.authToken = opts.authToken && closure(opts.authToken);
   }
   /**
    * Returns the LongPoll transport reference
@@ -7252,7 +6014,7 @@ var Socket = class {
     this.closeWasClean = false;
     let protocols = void 0;
     if (this.authToken) {
-      protocols = ["phoenix", `${AUTH_TOKEN_PREFIX}${btoa(this.authToken).replace(/=/g, "")}`];
+      protocols = ["phoenix", `${AUTH_TOKEN_PREFIX}${btoa(this.authToken()).replace(/=/g, "")}`];
     }
     this.conn = new this.transport(this.endPointURL(), protocols);
     this.conn.binaryType = this.binaryType;
@@ -7853,6 +6615,121 @@ function phoenixChannelParams(options) {
   };
 }
 
+// node_modules/@supabase/realtime-js/dist/module/RealtimePostgresFilterBuilder.js
+var PostgrestReservedCharsRegexp2 = /[,()"\\]/;
+var needsQuoting = (value) => PostgrestReservedCharsRegexp2.test(value) || value !== value.trim();
+var quote = (value) => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+var serializeScalar = (value) => {
+  const serialized = value === null ? "null" : String(value);
+  return needsQuoting(serialized) ? quote(serialized) : serialized;
+};
+var serializeIsValue = (value) => value === null ? "null" : String(value);
+var serialize = (operator, value) => {
+  if (operator === "in") {
+    const values = Array.isArray(value) ? value : [value];
+    if (values.length === 0) {
+      throw new Error("Realtime `in` filter requires at least one value.");
+    }
+    const items = Array.from(new Set(values)).map((v) => serializeScalar(v)).join(",");
+    return `in.(${items})`;
+  }
+  if (operator === "is") {
+    return `is.${serializeIsValue(value)}`;
+  }
+  return `${operator}.${serializeScalar(value)}`;
+};
+var RealtimePostgresFilterBuilder = class {
+  constructor() {
+    this.filters = [];
+  }
+  add(column, operator, value, negate = false) {
+    const prefix = negate ? "not." : "";
+    this.filters.push(`${column}=${prefix}${serialize(operator, value)}`);
+    return this;
+  }
+  /** Match rows where `column` equals `value` (`column=eq.value`). */
+  eq(column, value) {
+    return this.add(column, "eq", value);
+  }
+  /** Match rows where `column` does not equal `value` (`column=neq.value`). */
+  neq(column, value) {
+    return this.add(column, "neq", value);
+  }
+  /** Match rows where `column` is greater than `value` (`column=gt.value`). */
+  gt(column, value) {
+    return this.add(column, "gt", value);
+  }
+  /** Match rows where `column` is greater than or equal to `value` (`column=gte.value`). */
+  gte(column, value) {
+    return this.add(column, "gte", value);
+  }
+  /** Match rows where `column` is less than `value` (`column=lt.value`). */
+  lt(column, value) {
+    return this.add(column, "lt", value);
+  }
+  /** Match rows where `column` is less than or equal to `value` (`column=lte.value`). */
+  lte(column, value) {
+    return this.add(column, "lte", value);
+  }
+  /**
+   * Match rows where `column` is one of `values` (`column=in.(a,b,c)`).
+   * Requires at least one value; duplicates are removed. An element containing a
+   * reserved character is double-quoted (`in.("a,b",c)`), so commas inside an
+   * element are preserved. `null` is intentionally not accepted (`IN (null)`
+   * never matches in SQL) — use `is`/`not('col','is',null)` for null checks.
+   */
+  in(column, values) {
+    return this.add(column, "in", values);
+  }
+  /** Match rows where `column` matches the case-sensitive `pattern` (`column=like.pattern`). */
+  like(column, pattern) {
+    return this.add(column, "like", pattern);
+  }
+  /** Match rows where `column` matches the case-insensitive `pattern` (`column=ilike.pattern`). */
+  ilike(column, pattern) {
+    return this.add(column, "ilike", pattern);
+  }
+  /** Match rows where `column` matches the POSIX regex `pattern` (`column=match.pattern`). */
+  match(column, pattern) {
+    return this.add(column, "match", pattern);
+  }
+  /** Match rows where `column` matches the case-insensitive POSIX regex `pattern` (`column=imatch.pattern`). */
+  imatch(column, pattern) {
+    return this.add(column, "imatch", pattern);
+  }
+  /**
+   * Match rows where `column` `IS` the given value (`column=is.null`).
+   * Accepts `null`, a boolean, or the keywords `'null' | 'true' | 'false' | 'unknown'`.
+   */
+  is(column, value) {
+    return this.add(column, "is", value);
+  }
+  /** Match rows where `column` is distinct from `value` (`column=isdistinct.value`). NULL-safe inequality. */
+  isDistinct(column, value) {
+    return this.add(column, "isdistinct", value);
+  }
+  not(column, operator, value) {
+    return this.add(column, operator, value, true);
+  }
+  /**
+   * Serialize all conditions into the comma-separated (AND) filter string.
+   *
+   * Conditions are joined by commas, which the server applies as `AND`. A scalar
+   * value (or single `in` element) that contains a reserved character — `,`,
+   * `(`, `)`, `"`, `\` — or surrounding whitespace is double-quoted and escaped
+   * the way PostgREST does, so commas inside a value are preserved rather than
+   * read as a condition boundary.
+   */
+  build() {
+    return this.filters.join(",");
+  }
+  /** Alias for {@link build}; lets the builder be used wherever a string is expected. */
+  toString() {
+    return this.build();
+  }
+};
+var postgresChangesFilter = () => new RealtimePostgresFilterBuilder();
+
 // node_modules/@supabase/realtime-js/dist/module/RealtimeChannel.js
 var REALTIME_POSTGRES_CHANGES_LISTEN_EVENT;
 (function(REALTIME_POSTGRES_CHANGES_LISTEN_EVENT2) {
@@ -8049,6 +6926,11 @@ var RealtimeChannel = class _RealtimeChannel {
    * Sends the supplied payload to the presence tracker so other subscribers can see that this
    * client is online. Use `untrack` to stop broadcasting presence for the same key.
    *
+   * Tracking makes this client visible to other subscribers immediately, regardless of this
+   * channel's `config.presence.enabled` setting or whether it has a `presence` listener — that
+   * flag only affects whether *this* client receives presence updates from others (and, on
+   * RLS-protected channels, whether it's authorized to do so).
+   *
    * @category Realtime
    */
   async track(payload, opts = {}) {
@@ -8056,7 +6938,7 @@ var RealtimeChannel = class _RealtimeChannel {
       type: "presence",
       event: "track",
       payload
-    }, opts.timeout || this.timeout);
+    }, opts);
   }
   /**
    * Removes the current presence state for this client.
@@ -8433,6 +7315,10 @@ var RealtimeChannel = class _RealtimeChannel {
   /** @internal */
   _on(type, filter, callback) {
     const typeLower = type.toLocaleLowerCase();
+    const filterValue = filter === null || filter === void 0 ? void 0 : filter.filter;
+    if (filterValue instanceof RealtimePostgresFilterBuilder || typeof filterValue === "object" && filterValue !== null && typeof filterValue.build === "function") {
+      filter = Object.assign(Object.assign({}, filter), { filter: filterValue.build() });
+    }
     const ref = this.channelAdapter.on(type, callback);
     const binding = {
       type: typeLower,
@@ -8761,7 +7647,6 @@ var RealtimeClient = class {
    * Initializes the Socket.
    *
    * @param endPoint The string WebSocket endpoint, ie, "ws://example.com/socket", "wss://example.com", "/socket" (inherited host & protocol)
-   * @param httpEndpoint The string HTTP endpoint, ie, "https://example.com", "/" (inherited host & protocol)
    * @param options.transport The Websocket Transport, for example WebSocket. This can be a custom implementation
    * @param options.timeout The default timeout in milliseconds to trigger push timeouts.
    * @param options.params The optional params to pass when connecting.
@@ -8849,22 +7734,6 @@ var RealtimeClient = class {
       this.socketAdapter.connect();
     } catch (error) {
       const errorMessage = error.message;
-      if (errorMessage.includes("Node.js")) {
-        throw new Error(`${errorMessage}
-
-To use Realtime in Node.js, you need to provide a WebSocket implementation:
-
-Option 1: Use Node.js 22+ which has native WebSocket support
-Option 2: Install and provide the "ws" package:
-
-  npm install ws
-
-  import ws from "ws"
-  const client = new RealtimeClient(url, {
-    ...options,
-    transport: ws
-  })`);
-      }
       throw new Error(`WebSocket not available: ${errorMessage}`);
     }
     this._handleNodeJsRaceCondition();
@@ -9053,7 +7922,7 @@ Option 2: Install and provide the "ws" package:
   }
   /**
    * Sets a callback that receives lifecycle events for internal heartbeat messages.
-   * Useful for instrumenting connection health (e.g. sent/ok/timeout/disconnected).
+   * Useful for instrumenting connection health (e.g. sent/ok/timeout).
    *
    * @category Realtime
    */
@@ -9199,6 +8068,8 @@ Option 2: Install and provide the "ws" package:
   /** @internal */
   _wrapHeartbeatCallback(heartbeatCallback) {
     return (status, latency) => {
+      if (status === "disconnected")
+        return;
       if (status == "sent")
         this._setAuthSafely();
       if (heartbeatCallback)
@@ -10771,8 +9642,7 @@ var StorageFileApi = class extends BaseApiClient {
   * @category Storage
   * @subcategory File Buckets
   * @param path The full path and file name of the file to be downloaded. For example `folder/image.png`.
-  * @param options.transform Transform the asset before serving it to the client.
-  * @param options.cacheNonce Append a cache nonce parameter to the URL to invalidate the cache.
+  * @param options Optional settings: `transform` to transform the asset before serving it to the client, and `cacheNonce` to append a cache nonce parameter to the URL to invalidate the cache.
   * @param parameters Additional fetch parameters like signal for cancellation. Supports standard fetch options including cache control.
   * @returns BlobDownloadBuilder instance for downloading the file
   *
@@ -11022,6 +9892,57 @@ var StorageFileApi = class extends BaseApiClient {
     });
   }
   /**
+  * Purges the CDN cache for a single object in this bucket.
+  *
+  * Maps to `DELETE /cdn/{bucket}/{path}` on the Storage API. The server
+  * issues a CDN invalidation for the object and returns `{ message: 'success' }`.
+  *
+  * **Requires the `service_role` key.** The underlying endpoint enforces
+  * `service_role` JWT — calls made with the anon key or a user JWT will be
+  * rejected by the server.
+  *
+  * **Hosted CDN feature.** On self-hosted Supabase, the Storage service must
+  * have `CDN_PURGE_ENDPOINT_URL` configured and the `purgeCache` tenant
+  * feature enabled, otherwise the server returns an error.
+  *
+  * Operates on a single object path. There is no wildcard or recursion: pass
+  * the exact path of the object you want invalidated.
+  *
+  * @category Storage
+  * @subcategory File Buckets
+  * @param path The path (relative to the bucket) of the object to purge, e.g. `folder/avatar.png`.
+  * @param options Optional purge cache options.
+  * @param options.transformations If true, purges only transformations (resized/formatted variants), leaving the original cached file intact.
+  * @param parameters Optional fetch parameters such as an `AbortController` signal.
+  * @returns Promise with `{ data: { message }, error: null }` on success or `{ data: null, error }` on failure.
+  *
+  * @example Purge a single cached object
+  * ```js
+  * const { data, error } = await supabase
+  *   .storage
+  *   .from('avatars')
+  *   .purgeCache('folder/avatar1.png')
+  * ```
+  *
+  * @example Purge only transformations for a single object
+  * ```js
+  * const { data, error } = await supabase
+  *   .storage
+  *   .from('avatars')
+  *   .purgeCache('folder/avatar1.png', { transformations: true })
+  * ```
+  */
+  async purgeCache(path, options, parameters) {
+    var _this13 = this;
+    return _this13.handleOperation(async () => {
+      const _path = _this13._getFinalPath(path);
+      const query = new URLSearchParams();
+      if (options === null || options === void 0 ? void 0 : options.transformations) query.set("transformations", "true");
+      const queryString = query.toString();
+      return await remove(_this13.fetch, `${_this13.url}/cdn/${_path}${queryString ? `?${queryString}` : ""}`, {}, { headers: _this13.headers }, parameters);
+    });
+  }
+  /**
   * Get file metadata
   * @param id the file id to retrieve metadata
   */
@@ -11113,10 +10034,14 @@ var StorageFileApi = class extends BaseApiClient {
   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works
   */
   async list(path, options, parameters) {
-    var _this13 = this;
-    return _this13.handleOperation(async () => {
-      const body = _objectSpread22(_objectSpread22(_objectSpread22({}, DEFAULT_SEARCH_OPTIONS), options), {}, { prefix: path || "" });
-      return await post(_this13.fetch, `${_this13.url}/object/list/${_this13.bucketId}`, body, { headers: _this13.headers }, parameters);
+    var _this14 = this;
+    return _this14.handleOperation(async () => {
+      const sortBy = (options === null || options === void 0 ? void 0 : options.sortBy) ? _objectSpread22(_objectSpread22({}, DEFAULT_SEARCH_OPTIONS.sortBy), options.sortBy) : DEFAULT_SEARCH_OPTIONS.sortBy;
+      const body = _objectSpread22(_objectSpread22(_objectSpread22({}, DEFAULT_SEARCH_OPTIONS), options), {}, {
+        sortBy,
+        prefix: path || ""
+      });
+      return await post(_this14.fetch, `${_this14.url}/object/list/${_this14.bucketId}`, body, { headers: _this14.headers }, parameters);
     });
   }
   /**
@@ -11167,10 +10092,10 @@ var StorageFileApi = class extends BaseApiClient {
   * ```
   */
   async listV2(options, parameters) {
-    var _this14 = this;
-    return _this14.handleOperation(async () => {
+    var _this15 = this;
+    return _this15.handleOperation(async () => {
       const body = _objectSpread22({}, options);
-      return await post(_this14.fetch, `${_this14.url}/object/list-v2/${_this14.bucketId}`, body, { headers: _this14.headers }, parameters);
+      return await post(_this15.fetch, `${_this15.url}/object/list-v2/${_this15.bucketId}`, body, { headers: _this15.headers }, parameters);
     });
   }
   encodeMetadata(metadata) {
@@ -11196,7 +10121,7 @@ var StorageFileApi = class extends BaseApiClient {
     return query;
   }
 };
-var version2 = "2.108.2";
+var version2 = "2.110.7";
 var DEFAULT_HEADERS = { "X-Client-Info": `storage-js/${version2}` };
 var StorageBucketApi = class extends BaseApiClient {
   constructor(url, headers = {}, fetch$1, opts) {
@@ -11484,6 +10409,51 @@ var StorageBucketApi = class extends BaseApiClient {
     var _this6 = this;
     return _this6.handleOperation(async () => {
       return await remove(_this6.fetch, `${_this6.url}/bucket/${id}`, {}, { headers: _this6.headers });
+    });
+  }
+  /**
+  * Purges the CDN cache for an entire bucket.
+  *
+  * Maps to `DELETE /cdn/{bucket}` on the Storage API. The server
+  * issues a CDN invalidation for the bucket and returns `{ message: 'success' }`.
+  *
+  * **Requires the `service_role` key.** The underlying endpoint enforces
+  * `service_role` JWT — calls made with the anon key or a user JWT will be
+  * rejected by the server.
+  *
+  * **Hosted CDN feature.** On self-hosted Supabase, the Storage service must
+  * have `CDN_PURGE_ENDPOINT_URL` configured and the `purgeCache` tenant
+  * feature enabled, otherwise the server returns an error.
+  *
+  * @category Storage
+  * @subcategory File Buckets
+  * @param id The unique identifier of the bucket you would like to purge from cache.
+  * @param options Optional purge cache options.
+  * @param options.transformations If true, purges only transformations (resized/formatted variants), leaving original cached files intact.
+  * @param parameters Optional fetch parameters such as an `AbortController` signal.
+  * @returns Promise with `{ data: { message }, error: null }` on success or `{ data: null, error }` on failure.
+  *
+  * @example Purge cache for an entire bucket
+  * ```js
+  * const { data, error } = await supabase
+  *   .storage
+  *   .purgeBucketCache('avatars')
+  * ```
+  *
+  * @example Purge only transformations for an entire bucket
+  * ```js
+  * const { data, error } = await supabase
+  *   .storage
+  *   .purgeBucketCache('avatars', { transformations: true })
+  * ```
+  */
+  async purgeBucketCache(id, options, parameters) {
+    var _this7 = this;
+    return _this7.handleOperation(async () => {
+      const query = new URLSearchParams();
+      if (options === null || options === void 0 ? void 0 : options.transformations) query.set("transformations", "true");
+      const queryString = query.toString();
+      return await remove(_this7.fetch, `${_this7.url}/cdn/${id}${queryString ? `?${queryString}` : ""}`, {}, { headers: _this7.headers }, parameters);
     });
   }
   listBucketOptionsToQueryString(options) {
@@ -12553,7 +11523,7 @@ var StorageClient = class extends StorageBucketApi {
 };
 
 // node_modules/@supabase/auth-js/dist/module/lib/version.js
-var version3 = "2.108.2";
+var version3 = "2.110.7";
 
 // node_modules/@supabase/auth-js/dist/module/lib/constants.js
 var AUTO_REFRESH_TICK_DURATION_MS = 30 * 1e3;
@@ -13480,10 +12450,7 @@ var GoTrueAdminApi = class {
   }
   /**
    * Generates email links and OTPs to be sent via a custom email provider.
-   * @param email The user's email.
-   * @param options.password User password. For signup only.
-   * @param options.data Optional user metadata. For signup only.
-   * @param options.redirectTo The redirect url which should be appended to the generated link
+   * @param params The parameters for generating the link, including the link `type`, the user's `email`, and type-specific options such as `password`, `data`, and `redirectTo`.
    *
    * @category Auth
    * @subcategory Auth Admin
@@ -15435,6 +14402,7 @@ var GoTrueClient = class _GoTrueClient {
     this.lastRefreshFailure = null;
     this._sessionRemovalEpoch = 0;
     this.initializePromise = null;
+    this._pendingInitNotifications = null;
     this.detectSessionInUrl = true;
     this.hasCustomAuthorizationHeader = false;
     this.suppressGetSessionWarning = false;
@@ -15595,9 +14563,11 @@ var GoTrueClient = class _GoTrueClient {
    * @category Auth
    */
   async initialize() {
+    var _a;
     if (this.initializePromise) {
       return await this.initializePromise;
     }
+    this._pendingInitNotifications = [];
     this.initializePromise = (async () => {
       if (this.lock != null) {
         return await this._acquireLock(this.lockAcquireTimeout, async () => {
@@ -15606,7 +14576,13 @@ var GoTrueClient = class _GoTrueClient {
       }
       return await this._initialize();
     })();
-    return await this.initializePromise;
+    const result = await this.initializePromise;
+    const queue = (_a = this._pendingInitNotifications) !== null && _a !== void 0 ? _a : [];
+    this._pendingInitNotifications = null;
+    for (const n of queue) {
+      await this._notifyAllSubscribers(n.event, n.session, n.broadcast);
+    }
+    return result;
   }
   /**
    * IMPORTANT:
@@ -17443,7 +16419,7 @@ var GoTrueClient = class _GoTrueClient {
    * to the client. If that storage is based on request cookies for example,
    * the values in it may not be authentic and therefore it's strongly advised
    * against using this method and its results in such circumstances. A warning
-   * will be emitted if this is detected. Use {@link #getUser()} instead.
+   * will be emitted if this is detected. Use {@link GoTrueClient.getUser} instead.
    *
    * @category Auth
    *
@@ -17584,7 +16560,7 @@ var GoTrueClient = class _GoTrueClient {
     }
   }
   /**
-   * Use instead of {@link #getSession} inside the library. Loads the session
+   * Use instead of {@link GoTrueClient.getSession} inside the library. Loads the session
    * via `__loadSession` (which may trigger a refresh if the access token is
    * within the expiry margin) and runs `fn` with the result.
    */
@@ -17600,7 +16576,7 @@ var GoTrueClient = class _GoTrueClient {
   /**
    * NEVER USE DIRECTLY!
    *
-   * Always use {@link #_useSession}.
+   * Always use `_useSession`.
    */
   async __loadSession() {
     this._debug("#__loadSession()", "begin");
@@ -18452,6 +17428,10 @@ var GoTrueClient = class _GoTrueClient {
   async _signOut({ scope } = { scope: "global" }) {
     return await this._useSession(async (result) => {
       var _a;
+      const removeCurrentSession = async () => {
+        await this._removeSession();
+        await removeItemAsync(this.storage, `${this.storageKey}-code-verifier`);
+      };
       const { data, error: sessionError } = result;
       if (sessionError && !isAuthSessionMissingError(sessionError)) {
         return this._returnResult({ error: sessionError });
@@ -18461,13 +17441,15 @@ var GoTrueClient = class _GoTrueClient {
         const { error } = await this.admin.signOut(accessToken, scope);
         if (error) {
           if (!(isAuthApiError(error) && (error.status === 404 || error.status === 401 || error.status === 403) || isAuthSessionMissingError(error))) {
+            if (scope !== "others") {
+              await removeCurrentSession();
+            }
             return this._returnResult({ error });
           }
         }
       }
       if (scope !== "others") {
-        await this._removeSession();
-        await removeItemAsync(this.storage, `${this.storageKey}-code-verifier`);
+        await removeCurrentSession();
       }
       return this._returnResult({ error: null });
     });
@@ -19214,6 +18196,10 @@ var GoTrueClient = class _GoTrueClient {
     }
   }
   async _notifyAllSubscribers(event, session, broadcast = true) {
+    if (this._pendingInitNotifications !== null && broadcast) {
+      this._pendingInitNotifications.push({ event, session, broadcast });
+      return;
+    }
     const debugName = `#_notifyAllSubscribers(${event})`;
     this._debug(debugName, "begin", session, `broadcast = ${broadcast}`);
     try {
@@ -19246,7 +18232,6 @@ var GoTrueClient = class _GoTrueClient {
   async _saveSession(session) {
     this._debug("#_saveSession()", session);
     this.suppressGetSessionWarning = true;
-    await removeItemAsync(this.storage, `${this.storageKey}-code-verifier`);
     const sessionToProcess = Object.assign({}, session);
     const userIsProxy = sessionToProcess.user && sessionToProcess.user.__isUserNotAvailableProxy === true;
     if (this.userStorage) {
@@ -19281,8 +18266,8 @@ var GoTrueClient = class _GoTrueClient {
   /**
    * Removes any registered visibilitychange callback.
    *
-   * {@see #startAutoRefresh}
-   * {@see #stopAutoRefresh}
+   * {@link GoTrueClient.startAutoRefresh}
+   * {@link GoTrueClient.stopAutoRefresh}
    */
   _removeVisibilityChangedCallback() {
     this._debug("#_removeVisibilityChangedCallback()");
@@ -19297,7 +18282,7 @@ var GoTrueClient = class _GoTrueClient {
     }
   }
   /**
-   * This is the private implementation of {@link #startAutoRefresh}. Use this
+   * This is the private implementation of {@link GoTrueClient.startAutoRefresh}. Use this
    * within the library.
    */
   async _startAutoRefresh() {
@@ -19322,7 +18307,7 @@ var GoTrueClient = class _GoTrueClient {
     }
   }
   /**
-   * This is the private implementation of {@link #stopAutoRefresh}. Use this
+   * This is the private implementation of {@link GoTrueClient.stopAutoRefresh}. Use this
    * within the library.
    */
   async _stopAutoRefresh() {
@@ -19358,7 +18343,7 @@ var GoTrueClient = class _GoTrueClient {
    * platform's foreground indication mechanism and call these methods
    * appropriately to conserve resources.
    *
-   * {@see #stopAutoRefresh}
+   * {@link GoTrueClient.stopAutoRefresh}
    *
    * @category Auth
    *
@@ -19392,7 +18377,7 @@ var GoTrueClient = class _GoTrueClient {
    * If you call this method any managed visibility change callback will be
    * removed and you must manage visibility changes on your own.
    *
-   * See {@link #startAutoRefresh} for more details.
+   * See {@link GoTrueClient.startAutoRefresh} for more details.
    *
    * @category Auth
    *
@@ -19747,7 +18732,7 @@ var GoTrueClient = class _GoTrueClient {
     return run();
   }
   /**
-   * {@see GoTrueMFAApi#challengeAndVerify}
+   * {@link GoTrueMFAApi#challengeAndVerify}
    */
   async _challengeAndVerify(params) {
     const { data: challengeData, error: challengeError } = await this._challenge({
@@ -19763,7 +18748,7 @@ var GoTrueClient = class _GoTrueClient {
     });
   }
   /**
-   * {@see GoTrueMFAApi#listFactors}
+   * {@link GoTrueMFAApi#listFactors}
    */
   async _listFactors() {
     var _a;
@@ -19790,7 +18775,7 @@ var GoTrueClient = class _GoTrueClient {
     };
   }
   /**
-   * {@see GoTrueMFAApi#getAuthenticatorAssuranceLevel}
+   * {@link GoTrueMFAApi#getAuthenticatorAssuranceLevel}
    */
   async _getAuthenticatorAssuranceLevel(jwt) {
     var _a, _b, _c, _d;
@@ -20028,15 +19013,15 @@ var GoTrueClient = class _GoTrueClient {
    * Extracts the JWT claims present in the access token by first verifying the
    * JWT against the server's JSON Web Key Set endpoint
    * `/.well-known/jwks.json` which is often cached, resulting in significantly
-   * faster responses. Prefer this method over {@link #getUser} which always
+   * faster responses. Prefer this method over {@link GoTrueClient.getUser} which always
    * sends a request to the Auth server for each JWT.
    *
    * If the project is not using an asymmetric JWT signing key (like ECC or
-   * RSA) it always sends a request to the Auth server (similar to {@link
-   * #getUser}) to verify the JWT.
+   * RSA) it always sends a request to the Auth server (similar to
+   * {@link GoTrueClient.getUser}) to verify the JWT.
    *
    * @param jwt An optional specific JWT you wish to verify, not the one you
-   *            can obtain from {@link #getSession}.
+   *            can obtain from {@link GoTrueClient.getSession}.
    * @param options Various additional options that allow you to customize the
    *                behavior of this method.
    *
@@ -20472,7 +19457,7 @@ var AuthClient = GoTrueClient_default;
 var AuthClient_default = AuthClient;
 
 // node_modules/@supabase/supabase-js/dist/index.mjs
-var version4 = "2.108.2";
+var version4 = "2.110.7";
 var JS_ENV = "";
 var JS_RUNTIME_VERSION;
 if (typeof Deno !== "undefined") {
@@ -20482,7 +19467,8 @@ if (typeof Deno !== "undefined") {
 else if (typeof navigator !== "undefined" && navigator.product === "ReactNative") JS_ENV = "react-native";
 else {
   JS_ENV = "node";
-  JS_RUNTIME_VERSION = typeof process !== "undefined" ? (_process$version = process.version) === null || _process$version === void 0 ? void 0 : _process$version.replace(/^v/, "") : void 0;
+  const _process = globalThis["process"];
+  JS_RUNTIME_VERSION = _process === null || _process === void 0 || (_process$version = _process["version"]) === null || _process$version === void 0 ? void 0 : _process$version.replace(/^v/, "");
 }
 var _Deno$version;
 var _process$version;
@@ -20677,18 +19663,32 @@ var resolveFetch4 = (customFetch) => {
 var resolveHeadersConstructor = () => {
   return Headers;
 };
-var fetchWithAuth = (supabaseKey, supabaseUrl, getAccessToken, customFetch, tracePropagationOptions) => {
+var isNewApiKey = (key) => key.startsWith("sb_publishable_") || key.startsWith("sb_secret_");
+var TEMP_KEY_PREFIX = "sb_temp_";
+var warnedKeySubtypes = /* @__PURE__ */ new Set();
+var checkApiKeyFormat = (key) => {
+  var _key$match$, _key$match;
+  if (!key.startsWith("sb_") || isNewApiKey(key) || key.startsWith(TEMP_KEY_PREFIX)) return;
+  const subtype = (_key$match$ = (_key$match = key.match(/^sb_[a-zA-Z0-9]+_/)) === null || _key$match === void 0 ? void 0 : _key$match[0]) !== null && _key$match$ !== void 0 ? _key$match$ : "unknown";
+  if (warnedKeySubtypes.has(subtype)) return;
+  warnedKeySubtypes.add(subtype);
+  console.warn("@supabase/supabase-js: Unrecognized Supabase API key format. The client will proceed and send this key as-is; if you see authentication errors you may need to upgrade @supabase/supabase-js to a version that recognizes this key type.");
+};
+var fetchWithAuth = (supabaseKey, supabaseUrl, getAccessToken, customFetch, tracePropagationOptions, options) => {
   const fetch$1 = resolveFetch4(customFetch);
   const HeadersConstructor = resolveHeadersConstructor();
   const traceEnabled = (tracePropagationOptions === null || tracePropagationOptions === void 0 ? void 0 : tracePropagationOptions.enabled) === true;
   const respectSampling = (tracePropagationOptions === null || tracePropagationOptions === void 0 ? void 0 : tracePropagationOptions.respectSamplingDecision) !== false;
   const traceTargets = traceEnabled ? getDefaultPropagationTargets(supabaseUrl) : null;
+  const allowKeyAsBearer = !((options === null || options === void 0 ? void 0 : options.omitApiKeyAsBearer) && isNewApiKey(supabaseKey));
   return async (input, init) => {
-    var _await$getAccessToken;
-    const accessToken = (_await$getAccessToken = await getAccessToken()) !== null && _await$getAccessToken !== void 0 ? _await$getAccessToken : supabaseKey;
+    const realToken = await getAccessToken();
     let headers = new HeadersConstructor(init === null || init === void 0 ? void 0 : init.headers);
     if (!headers.has("apikey")) headers.set("apikey", supabaseKey);
-    if (!headers.has("Authorization")) headers.set("Authorization", `Bearer ${accessToken}`);
+    if (!headers.has("Authorization")) {
+      const bearer = realToken !== null && realToken !== void 0 ? realToken : allowKeyAsBearer ? supabaseKey : null;
+      if (bearer) headers.set("Authorization", `Bearer ${bearer}`);
+    }
     if (traceTargets) {
       const traceHeaders = await getTraceHeaders(input, traceTargets, respectSampling);
       if (traceHeaders) {
@@ -20761,14 +19761,15 @@ var SupabaseClient = class {
   *
   * @param supabaseUrl The unique Supabase URL which is supplied when you create a new project in your project dashboard.
   * @param supabaseKey The unique Supabase Key which is supplied when you create a new project in your project dashboard.
-  * @param options.db.schema You can switch in between schemas. The schema needs to be on the list of exposed schemas inside Supabase.
-  * @param options.auth.autoRefreshToken Set to "true" if you want to automatically refresh the token before expiring.
-  * @param options.auth.persistSession Set to "true" if you want to automatically save the user session into local storage.
-  * @param options.auth.detectSessionInUrl Set to "true" if you want to automatically detects OAuth grants in the URL and signs in the user.
-  * @param options.realtime Options passed along to realtime-js constructor.
-  * @param options.storage Options passed along to the storage-js constructor.
-  * @param options.global.fetch A custom fetch implementation.
-  * @param options.global.headers Any additional headers to send with each network request.
+  * @param options Optional configuration for the client:
+  * - `db.schema` — You can switch in between schemas. The schema needs to be on the list of exposed schemas inside Supabase.
+  * - `auth.autoRefreshToken` — Set to `true` if you want to automatically refresh the token before expiring.
+  * - `auth.persistSession` — Set to `true` if you want to automatically save the user session into local storage.
+  * - `auth.detectSessionInUrl` — Set to `true` if you want to automatically detect OAuth grants in the URL and sign in the user.
+  * - `realtime` — Options passed along to the realtime-js constructor.
+  * - `storage` — Options passed along to the storage-js constructor.
+  * - `global.fetch` — A custom fetch implementation.
+  * - `global.headers` — Any additional headers to send with each network request.
   *
   * @example Creating a client
   * ```js
@@ -20823,9 +19824,9 @@ var SupabaseClient = class {
   * ```
   *
   * @exampleDescription Custom fetch implementation
-  * `supabase-js` uses the [`cross-fetch`](https://www.npmjs.com/package/cross-fetch) library to make HTTP requests,
+  * `supabase-js` uses the runtime's global `fetch` to make HTTP requests,
   * but an alternative `fetch` implementation can be provided as an option.
-  * This is most useful in environments where `cross-fetch` is not compatible (for instance Cloudflare Workers).
+  * This is useful in environments where the global `fetch` is unavailable or where you want to customize request behavior.
   *
   * @example Custom fetch implementation
   * ```js
@@ -20971,6 +19972,7 @@ var SupabaseClient = class {
     this.supabaseKey = supabaseKey;
     const baseUrl = validateSupabaseUrl(supabaseUrl);
     if (!supabaseKey) throw new Error("supabaseKey is required.");
+    checkApiKeyFormat(supabaseKey);
     this.realtimeUrl = new URL("realtime/v1", baseUrl);
     this.realtimeUrl.protocol = this.realtimeUrl.protocol.replace("http", "ws");
     this.authUrl = new URL("auth/v1", baseUrl);
@@ -20997,7 +19999,8 @@ var SupabaseClient = class {
         throw new Error(`@supabase/supabase-js: Supabase Client is configured with the accessToken option, accessing supabase.auth.${String(prop)} is not possible`);
       } });
     }
-    this.fetch = fetchWithAuth(supabaseKey, supabaseUrl, this._getAccessToken.bind(this), settings.global.fetch, settings.tracePropagation);
+    this.fetch = fetchWithAuth(supabaseKey, supabaseUrl, this._getSessionToken.bind(this), settings.global.fetch, settings.tracePropagation);
+    this.functionsFetch = fetchWithAuth(supabaseKey, supabaseUrl, this._getSessionToken.bind(this), settings.global.fetch, settings.tracePropagation, { omitApiKeyAsBearer: true });
     this.realtime = this._initRealtimeClient(_objectSpread23({
       headers: this.headers,
       accessToken: this._getAccessToken.bind(this),
@@ -21020,7 +20023,7 @@ var SupabaseClient = class {
   get functions() {
     return new FunctionsClient(this.functionsUrl.href, {
       headers: this.headers,
-      customFetch: this.fetch
+      customFetch: this.functionsFetch
     });
   }
   /**
@@ -21130,12 +20133,22 @@ var SupabaseClient = class {
   removeAllChannels() {
     return this.realtime.removeAllChannels();
   }
-  async _getAccessToken() {
+  /**
+  * The raw session token — the custom `accessToken` result or the signed-in user's JWT —
+  * or `null` when there is no session. Unlike {@link _getAccessToken} it does not fall back
+  * to `supabaseKey`, so callers can distinguish "no session" from "has session".
+  */
+  async _getSessionToken() {
     var _this = this;
     var _data$session$access_, _data$session;
     if (_this.accessToken) return await _this.accessToken();
     const { data } = await _this.auth.getSession();
-    return (_data$session$access_ = (_data$session = data.session) === null || _data$session === void 0 ? void 0 : _data$session.access_token) !== null && _data$session$access_ !== void 0 ? _data$session$access_ : _this.supabaseKey;
+    return (_data$session$access_ = (_data$session = data.session) === null || _data$session === void 0 ? void 0 : _data$session.access_token) !== null && _data$session$access_ !== void 0 ? _data$session$access_ : null;
+  }
+  async _getAccessToken() {
+    var _this2 = this;
+    var _await$this$_getSessi;
+    return (_await$this$_getSessi = await _this2._getSessionToken()) !== null && _await$this$_getSessi !== void 0 ? _await$this$_getSessi : _this2.supabaseKey;
   }
   _initSupabaseAuthClient({ autoRefreshToken, persistSession, detectSessionInUrl, storage, userStorage, storageKey, flowType, lock, debug, throwOnError, experimental, lockAcquireTimeout, skipAutoInitialize }, headers, fetch$1) {
     const authHeaders = {
@@ -21171,7 +20184,7 @@ var SupabaseClient = class {
     });
   }
   _handleTokenChanged(event, source, token) {
-    if ((event === "TOKEN_REFRESHED" || event === "SIGNED_IN") && this.changedAccessToken !== token) {
+    if ((event === "TOKEN_REFRESHED" || event === "SIGNED_IN" || event === "INITIAL_SESSION") && this.changedAccessToken !== token) {
       this.changedAccessToken = token;
       this.realtime.setAuth(token);
     } else if (event === "SIGNED_OUT") {
@@ -21192,9 +20205,9 @@ function shouldShowDeprecationWarning() {
   if (processVersion === void 0 || processVersion === null) return false;
   const versionMatch = processVersion.match(/^v(\d+)\./);
   if (!versionMatch) return false;
-  return parseInt(versionMatch[1], 10) <= 18;
+  return parseInt(versionMatch[1], 10) <= 20;
 }
-if (shouldShowDeprecationWarning()) console.warn("⚠️  Node.js 18 and below are deprecated and will no longer be supported in future versions of @supabase/supabase-js. Please upgrade to Node.js 20 or later. For more information, visit: https://github.com/orgs/supabase/discussions/37217");
+if (shouldShowDeprecationWarning()) console.warn("⚠️  Node.js 20 and below are deprecated and will no longer be supported in future versions of @supabase/supabase-js. Please upgrade to Node.js 22 or later. For more information, visit: https://github.com/orgs/supabase/discussions/45715");
 export {
   AuthAdminApi_default as AuthAdminApi,
   AuthApiError,
@@ -21228,6 +20241,7 @@ export {
   REALTIME_SUBSCRIBE_STATES,
   RealtimeChannel,
   RealtimeClient,
+  RealtimePostgresFilterBuilder,
   RealtimePresence,
   SIGN_OUT_SCOPES,
   StorageApiError,
@@ -21244,6 +20258,7 @@ export {
   isAuthWeakPasswordError,
   internals as lockInternals,
   navigatorLock,
+  postgresChangesFilter,
   processLock
 };
 //# sourceMappingURL=@supabase_supabase-js.js.map

@@ -37,6 +37,15 @@ function pickString(...vals: unknown[]): string | null {
   return null;
 }
 
+function sanitizeDisplayName(value: string | null): string | null {
+  if (!value) return null;
+  const cleaned = value
+    .replace(/\{\{\s*[^{}]+\s*\}\}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || null;
+}
+
 interface NormalizedInbound {
   external_message_id: string;
   // Identity of the Instagram user (the contact) — used to resolve contact
@@ -150,7 +159,7 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
     return { error: "missing_subscriber_id" };
   }
 
-  const subscriber_name = pickString(
+  const subscriber_name = sanitizeDisplayName(pickString(
     subscriber?.name,
     subscriber?.first_name && subscriber?.last_name
       ? `${subscriber.first_name} ${subscriber.last_name}`
@@ -158,7 +167,7 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
     subscriber?.first_name,
     subscriber?.username,
     body.subscriber_name,
-  );
+  ));
 
   const rawText = pickString(
     body.message_text,
@@ -224,7 +233,7 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
         body.page_id,
         body.manychat_page_id,
       ) || "manychat_team";
-    sender_name = pickString(
+    sender_name = sanitizeDisplayName(pickString(
       body.agent_name,
       body.team_member_name,
       body.admin_name,
@@ -232,14 +241,14 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
       body.full_name,
       body.page?.name,
       body.page_name,
-    );
+    ));
   } else {
     sender_id = subscriber_id;
-    sender_name = pickString(
+    sender_name = sanitizeDisplayName(pickString(
       body.sender_name,
       body.full_name,
       subscriber_name,
-    );
+    ));
   }
 
   const rawAvatar = pickString(
@@ -308,6 +317,31 @@ async function logIntegrationEvent(
     if (error) console.error("[manychat-inbound] log_failed", error.message);
   } catch (e) {
     console.error("[manychat-inbound] log_failed", e);
+  }
+}
+
+async function markManyChatIngressHealth(
+  supabase: any,
+  instanceId: string,
+  successful: boolean,
+) {
+  const now = new Date().toISOString();
+  const payload: Record<string, unknown> = {
+    last_check_at: now,
+  };
+  if (successful) {
+    payload.last_successful_sync_at = now;
+    payload.status = "connected";
+    payload.error_message = null;
+  }
+  try {
+    const { error } = await supabase
+      .from("integration_instances")
+      .update(payload)
+      .eq("id", instanceId);
+    if (error) console.error("[manychat-inbound] health_update_failed", error.message);
+  } catch (e) {
+    console.error("[manychat-inbound] health_update_failed", e);
   }
 }
 
@@ -410,6 +444,10 @@ Deno.serve(async (req) => {
     );
     return jsonResponse({ success: false, error: "unauthorized" }, 401);
   }
+
+  // A correctly authenticated request proves that ManyChat reached our edge.
+  // It is distinct from a successful message persistence watermark below.
+  await markManyChatIngressHealth(supabase, instance.id, false);
 
   // 4.5) P3: backfill manychat_page_name в config, если payload его содержит, но его ещё нет.
   if (normalized.manychat_page_name && !instance.config?.manychat_page_name) {
@@ -563,6 +601,7 @@ Deno.serve(async (req) => {
       msgErr.code === "23505" ||
       (msgErr.message ?? "").includes("duplicate key");
     if (isDup) {
+      await markManyChatIngressHealth(supabase, instance.id, true);
       await logIntegrationEvent(
         supabase,
         instance.id,
@@ -609,8 +648,9 @@ Deno.serve(async (req) => {
   }
 
   // 8b) Push notifications to admins (only for incoming client messages, not dedupe path).
-  // Fire-and-forget: never break the 200 OK to ManyChat.
-  if (normalized.direction === "incoming" && inserted?.id) {
+  // Await the internal fan-out request: a bare fire-and-forget fetch can be
+  // terminated as soon as this Edge Function returns. Push remains non-fatal.
+  if (normalized.direction === "inbound" && inserted?.id) {
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
       const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -647,6 +687,7 @@ Deno.serve(async (req) => {
       } catch (nameErr) {
         console.warn("[manychat-inbound][push] name_resolve_failed", nameErr);
       }
+      senderName = sanitizeDisplayName(senderName) || "Сообщение из Instagram";
 
       const preview = ((normalized.message_text || "").trim()
         || (normalized.media_url ? "[медиа]" : "Новое сообщение"))
@@ -668,7 +709,7 @@ Deno.serve(async (req) => {
       );
 
       if (adminUserIds.length > 0) {
-        fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+        const pushResponse = await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -681,7 +722,14 @@ Deno.serve(async (req) => {
             url: "/admin/communication",
             tag: `ig-msg-${accountId}-${normalized.subscriber_id}`,
           }),
-        }).catch((e) => console.error("[Push][instagram] send error", e));
+        });
+        if (!pushResponse.ok) {
+          console.error(
+            "[Push][instagram] send failed",
+            pushResponse.status,
+            await pushResponse.text(),
+          );
+        }
       }
     } catch (pushErr) {
       console.error("[manychat-inbound][push] error", pushErr);
@@ -701,6 +749,7 @@ Deno.serve(async (req) => {
       has_media: !!normalized.media_url,
     },
   );
+  await markManyChatIngressHealth(supabase, instance.id, true);
 
   return jsonResponse({
     success: true,
