@@ -1,9 +1,8 @@
 name: Payment Method Verification Cron
 
 on:
-  schedule:
-    # Every 5 minutes
-    - cron: '*/5 * * * *'
+  # MIT verification is intentionally retired; keep manual dispatch only for
+  # diagnostics/cleanup, without generating a false failed run every 5 minutes.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -42,6 +41,11 @@ jobs:
           echo "Response: $body"
           echo "HTTP Code: $http_code"
           
+          if [ "$http_code" = "410" ]; then
+            echo "ℹ️ MIT verification is intentionally disabled; no verification jobs were run"
+            exit 0
+          fi
+
           if [ "$http_code" != "200" ]; then
             echo "::error::Expected 200, got $http_code"
             exit 1
