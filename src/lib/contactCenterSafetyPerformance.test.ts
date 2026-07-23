@@ -16,6 +16,7 @@ import incomingAlertSource from "../hooks/useIncomingMessageAlert.ts?raw";
 import pushHookSource from "../hooks/usePushNotifications.ts?raw";
 import manychatInboundSource from "../../supabase/functions/manychat-inbound/index.ts?raw";
 import telegramWebhookSource from "../../supabase/functions/telegram-webhook/index.ts?raw";
+import { sanitizeExternalDisplayName } from "./sanitizeExternalDisplayName";
 
 describe("Contact-center safety and mobile performance", () => {
   it("aligns contact-center RLS and protects the atomic sender RPC", () => {
@@ -138,5 +139,12 @@ describe("Contact-center safety and mobile performance", () => {
     expect(telegramWebhookSource).not.toContain(
       "}).catch(err => console.error('[Push] Send error:', err))",
     );
+  });
+
+  it("removes unresolved ManyChat name tokens without inventing a surname", () => {
+    expect(sanitizeExternalDisplayName("Натікун {{last_name}}")).toBe("Натікун");
+    expect(sanitizeExternalDisplayName("{{first_name}} {{last_name}}")).toBeNull();
+    expect(sanitizeExternalDisplayName("Наталия")).toBe("Наталия");
+    expect(manychatInboundSource).toContain("sanitizeDisplayName(pickString(");
   });
 });

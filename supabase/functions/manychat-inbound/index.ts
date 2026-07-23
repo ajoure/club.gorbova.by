@@ -37,6 +37,15 @@ function pickString(...vals: unknown[]): string | null {
   return null;
 }
 
+function sanitizeDisplayName(value: string | null): string | null {
+  if (!value) return null;
+  const cleaned = value
+    .replace(/\{\{\s*[^{}]+\s*\}\}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || null;
+}
+
 interface NormalizedInbound {
   external_message_id: string;
   // Identity of the Instagram user (the contact) — used to resolve contact
@@ -150,7 +159,7 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
     return { error: "missing_subscriber_id" };
   }
 
-  const subscriber_name = pickString(
+  const subscriber_name = sanitizeDisplayName(pickString(
     subscriber?.name,
     subscriber?.first_name && subscriber?.last_name
       ? `${subscriber.first_name} ${subscriber.last_name}`
@@ -158,7 +167,7 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
     subscriber?.first_name,
     subscriber?.username,
     body.subscriber_name,
-  );
+  ));
 
   const rawText = pickString(
     body.message_text,
@@ -224,7 +233,7 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
         body.page_id,
         body.manychat_page_id,
       ) || "manychat_team";
-    sender_name = pickString(
+    sender_name = sanitizeDisplayName(pickString(
       body.agent_name,
       body.team_member_name,
       body.admin_name,
@@ -232,14 +241,14 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
       body.full_name,
       body.page?.name,
       body.page_name,
-    );
+    ));
   } else {
     sender_id = subscriber_id;
-    sender_name = pickString(
+    sender_name = sanitizeDisplayName(pickString(
       body.sender_name,
       body.full_name,
       subscriber_name,
-    );
+    ));
   }
 
   const rawAvatar = pickString(
@@ -678,6 +687,7 @@ Deno.serve(async (req) => {
       } catch (nameErr) {
         console.warn("[manychat-inbound][push] name_resolve_failed", nameErr);
       }
+      senderName = sanitizeDisplayName(senderName) || "Сообщение из Instagram";
 
       const preview = ((normalized.message_text || "").trim()
         || (normalized.media_url ? "[медиа]" : "Новое сообщение"))

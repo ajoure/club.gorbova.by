@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { INBOX_DIALOGS_QK } from "@/constants/inboxQueryKeys";
 import { useAuth } from "@/contexts/AuthContext";
 import { normalizeTelegramSearchInput } from "@/lib/telegramSearch";
+import { sanitizeExternalDisplayName } from "@/lib/sanitizeExternalDisplayName";
 
 /**
  * useUnifiedInbox — фронтенд-нормализация трёх источников
@@ -465,7 +466,11 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
         source: "instagram",
         sourceId: `${d.__accountId}:${d.thread_key || d.peer_id}`,
         sourceLabel: accountLabel ? `@${accountLabel}` : null,
-        displayName: d.full_name || d.sender_name || d.instagram_username || "Instagram",
+        displayName:
+          sanitizeExternalDisplayName(d.full_name) ||
+          sanitizeExternalDisplayName(d.sender_name) ||
+          sanitizeExternalDisplayName(d.instagram_username) ||
+          "Instagram",
         avatarUrl: d.avatar_url || null,
         lastMessage: d.last_message || (d.last_media_url ? "[медиа]" : ""),
         lastMessageAt: d.last_at,
@@ -482,7 +487,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
           instagramPeerId: d.peer_id,
           instagramUserId: d.peer_id,
           instagramContactId: igContactMap.get(`${d.__accountId}:${d.peer_id}`)?.id ?? null,
-          instagramSenderName: d.sender_name,
+          instagramSenderName: sanitizeExternalDisplayName(d.sender_name),
         },
       });
     }
