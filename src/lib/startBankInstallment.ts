@@ -10,6 +10,7 @@ import type { BankInstallmentRuntime } from "@/lib/bankInstallment";
 
 export interface StartBankInstallmentInput {
   offerId: string;
+  addonOfferIds?: string[];
   runtime?: BankInstallmentRuntime;
   legacyBankLinkUrl?: string;
   legacyBankLinkLabel?: string;
@@ -46,6 +47,7 @@ export async function startBankInstallment(
       {
         body: {
           tariff_offer_id: input.offerId,
+          addon_offer_ids: input.addonOfferIds ?? [],
           name: input.contact.name,
           phone: input.contact.phone,
           email: input.contact.email,
