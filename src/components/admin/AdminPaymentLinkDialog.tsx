@@ -215,8 +215,10 @@ export function AdminPaymentLinkDialog({
         invoice_number: string;
         document_number: string | null;
         document_issued_at: string | null;
+        order_id: string | null;
       }
   >(null);
+
   // Phase 4.1 — provider routing UI state
   const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
   const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
@@ -1066,7 +1068,9 @@ ${amountLine}
         invoice_number: payload.invoice_number ?? "—",
         document_number: payload.document_number ?? null,
         document_issued_at: payload.document_issued_at ?? null,
+        order_id: payload.order_id ?? null,
       });
+
     } catch (e: any) {
       toast.error("Ошибка счёта: " + (e?.message ?? "unknown"));
     } finally {
@@ -2307,10 +2311,25 @@ ${amountLine}
               invoiceNumber={invoiceIssueResult.invoice_number}
               documentNumber={invoiceIssueResult.document_number}
               documentIssuedAt={invoiceIssueResult.document_issued_at}
+              orderId={invoiceIssueResult.order_id}
+              onDocumentReady={(r) =>
+                setInvoiceIssueResult((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        document_id: r.document_id,
+                        document_number: r.document_number ?? prev.document_number,
+                        document_issued_at:
+                          r.document_issued_at ?? prev.document_issued_at,
+                      }
+                    : prev,
+                )
+              }
               onClose={() => setInvoiceIssueResult(null)}
               layout="dialog"
             />
           )}
+
         </DialogContent>
       </Dialog>
     </>

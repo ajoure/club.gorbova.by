@@ -755,10 +755,67 @@ Deno.serve(async (req: Request) => {
     : `${Deno.env.get("SUPABASE_URL")}/functions/v1/rr-webhook`;
 
   // 3. Вызов РР (pre-call marker уже durable записан).
-  const itemNameRaw = composableQuote.items.map((item) =>
-    [item.product_name, item.tariff_name].filter(Boolean).join(" — ")
-  ).filter(Boolean).join("; ") || "Оплата заказа";
-  const itemName = itemNameRaw.slice(0, 128);
+  // Blocker ORD-26-02829 (B): RR provider description строим из canonical
+  // composition snapshot — primary отдельной строкой, затем ВСЕ addons в
+  // стабильном порядке sort_order / позиции. Никакого items[0]/find/legacy.
+  // Provider ограничивает name 128 символами: используем короткие имена
+  // модулей (после последнего "|", без префикса "Модуль:"), чтобы уместить
+  // все аддоны и не терять их визуально в описании платежа.
+  const compItems = Array.isArray(composableQuote.items) ? composableQuote.items : [];
+  const primaryItem =
+    compItems.find((i: any) => i?.role === "primary") ?? compItems[0];
+  const addonItems = compItems
+    .filter((i: any) => i && i !== primaryItem)
+    .slice()
+    .sort(
+      (a: any, b: any) =>
+        Number(a?.sort_order ?? 0) - Number(b?.sort_order ?? 0),
+    );
+
+  const shortenAddonName = (full: string | null | undefined): string => {
+    const raw = (full ?? "").trim();
+    if (!raw) return "";
+    const parts = raw.split("|").map((p) => p.trim()).filter(Boolean);
+    const tail = parts.length > 0 ? parts[parts.length - 1] : raw;
+    return tail.replace(/^Модуль\s*[:\-–]?\s*/i, "").trim() || tail;
+  };
+
+  const primaryLabel = (() => {
+    const pn = (primaryItem?.product_name ?? "").toString().trim();
+    const tn = (primaryItem?.tariff_name ?? "").toString().trim();
+    if (!pn) return "";
+    return tn ? `${pn} — ${tn}` : pn;
+  })();
+  const addonShortLabels = addonItems
+    .map((i: any) => shortenAddonName(i?.product_name))
+    .filter((n: string) => n.length > 0);
+
+  const MAX = 128;
+  const buildItemName = (): string => {
+    if (!primaryLabel && addonShortLabels.length === 0) return "Оплата заказа";
+    // «<primary>. Модули: <n1>, <n2>, ...» — оба addon-а обязаны быть видны.
+    let name = primaryLabel;
+    if (addonShortLabels.length > 0) {
+      const joined = addonShortLabels.join(", ");
+      const withAll = name
+        ? `${name}. Модули: ${joined}`
+        : `Модули: ${joined}`;
+      if (withAll.length <= MAX) return withAll;
+      // Не помещается: усечём primary, но оба модуля оставим целиком.
+      const suffix = `. Модули: ${joined}`;
+      if (suffix.length + 4 <= MAX && name) {
+        const budget = MAX - suffix.length - 1; // -1 для «…»
+        if (budget > 8) {
+          return `${name.slice(0, budget).trimEnd()}…${suffix}`;
+        }
+      }
+      // Аварийный минимум: без primary, только модули.
+      return suffix.slice(0, MAX);
+    }
+    return name.slice(0, MAX);
+  };
+  const itemName = buildItemName();
+
 
   const rrRes = await rrCreateOrder(cfg, {
     externalId, amountMinor, currency, notificationUrl, correlationId, itemName,
