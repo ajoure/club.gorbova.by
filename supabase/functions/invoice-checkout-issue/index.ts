@@ -39,6 +39,7 @@ import {
   resolveComposableCheckout,
 } from "../_shared/resolve-composable-checkout.ts";
 import { materializeComposableOrderGroup } from "../_shared/materialize-composable-order-group.ts";
+import { buildPurchaseCompositionTitle } from "../_shared/purchase-composition-title.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
