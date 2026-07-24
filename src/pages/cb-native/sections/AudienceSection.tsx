@@ -1,14 +1,18 @@
 import { rec, CB_PALETTE } from "../manifest";
 
 /**
- * Section 2 — "ДЛЯ КОГО ЭТОТ КУРС" (rec776467160).
- * Exactly 6 audience items, sourced by fixed manifest indices:
- *   text[0]           — heading
- *   text[1 + 3n]      — title
- *   text[2 + 3n], [3 + 3n] — description (lead + tail)
- *   images[n]         — icon
- * Magenta title / black-charcoal card / white heading — cbold visual hierarchy.
+ * Section 2 — "ДЛЯ КОГО ЭТОТ КУРС:" (rec776467160).
+ *
+ * Fidelity notes (Slice 1, 2026-07-24):
+ *  - Live uses `Sf-pro-display, Arial, sans-serif`, NOT Comfortaa.
+ *  - Live composition: transparent 3-column grid, no card chrome —
+ *    icon (colored, no filter) on top, dark uppercase title, dark body
+ *    with a bold-lead phrase. Previous charcoal-card / white-text /
+ *    magenta-lead design contradicted the canonical.
+ *  - H2 is magenta `#e422c2` at 40px weight 600.
+ *  - Text order (13 normalized lines) is unchanged and already at parity.
  */
+const SF_FONT = "'Sf-pro-display', Arial, sans-serif";
 const AUDIENCE_COUNT = 6;
 
 export function AudienceSection() {
@@ -25,26 +29,31 @@ export function AudienceSection() {
     <section
       id="rec776467160"
       data-cb-native-section="audience"
-      style={{ background: CB_PALETTE.bg }}
-      className="py-16 lg:py-24"
+      style={{
+        background: CB_PALETTE.bg,
+        fontFamily: SF_FONT,
+        color: CB_PALETTE.text,
+      }}
+      className="py-16 md:py-24 lg:py-28"
     >
       <div className="mx-auto max-w-[1160px] px-5">
         <h2
-          className="mb-10 text-center text-[32px] font-bold uppercase leading-[1.1] md:mb-14 md:text-[42px]"
-          style={{ color: CB_PALETTE.accent }}
+          className="mb-12 text-left text-[32px] font-semibold uppercase leading-[1.1] md:mb-16 md:text-[40px]"
+          style={{ color: CB_PALETTE.accent, fontFamily: SF_FONT, fontWeight: 600 }}
         >
           {heading}
         </h2>
+
         <div
-          className="grid gap-5 md:grid-cols-2 lg:grid-cols-3"
+          className="grid gap-x-10 gap-y-14 md:grid-cols-2 lg:grid-cols-3 md:gap-y-16"
           data-cb-native-audience-grid
         >
           {items.map((it, i) => (
             <article
               key={i}
               data-cb-native-audience-item
-              className="flex flex-col gap-4 rounded-[22px] p-7"
-              style={{ background: "#343434", color: CB_PALETTE.bg }}
+              className="flex flex-col gap-4"
+              style={{ fontFamily: SF_FONT }}
             >
               {it.icon && (
                 <img
@@ -52,18 +61,27 @@ export function AudienceSection() {
                   alt=""
                   aria-hidden
                   loading="lazy"
-                  className="h-12 w-12 object-contain"
-                  style={{ filter: "brightness(0) invert(1)" }}
+                  className="h-10 w-10 object-contain"
                 />
               )}
               <h3
-                className="text-[18px] font-bold uppercase leading-tight tracking-wide"
-                style={{ color: CB_PALETTE.bg }}
+                className="text-[20px] font-semibold uppercase leading-tight"
+                style={{
+                  color: CB_PALETTE.textStrong,
+                  fontFamily: SF_FONT,
+                  fontWeight: 600,
+                  letterSpacing: "0.01em",
+                }}
               >
                 {it.title}
               </h3>
-              <p className="text-[15px] leading-[1.5]" style={{ color: "#e6e6e6" }}>
-                <span style={{ color: CB_PALETTE.accentSoft }}>{it.lead}</span>
+              <p
+                className="m-0 text-[17px] leading-[1.5]"
+                style={{ color: CB_PALETTE.text, fontFamily: SF_FONT }}
+              >
+                <strong style={{ fontWeight: 700, color: CB_PALETTE.textStrong }}>
+                  {it.lead}
+                </strong>
                 {it.tail ? ` ${it.tail}` : ""}
               </p>
             </article>
