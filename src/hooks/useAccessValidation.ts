@@ -44,27 +44,41 @@ export interface SubscriptionLike {
 }
 
 /**
+ * Оплаченный доступ, который должен быть виден владельцу в «Моих доступах».
+ *
+ * access_rules описывают, какой контент открывает продукт, но не являются
+ * доказательством покупки. Ошибка правила не должна скрывать действующую
+ * subscriptions_v2/entitlements запись.
+ */
+export function isCurrentPurchasedAccess(
+  access: SubscriptionLike,
+): boolean {
+  if (access.status !== "active" && access.status !== "trial") return false;
+  if (access.access_end_at && new Date(access.access_end_at) < new Date()) return false;
+
+  const productId = access.product_id || access.products_v2?.id;
+  if (!productId) return false;
+
+  const product = access.products_v2;
+  const tariff = access.tariffs;
+  if (product?.is_active === false) return false;
+  if (tariff?.is_active === false) return false;
+
+  return true;
+}
+
+/**
  * Текущий валидный доступ — запись, подтверждённая действующим правилом доступа системы.
  */
 export function isCurrentValidAccess(
   sub: SubscriptionLike,
   productsWithRules: Set<string>
 ): boolean {
-  // 1. Статус
-  if (sub.status !== "active" && sub.status !== "trial") return false;
+  if (!isCurrentPurchasedAccess(sub)) return false;
 
-  // 2. Срок
-  if (sub.access_end_at && new Date(sub.access_end_at) < new Date()) return false;
-
-  // 3. Действующее правило доступа для продукта
+  // Действующее правило доступа для продукта
   const productId = sub.product_id || (sub.products_v2 as any)?.id;
   if (!productId || !productsWithRules.has(productId)) return false;
-
-  // 4. Дополнительные guard: продукт/тариф не деактивированы
-  const product = sub.products_v2 as any;
-  const tariff = sub.tariffs as any;
-  if (product?.is_active === false) return false;
-  if (tariff?.is_active === false) return false;
 
   return true;
 }

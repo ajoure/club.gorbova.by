@@ -293,23 +293,38 @@ Deno.serve(async (req) => {
             if (linked.subscription_v2_id) {
               const { data: subV2 } = await supabase
                 .from('subscriptions_v2')
-                .select('meta')
+                .select('meta, access_end_at')
                 .eq('id', linked.subscription_v2_id)
                 .single();
 
-              await supabase
+              const canceledAt = new Date().toISOString();
+              const { error: localSyncError } = await supabase
                 .from('subscriptions_v2')
                 .update({
                   auto_renew: false,
-                  canceled_at: new Date().toISOString(),
+                  canceled_at: canceledAt,
+                  cancel_at: subV2?.access_end_at || canceledAt,
                   meta: {
                     ...((subV2?.meta as object) || {}),
-                    bepaid_canceled_at: new Date().toISOString(),  // Use 'canceled'
+                    bepaid_canceled_at: canceledAt,
                     bepaid_canceled_by: user.id,
                     bepaid_cancel_source: source,
                   },
                 })
                 .eq('id', linked.subscription_v2_id);
+
+              if (localSyncError) {
+                console.error(
+                  `[bepaid-cancel-subs] Provider canceled ${subId}, local sync failed:`,
+                  localSyncError,
+                );
+                result.failed.push({
+                  id: subId,
+                  error: `Provider canceled, local sync failed: ${localSyncError.message}`,
+                  reason_code: 'api_error',
+                  provider_error: 'provider_canceled_local_sync_failed',
+                });
+              }
             }
 
             // Set targetUserId for audit
@@ -351,7 +366,7 @@ Deno.serve(async (req) => {
     }
 
     // Audit log
-    await supabase.from('audit_logs').insert({
+    const { error: auditError } = await supabase.from('audit_logs').insert({
       actor_type: 'system',
       actor_user_id: null,
       actor_label: 'bepaid-cancel-subscription',
@@ -371,6 +386,9 @@ Deno.serve(async (req) => {
         is_admin: hasAdminRole,
       },
     });
+    if (auditError) {
+      console.error('[bepaid-cancel-subs] Audit insert failed:', auditError);
+    }
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
