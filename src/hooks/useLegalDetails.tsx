@@ -190,22 +190,49 @@ export function useLegalDetails() {
     },
   });
 
-  // Delete legal details
+  // Delete legal details via SECURITY DEFINER RPC (admin/superadmin only).
+  // Server atomically detaches company_contacts + historical order/document
+  // references (SET NULL, snapshots preserved), removes CLD<->company map
+  // rows, then deletes the target. CRM companies/contacts are NOT deleted.
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from("client_legal_details")
-        .delete()
-        .eq("id", id);
-      
+      const { data, error } = await supabase.rpc(
+        "client_legal_details_admin_delete",
+        { _target_id: id },
+      );
       if (error) throw error;
+      return data as {
+        ok: boolean;
+        was_default: boolean;
+        detached_contacts: number;
+        detached_documents: number;
+        detached_order_links: number;
+      };
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["client-legal-details"] });
-      toast.success("Реквизиты удалены");
+      const details: string[] = [];
+      if (result?.detached_contacts) details.push(`контакты: ${result.detached_contacts}`);
+      if (result?.detached_documents) details.push(`документы: ${result.detached_documents}`);
+      if (result?.detached_order_links) details.push(`заказы: ${result.detached_order_links}`);
+      toast.success(
+        details.length
+          ? `Реквизиты удалены. Отвязано: ${details.join(", ")}`
+          : "Реквизиты удалены",
+      );
+      if (result?.was_default) {
+        toast.message("Удалён основной профиль — назначьте новый при необходимости.");
+      }
     },
-    onError: (error) => {
-      toast.error("Ошибка: " + error.message);
+    onError: (error: { message?: string }) => {
+      const msg = error?.message ?? "Не удалось удалить реквизиты";
+      if (/Forbidden|42501/i.test(msg)) {
+        toast.error("Удаление доступно только администратору или суперадминистратору.");
+      } else if (/not found|P0002/i.test(msg)) {
+        toast.error("Профиль реквизитов не найден или уже удалён.");
+      } else {
+        toast.error("Ошибка: " + msg);
+      }
     },
   });
 
