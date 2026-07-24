@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Calendar } from "@/components/ui/calendar";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { CompanyDetailsSheet } from "@/pages/admin/AdminCompanies";
 import { SwipeableDialogCard } from "@/components/admin/communication/SwipeableDialogCard";
 import { formatContactName } from "@/lib/nameUtils";
 import { 
@@ -187,6 +188,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
   const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
   const serverSearchQuery = normalizeTelegramSearchInput(debouncedSearchQuery);
   const [contactSheetUserId, setContactSheetUserId] = useState<string | null>(null);
+  const [companySheetId, setCompanySheetId] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "unread" | "read" | "favorites" | "pinned">("all");
   const [advancedFilters, setAdvancedFilters] = useState<Filters>(initialFilters);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -1297,8 +1299,18 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
           onOpenChange={(open) => {
             if (!open) setContactSheetUserId(null);
           }}
+          onOpenCompany={(companyId) => {
+            setContactSheetUserId(null);
+            setCompanySheetId(companyId);
+          }}
         />
       )}
+      <CompanyDetailsSheet
+        companyId={companySheetId}
+        canEdit={false}
+        onClose={() => setCompanySheetId(null)}
+        onOpenCompany={setCompanySheetId}
+      />
     </TooltipProvider>
   );
 }
