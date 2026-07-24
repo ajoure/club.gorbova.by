@@ -22,6 +22,8 @@ import {
 } from "@/hooks/useTelegramLink";
 import type { BankInstallmentRuntime } from "@/lib/bankInstallment";
 import { startBankInstallment } from "@/lib/startBankInstallment";
+import { OrderSummary } from "@/components/checkout/OrderSummary";
+import { useComposableQuoteSummary } from "@/hooks/useComposableQuoteSummary";
 
 interface LeadRequestDialogProps {
   open: boolean;
