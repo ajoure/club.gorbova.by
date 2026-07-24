@@ -17,6 +17,16 @@ const purchasesPage = readFileSync(
   "utf8",
 );
 
+const subscriptionConflict = readFileSync(
+  resolve(process.cwd(), "supabase/functions/_shared/subscription-conflict.ts"),
+  "utf8",
+);
+
+const contactDetailSheet = readFileSync(
+  resolve(process.cwd(), "src/components/admin/ContactDetailSheet.tsx"),
+  "utf8",
+);
+
 describe("provider-backed subscription cancellation", () => {
   it("cancels bePaid before writing a local successful cancellation", () => {
     const providerCall = subscriptionActions.indexOf(
@@ -42,6 +52,28 @@ describe("provider-backed subscription cancellation", () => {
     expect(bepaidCancel).toContain(".select('meta, access_end_at')");
     expect(bepaidCancel).toContain("cancel_at: subV2?.access_end_at || canceledAt");
     expect(bepaidCancel).toContain("provider_canceled_local_sync_failed");
+    expect(bepaidCancel).toContain("provider_canceled_provider_state_sync_failed");
+    expect(bepaidCancel.indexOf("result.canceled.push(subId)")).toBeGreaterThan(
+      bepaidCancel.indexOf("providerStateError"),
+    );
+  });
+
+  it("blocks another checkout while a same-product provider subscription is pending", () => {
+    expect(subscriptionConflict).toContain(
+      "['active', 'trial', 'pending', 'past_due', 'failed_attempt']",
+    );
+  });
+
+  it("does not show pending checkout attempts as active contact subscriptions", () => {
+    expect(contactDetailSheet).toContain(
+      "new Set(['active', 'trial', 'past_due', 'failed_attempt'])",
+    );
+    expect(contactDetailSheet).toContain(
+      "bePaid не подтвердил отмену подписки",
+    );
+    expect(contactDetailSheet).toContain(
+      "queryKey: ['contact-provider-subscriptions']",
+    );
   });
 
   it("shows an active paid entitlement when no active subscription is visible", () => {

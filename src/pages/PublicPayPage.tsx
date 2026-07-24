@@ -233,7 +233,7 @@ export default function PublicPayPage() {
 
       const data = await res.json();
       if (data?.error === 'already_has_active_subscription' && data?.conflict) {
-        setActiveSubscriptionData(data.conflict as SubscriptionConflictInfo);
+        setConflictData(data.conflict as SubscriptionConflictInfo);
         setIsProcessing(false);
         return;
       }
@@ -634,17 +634,18 @@ export default function PublicPayPage() {
               <Alert className="mb-4 border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
                 <Repeat className="h-4 w-4 text-amber-600" />
                 <AlertTitle className="text-amber-800 dark:text-amber-200">
-                  У вас уже есть активная подписка на этот продукт
+                  Новую подписку пока создать нельзя
                 </AlertTitle>
                 <AlertDescription className="space-y-3 text-amber-800 dark:text-amber-200">
-                  <p>Можно оставить текущую подписку или заменить её новой оплатой.</p>
+                  <p>У вас уже есть действующая или ожидающая оплаты подписка на этот продукт.</p>
+                  <p>Чтобы исключить двойное списание, сначала отмените её.</p>
                   <div className="flex flex-col sm:flex-row gap-2">
                     <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => setConflictData(null)}>
                       Оставить текущую
                     </Button>
                     <Button type="button" size="sm" className="flex-1" disabled={isProcessing || replaceStep !== 'idle'} onClick={() => setShowReplaceConfirm(true)}>
                       {replaceStep !== 'idle' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Repeat className="mr-2 h-4 w-4" />}
-                      Заменить подписку
+                      Отменить старую и создать новую
                     </Button>
                   </div>
                 </AlertDescription>

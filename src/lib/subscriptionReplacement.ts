@@ -44,14 +44,15 @@ export type ReplacementMode = 'provider_managed' | 'local_only_no_provider_subsc
 
 /**
  * Runtime-проверка provider-связи (не доверяем только полям из conflict-объекта).
- * Возвращает true если у subscription_v2_id есть active/pending запись в provider_subscriptions.
+ * Возвращает true, если у subscription_v2_id есть состояние, способное
+ * блокировать новый checkout или продолжать списания.
  */
 async function hasProviderLinkage(subscriptionV2Id: string): Promise<boolean> {
   const { data, error } = await supabase
     .from('provider_subscriptions')
     .select('id')
     .eq('subscription_v2_id', subscriptionV2Id)
-    .in('state', ['active', 'pending'])
+    .in('state', ['active', 'trial', 'pending', 'past_due', 'failed_attempt'])
     .limit(1)
     .maybeSingle();
   if (error) {
@@ -116,6 +117,10 @@ export async function cancelOldSubscriptionForReplacement(
     if (failedHard.length > 0) {
       const reason = failedHard[0]?.error || "неизвестная ошибка";
       throw new Error(`Провайдер не смог отменить подписку: ${reason}`);
+    }
+    const canceledIds = Array.isArray(cancelData?.canceled) ? cancelData.canceled : [];
+    if (canceledIds.length === 0 && !remoteMissingHere) {
+      throw new Error("Провайдер не подтвердил отмену подписки. Новая подписка не создана.");
     }
     remoteMissingTreatedAsCanceled = remoteMissingHere;
     cancelResult = cancelData;

@@ -944,7 +944,14 @@ ${amountLine}
       );
 
       if (error) throw error;
-      if (!data.success && data.error === "existing_subscription_conflict" && data.conflict) {
+      if (
+        !data.success
+        && (
+          data.error === "existing_subscription_conflict"
+          || data.error === "already_has_active_subscription"
+        )
+        && data.conflict
+      ) {
         // PATCH PAYMENT-CONFLICT v3: принимаем конфликт только если это same-product для текущего выбора.
         if (data.conflict.product_id === selectedProductId) {
           setConflictData(data.conflict);

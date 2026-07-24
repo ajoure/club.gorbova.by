@@ -130,7 +130,7 @@ Deno.serve(async (req) => {
         .from('provider_subscriptions')
         .select('provider_subscription_id, user_id')
         .eq('subscription_v2_id', body.subscription_v2_id)
-        .in('state', ['active', 'pending', 'trial']);
+        .in('state', ['active', 'trial', 'pending', 'past_due', 'failed_attempt']);
 
       if (provSubs?.length) {
         subscriptionIds.push(...provSubs.map((s: any) => s.provider_subscription_id));
@@ -273,15 +273,27 @@ Deno.serve(async (req) => {
         }
 
         if (shouldMarkCanceled) {
-          result.canceled.push(subId);
-
           // Update provider_subscriptions with normalized state
-          await supabase
+          const { error: providerStateError } = await supabase
             .from('provider_subscriptions')
             .update({
               state: 'canceled',  // Use 'canceled' (normalized)
             })
             .eq('provider_subscription_id', subId);
+
+          if (providerStateError) {
+            console.error(
+              `[bepaid-cancel-subs] Provider canceled ${subId}, provider_subscriptions sync failed:`,
+              providerStateError,
+            );
+            result.failed.push({
+              id: subId,
+              error: `Provider canceled, local provider state sync failed: ${providerStateError.message}`,
+              reason_code: 'api_error',
+              provider_error: 'provider_canceled_provider_state_sync_failed',
+            });
+            continue;
+          }
 
           // Update linked subscriptions_v2
           const { data: linkedSubs } = await supabase
@@ -331,6 +343,13 @@ Deno.serve(async (req) => {
             if (!targetUserId && linked.user_id) {
               targetUserId = linked.user_id;
             }
+          }
+
+          // Success is reported only after the local provider row was moved out
+          // of the live set. Otherwise the UI must not claim that cancellation
+          // completed while the same subscription remains visible/blocking.
+          if (!result.failed.some((failure) => failure.id === subId)) {
+            result.canceled.push(subId);
           }
         } else if (failReason) {
           result.failed.push(failReason);
