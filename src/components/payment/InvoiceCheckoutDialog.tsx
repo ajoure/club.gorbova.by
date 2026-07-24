@@ -705,7 +705,7 @@ type RowState =
 
 function renderRow(
   channel: "email" | "telegram",
-  state?: import("@/lib/invoiceDelivery").ChannelState,
+  state?: ChannelState,
 ): RowState {
   if (!state) return { kind: "pending", text: "Готовим…" };
   switch (state.status) {
