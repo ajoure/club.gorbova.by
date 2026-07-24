@@ -23579,7 +23579,6 @@ export type Database = {
           latest_payment_status: string
           meta: Json
           order_number: string
-          pipeline_id: string
           product_code: string
           product_id: string
           product_name: string
@@ -23601,6 +23600,10 @@ export type Database = {
       search_global: {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: Json
+      }
+      search_profile_ids_by_company: {
+        Args: { p_query: string }
+        Returns: string[]
       }
       send_ticket_message_v2: {
         Args: {
