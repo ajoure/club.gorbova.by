@@ -245,6 +245,39 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Only offers with an explicitly configured, currently available addon
+    // should open the composable checkout. Ordinary payment/trial/invoice
+    // buttons must go straight to their configured flow.
+    const offerIds = offers.map((offer) => offer.id);
+    const offersWithAvailableAddons = new Set<string>();
+    if (offerIds.length > 0) {
+      const { data: addonRules, error: addonRulesError } = await supabase
+        .from("offer_addons")
+        .select(`
+          parent_offer_id, visible_from, visible_to,
+          addon_product:products_v2!offer_addons_addon_product_id_fkey(is_active),
+          addon_tariff:tariffs!offer_addons_addon_tariff_id_fkey(is_active),
+          addon_offer:tariff_offers!offer_addons_addon_offer_id_fkey(is_active)
+        `)
+        .in("parent_offer_id", offerIds)
+        .eq("is_active", true);
+
+      if (addonRulesError) {
+        console.error("[public-product] Error fetching offer addons:", addonRulesError);
+      } else {
+        const nowMs = Date.now();
+        for (const rule of addonRules || []) {
+          const isAvailable =
+            (!rule.visible_from || Date.parse(rule.visible_from) <= nowMs) &&
+            (!rule.visible_to || Date.parse(rule.visible_to) >= nowMs) &&
+            (rule.addon_product as any)?.is_active === true &&
+            (rule.addon_tariff as any)?.is_active === true &&
+            (rule.addon_offer as any)?.is_active === true;
+          if (isAvailable) offersWithAvailableAddons.add(rule.parent_offer_id);
+        }
+      }
+    }
+
     // Map features and offers to tariffs (apply reentry pricing)
     const tariffsWithOffers = tariffs?.map((tariff) => ({
       ...tariff,
@@ -257,15 +290,19 @@ Deno.serve(async (req) => {
           return aSort - bSort || String(a.id).localeCompare(String(b.id));
         })
         .map((offer) => {
+          const withCompositionFlag = {
+            ...offer,
+            has_available_addons: offersWithAvailableAddons.has(offer.id),
+          };
           if (isReentryPricing && offer.reentry_amount) {
             return {
-              ...offer,
+              ...withCompositionFlag,
               original_amount: offer.amount,
               amount: offer.reentry_amount,
               is_reentry_price: true,
             };
           }
-          return { ...offer, is_reentry_price: false };
+          return { ...withCompositionFlag, is_reentry_price: false };
         }),
     })) || [];
 

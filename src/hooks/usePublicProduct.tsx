@@ -29,6 +29,9 @@ export interface TariffOfferMeta {
     charge_window_start?: number;
     charge_window_end?: number;
   };
+  document_scenarios?: unknown;
+  slot_role?: string;
+  site_button_variant?: string;
 }
 
 export interface TariffOffer {
@@ -47,6 +50,7 @@ export interface TariffOffer {
   is_primary?: boolean;
   payment_method?: string;
   installment_count?: number;
+  has_available_addons?: boolean;
   meta?: TariffOfferMeta;
 }
 

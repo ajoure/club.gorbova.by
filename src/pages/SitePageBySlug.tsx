@@ -65,23 +65,18 @@ interface CheckoutSelection {
   currency: string;
 }
 
-/**
- * Map an admin-HTML tariff key (data-lovable-tariff-key="…") to a tariff on the
- * linked product. Matches by substring of tariff.name (case-insensitive) so the
- * product's tariffs stay editable without HTML re-patch.
- * cb20 (Ценный бухгалтер): buh → «Бухгалтер», gl_buh → «Главный бухгалтер», biz-l → «Бизнес-леди».
- */
-const TARIFF_KEY_NAME_MATCH: Record<string, (name: string) => boolean> = {
-  buh: (n) => /^бухгалтер/i.test(n.trim()),
-  gl_buh: (n) => /главн\S*\s+бухгалтер/i.test(n),
-  "biz-l": (n) => /бизнес.?леди/i.test(n),
-};
+function configuredTariffKey(tariff: {
+  code?: string | null;
+  meta?: { site_slot_key?: string | null } | null;
+}) {
+  return String(tariff.meta?.site_slot_key || tariff.code || "").trim();
+}
 
 /**
  * Select the offer that matches the requested flow.
  * - lead        → offer_type='lead'
  * - installment → pay_now + payment_method='internal_installment'
- * - invoice     → pay_now + detectInvoiceOnlyOffer=true
+ * - invoice     → explicitly configured invoice button
  * - payment     → pay_now, primary full_payment, ignoring installment/invoice-only
  */
 function pickOfferForFlow(offers: readonly any[], flow: Flow) {
@@ -89,10 +84,10 @@ function pickOfferForFlow(offers: readonly any[], flow: Flow) {
   if (flow === "lead") return active.find((o) => o.offer_type === "lead") || null;
   if (flow === "bank_installment") return active.find((o) => o.offer_type === "bank_installment") || null;
   if (flow === "invoice") {
-    // Каноничный invoice-оффер имеет offer_type='invoice'. Legacy: pay_now с document_scenarios.
+    // Legacy dynamic-slot pages use slot_role/site_button_variant on the offer.
     return (
       active.find((o) => o.offer_type === "invoice") ||
-      active.filter((o) => o.offer_type === "pay_now").find((o) => detectInvoiceOnlyOffer(o).isInvoiceOnly) ||
+      active.find((o) => detectInvoiceOnlyOffer(o).isInvoiceOnly) ||
       null
     );
   }
@@ -283,7 +278,7 @@ export default function SitePageBySlug() {
       }
 
       // Dynamic-slot canonical path (Phase B). UUID-only; never falls back to
-      // the legacy TARIFF_KEY_NAME_MATCH regex resolver. Full revalidation:
+      // a name-based resolver. Full revalidation:
       //   1) offer_id is a UUID present in linkedProductData
       //   2) belongs to payload.tariff_id
       //   3) tariff belongs to linked product
@@ -410,13 +405,12 @@ export default function SitePageBySlug() {
         // pick offer that matches the requested flow. No UUIDs in the HTML.
         const flow = ACTION_TO_FLOW[detail.action as keyof typeof ACTION_TO_FLOW];
         const tariffKey = String(detail.payload?.tariff_key || "").trim();
-        const matcher = TARIFF_KEY_NAME_MATCH[tariffKey];
         const product = linkedProductDataRef.current;
-        if (!matcher || !product?.product?.id || !product.tariffs?.length) {
-          console.warn(`[site-action] ${detail.action}: no product data or unknown tariff_key`, { tariffKey });
+        if (!tariffKey || !product?.product?.id || !product.tariffs?.length) {
+          console.warn(`[site-action] ${detail.action}: no product data or empty tariff_key`, { tariffKey });
           return;
         }
-        const tariff = product.tariffs.find((t) => matcher(t.name || ""));
+        const tariff = product.tariffs.find((t) => configuredTariffKey(t) === tariffKey);
         if (!tariff) {
           console.warn(`[site-action] ${detail.action}: tariff not found`, { tariffKey });
           return;
@@ -516,7 +510,12 @@ export default function SitePageBySlug() {
           total: Number(resolved.offer.amount || 0),
           currency: resolved.product.currency || "BYN",
         };
-        if (!checkoutSelection && resolved.offer.offer_type !== "lead") {
+        if (
+          !checkoutSelection &&
+          resolved.offer.has_available_addons === true &&
+          resolved.offer.offer_type !== "lead" &&
+          resolved.offer.offer_type !== "bank_installment"
+        ) {
           return (
             <ComposableCheckoutDialog
               open={paymentOpen}
