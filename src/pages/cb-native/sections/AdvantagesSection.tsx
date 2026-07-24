@@ -21,6 +21,7 @@ export function AdvantagesSection() {
   return (
     <section
       id="rec782178631"
+      data-cb-native-section="advantages"
       className="py-16 lg:py-24"
       style={{ background: CB_PALETTE.bg }}
     >
