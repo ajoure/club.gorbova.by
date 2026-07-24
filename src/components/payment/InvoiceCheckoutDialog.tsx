@@ -517,14 +517,7 @@ function InvoiceDeliverySuccess({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentId]);
 
-  // Отдельный effect: как только достигнут финальный статус, не запускаем
-  // дополнительный tick. Достаточно того, что внутренний loop сам завершится
-  // при следующем attempt: но, чтобы не ждать 3 с зря, можно ранее остановить.
-  // Реализация выше "простая, но корректная": даже если она сделает лишний
-  // запрос, всё безопасно.
 
   async function handleDownload() {
     if (!documentId || !status?.pdf_ready) return;
