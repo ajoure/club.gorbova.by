@@ -21715,6 +21715,17 @@ export type Database = {
         Args: { p_order_id: string }
         Returns: Json
       }
+      consume_inline_otp_attempt: {
+        Args: {
+          p_code_hash: string
+          p_code_id: string
+          p_max_attempts?: number
+        }
+        Returns: {
+          attempts: number
+          status: string
+        }[]
+      }
       contact_feed_list: {
         Args: {
           _contact_id: string
@@ -22979,6 +22990,24 @@ export type Database = {
       is_verified_club_member: {
         Args: { _club_id: string; _tg_id: number }
         Returns: boolean
+      }
+      issue_inline_otp_code: {
+        Args: {
+          p_code_hash: string
+          p_email: string
+          p_flow_id: string
+          p_ip: string
+          p_meta: Json
+          p_purpose: string
+          p_salt: string
+          p_ttl_seconds?: number
+          p_user_agent: string
+        }
+        Returns: {
+          expires_at: string
+          retry_after_s: number
+          status: string
+        }[]
       }
       link_instagram_contact_to_profile: {
         Args: {
