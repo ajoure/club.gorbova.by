@@ -127,3 +127,6 @@ verify_jwt = false
 # Authorization bearer to the service-role secret before claiming jobs.
 [functions.crm-pipeline-automation-worker]
 verify_jwt = true
+
+[functions._temp_cbold_dump]
+verify_jwt = false
