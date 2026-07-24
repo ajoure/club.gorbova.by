@@ -111,7 +111,7 @@ export function CasesSection() {
               style={{
                 border: `1px solid ${CB_PALETTE.border}`,
                 breakInside: "avoid",
-                WebkitColumnBreakInside: "avoid",
+                ["WebkitColumnBreakInside" as any]: "avoid",
               }}
             >
               <img
