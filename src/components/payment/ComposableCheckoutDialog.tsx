@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AddonPicker } from "@/components/checkout/AddonPicker";
-
+import { OrderSummary, type OrderSummaryLine } from "@/components/checkout/OrderSummary";
 
 type Addon = {
   addon_offer_id: string;
@@ -18,11 +18,23 @@ type Addon = {
   is_default_selected: boolean;
 };
 
+type QuoteItem = {
+  role: "primary" | "addon";
+  product_name: string;
+  tariff_name?: string | null;
+  list_amount: number;
+  final_amount: number;
+  discount_amount?: number;
+  discount_percent?: number | null;
+  pricing_mode?: Addon["pricing_mode"];
+};
+
 type Quote = {
   currency: string;
   subtotal: number;
   adjustment_amount: number;
   total: number;
+  items: QuoteItem[];
   available_addons: Addon[];
   selected_addon_offer_ids: string[];
 };
@@ -35,9 +47,6 @@ interface Props {
   tariffName: string;
   onContinue: (selection: { addonOfferIds: string[]; total: number; currency: string }) => void;
 }
-
-const money = (value: number, currency: string) =>
-  new Intl.NumberFormat("ru-BY", { style: "currency", currency, maximumFractionDigits: 2 }).format(value);
 
 export function ComposableCheckoutDialog({
   open,
@@ -91,16 +100,19 @@ export function ComposableCheckoutDialog({
     return () => window.clearTimeout(timer);
   }, [offerId, open, selected]);
 
-  const requiredIds = useMemo(() =>
-    new Set(quote?.available_addons.filter((addon) => addon.is_required).map((addon) => addon.addon_offer_id) ?? []),
-  [quote]);
-
-  const toggle = (id: string) => {
-    if (requiredIds.has(id)) return;
-    setSelected((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
-    );
-  };
+  const summaryLines: OrderSummaryLine[] = useMemo(() => {
+    if (!quote?.items?.length) return [];
+    return quote.items.map((it) => ({
+      role: it.role,
+      product_name: it.product_name,
+      tariff_name: it.tariff_name ?? null,
+      list_amount: Number(it.list_amount ?? 0),
+      final_amount: Number(it.final_amount ?? 0),
+      discount_amount: Number(it.discount_amount ?? 0),
+      discount_percent: it.discount_percent ?? null,
+      pricing_mode: it.pricing_mode,
+    }));
+  }, [quote]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -129,7 +141,7 @@ export function ComposableCheckoutDialog({
               {error}
             </div>
           ) : (
-            <div className="relative mt-5 space-y-3 sm:mt-7">
+            <div className="relative mt-5 space-y-4 sm:mt-7">
               <AddonPicker
                 addons={quote?.available_addons ?? []}
                 selectedIds={selected}
@@ -143,20 +155,18 @@ export function ComposableCheckoutDialog({
                 density="public"
               />
 
+              {summaryLines.length > 0 && quote && (
+                <OrderSummary
+                  items={summaryLines}
+                  currency={quote.currency}
+                  total={quote.total}
+                  subtotal={quote.subtotal}
+                  adjustmentAmount={quote.adjustment_amount}
+                  paymentMethodLabel="Одной оплатой"
+                />
+              )}
 
-              <div className="mt-5 rounded-3xl border border-white/80 bg-white/70 p-4 shadow-[0_16px_45px_rgba(83,57,75,.08)] backdrop-blur-xl sm:mt-6 sm:rounded-[28px] sm:p-6">
-                <div className="flex items-end justify-between gap-4">
-                  <div>
-                    <div className="text-xs font-medium uppercase tracking-[.16em] text-slate-400">Итого</div>
-                    <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
-                      {quote ? money(quote.total, quote.currency) : "—"}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-slate-500">
-                    <ShieldCheck className="h-4 w-4 text-emerald-500" />
-                    Одна оплата
-                  </div>
-                </div>
+              <div className="rounded-3xl border border-white/80 bg-white/70 p-4 shadow-[0_16px_45px_rgba(83,57,75,.08)] backdrop-blur-xl sm:rounded-[28px] sm:p-5">
                 <Button
                   disabled={!quote || loading}
                   onClick={() => quote && onContinue({
@@ -164,12 +174,13 @@ export function ComposableCheckoutDialog({
                     total: quote.total,
                     currency: quote.currency,
                   })}
-                  className="mt-5 h-12 w-full rounded-2xl border-0 bg-gradient-to-r from-fuchsia-500 to-pink-500 text-base font-semibold text-white shadow-[0_14px_34px_rgba(217,70,170,.26)] hover:from-fuchsia-600 hover:to-pink-600"
+                  className="h-12 w-full rounded-2xl border-0 bg-gradient-to-r from-fuchsia-500 to-pink-500 text-base font-semibold text-white shadow-[0_14px_34px_rgba(217,70,170,.26)] hover:from-fuchsia-600 hover:to-pink-600"
                 >
                   {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
                   Продолжить оформление
                 </Button>
                 <div className="mt-3 flex items-center justify-center gap-2 text-[11px] text-slate-400">
+                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
                   <Check className="h-3.5 w-3.5" />
                   Доступ к каждому модулю предоставляется отдельно
                 </div>
