@@ -1859,7 +1859,7 @@ ${amountLine}
                 </div>
               )}
 
-              {effectiveOffer && (composableAvailableAddons.length > 0 || composableQuoteLoading) && (
+              {selectedProductId && selectedTariffId && effectiveOffer && quoteMatchesCurrentOffer && (composableAvailableAddons.length > 0 || composableQuoteLoading) && (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
                   <div>
                     <p className="text-sm font-medium">Дополнительные продукты</p>
