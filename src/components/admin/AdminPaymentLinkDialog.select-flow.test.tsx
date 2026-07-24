@@ -116,11 +116,10 @@ function renderDialog(onOpenChange = vi.fn()) {
   return { ...result, onOpenChange };
 }
 
-async function selectByVisibleText(currentText: string, optionName: string) {
-  const trigger = screen.getByText(currentText).closest("button");
-  expect(trigger).toBeTruthy();
-  fireEvent.pointerDown(trigger as HTMLButtonElement, { button: 0, ctrlKey: false });
-  fireEvent.click(await screen.findByRole("option", { name: optionName }));
+function selectNativeByValue(accessibleName: string, value: string) {
+  const field = screen.getByRole("combobox", { name: accessibleName }).parentElement?.querySelector("select");
+  expect(field).toBeTruthy();
+  fireEvent.change(field as HTMLSelectElement, { target: { value } });
 }
 
 describe("AdminPaymentLinkDialog product selection", () => {
@@ -133,7 +132,7 @@ describe("AdminPaymentLinkDialog product selection", () => {
 
     expect(screen.getByText("Выберите продукт")).toBeInTheDocument();
 
-    await selectByVisibleText("Выберите продукт", "Gorbova Club");
+    selectNativeByValue("Продукт", "product-club");
 
     await waitFor(() => expect(screen.getByText("Gorbova Club")).toBeInTheDocument());
     expect(screen.getByText("Тариф")).toBeInTheDocument();
@@ -143,12 +142,12 @@ describe("AdminPaymentLinkDialog product selection", () => {
   it("switches product by clearing dependent tariff state without clearing the new product", async () => {
     renderDialog();
 
-    await selectByVisibleText("Выберите продукт", "Ценный бухгалтер");
+    selectNativeByValue("Продукт", "product-cb");
     await waitFor(() => expect(screen.getByText("Ценный бухгалтер")).toBeInTheDocument());
-    await selectByVisibleText("Выберите тариф", "BASE");
+    selectNativeByValue("Тариф", "tariff-cb");
     await waitFor(() => expect(screen.getByText("BASE")).toBeInTheDocument());
 
-    await selectByVisibleText("Ценный бухгалтер", "Gorbova Club");
+    selectNativeByValue("Продукт", "product-club");
 
     await waitFor(() => expect(screen.getByText("Gorbova Club")).toBeInTheDocument());
     expect(screen.getByText("Выберите тариф")).toBeInTheDocument();
