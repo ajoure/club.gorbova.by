@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -772,8 +772,9 @@ ${amountLine}
     },
   });
 
-  // Reset на смене продукта — атомарно сбрасываем ВСЁ, что зависит от продукта.
-  useEffect(() => {
+  // Явный сброс всех состояний, которые зависят от выбранного продукта.
+  // НЕ трогает selectedProductId — вызывающая сторона сама выставляет новое значение.
+  const resetProductDependentState = useCallback(() => {
     setSelectedTariffId("");
     setSelectedOfferId("");
     setCustomAmount("");
@@ -788,12 +789,11 @@ ${amountLine}
     setInvoiceLegalDetailsId("");
     setInvoiceIssueResult(null);
     setSelectedInstallmentMonths(null);
-    // Немедленно удаляем закэшированные quote'ы, чтобы stale composition не мелькал.
     queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
-  }, [selectedProductId, queryClient]);
+  }, [queryClient]);
 
-  // Reset offer override и dependent state на смене тарифа
-  useEffect(() => {
+  // Сброс состояний, зависящих от тарифа (не трогает product/tariff id).
+  const resetTariffDependentState = useCallback(() => {
     setSelectedOfferId("");
     setCustomAmount("");
     setGeneratedUrl(null);
@@ -806,70 +806,54 @@ ${amountLine}
     setRrPanelOpen(false);
     setInvoiceIssueResult(null);
     queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
-  }, [selectedTariffId, queryClient]);
+  }, [queryClient]);
 
+  // Явные хендлеры Select: атомарно принимают новый id и очищают только dependent state.
+  const handleProductChange = useCallback((newProductId: string) => {
+    if (newProductId === selectedProductId) return;
+    resetProductDependentState();
+    setSelectedProductId(newProductId);
+  }, [selectedProductId, resetProductDependentState]);
 
-  // Сбрасывать stale conflict при смене типа оплаты или конкретного offer
+  const handleTariffChange = useCallback((newTariffId: string) => {
+    if (newTariffId === selectedTariffId) return;
+    resetTariffDependentState();
+    setSelectedTariffId(newTariffId);
+  }, [selectedTariffId, resetTariffDependentState]);
+
+  // Полный reset выполняется ТОЛЬКО на переходе диалога false → true.
+  // Никаких зависимостей от productId/tariffId/queryClient — иначе они будут
+  // затирать только что выбранный продукт при перерендерах.
+  const prevOpenRef = useRef(open);
   useEffect(() => {
-    setConflictData(null);
-    setReplaceStep("idle");
-    setShowCancelConfirm(false);
-  }, [paymentType, selectedOfferId]);
-
-  // Автоподстановка суммы при смене effective offer.
-  // ВАЖНО: offer.amount хранится в BYN — НЕ делить на 100.
-  useEffect(() => {
-    if (effectiveOffer) {
-      setCustomAmount(String(Number(effectiveOffer.amount)));
+    const wasOpen = prevOpenRef.current;
+    prevOpenRef.current = open;
+    if (open && !wasOpen) {
+      setSelectedProductId("");
+      setSelectedTariffId("");
+      setSelectedOfferId("");
+      setCustomAmount("");
+      setDescription("");
+      setPaymentType("one_time");
       setGeneratedUrl(null);
-      // Индивидуальная ссылка: по умолчанию N = точное количество платежей из оффера,
-      // но админ может изменить на любое значение 2..12.
-      if ((effectiveOffer as any).payment_method === "internal_installment") {
-        // Priority: precise installment_count > legacy meta.installment.max_months.
-        const legacy = Number((effectiveOffer as any).installment_count ?? 0);
-        const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
-        const defaultN = legacy >= 2 ? Math.min(12, legacy) : (metaMax >= 2 ? Math.min(12, metaMax) : null);
-        setSelectedInstallmentMonths(defaultN);
-        if (paymentType !== "one_time") setPaymentType("one_time");
-      } else {
-        setSelectedInstallmentMonths(null);
-      }
-    } else if (
-      !resolved.ok &&
-      tariffPrices?.price &&
-      !customAmount
-    ) {
-      setCustomAmount(String(tariffPrices.price));
+      setShowCancelConfirm(false);
+      setConflictData(null);
+      setReplaceStep("idle");
       setSelectedInstallmentMonths(null);
+      setSelectedAddonOfferIds([]);
+      setAdjustmentReason("");
+      setInvoicePanelOpen(false);
+      setRrPanelOpen(false);
+      setInvoicePayerType("legal_entity");
+      setInvoiceLegalDetailsId("");
+      setInvoiceIssueResult(null);
+      setInvoicePending(false);
+      setRrPending(false);
+      queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveOffer?.id]);
-
-  // Полный reset при открытии/закрытии диалога — гарантированно чистое состояние
-  // на каждый новый показ; никаких унаследованных product/tariff/quote/addons.
-  useEffect(() => {
-    setSelectedProductId("");
-    setSelectedTariffId("");
-    setSelectedOfferId("");
-    setCustomAmount("");
-    setDescription("");
-    setPaymentType("one_time");
-    setGeneratedUrl(null);
-    setShowCancelConfirm(false);
-    setConflictData(null);
-    setReplaceStep("idle");
-    setSelectedInstallmentMonths(null);
-    setSelectedAddonOfferIds([]);
-    setAdjustmentReason("");
-    setInvoicePanelOpen(false);
-    setRrPanelOpen(false);
-    setInvoicePayerType("legal_entity");
-    setInvoiceLegalDetailsId("");
-    setInvoiceIssueResult(null);
-    setInvoicePending(false);
-    setRrPending(false);
-    queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
   }, [open, queryClient]);
+
+
 
 
   // PATCH PAYMENT-CONFLICT v3: конфликт product-level (без tariff_id) и только для подписки.
@@ -1444,7 +1428,7 @@ ${amountLine}
                 {productsLoading ? (
                   <Skeleton className="h-10 w-full" />
                 ) : (
-                  <Select value={selectedProductId} onValueChange={setSelectedProductId}>
+                  <Select value={selectedProductId} onValueChange={handleProductChange}>
                     <SelectTrigger>
                       <SelectValue placeholder="Выберите продукт" />
                     </SelectTrigger>
@@ -1469,7 +1453,7 @@ ${amountLine}
                   {tariffsLoading ? (
                     <Skeleton className="h-10 w-full" />
                   ) : tariffs && tariffs.length > 0 ? (
-                    <Select value={selectedTariffId} onValueChange={setSelectedTariffId}>
+                    <Select value={selectedTariffId} onValueChange={handleTariffChange}>
                       <SelectTrigger>
                         <SelectValue placeholder="Выберите тариф" />
                       </SelectTrigger>
