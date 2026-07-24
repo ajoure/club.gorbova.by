@@ -451,8 +451,23 @@ export function InvoiceCheckoutDialog({
             invoiceNumber={result.invoice_number}
             documentNumber={result.document_number}
             documentIssuedAt={result.document_issued_at}
+            orderId={result.order_id}
+            onDocumentReady={(r) =>
+              setResult((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      document_id: r.document_id,
+                      document_number: r.document_number ?? prev.document_number,
+                      document_issued_at:
+                        r.document_issued_at ?? prev.document_issued_at,
+                    }
+                  : prev,
+              )
+            }
             onClose={() => handleClose(false)}
           />
+
         )}
 
       </DialogContent>
