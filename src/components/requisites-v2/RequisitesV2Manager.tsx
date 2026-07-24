@@ -43,6 +43,7 @@ import {
   Briefcase,
   ChevronLeft,
   ShieldCheck,
+  Pencil,
 } from "lucide-react";
 import {
   useRequisitesV2,
@@ -147,6 +148,12 @@ export function RequisitesV2Manager({ scope, title, description }: Props) {
 
         <Card className="min-w-0">
           <CardContent className="p-4 sm:p-6 sm:pt-6">
+            {isEdit && (
+              <div className="mb-5 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-muted-foreground">
+                Изменения будут использоваться только для новых документов.
+                Уже сформированные счета и акты останутся без изменений.
+              </div>
+            )}
             {tab === "individual" ? (
               <IndividualRequisitesForm
                 scope={scope}
@@ -414,6 +421,16 @@ function LegalSection({
                     className="flex w-full items-center justify-end gap-2 border-t pt-3 sm:w-auto sm:border-0 sm:pt-0"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => onEdit(row)}
+                      aria-label={`Изменить реквизиты: ${title}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                      Изменить
+                    </Button>
                     {!row.is_default && (
                       <Button
                         variant="outline"
@@ -515,6 +532,16 @@ function IndividualSection({
                     className="flex w-full items-center justify-end gap-2 border-t pt-3 sm:w-auto sm:border-0 sm:pt-0"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => onEdit(row)}
+                      aria-label={`Изменить реквизиты: ${d.full_name || "Физлицо"}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                      Изменить
+                    </Button>
                     {!row.is_default && (
                       <Button
                         variant="outline"

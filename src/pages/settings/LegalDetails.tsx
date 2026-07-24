@@ -19,7 +19,8 @@ import {
   User,
   Building2,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Pencil,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -185,6 +186,12 @@ export default function LegalDetailsSettings() {
 
           <Card className="min-w-0">
             <CardContent className="p-4 sm:p-6 sm:pt-6">
+              {mode === "edit" && (
+                <div className="mb-5 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-muted-foreground">
+                  Изменения будут использоваться только для новых документов.
+                  Уже сформированные счета и акты останутся без изменений.
+                </div>
+              )}
               {renderForm()}
             </CardContent>
           </Card>
@@ -270,6 +277,16 @@ export default function LegalDetailsSettings() {
                     </div>
                     
                     <div className="flex w-full items-center justify-end gap-2 border-t pt-3 sm:w-auto sm:border-0 sm:pt-0" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => openEdit(details)}
+                        aria-label={`Изменить реквизиты: ${getDisplayName(details)}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                        Изменить
+                      </Button>
                       {!details.is_default && (
                         <Button
                           variant="outline"
