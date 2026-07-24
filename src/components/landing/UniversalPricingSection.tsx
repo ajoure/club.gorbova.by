@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AnimatedSection } from "./AnimatedSection";
 import { TariffCard } from "./TariffCard";
@@ -33,6 +33,13 @@ interface UniversalPricingSectionProps {
    * This prop exists only as a debug/test override and for non-product-driven rendering paths.
    */
   layout?: "auto" | "vertical-grid";
+  cardRenderer?: (props: {
+    tariff: PublicTariff;
+    index: number;
+    onSelectOffer: (offer: TariffOffer, tariff: PublicTariff) => void;
+    showBadges: boolean;
+    priceSuffix: string;
+  }) => ReactNode;
 }
 
 export function UniversalPricingSection({
@@ -44,6 +51,7 @@ export function UniversalPricingSection({
   isReentryPricing,
   reentryMessage,
   layout: layoutProp,
+  cardRenderer,
 }: UniversalPricingSectionProps) {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState<{
@@ -71,6 +79,27 @@ export function UniversalPricingSection({
   const subtitle = sectionSubtitle || config.tariffs_subtitle || product.public_subtitle || "Выберите подходящий вариант";
   const disclaimerText = disclaimer || product.payment_disclaimer_text ||
     "Безопасная оплата через bePaid. Принимаем Visa, Mastercard, Белкарт, ЕРИП.";
+  const renderTariffCard = (tariff: PublicTariff, index: number) => {
+    const showBadges = config.show_badges !== false;
+    if (cardRenderer) {
+      return cardRenderer({
+        tariff,
+        index,
+        onSelectOffer: handleSelectOffer,
+        showBadges,
+        priceSuffix,
+      });
+    }
+
+    return (
+      <TariffCard
+        tariff={tariff}
+        onSelectOffer={handleSelectOffer}
+        showBadges={showBadges}
+        priceSuffix={priceSuffix}
+      />
+    );
+  };
 
   return (
     <>
@@ -103,12 +132,7 @@ export function UniversalPricingSection({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto items-stretch">
               {tariffs.map((tariff, index) => (
                 <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100} className="h-full">
-                  <TariffCard
-                    tariff={tariff}
-                    onSelectOffer={handleSelectOffer}
-                    showBadges={config.show_badges !== false}
-                    priceSuffix={priceSuffix}
-                  />
+                  {renderTariffCard(tariff, index)}
                 </AnimatedSection>
               ))}
             </div>
@@ -116,12 +140,7 @@ export function UniversalPricingSection({
             <TariffCarouselGrid count={tariffs.length}>
               {tariffs.map((tariff, index) => (
                 <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100} className="h-full">
-                  <TariffCard
-                    tariff={tariff}
-                    onSelectOffer={handleSelectOffer}
-                    showBadges={config.show_badges !== false}
-                    priceSuffix={priceSuffix}
-                  />
+                  {renderTariffCard(tariff, index)}
                 </AnimatedSection>
               ))}
             </TariffCarouselGrid>

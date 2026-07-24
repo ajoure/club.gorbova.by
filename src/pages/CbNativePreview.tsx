@@ -30,6 +30,7 @@ import { AdvantagesSection } from "./cb-native/sections/AdvantagesSection";
 import { PostTariffSection } from "./cb-native/sections/PostTariffSection";
 import { FaqSection } from "./cb-native/sections/FaqSection";
 import { CompanyFooterSection } from "./cb-native/sections/CompanyFooterSection";
+import { CbNativeTariffCard } from "./cb-native/sections/CbNativeTariffCard";
 
 // Same product bound to live /cb (site_pages slug='cb'). NO hardcoded prices.
 const CB_PRODUCT_ID = "3e43fb28-8322-41bc-bfee-714731bdc630";
@@ -107,7 +108,22 @@ export default function CbNativePreview() {
       <AdvantagesSection />
 
       {/* 9. Тарифы (dynamic slot manifest — preserves all payment dialogs & CTA bindings) */}
-      <div id="tariffs">
+      <div id="tariffs" className="cb-native-pricing-slice">
+        <style>{`
+          .cb-native-pricing-slice > section { background: ${CB_PALETTE.bg}; padding-top: 96px; padding-bottom: 96px; }
+          .cb-native-pricing-slice .container { max-width: 1164px; }
+          .cb-native-pricing-slice .text-center { text-align: left; }
+          .cb-native-pricing-slice h2 { color: ${CB_PALETTE.accent}; font-family: ${CB_FONT_STACK}; font-size: 40px; line-height: 1.15; font-weight: 700; text-transform: uppercase; }
+          .cb-native-pricing-slice h2 + p { display: none; }
+          .cb-native-pricing-slice .grid { max-width: 1164px !important; gap: 42px; }
+          @media (max-width: 767px) {
+            .cb-native-pricing-slice > section { padding-top: 72px; padding-bottom: 72px; }
+            .cb-native-pricing-slice .container { padding-left: 14px; padding-right: 14px; }
+            .cb-native-pricing-slice h2 { font-size: 32px; text-align: center; }
+            .cb-native-pricing-slice .text-center { text-align: center; }
+            .cb-native-pricing-slice .grid { gap: 22px; }
+          }
+        `}</style>
         {isLoading ? (
           <UniversalPricingSkeleton />
         ) : error || !data?.product || !data?.tariffs?.length ? (
@@ -130,6 +146,9 @@ export default function CbNativePreview() {
             tariffs={data.tariffs}
             sectionTitle="ТАРИФЫ И СТОИМОСТЬ ОБУЧЕНИЯ"
             sectionSubtitle=""
+            cardRenderer={({ tariff, index, onSelectOffer }) => (
+              <CbNativeTariffCard tariff={tariff} index={index} onSelectOffer={onSelectOffer} />
+            )}
           />
         )}
       </div>
