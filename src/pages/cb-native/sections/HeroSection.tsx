@@ -12,8 +12,8 @@ import { rec, CB_PALETTE } from "../manifest";
  *    exists on live only as a small badge next to "Рассрочка" (a live-only
  *    ornament); we intentionally omit it to avoid a stray "?" text token.
  *  - Info strip lives above the headline, with a light gray border and inline
- *    label/value groups. Only the first item ("Старт потока:" / "21 июня
- *    2025г.") is split onto two normalized text lines, matching live.
+ *    label/value groups. Only the first item ("Старт потока:" / current start
+ *    date) is split onto two normalized text lines, matching the reference.
  *  - Headline "ЦЕННЫЙ БУХГАЛТЕР" is canonical (rec text[7]).
  */
 const SF_FONT = "'Sf-pro-display', Arial, sans-serif";
@@ -37,7 +37,7 @@ export function HeroSection({ onCta }: { onCta: () => void }) {
 
   // Canonical order per manifest: [start, format, duration, conferences, npa]
   const infoItems = [
-    { icon: r.images[1], label: r.text[9] ?? "Старт потока:", value: r.text[10] ?? "21 июня 2025г." },
+    { icon: r.images[1], label: r.text[9] ?? "Старт потока:", value: "1 августа 2026 года" },
     { icon: r.images[2], label: r.text[11] ?? "Формат:", value: r.text[12] ?? "онлайн" },
     { icon: r.images[3], label: r.text[13] ?? "Продолжительность:", value: r.text[14] ?? "7 недель" },
     { icon: r.images[4], label: r.text[15] ?? "Практические", value: r.text[16] ?? "конференции" },
