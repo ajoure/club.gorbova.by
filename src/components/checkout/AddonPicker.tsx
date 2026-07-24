@@ -205,8 +205,9 @@ function AddonRow({ addon, currency, checked, onToggle, density }: RowProps) {
       <div className="min-w-0 flex-1">
         <div
           className={cn(
-            "truncate font-medium leading-tight text-slate-800",
-            density === "admin" ? "text-[13px]" : "text-sm",
+            "font-semibold leading-snug text-slate-800 break-words",
+            "line-clamp-2",
+            density === "admin" ? "text-[13px]" : "text-[14px]",
           )}
           title={addon.addon_product_name}
         >
@@ -218,6 +219,7 @@ function AddonRow({ addon, currency, checked, onToggle, density }: RowProps) {
           </div>
         )}
       </div>
+
 
       <div className="flex shrink-0 flex-col items-end gap-0.5 text-right">
         {finalPrice === 0 ? (
