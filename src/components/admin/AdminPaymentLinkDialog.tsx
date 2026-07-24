@@ -1433,7 +1433,7 @@ ${amountLine}
                   <Skeleton className="h-10 w-full" />
                 ) : (
                   <Select value={selectedProductId} onValueChange={handleProductChange}>
-                    <SelectTrigger>
+                    <SelectTrigger aria-label="Продукт">
                       <SelectValue placeholder="Выберите продукт" />
                     </SelectTrigger>
                     <SelectContent container={selectPortalContainer}>
@@ -1458,7 +1458,7 @@ ${amountLine}
                     <Skeleton className="h-10 w-full" />
                   ) : tariffs && tariffs.length > 0 ? (
                     <Select value={selectedTariffId} onValueChange={handleTariffChange}>
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="Тариф">
                         <SelectValue placeholder="Выберите тариф" />
                       </SelectTrigger>
                       <SelectContent container={selectPortalContainer}>
