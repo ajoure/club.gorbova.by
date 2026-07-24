@@ -38,6 +38,8 @@ import {
   type SubscriptionConflictInfo,
 } from "@/lib/subscriptionReplacement";
 import { USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
+import { OrderSummary } from "@/components/checkout/OrderSummary";
+import { useComposableQuoteSummary } from "@/hooks/useComposableQuoteSummary";
 
 interface SubscriptionMessage {
   title?: string;           // "Ежемесячная подписка" / "Подписка на Клуб"
@@ -170,6 +172,13 @@ export function PaymentDialog({
 }: PaymentDialogProps) {
   const displayCurrency = currency || "BYN";
   const paymentDescription = tariffName ? `${productName} — ${tariffName}` : productName;
+  const quoteSummary = useComposableQuoteSummary({
+    open,
+    offerId,
+    addonOfferIds,
+    fallbackCurrency: displayCurrency,
+    fallbackTotal: Number(price),
+  });
   // B8/B9. Публичный flow рассрочки: клиент явно выбирает N в диапазоне 2..max.
   // installmentCount оставлен как legacy alias для fallback.
   const installmentMaxMonthsResolved: number | null =
@@ -1760,7 +1769,17 @@ export function PaymentDialog({
             </DialogHeader>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto p-6 pt-4">
+          <div className="flex-1 min-h-0 overflow-y-auto p-6 pt-4 space-y-4">
+            {quoteSummary.items.length > 0 && quoteSummary.total != null && (
+              <OrderSummary
+                items={quoteSummary.items}
+                currency={quoteSummary.currency}
+                total={quoteSummary.total}
+                subtotal={quoteSummary.subtotal ?? undefined}
+                adjustmentAmount={quoteSummary.adjustmentAmount}
+                density="admin"
+              />
+            )}
             {renderStep()}
           </div>
         </DialogContent>
