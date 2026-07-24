@@ -373,8 +373,8 @@ export function InvoiceCheckoutDialog({
         )}
 
         {step === "payer" && showAddForm && (
-          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-            <div className="flex items-center justify-between">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <Button
                 variant="ghost"
                 size="sm"
@@ -387,7 +387,7 @@ export function InvoiceCheckoutDialog({
                 Добавить организацию или ИП
               </div>
             </div>
-            <Card className="p-4">
+            <Card className="p-3 sm:p-4">
               <OrganizationDetailsForm
                 initialData={null}
                 onSubmit={handleAddPayerSubmit}
@@ -400,7 +400,7 @@ export function InvoiceCheckoutDialog({
 
         {step === "confirm" && selectedPayer && (
           <>
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 space-y-4">
               <OrderSummary
                 items={
                   quoteItems.length > 0
@@ -422,22 +422,23 @@ export function InvoiceCheckoutDialog({
                 }
                 paymentMethodLabel="Счёт на юрлицо / ИП"
               />
-              <Card className="p-3 text-xs text-muted-foreground">
+              <Card className="p-3 text-xs text-muted-foreground break-words">
                 После нажатия кнопки будет создан заказ и сформирован PDF-счёт.
                 Копии на email и в Telegram уходят автоматически после готовности PDF;
                 статусы доставки вы увидите на следующем экране.
               </Card>
             </div>
-            <div className="shrink-0 border-t bg-background px-6 py-3 flex gap-2">
+            <div className="shrink-0 border-t bg-background px-4 sm:px-6 py-3 flex flex-col-reverse sm:flex-row gap-2">
               <Button
                 variant="outline"
                 onClick={() => setStep("payer")}
                 disabled={submitting}
+                className="w-full sm:w-auto"
               >
                 <ArrowLeft className="h-4 w-4 mr-1" /> Назад
               </Button>
               <Button
-                className="ml-auto"
+                className="w-full sm:w-auto sm:ml-auto"
                 onClick={handleIssueInvoice}
                 disabled={submitting}
               >
