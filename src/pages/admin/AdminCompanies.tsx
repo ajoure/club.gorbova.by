@@ -375,7 +375,7 @@ const contactPersonRoleLabels: Record<string, string> = {
   beneficial_owner: "Бенефициар",
   authorized_representative: "Представитель",
   employee: "Сотрудник",
-  billing_contact: "Billing-контакт",
+  billing_contact: "Контакт по оплате",
   contract_signatory: "Подписант",
 };
 
