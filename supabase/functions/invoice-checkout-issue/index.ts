@@ -39,6 +39,7 @@ import {
   resolveComposableCheckout,
 } from "../_shared/resolve-composable-checkout.ts";
 import { materializeComposableOrderGroup } from "../_shared/materialize-composable-order-group.ts";
+import { buildPurchaseCompositionTitle } from "../_shared/purchase-composition-title.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -228,9 +229,17 @@ Deno.serve(async (req) => {
     // Подсказка для canonical-document-generate-strict: он умеет брать
     // client_legal_details по _provenance.customer_legal_details_id.
     document_data: {
-      service_name: composableQuote.items.map((item) =>
-        [item.product_name, item.tariff_name].filter(Boolean).join(" — ")
-      ).join("; "),
+      service_name: (() => {
+        const items = composableQuote.items ?? [];
+        const primary = items.find((i: any) => i?.role === 'primary') ?? items[0];
+        const addons = items
+          .filter((i: any) => i !== primary)
+          .sort((a: any, b: any) => (Number(a?.sort_order ?? 0) - Number(b?.sort_order ?? 0)));
+        return buildPurchaseCompositionTitle({
+          primary: { product_name: primary?.product_name, tariff_name: primary?.tariff_name },
+          addons: addons.map((a: any) => ({ product_name: a?.product_name })),
+        });
+      })(),
       unit: "комплект",
       quantity: 1,
       unit_price: composableQuote.total,

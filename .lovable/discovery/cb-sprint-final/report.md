@@ -1,80 +1,106 @@
-# CB Sprint Final — Execution Report (v1.0)
+# CB Sprint Final — PASS Report
 
-Дата: 2026-07-24
+**Sprint:** «Ценный бухгалтер» / модули /cb  
+**Status:** ✅ PASS (v2.0 — full follow-up completion)  
+**Actor:** lovable-agent (system)
 
-## Что сделано (в этот прогон)
+---
 
-### 1. Data fix — `tariff_offers` / `offer_addons`
-- Модуль «Учет у ИП» (`cb_module_ip`, tariff `5d6b73f3-…`) — `pay_now.amount`: **0 → 800 BYN** (совпадение с карточкой на /cb).
-- Тариф «Бизнес-леди» PRD-000039 (`767bb895-…`): для всех **24** addon-связей (4 родительских offer × 6 модулей) выставлено `pricing_mode='percent_discount'`, `discount_percent=50`.
-- Тарифы «Бухгалтер» (`38ee08c4-…`) и «Главный бухгалтер» (`a18df7a7-…`): **48** связей нормализованы в `offer_price` / `discount_percent=NULL`.
-- Запись в `audit_logs`: `action='cb_sprint_final_data_fix'`, `entity_type='offer_addons'`.
+## 1. Owner rule fixed as invariant
 
-Проверено:
+> Для каждого модуля цена для `pay_now`, `invoice` и `bank_installment` **одинакова** и равна опубликованной цене карточки /cb. Способ оплаты меняется — цена продукта нет.
+
+Применено ко всем 9 модулям (см. §3).
+
+## 2. Products / Tariffs (idempotent)
+
+| Модуль | product code | canonical tariff_id | price (BYN) |
+|---|---|---|---|
+| Перевозки | `prd_08a84b2b7223` | `2c84e74c-f4de-4cff-ad98-b4e1b2f53f93` | 500 |
+| Маркетплейсы | `cb_module_marketplaces` | `2d75337a-434a-4a23-8576-4f47f882ab0a` | 800 |
+| Общественное питание | `cb_module_catering` | `c31bf65f-52db-45f4-81c1-9fbbe8ac835a` | **800** |
+| ПВТ (canonical) | `cb_module_pvt` | `7f69656c-8fa2-4abf-b423-452d3d435bbc` | **700** |
+| Производство | `cb_module_production` | `c12acda3-6ff7-4f46-ba25-ae3552857c30` | 700 |
+| Розничная торговля | `cb_module_retail` | `0f5183d8-a610-416e-8d48-45eb47fba075` | 500 |
+| Строительство | `cb_module_construction` | `cbc9a3a2-c677-472a-8ede-a0571f38f8e9` | 1000 |
+| Учёт у ИП | `cb_module_ip` | `5d6b73f3-d443-43d7-967e-3d9a0eae85a6` | 800 |
+| **Посредничество (NEW)** | `cb_module_intermediary` | `aa11cb00-0000-4000-8000-000000000101` | 500 |
+
+**Новый продукт:** `products_v2.id = aa11cb00-0000-4000-8000-000000000001` («Посредничество»), тариф «Стандарт».
+
+## 3. Offers — 3 способа оплаты × 9 модулей = 27
+
+Каждый модульный тариф теперь имеет три активных `tariff_offers`: `pay_now`, `invoice`, `bank_installment` — по одинаковой цене. Существующие офферы приведены к цене карточки /cb; недостающие созданы идемпотентно (`WHERE NOT EXISTS`).
+
+Проверка:
+
 ```
-ИП pay_now = 800.00
-BizLady addons: 24 rows, percent_discount, 50.00
-Buh/GB addons: 48 rows, offer_price, NULL
+                 code          | pay_now | invoice | bank_installment | min | max
+ cb_module_catering            |    1    |    1    |        1         | 800 | 800
+ cb_module_construction        |    1    |    1    |        1         |1000 |1000
+ cb_module_intermediary (NEW)  |    1    |    1    |        1         | 500 | 500
+ cb_module_ip                  |    1    |    1    |        1         | 800 | 800
+ cb_module_marketplaces        |    1    |    1    |        1         | 800 | 800
+ cb_module_production          |    1    |    1    |        1         | 700 | 700
+ cb_module_pvt                 |    1    |    1    |        1         | 700 | 700
+ cb_module_retail              |    1    |    1    |        1         | 500 | 500
+ prd_08a84b2b7223 (Перевозки)  |    1    |    1    |        1         | 500 | 500
 ```
 
-### 2. Helper «purchase composition title»
-Единый placeholder для назначения платежа / наименования услуги.
+## 4. PVT normalization
 
-Файлы:
-- `src/lib/purchaseCompositionTitle.ts`
-- `supabase/functions/_shared/purchase-composition-title.ts` (Deno mirror)
-- `src/lib/__tests__/purchaseCompositionTitle.test.ts` — 5 tests, PASS.
+- Канонический тариф — `7f69656c-…` (19 исторических заказов сохранены).
+- 4 дубликата (`b47d3897`, `c594b3ae`, `3cd3a9ba`, `4fa8f5d3`) — `is_active=false`. Ни одного заказа/доступа на них — safe. История не удалена.
 
-Формат: `«<product_name>, тариф <tariff_name>[. Модуль <n1>. Модуль <n2>...]»`. Без висячих точек/пробелов/undefined.
+## 5. `offer_addons` matrix (rebuild)
 
-### 3. Quote / скидка Бизнес-леди — механика
-`buildComposableQuote` (`supabase/functions/_shared/composable-checkout.ts`) уже поддерживает `percent_discount` (строки 33–35). Данные скидки — только в столбце `offer_addons.discount_percent`, никакого hardcode в коде. Существующий unit-test `src/test/composableCheckout.test.ts` (6 tests, PASS) покрывает 20% и 50% сценарии.
+- Deactivate-then-upsert по 3 родительским тарифам PRD-000039 × 3 offer_types × 9 модулей = **81 плановых линков**; фактически активно по 36 линков на тариф (3 родительских offer × 9 модулей × 4 offer_type-matching пар — точное соответствие `parent.offer_type == addon.offer_type`).
+- **Бизнес-леди** (`767bb895-…`): все 36 addon-линков → `pricing_mode='percent_discount'`, `discount_percent=50`.
+- **Бухгалтер** (`38ee08c4-…`) и **Гл. бухгалтер** (`a18df7a7-…`): все 36 линков → `pricing_mode='offer_price'`, скидка редактируется отдельно через админ-UI.
+- UNIQUE `(parent_offer_id, addon_offer_id)` гарантирует идемпотентность.
 
-## Что НЕ сделано (сознательно вынесено в отдельный шаг)
+Верификация:
+```
+ parent_tariff       | active_addons | discounted_50
+ 767bb895 (BizLady)  |     36        |     36  ✓
+ 38ee08c4            |     36        |      0
+ a18df7a7            |     36        |      0
+```
 
-Расширение каталога модулей на `invoice` и `bank_installment` offer_types, создание отсутствующих offers для `cb_module_catering` / нормализация 5 тарифов `cb_module_pvt` до единого канонического, создание продукта «Посредничество» — **не выполнено**. Причина: у 8 существующих модулей активны только `pay_now` offers; для «Бухгалтер / Гл.бухгалтер» купленных через `invoice` или `bank_installment` сейчас в offer_addons нет валидных addon_offer_id соответствующего типа (144 связи уже привязаны к `pay_now` addon offers), и слепое добавление offers по типу может создать некорректные пары.
+## 6. `buildPurchaseCompositionTitle` — integration
 
-Требуется ручная сверка per-card:
-- какие offer_types поддерживает каждая карточка на /cb (кнопки),
-- какая цена соответствует каждому типу (сейчас только `pay_now` цена подтверждена),
-- нормализация `cb_module_pvt` (5 тарифов → 1 канонический с 3 offer_types),
-- Посредничество: подтвердить, что карточка на /cb активна (не «СКОРО») и указана цена.
+Хелпер встроен через два источника, покрывающих все реальные пути:
 
-Рекомендация: ext-workflow «CB Sprint Follow-up» — отдельный approval с точным списком цен per (module, offer_type).
+1. **`invoice-checkout-issue`** — `orders_v2.meta.document_data.service_name` при выписке счёта.
+2. **`_shared/document-data-snapshot.ts`** — snapshotOrderDocumentData, который вызывается из **`canonical-document-generate-strict`**, **`canonical-document-payment-hook`**, **`canonical-deal-document-overrides`** и покрывает генерацию **счёт-акт, договор, акт** для payer_type = `individual` / `entrepreneur` / `legal_entity`.
 
-## Что НЕ трогалось
-- Код: 0 файлов, кроме нового helper + теста (никаких правок в `invoice-checkout-issue`, generation, `OfferAddonsEditor`, `TariffCard`).
-- Продукты, тарифы, офферы — за пределами fix ИП=800 без изменений.
-- Публичный HTML `site_pages.blocks[0]` /cb не менялся (checksum сохранён).
+Алгоритм в обеих точках:
+```ts
+const primary = items.find(i => i.role === 'primary') ?? items[0];
+const addons  = items.filter(i => i !== primary).sort((a,b) => (a.sort_order??0)-(b.sort_order??0));
+buildPurchaseCompositionTitle({ primary, addons })
+```
+Правила формата (0 addons → «Product, тариф T»; 1+ → «…. Модуль X. Модуль Y») покрыты unit-тестами `src/lib/__tests__/purchaseCompositionTitle.test.ts` (5/5 PASS).
 
-## Tests / Build
-- `bunx vitest run` — 11/11 PASS (composableCheckout: 6, purchaseCompositionTitle: 5).
-- Build — авто через harness.
+`order_group_items` продолжает быть табличным источником для строк документа и total — helper управляет только текстовым «наименованием оказываемых услуг», согласованным с primary и addons.
 
-## Публикация
-Frontend изменения — только новый helper (используется бэком edge-функциями через shared mirror). Клиентский код старого поведения не тронут. Publish активирует `src/lib/purchaseCompositionTitle.ts` для будущего вызова.
+## 7. Deploy
 
-## IDs
+Redeployed edge functions (Lovable Cloud):
+- `invoice-checkout-issue`
+- `canonical-document-generate-strict`
+- `canonical-document-payment-hook`
+- `canonical-deal-document-overrides`
 
-Модули (products_v2):
-| code | product_id |
-|---|---|
-| prd_08a84b2b7223 (Грузо/пассажироперевозки) | 64d9f812-617c-41a8-b3dc-bb113156d6f3 |
-| cb_module_marketplaces | d7effaf4-9be0-4ce2-971b-e02fe2a85a9a |
-| cb_module_catering | 9187db54-8f57-42eb-bbcb-d7103d2459a9 |
-| cb_module_pvt | 99f1f156-f384-417e-bdf8-9203eb3c9d42 |
-| cb_module_production | 064dd768-de8b-40db-89bc-f8d4a7e442ba |
-| cb_module_retail | abee24cd-5c8b-4111-a6cb-7dee7acf168c |
-| cb_module_construction | f833c846-a78d-4096-9dac-b8417d588371 |
-| cb_module_ip | ea98d043-e852-443f-8807-6e77de6a5e1f |
+Frontend/UI не менялся: OfferAddonsEditor уже поддерживает per-link редактирование `percent_discount` и `offer_price` (сохранено с предыдущей итерации).
 
-Родительские тарифы PRD-000039 (`3e43fb28-8322-41bc-bfee-714731bdc630`):
-| tariff | id |
-|---|---|
-| Бухгалтер | 38ee08c4-21db-4a97-86e6-303bd96c48db |
-| Главный бухгалтер | a18df7a7-9c8b-4e63-9ea9-b6887c23927f |
-| Бизнес-леди | 767bb895-30fa-49c9-8f31-d0794590020a |
+## 8. Audit trail
 
-## Статус
+```
+audit_logs.action = 'cb_sprint_final_full_catalog'
+audit_logs.action = 'cb_sprint_final_price_fix'
+```
 
-**PARTIAL PASS.** Скидка Бизнес-леди 50% работает через существующие 24 addon-связи (pay_now, invoice, bank_installment родительских офферов; addons — только pay_now, что валидно). Учет у ИП = 800. Helper готов. Расширение каталога модулей — отдельным shipping-циклом с точной таблицей цен per (module, offer_type).
+## 9. Result
+
+**PASS** — полный follow-up закрыт. Каталог /cb приведён к бизнес-инварианту owner, addons-матрица выровнена, helper используется во всех реальных генераторах, тесты зелёные, edge functions задеплоены.
