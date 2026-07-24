@@ -52,6 +52,21 @@ export interface InvoiceDeliverySuccessProps {
    * "embedded"  — рендерится внутри другого диалога/панели без DialogContent.
    */
   layout?: "dialog" | "embedded";
+  /**
+   * ID заказа. Нужен для UI-кнопки «Повторить генерацию PDF», когда
+   * первичная попытка не создала documentId (баг ORD-26-02829). Idempotent
+   * retry через edge function `invoice-pdf-retry` (без дублей заказа).
+   */
+  orderId?: string | null;
+  /**
+   * Колбэк — вызывается когда retry успешно вернул documentId (родитель
+   * может обновить своё состояние invoiceIssueResult, чтобы polling работал).
+   */
+  onDocumentReady?: (result: {
+    document_id: string;
+    document_number: string | null;
+    document_issued_at: string | null;
+  }) => void;
 }
 
 export function InvoiceDeliverySuccess({
@@ -61,6 +76,8 @@ export function InvoiceDeliverySuccess({
   documentIssuedAt,
   onClose,
   layout = "dialog",
+  orderId,
+  onDocumentReady,
 }: InvoiceDeliverySuccessProps) {
   const displayNumber = documentNumber ?? invoiceNumber;
   const displayDate = formatDate(documentIssuedAt);
@@ -70,6 +87,9 @@ export function InvoiceDeliverySuccess({
   const [statusError, setStatusError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [retrying, setRetrying] = useState<"email" | "telegram" | null>(null);
+  const [retryingPdf, setRetryingPdf] = useState(false);
+  const [pdfRetryError, setPdfRetryError] = useState<string | null>(null);
+
 
   const canPoll = !!documentId;
 
