@@ -1845,6 +1845,39 @@ ${amountLine}
                 </div>
               )}
 
+              {effectiveOffer && composableItems.length > 0 && (
+                <OrderSummary
+                  items={composableItems.map((it: any) => ({
+                    role: it.role,
+                    product_name: it.product_name,
+                    tariff_name: it.tariff_name ?? null,
+                    list_amount: Number(it.list_amount ?? 0),
+                    final_amount: Number(it.final_amount ?? 0),
+                    discount_amount: Number(it.discount_amount ?? 0),
+                    discount_percent: it.discount_percent ?? null,
+                    pricing_mode: it.pricing_mode,
+                  })) as OrderSummaryLine[]}
+                  currency={composableCurrency}
+                  total={amount}
+                  subtotal={composableSubtotal}
+                  adjustmentAmount={composableAdjustment}
+                  adjustmentReason={adjustmentReason.trim() || null}
+                  paymentMethodLabel={
+                    invoicePanelOpen
+                      ? "Счёт на юрлицо / ИП"
+                      : rrPanelOpen
+                        ? "Ресурс развития"
+                        : paymentType === "subscription"
+                          ? "Подписка (карта)"
+                          : isInstallmentOffer
+                            ? "Рассрочка (internal_installment)"
+                            : "Карта"
+                  }
+                  density="admin"
+                />
+              )}
+
+
 
               {/* Сумма */}
               {selectedTariffId && (
