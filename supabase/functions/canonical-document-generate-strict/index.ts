@@ -732,16 +732,27 @@ Deno.serve(async (req) => {
       // никогда не перезаписывает manual_override и не трогает legacy FLDs вне
       // B-97 scope. Поднимает audit-warning `b97_live_fallback_used`.
       const docDataMeta: any = (order.meta as any)?.document_data || {};
-      const customerLdId = docDataMeta?._provenance?.customer_legal_details_id || null;
-      const executorIdSnap = docDataMeta?.executor_id || null;
+      // PATCH-PAYER-EXPLICIT-ID: приоритет — явно выбранный в UI legal_details_id
+      // из order.meta.legal_details_id. Только при отсутствии — fallback на
+      // provenance snapshot, а затем на cohort по payer_type. Fallback на default
+      // строку другого профиля запрещён (см. document-data-snapshot).
+      const customerLdId =
+        ((order.meta as any)?.legal_details_id as string | null)
+        || (docDataMeta?._provenance?.customer_legal_details_id as string | null)
+        || null;
       if (customerLdId) {
         const { data: ld } = await supabase
           .from('client_legal_details')
           .select('*')
           .eq('id', customerLdId)
           .maybeSingle();
-        b97LiveCustomer = ld || null;
+        // Ownership guard: если реквизит принадлежит другому профилю — не
+        // подставляем чужие данные, оставляем b97LiveCustomer=null.
+        if (ld && (!order.profile_id || ld.profile_id === order.profile_id)) {
+          b97LiveCustomer = ld;
+        }
       }
+      const executorIdSnap = docDataMeta?.executor_id || null;
       if (!b97LiveCustomer && order.profile_id) {
         const payerType = (order as any).payer_type;
         const wantedClientType = payerType === 'legal_entity' ? 'legal_entity'
@@ -757,6 +768,7 @@ Deno.serve(async (req) => {
           .limit(1);
         b97LiveCustomer = (lds && lds[0]) || null;
       }
+
       if (executorIdSnap) {
         const { data: ex } = await supabase.from('executors').select('*').eq('id', executorIdSnap).maybeSingle();
         b97LiveExecutor = ex || null;

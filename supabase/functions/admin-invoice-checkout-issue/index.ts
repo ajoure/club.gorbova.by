@@ -214,7 +214,7 @@ Deno.serve(async (req) => {
     composable_checkout: composableQuote,
     document_data: {
       service_name: serviceName,
-      unit: "комплект",
+      unit: "доступ",
       quantity: 1,
       unit_price: composableQuote.total,
       amount: composableQuote.total,

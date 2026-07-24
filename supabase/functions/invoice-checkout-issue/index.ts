@@ -240,7 +240,7 @@ Deno.serve(async (req) => {
           addons: addons.map((a: any) => ({ product_name: a?.product_name })),
         });
       })(),
-      unit: "комплект",
+      unit: "доступ",
       quantity: 1,
       unit_price: composableQuote.total,
       amount: composableQuote.total,

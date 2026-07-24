@@ -206,9 +206,15 @@ export async function snapshotOrderDocumentData(
       productDefaults = data?.meta?.document_defaults || null;
     }
 
-    // Customer legal_details — Sprint B: payer_type-aware cohort.
-    // SOT: orders_v2.payer_type. Match client_type=payer_type, prefer is_default,
-    // then most recently updated. Fallback to any default row + warning.
+    // Customer legal_details — Sprint B + PATCH-PAYER-EXPLICIT-ID.
+    // SOT приоритет:
+    //   1) order.meta.legal_details_id — явно выбран пользователем в UI
+    //      (invoice-checkout / admin-invoice-checkout). Валидируем ownership по
+    //      profile_id. При невалидном/чужом id customerRow=null + audit warning;
+    //      НИКОГДА не проваливаемся в default другого профиля — иначе PDF
+    //      подменит плательщика.
+    //   2) cohort по payer_type (is_default → updated_at) — legacy paid-flow.
+    //   3) fallback default row (warning) — только если cohort пустой.
     let customerRow: any = null;
     let customerResolutionSource = 'none';
     const orderPayerTypeForCustomer: PayerType = (order as any).payer_type === 'legal_entity'
@@ -216,7 +222,37 @@ export async function snapshotOrderDocumentData(
       : (order as any).payer_type === 'entrepreneur'
         ? 'entrepreneur'
         : 'individual';
-    if (order.profile_id) {
+    const explicitLegalDetailsId: string | null =
+      (order.meta as any)?.legal_details_id
+        || (order.meta as any)?.document_data?._provenance?.customer_legal_details_id
+        || null;
+    if (explicitLegalDetailsId) {
+      const { data: explicit, error: explicitErr } = await supabase
+        .from('client_legal_details')
+        .select('*')
+        .eq('id', explicitLegalDetailsId)
+        .maybeSingle();
+      if (explicitErr) {
+        await safeAudit(supabase, 'document_data.snapshot_error', {
+          order_id: orderId, table: 'client_legal_details', stage: 'load_customer_explicit',
+          explicit_legal_details_id: explicitLegalDetailsId, error: explicitErr.message,
+        });
+      }
+      if (explicit && order.profile_id && explicit.profile_id === order.profile_id) {
+        customerRow = explicit;
+        customerResolutionSource = 'explicit_order_meta_legal_details_id';
+      } else {
+        await safeAudit(supabase, 'document_data.snapshot_payer_explicit_mismatch', {
+          order_id: orderId,
+          explicit_legal_details_id: explicitLegalDetailsId,
+          explicit_profile_id: explicit?.profile_id ?? null,
+          order_profile_id: order.profile_id ?? null,
+        });
+        // НЕ падаем на default — оставляем customerRow=null, чтобы PDF-генератор
+        // сработал видимой ошибкой вместо тихой подмены плательщика.
+      }
+    }
+    if (!customerRow && order.profile_id) {
       const { data: cohort, error: cohortErr } = await supabase
         .from('client_legal_details')
         .select('*')
@@ -251,6 +287,7 @@ export async function snapshotOrderDocumentData(
         }
       }
     }
+
 
     // Layered pick (offer wins, then tariff, then product).
     const pick = <T,>(key: string): T | null => {
@@ -484,7 +521,7 @@ export async function snapshotOrderDocumentData(
       executor_id: explicitExecutorIdLayered,
       service_name: composableServiceName || pick<string>('service_name'),
       service_description: pick<string>('service_description'),
-      unit: composableCheckout ? 'комплект' : (pick<string>('unit') || 'услуга'),
+      unit: composableCheckout ? 'доступ' : (pick<string>('unit') || 'услуга'),
       quantity,
       unit_price: unitPrice,
       amount,
