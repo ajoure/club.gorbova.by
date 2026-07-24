@@ -2187,7 +2187,7 @@ ${amountLine}
                                     {d.leg_org_form ? `${d.leg_org_form} ` : ""}
                                     {d.leg_name || d.ent_name || "—"}
                                     {d.leg_unp || d.ent_unp ? ` · УНП ${d.leg_unp || d.ent_unp}` : ""}
-                                    {d.is_primary ? " · основные" : ""}
+                                    {d.is_default ? " · основные" : ""}
                                   </option>
                                 ))}
                             </select>
