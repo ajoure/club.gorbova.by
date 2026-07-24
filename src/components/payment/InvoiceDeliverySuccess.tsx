@@ -173,6 +173,42 @@ export function InvoiceDeliverySuccess({
     }
   }
 
+  async function handleRetryPdf() {
+    if (!orderId || retryingPdf) return;
+    setRetryingPdf(true);
+    setPdfRetryError(null);
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "invoice-pdf-retry",
+        { body: { order_id: orderId } },
+      );
+      if (error) {
+        setPdfRetryError(error.message || "Не удалось сформировать PDF");
+        toast.error(error.message || "Не удалось сформировать PDF");
+        return;
+      }
+      const payload = data as any;
+      if (payload?.ok && payload.document_id) {
+        toast.success("PDF сформирован");
+        onDocumentReady?.({
+          document_id: payload.document_id,
+          document_number: payload.document_number ?? null,
+          document_issued_at: payload.document_issued_at ?? null,
+        });
+      } else {
+        const msg = payload?.error || "generation_failed";
+        setPdfRetryError(msg);
+        toast.error(`Ошибка PDF: ${msg}`);
+      }
+    } catch (e) {
+      const msg = (e as Error).message || "network_error";
+      setPdfRetryError(msg);
+      toast.error(msg);
+    } finally {
+      setRetryingPdf(false);
+    }
+  }
+
   const rootBody = "space-y-4";
   const wrapBody =
     layout === "dialog"
@@ -195,18 +231,50 @@ export function InvoiceDeliverySuccess({
               Счёт № {displayNumber} создан, но PDF не удалось сформировать
             </div>
             <div className="text-sm text-muted-foreground mt-1">
-              Заказ в системе есть. Свяжитесь с поддержкой — мы вышлем PDF вручную.
+              {orderId
+                ? "Заказ уже сохранён — попробуйте сформировать PDF повторно. Дубликата не будет."
+                : "Заказ в системе есть. Свяжитесь с поддержкой — мы вышлем PDF вручную."}
             </div>
+            {pdfRetryError && (
+              <div className="text-xs text-rose-600 mt-2">
+                Причина: {pdfRetryError}
+              </div>
+            )}
           </div>
         </div>
         <div className={wrapFooter}>
-          <Button className="sm:ml-auto ml-auto" onClick={onClose}>
-            Готово
+          {orderId && (
+            <Button
+              variant="default"
+              onClick={handleRetryPdf}
+              disabled={retryingPdf}
+              className="sm:mr-auto"
+            >
+              {retryingPdf ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Формируем…
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Повторить генерацию PDF
+                </>
+              )}
+            </Button>
+          )}
+          <Button
+            variant={orderId ? "outline" : "default"}
+            className={orderId ? "" : "sm:ml-auto ml-auto"}
+            onClick={onClose}
+          >
+            Закрыть
           </Button>
         </div>
       </>
     );
   }
+
 
   return (
     <>
