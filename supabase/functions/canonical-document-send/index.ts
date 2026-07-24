@@ -552,21 +552,31 @@ Deno.serve(async (req) => {
               results.telegram_error = r.error || "telegram_send_failed";
             } else {
               results.telegram_sent = true;
-              await admin
-                .from("ai_generated_documents")
-                .update({
-                  meta: {
-                    ...(doc.meta || {}),
-                    sent_to_telegram: String(chatId),
-                    sent_at: new Date().toISOString(),
-                  },
-                })
-                .eq("id", doc.id);
             }
           }
         } catch (e) {
           results.telegram_error = e instanceof Error ? e.message : "telegram_exception";
         }
+      }
+      // Persist per-channel delivery state.
+      //  - у профиля нет telegram_user_id                → not_linked
+      //  - sendDocument вернул ошибку / исключение       → error
+      //  - успех                                         → sent
+      const tgChatId = docProfile?.telegram_user_id;
+      if (results.telegram_sent) {
+        await persistDelivery(admin, doc.id, doc.meta as any, "telegram", {
+          status: "sent",
+          recipient: tgChatId ? String(tgChatId) : null,
+        });
+      } else if (results.telegram_error === "telegram_not_linked") {
+        await persistDelivery(admin, doc.id, doc.meta as any, "telegram", {
+          status: "not_linked",
+        });
+      } else {
+        await persistDelivery(admin, doc.id, doc.meta as any, "telegram", {
+          status: "error",
+          error: results.telegram_error,
+        });
       }
       await writeAudit(
         admin,
