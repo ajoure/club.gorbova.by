@@ -66,6 +66,7 @@ export function AdvantagesSection() {
           <div
             key={g.id}
             id={g.id}
+            data-cb-native-advantage-block
             className="mt-10 rounded-2xl p-6 lg:p-8"
             style={{
               background: CB_PALETTE.bgSoft,
