@@ -196,6 +196,13 @@ export function AdminPaymentLinkDialog({
   const [selectedInstallmentMonths, setSelectedInstallmentMonths] = useState<number | null>(null);
   const [selectedAddonOfferIds, setSelectedAddonOfferIds] = useState<string[]>([]);
   const [adjustmentReason, setAdjustmentReason] = useState("");
+  // Sprint «Составные продажи ЦБ» — panels для invoice (ЮЛ/ИП/ФЛ) и Ресурс развития (RR).
+  const [invoicePanelOpen, setInvoicePanelOpen] = useState(false);
+  const [rrPanelOpen, setRrPanelOpen] = useState(false);
+  const [invoicePayerType, setInvoicePayerType] = useState<"individual" | "entrepreneur" | "legal_entity">("legal_entity");
+  const [invoiceLegalDetailsId, setInvoiceLegalDetailsId] = useState<string>("");
+  const [invoicePending, setInvoicePending] = useState(false);
+  const [rrPending, setRrPending] = useState(false);
   // Phase 4.1 — provider routing UI state
   const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
   const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
