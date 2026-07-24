@@ -415,14 +415,23 @@ export function AdminPaymentLinkDialog({
     queryKey: ["composable-checkout-quote", effectiveOffer?.id, selectedAddonOfferIds],
     enabled: !!effectiveOffer?.id,
     queryFn: async () => {
+      const parentOfferId = effectiveOffer!.id;
       const { data, error } = await supabase.functions.invoke("composable-checkout-quote", {
-        body: { parent_offer_id: effectiveOffer!.id, addon_offer_ids: selectedAddonOfferIds },
+        body: { parent_offer_id: parentOfferId, addon_offer_ids: selectedAddonOfferIds },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || "Не удалось рассчитать комплект");
-      return data as any;
+      // Тегируем ответ id-оффера, чтобы UI мог отбросить stale-квоты, пришедшие для
+      // предыдущего продукта/тарифа (защита от race при быстром переключении).
+      return { ...(data as any), __parentOfferId: parentOfferId };
     },
+    staleTime: 0,
   });
+
+  // Считаем quote «свежей» только если она относится к текущему effectiveOffer.
+  const quoteMatchesCurrentOffer =
+    !!effectiveOffer?.id && composableQuote?.__parentOfferId === effectiveOffer.id;
+
 
   useEffect(() => {
     setSelectedAddonOfferIds([]);
@@ -763,7 +772,7 @@ ${amountLine}
     },
   });
 
-  // Reset на смене продукта
+  // Reset на смене продукта — атомарно сбрасываем ВСЁ, что зависит от продукта.
   useEffect(() => {
     setSelectedTariffId("");
     setSelectedOfferId("");
@@ -772,9 +781,18 @@ ${amountLine}
     setConflictData(null);
     setReplaceStep("idle");
     setShowCancelConfirm(false);
-  }, [selectedProductId]);
+    setSelectedAddonOfferIds([]);
+    setAdjustmentReason("");
+    setInvoicePanelOpen(false);
+    setRrPanelOpen(false);
+    setInvoiceLegalDetailsId("");
+    setInvoiceIssueResult(null);
+    setSelectedInstallmentMonths(null);
+    // Немедленно удаляем закэшированные quote'ы, чтобы stale composition не мелькал.
+    queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
+  }, [selectedProductId, queryClient]);
 
-  // Reset offer override на смене тарифа
+  // Reset offer override и dependent state на смене тарифа
   useEffect(() => {
     setSelectedOfferId("");
     setCustomAmount("");
@@ -782,7 +800,14 @@ ${amountLine}
     setConflictData(null);
     setReplaceStep("idle");
     setShowCancelConfirm(false);
-  }, [selectedTariffId]);
+    setSelectedAddonOfferIds([]);
+    setAdjustmentReason("");
+    setInvoicePanelOpen(false);
+    setRrPanelOpen(false);
+    setInvoiceIssueResult(null);
+    queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
+  }, [selectedTariffId, queryClient]);
+
 
   // Сбрасывать stale conflict при смене типа оплаты или конкретного offer
   useEffect(() => {
@@ -820,22 +845,32 @@ ${amountLine}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveOffer?.id]);
 
-  // Reset при закрытии диалога
+  // Полный reset при открытии/закрытии диалога — гарантированно чистое состояние
+  // на каждый новый показ; никаких унаследованных product/tariff/quote/addons.
   useEffect(() => {
-    if (!open) {
-      setSelectedProductId("");
-      setSelectedTariffId("");
-      setSelectedOfferId("");
-      setCustomAmount("");
-      setDescription("");
-      setPaymentType("one_time");
-      setGeneratedUrl(null);
-      setShowCancelConfirm(false);
-      setConflictData(null);
-      setReplaceStep("idle");
-      setSelectedInstallmentMonths(null);
-    }
-  }, [open]);
+    setSelectedProductId("");
+    setSelectedTariffId("");
+    setSelectedOfferId("");
+    setCustomAmount("");
+    setDescription("");
+    setPaymentType("one_time");
+    setGeneratedUrl(null);
+    setShowCancelConfirm(false);
+    setConflictData(null);
+    setReplaceStep("idle");
+    setSelectedInstallmentMonths(null);
+    setSelectedAddonOfferIds([]);
+    setAdjustmentReason("");
+    setInvoicePanelOpen(false);
+    setRrPanelOpen(false);
+    setInvoicePayerType("legal_entity");
+    setInvoiceLegalDetailsId("");
+    setInvoiceIssueResult(null);
+    setInvoicePending(false);
+    setRrPending(false);
+    queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
+  }, [open, queryClient]);
+
 
   // PATCH PAYMENT-CONFLICT v3: конфликт product-level (без tariff_id) и только для подписки.
   const isCurrentConflict = useMemo(() => {
@@ -1320,7 +1355,7 @@ ${amountLine}
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-lg w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
+        <DialogContent className="w-[min(92vw,820px)] sm:max-w-[820px] max-h-[calc(100dvh-2rem)] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
               <Link2 className="h-5 w-5 shrink-0" />
@@ -1824,7 +1859,7 @@ ${amountLine}
                 </div>
               )}
 
-              {effectiveOffer && (composableAvailableAddons.length > 0 || composableQuoteLoading) && (
+              {selectedProductId && selectedTariffId && effectiveOffer && quoteMatchesCurrentOffer && (composableAvailableAddons.length > 0 || composableQuoteLoading) && (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
                   <div>
                     <p className="text-sm font-medium">Дополнительные продукты</p>
@@ -1853,7 +1888,7 @@ ${amountLine}
                 </div>
               )}
 
-              {effectiveOffer && composableItems.length > 0 && (
+              {selectedProductId && selectedTariffId && effectiveOffer && quoteMatchesCurrentOffer && composableItems.length > 0 && (
                 <OrderSummary
                   items={composableItems.map((it: any) => ({
                     role: it.role,

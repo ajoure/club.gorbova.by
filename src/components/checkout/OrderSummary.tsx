@@ -167,13 +167,14 @@ function SummaryRow({
   return (
     <li className="flex items-start justify-between gap-3">
       <div className="min-w-0 flex-1">
-        <div className={cn("truncate", isPrimary ? "font-semibold text-foreground" : "text-foreground")}>
+        <div className={cn("break-words", isPrimary ? "font-semibold text-foreground" : "text-foreground")}>
           {displayName}
         </div>
         {secondary && (
-          <div className="truncate text-[11px] text-muted-foreground">{secondary}</div>
+          <div className="break-words text-[11px] text-muted-foreground">{secondary}</div>
         )}
       </div>
+
       <div className="flex shrink-0 flex-col items-end gap-0.5 text-right">
         {isFree ? (
           <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
