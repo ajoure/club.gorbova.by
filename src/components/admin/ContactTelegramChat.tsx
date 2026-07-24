@@ -1049,7 +1049,6 @@ export function ContactTelegramChat({
     const vp = getScrollViewport();
     if (!vp) return;
     vp.scrollTo({ top: vp.scrollHeight, behavior });
-    bottomRef.current?.scrollIntoView({ block: "end", behavior });
   }, [getScrollViewport]);
 
   const startStickyScroll = useCallback((durationMs = 1800) => {
@@ -1638,7 +1637,11 @@ export function ContactTelegramChat({
       return vp.scrollHeight - vp.scrollTop - vp.clientHeight < 120;
     };
 
-    const shouldScroll = !didInitialScrollRef.current || isNearBottom();
+    // Decide from the position captured BEFORE React prepends/enriches rows.
+    // Stage 2 adds older history above the initial 20 messages; measuring the
+    // DOM after that prepend incorrectly looks like the operator scrolled up.
+    const shouldScroll =
+      !didInitialScrollRef.current || shouldStickToBottomRef.current;
     if (!shouldScroll) return;
 
     // Скрытый pin-to-bottom: моментально, без анимации.
@@ -1646,7 +1649,6 @@ export function ContactTelegramChat({
       const vp = getViewport();
       if (!vp) return;
       vp.scrollTop = vp.scrollHeight;
-      bottomRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
     };
 
     // 1) Пока первая раскладка и медиа догружаются, держим ленту у конца.
@@ -1680,7 +1682,7 @@ export function ContactTelegramChat({
         pinToBottom();
         return;
       }
-      if (isNearBottom()) pinToBottom();
+      if (shouldStickToBottomRef.current) pinToBottom();
     });
     const inner = viewport.firstElementChild as HTMLElement | null;
     if (inner) ro.observe(inner);
@@ -1688,7 +1690,7 @@ export function ContactTelegramChat({
 
     // 3) Картинки и видео — каждая догрузка двигает scrollHeight.
     const onMediaLoad = () => {
-      if (isNearBottom()) pinToBottom();
+      if (shouldStickToBottomRef.current) pinToBottom();
     };
     const attachLoadListeners = (root: ParentNode) => {
       const medias = Array.from(
@@ -1725,7 +1727,7 @@ export function ContactTelegramChat({
       }
       if (hasNewMedia) {
         attachLoadListeners(viewport);
-        if (isNearBottom()) pinToBottom();
+        if (shouldStickToBottomRef.current) pinToBottom();
       }
     });
     mo.observe(viewport, { childList: true, subtree: true });
@@ -1774,7 +1776,7 @@ export function ContactTelegramChat({
     if (vp) {
       vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
     }
-    bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    shouldStickToBottomRef.current = true;
     setUnreadCount(0);
   }, []);
 
