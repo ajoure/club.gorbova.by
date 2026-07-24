@@ -24,7 +24,11 @@ const RECS = [
 export function PostTariffSection() {
   const blocks = RECS.map((id) => rec(id));
   return (
-    <section className="py-8" style={{ background: CB_PALETTE.bg }}>
+    <section
+      className="py-8"
+      data-cb-native-section="post-tariff"
+      style={{ background: CB_PALETTE.bg }}
+    >
       <div className="mx-auto max-w-6xl px-5 space-y-8">
         {blocks.map((b) => {
           const [title = "", ...body] = b.text;
@@ -34,6 +38,7 @@ export function PostTariffSection() {
             <div
               key={b.id}
               id={b.id}
+              data-cb-native-post-tariff-block
               className="rounded-2xl p-6 lg:p-8"
               style={{
                 background: accent ? CB_PALETTE.accent : CB_PALETTE.bgSoft,
