@@ -38,6 +38,9 @@ import {
   Download,
   Star,
   Copy,
+  RefreshCw,
+  AlertCircle,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
