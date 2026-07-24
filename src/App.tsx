@@ -231,6 +231,7 @@ const App = () => {
               <Route path="/instruction" element={<LazyRoute><Instruction /></LazyRoute>} />
               <Route path="/contacts" element={<LazyRoute><Contacts /></LazyRoute>} />
               <Route path="/unsubscribe" element={<LazyRoute><Unsubscribe /></LazyRoute>} />
+              <Route path="/cb-native-preview" element={<LazyRoute><CbNativePreview /></LazyRoute>} />
 
               <Route path="/help" element={<LazyRoute><Help /></LazyRoute>} />
               <Route path="/cons" element={<Navigate to="/consultation" replace />} />
