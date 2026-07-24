@@ -772,7 +772,7 @@ ${amountLine}
     },
   });
 
-  // Reset на смене продукта
+  // Reset на смене продукта — атомарно сбрасываем ВСЁ, что зависит от продукта.
   useEffect(() => {
     setSelectedTariffId("");
     setSelectedOfferId("");
@@ -781,9 +781,18 @@ ${amountLine}
     setConflictData(null);
     setReplaceStep("idle");
     setShowCancelConfirm(false);
-  }, [selectedProductId]);
+    setSelectedAddonOfferIds([]);
+    setAdjustmentReason("");
+    setInvoicePanelOpen(false);
+    setRrPanelOpen(false);
+    setInvoiceLegalDetailsId("");
+    setInvoiceIssueResult(null);
+    setSelectedInstallmentMonths(null);
+    // Немедленно удаляем закэшированные quote'ы, чтобы stale composition не мелькал.
+    queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
+  }, [selectedProductId, queryClient]);
 
-  // Reset offer override на смене тарифа
+  // Reset offer override и dependent state на смене тарифа
   useEffect(() => {
     setSelectedOfferId("");
     setCustomAmount("");
@@ -791,7 +800,14 @@ ${amountLine}
     setConflictData(null);
     setReplaceStep("idle");
     setShowCancelConfirm(false);
-  }, [selectedTariffId]);
+    setSelectedAddonOfferIds([]);
+    setAdjustmentReason("");
+    setInvoicePanelOpen(false);
+    setRrPanelOpen(false);
+    setInvoiceIssueResult(null);
+    queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
+  }, [selectedTariffId, queryClient]);
+
 
   // Сбрасывать stale conflict при смене типа оплаты или конкретного offer
   useEffect(() => {
