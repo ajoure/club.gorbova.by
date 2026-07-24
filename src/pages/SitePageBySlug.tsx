@@ -67,7 +67,7 @@ interface CheckoutSelection {
 
 function configuredTariffKey(tariff: {
   code?: string | null;
-  meta?: { site_slot_key?: string | null } | null;
+  meta?: Record<string, any> | null;
 }) {
   return String(tariff.meta?.site_slot_key || tariff.code || "").trim();
 }
