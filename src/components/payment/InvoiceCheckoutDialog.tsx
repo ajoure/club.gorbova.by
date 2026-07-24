@@ -271,13 +271,15 @@ export function InvoiceCheckoutDialog({
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[720px] max-h-[92vh] max-h-[92dvh] p-0 flex flex-col gap-0 overflow-hidden">
-        <DialogHeader className="px-6 pt-6 pb-3 border-b shrink-0">
-          <DialogTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Счёт на оплату — {productName}
-            {tariffName ? ` · ${tariffName}` : ""}
+        <DialogHeader className="px-4 sm:px-6 pt-5 sm:pt-6 pb-3 border-b shrink-0">
+          <DialogTitle className="flex items-start gap-2 pr-8 text-base sm:text-lg break-words [overflow-wrap:anywhere]">
+            <FileText className="h-5 w-5 shrink-0 mt-0.5" />
+            <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+              Счёт на оплату — {productName}
+              {tariffName ? ` · ${tariffName}` : ""}
+            </span>
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="break-words">
             Оплата по банковскому реквизиту для юридического лица или ИП
           </DialogDescription>
         </DialogHeader>
