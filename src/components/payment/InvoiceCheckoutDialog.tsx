@@ -416,76 +416,15 @@ export function InvoiceCheckoutDialog({
           </>
         )}
 
-        {step === "success" && result && (() => {
-          const displayNumber = result.document_number ?? result.invoice_number;
-          const displayDate = formatDate(result.document_issued_at);
-          const purposeText = `Оплата по счёту №${displayNumber} от ${displayDate}`;
-          return (
-            <>
-              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 text-center">
-                <div className="flex justify-center">
-                  <CheckCircle2 className="h-12 w-12 text-green-600" />
-                </div>
-                <div>
-                  <div className="text-lg font-semibold">
-                    Счёт № {displayNumber} сформирован
-                  </div>
-                  <div className="text-sm text-muted-foreground mt-1">
-                    Отправка на email и в Telegram запущена и придёт в течение
-                    нескольких минут. Также PDF можно скачать сразу.
-                  </div>
-                </div>
-                <Card className="p-3 text-left text-sm bg-muted/40">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1">
-                      <div className="text-muted-foreground text-xs uppercase tracking-wide mb-1">
-                        При оплате в назначении платежа укажите
-                      </div>
-                      <div className="font-medium break-words select-all">
-                        {purposeText}
-                      </div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="shrink-0"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(purposeText);
-                          toast.success("Скопировано");
-                        } catch {
-                          toast.error("Не удалось скопировать");
-                        }
-                      }}
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </Card>
-              </div>
-              <div className="shrink-0 border-t bg-background px-6 py-3 flex flex-col sm:flex-row gap-2">
-                {result.document_id && (
-                  <Button
-                    variant="outline"
-                    onClick={async () => {
-                      const r = await downloadDocumentBlob(result.document_id!, "pdf");
-                      if (r.ok === false) {
-                        toast.error(r.message);
-                      } else {
-                        toast.success("Скачивание началось");
-                      }
-                    }}
-                  >
-                    <Download className="h-4 w-4 mr-1" /> Скачать PDF
-                  </Button>
-                )}
-                <Button className="sm:ml-auto" onClick={() => handleClose(false)}>
-                  Готово
-                </Button>
-              </div>
-            </>
-          );
-        })()}
+        {step === "success" && result && (
+          <InvoiceDeliverySuccess
+            documentId={result.document_id}
+            invoiceNumber={result.invoice_number}
+            documentNumber={result.document_number}
+            documentIssuedAt={result.document_issued_at}
+            onClose={() => handleClose(false)}
+          />
+        )}
 
       </DialogContent>
     </Dialog>
