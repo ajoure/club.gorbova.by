@@ -270,6 +270,10 @@ export function AdminPaymentLinkDialog({
   }, [stripeAccounts, stripeAccountCode]);
 
   // Sprint «Составные продажи ЦБ» — legal_details целевого пользователя (для invoice ЮЛ/ИП).
+  // Канонический резолвер: тот же путь, что public InvoiceCheckoutDialog / useLegalDetails —
+  // profiles.user_id → client_legal_details.profile_id. Флаг «по-умолчанию» — is_default
+  // (единственный boolean в схеме; is_primary в client_legal_details не существует и раньше
+  // ронял весь select, из-за чего резолвер молча возвращал пустой массив → «нет карточек»).
   const { data: targetLegalDetails } = useQuery({
     queryKey: ["admin-payment-link-target-legal-details", userId],
     enabled: !!userId && invoicePanelOpen,
@@ -279,9 +283,9 @@ export function AdminPaymentLinkDialog({
       if (!profile) return [];
       const { data, error } = await supabase
         .from("client_legal_details")
-        .select("id, client_type, leg_name, leg_org_form, ent_name, leg_unp, ent_unp, is_primary")
+        .select("id, client_type, leg_name, leg_org_form, ent_name, leg_unp, ent_unp, is_default")
         .eq("profile_id", profile.id)
-        .order("is_primary", { ascending: false });
+        .order("is_default", { ascending: false });
       if (error) throw error;
       return data ?? [];
     },
@@ -1925,8 +1929,9 @@ ${amountLine}
               )}
 
               {/* Индивидуальная ссылка: N всегда 2..12, независимо от настроек кнопки.
-                  Админ может изменить количество платежей и сумму. Публичная кнопка не меняется. */}
-              {selectedTariffId && isInstallmentOffer && (() => {
+                  Админ может изменить количество платежей и сумму. Публичная кнопка не меняется.
+                  Скрываем для invoice/RR — там нет рассрочки, только счёт/RR-ссылка. */}
+              {selectedTariffId && isInstallmentOffer && !invoicePanelOpen && !rrPanelOpen && (() => {
                 const intervalDays = Number((effectiveOffer as any)?.installment_interval_days ?? 30);
                 const offerAmountByn = Number((effectiveOffer as any)?.amount ?? 0);
                 const offerN = installmentMaxMonths ?? null;
@@ -2183,7 +2188,7 @@ ${amountLine}
                                     {d.leg_org_form ? `${d.leg_org_form} ` : ""}
                                     {d.leg_name || d.ent_name || "—"}
                                     {d.leg_unp || d.ent_unp ? ` · УНП ${d.leg_unp || d.ent_unp}` : ""}
-                                    {d.is_primary ? " · основные" : ""}
+                                    {d.is_default ? " · основные" : ""}
                                   </option>
                                 ))}
                             </select>
