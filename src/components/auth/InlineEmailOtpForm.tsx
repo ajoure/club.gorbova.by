@@ -16,8 +16,12 @@ import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/comp
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AlertCircle, Loader2, Mail } from "lucide-react";
+import { AlertCircle, Check, Eye, EyeOff, Loader2, Mail, X } from "lucide-react";
 import { useInlineEmailOtp } from "@/hooks/useInlineEmailOtp";
+import {
+  REGISTRATION_PASSWORD_MIN_LENGTH,
+  checkRegistrationPassword,
+} from "@/lib/auth/registrationPassword";
 
 export interface InlineEmailOtpFormProps {
   initialEmail?: string;
@@ -41,7 +45,15 @@ export function InlineEmailOtpForm({
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [code, setCode] = useState("");
+  const passwordChecks = checkRegistrationPassword(password);
+  const passwordValid =
+    passwordChecks.minLength && passwordChecks.hasLetter && passwordChecks.hasDigit;
+  const passwordsMatch = password.length > 0 && password === confirmPassword;
 
   useEffect(() => {
     if (initialEmail && !email) setEmail(initialEmail);
@@ -58,8 +70,8 @@ export function InlineEmailOtpForm({
 
   const handleSubmitDetails = async (e: FormEvent) => {
     e.preventDefault();
-    if (!firstName.trim()) return;
-    await auth.submitDetails({ firstName, lastName, phone });
+    if (!firstName.trim() || !passwordValid || !passwordsMatch) return;
+    await auth.submitDetails({ firstName, lastName, phone, password });
   };
 
   const handleVerify = async (e?: FormEvent) => {
@@ -87,6 +99,10 @@ export function InlineEmailOtpForm({
     setFirstName("");
     setLastName("");
     setPhone("");
+    setPassword("");
+    setConfirmPassword("");
+    setShowPassword(false);
+    setShowConfirmPassword(false);
   };
 
   return (
@@ -172,7 +188,87 @@ export function InlineEmailOtpForm({
               onChange={(e) => setPhone(e.target.value)}
             />
           </div>
-          <Button type="submit" size="lg" className="w-full" disabled={isBusy || !firstName.trim()}>
+          <div className="space-y-2">
+            <Label htmlFor="iaf-otp-password">Создайте пароль</Label>
+            <div className="relative">
+              <Input
+                id="iaf-otp-password"
+                name="new-password"
+                type={showPassword ? "text" : "password"}
+                required
+                minLength={REGISTRATION_PASSWORD_MIN_LENGTH}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
+                className="pr-11"
+              />
+              <button
+                type="button"
+                className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground hover:text-foreground"
+                onClick={() => setShowPassword((value) => !value)}
+                aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <div className="space-y-1 text-xs" aria-label="Требования к паролю">
+              {[
+                [passwordChecks.minLength, `Минимум ${REGISTRATION_PASSWORD_MIN_LENGTH} символов`],
+                [passwordChecks.hasLetter, "Минимум одна буква"],
+                [passwordChecks.hasDigit, "Минимум одна цифра"],
+              ].map(([valid, label]) => (
+                <div
+                  key={String(label)}
+                  className={`flex items-center gap-1.5 ${
+                    valid ? "text-green-600" : "text-muted-foreground"
+                  }`}
+                >
+                  {valid ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                  <span>{label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="iaf-otp-confirm-password">Повторите пароль</Label>
+            <div className="relative">
+              <Input
+                id="iaf-otp-confirm-password"
+                name="confirm-password"
+                type={showConfirmPassword ? "text" : "password"}
+                required
+                minLength={REGISTRATION_PASSWORD_MIN_LENGTH}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                autoComplete="new-password"
+                className="pr-11"
+                aria-invalid={confirmPassword.length > 0 && !passwordsMatch}
+              />
+              <button
+                type="button"
+                className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground hover:text-foreground"
+                onClick={() => setShowConfirmPassword((value) => !value)}
+                aria-label={showConfirmPassword ? "Скрыть повтор пароля" : "Показать повтор пароля"}
+              >
+                {showConfirmPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            </div>
+            {confirmPassword.length > 0 && (
+              <p className={`text-xs ${passwordsMatch ? "text-green-600" : "text-destructive"}`}>
+                {passwordsMatch ? "Пароли совпадают" : "Пароли не совпадают"}
+              </p>
+            )}
+          </div>
+          <Button
+            type="submit"
+            size="lg"
+            className="w-full"
+            disabled={isBusy || !firstName.trim() || !passwordValid || !passwordsMatch}
+          >
             {isBusy ? (
               <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Отправка…</>
             ) : (

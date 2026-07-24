@@ -21,6 +21,10 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  REGISTRATION_PASSWORD_MIN_LENGTH,
+  isRegistrationPasswordValid,
+} from "@/lib/auth/registrationPassword";
 
 export type InlineOtpStep =
   | "email"
@@ -32,6 +36,11 @@ export interface InlineOtpMeta {
   firstName?: string;
   lastName?: string;
   phone?: string;
+  /**
+   * Kept only in browser memory until email OTP verification succeeds.
+   * It is never included in the request-inline-otp payload or database row.
+   */
+  password?: string;
 }
 
 interface IdentifyResult {
@@ -76,6 +85,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
   const [invalidAttempts, setInvalidAttempts] = useState(0);
   const [resendIn, setResendIn] = useState(0);
   const metaRef = useRef<InlineOtpMeta | undefined>(undefined);
+  const pendingPasswordRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -161,7 +171,10 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
 
         // Only on success do we advance to the code step.
         setEmail(trimmed);
-        if (meta) metaRef.current = meta;
+        if (meta) {
+          metaRef.current = meta;
+          pendingPasswordRef.current = meta.password || null;
+        }
         setStep("sent");
         setInvalidAttempts(0);
         setResendIn(RESEND_COOLDOWN_S);
@@ -211,6 +224,12 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
       if (!email) {
         setError("Введите email заново.");
         setStep("email");
+        return false;
+      }
+      if (!meta.password || !isRegistrationPasswordValid(meta.password)) {
+        setError(
+          `Пароль должен содержать минимум ${REGISTRATION_PASSWORD_MIN_LENGTH} символов, одну букву и одну цифру.`,
+        );
         return false;
       }
       return sendOtpForEmail(email, meta);
@@ -283,6 +302,25 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
           return null;
         }
 
+        // New registrations keep the password only in browser memory. Set it
+        // after the email code has produced a verified Supabase session.
+        const pendingPassword = pendingPasswordRef.current;
+        if (pendingPassword) {
+          const { error: passwordError } = await supabase.auth.updateUser({
+            password: pendingPassword,
+          });
+          if (passwordError) {
+            console.error("[useInlineEmailOtp] password setup failed:", passwordError);
+            await supabase.auth.signOut();
+            setStep("details");
+            setError(
+              "Email подтверждён, но пароль не удалось сохранить. Проверьте пароль и запросите новый код.",
+            );
+            return null;
+          }
+          pendingPasswordRef.current = null;
+        }
+
         setStep("authenticated");
         return { userId: sessionData.user.id };
       } catch (e) {
@@ -303,6 +341,7 @@ export function useInlineEmailOtp(): UseInlineEmailOtpReturn {
     setInvalidAttempts(0);
     setResendIn(0);
     metaRef.current = undefined;
+    pendingPasswordRef.current = null;
   }, []);
 
   return {
