@@ -2311,10 +2311,25 @@ ${amountLine}
               invoiceNumber={invoiceIssueResult.invoice_number}
               documentNumber={invoiceIssueResult.document_number}
               documentIssuedAt={invoiceIssueResult.document_issued_at}
+              orderId={invoiceIssueResult.order_id}
+              onDocumentReady={(r) =>
+                setInvoiceIssueResult((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        document_id: r.document_id,
+                        document_number: r.document_number ?? prev.document_number,
+                        document_issued_at:
+                          r.document_issued_at ?? prev.document_issued_at,
+                      }
+                    : prev,
+                )
+              }
               onClose={() => setInvoiceIssueResult(null)}
               layout="dialog"
             />
           )}
+
         </DialogContent>
       </Dialog>
     </>
