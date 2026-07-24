@@ -21657,6 +21657,10 @@ export type Database = {
           grants_count: number
         }[]
       }
+      client_legal_details_admin_delete: {
+        Args: { _target_id: string }
+        Returns: Json
+      }
       close_stale_autoweb_sessions: { Args: never; Returns: number }
       company_feed_list: {
         Args: {
