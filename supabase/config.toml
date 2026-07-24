@@ -128,5 +128,5 @@ verify_jwt = false
 [functions.crm-pipeline-automation-worker]
 verify_jwt = true
 
-[functions._temp_cbold_dump]
+[functions.temp-cbold-dump]
 verify_jwt = false
