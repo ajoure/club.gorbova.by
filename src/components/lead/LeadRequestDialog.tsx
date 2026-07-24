@@ -293,6 +293,17 @@ export function LeadRequestDialog({
                   : "Проверьте контактные данные — менеджер свяжется с вами."}
               </DialogDescription>
             </DialogHeader>
+            {quoteSummary.items.length > 0 && quoteSummary.total != null && (
+              <OrderSummary
+                items={quoteSummary.items}
+                currency={quoteSummary.currency}
+                total={quoteSummary.total}
+                subtotal={quoteSummary.subtotal ?? undefined}
+                adjustmentAmount={quoteSummary.adjustmentAmount}
+                density="admin"
+                className="mb-2"
+              />
+            )}
             <form onSubmit={handleSubmitLead} className="space-y-4">
               {/* honeypot */}
               <input
