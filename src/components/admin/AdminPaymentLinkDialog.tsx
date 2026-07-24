@@ -1428,7 +1428,7 @@ ${amountLine}
                 {productsLoading ? (
                   <Skeleton className="h-10 w-full" />
                 ) : (
-                  <Select value={selectedProductId} onValueChange={setSelectedProductId}>
+                  <Select value={selectedProductId} onValueChange={handleProductChange}>
                     <SelectTrigger>
                       <SelectValue placeholder="Выберите продукт" />
                     </SelectTrigger>
