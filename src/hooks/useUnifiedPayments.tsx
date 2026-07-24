@@ -59,6 +59,9 @@ export interface UnifiedPayment {
   profile_email: string | null;
   profile_phone: string | null;
   is_ghost: boolean;
+  // Canonical company linked through the payment's order (used by search).
+  company_id: string | null;
+  company_name: string | null;
   
   // Linked deal (raw from payments_v2)
   order_id: string | null;
@@ -206,7 +209,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             matched_profile_id, matched_order_id, matched_product_id, matched_tariff_id, matched_offer_id,
             is_external, has_conflict, provider,
             profiles:matched_profile_id(id, full_name, email, phone, user_id),
-            orders:matched_order_id(id, order_number, status, profile_id, profiles(id, full_name, email, phone, user_id))
+            orders:matched_order_id(id, order_number, status, profile_id, company_id, profiles(id, full_name, email, phone, user_id))
           `)
           .eq("is_fee", false)
           .not("bepaid_uid", "is", null)
@@ -232,7 +235,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             amount, currency, status, transaction_type, provider, origin, payment_classification,
             card_last4, card_brand, paid_at, created_at,
             receipt_url, refunds, refunded_amount, provider_response, meta,
-            orders:order_id(id, order_number, status, product_id, purchase_snapshot, profile_id, profiles(id, full_name, email, phone, user_id)),
+            orders:order_id(id, order_number, status, product_id, purchase_snapshot, profile_id, company_id, profiles(id, full_name, email, phone, user_id)),
             profiles:profile_id(id, full_name, email, phone, user_id)
           `)
           // PATCH-LIVE-2: грузим и bePaid, и Stripe. UI-фильтр "Провайдер" (PaymentsTabContent)
@@ -303,6 +306,29 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         : { data: [] };
       
       const productsMap = new Map((productsResult.data || []).map(p => [p.id, p.name]));
+
+      // Resolve canonical company names once, then include them in every
+      // payment search index. The payment source of truth remains unchanged.
+      const companyIds = Array.from(new Set([
+        ...paymentsData.map((p) => (p.orders as any)?.company_id),
+        ...queueData.map((q) => (q.orders as any)?.company_id),
+      ].filter(Boolean)));
+      const profileIds = Array.from(new Set([
+        ...paymentsData.map((p) => p.profile_id || (p.orders as any)?.profile_id),
+        ...queueData.map((q) => q.matched_profile_id || (q.orders as any)?.profile_id),
+      ].filter(Boolean)));
+      const companyContactsResult = profileIds.length > 0
+        ? await supabase.from("company_contacts").select("profile_id, company_id").in("profile_id", profileIds)
+        : { data: [], error: null };
+      const linkedCompanyIds = Array.from(new Set([
+        ...companyIds,
+        ...(companyContactsResult.data || []).map((link) => link.company_id),
+      ].filter(Boolean)));
+      const companiesResult = linkedCompanyIds.length > 0
+        ? await supabase.from("companies").select("id, full_name, short_name").in("id", linkedCompanyIds)
+        : { data: [], error: null };
+      const companiesMap = new Map((companiesResult.data || []).map((company) => [company.id, company]));
+      const companyByProfile = new Map((companyContactsResult.data || []).map((link) => [link.profile_id, companiesMap.get(link.company_id)]));
       
       // F13.ADD: Build cross-reference map from ALL queue records BEFORE dedup
       // This allows payments_v2 records to inherit matched_order_id from queue
@@ -507,6 +533,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         const orderProfile = order?.profiles as any;
         const profile = directProfile || orderProfile || null;
         const effectiveProfileId = p.profile_id || order?.profile_id || null;
+        const company = order?.company_id ? companiesMap.get(order.company_id) : null;
+        const companyName = company?.short_name || company?.full_name || null;
         
         const providerResponse = p.provider_response as any;
         const refunds = (p.refunds || []) as any[];
@@ -624,6 +652,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           manualComment,
           manualBankDocumentNo,
           manualDetails?.contact_name_snapshot as string | null | undefined,
+          companyName,
         ]);
         
         return {
@@ -653,6 +682,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           profile_email: profile?.email || null,
           profile_phone: profile?.phone || null,
           is_ghost: profile ? !profile.user_id : false,
+          company_id: order?.company_id || null,
+          company_name: companyName,
           order_id: p.order_id,
           order_number: order?.order_number || null,
           order_status: order?.status || null,
@@ -717,6 +748,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           const orderProfile = order?.profiles as any;
           const profile = directProfile || orderProfile || null;
           const effectiveProfileId = q.matched_profile_id || order?.profile_id || profile?.id || null;
+          const company = order?.company_id ? companiesMap.get(order.company_id) : null;
+          const companyName = company?.short_name || company?.full_name || null;
           
           // Normalize source for UI filtering
           let uiSource: PaymentSource = 'webhook';
@@ -779,6 +812,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             profile_email: profile?.email || null,
             profile_phone: profile?.phone || null,
             is_ghost: profile ? !profile.user_id : false,
+            company_id: order?.company_id || null,
+            company_name: companyName,
             order_id: q.matched_order_id || order?.id || null,
             order_number: order?.order_number || null,
             order_status: order?.status || null,
@@ -830,6 +865,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
               q.amount,
               q.product_name,
               q.description,
+              companyName,
             ]),
           };
         });

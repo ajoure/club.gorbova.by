@@ -3044,7 +3044,19 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                     <div className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">Контакт пока не связан с компаниями.</div>
                   )}
                   {(linkedCompaniesQuery.data ?? []).map(({ company, relationship_type, is_primary, is_billing_contact }) => (
-                    <div key={`${company!.id}-${relationship_type}`} className="flex items-center gap-3 rounded-lg border p-3">
+                    <div
+                      key={`${company!.id}-${relationship_type}`}
+                      className={cn("flex items-center gap-3 rounded-lg border p-3", onOpenCompany && "cursor-pointer transition-colors hover:bg-muted/50")}
+                      role={onOpenCompany ? "button" : undefined}
+                      tabIndex={onOpenCompany ? 0 : undefined}
+                      onClick={onOpenCompany ? () => onOpenCompany(company!.id) : undefined}
+                      onKeyDown={onOpenCompany ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onOpenCompany(company!.id);
+                        }
+                      } : undefined}
+                    >
                       <div className="rounded-lg bg-primary/10 p-2 text-primary"><Building2 className="h-4 w-4" /></div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -3054,7 +3066,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                         </div>
                         <div className="mt-0.5 text-xs text-muted-foreground">{company!.public_id} · {relationship_type || "связанный контакт"}</div>
                       </div>
-                      {onOpenCompany && <Button type="button" variant="link" size="sm" className="shrink-0 text-xs" onClick={() => onOpenCompany(company!.id)}>Открыть компанию</Button>}
+                      {onOpenCompany && <span className="shrink-0 text-xs font-medium text-primary">Открыть</span>}
                     </div>
                   ))}
                 </CardContent>
