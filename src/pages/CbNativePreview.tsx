@@ -1,5 +1,6 @@
 /**
- * /cb-native-preview — hidden native React replacement candidate for /cb.
+ * Native React landing for /cb. /cb-native-preview remains its hidden
+ * acceptance route.
  *
  * Visual/content source of truth:
  *   .lovable/discovery/cb-native/cbold_manifest.json (73 recs, DOM-parsed)
@@ -10,9 +11,10 @@
  * - No absolute-position Zero Blocks. Semantic sections with flex/grid.
  * - Tariff pricing + CTAs resolve dynamically through UniversalPricingSection
  *   (slot manifest) via usePublicProduct(). Same product id as /cb.
- * - Route is unlinked from navigation, marked noindex.
+ * - Public /cb is indexable; the preview alias is unlinked and noindex.
  */
 import { useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
 import {
   UniversalPricingSection,
@@ -42,9 +44,14 @@ const scrollToTariffs = () => {
 };
 
 export default function CbNativePreview() {
+  const { pathname } = useLocation();
+  const isPreview = pathname === "/cb-native-preview";
+
   useEffect(() => {
-    document.title = "ЦБ 2.0 · native preview";
-    // noindex
+    document.title = isPreview ? "ЦБ 2.0 · native preview" : "Ценный бухгалтер";
+
+    // Keep the hidden acceptance route out of search results. The public /cb
+    // route remains indexable after publication.
     let meta = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
     let injected = false;
     if (!meta) {
@@ -54,13 +61,13 @@ export default function CbNativePreview() {
       injected = true;
     }
     const prev = meta.content;
-    meta.content = "noindex,nofollow";
+    meta.content = isPreview ? "noindex,nofollow" : "index,follow";
 
     return () => {
       if (injected) meta!.remove();
       else meta!.content = prev;
     };
-  }, []);
+  }, [isPreview]);
 
   const { data, isLoading, error } = usePublicProduct({ productId: CB_PRODUCT_ID });
 

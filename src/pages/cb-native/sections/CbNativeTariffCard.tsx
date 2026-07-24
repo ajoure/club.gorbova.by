@@ -6,7 +6,10 @@
  *
  * Rules:
  *  - No paraphrasing/reordering. Every displayed string is a slice of manifest text.
- *  - Prices come from the manifest (static display), same as live Tilda card.
+ *  - Prices come from the product tariff's card_config. Checkout amounts still
+ *    come from the selected backend offer, so the visual price and payment
+ *    flow share the same configurable product source rather than stale Tilda
+ *    copy.
  *  - CTA labels come from backend offers (usePublicProduct → tariff.offers),
  *    forced into the canonical Tilda order:
  *      1) pay_now              → ОПЛАТИТЬ ОБУЧЕНИЕ
@@ -63,9 +66,6 @@ type CardData = {
   credentials: FeatureItem[];
   audienceTitle: string;
   audience: string;
-  oldPrice: string;
-  monthly: string;
-  fullPrice: string;
   period: string;
 };
 
@@ -101,9 +101,6 @@ const CARDS: CardData[] = [
     ],
     audienceTitle: t(78),
     audience: t(79),
-    oldPrice: t(51), // 1690 BYN
-    monthly: t(52), // ОТ 136 BYN/МЕС
-    fullPrice: t(53), // или 1490 BYN при 100% оплате
     period: t(57), // 12 мес
   },
 
@@ -138,9 +135,6 @@ const CARDS: CardData[] = [
     ],
     audienceTitle: t(178),
     audience: [t(179), t(180), t(181)].filter(Boolean).join(" "),
-    oldPrice: t(113), // 1990 BYN
-    monthly: t(114), // ОТ 163 BYN/МЕС
-    fullPrice: t(115), // или 1790 BYN при 100% оплате
     period: t(116), // 12 мес
   },
 
@@ -175,12 +169,48 @@ const CARDS: CardData[] = [
     ],
     audienceTitle: t(175),
     audience: [t(176), t(177)].filter(Boolean).join(" "),
-    oldPrice: t(0),  // 2690 BYN
-    monthly: t(1),   // ОТ 227 BYN/МЕС
-    fullPrice: t(2), // или 2490 BYN при 100% оплате
     period: t(3),    // 12 мес
   },
 ];
+
+const finiteAmount = (value: unknown): number | null => {
+  const amount = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+};
+
+const formatAmount = (amount: number) =>
+  new Intl.NumberFormat("ru-RU", {
+    maximumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+  }).format(amount);
+
+const resolveVisualPricing = (tariff: PublicTariff) => {
+  const cardConfig = tariff.meta?.card_config;
+  const activeOffers = (tariff.offers ?? []).filter((offer) => offer.is_active !== false);
+  const primaryFullPayment = activeOffers.find(
+    (offer) =>
+      offer.is_primary === true &&
+      (offer.offer_type === "pay_now" || offer.payment_method === "full_payment"),
+  );
+  const firstPayNow = activeOffers.find((offer) => offer.offer_type === "pay_now");
+  const firstOffer = activeOffers[0];
+
+  const current =
+    finiteAmount(cardConfig?.price_display) ??
+    finiteAmount(primaryFullPayment?.amount) ??
+    finiteAmount(tariff.current_price) ??
+    finiteAmount(firstPayNow?.amount) ??
+    finiteAmount(firstOffer?.amount);
+  const configuredOld = finiteAmount(cardConfig?.old_price);
+  const old = current && configuredOld && configuredOld > current ? configuredOld : null;
+  const suffix = cardConfig?.price_suffix?.trim() || "BYN";
+
+  return {
+    current,
+    old,
+    monthly: current ? Math.round(current / 12) : null,
+    suffix,
+  };
+};
 
 // ── CTA appearance mirrors live Tilda ─────────────────────────
 const buttonStyle = (offer: TariffOffer, index: number) => {
@@ -291,6 +321,7 @@ interface CbNativeTariffCardProps {
 
 export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTariffCardProps) {
   const card = CARDS[index] ?? CARDS[0];
+  const pricing = resolveVisualPricing(tariff);
 
   const offers = (tariff.offers ?? [])
     .filter((o) => o.is_active !== false && ACTIONABLE_TYPES.has(o.offer_type))
@@ -351,21 +382,23 @@ export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTar
         </div>
 
         <div className="mt-auto pt-[66px]" style={{ fontFamily: PRICE_FONT }}>
-          {card.oldPrice ? (
+          {pricing.old ? (
             <p
+              data-cb-native-old-price
               className="text-[28px] font-semibold leading-none line-through"
               style={{ color: "#1b1b1b" }}
             >
-              {card.oldPrice}
+              {formatAmount(pricing.old)} {pricing.suffix}
             </p>
           ) : null}
           <div className="mt-4 flex items-center gap-[10px]">
-            {card.monthly ? (
+            {pricing.monthly ? (
               <p
+                data-cb-native-monthly-price
                 className="min-w-0 text-[27px] font-bold uppercase leading-none tracking-tight"
                 style={{ color: "#1b1b1b" }}
               >
-                {card.monthly}
+                ОТ {formatAmount(pricing.monthly)} {pricing.suffix}/МЕС
               </p>
             ) : null}
             {card.period ? (
@@ -377,9 +410,13 @@ export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTar
               </p>
             ) : null}
           </div>
-          {card.fullPrice ? (
-            <p className="mt-3 text-[14px] leading-snug" style={{ color: "#686868" }}>
-              {card.fullPrice}
+          {pricing.current ? (
+            <p
+              data-cb-native-current-price
+              className="mt-3 text-[14px] leading-snug"
+              style={{ color: "#686868" }}
+            >
+              или {formatAmount(pricing.current)} {pricing.suffix} при 100% оплате
             </p>
           ) : null}
         </div>
