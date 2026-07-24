@@ -1,73 +1,60 @@
-import { AnimatedSection } from "@/components/landing/AnimatedSection";
-import { CheckCircle2 } from "lucide-react";
+import { rec, CB_PALETTE } from "../manifest";
 
-interface SpeakerSectionProps {
-  id?: string;
-  name: string;
-  role: string;
-  bio: string[];
-  achievements: string[];
-  imageUrl?: string;
-}
+/**
+ * Section 4 — Автор / Speaker (rec776467163).
+ * Photo + name + achievements list.
+ */
+export function SpeakerSection() {
+  const r = rec("rec776467163");
+  const name = r.text.find((t) => /КАТЕРИНА/i.test(t)) ?? "КАТЕРИНА ГОРБОВА";
+  const rest = r.text.filter((t) => t !== name);
+  // Portrait: pick largest-looking asset; icons pool = the rest.
+  const portrait =
+    r.images.find((u) => /Grand|portrait|kater/i.test(u)) ??
+    r.images.find((u) => /resize\/(6\d{2}|7\d{2}|8\d{2})/i.test(u)) ??
+    r.images[0];
+  const icons = r.images.filter((u) => u !== portrait);
 
-export function SpeakerSection({
-  id,
-  name,
-  role,
-  bio,
-  achievements,
-  imageUrl,
-}: SpeakerSectionProps) {
   return (
-    <section id={id} className="py-16 md:py-24 bg-background">
-      <div className="container mx-auto px-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-10 max-w-6xl mx-auto items-center">
-          <AnimatedSection animation="fade-right">
-            <div className="relative">
-              <div className="aspect-[4/5] rounded-2xl overflow-hidden bg-muted">
-                {imageUrl ? (
-                  <img
-                    src={imageUrl}
-                    alt={name}
-                    loading="lazy"
-                    className="w-full h-full object-cover"
-                  />
+    <section
+      id="rec776467163"
+      className="py-16 lg:py-24"
+      style={{ background: CB_PALETTE.bgSoft }}
+    >
+      <div className="mx-auto max-w-6xl px-5 grid gap-10 lg:grid-cols-[1fr_1.3fr] items-start">
+        {portrait && (
+          <div className="justify-self-center">
+            <img
+              src={portrait}
+              alt={name}
+              loading="lazy"
+              className="w-full max-w-[380px] h-auto rounded-2xl"
+            />
+          </div>
+        )}
+        <div>
+          <h2
+            className="text-2xl sm:text-3xl lg:text-4xl font-semibold mb-6"
+            style={{ color: CB_PALETTE.textStrong }}
+          >
+            {name}
+          </h2>
+          <ul className="space-y-3">
+            {rest.map((t, i) => (
+              <li key={i} className="flex gap-3 text-sm sm:text-base leading-relaxed"
+                  style={{ color: CB_PALETTE.text }}>
+                {icons[i] ? (
+                  <img src={icons[i]} alt="" aria-hidden className="w-6 h-6 mt-1 object-contain shrink-0" />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                    Фото автора
-                  </div>
+                  <span
+                    className="mt-2 w-2 h-2 rounded-full shrink-0"
+                    style={{ background: CB_PALETTE.accent }}
+                  />
                 )}
-              </div>
-              <div className="absolute -bottom-4 -right-4 w-32 h-32 rounded-full bg-primary/15 blur-2xl -z-10" />
-            </div>
-          </AnimatedSection>
-
-          <AnimatedSection animation="fade-left">
-            <p className="text-sm uppercase tracking-wider text-primary font-medium mb-3">
-              Автор курса
-            </p>
-            <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-2">{name}</h2>
-            <p className="text-lg text-muted-foreground mb-6">{role}</p>
-
-            <div className="space-y-3 mb-6">
-              {bio.map((paragraph, i) => (
-                <p key={i} className="text-base text-foreground/90 leading-relaxed">
-                  {paragraph}
-                </p>
-              ))}
-            </div>
-
-            {achievements.length > 0 && (
-              <ul className="space-y-2">
-                {achievements.map((a, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm">
-                    <CheckCircle2 className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                    <span className="text-foreground/90">{a}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </AnimatedSection>
+                <span>{t}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </section>

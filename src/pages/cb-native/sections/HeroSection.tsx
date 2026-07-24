@@ -1,60 +1,86 @@
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Shield, ChevronRight } from "lucide-react";
-import { AnimatedSection } from "@/components/landing/AnimatedSection";
+import { rec, CB_PALETTE } from "../manifest";
 
-interface HeroSectionProps {
-  title: string;
-  subtitle: string;
-  eyebrow?: string;
-}
+/**
+ * Section 1 — Hero.
+ * Sources: rec776467156 (eyebrow "KATERINA GORBOVA") + rec776467157
+ * (headline + subhead + feature icons row).
+ */
+export function HeroSection({ onCta }: { onCta: () => void }) {
+  const eyebrow = rec("rec776467156").text[0] ?? "KATERINA GORBOVA";
+  const r2 = rec("rec776467157");
+  // r2.text is a mixed list from parsed DOM; the first long fragment is the headline,
+  // followed by feature captions. Split heuristically.
+  const [headline, ...rest] = r2.text;
+  const features = rest.filter((t) => t.length < 60);
+  const heroImg = r2.images.find((u) => /___\d+\.png\.webp/i.test(u)) ?? r2.images[0];
 
-export function HeroSection({ title, subtitle, eyebrow }: HeroSectionProps) {
   return (
     <section
-      className="relative pt-24 pb-20 overflow-hidden"
-      style={{ background: "var(--gradient-background)" }}
+      id="rec776467157"
+      className="relative overflow-hidden"
+      style={{ background: CB_PALETTE.bg, borderBottom: `1px solid ${CB_PALETTE.border}` }}
     >
-      <div className="absolute top-1/4 right-0 w-96 h-96 rounded-full bg-primary/10 blur-3xl -z-10" />
-      <div className="absolute bottom-1/4 left-0 w-80 h-80 rounded-full bg-accent/10 blur-3xl -z-10" />
-
-      <div className="container mx-auto px-4">
-        <div className="max-w-4xl mx-auto text-center">
-          {eyebrow && (
-            <AnimatedSection animation="fade-up">
-              <Badge variant="secondary" className="mb-6 bg-primary/10 text-primary border-0">
-                <Shield size={14} className="mr-1" />
-                {eyebrow}
-              </Badge>
-            </AnimatedSection>
-          )}
-
-          <AnimatedSection animation="fade-up" delay={100} instant>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-foreground leading-tight mb-6">
-              {title}
-            </h1>
-          </AnimatedSection>
-
-          <AnimatedSection animation="fade-up" delay={200}>
-            <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
-              {subtitle}
-            </p>
-          </AnimatedSection>
-
-          <AnimatedSection animation="fade-up" delay={300}>
-            <Button
-              size="lg"
-              className="text-lg px-8 py-6"
-              onClick={() =>
-                document.getElementById("tariffs")?.scrollIntoView({ behavior: "smooth" })
-              }
-            >
-              Выбрать тариф
-              <ChevronRight className="ml-2" />
-            </Button>
-          </AnimatedSection>
+      <div className="mx-auto max-w-6xl px-5 py-16 lg:py-24 grid gap-10 lg:grid-cols-[1.15fr_1fr] items-center">
+        <div>
+          <div
+            className="text-xs tracking-[0.35em] mb-4"
+            style={{ color: CB_PALETTE.accent }}
+          >
+            {eyebrow}
+          </div>
+          <h1
+            className="text-2xl sm:text-3xl lg:text-[42px] leading-tight font-semibold mb-6"
+            style={{ color: CB_PALETTE.textStrong, letterSpacing: "-0.01em" }}
+          >
+            {headline}
+          </h1>
+          <button
+            type="button"
+            onClick={onCta}
+            className="inline-flex items-center rounded-full px-6 py-3 text-white text-sm font-semibold transition hover:opacity-90"
+            style={{ background: CB_PALETTE.accent }}
+          >
+            Выбрать тариф
+          </button>
         </div>
+        {heroImg && (
+          <div className="justify-self-center lg:justify-self-end">
+            <img
+              src={heroImg}
+              alt="Катерина Горбова"
+              loading="eager"
+              className="w-full max-w-[420px] h-auto"
+            />
+          </div>
+        )}
       </div>
+
+      {features.length > 0 && (
+        <div className="mx-auto max-w-6xl px-5 pb-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {features.slice(0, 8).map((f, i) => {
+            const icon = r2.images[i + 1];
+            return (
+              <div
+                key={i}
+                className="flex items-start gap-3 p-4 rounded-2xl"
+                style={{ background: CB_PALETTE.bgSoft }}
+              >
+                {icon && (
+                  <img
+                    src={icon}
+                    alt=""
+                    aria-hidden
+                    className="w-10 h-10 shrink-0 object-contain"
+                  />
+                )}
+                <p className="text-sm leading-snug" style={{ color: CB_PALETTE.text }}>
+                  {f}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }

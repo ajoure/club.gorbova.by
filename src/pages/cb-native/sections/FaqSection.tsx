@@ -1,47 +1,70 @@
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import { AnimatedSection } from "@/components/landing/AnimatedSection";
+import { rec, CB_PALETTE } from "../manifest";
 
-export interface FaqItem {
-  q: string;
-  a: string;
-}
+/**
+ * Section 11a — Q&A (rec776467188 header + rec776467189 items).
+ * Native <details>/<summary> — no third-party accordion runtime.
+ */
+export function FaqSection() {
+  const header = rec("rec776467188").text[0] ?? "АКТУАЛЬНЫЕ ВОПРОСЫ";
+  const src = rec("rec776467189").text;
+  // Manifest tokens alternate: question (short) then answer paragraphs until next '?'
+  const items: { q: string; a: string }[] = [];
+  let curQ: string | null = null;
+  let curA: string[] = [];
+  const flush = () => {
+    if (curQ) items.push({ q: curQ, a: curA.join(" ") });
+    curQ = null;
+    curA = [];
+  };
+  for (const t of src) {
+    if (t.endsWith("?") && t.length < 160) {
+      flush();
+      curQ = t;
+    } else if (curQ) {
+      curA.push(t);
+    }
+  }
+  flush();
 
-interface FaqSectionProps {
-  id?: string;
-  title: string;
-  subtitle?: string;
-  items: FaqItem[];
-}
-
-export function FaqSection({ id, title, subtitle, items }: FaqSectionProps) {
   return (
-    <section id={id} className="py-16 md:py-24 bg-muted/30">
-      <div className="container mx-auto px-4">
-        <AnimatedSection animation="fade-up">
-          <div className="text-center mb-10 max-w-2xl mx-auto">
-            <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-4">{title}</h2>
-            {subtitle && <p className="text-lg text-muted-foreground">{subtitle}</p>}
-          </div>
-        </AnimatedSection>
-
-        <div className="max-w-3xl mx-auto">
-          <Accordion type="single" collapsible className="w-full">
-            {items.map((item, i) => (
-              <AccordionItem key={i} value={`item-${i}`}>
-                <AccordionTrigger className="text-left text-base font-medium">
-                  {item.q}
-                </AccordionTrigger>
-                <AccordionContent className="text-muted-foreground leading-relaxed">
-                  {item.a}
-                </AccordionContent>
-              </AccordionItem>
-            ))}
-          </Accordion>
+    <section id="rec776467188" className="py-16 lg:py-24" style={{ background: CB_PALETTE.bg }}>
+      <div className="mx-auto max-w-4xl px-5">
+        <h2
+          className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-center mb-10"
+          style={{ color: CB_PALETTE.textStrong }}
+        >
+          {header}
+        </h2>
+        <div className="space-y-3">
+          {items.map((it, i) => (
+            <details
+              key={i}
+              className="group rounded-2xl overflow-hidden"
+              style={{
+                background: CB_PALETTE.bgSoft,
+                border: `1px solid ${CB_PALETTE.border}`,
+              }}
+            >
+              <summary
+                className="cursor-pointer list-none p-5 flex justify-between items-start gap-4"
+                style={{ color: CB_PALETTE.textStrong }}
+              >
+                <span className="font-medium text-sm sm:text-base">{it.q}</span>
+                <span
+                  className="text-xl leading-none transition-transform group-open:rotate-45"
+                  style={{ color: CB_PALETTE.accent }}
+                >
+                  +
+                </span>
+              </summary>
+              <div
+                className="px-5 pb-5 text-sm leading-relaxed"
+                style={{ color: CB_PALETTE.text }}
+              >
+                {it.a}
+              </div>
+            </details>
+          ))}
         </div>
       </div>
     </section>
