@@ -470,18 +470,14 @@ export function ChatMediaMessage({
       document.body.removeChild(a);
     };
 
-    const isOfficeDoc = /\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/i.test(fileName || "");
     const handleOpenInNewTab = () => {
-      if (isOfficeDoc && fileUrl) {
-        // Office Viewer must receive an inline signed URL. A Supabase URL with
-        // `download=...` responds as an attachment and Office reports it as
-        // "file not found".
-        const inlineUrl = toInlineTelegramDocumentUrl(fileUrl);
-        const viewerUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(inlineUrl)}`;
-        window.open(viewerUrl, "_blank", "noopener,noreferrer");
-        return;
-      }
-      window.open(fileUrl!, "_blank", "noopener,noreferrer");
+      // Private signed Telegram files cannot be fetched reliably by external
+      // Office viewers. Open the protected Storage URL directly instead.
+      window.open(
+        toInlineTelegramDocumentUrl(fileUrl!),
+        "_blank",
+        "noopener,noreferrer",
+      );
     };
 
     return (
