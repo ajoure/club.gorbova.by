@@ -267,11 +267,19 @@ export async function snapshotOrderDocumentData(
       ? orderMetaAny.composable_checkout
       : null;
     const composableItems = composableCheckout?.items ?? [];
-    const composableServiceName = composableItems.length > 0
-      ? composableItems.map((item: any) =>
-        [item.product_name, item.tariff_name].filter(Boolean).join(' — ')
-      ).filter(Boolean).join('; ')
-      : null;
+    // Canonical composition title (primary + addons formatted as «. Модуль ...»).
+    let composableServiceName: string | null = null;
+    if (composableItems.length > 0) {
+      const { buildPurchaseCompositionTitle } = await import('./purchase-composition-title.ts');
+      const primary = composableItems.find((i: any) => i?.role === 'primary') ?? composableItems[0];
+      const addons = composableItems
+        .filter((i: any) => i !== primary)
+        .sort((a: any, b: any) => (Number(a?.sort_order ?? 0) - Number(b?.sort_order ?? 0)));
+      composableServiceName = buildPurchaseCompositionTitle({
+        primary: { product_name: primary?.product_name, tariff_name: primary?.tariff_name },
+        addons: addons.map((a: any) => ({ product_name: a?.product_name })),
+      }) || null;
+    }
     const composableTotal = composableCheckout?.total != null &&
         Number.isFinite(Number(composableCheckout.total))
       ? Number(composableCheckout.total)
