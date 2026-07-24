@@ -172,6 +172,13 @@ export function PaymentDialog({
 }: PaymentDialogProps) {
   const displayCurrency = currency || "BYN";
   const paymentDescription = tariffName ? `${productName} — ${tariffName}` : productName;
+  const quoteSummary = useComposableQuoteSummary({
+    open,
+    offerId,
+    addonOfferIds,
+    fallbackCurrency: displayCurrency,
+    fallbackTotal: Number(price),
+  });
   // B8/B9. Публичный flow рассрочки: клиент явно выбирает N в диапазоне 2..max.
   // installmentCount оставлен как legacy alias для fallback.
   const installmentMaxMonthsResolved: number | null =
