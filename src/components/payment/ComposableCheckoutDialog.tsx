@@ -75,13 +75,25 @@ export function ComposableCheckoutDialog({
         return;
       }
       const next = data as Quote;
+      // Defensive fallback for stale/mixed deployments: even if the public
+      // product payload incorrectly marked the offer as composable, an empty
+      // canonical quote must never show the "Соберите свою программу" UI.
+      // Continue immediately into the offer's ordinary configured checkout.
+      if (!Array.isArray(next.available_addons) || next.available_addons.length === 0) {
+        onContinue({
+          addonOfferIds: [],
+          total: Number(next.total ?? 0),
+          currency: next.currency || "BYN",
+        });
+        return;
+      }
       setQuote(next);
       setSelected(next.available_addons
         .filter((addon) => addon.is_required || addon.is_default_selected)
         .map((addon) => addon.addon_offer_id));
     }).finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [offerId, open]);
+  }, [offerId, onContinue, open]);
 
   useEffect(() => {
     if (!open || !quote) return;
