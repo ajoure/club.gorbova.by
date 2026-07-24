@@ -117,7 +117,9 @@ function renderDialog(onOpenChange = vi.fn()) {
 }
 
 async function selectByVisibleText(currentText: string, optionName: string) {
-  fireEvent.pointerDown(screen.getByText(currentText));
+  const trigger = screen.getByText(currentText).closest("button");
+  expect(trigger).toBeTruthy();
+  fireEvent.pointerDown(trigger as HTMLButtonElement, { button: 0, ctrlKey: false });
   fireEvent.click(await screen.findByRole("option", { name: optionName }));
 }
 
