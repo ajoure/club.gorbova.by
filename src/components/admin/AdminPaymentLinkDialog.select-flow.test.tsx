@@ -134,7 +134,7 @@ describe("AdminPaymentLinkDialog product selection", () => {
 
     selectNativeByValue("Продукт", "product-club");
 
-    await waitFor(() => expect(screen.getByText("Gorbova Club")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Продукт" })).toHaveTextContent("Gorbova Club"));
     expect(screen.getByText("Тариф")).toBeInTheDocument();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
@@ -143,13 +143,13 @@ describe("AdminPaymentLinkDialog product selection", () => {
     renderDialog();
 
     selectNativeByValue("Продукт", "product-cb");
-    await waitFor(() => expect(screen.getByText("Ценный бухгалтер")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Продукт" })).toHaveTextContent("Ценный бухгалтер"));
     selectNativeByValue("Тариф", "tariff-cb");
-    await waitFor(() => expect(screen.getByText("BASE")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Тариф" })).toHaveTextContent("BASE"));
 
     selectNativeByValue("Продукт", "product-club");
 
-    await waitFor(() => expect(screen.getByText("Gorbova Club")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Продукт" })).toHaveTextContent("Gorbova Club"));
     expect(screen.getByText("Выберите тариф")).toBeInTheDocument();
     expect(screen.queryByText("BASE")).not.toBeInTheDocument();
   });
