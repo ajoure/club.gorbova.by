@@ -122,3 +122,7 @@ document-field-resolver-v2-snapshot
 
 
 
+
+# Invoice delivery status/retry (per-channel visibility)
+invoice-delivery-status
+invoice-delivery-retry

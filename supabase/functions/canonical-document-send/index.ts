@@ -128,26 +128,83 @@ async function tgSendDocument(
 }
 
 // ============================================================================
-// Audit helper
+// Audit helper — audit_logs схема: (actor_user_id, action, entity_type,
+// entity_id, meta). Раньше здесь были event_type / user_id / payload — они
+// не существовали в таблице, и все insert-ы падали в try/catch без следа.
 // ============================================================================
 async function writeAudit(
   supabase: any,
-  event_type: string,
+  action: string,
   document_id: string,
   user_id: string | null,
   meta: Record<string, unknown>,
 ) {
   try {
     await supabase.from("audit_logs").insert({
-      event_type,
+      actor_user_id: user_id,
+      actor_type: user_id ? "user" : "system",
+      action,
       entity_type: "ai_generated_document",
       entity_id: document_id,
-      user_id,
-      payload: meta,
+      meta,
     });
   } catch (e) {
     console.error("[audit] failed", e);
   }
+}
+
+// ---------------------------------------------------------------------------
+// persistDelivery — записывает финальный статус попытки доставки одного
+// канала в ai_generated_documents.meta.delivery.{email|telegram}. Этот путь
+// читает invoice-delivery-status; polling на клиенте использует его как
+// единственный source of truth.
+// ---------------------------------------------------------------------------
+type DeliveryStatus = "sent" | "error" | "not_linked" | "no_recipient";
+async function persistDelivery(
+  admin: any,
+  docId: string,
+  currentMeta: Record<string, unknown> | null,
+  channel: "email" | "telegram",
+  patch: { status: DeliveryStatus; error?: string | null; recipient?: string | null },
+) {
+  const nowIso = new Date().toISOString();
+  const prev = (currentMeta || {}) as Record<string, unknown>;
+  const prevDelivery = ((prev.delivery as any) || {}) as Record<string, unknown>;
+  const nextMeta: Record<string, unknown> = {
+    ...prev,
+    delivery: {
+      ...prevDelivery,
+      [channel]: {
+        status: patch.status,
+        at: nowIso,
+        error: patch.error ?? null,
+        recipient: patch.recipient ?? null,
+      },
+    },
+  };
+  // Сохраняем прежние sent_to_email/sent_to_telegram/sent_at для обратной
+  // совместимости с существующим UI (историческая метаданность).
+  if (patch.status === "sent") {
+    if (channel === "email" && patch.recipient) {
+      nextMeta.sent_to_email = patch.recipient;
+    }
+    if (channel === "telegram" && patch.recipient) {
+      nextMeta.sent_to_telegram = String(patch.recipient);
+    }
+    nextMeta.sent_at = nowIso;
+  }
+  try {
+    await admin
+      .from("ai_generated_documents")
+      .update({ meta: nextMeta })
+      .eq("id", docId);
+  } catch (e) {
+    console.error("[persistDelivery] failed", e);
+  }
+  // Мутируем локальный currentMeta так, чтобы последующие вызовы в том же
+  // handler видели свежее состояние (email → telegram).
+  (currentMeta as any).delivery = (nextMeta as any).delivery;
+  return nextMeta;
 }
 
 // ============================================================================
@@ -425,20 +482,30 @@ Deno.serve(async (req) => {
             results.email_error = emailErr.message || "email_send_failed";
           } else {
             results.email_sent = true;
-            await admin
-              .from("ai_generated_documents")
-              .update({
-                meta: {
-                  ...(doc.meta || {}),
-                  sent_to_email: recipientEmail,
-                  sent_at: new Date().toISOString(),
-                },
-              })
-              .eq("id", doc.id);
           }
         } catch (e) {
           results.email_error = e instanceof Error ? e.message : "email_exception";
         }
+      }
+      // Persist per-channel delivery state (source of truth for
+      // invoice-delivery-status). Разные исходы:
+      //  - нет email в профиле и не передан override      → no_recipient
+      //  - send-email вернул ошибку / бросил исключение   → error
+      //  - успех                                          → sent
+      if (results.email_sent) {
+        await persistDelivery(admin, doc.id, doc.meta as any, "email", {
+          status: "sent",
+          recipient: body.to_email?.trim() || docProfile?.email?.trim() || null,
+        });
+      } else if (results.email_error === "no_recipient_email") {
+        await persistDelivery(admin, doc.id, doc.meta as any, "email", {
+          status: "no_recipient",
+        });
+      } else {
+        await persistDelivery(admin, doc.id, doc.meta as any, "email", {
+          status: "error",
+          error: results.email_error,
+        });
       }
       await writeAudit(
         admin,
@@ -485,21 +552,31 @@ Deno.serve(async (req) => {
               results.telegram_error = r.error || "telegram_send_failed";
             } else {
               results.telegram_sent = true;
-              await admin
-                .from("ai_generated_documents")
-                .update({
-                  meta: {
-                    ...(doc.meta || {}),
-                    sent_to_telegram: String(chatId),
-                    sent_at: new Date().toISOString(),
-                  },
-                })
-                .eq("id", doc.id);
             }
           }
         } catch (e) {
           results.telegram_error = e instanceof Error ? e.message : "telegram_exception";
         }
+      }
+      // Persist per-channel delivery state.
+      //  - у профиля нет telegram_user_id                → not_linked
+      //  - sendDocument вернул ошибку / исключение       → error
+      //  - успех                                         → sent
+      const tgChatId = docProfile?.telegram_user_id;
+      if (results.telegram_sent) {
+        await persistDelivery(admin, doc.id, doc.meta as any, "telegram", {
+          status: "sent",
+          recipient: tgChatId ? String(tgChatId) : null,
+        });
+      } else if (results.telegram_error === "telegram_not_linked") {
+        await persistDelivery(admin, doc.id, doc.meta as any, "telegram", {
+          status: "not_linked",
+        });
+      } else {
+        await persistDelivery(admin, doc.id, doc.meta as any, "telegram", {
+          status: "error",
+          error: results.telegram_error,
+        });
       }
       await writeAudit(
         admin,
