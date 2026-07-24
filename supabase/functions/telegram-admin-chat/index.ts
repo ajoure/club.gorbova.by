@@ -1035,14 +1035,6 @@ Deno.serve(async (req) => {
         };
 
         // Helper to detect non-PDF documents (DOCX, XLSX, CSV, etc.)
-        const isDocLike = (meta: any) => {
-          const ft = String(meta?.file_type || "").toLowerCase();
-          const mime = String(meta?.mime_type || "").toLowerCase();
-          return ft === "document" || 
-                 (mime.includes("application/") && !mime.includes("application/pdf")) || 
-                 mime.includes("text/");
-        };
-
         // === OPTIMIZED BATCH SIGNED URL GENERATION ===
         // P2: Parallel processing with concurrency limit, single batch audit log
         const CONCURRENCY_LIMIT = 10;
@@ -1794,11 +1786,11 @@ Deno.serve(async (req) => {
                 return { id: msg.id, url: null };
               }
               try {
-                const signedOptions = isPdfLike(meta) 
+                // Return inline URLs for previews. The client derives a
+                // separate `download=filename` URL only for the Download action.
+                const signedOptions = isPdfLike(meta)
                   ? { download: false }
-                  : isDocLike(meta) 
-                    ? { download: meta.file_name || "file" }
-                    : undefined;
+                  : undefined;
 
                 const { data } = await supabase.storage
                   .from(meta.storage_bucket)
