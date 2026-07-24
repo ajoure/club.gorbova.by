@@ -472,10 +472,34 @@ export default function AdminContacts() {
       // Server-side search
       if (debouncedSearch) {
         const s = debouncedSearch.trim();
-        const { data: companyProfileIds, error: companySearchError } = await (supabase.rpc as any)("search_profile_ids_by_company", { p_query: s });
-        if (companySearchError) throw companySearchError;
-        const companyIds = ((companyProfileIds ?? []) as string[]).filter(Boolean);
-        const companyIdFilter = companyIds.length > 0 ? `,id.in.(${companyIds.join(",")})` : "";
+        let companyProfileIds: string[] = [];
+        const { data: rpcCompanyProfileIds, error: companySearchError } = await (supabase.rpc as any)("search_profile_ids_by_company", { p_query: s });
+        if (!companySearchError) {
+          companyProfileIds = ((rpcCompanyProfileIds ?? []) as string[]).filter(Boolean);
+        } else if (companySearchError.code === "PGRST202" || /schema cache|could not find the function/i.test(companySearchError.message || "")) {
+          // The managed migration may briefly lag the frontend publish. Keep the
+          // regular profile search usable and use a read-only compatibility path
+          // until the canonical RPC is available.
+          const { data: matchedCompanies, error: companiesError } = await supabase
+            .from("companies")
+            .select("id")
+            .or(`full_name.ilike.%${s}%,short_name.ilike.%${s}%,public_id.ilike.%${s}%,unp.ilike.%${s}%`)
+            .limit(1000);
+          if (companiesError) throw companiesError;
+          const companyIds = (matchedCompanies ?? []).map(({ id }) => id).filter(Boolean);
+          if (companyIds.length > 0) {
+            const { data: linkedProfiles, error: linksError } = await supabase
+              .from("company_contacts")
+              .select("profile_id")
+              .in("company_id", companyIds)
+              .not("profile_id", "is", null);
+            if (linksError) throw linksError;
+            companyProfileIds = (linkedProfiles ?? []).map(({ profile_id }) => profile_id).filter(Boolean) as string[];
+          }
+        } else {
+          throw companySearchError;
+        }
+        const companyIdFilter = companyProfileIds.length > 0 ? `,id.in.(${companyProfileIds.join(",")})` : "";
         query = query.or(`email.ilike.%${s}%,full_name.ilike.%${s}%,phone.ilike.%${s}%${companyIdFilter}`);
       }
 
