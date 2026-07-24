@@ -99,17 +99,22 @@ function IndustryModules({ onCta }: { onCta: () => void }) {
               </ul>
             ) : null}
             {card.price ? (
-              <p
-                className="mt-auto pt-6 text-right text-[22px] font-bold"
-                style={{ color: CB_PALETTE.textStrong }}
+              <button
+                type="button"
+                onClick={onCta}
+                data-cb-native-module-price-cta
+                aria-label={`${card.title}: ${card.price}. Выбрать тариф`}
+                className="mt-auto h-[56px] w-full rounded-full px-5 text-[17px] font-bold uppercase"
+                style={{ background: CB_PALETTE.accent, color: "#ffffff" }}
               >
                 {card.price}
-              </p>
+              </button>
             ) : null}
             {card.included ? (
               <button
                 type="button"
                 onClick={onCta}
+                data-cb-native-module-included-cta
                 className="mt-6 h-[56px] rounded-full px-5 text-[14px] font-bold uppercase"
                 style={{ background: CB_PALETTE.accent, color: "#ffffff" }}
               >
