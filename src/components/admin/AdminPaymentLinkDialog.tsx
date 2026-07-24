@@ -1068,7 +1068,9 @@ ${amountLine}
         invoice_number: payload.invoice_number ?? "—",
         document_number: payload.document_number ?? null,
         document_issued_at: payload.document_issued_at ?? null,
+        order_id: payload.order_id ?? null,
       });
+
     } catch (e: any) {
       toast.error("Ошибка счёта: " + (e?.message ?? "unknown"));
     } finally {
