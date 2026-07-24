@@ -1,98 +1,114 @@
-План: Спринт «Ценный бухгалтер» — финализация
+## Контекст (verified reads)
 
-Порядок работы по ENGINEERING_RULES: Diagnose → Plan → Dry run → Execute → Verify. Каждая фаза с DoD.
+- `AdminPaymentLinkDialog.tsx` уже поддерживает composable-quote и выбирает `paymentType ∈ {one_time, subscription}` + provider (bepaid/stripe) + внутреннюю рассрочку по `payment_method='internal_installment'`. Сценарии «Счёт для юрлица/ИП» (`offer_type='invoice'`, `payment_method='bank_transfer'`) и «Ресурс развития» (`offer_type='bank_installment'`) в UI отсутствуют.
+- Оффер `4c6d6110…` = `invoice`, оффер `fdb8bffc…` = `bank_installment`. Значит для UI-фильтра НЕ нужно хардкодить UUID: определяем сценарий по паре `offer_type`/`payment_method` активного оффера того же тарифа.
+- `invoice-checkout-issue` (edge) уже поддерживает `addon_offer_ids`, `resolveComposableCheckout`, `materializeComposableOrderGroup`, `buildPurchaseCompositionTitle` → используется у клиента (JWT + `client_legal_details` принадлежит его профилю).
+- `public-rr-installment-initiate` уже принимает `addon_offer_ids`, применяет `allocateComposablePayableTotal` и материализует order-group на успешный callback → используется публично.
+- `admin-create-public-link` уже принимает `composable_quote` + `provider`.
+- Точка входа: `ContactDetailSheet.tsx` → кнопка «Ссылка на оплату» → `AdminPaymentLinkDialog` (`mode="contact"`). `CreateDealDialog.tsx` — минимальный (`title/amount/pipeline/stage/product/tariff`), без модулей и способа оплаты.
+- В `orders_v2` payer/legal_details пишутся в `meta.legal_details_id` + `meta.purchase_snapshot`; `order_group` строится хелпером `materializeComposableOrderGroup`.
 
-## Контекст (Diagnose завершён)
+## Scope (только фронтенд + два узких серверных writer-а, канонические таблицы)
 
-- `site_pages.slug='cb'` → `product_id=3e43fb28…` (PRD-000039, «ЦБ 20 поток»). Один HTML-блок Tilda — источник цен и списка карточек.
-- В `products_v2` уже есть 8 канонических модулей ЦБ: Грузоперевозки, Маркетплейсы, Общепит, ПВТ, Производство, Розничная торговля, Строительство, Учет у ИП. НЕТ: «Посредничество».
-- `offer_addons` уже существует со схемой (parent_offer_id, addon_offer_id, pricing_mode ∈ {offer_price, fixed_price, percent_discount, free}, discount_percent, is_required, is_default_selected, sort_order, is_active, unique(parent_offer_id, addon_offer_id)). Ранее уже создано 144 связи — их нужно ревизовать, не пересобирать hardcode-ом.
-- Существует `buildComposableQuote` (`supabase/functions/_shared/composable-checkout.ts`) с уже реализованным `percent_discount`. Значит, скидка «Бизнес-леди 50%» = данные в `offer_addons`, не код.
+### 1. UI: способы оплаты (AdminPaymentLinkDialog)
 
-## Требуемый объём
+Расширить набор «Способ оплаты» до 4 сценариев, определяемых по активным `tariff_offers` выбранного тарифа (без хардкода UUID):
 
-### 1. Каталог модулей на /cb (idempotent SQL migrations, backend-only)
+- «Картой сейчас» — `pay_now` (текущая ветка, provider bepaid/stripe).
+- «Внутренняя рассрочка» — `payment_method='internal_installment'` (текущая).
+- «Счёт для юрлица/ИП» — `offer_type='invoice'`.
+- «Ресурс развития» — `offer_type='bank_installment'`.
 
-1.1. Извлечь из HTML `site_pages.blocks[0]` все активные карточки-модули (не «СКОРО») с ценой и `data-tariff-key`. Артефакт — `.lovable/discovery/cb-sprint-final/cb_cards_source.json` (в отчёте, не в БД).
-1.2. Сверить с текущими продуктами по человеко-читаемому маппингу:
-   - Учет у ИП → `cb_module_ip`: проверить цену тарифа = 800 BYN, offers активны для pay_now/invoice/bank_installment. Fix, если 0.
-   - Посредничество → создать `cb_module_intermediary` product + tariff + offers (только если карточка активна и цена видна).
-   - Общепит `cb_module_catering`, ПВТ `cb_module_pvt` (не создавать дубль, привязать к канонике), Грузоперевозки, Маркетплейсы, Производство, Розничная торговля, Строительство.
-1.3. Для каждого модуля обеспечить tariff (`is_active=true`) + `tariff_offers`: `pay_now` (full_payment), `invoice` (invoice-only), `bank_installment` (lead-form). Идемпотентно: сначала SELECT по (product_id, offer_type, meta-key), INSERT только при отсутствии.
-1.4. Пропустить карточки «СКОРО» — не создавать.
+Каждая опция скрывается, если у тарифа нет соответствующего активного оффера. Selector даёт единый способ выбора → `effectiveOffer` подставляется автоматически (по offer_type). Выбор модулей и `composable_quote` работают одинаково для всех 4 сценариев. Скидка/наценка/`adjustmentReason` уже общий блок — переиспользуем.
 
-**DoD:** SQL прогон дважды подряд не создаёт дубликаты; для каждой активной карточки на /cb есть ровно один канонический `products_v2` + активный tariff + активные offers всех трёх типов; цены идентичны /cb (Учет у ИП = 800).
+### 2. Ветка «Счёт»
 
-### 2. offer_addons матрица (data-driven, без hardcode)
+- В диалоге появляется блок:
+  - `payer_type` = ЮЛ / ИП / ФЛ,
+  - Select карточки реквизитов из `client_legal_details` (WHERE `profile_id`=owner контакта, соответствующий `client_type`).
+- Отправка на новый **узкий** edge writer `admin-invoice-checkout-issue` (service-role, role guard admin/super_admin/menedzher):
+  - Принимает `user_id, product_id, offer_id, addon_offer_ids, legal_details_id, adjustment_reason, composable_quote_client`.
+  - Использует те же shared модули (`resolveComposableCheckout`, `materializeComposableOrderGroup`, `resolveOfferRouting`, `buildPurchaseCompositionTitle`), что и `invoice-checkout-issue`.
+  - Создаёт ORD + при необходимости order-group + вызывает `canonical-document-generate-strict` с `pre_payment_invoice=true`. Не рассылает email/telegram автоматически (админский flow — только выпуск PDF, возвращает `pdf_url`, `document_number`, `order_id`).
+  - Для ФЛ legal_details не требуется — вызываем без `legal_details_id`; шаблон подтягивает данные пользователя как и раньше.
+- В UI показываем результат (номер счёта, кнопка «Открыть PDF»).
 
-2.1. Три родительских тарифа PRD-000039: Бухгалтер, Главный бухгалтер, Бизнес-леди. Для каждого — все не-lead офферы (pay_now/invoice/bank_installment, включая internal_installment).
-2.2. Настроить `offer_addons`: parent_offer × каждый (addon_offer модуля тех же трёх типов). `pricing_mode='offer_price'` по умолчанию.
-2.3. Для тарифа «Бизнес-леди»: все addon_offers → `pricing_mode='percent_discount'`, `discount_percent=50`. Для остальных двух тарифов — `offer_price` (0%).
-2.4. Все связи через UPSERT ON CONFLICT DO UPDATE — идемпотентно. Скидка = столбец, не код.
+### 3. Ветка «Ресурс развития»
 
-**DoD:** `SELECT count(*)` по (parent_tariff, addon_product, offer_type) даёт полное покрытие; повторный прогон = 0 новых строк; `buildComposableQuote` для Бизнес-леди с 2 модулями возвращает primary_amount + Σ(addon*0.5); для Бухгалтер/Гл.бухгалтер — Σ(addon).
+- `payment_type` фиксируется как one-time (RR — рассрочка провайдера).
+- Отправка на новый **узкий** edge writer `admin-rr-installment-initiate` (service-role, role guard):
+  - Body: `user_id, product_id, offer_id, addon_offer_ids, composable_quote_client, adjustment_reason, contact_snapshot (name/phone/email из контакта)`.
+  - Внутри — то же, что `public-rr-installment-initiate`, но identity берём из `profiles.user_id` контакта; upstream-выкладка НЕ выполняется автоматически, если админ не подтвердил — рендерим редирект-URL, копируем/шлём в Telegram.
+  - Callback (`rr-webhook`) уже правильно материализует order-group.
 
-### 3. OfferAddonsEditor (admin UI)
+### 4. CreateDealDialog / канонический ручной flow
 
-3.1. Прочитать текущий `src/components/admin/…/OfferAddonsEditor.tsx` (существует).
-3.2. Убедиться, что поля `pricing_mode`, `discount_percent`, `is_required`, `is_default_selected`, `sort_order`, `is_active` редактируются; поиск любого продукта/оффера как аддона (не ограничен ЦБ).
-3.3. В checkout UI (`TariffCard` / composable checkout summary) показать зачёркнутую list_amount и итоговую final_amount, если скидка > 0. Клиентская цена всегда пересчитывается сервером (`composable-checkout-quote`).
+- Добавить в `CreateDealDialog` мост «Создать сделку и открыть ссылку на оплату» — по клику диалог закрывается и открывается `AdminPaymentLinkDialog` (`mode="contact"`) с предзаполненными `product/tariff`. Никакой параллельной формы, вся логика модулей/оплат остаётся в одном диалоге.
+- Кроме того — под чекбоксом «только сделка без оплаты» (уже есть) — оставляем текущий upsert `orders_v2`.
 
-**DoD:** админ может для любой пары tariff_offer↔addon_offer выставить скидку 0–100 и это отражается в quote и checkout UI.
+### 5. Помощник состава документа
 
-### 4. Helper назначения для счетов (единый placeholder)
+- `buildPurchaseCompositionTitle` уже канонический. Убедиться, что он вызывается в `invoice-checkout-issue`, `admin-invoice-checkout-issue`, `public-rr-installment-initiate`, `admin-rr-installment-initiate` и в `_shared/document-data-snapshot.ts` (проверено). Пустые аддоны → «Продукт, тариф X» без висячих знаков (уже так).
 
-4.1. Новый helper `supabase/functions/_shared/purchase-composition-title.ts` + зеркало в `src/lib/purchaseCompositionTitle.ts`:
-   - Вход: `{primary: {product_name, tariff_name}, addons: [{product_name}...]}`.
-   - Выход: `«<primary.product_name>, тариф <primary.tariff_name>»` + `. Модуль <n1>. Модуль <n2>...` только если addons ≠ ∅.
-   - Никаких висячих точек/пробелов, никаких «undefined»/пустых placeholder.
-4.2. Заменить формирование `назначения платежа`/`наименования услуги` в: `invoice-checkout-issue`, каноническом генераторе счетов ИП/физлицо/юрлицо, документах (`ai-generated-documents` где строится title). Grep по коду выявит существующие места.
-4.3. В табличной части документа каждый модуль — отдельная строка (использовать текущий шаблон, ничего не хардкодить).
+### 6. UI-стиль
 
-**DoD:** 3 фикстуры (ИП / физлицо / юрлицо) × 3 варианта (0/1/2 модуля) = 9 сгенерированных документов, назначение форматируется корректно, сумма = quote.total, позиции = primary + модули.
+Переиспользовать существующие glass-классы диалога; секция «Способ оплаты» — сегмент-контрол; блок «Счёт» — компактная карточка с select реквизитов и badge payer_type. Мобильный layout — сохранить существующий `sm:` брейкпоинт.
 
-### 5. Admin payment-link из карточки контакта
+### 7. Тесты
 
-5.1. Регрессионно проверить flow `ContactPaymentLinkDialog` (существует): выбор продукт → тариф → модули (multi-select с чекбоксами и per-module discount из offer_addons), общий пересчёт через `composable-checkout-quote`, ручная корректировка, внутренняя рассрочка на общую сумму.
-5.2. Ничего не менять в бизнес-логике, если тест зелёный. Smoke без создания реальной ссылки (transaction-rollback wrapper в тесте).
+Vitest:
+- `AdminPaymentLinkDialog` selector: показывает 4 опции только при наличии соответствующих активных офферов (мок `useTariffOffers`).
+- `invoice-checkout` наименование состава: 0/1/2/9 addons — правильная пунктуация (`buildPurchaseCompositionTitle` уже покрыт, расширить кейс «0 addons — без запятой/точки»).
+- `composable-checkout` quote: 0/2/9 addons, 50% только addons, ручная корректировка, adjustment_reason required (уже частично покрыт).
 
-**DoD:** integration test проходит; UI не регрессирует.
+Backend Deno tests (dry, без сети):
+- `admin-invoice-checkout-issue` — контракт success (мок админ-клиента, проверка что вызывается materialize при 2+ items).
+- `admin-rr-installment-initiate` — контракт: без callback ничего не активирует; идемпотентность повторного initiate.
+- Regression: `rr-webhook` full/partial refund не ломает line items (интеграционный SQL уже есть — добавить кейс на composable order-group).
 
-### 6. Верификация
+### 8. Verify → Publish
 
-- `bun run test` (unit): `composableCheckout.test.ts` + новые тесты helper'a + скидка Бизнес-леди.
-- SQL contract: `supabase/tests/composable_checkout_catalog_contract.sql` без изменений — должен проходить.
-- Build: авто через harness.
-- Playwright: /cb на 390×844 и 1440×900, admin OfferAddonsEditor, admin payment-link dialog. Screenshots в `/tmp/browser/cb-sprint/`.
-- Идемпотентность: повторный прогон всех миграций (они idempotent by design).
+- `bunx vitest run` (frontend), `tsgo` typecheck, `bun run build`.
+- Дeploy edge functions: `admin-invoice-checkout-issue`, `admin-rr-installment-initiate` (+ переиспользуемые уже задеплоены).
+- Обновить `supabase/functions.registry.txt` (P1 блок).
+- `preview_ui--publish` после успешных тестов.
+- Production verification (read-only): `SELECT` на офферы «Бизнес-леди» подтверждает 4 доступных сценария; проверить в preview что диалог рендерит все 4 варианта и quote для 9 модулей возвращает 50% на addons.
 
-### 7. Publish
+## Технические заметки
 
-- После PASS всех проверок — `preview_ui--publish`. Frontend edits активируются.
+- Никаких новых таблиц. Всё пишется в `orders_v2`, `order_groups`, `order_group_items`, `ai_generated_documents`, `payment_links`.
+- Идемпотентность: writer'ы получают `idempotencyKey = f"admin-invoice:{user_id}:{offer_id}:{sha(addon_ids)}"` / RR — тот же `rr_get_or_create_pending_order` уже идемпотентен.
+- Concurrency: RR — вся защита в существующих RPC (`rr_mark_call_started`, `rr_finalize_*`). Invoice — единичный INSERT + materialize wrapped в try/catch (уже реализовано в `invoice-checkout-issue`).
+- Access grants: только через существующие post-payment триггеры (`grant-access-for-order`, `rr-fulfill-order`, `bepaid-webhook`). Ссылка/счёт/RR-initiate не выдаёт доступов.
+- Refund preservation: реализовано `materializeComposableOrderGroup` (order-group + line items), тест добавляем поверх.
+- Rollback: код-only, миграций нет; в случае regression функции возвращаются на предыдущий tag.
 
-## Технические детали (SQL/RLS/безопасность)
+## Список изменяемых артефактов
 
-- Все новые таблицы отсутствуют — только INSERT/UPDATE в `products_v2`, `tariffs`, `tariff_offers`, `offer_addons`. Схема не меняется.
-- Никаких новых RPC не нужно — `buildComposableQuote` уже поддерживает `percent_discount`.
-- RLS/GRANT уже настроены (offer_addons: admin RLS policies).
-- Все SQL в миграциях под транзакцией; идемпотентность через `ON CONFLICT`.
+**Frontend**
+- `src/components/admin/AdminPaymentLinkDialog.tsx` — расширенный selector, ветки Invoice и RR, вызовы новых writer-ов.
+- `src/components/admin/CreateDealDialog.tsx` — мост «сделка → оплата».
+- (опц.) `src/components/admin/deals/*` — точка входа тем же путём.
+- `src/hooks/useTariffOffers.ts` — если нужно расширить типы `offer_type`.
 
-## Stop-guards
+**Backend (новые узкие writer-ы)**
+- `supabase/functions/admin-invoice-checkout-issue/index.ts`
+- `supabase/functions/admin-rr-installment-initiate/index.ts`
+- `supabase/functions.registry.txt` — добавить обе функции в P1.
 
-- Если карточка «Посредничество» на /cb размечена как «СКОРО» — не создавать продукт, залогировать в отчёт.
-- Если цена в БД отличается от /cb более чем на 0.01 — abort с отчётом (кроме подтверждённого fix Учет у ИП = 800).
-- Если `buildComposableQuote` unit-test падает после наполнения данных — rollback data-миграции, отчёт.
+**Tests**
+- `src/components/admin/__tests__/AdminPaymentLinkDialog.selector.test.tsx`
+- `src/lib/__tests__/purchaseCompositionTitle.test.ts` — расширить (0 addons).
+- `supabase/functions/admin-invoice-checkout-issue/index.test.ts`
+- `supabase/functions/admin-rr-installment-initiate/index.test.ts`
 
-## Deliverables
+**Verify**
+- `bunx vitest run`, `tsgo`, `bun run build`, deploy edge, `preview_ui--publish`.
 
-1. Миграции: `20260724_cb_sprint_final_catalog.sql`, `20260724_cb_sprint_final_addons_matrix.sql`.
-2. Код: `_shared/purchase-composition-title.ts`, `src/lib/purchaseCompositionTitle.ts`, правки в invoice/document paths, правки OfferAddonsEditor (по необходимости), TariffCard UI (перечёркнутая цена).
-3. Тесты: расширение `composableCheckout.test.ts`, новый `purchaseCompositionTitle.test.ts`.
-4. Отчёт: `.lovable/discovery/cb-sprint-final/report.md` с точными IDs продуктов/тарифов/офферов/связей и PASS/FAIL.
-5. Publish в Lovable Cloud.
+## Definition of Done
 
-## Оценка объёма
-
-~3–5 миграций + ~8 файлов кода + ~4 файла тестов. Время: длинная сессия. Плана достаточно для реализации в один прогон при вашем подтверждении.
-
-**Прошу подтверждение: приступать к реализации по этому плану?**
+1. В карточке контакта «Ссылка на оплату» → появляются 4 сценария (карта, внутренняя рассрочка, счёт ЮЛ/ИП, Ресурс развития), скрытые если оффер отсутствует.
+2. Каждый сценарий поддерживает выбор 0..N модулей, ручную корректировку суммы с обязательной причиной, снапшот `composable_quote` и создание одной сделки/группы.
+3. «Счёт» создаёт PDF через `canonical-document-generate-strict`; наименование = `buildPurchaseCompositionTitle` (без висячих знаков без addons); payer_type = ЮЛ/ИП/ФЛ.
+4. «Ресурс развития» отдаёт redirect_url, callback материализует одну сделку и раздаёт доступы отдельно per product.
+5. Все тесты зелёные; сборка чистая; publish выполнен; отчёт с точным перечнем изменений.
