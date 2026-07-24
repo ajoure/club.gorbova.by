@@ -29,9 +29,9 @@ import { ProcessSection } from "./cb-native/sections/ProcessSection";
 import { AdvantagesSection } from "./cb-native/sections/AdvantagesSection";
 import { PostTariffSection } from "./cb-native/sections/PostTariffSection";
 import { FaqSection } from "./cb-native/sections/FaqSection";
-import { CompanyFooterSection } from "./cb-native/sections/CompanyFooterSection";
 import { CbNativeTariffCard } from "./cb-native/sections/CbNativeTariffCard";
 import { BrandHeaderSection } from "./cb-native/sections/BrandHeaderSection";
+import { UnifiedFooter } from "@/components/layout/UnifiedFooter";
 
 // Same product bound to live /cb (site_pages slug='cb'). NO hardcoded prices.
 const CB_PRODUCT_ID = "3e43fb28-8322-41bc-bfee-714731bdc630";
@@ -149,9 +149,9 @@ export default function CbNativePreview() {
       {/* 10. Пост-тарифный блок */}
       <PostTariffSection />
 
-      {/* 11. FAQ + Company */}
+      {/* 11. FAQ + canonical gorbova.by footer */}
       <FaqSection />
-      <CompanyFooterSection />
+      <UnifiedFooter showAnchorNav={false} />
     </div>
   );
 }
