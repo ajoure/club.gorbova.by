@@ -130,48 +130,19 @@ export function ComposableCheckoutDialog({
             </div>
           ) : (
             <div className="relative mt-5 space-y-3 sm:mt-7">
-              {quote?.available_addons.map((addon) => {
-                const checked = selected.includes(addon.addon_offer_id) || addon.is_required;
-                const finalPrice = addon.pricing_mode === "free"
-                  ? 0
-                  : addon.pricing_mode === "fixed_price"
-                    ? Number(addon.fixed_amount ?? addon.list_amount)
-                    : addon.pricing_mode === "percent_discount"
-                      ? addon.list_amount * (1 - Number(addon.discount_percent ?? 0) / 100)
-                      : addon.list_amount;
-                return (
-                  <button
-                    type="button"
-                    key={addon.addon_offer_id}
-                    onClick={() => toggle(addon.addon_offer_id)}
-                    className={`group flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition-all sm:gap-4 sm:rounded-3xl sm:p-5 ${
-                      checked
-                        ? "border-fuchsia-200/90 bg-white/85 shadow-[0_12px_34px_rgba(196,74,154,.10)]"
-                        : "border-white/80 bg-white/45 hover:border-fuchsia-100 hover:bg-white/75"
-                    }`}
-                  >
-                    <Checkbox checked={checked} disabled={addon.is_required} className="h-5 w-5 rounded-md border-fuchsia-200 data-[state=checked]:border-fuchsia-500 data-[state=checked]:bg-fuchsia-500" />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium text-slate-800">{addon.addon_product_name}</div>
-                      <div className="mt-1 text-xs text-slate-500">{addon.addon_tariff_name}</div>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      {finalPrice === 0 ? (
-                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">В подарок</span>
-                      ) : (
-                        <div className="font-semibold text-slate-800">{money(finalPrice, quote.currency)}</div>
-                      )}
-                      {addon.is_required && <div className="mt-1 text-[11px] text-fuchsia-600">Включён в тариф</div>}
-                    </div>
-                  </button>
-                );
-              })}
+              <AddonPicker
+                addons={quote?.available_addons ?? []}
+                selectedIds={selected}
+                currency={quote?.currency ?? "BYN"}
+                onToggle={(id, next) =>
+                  setSelected((cur) =>
+                    next ? [...new Set([...cur, id])] : cur.filter((x) => x !== id),
+                  )
+                }
+                loading={loading}
+                density="public"
+              />
 
-              {quote?.available_addons.length === 0 && (
-                <div className="rounded-3xl border border-white/80 bg-white/60 p-5 text-sm text-slate-500">
-                  Для этого тарифа дополнительные модули пока не настроены.
-                </div>
-              )}
 
               <div className="mt-5 rounded-3xl border border-white/80 bg-white/70 p-4 shadow-[0_16px_45px_rgba(83,57,75,.08)] backdrop-blur-xl sm:mt-6 sm:rounded-[28px] sm:p-6">
                 <div className="flex items-end justify-between gap-4">
