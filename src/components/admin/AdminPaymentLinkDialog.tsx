@@ -38,6 +38,8 @@ import {
   AlertTriangle, MousePointerClick, CreditCard, RefreshCw, Info, Users
 } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
+import { AddonPicker } from "@/components/checkout/AddonPicker";
+
 import { useTariffOffers, type TariffOffer } from "@/hooks/useTariffOffers";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 import { copyToClipboard } from "@/utils/clipboardUtils";
