@@ -38,6 +38,8 @@ import {
   type SubscriptionConflictInfo,
 } from "@/lib/subscriptionReplacement";
 import { USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
+import { OrderSummary } from "@/components/checkout/OrderSummary";
+import { useComposableQuoteSummary } from "@/hooks/useComposableQuoteSummary";
 
 interface SubscriptionMessage {
   title?: string;           // "Ежемесячная подписка" / "Подписка на Клуб"
