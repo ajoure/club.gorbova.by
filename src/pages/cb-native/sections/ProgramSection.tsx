@@ -1,53 +1,122 @@
-import { AnimatedSection } from "@/components/landing/AnimatedSection";
-import { CheckCircle2 } from "lucide-react";
+import { rec, CB_PALETTE } from "../manifest";
 
-export interface ProgramModule {
-  number: string;
-  title: string;
-  points: string[];
-}
+/**
+ * Section 6 — Программа: header (rec776467165/rec1099306976) + module cards.
+ * Manifest order preserved. Every module rec renders as a card in a responsive grid.
+ * "СМОТРЕТЬ всю программу" CTA (rec779963654) at the end scrolls to tariffs.
+ */
+const MODULE_RECS = [
+  "rec779902274",
+  "rec779946753",
+  "rec780006224",
+  "rec780073973",
+  "rec780079482",
+  "rec780081115",
+  "rec780092281",
+  "rec780094387",
+  "rec780097393",
+  "rec780099682",
+  "rec780102268",
+  "rec780331623",
+  "rec780337757",
+  "rec780343795",
+  "rec780348530",
+  "rec780743292",
+  "rec780360510",
+  "rec780366621",
+  "rec780398470",
+  "rec780353436",
+  "rec782168706",
+  "rec782170827",
+  "rec782173747",
+  "rec782174918",
+  "rec783206282",
+  "rec783206583",
+];
 
-interface ProgramSectionProps {
-  id?: string;
-  title: string;
-  subtitle?: string;
-  modules: ProgramModule[];
-}
+// Mid-section testimonial callouts kept in manifest order.
+const CALLOUT_RECS = ["rec780085012", "rec780107499", "rec780756731"];
 
-export function ProgramSection({ id, title, subtitle, modules }: ProgramSectionProps) {
+export function ProgramSection({ onCta }: { onCta: () => void }) {
+  const header = rec("rec776467165");
+  const cta = rec("rec779963654").text[0] ?? "СМОТРЕТЬ всю программу";
+  const headline = header.text.slice(0, 4).join(" ").trim();
+  const modules = MODULE_RECS.map((id) => rec(id));
+  const callouts = CALLOUT_RECS.map((id) => rec(id));
+
   return (
-    <section id={id} className="py-16 md:py-24 bg-muted/30">
-      <div className="container mx-auto px-4">
-        <AnimatedSection animation="fade-up">
-          <div className="text-center mb-12 max-w-3xl mx-auto">
-            <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-4">{title}</h2>
-            {subtitle && <p className="text-lg text-muted-foreground">{subtitle}</p>}
-          </div>
-        </AnimatedSection>
+    <section id="rec776467165" className="py-16 lg:py-24" style={{ background: CB_PALETTE.bg }}>
+      <div className="mx-auto max-w-6xl px-5">
+        <h2
+          className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-center mb-10"
+          style={{ color: CB_PALETTE.textStrong }}
+        >
+          {headline}
+        </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-5xl mx-auto">
-          {modules.map((mod, index) => (
-            <AnimatedSection key={index} animation="fade-up" delay={index * 40}>
-              <article className="h-full p-5 rounded-xl bg-card border border-border/60 hover:border-primary/40 transition-colors">
-                <div className="flex items-start gap-3 mb-3">
-                  <span className="shrink-0 w-10 h-10 rounded-lg bg-primary/10 text-primary font-semibold flex items-center justify-center">
-                    {mod.number}
-                  </span>
-                  <h3 className="text-lg font-semibold text-foreground pt-1.5">{mod.title}</h3>
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {modules.map((m, idx) => {
+            const [title = "", ...body] = m.text;
+            const icon = m.images[0];
+            return (
+              <article
+                key={m.id}
+                id={m.id}
+                className="rounded-2xl p-5 flex flex-col gap-3"
+                style={{
+                  background: CB_PALETTE.bgSoft,
+                  border: `1px solid ${CB_PALETTE.border}`,
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  {icon ? (
+                    <img src={icon} alt="" aria-hidden className="w-10 h-10 object-contain" />
+                  ) : (
+                    <span
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-full text-white text-xs font-bold"
+                      style={{ background: CB_PALETTE.accent }}
+                    >
+                      {idx + 1}
+                    </span>
+                  )}
+                  <h3
+                    className="font-semibold text-base sm:text-lg leading-snug"
+                    style={{ color: CB_PALETTE.textStrong }}
+                  >
+                    {title}
+                  </h3>
                 </div>
-                {mod.points.length > 0 && (
-                  <ul className="space-y-1.5 pl-1">
-                    {mod.points.map((p, i) => (
-                      <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
-                        <CheckCircle2 className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                        <span>{p}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <p className="text-sm leading-relaxed" style={{ color: CB_PALETTE.text }}>
+                  {body.join(" ")}
+                </p>
               </article>
-            </AnimatedSection>
-          ))}
+            );
+          })}
+        </div>
+
+        {callouts.map((c) => (
+          <div
+            key={c.id}
+            id={c.id}
+            className="mt-10 rounded-2xl p-6 lg:p-8 text-center"
+            style={{
+              background: CB_PALETTE.accent,
+              color: "#ffffff",
+            }}
+          >
+            <p className="text-base sm:text-lg leading-relaxed">{c.text.join(" ")}</p>
+          </div>
+        ))}
+
+        <div className="mt-10 text-center" id="rec779963654">
+          <button
+            type="button"
+            onClick={onCta}
+            className="inline-flex items-center rounded-full px-8 py-3 text-white text-sm font-semibold hover:opacity-90 transition"
+            style={{ background: CB_PALETTE.accent }}
+          >
+            {cta}
+          </button>
         </div>
       </div>
     </section>
