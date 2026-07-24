@@ -66,7 +66,7 @@ describe("provider-backed subscription cancellation", () => {
 
   it("does not show pending checkout attempts as active contact subscriptions", () => {
     expect(contactDetailSheet).toContain(
-      "new Set(['active', 'trial', 'past_due', 'failed_attempt'])",
+      "new Set(['active', 'trial'])",
     );
     expect(contactDetailSheet).toContain(
       "bePaid не подтвердил отмену подписки",
