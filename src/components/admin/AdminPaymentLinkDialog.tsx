@@ -182,6 +182,10 @@ export function AdminPaymentLinkDialog({
   const effectiveTelegramUserId = isPublicMode ? null : telegramUserId;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [selectPortalContainer, setSelectPortalContainer] = useState<HTMLElement | null>(null);
+  const setDialogContentRef = useCallback((node: HTMLDivElement | null) => {
+    setSelectPortalContainer(node);
+  }, []);
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [selectedTariffId, setSelectedTariffId] = useState<string>("");
   // selectedOfferId — пользовательский override; если пуст, используется resolver.offer.id
@@ -811,8 +815,8 @@ ${amountLine}
   // Явные хендлеры Select: атомарно принимают новый id и очищают только dependent state.
   const handleProductChange = useCallback((newProductId: string) => {
     if (newProductId === selectedProductId) return;
-    resetProductDependentState();
     setSelectedProductId(newProductId);
+    resetProductDependentState();
   }, [selectedProductId, resetProductDependentState]);
 
   const handleTariffChange = useCallback((newTariffId: string) => {
@@ -1339,7 +1343,7 @@ ${amountLine}
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="w-[min(92vw,820px)] sm:max-w-[820px] max-h-[calc(100dvh-2rem)] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
+        <DialogContent ref={setDialogContentRef} className="w-[min(92vw,820px)] sm:max-w-[820px] max-h-[calc(100dvh-2rem)] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
               <Link2 className="h-5 w-5 shrink-0" />
@@ -1429,10 +1433,10 @@ ${amountLine}
                   <Skeleton className="h-10 w-full" />
                 ) : (
                   <Select value={selectedProductId} onValueChange={handleProductChange}>
-                    <SelectTrigger>
+                    <SelectTrigger aria-label="Продукт">
                       <SelectValue placeholder="Выберите продукт" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent container={selectPortalContainer}>
                       {activeProducts.map((product) => (
                         <SelectItem key={product.id} value={product.id}>
                           {product.name}
@@ -1454,10 +1458,10 @@ ${amountLine}
                     <Skeleton className="h-10 w-full" />
                   ) : tariffs && tariffs.length > 0 ? (
                     <Select value={selectedTariffId} onValueChange={handleTariffChange}>
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="Тариф">
                         <SelectValue placeholder="Выберите тариф" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent container={selectPortalContainer}>
                         {tariffs.filter((t) => t.is_active).map((tariff) => (
                           <SelectItem key={tariff.id} value={tariff.id}>
                             {tariff.name}
@@ -1598,7 +1602,7 @@ ${amountLine}
                           <Label className="text-xs">Stripe-подключение</Label>
                           <Select value={stripeAccountCode} onValueChange={setStripeAccountCode}>
                             <SelectTrigger><SelectValue placeholder="Выберите аккаунт" /></SelectTrigger>
-                            <SelectContent>
+                            <SelectContent container={selectPortalContainer}>
                               {(stripeAccounts ?? []).map((a: any) => {
                                 const name = (a.account_name ?? "").trim() || "Stripe — подключение без названия";
                                 return (
@@ -1622,7 +1626,7 @@ ${amountLine}
                           >
 
                             <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
+                            <SelectContent container={selectPortalContainer}>
                               {STRIPE_CURRENCY_OPTIONS.map((code) => {
                                 const check = isStripeCurrencyDisabled(code);
                                 return (
@@ -1775,7 +1779,7 @@ ${amountLine}
                         <SelectTrigger>
                           <SelectValue placeholder="Выберите кнопку…" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent container={selectPortalContainer}>
                           {visibleOffers.map((o) => {
                             const isSub = !!o.meta?.recurring?.is_recurring;
                             return (
@@ -1990,7 +1994,7 @@ ${amountLine}
                     <SelectTrigger>
                       <SelectValue placeholder="Выберите количество…" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent container={selectPortalContainer}>
                       {Array.from({ length: 11 }, (_, i) => i + 2).map((n) => (
                         <SelectItem key={n} value={String(n)}>
                           {n} {pluralPayment(n)}
