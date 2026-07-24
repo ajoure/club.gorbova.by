@@ -467,23 +467,15 @@ function InvoiceDeliverySuccess({
   const displayDate = formatDate(documentIssuedAt);
   const purposeText = `Оплата по счёту №${displayNumber} от ${displayDate}`;
 
-  // Импорт лениво, чтобы модуль не тянул тесты.
-  const [status, setStatus] = useState<
-    import("@/lib/invoiceDelivery").DeliveryStatusResponse | null
-  >(null);
+  const [status, setStatus] = useState<DeliveryStatusResponse | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [retrying, setRetrying] = useState<"email" | "telegram" | null>(null);
 
   const canPoll = !!documentId;
-  const isFinal = status
-    ? // импорт функции внутри компонента — избегаем циклов
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require("@/lib/invoiceDelivery").isDeliveryFinal(status)
-    : false;
 
-  const pollTick = async () => {
-    if (!documentId) return;
+  const pollTick = async (): Promise<DeliveryStatusResponse | null> => {
+    if (!documentId) return null;
     try {
       const { data, error } = await supabase.functions.invoke(
         "invoice-delivery-status",
@@ -491,12 +483,14 @@ function InvoiceDeliverySuccess({
       );
       if (error) {
         setStatusError(error.message || "status_error");
-        return;
+        return null;
       }
       setStatusError(null);
-      setStatus(data as any);
+      setStatus(data as DeliveryStatusResponse);
+      return data as DeliveryStatusResponse;
     } catch (e) {
       setStatusError(e instanceof Error ? e.message : "status_error");
+      return null;
     }
   };
 
@@ -505,24 +499,24 @@ function InvoiceDeliverySuccess({
     let cancelled = false;
     let attempts = 0;
     const MAX_ATTEMPTS = 40; // ~2 минуты при 3 с интервале
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const loop = async () => {
       if (cancelled) return;
       attempts += 1;
-      await pollTick();
+      const fresh = await pollTick();
       if (cancelled) return;
-      // читаем свежий status через ref-подобный трюк
-      const s = (await new Promise<any>((resolve) => setTimeout(() => resolve(null), 0)));
-      void s;
-      // Останавливаемся если достигли лимита; финальность проверим на следующем рендере.
+      if (fresh && isDeliveryFinal(fresh)) return;
       if (attempts >= MAX_ATTEMPTS) return;
       timer = setTimeout(loop, 3000);
     };
     loop();
     return () => {
       cancelled = true;
-      if (timer!) clearTimeout(timer);
+      if (timer) clearTimeout(timer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentId]);
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
 
