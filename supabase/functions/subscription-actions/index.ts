@@ -208,6 +208,100 @@ serve(async (req) => {
 
     switch (action) {
       case 'cancel': {
+        // A provider-managed subscription must be canceled remotely before we
+        // promise success locally. The old path only changed subscriptions_v2,
+        // leaving the bePaid sbs_* active and able to charge again.
+        const { data: providerRows, error: providerRowsError } = await supabase
+          .from('provider_subscriptions')
+          .select('provider, provider_subscription_id, state')
+          .eq('subscription_v2_id', subscription_id)
+          .order('updated_at', { ascending: false });
+
+        if (providerRowsError) {
+          console.error('Error loading provider subscriptions:', providerRowsError);
+          return new Response(JSON.stringify({
+            error: 'Failed to verify provider subscription',
+            code: 'provider_subscription_lookup_failed',
+          }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const liveProviderRows = (providerRows || []).filter((row: any) => {
+          const state = String(row.state || '').toLowerCase();
+          return ['active', 'pending', 'trial', 'past_due', 'failed_attempt'].includes(state);
+        });
+        const liveBepaidRows = liveProviderRows.filter((row: any) => row.provider === 'bepaid');
+        const unsupportedLiveRows = liveProviderRows.filter((row: any) => row.provider !== 'bepaid');
+
+        if (unsupportedLiveRows.length > 0) {
+          const providers = [...new Set(unsupportedLiveRows.map((row: any) => row.provider))];
+          return new Response(JSON.stringify({
+            error: 'This subscription must be canceled through its payment provider',
+            code: 'provider_cancel_not_supported',
+            providers,
+          }), {
+            status: 409,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (liveBepaidRows.length > 0) {
+          const providerResponse = await fetch(
+            `${supabaseUrl}/functions/v1/bepaid-cancel-subscriptions`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: authHeader,
+                apikey: supabaseAnonKey,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                subscription_v2_id: subscription_id,
+                source: 'user_self_cancel',
+              }),
+            },
+          );
+
+          let providerResult: any = null;
+          try {
+            providerResult = await providerResponse.json();
+          } catch {
+            providerResult = null;
+          }
+
+          const expectedIds = new Set(
+            liveBepaidRows
+              .map((row: any) => row.provider_subscription_id)
+              .filter(Boolean),
+          );
+          const canceledIds = new Set(
+            Array.isArray(providerResult?.canceled) ? providerResult.canceled : [],
+          );
+          const allCanceled = [...expectedIds].every((id) => canceledIds.has(id));
+          const hasFailures =
+            Array.isArray(providerResult?.failed) && providerResult.failed.length > 0;
+
+          if (!providerResponse.ok || hasFailures || !allCanceled) {
+            console.error('bePaid provider cancellation failed:', {
+              status: providerResponse.status,
+              expected: expectedIds.size,
+              canceled: canceledIds.size,
+              failed: providerResult?.failed?.length || 0,
+            });
+            return new Response(JSON.stringify({
+              error: 'Failed to cancel subscription at payment provider',
+              code: 'provider_cancel_failed',
+              provider: 'bepaid',
+              details: providerResult,
+            }), {
+              status: 502,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        }
+
         // Determine cancel_at date
         let cancelAt: string;
         
@@ -255,14 +349,29 @@ serve(async (req) => {
         }
 
         // Log the action
-        await supabase.from('audit_logs').insert({
+        const { error: auditError } = await supabase.from('audit_logs').insert({
           actor_user_id: userId,
           action: 'subscription.canceled',
-          meta: { subscription_id, cancel_at: cancelAt, cancel_source: 'user' },
+          target_user_id: subscription.user_id,
+          meta: {
+            subscription_id,
+            cancel_at: cancelAt,
+            cancel_source: 'user',
+            provider_cancel_confirmed: liveBepaidRows.length > 0,
+            provider_subscription_ids: liveBepaidRows.map((row: any) => row.provider_subscription_id),
+          },
         });
+        if (auditError) {
+          console.error('Subscription canceled, but audit insert failed:', auditError);
+        }
 
         console.log(`Subscription ${subscription_id} canceled by user, will end at ${cancelAt}`);
-        return new Response(JSON.stringify({ success: true, cancel_at: cancelAt }), {
+        return new Response(JSON.stringify({
+          success: true,
+          cancel_at: cancelAt,
+          provider_cancel_confirmed: liveBepaidRows.length > 0,
+          audit_logged: !auditError,
+        }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }

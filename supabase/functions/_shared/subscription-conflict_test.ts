@@ -153,14 +153,18 @@ Deno.test("v4: past_due + redirecting provider → no_existing", async () => {
   if (r.status === "ok") assertEquals(r.decision, "no_existing");
 });
 
-Deno.test("v4: active sub but provider state=pending → no_existing (pending not blocking)", async () => {
+Deno.test("pending provider subscription blocks a duplicate same-product checkout", async () => {
   const supabase = makeMock({
     subs: [{ id: "v2-act", status: "active", tariff_id: TARIFF_A }],
     providerSubByV2: { "v2-act": { provider_subscription_id: "sbs_pending", state: "pending" } },
   });
   const r = await classifySameProductState(supabase, { user_id: USER, product_id: PRODUCT, tariff_id: TARIFF_A });
   assertEquals(r.status, "ok");
-  if (r.status === "ok") assertEquals(r.decision, "no_existing");
+  if (r.status === "ok") {
+    assertEquals(r.decision, "extend_same_tariff");
+    assertEquals(r.existing?.provider_subscription_id, "sbs_pending");
+    assertEquals(r.existing?.provider_state, "pending");
+  }
 });
 
 Deno.test("classifySameProductState — fail-closed on subs query error", async () => {

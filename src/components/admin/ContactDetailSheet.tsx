@@ -849,12 +849,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         body: { subscription_ids: [providerSubId], source: 'admin_cancel' }
       });
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (!Array.isArray(data?.canceled) || !data.canceled.includes(providerSubId)) {
+        const failure = Array.isArray(data?.failed)
+          ? data.failed.find((item: { id?: string }) => item?.id === providerSubId)
+          : null;
+        throw new Error(failure?.error || 'bePaid не подтвердил отмену подписки');
+      }
       return data;
     },
     onSuccess: () => {
-      if (contact?.user_id) {
-        queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact.user_id] });
-      }
+      queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions'] });
+      queryClient.invalidateQueries({ queryKey: ['bepaid-subscriptions-admin'] });
       toast.success('Подписка bePaid отменена');
     },
     onError: (error: Error) => {
@@ -2433,7 +2439,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                 // не должны переводить живое bePaid-автосписание в "ремонт".
                 // Зомби = провайдер реально мёртв (canceled/expired/terminated/404 в snapshot
                 // или INV-22 флаг). См. .lovable/plan.md + admin-repair-zombie-provider-subs.
-                const LIVE_PROVIDER_STATES = new Set(['active', 'trial', 'pending']);
+                // Карточка контакта показывает только фактически действующие
+                // рекурренты. pending/past_due/failed_attempt — неоплаченные
+                // или проблемные состояния; они остаются в диагностике и
+                // списке автоплатежей, но не маскируются под действующую
+                // подписку клиента.
+                const LIVE_PROVIDER_STATES = new Set(['active', 'trial']);
                 const DEAD_PROVIDER_SNAPSHOT_STATES = new Set([
                   'canceled', 'cancelled', 'expired', 'terminated', 'finished', 'failed',
                 ]);
@@ -2509,7 +2520,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                       const productName = sub.subscriptions_v2?.products_v2?.name || 'Подписка';
                       const tariffName = sub.subscriptions_v2?.tariffs?.name;
                       const displayName = tariffName ? `${productName} — ${tariffName}` : productName;
-                      const isActive = sub.state === 'active' || sub.state === 'pending';
+                      const isActive = LIVE_PROVIDER_STATES.has(sub.state);
                       const isBepaid = sub.provider === 'bepaid';
                       const providerLabel =
                         PROVIDER_BRAND_LABELS[String(sub.provider).toLowerCase()] ||

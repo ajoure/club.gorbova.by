@@ -863,7 +863,11 @@ export function PaymentDialog({
             return;
           }
           // Same-pair subscription conflict — show keep/replace UI, do NOT redirect to /purchases
-          if (data?.error === 'existing_subscription_conflict' && data?.conflict) {
+          if (
+            (data?.error === 'existing_subscription_conflict'
+              || data?.error === 'already_has_active_subscription')
+            && data?.conflict
+          ) {
             setConflictData(data.conflict as SubscriptionConflictInfo);
             setStep('ready');
             setIsLoading(false);
@@ -873,7 +877,11 @@ export function PaymentDialog({
         }
 
         if (!data.success) {
-          if (data?.error === 'existing_subscription_conflict' && data?.conflict) {
+          if (
+            (data?.error === 'existing_subscription_conflict'
+              || data?.error === 'already_has_active_subscription')
+            && data?.conflict
+          ) {
             setConflictData(data.conflict as SubscriptionConflictInfo);
             setStep('ready');
             setIsLoading(false);
@@ -1441,10 +1449,12 @@ export function PaymentDialog({
               <Alert className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
                 <Repeat className="h-4 w-4 text-amber-600" />
                 <AlertTitle className="text-amber-800 dark:text-amber-200">
-                  У вас уже есть активная подписка на этот продукт
+                  Новую подписку пока создать нельзя
                 </AlertTitle>
                 <AlertDescription className="space-y-3">
                   <div className="text-sm space-y-1 text-amber-800 dark:text-amber-200">
+                    <p>У вас уже есть действующая или ожидающая оплаты подписка на этот продукт.</p>
+                    <p>Чтобы исключить двойное списание, сначала отмените её.</p>
                     <p>Статус: {conflictData.status}</p>
                     {conflictData.access_end_at && (
                       <p>
@@ -1484,7 +1494,7 @@ export function PaymentDialog({
                       className="w-full min-w-0"
                     >
                       <Repeat className="mr-2 h-4 w-4 shrink-0" />
-                      <span className="truncate">Заменить подписку</span>
+                      <span className="truncate">Отменить старую и создать новую</span>
                     </Button>
                   </div>
                 </AlertDescription>

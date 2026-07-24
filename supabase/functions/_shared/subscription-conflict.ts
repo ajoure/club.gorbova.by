@@ -38,10 +38,12 @@ export const CONFLICTING_STATUSES = ['active', 'trial'] as const;
 
 /**
  * Provider states, которые считаются живой рекуррентной связью для целей конфликта.
- * failed_attempt — активный retry-цикл bePaid: он продолжает инициировать
- * списания и поэтому обязан блокировать создание второй подписки.
+ * pending — уже созданная provider-managed подписка/checkout. Пока она явно
+ * не отменена, новая same-product подписка запрещена: иначе один пользователь
+ * получает несколько sbs_* и после оплаты старой ссылки возможны двойные
+ * списания. failed_attempt — активный retry-цикл bePaid.
  */
-export const BLOCKING_PROVIDER_STATES = ['active', 'failed_attempt'] as const;
+export const BLOCKING_PROVIDER_STATES = ['active', 'trial', 'pending', 'past_due', 'failed_attempt'] as const;
 
 /** Финальные статусы, разрешённые для заменяемой подписки (из живого enum). */
 export const TERMINAL_STATUSES = ['canceled', 'superseded', 'expired', 'expired_reentry'] as const;

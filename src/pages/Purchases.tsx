@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CreditCard, ShoppingBag, History, ClipboardList, FileText, MessageCircle } from "lucide-react";
+import { CreditCard, ShoppingBag, History, ClipboardList, FileText, MessageCircle, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OrderDocuments } from "@/components/purchases/OrderDocuments";
 import { format } from "date-fns";
@@ -122,6 +122,20 @@ interface CoursePreregistration {
   notes: string | null;
 }
 
+interface Entitlement {
+  id: string;
+  product_id: string | null;
+  product_code: string | null;
+  status: string;
+  expires_at: string | null;
+  products_v2: {
+    id: string;
+    name: string;
+    code: string;
+    is_active: boolean;
+  } | null;
+}
+
 export default function Purchases() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -183,6 +197,28 @@ export default function Purchases() {
       
       if (error) throw error;
       return data as SubscriptionV2[];
+    },
+    enabled: !!user,
+  });
+
+  // A paid entitlement remains a valid visible access even when the technical
+  // subscription row is missing, stale, or already scheduled for cancellation.
+  // This is the same canonical access record used by content gates/admin CRM.
+  const { data: entitlements, isLoading: entitlementsLoading } = useQuery({
+    queryKey: ["user-purchase-entitlements", user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data, error } = await supabase
+        .from("entitlements")
+        .select(`
+          id, product_id, product_code, status, expires_at,
+          products_v2:product_id(id, name, code, is_active)
+        `)
+        .eq("user_id", user.id)
+        .order("expires_at", { ascending: false, nullsFirst: false });
+
+      if (error) throw error;
+      return data as Entitlement[];
     },
     enabled: !!user,
   });
@@ -332,6 +368,19 @@ export default function Purchases() {
   const activeIds = new Set(uniqueActiveSubscriptions.map(s => s.id));
   const historySubscriptions = subscriptions?.filter(s => !activeIds.has(s.id)) || [];
 
+  const activeSubscriptionProductIds = new Set(
+    uniqueActiveSubscriptions
+      .map((subscription) => subscription.products_v2?.id)
+      .filter(Boolean),
+  );
+  const activeEntitlements = (entitlements || []).filter((entitlement) => {
+    if (entitlement.status !== "active") return false;
+    if (entitlement.expires_at && new Date(entitlement.expires_at) < new Date()) return false;
+    if (entitlement.products_v2?.is_active === false) return false;
+    if (entitlement.product_id && activeSubscriptionProductIds.has(entitlement.product_id)) return false;
+    return !!(entitlement.product_id || entitlement.product_code);
+  });
+
   // Payments tab: hide pure "in-progress" noise — only paid/failed/refunded matter to the user.
   // pending/processing/created — это шум без действий, не показываем.
   const VISIBLE_ORDER_STATUSES = new Set(["paid", "failed", "refunded"]);
@@ -359,12 +408,12 @@ export default function Purchases() {
             </CardTitle>
           </CardHeader>
           <CardContent className="px-3 sm:px-6">
-            {subscriptionsLoading ? (
+            {subscriptionsLoading || entitlementsLoading ? (
               <div className="space-y-3">
                 <Skeleton className="h-20 w-full" />
                 <Skeleton className="h-20 w-full" />
               </div>
-            ) : uniqueActiveSubscriptions.length > 0 ? (
+            ) : uniqueActiveSubscriptions.length > 0 || activeEntitlements.length > 0 ? (
               <div className="space-y-3">
                 {uniqueActiveSubscriptions.map((sub) => (
                   <SubscriptionListItem
@@ -372,6 +421,31 @@ export default function Purchases() {
                     subscription={sub}
                     onClick={() => openSubscriptionDetail(sub)}
                   />
+                ))}
+
+                {activeEntitlements.map((entitlement) => (
+                  <div
+                    key={entitlement.id}
+                    className="w-full flex items-start justify-between gap-3 p-4 sm:p-5 rounded-xl border border-border/60 bg-card"
+                  >
+                    <div className="min-w-0 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <BookOpen className="h-4 w-4 text-primary shrink-0" />
+                        <h3 className="font-medium text-foreground text-sm sm:text-base">
+                          {entitlement.products_v2?.name || entitlement.product_code || "Доступ к продукту"}
+                        </h3>
+                      </div>
+                      <p className="text-xs sm:text-sm text-muted-foreground">
+                        Оплаченный доступ
+                        {entitlement.expires_at
+                          ? ` · действует до ${format(new Date(entitlement.expires_at), "d MMM yyyy", { locale: ru })}`
+                          : " · бессрочно"}
+                      </p>
+                    </div>
+                    <span className="text-xs font-medium text-green-700 bg-green-100 dark:bg-green-900/30 dark:text-green-400 rounded-full px-2.5 py-1">
+                      Активен
+                    </span>
+                  </div>
                 ))}
                 
                 {/* Telegram reminder for active subscriptions */}

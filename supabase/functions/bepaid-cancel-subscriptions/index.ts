@@ -130,7 +130,7 @@ Deno.serve(async (req) => {
         .from('provider_subscriptions')
         .select('provider_subscription_id, user_id')
         .eq('subscription_v2_id', body.subscription_v2_id)
-        .in('state', ['active', 'pending', 'trial']);
+        .in('state', ['active', 'trial', 'pending', 'past_due', 'failed_attempt']);
 
       if (provSubs?.length) {
         subscriptionIds.push(...provSubs.map((s: any) => s.provider_subscription_id));
@@ -273,15 +273,27 @@ Deno.serve(async (req) => {
         }
 
         if (shouldMarkCanceled) {
-          result.canceled.push(subId);
-
           // Update provider_subscriptions with normalized state
-          await supabase
+          const { error: providerStateError } = await supabase
             .from('provider_subscriptions')
             .update({
               state: 'canceled',  // Use 'canceled' (normalized)
             })
             .eq('provider_subscription_id', subId);
+
+          if (providerStateError) {
+            console.error(
+              `[bepaid-cancel-subs] Provider canceled ${subId}, provider_subscriptions sync failed:`,
+              providerStateError,
+            );
+            result.failed.push({
+              id: subId,
+              error: `Provider canceled, local provider state sync failed: ${providerStateError.message}`,
+              reason_code: 'api_error',
+              provider_error: 'provider_canceled_provider_state_sync_failed',
+            });
+            continue;
+          }
 
           // Update linked subscriptions_v2
           const { data: linkedSubs } = await supabase
@@ -293,29 +305,51 @@ Deno.serve(async (req) => {
             if (linked.subscription_v2_id) {
               const { data: subV2 } = await supabase
                 .from('subscriptions_v2')
-                .select('meta')
+                .select('meta, access_end_at')
                 .eq('id', linked.subscription_v2_id)
                 .single();
 
-              await supabase
+              const canceledAt = new Date().toISOString();
+              const { error: localSyncError } = await supabase
                 .from('subscriptions_v2')
                 .update({
                   auto_renew: false,
-                  canceled_at: new Date().toISOString(),
+                  canceled_at: canceledAt,
+                  cancel_at: subV2?.access_end_at || canceledAt,
                   meta: {
                     ...((subV2?.meta as object) || {}),
-                    bepaid_canceled_at: new Date().toISOString(),  // Use 'canceled'
+                    bepaid_canceled_at: canceledAt,
                     bepaid_canceled_by: user.id,
                     bepaid_cancel_source: source,
                   },
                 })
                 .eq('id', linked.subscription_v2_id);
+
+              if (localSyncError) {
+                console.error(
+                  `[bepaid-cancel-subs] Provider canceled ${subId}, local sync failed:`,
+                  localSyncError,
+                );
+                result.failed.push({
+                  id: subId,
+                  error: `Provider canceled, local sync failed: ${localSyncError.message}`,
+                  reason_code: 'api_error',
+                  provider_error: 'provider_canceled_local_sync_failed',
+                });
+              }
             }
 
             // Set targetUserId for audit
             if (!targetUserId && linked.user_id) {
               targetUserId = linked.user_id;
             }
+          }
+
+          // Success is reported only after the local provider row was moved out
+          // of the live set. Otherwise the UI must not claim that cancellation
+          // completed while the same subscription remains visible/blocking.
+          if (!result.failed.some((failure) => failure.id === subId)) {
+            result.canceled.push(subId);
           }
         } else if (failReason) {
           result.failed.push(failReason);
@@ -351,7 +385,7 @@ Deno.serve(async (req) => {
     }
 
     // Audit log
-    await supabase.from('audit_logs').insert({
+    const { error: auditError } = await supabase.from('audit_logs').insert({
       actor_type: 'system',
       actor_user_id: null,
       actor_label: 'bepaid-cancel-subscription',
@@ -371,6 +405,9 @@ Deno.serve(async (req) => {
         is_admin: hasAdminRole,
       },
     });
+    if (auditError) {
+      console.error('[bepaid-cancel-subs] Audit insert failed:', auditError);
+    }
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
