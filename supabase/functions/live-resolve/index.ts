@@ -374,17 +374,27 @@ Deno.serve(async (req) => {
       default: roomPhase = 'closed';
     }
 
-    // Sprint 2 PATCH 2.6: active participants v1 (view: live_event_active_participants_v)
-    let activeParticipants = 0;
-    try {
-      const { data: ap } = await supabase
-        .from('live_event_active_participants_v')
-        .select('active_count')
-        .eq('live_event_id', event.id)
-        .maybeSingle();
-      activeParticipants = ((ap as any)?.active_count as number) ?? 0;
-    } catch (e) {
-      console.warn('[live-resolve] active_participants fetch failed:', e);
+    // Количество участников — служебная метрика комнаты. Не вычисляем и не
+    // возвращаем её обычному зрителю: доступ только у admin/super_admin либо
+    // у пользователя, назначенного ведущим в metadata.presenter_user_id.
+    const presenterUserId = (event.metadata as Record<string, unknown> | null)
+      ?.presenter_user_id;
+    const canViewActiveParticipants = isAdmin === true
+      || isSuperAdmin === true
+      || presenterUserId === userId;
+    let activeParticipants: number | undefined;
+    if (canViewActiveParticipants) {
+      try {
+        const { data: ap } = await supabase
+          .from('live_event_active_participants_v')
+          .select('active_count')
+          .eq('live_event_id', event.id)
+          .maybeSingle();
+        activeParticipants = ((ap as any)?.active_count as number) ?? 0;
+      } catch (e) {
+        console.warn('[live-resolve] active_participants fetch failed:', e);
+        activeParticipants = 0;
+      }
     }
 
     // 7. Access granted
@@ -415,7 +425,7 @@ Deno.serve(async (req) => {
       room_opened_at: event.room_opened_at,
       live_started_at: event.live_started_at,
       webinar_completed_at: event.webinar_completed_at,
-      active_participants: activeParticipants,
+      ...(canViewActiveParticipants ? { active_participants: activeParticipants ?? 0 } : {}),
       // UX-only metadata pass-through (Sprint 1) — does NOT influence access/resolver logic.
       room_theme: (event.metadata as any)?.room_theme || null,
       live_badge_mode: (event.metadata as any)?.live_badge_mode || null,

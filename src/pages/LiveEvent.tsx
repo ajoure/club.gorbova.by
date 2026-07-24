@@ -34,6 +34,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useScreenWakeLock } from "@/hooks/useScreenWakeLock";
 import { useVisualViewportInset } from "@/hooks/useVisualViewportInset";
 import { useUnansweredQuestionsCount } from "@/hooks/useUnansweredQuestionsCount";
+import { isAdminRole } from "@/lib/liveRoomRoles";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
@@ -629,6 +630,9 @@ function LiveEventLegacy() {
   const roomTheme: any = (data as any)?.room_theme || {};
   const presenterUserId: string | null = (data as any)?.presenter_user_id || null;
   const isPresenter = !!user?.id && !!presenterUserId && user.id === presenterUserId;
+  // Количество зрителей — служебная метрика комнаты: доступна только
+  // администраторам и явно назначенному ведущему, но не обычным участникам.
+  const canViewParticipantCount = isAdminRole(role) || isPresenter;
   const liveBadgeMode: LiveBadgeMode = ((data as any)?.live_badge_mode as LiveBadgeMode) || "auto";
   const themeStyle: React.CSSProperties = {
     ['--room-bg' as string]: roomTheme.background_color || undefined,
@@ -677,7 +681,7 @@ function LiveEventLegacy() {
             </Badge>
           )}
           {/* Sprint 2 PATCH 2.6: participant count v1 (честный — активные за 2 мин) */}
-          {typeof activeParticipants === "number" && (roomState === "opened" || roomState === "live") && (
+          {canViewParticipantCount && typeof activeParticipants === "number" && (roomState === "opened" || roomState === "live") && (
             <Badge variant="outline" className="text-xs gap-1 shrink-0" title="Активные участники за последние 2 минуты">
               <Users className="h-3 w-3" /> {activeParticipants}
             </Badge>
