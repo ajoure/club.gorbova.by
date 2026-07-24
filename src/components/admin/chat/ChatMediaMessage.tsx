@@ -16,6 +16,10 @@ import {
   Pause
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  toDownloadTelegramDocumentUrl,
+  toInlineTelegramDocumentUrl,
+} from "@/lib/telegramDocumentUrl";
 import { MediaLightbox } from "./MediaLightbox";
 import { AudioPlayer } from "./AudioPlayer";
 import { VoiceMessageBubble } from "./VoiceMessageBubble";
@@ -457,7 +461,7 @@ export function ChatMediaMessage({
   if (hasFile) {
     const handleDownload = () => {
       const a = document.createElement("a");
-      a.href = fileUrl!;
+      a.href = toDownloadTelegramDocumentUrl(fileUrl!, fileName);
       a.download = fileName || "file";
       a.target = "_blank";
       a.rel = "noopener noreferrer";
@@ -469,8 +473,11 @@ export function ChatMediaMessage({
     const isOfficeDoc = /\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/i.test(fileName || "");
     const handleOpenInNewTab = () => {
       if (isOfficeDoc && fileUrl) {
-        // Office/RTF файлы браузер не умеет открывать — показываем через Office Online Viewer
-        const viewerUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(fileUrl)}`;
+        // Office Viewer must receive an inline signed URL. A Supabase URL with
+        // `download=...` responds as an attachment and Office reports it as
+        // "file not found".
+        const inlineUrl = toInlineTelegramDocumentUrl(fileUrl);
+        const viewerUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(inlineUrl)}`;
         window.open(viewerUrl, "_blank", "noopener,noreferrer");
         return;
       }
