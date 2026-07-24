@@ -1,11 +1,10 @@
 import { rec, CB_PALETTE } from "../manifest";
 
 /**
- * Section 10 — Post-tariff narrative + urgency + bonuses.
+ * Section 10 — Post-tariff narrative and bonuses.
  * Order preserved from manifest:
  *   rec776467185 (рассрочка до 12 мес),
  *   rec1100350436 (как обучаться бесплатно),
- *   rec782699143 (таймер бонусов),
  *   rec776467158 (never-again pricing notice),
  *   rec776467186 (что я изучала 15 лет),
  *   rec1099268301 (клуб «Буква закона»),
@@ -14,7 +13,6 @@ import { rec, CB_PALETTE } from "../manifest";
 const RECS = [
   "rec776467185",
   "rec1100350436",
-  "rec782699143",
   "rec776467158",
   "rec776467186",
   "rec1099268301",
@@ -32,8 +30,7 @@ export function PostTariffSection() {
       <div className="mx-auto max-w-6xl px-5 space-y-8">
         {blocks.map((b) => {
           const [title = "", ...body] = b.text;
-          const accent =
-            b.id === "rec782699143" || b.id === "rec776467158";
+          const accent = b.id === "rec776467158";
           return (
             <div
               key={b.id}

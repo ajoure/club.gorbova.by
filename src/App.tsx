@@ -30,7 +30,7 @@ const ConnectAgent = lazy(() => import("./pages/ConnectAgent"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
 const ReferralCapture = lazy(() => import("./pages/ReferralCapture"));
-// Hidden native /cb candidate — not linked from navigation, noindex.
+// Native ЦБ landing. /cb-native-preview remains as a noindex acceptance route.
 const CbNativePreview = lazy(() => import("./pages/CbNativePreview"));
 
 // DEV-only fixture stand for the slot bridge regression harness. Guarded by
@@ -231,6 +231,7 @@ const App = () => {
               <Route path="/instruction" element={<LazyRoute><Instruction /></LazyRoute>} />
               <Route path="/contacts" element={<LazyRoute><Contacts /></LazyRoute>} />
               <Route path="/unsubscribe" element={<LazyRoute><Unsubscribe /></LazyRoute>} />
+              <Route path="/cb" element={<LazyRoute><CbNativePreview /></LazyRoute>} />
               <Route path="/cb-native-preview" element={<LazyRoute><CbNativePreview /></LazyRoute>} />
 
               <Route path="/help" element={<LazyRoute><Help /></LazyRoute>} />

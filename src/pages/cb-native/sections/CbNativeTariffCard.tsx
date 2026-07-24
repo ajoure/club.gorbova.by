@@ -6,7 +6,10 @@
  *
  * Rules:
  *  - No paraphrasing/reordering. Every displayed string is a slice of manifest text.
- *  - Prices come from the manifest (static display), same as live Tilda card.
+ *  - Prices come from the product tariff's card_config. Checkout amounts still
+ *    come from the selected backend offer, so the visual price and payment
+ *    flow share the same configurable product source rather than stale Tilda
+ *    copy.
  *  - CTA labels come from backend offers (usePublicProduct → tariff.offers),
  *    forced into the canonical Tilda order:
  *      1) pay_now              → ОПЛАТИТЬ ОБУЧЕНИЕ
@@ -48,18 +51,21 @@ const PRICE_FONT =
 const T = rec("rec1219722591").text;
 const t = (i: number) => T[i] ?? "";
 
-type Bullet = { bold?: string; text?: string };
-type BonusItem = { badge?: "VIP" | "Grand" | "Business"; cert?: boolean; text: string };
+type Badge = "VIP" | "Grand" | "Business";
+type FeatureItem = {
+  badge?: Badge;
+  bold?: string;
+  text: string;
+  locked?: boolean;
+};
 
 type CardData = {
   title: string;
-  core: Bullet[];
-  bonus: BonusItem[];
+  core: FeatureItem[];
+  programme: FeatureItem[];
+  credentials: FeatureItem[];
   audienceTitle: string;
   audience: string;
-  oldPrice: string;
-  monthly: string;
-  fullPrice: string;
   period: string;
 };
 
@@ -72,30 +78,29 @@ const CARDS: CardData[] = [
       { text: t(12) },                                // 18 основных модулей
       { bold: t(14), text: t(15) },                   // Задания / для личной проработки…
       { bold: t(17), text: t(18) },                   // Дополнительные материалы / , рабочая тетрадь…
-      { text: t(20) },                                // Доступ к клубу «Буква закона»
+      { text: t(20), locked: true },                  // Доступ к клубу «Буква закона»
       { bold: t(22), text: t(23) },                   // Доступ 6 месяцев / после окончания курса
+    ],
+    programme: [
       { text: t(25) },                                // 5 практических конференций с Катериной
       { text: t(26).replace(/^→\s*/, "") },           // Итоговый конспект для удобной работы
-    ],
-    bonus: [
       { badge: "VIP", text: t(29) },                  // «Делегирование»
       { badge: "VIP", text: t(32) },                  // «Найм, адаптация и удержание персонала»
       { badge: "VIP", text: t(35) },                  // «Таймлайн месяца»
-      { cert: true, text: `${t(36).replace(/^→\s*/, "")} ${t(37)}` },
-      { badge: "Grand", text: t(40) },                // «Налоговое законодательство Беларуси»
-      { badge: "Grand", text: t(42) },                // «Система в бухгалтерии»
-      { badge: "Business", text: t(44) },             // «Экспресс-аудит»
-      { badge: "Business", text: t(46) },             // «Восстановление учета»
-      { text: `${t(47)} ${t(48)}` },                  // Скидка 50% на модули…
-      { text: `${t(49)} ${t(50)}` },                  // Дополнительная живая встреча…
-      { text: `${t(54)} ${t(55)}` },                  // Письменная характеристика для работодателя
-      { text: t(56) },                                // Личная рекомендация Катерины…
+      { badge: "Grand", text: t(40), locked: true },  // «Налоговое законодательство Беларуси»
+      { badge: "Grand", text: t(42), locked: true },  // «Система в бухгалтерии»
+      { badge: "Business", text: t(44), locked: true },
+      { badge: "Business", text: t(46), locked: true },
+      { bold: t(47), text: t(48), locked: true },
+      { bold: t(49), text: t(50), locked: true },
+    ],
+    credentials: [
+      { bold: t(36).replace(/^→\s*/, ""), text: t(37) },
+      { bold: t(54), text: t(55), locked: true },
+      { text: t(56), locked: true },
     ],
     audienceTitle: t(78),
     audience: t(79),
-    oldPrice: t(51), // 1690 BYN
-    monthly: t(52), // ОТ 136 BYN/МЕС
-    fullPrice: t(53), // или 1490 BYN при 100% оплате
     period: t(57), // 12 мес
   },
 
@@ -109,28 +114,27 @@ const CARDS: CardData[] = [
       { bold: t(70), text: t(71) },                   // Дополнительные материалы / , рабочая тетрадь…
       { bold: t(73), text: t(74) },                   // Доступ к Клубу "Буква закона" / тариф Full на 4 недели
       { bold: t(76), text: t(77) },                   // Доступ 8 месяцев / после окончания курса
+    ],
+    programme: [
       { text: t(81) },                                // 6 практических конференций с Катериной
       { text: t(82).replace(/^→\s*/, "") },           // Итоговый конспект…
-    ],
-    bonus: [
       { badge: "VIP", text: t(85) },                  // «Делегирование»
       { badge: "VIP", text: t(88) },                  // «Найм, адаптация и удержание персонала»
       { badge: "VIP", text: t(91) },                  // «Таймлайн месяца»
       { badge: "Grand", text: t(94) },                // «Налоговое законодательство Беларуси»
       { badge: "Grand", text: t(97) },                // «Система в бухгалтерии»
-      { cert: true, text: `${t(98).replace(/^→\s*/, "")} ${t(99)}` },
-      { text: `${t(101)} ${t(102)}` },                // Письменная характеристика для работодателя
-      { badge: "Business", text: t(105) },            // «Экспресс-аудит»
-      { badge: "Business", text: t(107) },            // «Восстановление учета»
-      { text: `${t(108)} ${t(109)}` },                // Скидка 50% на модули…
-      { text: `${t(110)} ${t(111)}` },                // Дополнительная живая встреча…
-      { text: t(112) },                               // Личная рекомендация Катерины…
+      { badge: "Business", text: t(105), locked: true },
+      { badge: "Business", text: t(107), locked: true },
+      { bold: t(108), text: t(109), locked: true },
+      { bold: t(110), text: t(111), locked: true },
+    ],
+    credentials: [
+      { bold: t(98).replace(/^→\s*/, ""), text: t(99) },
+      { bold: t(101), text: t(102) },
+      { text: t(112), locked: true },
     ],
     audienceTitle: t(178),
     audience: [t(179), t(180), t(181)].filter(Boolean).join(" "),
-    oldPrice: t(113), // 1990 BYN
-    monthly: t(114), // ОТ 163 BYN/МЕС
-    fullPrice: t(115), // или 1790 BYN при 100% оплате
     period: t(116), // 12 мес
   },
 
@@ -144,10 +148,10 @@ const CARDS: CardData[] = [
       { bold: t(129), text: t(130) },                 // Дополнительные материалы …
       { bold: t(132), text: t(133) },                 // Доступ к клубу “Буква закона” / тариф Business на 4 недели
       { bold: t(135), text: t(136) },                 // Доступ 10 месяцев / после окончания курса
+    ],
+    programme: [
       { text: t(138) },                               // 6 практических конференций с Катериной
       { text: t(139).replace(/^→\s*/, "") },          // Итоговый конспект…
-    ],
-    bonus: [
       { badge: "VIP", text: t(142) },
       { badge: "VIP", text: t(145) },
       { badge: "VIP", text: t(148) },
@@ -155,20 +159,58 @@ const CARDS: CardData[] = [
       { badge: "Grand", text: t(154) },
       { badge: "Business", text: t(157) },
       { badge: "Business", text: t(160) },
-      { text: `${t(161)} ${t(162)}` },                // Скидка 50%…
-      { text: `${t(163)} ${t(164)}` },                // Дополнительная живая встреча…
-      { cert: true, text: `${t(165).replace(/^→\s*/, "")} ${t(166)}` },
-      { text: `${t(168)} ${t(169)} ${t(170)}` },      // Письменная характеристика для работодателя и клиента
-      { text: `${t(172)} ${t(173)}` },                // Личная рекомендация Катерины по итогам…
+      { bold: t(161), text: t(162) },
+      { bold: t(163), text: t(164) },
+    ],
+    credentials: [
+      { bold: t(165).replace(/^→\s*/, ""), text: t(166) },
+      { bold: t(168), text: `${t(169)} ${t(170)}` },
+      { bold: t(172), text: t(173) },
     ],
     audienceTitle: t(175),
     audience: [t(176), t(177)].filter(Boolean).join(" "),
-    oldPrice: t(0),  // 2690 BYN
-    monthly: t(1),   // ОТ 227 BYN/МЕС
-    fullPrice: t(2), // или 2490 BYN при 100% оплате
     period: t(3),    // 12 мес
   },
 ];
+
+const finiteAmount = (value: unknown): number | null => {
+  const amount = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+};
+
+const formatAmount = (amount: number) =>
+  new Intl.NumberFormat("ru-RU", {
+    maximumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+  }).format(amount);
+
+const resolveVisualPricing = (tariff: PublicTariff) => {
+  const cardConfig = tariff.meta?.card_config;
+  const activeOffers = (tariff.offers ?? []).filter((offer) => offer.is_active !== false);
+  const primaryFullPayment = activeOffers.find(
+    (offer) =>
+      offer.is_primary === true &&
+      (offer.offer_type === "pay_now" || offer.payment_method === "full_payment"),
+  );
+  const firstPayNow = activeOffers.find((offer) => offer.offer_type === "pay_now");
+  const firstOffer = activeOffers[0];
+
+  const current =
+    finiteAmount(cardConfig?.price_display) ??
+    finiteAmount(primaryFullPayment?.amount) ??
+    finiteAmount(tariff.current_price) ??
+    finiteAmount(firstPayNow?.amount) ??
+    finiteAmount(firstOffer?.amount);
+  const configuredOld = finiteAmount(cardConfig?.old_price);
+  const old = current && configuredOld && configuredOld > current ? configuredOld : null;
+  const suffix = cardConfig?.price_suffix?.trim() || "BYN";
+
+  return {
+    current,
+    old,
+    monthly: current ? Math.round(current / 12) : null,
+    suffix,
+  };
+};
 
 // ── CTA appearance mirrors live Tilda ─────────────────────────
 const buttonStyle = (offer: TariffOffer, index: number) => {
@@ -191,24 +233,85 @@ const buttonStyle = (offer: TariffOffer, index: number) => {
     return { background: "#343434", color: "#ffffff", borderColor: "#343434" };
   }
   if (offer.offer_type === "invoice" || label.includes("юрлиц")) {
-    return { background: "#1b1b1b", color: "#ffffff", borderColor: "#1b1b1b" };
+    return { background: "#eb3d7f", color: "#ffffff", borderColor: "#eb3d7f" };
   }
   return index === 0
     ? { background: CB_PALETTE.accent, color: "#ffffff", borderColor: CB_PALETTE.accent }
     : { background: "#ffffff", color: CB_PALETTE.accent, borderColor: CB_PALETTE.accent };
 };
 
-// Badge chip colors (VIP / Grand / Business).
-const badgeStyle = (b: NonNullable<BonusItem["badge"]>) => {
-  switch (b) {
-    case "VIP":
-      return { background: "#ffffff", color: "#1b1b1b" };
-    case "Grand":
-      return { background: CB_PALETTE.accent, color: "#ffffff" };
-    case "Business":
-      return { background: "#f9aeff", color: "#1b1b1b" };
-  }
+const BADGE_ASSETS: Record<Badge, { src: string; width: number; alt: string }> = {
+  VIP: {
+    src: "https://static.tildacdn.com/tild3163-6437-4533-b336-366331613231/___86.png",
+    width: 28,
+    alt: "VIP",
+  },
+  Grand: {
+    src: "https://static.tildacdn.com/tild3263-3864-4830-b339-386461376561/Grand_1.png",
+    width: 44,
+    alt: "Grand",
+  },
+  Business: {
+    src: "https://static.tildacdn.com/tild3536-3030-4634-b331-383233363261/Grand_2.png",
+    width: 58,
+    alt: "Business",
+  },
 };
+
+const LOCK_ASSET =
+  "https://static.tildacdn.com/tild6465-3839-4530-b338-666633303264/___80.png";
+
+function FeatureRow({
+  item,
+  dark = false,
+}: {
+  item: FeatureItem;
+  dark?: boolean;
+}) {
+  const badge = item.badge ? BADGE_ASSETS[item.badge] : null;
+  return (
+    <li
+      className="flex min-w-0 items-start gap-[9px]"
+      data-locked={item.locked ? "true" : "false"}
+      style={{ opacity: item.locked ? 0.55 : 1 }}
+    >
+      {item.locked ? (
+        <img
+          src={LOCK_ASSET}
+          alt="Не входит в тариф"
+          width={18}
+          height={22}
+          className="mt-[2px] h-[22px] w-[18px] shrink-0 object-contain"
+          style={{ filter: dark ? "none" : "invert(.55)" }}
+          loading="lazy"
+        />
+      ) : (
+        <span
+          aria-hidden
+          className="mt-[-1px] w-[18px] shrink-0 text-[19px] leading-none"
+          style={{ color: dark ? "#ffffff" : CB_PALETTE.accent }}
+        >
+          →
+        </span>
+      )}
+      {badge ? (
+        <img
+          src={badge.src}
+          alt={badge.alt}
+          width={badge.width}
+          className="mt-[2px] h-auto shrink-0 object-contain"
+          style={{ width: badge.width }}
+          loading="lazy"
+        />
+      ) : null}
+      <span className="min-w-0">
+        {item.bold ? <strong className="font-bold">{item.bold}</strong> : null}
+        {item.bold && item.text ? " " : null}
+        {item.text}
+      </span>
+    </li>
+  );
+}
 
 interface CbNativeTariffCardProps {
   tariff: PublicTariff;
@@ -218,6 +321,7 @@ interface CbNativeTariffCardProps {
 
 export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTariffCardProps) {
   const card = CARDS[index] ?? CARDS[0];
+  const pricing = resolveVisualPricing(tariff);
 
   const offers = (tariff.offers ?? [])
     .filter((o) => o.is_active !== false && ACTIONABLE_TYPES.has(o.offer_type))
@@ -231,128 +335,134 @@ export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTar
 
   return (
     <article
-      className="flex h-full flex-col rounded-[20px] border shadow-none"
+      className="flex h-full min-w-0 flex-col overflow-hidden rounded-[25px] border-2 shadow-none"
       style={{
         background: "#ffffff",
-        borderColor: "#ededed",
+        borderColor: CB_PALETTE.accent,
         fontFamily: TARIFF_FONT,
-        padding: "36px 28px 32px",
       }}
     >
-      {/* Title */}
-      <h3
-        className="text-[26px] font-bold uppercase leading-[1.15] tracking-[-0.01em]"
-        style={{ color: CB_PALETTE.accent, fontFamily: PRICE_FONT }}
-      >
-        {card.title}
-      </h3>
+      <div className="flex flex-1 flex-col px-[18px] pb-[28px] pt-[34px] sm:px-[20px]">
+        <h3
+          className="text-[27px] font-bold uppercase leading-[1.15] tracking-[-0.01em]"
+          style={{ color: CB_PALETTE.accent, fontFamily: PRICE_FONT }}
+        >
+          {card.title}
+        </h3>
 
-      {/* Core bullets with arrow prefix, bold + regular runs */}
-      <ul className="mt-6 space-y-[10px] text-[15px] leading-[1.5]" style={{ color: "#1b1b1b" }}>
-        {card.core.map((b, i) => (
-          <li key={i} className="flex gap-2">
-            <span aria-hidden style={{ color: CB_PALETTE.accent, fontWeight: 700 }}>→</span>
-            <span>
-              {b.bold ? <strong className="font-bold">{b.bold}</strong> : null}
-              {b.bold && b.text ? " " : null}
-              {b.text}
-            </span>
-          </li>
-        ))}
-      </ul>
-
-      {/* Dark certificate/bonus block */}
-      <div
-        className="mt-6 rounded-[14px] text-[14px] leading-[1.5]"
-        style={{ background: "#1b1b1b", color: "#ffffff", padding: "18px 18px" }}
-      >
-        <ul className="space-y-[9px]">
-          {card.bonus.map((b, i) => (
-            <li key={i} className="flex items-start gap-2">
-              {b.badge && (
-                <span
-                  className="mt-[2px] shrink-0 rounded-[6px] px-[8px] py-[2px] text-[11px] font-bold uppercase tracking-wide"
-                  style={badgeStyle(b.badge)}
-                >
-                  {b.badge}
-                </span>
-              )}
-              {b.cert && (
-                <span
-                  className="mt-[2px] shrink-0 rounded-[6px] px-[8px] py-[2px] text-[11px] font-bold uppercase tracking-wide"
-                  style={{ background: CB_PALETTE.accent, color: "#ffffff" }}
-                >
-                  Сертификат
-                </span>
-              )}
-              <span className={b.badge ? "font-bold" : b.cert ? "" : ""}>{b.text}</span>
-            </li>
+        <ul
+          className="mt-6 space-y-[10px] text-[16px] leading-[1.32]"
+          style={{ color: "#1b1b1b" }}
+        >
+          {card.core.map((item, itemIndex) => (
+            <FeatureRow key={itemIndex} item={item} />
           ))}
         </ul>
-      </div>
 
-      {/* Для кого? — audience */}
-      {card.audience && (
         <div
-          className="mt-5 rounded-[14px] text-[13px] leading-[1.55]"
-          style={{ background: "#f6f6f6", color: "#343434", padding: "16px 18px" }}
+          className="mt-6 rounded-[25px] px-[14px] py-[20px] text-[15px] leading-[1.24] sm:px-[16px]"
+          style={{ background: CB_PALETTE.accent, color: "#ffffff" }}
         >
-          {card.audienceTitle && (
-            <p className="mb-2 font-bold uppercase" style={{ color: CB_PALETTE.accent }}>
-              {card.audienceTitle}
-            </p>
-          )}
-          <p>{card.audience}</p>
+          <ul className="space-y-[10px]">
+            {card.programme.map((item, itemIndex) => (
+              <FeatureRow key={itemIndex} item={item} dark />
+            ))}
+          </ul>
         </div>
-      )}
 
-      {/* Price block */}
-      <div className="mt-auto pt-8" style={{ fontFamily: PRICE_FONT }}>
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            {card.oldPrice && (
+        <div
+          className="mt-[10px] rounded-[25px] px-[14px] py-[20px] text-[15px] leading-[1.24] sm:px-[16px]"
+          style={{ background: "#302c2c", color: "#ffffff" }}
+        >
+          <ul className="space-y-[11px]">
+            {card.credentials.map((item, itemIndex) => (
+              <FeatureRow key={itemIndex} item={item} dark />
+            ))}
+          </ul>
+        </div>
+
+        <div className="mt-auto pt-[66px]" style={{ fontFamily: PRICE_FONT }}>
+          {pricing.old ? (
+            <p
+              data-cb-native-old-price
+              className="text-[28px] font-semibold leading-none line-through"
+              style={{ color: "#1b1b1b" }}
+            >
+              {formatAmount(pricing.old)} {pricing.suffix}
+            </p>
+          ) : null}
+          <div className="mt-4 flex items-center gap-[10px]">
+            {pricing.monthly ? (
               <p
-                className="text-[22px] font-semibold leading-none line-through"
-                style={{ color: "#8a8a8a" }}
-              >
-                {card.oldPrice}
-              </p>
-            )}
-            {card.monthly && (
-              <p
-                className="mt-3 text-[26px] font-bold uppercase leading-none tracking-tight"
+                data-cb-native-monthly-price
+                className="min-w-0 text-[27px] font-bold uppercase leading-none tracking-tight"
                 style={{ color: "#1b1b1b" }}
               >
-                {card.monthly}
+                ОТ {formatAmount(pricing.monthly)} {pricing.suffix}/МЕС
               </p>
-            )}
-            {card.fullPrice && (
-              <p className="mt-2 text-[13px] leading-snug" style={{ color: "#686868" }}>
-                {card.fullPrice}
+            ) : null}
+            {card.period ? (
+              <p
+                className="shrink-0 rounded-full px-[15px] py-[3px] text-[12px] leading-none"
+                style={{ background: CB_PALETTE.accent, color: "#ffffff" }}
+              >
+                {card.period}
               </p>
-            )}
+            ) : null}
           </div>
-          {card.period && (
-            <p className="pb-1 text-[13px]" style={{ color: "#686868" }}>
-              {card.period}
+          {pricing.current ? (
+            <p
+              data-cb-native-current-price
+              className="mt-3 text-[14px] leading-snug"
+              style={{ color: "#686868" }}
+            >
+              или {formatAmount(pricing.current)} {pricing.suffix} при 100% оплате
             </p>
-          )}
+          ) : null}
         </div>
 
-        {/* CTAs (fixed order, uppercase via CSS, backend labels preserved) */}
-        <div className="mt-6 space-y-[10px]">
+        <div className="mt-7 space-y-[10px]">
           {offers.map((offer, offerIndex) => (
             <Button
               key={offer.id}
               type="button"
               onClick={() => onSelectOffer(offer, tariff)}
-              className="h-[54px] w-full rounded-[12px] border-2 text-[13px] font-bold uppercase tracking-[0.02em] shadow-none hover:opacity-90"
+              className="h-[62px] w-full whitespace-normal rounded-full border-2 px-4 text-[14px] font-bold uppercase leading-tight tracking-[0.01em] shadow-none hover:opacity-90"
               style={{ ...buttonStyle(offer, offerIndex), fontFamily: PRICE_FONT }}
             >
               {offer.button_label}
             </Button>
           ))}
         </div>
+
+        {card.audience ? (
+          <details className="group mt-6 text-[14px] leading-[1.45]" style={{ color: "#343434" }}>
+            <summary className="flex cursor-pointer list-none items-center justify-center gap-3 text-[17px]">
+              <span>{card.audienceTitle}</span>
+              <span
+                aria-hidden
+                className="flex h-9 w-9 items-center justify-center rounded-full text-[21px] font-bold"
+                style={{
+                  background: CB_PALETTE.accent,
+                  color: "#ffffff",
+                  boxShadow: "0 8px 22px rgba(228,34,194,.2)",
+                }}
+              >
+                ?
+              </span>
+            </summary>
+            <p
+              className="mt-4 rounded-[18px] border px-4 py-4"
+              style={{
+                background: "#ffffff",
+                borderColor: "#eeeeee",
+                boxShadow: "0 12px 30px rgba(27,27,27,.08)",
+              }}
+            >
+              {card.audience}
+            </p>
+          </details>
+        ) : null}
       </div>
     </article>
   );

@@ -1,5 +1,6 @@
 /**
- * /cb-native-preview — hidden native React replacement candidate for /cb.
+ * Native React landing for /cb. /cb-native-preview remains its hidden
+ * acceptance route.
  *
  * Visual/content source of truth:
  *   .lovable/discovery/cb-native/cbold_manifest.json (73 recs, DOM-parsed)
@@ -10,9 +11,10 @@
  * - No absolute-position Zero Blocks. Semantic sections with flex/grid.
  * - Tariff pricing + CTAs resolve dynamically through UniversalPricingSection
  *   (slot manifest) via usePublicProduct(). Same product id as /cb.
- * - Route is unlinked from navigation, marked noindex.
+ * - Public /cb is indexable; the preview alias is unlinked and noindex.
  */
 import { useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
 import {
   UniversalPricingSection,
@@ -29,8 +31,9 @@ import { ProcessSection } from "./cb-native/sections/ProcessSection";
 import { AdvantagesSection } from "./cb-native/sections/AdvantagesSection";
 import { PostTariffSection } from "./cb-native/sections/PostTariffSection";
 import { FaqSection } from "./cb-native/sections/FaqSection";
-import { CompanyFooterSection } from "./cb-native/sections/CompanyFooterSection";
 import { CbNativeTariffCard } from "./cb-native/sections/CbNativeTariffCard";
+import { BrandHeaderSection } from "./cb-native/sections/BrandHeaderSection";
+import { UnifiedFooter } from "@/components/layout/UnifiedFooter";
 
 // Same product bound to live /cb (site_pages slug='cb'). NO hardcoded prices.
 const CB_PRODUCT_ID = "3e43fb28-8322-41bc-bfee-714731bdc630";
@@ -41,9 +44,14 @@ const scrollToTariffs = () => {
 };
 
 export default function CbNativePreview() {
+  const { pathname } = useLocation();
+  const isPreview = pathname === "/cb-native-preview";
+
   useEffect(() => {
-    document.title = "ЦБ 2.0 · native preview";
-    // noindex
+    document.title = isPreview ? "ЦБ 2.0 · native preview" : "Ценный бухгалтер";
+
+    // Keep the hidden acceptance route out of search results. The public /cb
+    // route remains indexable after publication.
     let meta = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
     let injected = false;
     if (!meta) {
@@ -53,24 +61,13 @@ export default function CbNativePreview() {
       injected = true;
     }
     const prev = meta.content;
-    meta.content = "noindex,nofollow";
-
-    // Preload Comfortaa (Tilda's font family declared in manifest).
-    const linkId = "cb-native-font";
-    if (!document.getElementById(linkId)) {
-      const l = document.createElement("link");
-      l.id = linkId;
-      l.rel = "stylesheet";
-      l.href =
-        "https://fonts.googleapis.com/css2?family=Comfortaa:wght@400;500;600;700&display=swap";
-      document.head.appendChild(l);
-    }
+    meta.content = isPreview ? "noindex,nofollow" : "index,follow";
 
     return () => {
       if (injected) meta!.remove();
       else meta!.content = prev;
     };
-  }, []);
+  }, [isPreview]);
 
   const { data, isLoading, error } = usePublicProduct({ productId: CB_PRODUCT_ID });
 
@@ -83,6 +80,8 @@ export default function CbNativePreview() {
         fontFamily: CB_FONT_STACK,
       }}
     >
+      <BrandHeaderSection />
+
       {/* 1. Hero */}
       <HeroSection onCta={scrollToTariffs} />
 
@@ -105,10 +104,10 @@ export default function CbNativePreview() {
       <ProcessSection />
 
       {/* 8. Преимущества */}
-      <AdvantagesSection />
+      <AdvantagesSection onCta={scrollToTariffs} />
 
       {/* 9. Тарифы (dynamic slot manifest — preserves all payment dialogs & CTA bindings) */}
-      <div className="cb-native-pricing-slice">
+      <div id="rec1219722591" className="cb-native-pricing-slice">
         <style>{`
           .cb-native-pricing-slice > section { background: ${CB_PALETTE.bg}; padding-top: 96px; padding-bottom: 96px; }
           .cb-native-pricing-slice .container { max-width: 1164px; }
@@ -157,9 +156,9 @@ export default function CbNativePreview() {
       {/* 10. Пост-тарифный блок */}
       <PostTariffSection />
 
-      {/* 11. FAQ + Company */}
+      {/* 11. FAQ + canonical gorbova.by footer */}
       <FaqSection />
-      <CompanyFooterSection />
+      <UnifiedFooter showAnchorNav={false} />
     </div>
   );
 }

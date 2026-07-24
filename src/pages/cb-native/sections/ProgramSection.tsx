@@ -51,6 +51,115 @@ export const PROGRAM_CALLOUT_COUNT = ORDERED.filter((i) => i.kind === "callout")
 
 function ModuleCard({ id }: { id: string }) {
   const r = rec(id);
+  const specialMeta: Record<
+    string,
+    { title: string; intro: string[]; results: string[] }
+  > = {
+    rec782168706: {
+      title: r.text[4] ?? "",
+      intro: r.text.slice(5, 7),
+      results: r.text.slice(1, 4),
+    },
+    rec782170827: {
+      title: r.text[4] ?? "",
+      intro: r.text.slice(5, 7),
+      results: r.text.slice(1, 4),
+    },
+    rec782173747: {
+      title: r.text[2] ?? "",
+      intro: r.text.slice(3, 5),
+      results: r.text.slice(1, 2),
+    },
+  };
+  const special = specialMeta[id];
+
+  if (id === "rec779902274") {
+    const title = r.text[0] ?? "";
+    const subtitle = [r.text[1], r.text[2]].filter(Boolean).join(" ");
+    const materials = r.text.slice(3, 9);
+    const bonuses = r.text.slice(10, 14);
+    const badge = r.text[14] ?? "";
+    const results = r.text.slice(16);
+    return (
+      <article
+        id={id}
+        data-cb-native-program-module
+        className="flex h-full flex-col gap-4 rounded-[22px] p-6"
+        style={{ background: CB_PALETTE.bg, border: `1px solid ${CB_PALETTE.border}` }}
+      >
+        <span
+          className="inline-flex self-start rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
+          style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
+        >
+          {badge}
+        </span>
+        <h3 className="text-[18px] font-bold uppercase leading-tight">{title}</h3>
+        <p className="text-[14px] font-semibold">{subtitle}</p>
+        <ul className="space-y-1.5 text-[13.5px] leading-[1.5]">
+          {materials.map((text, index) => (
+            <li key={index}>→ {text}</li>
+          ))}
+        </ul>
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em]">{r.text[9]}</p>
+        <ul className="space-y-1.5 text-[13.5px] leading-[1.5]">
+          {bonuses.map((text, index) => (
+            <li key={index}>→ {text}</li>
+          ))}
+        </ul>
+        <p
+          className="text-[11px] font-bold uppercase tracking-[0.16em]"
+          style={{ color: CB_PALETTE.accent }}
+        >
+          {r.text[15]}
+        </p>
+        <ul className="space-y-1.5 text-[13.5px] leading-[1.5]">
+          {results.map((text, index) => (
+            <li key={index}>→ {text}</li>
+          ))}
+        </ul>
+      </article>
+    );
+  }
+
+  if (special) {
+    const badge = r.text.find((text) => /МОДУЛЬ\s*#?\d+/i.test(text)) ?? "";
+    return (
+      <article
+        id={id}
+        data-cb-native-program-module
+        className="flex h-full flex-col gap-4 rounded-[22px] p-6"
+        style={{ background: CB_PALETTE.bg, border: `1px solid ${CB_PALETTE.border}` }}
+      >
+        <span
+          className="inline-flex self-start rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
+          style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
+        >
+          {badge}
+        </span>
+        <h3
+          className="text-[18px] font-bold uppercase leading-tight"
+          style={{ color: CB_PALETTE.textStrong }}
+        >
+          {special.title}
+        </h3>
+        <p className="text-[14px] leading-[1.55]" style={{ color: CB_PALETTE.text }}>
+          {special.intro.join(" ")}
+        </p>
+        <p
+          className="text-[11px] font-bold uppercase tracking-[0.16em]"
+          style={{ color: CB_PALETTE.accent }}
+        >
+          {r.text[0]}
+        </p>
+        <ul className="space-y-1.5 text-[13.5px] leading-[1.5]">
+          {special.results.map((text, index) => (
+            <li key={index}>→ {text}</li>
+          ))}
+        </ul>
+      </article>
+    );
+  }
+
   // Module recs have a "МОДУЛЬ #NN" token somewhere in the list; the first
   // non-badge, non-meta token is the title.
   const badge = r.text.find((t) => /МОДУЛЬ\s*#?\d+/i.test(t)) ?? "";
@@ -83,7 +192,6 @@ function ModuleCard({ id }: { id: string }) {
         !results.includes(t) &&
         !bonuses.includes(t),
     )
-    .slice(0, 2)
     .join(" ");
   const badgeLabel = badge || "Модуль курса";
 
@@ -141,21 +249,23 @@ function ModuleCard({ id }: { id: string }) {
           {intro}
         </p>
       )}
-      {results.length > 0 && (
+      {r.text.some((text) => /^Результаты модуля:?$/i.test(text)) && (
         <div>
           <p
             className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em]"
             style={{ color: CB_PALETTE.accent }}
           >
-            Результаты модуля
+            Результаты модуля:
           </p>
-          <ul className="space-y-1.5 text-[13.5px] leading-[1.5]" style={{ color: CB_PALETTE.text }}>
-            {results.map((x, i) => (
-              <li key={i} className="pl-3 -indent-3">
-                → {x}
-              </li>
-            ))}
-          </ul>
+          {results.length > 0 ? (
+            <ul className="space-y-1.5 text-[13.5px] leading-[1.5]" style={{ color: CB_PALETTE.text }}>
+              {results.map((x, i) => (
+                <li key={i} className="pl-3 -indent-3">
+                  → {x}
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       )}
       {bonuses.length > 0 && (
@@ -167,7 +277,7 @@ function ModuleCard({ id }: { id: string }) {
             className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em]"
             style={{ color: "#343434" }}
           >
-            Усилители
+            Усилители:
           </p>
           <ul className="space-y-1 text-[13px] leading-[1.5]" style={{ color: CB_PALETTE.text }}>
             {bonuses.map((x, i) => (
@@ -223,7 +333,7 @@ function MagentaCallout({ id }: { id: string }) {
       </h3>
       {r.text[1] && (
         <p className="mt-3 text-[15px] leading-[1.55]" style={{ color: "#fff2e6" }}>
-          {r.text.slice(1, 4).join(" ")}
+          {r.text.slice(1).join(" ")}
         </p>
       )}
     </div>
@@ -245,7 +355,7 @@ function GridCallout({ id }: { id: string }) {
         className="text-[15px] leading-[1.55] md:text-[16px]"
         style={{ color: CB_PALETTE.text }}
       >
-        {r.text[0]}
+        {r.text.slice(0, 4).join(" ")}
       </p>
       <ul className="mt-4 grid gap-2 md:grid-cols-2">
         {bullets.map((b, i) => (
