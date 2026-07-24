@@ -1929,8 +1929,9 @@ ${amountLine}
               )}
 
               {/* Индивидуальная ссылка: N всегда 2..12, независимо от настроек кнопки.
-                  Админ может изменить количество платежей и сумму. Публичная кнопка не меняется. */}
-              {selectedTariffId && isInstallmentOffer && (() => {
+                  Админ может изменить количество платежей и сумму. Публичная кнопка не меняется.
+                  Скрываем для invoice/RR — там нет рассрочки, только счёт/RR-ссылка. */}
+              {selectedTariffId && isInstallmentOffer && !invoicePanelOpen && !rrPanelOpen && (() => {
                 const intervalDays = Number((effectiveOffer as any)?.installment_interval_days ?? 30);
                 const offerAmountByn = Number((effectiveOffer as any)?.amount ?? 0);
                 const offerN = installmentMaxMonths ?? null;
