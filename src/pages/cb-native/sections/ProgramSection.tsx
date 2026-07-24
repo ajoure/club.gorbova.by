@@ -1,14 +1,13 @@
 import { rec, CB_PALETTE } from "../manifest";
 
 /**
- * Section 6 — "ВАША ПОЛЬЗА В КАЖДОМ МОДУЛЕ ОБУЧЕНИЯ".
+ * Reference-faithful programme.
  *
- * Header rec776467165. Content is a strict cbold-order sequence of module recs
- * interleaved with three callouts, then the anchor CTA rec779963654
- * ("СМОТРЕТЬ всю программу") which scrolls to #tariffs.
- *
- * Layout is native responsive (grid + full-width callouts), no absolute Zero Blocks.
- * Magenta module badge / white card / dark charcoal callout — cbold hierarchy.
+ * The canonical /cb20predzapis page presents every module as one wide,
+ * asymmetric composition: title/question on the left, results and boosters
+ * on the right. It is intentionally not a generic card grid. On phones the
+ * same panels stack in reading order without any absolute-positioned Tilda
+ * blocks.
  */
 type Item =
   | { kind: "module"; id: string }
@@ -46,245 +45,268 @@ const ORDERED: Item[] = [
   { kind: "module", id: "rec783206583" },
 ];
 
-export const PROGRAM_MODULE_COUNT = ORDERED.filter((i) => i.kind === "module").length;
-export const PROGRAM_CALLOUT_COUNT = ORDERED.filter((i) => i.kind === "callout").length;
+export const PROGRAM_MODULE_COUNT = ORDERED.filter((item) => item.kind === "module").length;
+export const PROGRAM_CALLOUT_COUNT = ORDERED.filter((item) => item.kind === "callout").length;
 
-function ModuleCard({ id }: { id: string }) {
+type ModuleContent = {
+  badge: string;
+  title: string;
+  question: string;
+  results: string[];
+  boosters: string[];
+  pretrainingLead?: string[];
+};
+
+const clean = (values: Array<string | undefined>) =>
+  values
+    .filter((value): value is string => Boolean(value?.trim()))
+    .map((value) => value.trim())
+    .join(" ")
+    .replace(/\s+([,.:;!?])/g, "$1");
+
+function parseModule(id: string): ModuleContent {
   const r = rec(id);
-  const specialMeta: Record<
-    string,
-    { title: string; intro: string[]; results: string[] }
-  > = {
-    rec782168706: {
-      title: r.text[4] ?? "",
-      intro: r.text.slice(5, 7),
-      results: r.text.slice(1, 4),
-    },
-    rec782170827: {
-      title: r.text[4] ?? "",
-      intro: r.text.slice(5, 7),
-      results: r.text.slice(1, 4),
-    },
-    rec782173747: {
-      title: r.text[2] ?? "",
-      intro: r.text.slice(3, 5),
-      results: r.text.slice(1, 2),
-    },
-  };
-  const special = specialMeta[id];
 
   if (id === "rec779902274") {
-    const title = r.text[0] ?? "";
-    const subtitle = [r.text[1], r.text[2]].filter(Boolean).join(" ");
-    const materials = r.text.slice(3, 9);
-    const bonuses = r.text.slice(10, 14);
-    const badge = r.text[14] ?? "";
-    const results = r.text.slice(16);
+    return {
+      badge: r.text[14] ?? "ПРЕДОБУЧЕНИЕ",
+      title: r.text[0] ?? "КАК ПОДГОТОВИТЬСЯ К ОБУЧЕНИЮ?",
+      question: "",
+      pretrainingLead: [
+        clean([r.text[1], r.text[2]]),
+        clean([r.text[10], r.text[11]]),
+        clean([r.text[12], r.text[13]]),
+      ],
+      boosters: [
+        clean([r.text[3], r.text[4]]),
+        clean([r.text[5], r.text[6]]),
+        clean([r.text[7], r.text[8]]),
+      ],
+      results: r.text.slice(16).filter(Boolean),
+    };
+  }
+
+  const badgeIndex = r.text.findIndex((value) => /МОДУЛЬ\s*#?\d+/i.test(value));
+  const resultsIndex = r.text.findIndex((value) => /^Результаты модуля:?$/i.test(value));
+  const boostersIndex = r.text.findIndex((value) => /^Усилители:?$/i.test(value));
+  const badge = badgeIndex >= 0 ? r.text[badgeIndex] : "МОДУЛЬ КУРСА";
+
+  const special: Record<string, { title: number; question: number[] }> = {
+    rec782168706: { title: 4, question: [5, 6] },
+    rec782170827: { title: 4, question: [5, 6] },
+    rec782173747: { title: 2, question: [3, 4] },
+  };
+  const specialMeta = special[id];
+  const titleIndex = specialMeta?.title ?? 0;
+  const questionIndexes =
+    specialMeta?.question ??
+    r.text
+      .map((_, index) => index)
+      .filter(
+        (index) =>
+          index !== titleIndex &&
+          index < (resultsIndex >= 0 ? resultsIndex : r.text.length) &&
+          index !== badgeIndex,
+      );
+
+  const stopAfterResults = [boostersIndex, badgeIndex]
+    .filter((index) => index > resultsIndex)
+    .sort((a, b) => a - b)[0] ?? r.text.length;
+  let results =
+    resultsIndex >= 0 ? r.text.slice(resultsIndex + 1, stopAfterResults).filter(Boolean) : [];
+
+  let boosters =
+    boostersIndex >= 0
+      ? r.text
+          .slice(boostersIndex + 1, badgeIndex > boostersIndex ? badgeIndex : r.text.length)
+          .filter(Boolean)
+      : [];
+
+  // Module 01 has the two headings adjacent in the source DOM; the four
+  // following statements are results, not boosters.
+  if (id === "rec779946753") {
+    results = r.text.slice(6, 10).filter(Boolean);
+    boosters = [];
+  }
+
+  return {
+    badge,
+    title: r.text[titleIndex] ?? "",
+    question: clean(questionIndexes.map((index) => r.text[index])),
+    results,
+    boosters,
+  };
+}
+
+function DotList({
+  items,
+  strongFirst = false,
+}: {
+  items: string[];
+  strongFirst?: boolean;
+}) {
+  return (
+    <ul className="space-y-2.5">
+      {items.map((item, index) => (
+        <li key={`${item}-${index}`} className="flex gap-3 text-[14px] leading-[1.4] md:text-[15px]">
+          <span
+            aria-hidden
+            className="mt-[7px] h-2 w-2 shrink-0 rounded-full shadow-[0_0_8px_rgba(228,34,194,0.8)]"
+            style={{ background: CB_PALETTE.accent }}
+          />
+          <span>
+            {strongFirst && index === 0 ? <strong>{item}</strong> : item}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ReferenceModule({ id }: { id: string }) {
+  const content = parseModule(id);
+  const pretraining = id === "rec779902274";
+  const moduleNumber = content.badge.match(/\d+/)?.[0];
+
+  if (pretraining) {
     return (
       <article
         id={id}
         data-cb-native-program-module
-        className="flex h-full flex-col gap-4 rounded-[22px] p-6"
-        style={{ background: CB_PALETTE.bg, border: `1px solid ${CB_PALETTE.border}` }}
+        className="relative grid gap-5 pb-16 md:grid-cols-2 md:gap-x-0 md:gap-y-4 md:pb-24"
       >
-        <span
-          className="inline-flex self-start rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
-          style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
+        <div
+          className="rounded-[20px] px-5 pb-5 pt-6 md:col-span-2 md:grid md:grid-cols-2 md:gap-10 md:px-6 md:py-6"
+          style={{ background: "#efa2f5" }}
         >
-          {badge}
-        </span>
-        <h3 className="text-[18px] font-bold uppercase leading-tight">{title}</h3>
-        <p className="text-[14px] font-semibold">{subtitle}</p>
-        <ul className="space-y-1.5 text-[13.5px] leading-[1.5]">
-          {materials.map((text, index) => (
-            <li key={index}>→ {text}</li>
-          ))}
-        </ul>
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em]">{r.text[9]}</p>
-        <ul className="space-y-1.5 text-[13.5px] leading-[1.5]">
-          {bonuses.map((text, index) => (
-            <li key={index}>→ {text}</li>
-          ))}
-        </ul>
-        <p
-          className="text-[11px] font-bold uppercase tracking-[0.16em]"
-          style={{ color: CB_PALETTE.accent }}
+          <div>
+            <p
+              className="text-[42px] font-light uppercase leading-none md:text-[54px]"
+              style={{ color: "#f8ccfb" }}
+            >
+              {content.badge}
+            </p>
+            <h3
+              className="-mx-5 mt-5 rounded-[0_18px_18px_0] px-5 py-4 text-[21px] font-normal uppercase leading-tight md:-ml-6 md:mr-0 md:text-[28px]"
+              style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
+            >
+              {content.title}
+            </h3>
+          </div>
+          <div className="mt-6 md:mt-0 md:px-3">
+            <p
+              className="mb-3 text-[15px] font-normal uppercase md:text-[18px]"
+              style={{ color: "#bf37ae" }}
+            >
+              Результаты модуля:
+            </p>
+            <DotList items={content.results} />
+          </div>
+        </div>
+
+        <div className="relative px-5 py-4 md:min-h-[155px] md:px-10">
+          <span
+            aria-hidden
+            className="absolute bottom-5 left-0 top-4 w-px"
+            style={{ background: CB_PALETTE.accent }}
+          />
+          <ul className="space-y-3 text-[15px] leading-[1.35] md:text-[17px]">
+            {(content.pretrainingLead ?? []).map((item, index) => (
+              <li key={item} className="relative pl-2">
+                <span
+                  aria-hidden
+                  className="absolute -left-10 top-[0.7em] h-px w-8"
+                  style={{ background: CB_PALETTE.accent }}
+                />
+                {index === 0 ? (
+                  <>
+                    <strong>Как усилить эффект</strong> от курса?
+                  </>
+                ) : index === 1 ? (
+                  <>
+                    <strong>Законы эффективного обучения:</strong> как учиться правильно?
+                  </>
+                ) : (
+                  <>
+                    <strong>Гид по курсу:</strong> как устроен «Ценный бухгалтер»?
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div
+          className="rounded-[20px] border px-6 py-5 md:min-h-[155px] md:px-10"
+          style={{ borderColor: CB_PALETTE.accent }}
         >
-          {r.text[15]}
-        </p>
-        <ul className="space-y-1.5 text-[13.5px] leading-[1.5]">
-          {results.map((text, index) => (
-            <li key={index}>→ {text}</li>
-          ))}
-        </ul>
+          <p className="mb-3 text-[18px] font-normal uppercase">Бонусы:</p>
+          <DotList items={content.boosters} strongFirst />
+        </div>
       </article>
     );
   }
-
-  if (special) {
-    const badge = r.text.find((text) => /МОДУЛЬ\s*#?\d+/i.test(text)) ?? "";
-    return (
-      <article
-        id={id}
-        data-cb-native-program-module
-        className="flex h-full flex-col gap-4 rounded-[22px] p-6"
-        style={{ background: CB_PALETTE.bg, border: `1px solid ${CB_PALETTE.border}` }}
-      >
-        <span
-          className="inline-flex self-start rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
-          style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
-        >
-          {badge}
-        </span>
-        <h3
-          className="text-[18px] font-bold uppercase leading-tight"
-          style={{ color: CB_PALETTE.textStrong }}
-        >
-          {special.title}
-        </h3>
-        <p className="text-[14px] leading-[1.55]" style={{ color: CB_PALETTE.text }}>
-          {special.intro.join(" ")}
-        </p>
-        <p
-          className="text-[11px] font-bold uppercase tracking-[0.16em]"
-          style={{ color: CB_PALETTE.accent }}
-        >
-          {r.text[0]}
-        </p>
-        <ul className="space-y-1.5 text-[13.5px] leading-[1.5]">
-          {special.results.map((text, index) => (
-            <li key={index}>→ {text}</li>
-          ))}
-        </ul>
-      </article>
-    );
-  }
-
-  // Module recs have a "МОДУЛЬ #NN" token somewhere in the list; the first
-  // non-badge, non-meta token is the title.
-  const badge = r.text.find((t) => /МОДУЛЬ\s*#?\d+/i.test(t)) ?? "";
-  const title = r.text[0] ?? "";
-  // cbold module cards use a vector.svg icon from images[0].
-  const icon = r.images.find((src) => /\.svg(\?|$)/i.test(src)) ?? r.images[0] ?? "";
-  const results: string[] = [];
-  const bonuses: string[] = [];
-  let bucket: "none" | "results" | "bonuses" = "none";
-  r.text.slice(1).forEach((t) => {
-    if (/^Результаты модуля:?$/i.test(t)) {
-      bucket = "results";
-      return;
-    }
-    if (/^Усилители:?$/i.test(t)) {
-      bucket = "bonuses";
-      return;
-    }
-    if (t === badge) return;
-    if (bucket === "results") results.push(t);
-    else if (bucket === "bonuses") bonuses.push(t);
-  });
-  const intro = r.text
-    .slice(1)
-    .filter(
-      (t) =>
-        t !== badge &&
-        !/^Результаты модуля:?$/i.test(t) &&
-        !/^Усилители:?$/i.test(t) &&
-        !results.includes(t) &&
-        !bonuses.includes(t),
-    )
-    .join(" ");
-  const badgeLabel = badge || "Модуль курса";
 
   return (
     <article
       id={id}
       data-cb-native-program-module
-      className="flex h-full flex-col gap-4 rounded-[22px] p-6"
-      style={{ background: CB_PALETTE.bg, border: `1px solid ${CB_PALETTE.border}` }}
+      className="relative grid gap-5 pb-16 md:grid-cols-2 md:gap-x-5 md:gap-y-4 md:pb-20"
     >
-      <div className="flex items-center gap-3">
-        {icon ? (
-          <img
-            src={icon}
-            alt={badgeLabel}
-            data-cb-native-program-icon
-            className="h-11 w-11 shrink-0 object-contain"
-            loading="lazy"
-          />
-        ) : (
-          <span
-            data-cb-native-program-icon-fallback
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[11px] font-bold uppercase tracking-[0.1em]"
-            style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
-            aria-label={badgeLabel}
-          >
-            {badge ? badge.replace(/[^\d]/g, "") || "M" : "M"}
-          </span>
-        )}
-        {badge && (
-          <span
-            className={
-              icon
-                ? "sr-only"
-                : "inline-flex self-start rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
-            }
-            style={
-              icon
-                ? undefined
-                : { background: CB_PALETTE.accent, color: CB_PALETTE.bg }
-            }
-          >
-            {badge}
-          </span>
-        )}
-      </div>
-      <h3
-        className="text-[18px] font-bold uppercase leading-tight"
-        style={{ color: CB_PALETTE.textStrong }}
-      >
-        {title}
-      </h3>
-      {intro && (
-        <p className="text-[14px] leading-[1.55]" style={{ color: CB_PALETTE.text }}>
-          {intro}
-        </p>
-      )}
-      {r.text.some((text) => /^Результаты модуля:?$/i.test(text)) && (
-        <div>
-          <p
-            className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em]"
-            style={{ color: CB_PALETTE.accent }}
-          >
-            Результаты модуля:
-          </p>
-          {results.length > 0 ? (
-            <ul className="space-y-1.5 text-[13.5px] leading-[1.5]" style={{ color: CB_PALETTE.text }}>
-              {results.map((x, i) => (
-                <li key={i} className="pl-3 -indent-3">
-                  → {x}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      )}
-      {bonuses.length > 0 && (
-        <div
-          className="mt-auto rounded-[14px] px-4 py-3"
-          style={{ background: CB_PALETTE.bgSoft }}
+      <div className="relative flex min-h-[188px] flex-col justify-end pt-14 md:min-h-[205px]">
+        <p
+          className="absolute left-5 top-0 text-[48px] font-light uppercase leading-none md:left-0 md:text-[58px]"
+          style={{ color: "#f8e5f7" }}
         >
-          <p
-            className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em]"
-            style={{ color: "#343434" }}
-          >
-            Усилители:
-          </p>
-          <ul className="space-y-1 text-[13px] leading-[1.5]" style={{ color: CB_PALETTE.text }}>
-            {bonuses.map((x, i) => (
-              <li key={i}>• {x}</li>
-            ))}
-          </ul>
+          МОДУЛЬ #{moduleNumber ?? ""}
+        </p>
+        <h3
+          className="relative rounded-[0_18px_18px_0] px-5 py-5 text-[21px] font-normal uppercase leading-tight md:pr-7 md:text-[27px]"
+          style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
+        >
+          {content.title}
+        </h3>
+      </div>
+
+      <div
+        className="rounded-[20px] px-6 py-5 md:min-h-[205px] md:px-9 md:py-6"
+        style={{ background: "#efa2f5" }}
+      >
+        <p
+          className="mb-3 text-[15px] font-normal uppercase md:text-[18px]"
+          style={{ color: "#bf37ae" }}
+        >
+          Результаты модуля:
+        </p>
+        <DotList items={content.results} />
+      </div>
+
+      <div className="relative min-h-[110px] px-5 py-4 md:px-10">
+        <span
+          aria-hidden
+          className="absolute bottom-5 left-0 top-4 w-px"
+          style={{ background: CB_PALETTE.accent }}
+        />
+        <p className="relative text-[15px] leading-[1.45] md:text-[17px]">
+          <span
+            aria-hidden
+            className="absolute -left-10 top-[0.7em] h-px w-8"
+            style={{ background: CB_PALETTE.accent }}
+          />
+          {content.question}
+        </p>
+      </div>
+
+      {content.boosters.length > 0 ? (
+        <div
+          className="rounded-[20px] border px-6 py-5 md:min-h-[110px] md:px-9"
+          style={{ borderColor: CB_PALETTE.accent }}
+        >
+          <p className="mb-3 text-[17px] font-normal uppercase">Усилители:</p>
+          <DotList items={content.boosters} />
         </div>
+      ) : (
+        <div aria-hidden className="hidden md:block" />
       )}
     </article>
   );
@@ -293,97 +315,82 @@ function ModuleCard({ id }: { id: string }) {
 function DarkCallout({ id }: { id: string }) {
   const r = rec(id);
   return (
-    <div
+    <aside
       id={id}
       data-cb-native-program-callout
-      className="col-span-full my-4 rounded-[22px] px-7 py-8 text-center md:px-12 md:py-10"
+      className="mb-20 rounded-[24px] px-7 py-10 text-center md:px-14 md:py-14"
       style={{ background: "#343434", color: CB_PALETTE.bg }}
     >
-      <p className="mx-auto max-w-3xl text-[16px] leading-[1.5] md:text-[18px]">
+      <p className="mx-auto max-w-4xl text-[17px] leading-[1.5] md:text-[20px]">
         <span
-          className="mr-2 inline-block align-middle text-[38px] font-bold md:text-[52px]"
+          className="mr-3 inline-block align-middle text-[48px] font-bold md:text-[68px]"
           style={{ color: CB_PALETTE.accent }}
         >
           {r.text[4] ?? ""}
         </span>
-        {r.text[1]} <strong>{r.text[2]}</strong>
-        {r.text[3]}
+        {r.text[1]} <strong>{r.text[2]}</strong> {r.text[3]}
       </p>
       <p
-        className="mt-4 text-[13px] font-bold uppercase tracking-[0.14em]"
+        className="mt-5 text-[13px] font-bold uppercase tracking-[0.14em]"
         style={{ color: CB_PALETTE.accentSoft }}
       >
         {r.text[0]}
       </p>
-    </div>
+    </aside>
   );
 }
 
 function MagentaCallout({ id }: { id: string }) {
   const r = rec(id);
   return (
-    <div
+    <aside
       id={id}
       data-cb-native-program-callout
-      className="col-span-full my-4 rounded-[22px] px-7 py-8 md:px-12 md:py-10"
+      className="mb-20 rounded-[24px] px-7 py-10 md:px-14 md:py-14"
       style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
     >
-      <h3 className="text-[22px] font-bold uppercase leading-tight md:text-[28px]">
+      <h3 className="text-[24px] font-bold uppercase leading-tight md:text-[34px]">
         {r.text[0] ?? ""}
       </h3>
-      {r.text[1] && (
-        <p className="mt-3 text-[15px] leading-[1.55]" style={{ color: "#fff2e6" }}>
+      {r.text[1] ? (
+        <p className="mt-4 text-[15px] leading-[1.55] md:text-[17px]">
           {r.text.slice(1).join(" ")}
         </p>
-      )}
-    </div>
+      ) : null}
+    </aside>
   );
 }
 
 function GridCallout({ id }: { id: string }) {
   const r = rec(id);
-  const bulletStart = 6; // t6..t9 = 4 competency bullets
-  const bullets = r.text.slice(bulletStart, bulletStart + 4).filter(Boolean);
+  const bullets = r.text.slice(6, 10).filter(Boolean);
   return (
-    <div
+    <aside
       id={id}
       data-cb-native-program-callout
-      className="col-span-full my-4 rounded-[22px] px-7 py-8 md:px-12 md:py-10"
-      style={{ background: CB_PALETTE.bgSoft, border: `1px solid ${CB_PALETTE.border}` }}
+      className="mb-20 rounded-[24px] border px-7 py-9 md:px-12 md:py-12"
+      style={{ background: CB_PALETTE.bgSoft, borderColor: CB_PALETTE.border }}
     >
-      <p
-        className="text-[15px] leading-[1.55] md:text-[16px]"
-        style={{ color: CB_PALETTE.text }}
-      >
-        {r.text.slice(0, 4).join(" ")}
-      </p>
-      <ul className="mt-4 grid gap-2 md:grid-cols-2">
-        {bullets.map((b, i) => (
+      <p className="text-[16px] leading-[1.55] md:text-[18px]">{r.text.slice(0, 4).join(" ")}</p>
+      <ul className="mt-5 grid gap-3 md:grid-cols-2">
+        {bullets.map((bullet) => (
           <li
-            key={i}
-            className="rounded-[14px] bg-white px-4 py-3 text-[14px]"
-            style={{ color: CB_PALETTE.textStrong, border: `1px solid ${CB_PALETTE.border}` }}
+            key={bullet}
+            className="rounded-[14px] border bg-white px-4 py-3 text-[14px]"
+            style={{ borderColor: CB_PALETTE.border }}
           >
-            → {b}
+            → {bullet}
           </li>
         ))}
       </ul>
-      <p
-        className="mt-5 text-[14px] font-bold uppercase leading-snug"
-        style={{ color: CB_PALETTE.accent }}
-      >
-        {r.text[4]}
-        <span className="ml-2" style={{ color: CB_PALETTE.textStrong }}>
-          {r.text[5]}
-        </span>
+      <p className="mt-6 text-[15px] font-bold uppercase" style={{ color: CB_PALETTE.accent }}>
+        {r.text[4]} <span style={{ color: CB_PALETTE.textStrong }}>{r.text[5]}</span>
       </p>
-    </div>
+    </aside>
   );
 }
 
 export function ProgramSection({ onCta }: { onCta: () => void }) {
-  const header = rec("rec776467165");
-  const headline = header.text.slice(0, 4).join(" ").trim() || "ВАША ПОЛЬЗА В КАЖДОМ МОДУЛЕ ОБУЧЕНИЯ";
   const cta = rec("rec779963654").text[0] ?? "СМОТРЕТЬ всю программу";
 
   return (
@@ -393,30 +400,32 @@ export function ProgramSection({ onCta }: { onCta: () => void }) {
       className="py-16 lg:py-24"
       style={{ background: CB_PALETTE.bg }}
     >
-      <div className="mx-auto max-w-[1160px] px-5">
+      <div className="mx-auto max-w-[1200px] px-5">
         <h2
-          className="mb-10 text-center text-[32px] font-bold uppercase leading-[1.1] md:mb-14 md:text-[42px]"
-          style={{ color: CB_PALETTE.accent }}
+          className="mb-14 text-left text-[31px] font-bold uppercase leading-[1.08] md:mb-20 md:text-[42px]"
+          style={{ color: CB_PALETTE.textStrong }}
         >
-          {headline}
+          ВАША ПОЛЬЗА <span style={{ color: CB_PALETTE.accent }}>В КАЖДОМ</span>
+          <br />
+          МОДУЛЕ ОБУЧЕНИЯ
         </h2>
 
-        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+        <div data-cb-native-program-list>
           {ORDERED.map((item) => {
-            if (item.kind === "module") return <ModuleCard key={item.id} id={item.id} />;
+            if (item.kind === "module") return <ReferenceModule key={item.id} id={item.id} />;
             if (item.variant === "dark") return <DarkCallout key={item.id} id={item.id} />;
             if (item.variant === "magenta") return <MagentaCallout key={item.id} id={item.id} />;
             return <GridCallout key={item.id} id={item.id} />;
           })}
         </div>
 
-        <div className="mt-12 text-center" id="rec779963654">
+        <div className="mt-3 text-center" id="rec779963654">
           <button
             type="button"
             onClick={onCta}
             data-cb-native-program-cta
             data-cb-native-anchor-target="#tariffs"
-            className="inline-flex h-[62px] items-center justify-center rounded-[28px] px-10 text-[15px] font-bold uppercase tracking-wide shadow-[0_8px_22px_rgba(228,34,194,0.35)] transition hover:opacity-90"
+            className="inline-flex h-[62px] items-center justify-center rounded-[30px] px-10 text-[15px] font-bold uppercase tracking-wide shadow-[0_8px_22px_rgba(228,34,194,0.35)] transition hover:opacity-90"
             style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
           >
             {cta}
