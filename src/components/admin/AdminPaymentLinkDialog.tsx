@@ -845,22 +845,32 @@ ${amountLine}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveOffer?.id]);
 
-  // Reset при закрытии диалога
+  // Полный reset при открытии/закрытии диалога — гарантированно чистое состояние
+  // на каждый новый показ; никаких унаследованных product/tariff/quote/addons.
   useEffect(() => {
-    if (!open) {
-      setSelectedProductId("");
-      setSelectedTariffId("");
-      setSelectedOfferId("");
-      setCustomAmount("");
-      setDescription("");
-      setPaymentType("one_time");
-      setGeneratedUrl(null);
-      setShowCancelConfirm(false);
-      setConflictData(null);
-      setReplaceStep("idle");
-      setSelectedInstallmentMonths(null);
-    }
-  }, [open]);
+    setSelectedProductId("");
+    setSelectedTariffId("");
+    setSelectedOfferId("");
+    setCustomAmount("");
+    setDescription("");
+    setPaymentType("one_time");
+    setGeneratedUrl(null);
+    setShowCancelConfirm(false);
+    setConflictData(null);
+    setReplaceStep("idle");
+    setSelectedInstallmentMonths(null);
+    setSelectedAddonOfferIds([]);
+    setAdjustmentReason("");
+    setInvoicePanelOpen(false);
+    setRrPanelOpen(false);
+    setInvoicePayerType("legal_entity");
+    setInvoiceLegalDetailsId("");
+    setInvoiceIssueResult(null);
+    setInvoicePending(false);
+    setRrPending(false);
+    queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
+  }, [open, queryClient]);
+
 
   // PATCH PAYMENT-CONFLICT v3: конфликт product-level (без tariff_id) и только для подписки.
   const isCurrentConflict = useMemo(() => {
