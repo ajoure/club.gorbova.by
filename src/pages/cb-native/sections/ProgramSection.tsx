@@ -55,6 +55,8 @@ function ModuleCard({ id }: { id: string }) {
   // non-badge, non-meta token is the title.
   const badge = r.text.find((t) => /МОДУЛЬ\s*#?\d+/i.test(t)) ?? "";
   const title = r.text[0] ?? "";
+  // cbold module cards use a vector.svg icon from images[0].
+  const icon = r.images.find((src) => /\.svg(\?|$)/i.test(src)) ?? r.images[0] ?? "";
   const results: string[] = [];
   const bonuses: string[] = [];
   let bucket: "none" | "results" | "bonuses" = "none";
@@ -83,6 +85,7 @@ function ModuleCard({ id }: { id: string }) {
     )
     .slice(0, 2)
     .join(" ");
+  const badgeLabel = badge || "Модуль курса";
 
   return (
     <article
@@ -91,14 +94,42 @@ function ModuleCard({ id }: { id: string }) {
       className="flex h-full flex-col gap-4 rounded-[22px] p-6"
       style={{ background: CB_PALETTE.bg, border: `1px solid ${CB_PALETTE.border}` }}
     >
-      {badge && (
-        <span
-          className="inline-flex self-start rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
-          style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
-        >
-          {badge}
-        </span>
-      )}
+      <div className="flex items-center gap-3">
+        {icon ? (
+          <img
+            src={icon}
+            alt={badgeLabel}
+            data-cb-native-program-icon
+            className="h-11 w-11 shrink-0 object-contain"
+            loading="lazy"
+          />
+        ) : (
+          <span
+            data-cb-native-program-icon-fallback
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[11px] font-bold uppercase tracking-[0.1em]"
+            style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
+            aria-label={badgeLabel}
+          >
+            {badge ? badge.replace(/[^\d]/g, "") || "M" : "M"}
+          </span>
+        )}
+        {badge && (
+          <span
+            className={
+              icon
+                ? "sr-only"
+                : "inline-flex self-start rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
+            }
+            style={
+              icon
+                ? undefined
+                : { background: CB_PALETTE.accent, color: CB_PALETTE.bg }
+            }
+          >
+            {badge}
+          </span>
+        )}
+      </div>
       <h3
         className="text-[18px] font-bold uppercase leading-tight"
         style={{ color: CB_PALETTE.textStrong }}
