@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Plus, ShieldCheck, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AddonPicker } from "@/components/checkout/AddonPicker";
+
 
 type Addon = {
   addon_offer_id: string;
