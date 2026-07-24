@@ -415,14 +415,23 @@ export function AdminPaymentLinkDialog({
     queryKey: ["composable-checkout-quote", effectiveOffer?.id, selectedAddonOfferIds],
     enabled: !!effectiveOffer?.id,
     queryFn: async () => {
+      const parentOfferId = effectiveOffer!.id;
       const { data, error } = await supabase.functions.invoke("composable-checkout-quote", {
-        body: { parent_offer_id: effectiveOffer!.id, addon_offer_ids: selectedAddonOfferIds },
+        body: { parent_offer_id: parentOfferId, addon_offer_ids: selectedAddonOfferIds },
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || "Не удалось рассчитать комплект");
-      return data as any;
+      // Тегируем ответ id-оффера, чтобы UI мог отбросить stale-квоты, пришедшие для
+      // предыдущего продукта/тарифа (защита от race при быстром переключении).
+      return { ...(data as any), __parentOfferId: parentOfferId };
     },
+    staleTime: 0,
   });
+
+  // Считаем quote «свежей» только если она относится к текущему effectiveOffer.
+  const quoteMatchesCurrentOffer =
+    !!effectiveOffer?.id && composableQuote?.__parentOfferId === effectiveOffer.id;
+
 
   useEffect(() => {
     setSelectedAddonOfferIds([]);
