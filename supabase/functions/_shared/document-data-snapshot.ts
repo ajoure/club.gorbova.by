@@ -271,7 +271,6 @@ export async function snapshotOrderDocumentData(
     // Canonical composition title (primary + addons formatted as «. Модуль ...»).
     let composableServiceName: string | null = null;
     if (composableItems.length > 0) {
-      const { buildPurchaseCompositionTitle } = await import('./purchase-composition-title.ts');
       const primary = composableItems.find((i: any) => i?.role === 'primary') ?? composableItems[0];
       const addons = composableItems
         .filter((i: any) => i !== primary)
