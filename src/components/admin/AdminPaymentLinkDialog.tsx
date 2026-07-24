@@ -2073,6 +2073,117 @@ ${amountLine}
                 </div>
               )}
 
+              {/* Sprint «Составные продажи ЦБ» — дополнительные сценарии checkout.
+                  Кнопки видны только если у тарифа есть sibling offer соответствующего типа. */}
+              {selectedTariffId && (invoiceSiblingOffer || rrSiblingOffer) && (
+                <div className="rounded-lg border bg-card/50 p-3 space-y-3">
+                  <p className="text-sm font-medium">Дополнительные сценарии оплаты</p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {invoiceSiblingOffer && (
+                      <Button
+                        type="button"
+                        variant={invoicePanelOpen ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => { setInvoicePanelOpen((v) => !v); setRrPanelOpen(false); }}
+                      >
+                        Счёт для юрлица/ИП
+                      </Button>
+                    )}
+                    {rrSiblingOffer && (
+                      <Button
+                        type="button"
+                        variant={rrPanelOpen ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => { setRrPanelOpen((v) => !v); setInvoicePanelOpen(false); }}
+                      >
+                        Ресурс развития
+                      </Button>
+                    )}
+                  </div>
+
+                  {invoicePanelOpen && invoiceSiblingOffer && (
+                    <div className="space-y-3 pt-2 border-t">
+                      <div className="space-y-1.5">
+                        <Label>Плательщик</Label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(["legal_entity", "entrepreneur", "individual"] as const).map((t) => (
+                            <Button
+                              key={t}
+                              type="button"
+                              size="sm"
+                              variant={invoicePayerType === t ? "default" : "outline"}
+                              onClick={() => setInvoicePayerType(t)}
+                            >
+                              {t === "legal_entity" ? "ЮЛ" : t === "entrepreneur" ? "ИП" : "ФЛ"}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                      {invoicePayerType !== "individual" && (
+                        <div className="space-y-1.5">
+                          <Label>Реквизиты плательщика</Label>
+                          {(targetLegalDetails ?? []).length === 0 ? (
+                            <p className="text-xs text-muted-foreground">
+                              У контакта нет карточек реквизитов. Добавьте их из карточки контакта.
+                            </p>
+                          ) : (
+                            <select
+                              className="w-full h-9 rounded-md border bg-background px-2 text-sm"
+                              value={invoiceLegalDetailsId}
+                              onChange={(e) => setInvoiceLegalDetailsId(e.target.value)}
+                            >
+                              <option value="">— выберите —</option>
+                              {(targetLegalDetails ?? [])
+                                .filter((d: any) =>
+                                  invoicePayerType === "legal_entity"
+                                    ? d.client_type === "legal_entity"
+                                    : d.client_type === "entrepreneur",
+                                )
+                                .map((d: any) => (
+                                  <option key={d.id} value={d.id}>
+                                    {d.leg_org_form ? `${d.leg_org_form} ` : ""}
+                                    {d.leg_name || d.ent_name || "—"}
+                                    {d.leg_unp || d.ent_unp ? ` · УНП ${d.leg_unp || d.ent_unp}` : ""}
+                                    {d.is_primary ? " · основные" : ""}
+                                  </option>
+                                ))}
+                            </select>
+                          )}
+                        </div>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="w-full"
+                        disabled={invoicePending || !selectedProductId}
+                        onClick={handleIssueInvoice}
+                      >
+                        {invoicePending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                        Выписать счёт
+                      </Button>
+                    </div>
+                  )}
+
+                  {rrPanelOpen && rrSiblingOffer && (
+                    <div className="space-y-3 pt-2 border-t">
+                      <p className="text-xs text-muted-foreground">
+                        Будет создана ссылка через Ресурс развития на общую сумму состава.
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="w-full"
+                        disabled={rrPending || !selectedProductId}
+                        onClick={handleInitiateRr}
+                      >
+                        {rrPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                        Сформировать ссылку RR
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-2">
                 <Button
                   type="button"
