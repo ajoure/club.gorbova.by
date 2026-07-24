@@ -86,6 +86,14 @@ function getDisplayName(d: ClientLegalDetails): string {
   return "Плательщик";
 }
 
+/** DD.MM.YYYY из ISO строки, либо сегодня. */
+function formatDate(iso?: string | null): string {
+  const d = iso ? new Date(iso) : new Date();
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}.${mm}.${d.getFullYear()}`;
+}
+
 function getUnp(d: ClientLegalDetails): string | null {
   return d.client_type === "entrepreneur" ? d.ent_unp : d.leg_unp;
 }
