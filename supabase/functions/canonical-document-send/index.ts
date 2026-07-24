@@ -482,20 +482,30 @@ Deno.serve(async (req) => {
             results.email_error = emailErr.message || "email_send_failed";
           } else {
             results.email_sent = true;
-            await admin
-              .from("ai_generated_documents")
-              .update({
-                meta: {
-                  ...(doc.meta || {}),
-                  sent_to_email: recipientEmail,
-                  sent_at: new Date().toISOString(),
-                },
-              })
-              .eq("id", doc.id);
           }
         } catch (e) {
           results.email_error = e instanceof Error ? e.message : "email_exception";
         }
+      }
+      // Persist per-channel delivery state (source of truth for
+      // invoice-delivery-status). Разные исходы:
+      //  - нет email в профиле и не передан override      → no_recipient
+      //  - send-email вернул ошибку / бросил исключение   → error
+      //  - успех                                          → sent
+      if (results.email_sent) {
+        await persistDelivery(admin, doc.id, doc.meta as any, "email", {
+          status: "sent",
+          recipient: body.to_email?.trim() || docProfile?.email?.trim() || null,
+        });
+      } else if (results.email_error === "no_recipient_email") {
+        await persistDelivery(admin, doc.id, doc.meta as any, "email", {
+          status: "no_recipient",
+        });
+      } else {
+        await persistDelivery(admin, doc.id, doc.meta as any, "email", {
+          status: "error",
+          error: results.email_error,
+        });
       }
       await writeAudit(
         admin,
