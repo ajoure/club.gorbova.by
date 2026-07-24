@@ -162,7 +162,7 @@ export function HeroSection({ onCta }: { onCta: () => void }) {
 
         <div className="relative grid items-start gap-6 md:grid-cols-[minmax(0,600px)_1fr] md:gap-10 md:pt-12">
           <div className="relative z-10 flex flex-col items-start text-left">
-            <div className="relative mt-2 inline-flex items-start gap-3 md:mt-3">
+            <div className="relative mt-2 flex flex-wrap items-start gap-3 md:mt-3">
               <div className="relative">
                 {crownImg && (
                   <img
