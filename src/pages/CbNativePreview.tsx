@@ -108,7 +108,7 @@ export default function CbNativePreview() {
       <AdvantagesSection />
 
       {/* 9. Тарифы (dynamic slot manifest — preserves all payment dialogs & CTA bindings) */}
-      <div id="tariffs" className="cb-native-pricing-slice">
+      <div className="cb-native-pricing-slice">
         <style>{`
           .cb-native-pricing-slice > section { background: ${CB_PALETTE.bg}; padding-top: 96px; padding-bottom: 96px; }
           .cb-native-pricing-slice .container { max-width: 1164px; }
@@ -146,6 +146,7 @@ export default function CbNativePreview() {
             tariffs={data.tariffs}
             sectionTitle="ТАРИФЫ И СТОИМОСТЬ ОБУЧЕНИЯ"
             sectionSubtitle=""
+            composableCheckoutMode="always"
             cardRenderer={({ tariff, index, onSelectOffer }) => (
               <CbNativeTariffCard tariff={tariff} index={index} onSelectOffer={onSelectOffer} />
             )}

@@ -6,12 +6,15 @@ import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
 import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialog";
+import { ComposableCheckoutDialog } from "@/components/payment/ComposableCheckoutDialog";
 import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TariffCarouselGrid } from "./TariffCarouselGrid";
 import { AlertTriangle } from "lucide-react";
 import type { PublicProduct, PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
+
+type CheckoutSelection = { addonOfferIds: string[]; total: number; currency: string };
 
 interface UniversalPricingSectionProps {
   product: PublicProduct;
@@ -40,6 +43,16 @@ interface UniversalPricingSectionProps {
     showBadges: boolean;
     priceSuffix: string;
   }) => ReactNode;
+  /**
+   * How to route CTA clicks through the composable add-on selector.
+   * - "auto" (default): open ComposableCheckoutDialog only when the server
+   *   marks the offer with `has_available_addons === true` (SitePageBySlug parity).
+   * - "always": open ComposableCheckoutDialog for every non-preregistration
+   *   offer and let the dialog's built-in "empty quote" fallback auto-continue
+   *   into the downstream flow when no add-ons are configured. Enables the
+   *   composable UX on landings whose server payload does not surface the flag.
+   */
+  composableCheckoutMode?: "auto" | "always";
 }
 
 export function UniversalPricingSection({
@@ -52,6 +65,7 @@ export function UniversalPricingSection({
   reentryMessage,
   layout: layoutProp,
   cardRenderer,
+  composableCheckoutMode = "auto",
 }: UniversalPricingSectionProps) {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState<{
@@ -59,6 +73,7 @@ export function UniversalPricingSection({
     tariff: PublicTariff;
     productId: string;
   } | null>(null);
+  const [checkoutSelection, setCheckoutSelection] = useState<CheckoutSelection | null>(null);
 
   const config = product.landing_config || {};
   const priceSuffix = config.price_suffix || "BYN";
@@ -70,7 +85,16 @@ export function UniversalPricingSection({
 
   const handleSelectOffer = (offer: TariffOffer, tariff: PublicTariff) => {
     setSelectedOffer({ offer, tariff, productId: product.id });
+    setCheckoutSelection(null);
     setPaymentOpen(true);
+  };
+
+  const handleDialogOpenChange = (open: boolean) => {
+    setPaymentOpen(open);
+    if (!open) {
+      setSelectedOffer(null);
+      setCheckoutSelection(null);
+    }
   };
 
   if (!tariffs || tariffs.length === 0) return null;
@@ -156,12 +180,35 @@ export function UniversalPricingSection({
         </div>
       </section>
 
-      {/* Payment / Preregistration / Lead / Bank-installment Dialog */}
-      {selectedOffer && (selectedOffer.offer.offer_type === "lead" || selectedOffer.offer.offer_type === "bank_installment") ? (
+      {/* Composable checkout gate.
+          - "auto": SitePageBySlug parity — only for offers the server marks
+            with has_available_addons=true, and only for direct-pay flows.
+          - "always": try the composable dialog for every non-preregistration
+            offer (incl. lead / bank_installment). ComposableCheckoutDialog
+            auto-continues without UI when the quote returns 0 add-ons, so
+            offers without configured modules keep clean text behavior. */}
+      {selectedOffer &&
+        !checkoutSelection &&
+        selectedOffer.offer.offer_type !== "preregistration" &&
+        (composableCheckoutMode === "always"
+          ? true
+          : selectedOffer.offer.has_available_addons === true &&
+            selectedOffer.offer.offer_type !== "lead" &&
+            selectedOffer.offer.offer_type !== "bank_installment") ? (
+        <ComposableCheckoutDialog
+          open={paymentOpen}
+          onOpenChange={handleDialogOpenChange}
+          offerId={selectedOffer.offer.id}
+          productName={product.public_title || product.name}
+          tariffName={selectedOffer.tariff.name}
+          onContinue={setCheckoutSelection}
+        />
+      ) : selectedOffer && (selectedOffer.offer.offer_type === "lead" || selectedOffer.offer.offer_type === "bank_installment") ? (
         <LeadRequestDialog
           open={paymentOpen}
-          onOpenChange={setPaymentOpen}
+          onOpenChange={handleDialogOpenChange}
           offerId={selectedOffer.offer.id}
+          addonOfferIds={checkoutSelection?.addonOfferIds ?? []}
           offerLabel={selectedOffer.offer.button_label}
           productName={product.public_title || product.name}
           tariffName={selectedOffer.tariff.name}
@@ -174,32 +221,34 @@ export function UniversalPricingSection({
       ) : selectedOffer && selectedOffer.offer.offer_type === "preregistration" ? (
         <PreregistrationDialog
           open={paymentOpen}
-          onOpenChange={setPaymentOpen}
+          onOpenChange={handleDialogOpenChange}
           tariffName={selectedOffer.tariff.name}
           offerId={selectedOffer.offer.id}
         />
       ) : selectedOffer && detectInvoiceOnlyOffer(selectedOffer.offer).isInvoiceOnly ? (
         <InvoiceCheckoutDialog
           open={paymentOpen}
-          onOpenChange={setPaymentOpen}
+          onOpenChange={handleDialogOpenChange}
           productId={selectedOffer.productId}
           productName={product.public_title || product.name}
           tariffName={selectedOffer.tariff.name}
           offerId={selectedOffer.offer.id}
-          amount={selectedOffer.offer.amount}
-          currency={product.currency || "BYN"}
+          addonOfferIds={checkoutSelection?.addonOfferIds ?? []}
+          amount={checkoutSelection?.total ?? selectedOffer.offer.amount}
+          currency={checkoutSelection?.currency ?? product.currency ?? "BYN"}
         />
       ) : selectedOffer ? (
         <PaymentDialog
           open={paymentOpen}
-          onOpenChange={setPaymentOpen}
+          onOpenChange={handleDialogOpenChange}
           productId={selectedOffer.productId}
           productName={product.public_title || product.name}
           tariffName={selectedOffer.tariff.name}
-          currency={product.currency || "BYN"}
-          price={String(selectedOffer.offer.amount)}
+          currency={checkoutSelection?.currency ?? product.currency ?? "BYN"}
+          price={String(checkoutSelection?.total ?? selectedOffer.offer.amount)}
           tariffCode={selectedOffer.tariff.code}
           offerId={selectedOffer.offer.id}
+          addonOfferIds={checkoutSelection?.addonOfferIds ?? []}
           isTrial={selectedOffer.offer.offer_type === "trial"}
           trialDays={selectedOffer.offer.trial_days ?? undefined}
           isClubProduct={!!product.telegram_club_id}
@@ -210,7 +259,9 @@ export function UniversalPricingSection({
           paymentMethod={selectedOffer.offer.payment_method}
           installmentMaxMonths={selectedOffer.offer.installment_count ?? null}
           installmentIntervalDays={(selectedOffer.offer as any).installment_interval_days ?? null}
-          installmentTotalAmountKopecks={Math.round(Number(selectedOffer.offer.amount) * 100)}
+          installmentTotalAmountKopecks={Math.round(
+            Number(checkoutSelection?.total ?? selectedOffer.offer.amount) * 100,
+          )}
         />
       ) : null}
     </>
