@@ -521,7 +521,7 @@ export async function snapshotOrderDocumentData(
       executor_id: explicitExecutorIdLayered,
       service_name: composableServiceName || pick<string>('service_name'),
       service_description: pick<string>('service_description'),
-      unit: composableCheckout ? 'комплект' : (pick<string>('unit') || 'услуга'),
+      unit: composableCheckout ? 'доступ' : (pick<string>('unit') || 'услуга'),
       quantity,
       unit_price: unitPrice,
       amount,
