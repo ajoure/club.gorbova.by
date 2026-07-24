@@ -3043,31 +3043,19 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                   {!linkedCompaniesQuery.isLoading && !linkedCompaniesQuery.isError && linkedCompaniesQuery.data?.length === 0 && (
                     <div className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">Контакт пока не связан с компаниями.</div>
                   )}
-                  {(linkedCompaniesQuery.data ?? []).map(({ company, relationship_type, is_primary, is_billing_contact }) => (
-                    <div
-                      key={`${company!.id}-${relationship_type}`}
-                      className={cn("flex items-center gap-3 rounded-lg border p-3", onOpenCompany && "cursor-pointer transition-colors hover:bg-muted/50")}
-                      role={onOpenCompany ? "button" : undefined}
-                      tabIndex={onOpenCompany ? 0 : undefined}
+                  {(linkedCompaniesQuery.data ?? []).map(({ company }) => (
+                    <button
+                      type="button"
+                      key={company!.id}
+                      disabled={!onOpenCompany}
+                      className={cn("flex w-full items-center gap-3 rounded-lg border p-3 text-left", onOpenCompany && "cursor-pointer transition-colors hover:bg-muted/50", !onOpenCompany && "cursor-default")}
                       onClick={onOpenCompany ? () => onOpenCompany(company!.id) : undefined}
-                      onKeyDown={onOpenCompany ? (event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          onOpenCompany(company!.id);
-                        }
-                      } : undefined}
                     >
                       <div className="rounded-lg bg-primary/10 p-2 text-primary"><Building2 className="h-4 w-4" /></div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium break-words">{normalizeCompanyName(company!.full_name)}</span>
-                          {is_primary && <Badge variant="outline">Основная</Badge>}
-                          {is_billing_contact && <Badge variant="outline">Billing</Badge>}
-                        </div>
-                        <div className="mt-0.5 text-xs text-muted-foreground">{company!.public_id} · {relationship_type || "связанный контакт"}</div>
+                        <span className="font-medium break-words">{normalizeCompanyName(company!.full_name)}</span>
                       </div>
-                      {onOpenCompany && <span className="shrink-0 text-xs font-medium text-primary">Открыть</span>}
-                    </div>
+                    </button>
                   ))}
                 </CardContent>
               </Card>

@@ -82,6 +82,7 @@ import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
@@ -159,6 +160,7 @@ function getTelegramPlainText(text: string | null | undefined): string {
 
 export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContentProps) {
   const { user } = useAuth();
+  const { canWrite, isSuperAdmin } = usePermissions();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -1307,7 +1309,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
       )}
       <CompanyDetailsSheet
         companyId={companySheetId}
-        canEdit={false}
+        canEdit={isSuperAdmin() || canWrite("companies")}
         onClose={() => setCompanySheetId(null)}
         onOpenCompany={setCompanySheetId}
       />
