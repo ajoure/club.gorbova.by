@@ -326,6 +326,24 @@ export function AdminPaymentLinkDialog({
   // Stripe Price. Frontend не является SOT — финальная валидация выполняется на backend.
   const visibleOffers = activeOffers;
 
+  // Sprint «Составные продажи ЦБ» — sibling invoice / RR офферы того же тарифа.
+  // Никаких хардкод UUID — источник истины tariff_offers.offer_type / meta.bank_installment.rr_runtime.
+  const invoiceSiblingOffer = useMemo(
+    () => (allOffers || []).find((o: any) => o.is_active && o.offer_type === "invoice") ?? null,
+    [allOffers],
+  );
+  const rrSiblingOffer = useMemo(
+    () =>
+      (allOffers || []).find(
+        (o: any) =>
+          o.is_active &&
+          o.offer_type === "bank_installment" &&
+          o?.meta?.bank_installment?.rr_runtime?.enabled === true &&
+          o?.meta?.bank_installment?.rr_runtime?.provider === "rr",
+      ) ?? null,
+    [allOffers],
+  );
+
   // Автосброс selectedOfferId, если выбранная кнопка вышла из visibleOffers (смена провайдера/типа).
   useEffect(() => {
     if (!selectedOfferId) return;
