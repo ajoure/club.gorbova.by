@@ -30,6 +30,8 @@ const ConnectAgent = lazy(() => import("./pages/ConnectAgent"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
 const ReferralCapture = lazy(() => import("./pages/ReferralCapture"));
+// Hidden native /cb candidate — not linked from navigation, noindex.
+const CbNativePreview = lazy(() => import("./pages/CbNativePreview"));
 
 // DEV-only fixture stand for the slot bridge regression harness. Guarded by
 // import.meta.env.DEV; production bundles never register the route below.
