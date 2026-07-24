@@ -31,6 +31,7 @@ import { PostTariffSection } from "./cb-native/sections/PostTariffSection";
 import { FaqSection } from "./cb-native/sections/FaqSection";
 import { CompanyFooterSection } from "./cb-native/sections/CompanyFooterSection";
 import { CbNativeTariffCard } from "./cb-native/sections/CbNativeTariffCard";
+import { BrandHeaderSection } from "./cb-native/sections/BrandHeaderSection";
 
 // Same product bound to live /cb (site_pages slug='cb'). NO hardcoded prices.
 const CB_PRODUCT_ID = "3e43fb28-8322-41bc-bfee-714731bdc630";
@@ -55,17 +56,6 @@ export default function CbNativePreview() {
     const prev = meta.content;
     meta.content = "noindex,nofollow";
 
-    // Preload Comfortaa (Tilda's font family declared in manifest).
-    const linkId = "cb-native-font";
-    if (!document.getElementById(linkId)) {
-      const l = document.createElement("link");
-      l.id = linkId;
-      l.rel = "stylesheet";
-      l.href =
-        "https://fonts.googleapis.com/css2?family=Comfortaa:wght@400;500;600;700&display=swap";
-      document.head.appendChild(l);
-    }
-
     return () => {
       if (injected) meta!.remove();
       else meta!.content = prev;
@@ -83,6 +73,8 @@ export default function CbNativePreview() {
         fontFamily: CB_FONT_STACK,
       }}
     >
+      <BrandHeaderSection />
+
       {/* 1. Hero */}
       <HeroSection onCta={scrollToTariffs} />
 
@@ -105,10 +97,10 @@ export default function CbNativePreview() {
       <ProcessSection />
 
       {/* 8. Преимущества */}
-      <AdvantagesSection />
+      <AdvantagesSection onCta={scrollToTariffs} />
 
       {/* 9. Тарифы (dynamic slot manifest — preserves all payment dialogs & CTA bindings) */}
-      <div className="cb-native-pricing-slice">
+      <div id="rec1219722591" className="cb-native-pricing-slice">
         <style>{`
           .cb-native-pricing-slice > section { background: ${CB_PALETTE.bg}; padding-top: 96px; padding-bottom: 96px; }
           .cb-native-pricing-slice .container { max-width: 1164px; }

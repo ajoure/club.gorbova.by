@@ -29,6 +29,7 @@ export function HeroSection({ onCta }: { onCta: () => void }) {
   const installmentLabel = r.text[4] ?? "Рассрочка";
   const headline = r.text[7] ?? "ЦЕННЫЙ БУХГАЛТЕР";
   const newBadge = r.text[8] ?? "New";
+  const installmentNote = [r.text[5], r.text[6]].filter(Boolean).join(" ");
 
   const heroImg =
     r.images.find((u) => u.includes("img5-removebg-previe")) ?? r.images[6];
@@ -243,6 +244,14 @@ export function HeroSection({ onCta }: { onCta: () => void }) {
                 {installmentLabel}
               </span>
             </div>
+            {installmentNote ? (
+              <p
+                className="mt-4 max-w-[500px] text-[12px] leading-[1.45]"
+                style={{ color: MUTED, fontFamily: SF_FONT }}
+              >
+                {installmentNote}
+              </p>
+            ) : null}
           </div>
 
           {/* Portrait column (desktop) */}

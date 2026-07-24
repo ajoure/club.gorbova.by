@@ -74,4 +74,4 @@ export const CB_PALETTE = {
 } as const;
 
 export const CB_FONT_STACK =
-  "'Comfortaa', 'Segoe UI', system-ui, -apple-system, sans-serif";
+  "'Sf-pro-display', Arial, sans-serif";
