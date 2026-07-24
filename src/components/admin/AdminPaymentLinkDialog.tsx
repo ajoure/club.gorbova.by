@@ -215,8 +215,10 @@ export function AdminPaymentLinkDialog({
         invoice_number: string;
         document_number: string | null;
         document_issued_at: string | null;
+        order_id: string | null;
       }
   >(null);
+
   // Phase 4.1 — provider routing UI state
   const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
   const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
