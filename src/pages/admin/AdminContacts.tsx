@@ -472,7 +472,7 @@ export default function AdminContacts() {
       // Server-side search
       if (debouncedSearch) {
         const s = debouncedSearch.trim();
-        const { data: companyProfileIds, error: companySearchError } = await (supabase.rpc as any)("search_profile_ids_by_company", { p_query: s });
+        const { data: companyProfileIds, error: companySearchError } = await supabase.rpc("search_profile_ids_by_company", { p_query: s });
         if (companySearchError) throw companySearchError;
         const companyIds = ((companyProfileIds ?? []) as string[]).filter(Boolean);
         const companyIdFilter = companyIds.length > 0 ? `,id.in.(${companyIds.join(",")})` : "";
