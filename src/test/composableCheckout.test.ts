@@ -89,4 +89,37 @@ describe("composable checkout quote", () => {
     expect(allocated.items.map((item) => item.final_amount)).toEqual([0.01, 0, 0]);
     expect(() => allocateComposablePayableTotal(quote, 0, "credit")).toThrow("invalid_payable_total");
   });
+
+  it("BizLady CB: primary 2650 stays full, addons discounted 50%", () => {
+    const bizLadyPrimary = {
+      role: "primary" as const,
+      product_id: "cb-20",
+      product_name: "Ценный бухгалтер",
+      tariff_id: "biz-lady",
+      tariff_name: "Бизнес-леди",
+      offer_id: "biz-lady-100",
+      list_amount: 2650,
+    };
+    const addon = (offer_id: string, name: string, list: number) => ({
+      ...bizLadyPrimary,
+      role: "addon" as const,
+      product_id: offer_id,
+      product_name: name,
+      offer_id,
+      list_amount: list,
+      pricing_mode: "percent_discount" as const,
+      discount_percent: 50,
+    });
+    const quote = buildComposableQuote([
+      bizLadyPrimary,
+      addon("mod-ip", "Учет у ИП", 800),
+      addon("mod-mp", "Маркетплейсы", 600),
+    ]);
+    expect(quote.items[0].final_amount).toBe(2650);
+    expect(quote.items[1].final_amount).toBe(400);
+    expect(quote.items[2].final_amount).toBe(300);
+    expect(quote.subtotal).toBe(3350);
+    expect(quote.total).toBe(3350);
+  });
 });
+

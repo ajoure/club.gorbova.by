@@ -196,6 +196,13 @@ export function AdminPaymentLinkDialog({
   const [selectedInstallmentMonths, setSelectedInstallmentMonths] = useState<number | null>(null);
   const [selectedAddonOfferIds, setSelectedAddonOfferIds] = useState<string[]>([]);
   const [adjustmentReason, setAdjustmentReason] = useState("");
+  // Sprint «Составные продажи ЦБ» — panels для invoice (ЮЛ/ИП/ФЛ) и Ресурс развития (RR).
+  const [invoicePanelOpen, setInvoicePanelOpen] = useState(false);
+  const [rrPanelOpen, setRrPanelOpen] = useState(false);
+  const [invoicePayerType, setInvoicePayerType] = useState<"individual" | "entrepreneur" | "legal_entity">("legal_entity");
+  const [invoiceLegalDetailsId, setInvoiceLegalDetailsId] = useState<string>("");
+  const [invoicePending, setInvoicePending] = useState(false);
+  const [rrPending, setRrPending] = useState(false);
   // Phase 4.1 — provider routing UI state
   const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
   const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
@@ -247,6 +254,24 @@ export function AdminPaymentLinkDialog({
       setStripeAccountCode((def as any).account_code);
     }
   }, [stripeAccounts, stripeAccountCode]);
+
+  // Sprint «Составные продажи ЦБ» — legal_details целевого пользователя (для invoice ЮЛ/ИП).
+  const { data: targetLegalDetails } = useQuery({
+    queryKey: ["admin-payment-link-target-legal-details", userId],
+    enabled: !!userId && invoicePanelOpen,
+    queryFn: async () => {
+      const { data: profile } = await supabase
+        .from("profiles").select("id").eq("user_id", userId!).maybeSingle();
+      if (!profile) return [];
+      const { data, error } = await supabase
+        .from("client_legal_details")
+        .select("id, client_type, leg_name, leg_org_form, ent_name, leg_unp, ent_unp, is_primary")
+        .eq("profile_id", profile.id)
+        .order("is_primary", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
 
   // Phase 7-UI follow-up — supported currencies выбранного Stripe-аккаунта.
   // Передаются в shared `resolveAvailableProviders` (frontend mirror SOT).
@@ -318,6 +343,24 @@ export function AdminPaymentLinkDialog({
   // сам вызовет admin-provision-stripe-price при необходимости и идемпотентно создаст/найдёт
   // Stripe Price. Frontend не является SOT — финальная валидация выполняется на backend.
   const visibleOffers = activeOffers;
+
+  // Sprint «Составные продажи ЦБ» — sibling invoice / RR офферы того же тарифа.
+  // Никаких хардкод UUID — источник истины tariff_offers.offer_type / meta.bank_installment.rr_runtime.
+  const invoiceSiblingOffer = useMemo(
+    () => (allOffers || []).find((o: any) => o.is_active && o.offer_type === "invoice") ?? null,
+    [allOffers],
+  );
+  const rrSiblingOffer = useMemo(
+    () =>
+      (allOffers || []).find(
+        (o: any) =>
+          o.is_active &&
+          o.offer_type === "bank_installment" &&
+          o?.meta?.bank_installment?.rr_runtime?.enabled === true &&
+          o?.meta?.bank_installment?.rr_runtime?.provider === "rr",
+      ) ?? null,
+    [allOffers],
+  );
 
   // Автосброс selectedOfferId, если выбранная кнопка вышла из visibleOffers (смена провайдера/типа).
   useEffect(() => {
@@ -968,6 +1011,92 @@ ${amountLine}
       toast.error("Ошибка: " + (error as Error).message);
     },
   });
+
+  // Sprint «Составные продажи ЦБ» — invoice writer (admin-invoice-checkout-issue).
+  // Selected addons + composite total идут в один order_group.
+  const handleIssueInvoice = async () => {
+    if (!userId) { toast.error("Только для карточки контакта"); return; }
+    if (!invoiceSiblingOffer) { toast.error("У тарифа нет invoice-оффера"); return; }
+    if (!selectedProductId) { toast.error("Выберите продукт"); return; }
+    if ((invoicePayerType === "legal_entity" || invoicePayerType === "entrepreneur") && !invoiceLegalDetailsId) {
+      toast.error("Выберите реквизиты плательщика");
+      return;
+    }
+    setInvoicePending(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-invoice-checkout-issue", {
+        body: {
+          target_user_id: userId,
+          product_id: selectedProductId,
+          offer_id: invoiceSiblingOffer.id,
+          addon_offer_ids: selectedAddonOfferIds,
+          payer_type: invoicePayerType,
+          legal_details_id: invoicePayerType === "individual" ? null : invoiceLegalDetailsId,
+          adjustment_reason: adjustmentReason.trim() || null,
+        },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast.success(`Счёт ${(data as any).invoice_number ?? "выписан"}`);
+      queryClient.invalidateQueries({ queryKey: ["payment-links-enriched"] });
+      queryClient.invalidateQueries({ queryKey: ["contact-orders"] });
+      setInvoicePanelOpen(false);
+    } catch (e: any) {
+      toast.error("Ошибка счёта: " + (e?.message ?? "unknown"));
+    } finally {
+      setInvoicePending(false);
+    }
+  };
+
+  // Sprint «Составные продажи ЦБ» — Resource Development админ-flow
+  // (переиспользует public-rr-installment-initiate: принимает PII контакта).
+  const handleInitiateRr = async () => {
+    if (!rrSiblingOffer) { toast.error("У тарифа нет RR-оффера"); return; }
+    if (!selectedProductId) { toast.error("Выберите продукт"); return; }
+    setRrPending(true);
+    try {
+      // Тянем PII целевого профиля из БД (SoT — profiles).
+      let name = userName || "";
+      let email = userEmail || "";
+      let phone = "";
+      if (userId) {
+        const { data: p } = await supabase
+          .from("profiles")
+          .select("full_name, email, phone")
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (p) {
+          name = name || (p as any).full_name || "";
+          email = email || (p as any).email || "";
+          phone = (p as any).phone || "";
+        }
+      }
+      if (!name || !email || !phone) {
+        toast.error("Для RR требуется имя, email и телефон контакта");
+        return;
+      }
+      const { data, error } = await supabase.functions.invoke("public-rr-installment-initiate", {
+        body: {
+          offer_id: rrSiblingOffer.id,
+          addon_offer_ids: selectedAddonOfferIds,
+          name, email, phone,
+        },
+      });
+      if (error) throw error;
+      const redirect = (data as any)?.redirect_url ?? (data as any)?.url ?? null;
+      if (!redirect) throw new Error((data as any)?.error || "RR не вернул redirect_url");
+      setGeneratedUrl(redirect);
+      queryClient.invalidateQueries({ queryKey: ["contact-orders"] });
+      toast.success("Ссылка RR сформирована");
+      setRrPanelOpen(false);
+    } catch (e: any) {
+      toast.error("Ошибка RR: " + (e?.message ?? "unknown"));
+    } finally {
+      setRrPending(false);
+    }
+  };
+
+
 
   const sendToTelegramMutation = useMutation({
     mutationFn: async () => {
@@ -1940,6 +2069,117 @@ ${amountLine}
                         {effectivePaymentType === "subscription" ? "Подписка (ежемесячно)" : "Разовая оплата"}
                       </p>
                     </>
+                  )}
+                </div>
+              )}
+
+              {/* Sprint «Составные продажи ЦБ» — дополнительные сценарии checkout.
+                  Кнопки видны только если у тарифа есть sibling offer соответствующего типа. */}
+              {selectedTariffId && (invoiceSiblingOffer || rrSiblingOffer) && (
+                <div className="rounded-lg border bg-card/50 p-3 space-y-3">
+                  <p className="text-sm font-medium">Дополнительные сценарии оплаты</p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {invoiceSiblingOffer && (
+                      <Button
+                        type="button"
+                        variant={invoicePanelOpen ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => { setInvoicePanelOpen((v) => !v); setRrPanelOpen(false); }}
+                      >
+                        Счёт для юрлица/ИП
+                      </Button>
+                    )}
+                    {rrSiblingOffer && (
+                      <Button
+                        type="button"
+                        variant={rrPanelOpen ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => { setRrPanelOpen((v) => !v); setInvoicePanelOpen(false); }}
+                      >
+                        Ресурс развития
+                      </Button>
+                    )}
+                  </div>
+
+                  {invoicePanelOpen && invoiceSiblingOffer && (
+                    <div className="space-y-3 pt-2 border-t">
+                      <div className="space-y-1.5">
+                        <Label>Плательщик</Label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(["legal_entity", "entrepreneur", "individual"] as const).map((t) => (
+                            <Button
+                              key={t}
+                              type="button"
+                              size="sm"
+                              variant={invoicePayerType === t ? "default" : "outline"}
+                              onClick={() => setInvoicePayerType(t)}
+                            >
+                              {t === "legal_entity" ? "ЮЛ" : t === "entrepreneur" ? "ИП" : "ФЛ"}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                      {invoicePayerType !== "individual" && (
+                        <div className="space-y-1.5">
+                          <Label>Реквизиты плательщика</Label>
+                          {(targetLegalDetails ?? []).length === 0 ? (
+                            <p className="text-xs text-muted-foreground">
+                              У контакта нет карточек реквизитов. Добавьте их из карточки контакта.
+                            </p>
+                          ) : (
+                            <select
+                              className="w-full h-9 rounded-md border bg-background px-2 text-sm"
+                              value={invoiceLegalDetailsId}
+                              onChange={(e) => setInvoiceLegalDetailsId(e.target.value)}
+                            >
+                              <option value="">— выберите —</option>
+                              {(targetLegalDetails ?? [])
+                                .filter((d: any) =>
+                                  invoicePayerType === "legal_entity"
+                                    ? d.client_type === "legal_entity"
+                                    : d.client_type === "entrepreneur",
+                                )
+                                .map((d: any) => (
+                                  <option key={d.id} value={d.id}>
+                                    {d.leg_org_form ? `${d.leg_org_form} ` : ""}
+                                    {d.leg_name || d.ent_name || "—"}
+                                    {d.leg_unp || d.ent_unp ? ` · УНП ${d.leg_unp || d.ent_unp}` : ""}
+                                    {d.is_primary ? " · основные" : ""}
+                                  </option>
+                                ))}
+                            </select>
+                          )}
+                        </div>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="w-full"
+                        disabled={invoicePending || !selectedProductId}
+                        onClick={handleIssueInvoice}
+                      >
+                        {invoicePending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                        Выписать счёт
+                      </Button>
+                    </div>
+                  )}
+
+                  {rrPanelOpen && rrSiblingOffer && (
+                    <div className="space-y-3 pt-2 border-t">
+                      <p className="text-xs text-muted-foreground">
+                        Будет создана ссылка через Ресурс развития на общую сумму состава.
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="w-full"
+                        disabled={rrPending || !selectedProductId}
+                        onClick={handleInitiateRr}
+                      >
+                        {rrPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                        Сформировать ссылку RR
+                      </Button>
+                    </div>
                   )}
                 </div>
               )}
