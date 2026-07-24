@@ -39,6 +39,8 @@ import {
 } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 import { AddonPicker } from "@/components/checkout/AddonPicker";
+import { OrderSummary, type OrderSummaryLine } from "@/components/checkout/OrderSummary";
+import { InvoiceDeliverySuccess } from "@/components/payment/InvoiceDeliverySuccess";
 
 import { useTariffOffers, type TariffOffer } from "@/hooks/useTariffOffers";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
@@ -205,6 +207,16 @@ export function AdminPaymentLinkDialog({
   const [invoiceLegalDetailsId, setInvoiceLegalDetailsId] = useState<string>("");
   const [invoicePending, setInvoicePending] = useState(false);
   const [rrPending, setRrPending] = useState(false);
+  // Blocker fix ORD-26-02827: invoice delivery success внутри админского flow.
+  const [invoiceIssueResult, setInvoiceIssueResult] = useState<
+    | null
+    | {
+        document_id: string | null;
+        invoice_number: string;
+        document_number: string | null;
+        document_issued_at: string | null;
+      }
+  >(null);
   // Phase 4.1 — provider routing UI state
   const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
   const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
@@ -1039,10 +1051,18 @@ ${amountLine}
       });
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
-      toast.success(`Счёт ${(data as any).invoice_number ?? "выписан"}`);
+      const payload = data as any;
+      // Не заявляем «отправлено» — реальные статусы покажет InvoiceDeliverySuccess.
+      toast.success(`Счёт ${payload.invoice_number ?? "выписан"}. PDF готовится…`);
       queryClient.invalidateQueries({ queryKey: ["payment-links-enriched"] });
       queryClient.invalidateQueries({ queryKey: ["contact-orders"] });
       setInvoicePanelOpen(false);
+      setInvoiceIssueResult({
+        document_id: payload.document_id ?? null,
+        invoice_number: payload.invoice_number ?? "—",
+        document_number: payload.document_number ?? null,
+        document_issued_at: payload.document_issued_at ?? null,
+      });
     } catch (e: any) {
       toast.error("Ошибка счёта: " + (e?.message ?? "unknown"));
     } finally {
@@ -2231,6 +2251,30 @@ ${amountLine}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={!!invoiceIssueResult}
+        onOpenChange={(v) => { if (!v) setInvoiceIssueResult(null); }}
+      >
+        <DialogContent className="sm:max-w-[560px] p-0 flex flex-col gap-0 overflow-hidden">
+          <DialogHeader className="px-6 pt-6 pb-3 border-b shrink-0">
+            <DialogTitle>Счёт выписан</DialogTitle>
+            <DialogDescription>
+              Проверьте, что PDF сформирован и оба канала доставки отработали.
+            </DialogDescription>
+          </DialogHeader>
+          {invoiceIssueResult && (
+            <InvoiceDeliverySuccess
+              documentId={invoiceIssueResult.document_id}
+              invoiceNumber={invoiceIssueResult.invoice_number}
+              documentNumber={invoiceIssueResult.document_number}
+              documentIssuedAt={invoiceIssueResult.document_issued_at}
+              onClose={() => setInvoiceIssueResult(null)}
+              layout="dialog"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
