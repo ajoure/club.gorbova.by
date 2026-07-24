@@ -38,11 +38,11 @@ describe("OrderSummary", () => {
   });
 
   it("renders 9 addons compactly without crashing", () => {
-    const names = ["A","B","C","D","E","F","G","H","I"];
+    const names = ["Стройка","Общепит","Услуги","ИТ","Аренда","Импорт","Экспорт","Логистика","Розница"];
     const items = [base, ...names.map((n) => addon(n, 400, 200))];
     render(<OrderSummary items={items} currency="BYN" total={2650 + 9 * 200} />);
     for (const n of names) {
-      expect(screen.getByText(new RegExp(n))).toBeInTheDocument();
+      expect(screen.getAllByText(new RegExp(n)).length).toBeGreaterThan(0);
     }
   });
 
