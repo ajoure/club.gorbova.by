@@ -23,6 +23,7 @@ import { formatAmountWithWordsByRublesAndKopecks } from './amount-with-words.ts'
 import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFields } from './executor-fields.ts';
 import { buildStandardFieldValues, mergeStandardIntoFields } from './standard-fields.ts';
 import { derivePaymentChannel } from './document-resolver-v2/payment-channel.ts';
+import { buildPurchaseCompositionTitle } from './purchase-composition-title.ts';
 import { resolveDocumentScenario, type PayerType } from './document-scenario-resolver.ts';
 import { buildTypedB97FieldValues, mergeTypedB97IntoFields } from './typed-fld-mapping.ts';
 
