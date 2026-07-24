@@ -1453,7 +1453,7 @@ ${amountLine}
                   {tariffsLoading ? (
                     <Skeleton className="h-10 w-full" />
                   ) : tariffs && tariffs.length > 0 ? (
-                    <Select value={selectedTariffId} onValueChange={setSelectedTariffId}>
+                    <Select value={selectedTariffId} onValueChange={handleTariffChange}>
                       <SelectTrigger>
                         <SelectValue placeholder="Выберите тариф" />
                       </SelectTrigger>
