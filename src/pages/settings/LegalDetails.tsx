@@ -331,14 +331,39 @@ export default function LegalDetailsSettings() {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить реквизиты?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {detailsToDelete && (
-                <>
-                  Реквизиты «{getDisplayName(detailsToDelete)}» будут удалены.
-                  Это действие нельзя отменить.
-                </>
-              )}
+            <AlertDialogTitle>Удалить профиль реквизитов?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              {detailsToDelete ? (
+                <div className="space-y-2 text-sm">
+                  <div>
+                    <span className="font-medium text-foreground">
+                      {getDisplayName(detailsToDelete)}
+                    </span>{" "}
+                    <span className="text-muted-foreground">
+                      ({getTypeLabel(detailsToDelete.client_type as ClientType)})
+                    </span>
+                  </div>
+                  <ul className="list-disc pl-5 text-muted-foreground space-y-1">
+                    <li>Профиль исчезнет из будущего выбора плательщика.</li>
+                    <li>
+                      Связи с CRM-компанией и платёжными контактами будут отвязаны,
+                      но сами компании и контакты сохранятся.
+                    </li>
+                    <li>
+                      Исторические счета, акты и заказы сохранят snapshot реквизитов
+                      — ссылка на профиль просто обнулится.
+                    </li>
+                    {detailsToDelete.is_default && (
+                      <li className="text-destructive">
+                        Это основной профиль — после удаления назначьте новый основной вручную.
+                      </li>
+                    )}
+                  </ul>
+                  <div className="text-destructive font-medium pt-1">
+                    Действие необратимо.
+                  </div>
+                </div>
+              ) : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -347,7 +372,7 @@ export default function LegalDetailsSettings() {
               onClick={handleDelete}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Удалить
+              Удалить профиль
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
