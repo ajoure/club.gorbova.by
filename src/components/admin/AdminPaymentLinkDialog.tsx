@@ -1888,7 +1888,7 @@ ${amountLine}
                 </div>
               )}
 
-              {effectiveOffer && composableItems.length > 0 && (
+              {selectedProductId && selectedTariffId && effectiveOffer && quoteMatchesCurrentOffer && composableItems.length > 0 && (
                 <OrderSummary
                   items={composableItems.map((it: any) => ({
                     role: it.role,
