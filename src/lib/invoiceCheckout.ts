@@ -1,10 +1,10 @@
 /**
  * Invoice checkout detection.
  *
- * Оффер считается «invoice-only», если среди включённых сценариев есть
- * сценарий payer_type='legal_entity' с единственным каналом 'bank_transfer'
- * и нет другого включённого legal_entity-сценария с эквайринговыми каналами.
- * Базовые/legacy сценарии физлица не должны ломать детект счёта для ЮЛ.
+ * Источник истины — настройки самой кнопки/оффера. Настройки генерируемых
+ * документов намеренно не участвуют в выборе checkout: один и тот же оффер
+ * может иметь документы и для физлица, и для юрлица, не становясь от этого
+ * кнопкой выставления счёта.
  *
  * В таком случае кнопка НЕ вызывает bePaid — вместо этого открывается
  * InvoiceCheckoutDialog, который создаёт заказ+сделку и выписывает счёт.
@@ -19,45 +19,15 @@ export interface InvoiceOnlyDetection {
 
 export function detectInvoiceOnlyOffer(offer: TariffOffer | null | undefined): InvoiceOnlyDetection {
   if (!offer) return { isInvoiceOnly: false, scenarioId: null };
-  // Каноничный признак — offer_type='invoice' (кнопка «Сформировать счёт»).
-  // Приоритетнее любых scenario-based эвристик.
-  if ((offer as any).offer_type === "invoice") {
-    return { isInvoiceOnly: true, scenarioId: null };
-  }
-  const meta = (offer as unknown as { meta?: Record<string, unknown> }).meta;
-  const scenariosRaw = meta && typeof meta === "object" ? (meta as any).document_scenarios : null;
-  if (!Array.isArray(scenariosRaw) || scenariosRaw.length === 0) {
-    return { isInvoiceOnly: false, scenarioId: null };
-  }
+  const meta = offer.meta as (TariffOffer["meta"] & {
+    slot_role?: string;
+    site_button_variant?: string;
+  }) | undefined;
+  const isInvoiceOnly =
+    offer.offer_type === "invoice" ||
+    offer.payment_method === "bank_transfer" ||
+    meta?.slot_role === "payment_invoice" ||
+    meta?.site_button_variant === "legal_entity";
 
-  const enabled = scenariosRaw.filter((s: any) => s && s.is_enabled !== false);
-  if (enabled.length === 0) return { isInvoiceOnly: false, scenarioId: null };
-
-  const legalScenarios = enabled.filter((s: any) => s.payer_type === "legal_entity");
-  if (legalScenarios.length === 0) return { isInvoiceOnly: false, scenarioId: null };
-
-  const invoiceScenario = legalScenarios.find((s: any) => {
-    const channels = Array.isArray(s.payment_channels)
-      ? s.payment_channels
-      : Array.isArray(s.payment_methods)
-        ? s.payment_methods
-        : [];
-    return channels.length === 1 && channels[0] === "bank_transfer";
-  });
-  if (!invoiceScenario) return { isInvoiceOnly: false, scenarioId: null };
-
-  const hasLegalAcquiringScenario = legalScenarios.some((s: any) => {
-    if (s === invoiceScenario) return false;
-    const channels = Array.isArray(s.payment_channels)
-      ? s.payment_channels
-      : Array.isArray(s.payment_methods)
-        ? s.payment_methods
-        : [];
-    // Пустой массив = «любой канал», значит такой сценарий не invoice-only.
-    if (channels.length === 0) return true;
-    return channels.some((c: string) => c !== "bank_transfer");
-  });
-
-  if (hasLegalAcquiringScenario) return { isInvoiceOnly: false, scenarioId: null };
-  return { isInvoiceOnly: true, scenarioId: invoiceScenario.id ?? null };
+  return { isInvoiceOnly, scenarioId: null };
 }
