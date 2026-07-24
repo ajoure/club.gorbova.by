@@ -1012,6 +1012,92 @@ ${amountLine}
     },
   });
 
+  // Sprint «Составные продажи ЦБ» — invoice writer (admin-invoice-checkout-issue).
+  // Selected addons + composite total идут в один order_group.
+  const handleIssueInvoice = async () => {
+    if (!userId) { toast.error("Только для карточки контакта"); return; }
+    if (!invoiceSiblingOffer) { toast.error("У тарифа нет invoice-оффера"); return; }
+    if (!selectedProductId) { toast.error("Выберите продукт"); return; }
+    if ((invoicePayerType === "legal_entity" || invoicePayerType === "entrepreneur") && !invoiceLegalDetailsId) {
+      toast.error("Выберите реквизиты плательщика");
+      return;
+    }
+    setInvoicePending(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-invoice-checkout-issue", {
+        body: {
+          target_user_id: userId,
+          product_id: selectedProductId,
+          offer_id: invoiceSiblingOffer.id,
+          addon_offer_ids: selectedAddonOfferIds,
+          payer_type: invoicePayerType,
+          legal_details_id: invoicePayerType === "individual" ? null : invoiceLegalDetailsId,
+          adjustment_reason: adjustmentReason.trim() || null,
+        },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast.success(`Счёт ${(data as any).invoice_number ?? "выписан"}`);
+      queryClient.invalidateQueries({ queryKey: ["payment-links-enriched"] });
+      queryClient.invalidateQueries({ queryKey: ["contact-orders"] });
+      setInvoicePanelOpen(false);
+    } catch (e: any) {
+      toast.error("Ошибка счёта: " + (e?.message ?? "unknown"));
+    } finally {
+      setInvoicePending(false);
+    }
+  };
+
+  // Sprint «Составные продажи ЦБ» — Resource Development админ-flow
+  // (переиспользует public-rr-installment-initiate: принимает PII контакта).
+  const handleInitiateRr = async () => {
+    if (!rrSiblingOffer) { toast.error("У тарифа нет RR-оффера"); return; }
+    if (!selectedProductId) { toast.error("Выберите продукт"); return; }
+    setRrPending(true);
+    try {
+      // Тянем PII целевого профиля из БД (SoT — profiles).
+      let name = userName || "";
+      let email = userEmail || "";
+      let phone = "";
+      if (userId) {
+        const { data: p } = await supabase
+          .from("profiles")
+          .select("full_name, email, phone")
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (p) {
+          name = name || (p as any).full_name || "";
+          email = email || (p as any).email || "";
+          phone = (p as any).phone || "";
+        }
+      }
+      if (!name || !email || !phone) {
+        toast.error("Для RR требуется имя, email и телефон контакта");
+        return;
+      }
+      const { data, error } = await supabase.functions.invoke("public-rr-installment-initiate", {
+        body: {
+          offer_id: rrSiblingOffer.id,
+          addon_offer_ids: selectedAddonOfferIds,
+          name, email, phone,
+        },
+      });
+      if (error) throw error;
+      const redirect = (data as any)?.redirect_url ?? (data as any)?.url ?? null;
+      if (!redirect) throw new Error((data as any)?.error || "RR не вернул redirect_url");
+      setGeneratedUrl(redirect);
+      queryClient.invalidateQueries({ queryKey: ["contact-orders"] });
+      toast.success("Ссылка RR сформирована");
+      setRrPanelOpen(false);
+    } catch (e: any) {
+      toast.error("Ошибка RR: " + (e?.message ?? "unknown"));
+    } finally {
+      setRrPending(false);
+    }
+  };
+
+
+
   const sendToTelegramMutation = useMutation({
     mutationFn: async () => {
       if (!generatedUrl || !selectedProduct || !selectedTariff) {
