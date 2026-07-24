@@ -360,13 +360,13 @@ export function IndividualRequisitesForm({
           )}
         />
 
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           {onCancel && (
-            <Button type="button" variant="ghost" onClick={onCancel}>
+            <Button className="w-full sm:w-auto" type="button" variant="ghost" onClick={onCancel}>
               Отмена
             </Button>
           )}
-          <Button type="submit" disabled={!!isSubmitting}>
+          <Button className="w-full sm:w-auto" type="submit" disabled={!!isSubmitting}>
             {isSubmitting ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
             ) : (
