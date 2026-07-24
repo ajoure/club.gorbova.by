@@ -94,10 +94,13 @@ export function AddonPicker({
   }
 
   const gapClass = density === "admin" ? "gap-1.5" : "gap-2";
+  // Public: строго одна колонка — имя модуля всегда полностью видно.
+  // Admin: компактная 2–3-колоночная сетка сохраняется.
   const gridClass =
     density === "admin"
       ? "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
-      : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3";
+      : "grid grid-cols-1";
+
 
   return (
     <div className={cn("space-y-2", className)}>
