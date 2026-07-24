@@ -1802,43 +1802,27 @@ ${amountLine}
                       Они войдут в одну сделку и общую сумму, а доступ будет выдан отдельно по каждой позиции.
                     </p>
                   </div>
-                  {composableQuoteLoading ? (
-                    <Skeleton className="h-12 w-full" />
-                  ) : composableAvailableAddons.map((addon: any) => {
-                    const checked = addon.is_required || selectedAddonOfferIds.includes(addon.addon_offer_id);
-                    const priceLabel = addon.pricing_mode === "free"
-                      ? "бесплатно"
-                      : addon.pricing_mode === "percent_discount"
-                        ? `скидка ${addon.discount_percent}%`
-                        : addon.pricing_mode === "fixed_price"
-                          ? `${addon.fixed_amount} ${composableCurrency}`
-                          : `${addon.list_amount} ${composableCurrency}`;
-                    return (
-                      <label key={addon.addon_offer_id} className="flex items-center gap-3 rounded-md border p-3">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={addon.is_required}
-                          onChange={(e) => setSelectedAddonOfferIds((prev) =>
-                            e.target.checked
-                              ? [...new Set([...prev, addon.addon_offer_id])]
-                              : prev.filter((id) => id !== addon.addon_offer_id)
-                          )}
-                        />
-                        <span className="flex-1 text-sm">
-                          <span className="font-medium">{addon.addon_product_name}</span>
-                          <span className="block text-xs text-muted-foreground">{addon.addon_tariff_name}</span>
-                        </span>
-                        <Badge variant="outline">{priceLabel}</Badge>
-                      </label>
-                    );
-                  })}
+                  <AddonPicker
+                    addons={composableAvailableAddons as any}
+                    selectedIds={selectedAddonOfferIds}
+                    currency={composableCurrency}
+                    loading={composableQuoteLoading}
+                    density="admin"
+                    onToggle={(id, next) =>
+                      setSelectedAddonOfferIds((prev) =>
+                        next
+                          ? [...new Set([...prev, id])]
+                          : prev.filter((x) => x !== id),
+                      )
+                    }
+                  />
                   <div className="flex justify-between border-t pt-2 text-sm font-medium">
                     <span>Сумма комплекта до ручной корректировки</span>
                     <span>{composableSubtotal} {composableCurrency}</span>
                   </div>
                 </div>
               )}
+
 
               {/* Сумма */}
               {selectedTariffId && (
