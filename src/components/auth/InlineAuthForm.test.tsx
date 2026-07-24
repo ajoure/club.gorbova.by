@@ -90,9 +90,8 @@ describe("InlineAuthForm (password tabs)", () => {
       error: null,
     });
     functionsInvoke.mockResolvedValue({ data: {}, error: null });
-    render(<InlineAuthForm onAuthenticated={() => {}} />);
+    render(<InlineAuthForm onAuthenticated={() => {}} defaultTab="signup" />);
 
-    fireEvent.click(screen.getByRole("tab", { name: /Зарегистрироваться/ }));
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "new@user.com" } });
     fireEvent.change(screen.getByLabelText("Имя"), { target: { value: "Ivan" } });
     fireEvent.change(screen.getByLabelText("Пароль"), { target: { value: "LongEnough123" } });
