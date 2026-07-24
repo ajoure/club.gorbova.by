@@ -32,10 +32,14 @@ export function AdvantagesSection() {
         >
           {title}
         </h2>
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div
+          className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3"
+          data-cb-native-advantages-grid
+        >
           {perks.map((p, i) => (
             <div
               key={i}
+              data-cb-native-advantage-item
               className="rounded-2xl p-5"
               style={{
                 background: CB_PALETTE.bgSoft,
@@ -47,6 +51,7 @@ export function AdvantagesSection() {
                   src={main.images[i]}
                   alt=""
                   aria-hidden
+                  data-cb-native-advantage-icon
                   className="w-10 h-10 mb-3 object-contain"
                 />
               )}
