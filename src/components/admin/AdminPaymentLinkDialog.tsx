@@ -255,6 +255,24 @@ export function AdminPaymentLinkDialog({
     }
   }, [stripeAccounts, stripeAccountCode]);
 
+  // Sprint «Составные продажи ЦБ» — legal_details целевого пользователя (для invoice ЮЛ/ИП).
+  const { data: targetLegalDetails } = useQuery({
+    queryKey: ["admin-payment-link-target-legal-details", userId],
+    enabled: !!userId && invoicePanelOpen,
+    queryFn: async () => {
+      const { data: profile } = await supabase
+        .from("profiles").select("id").eq("user_id", userId!).maybeSingle();
+      if (!profile) return [];
+      const { data, error } = await supabase
+        .from("client_legal_details")
+        .select("id, client_type, leg_name, leg_org_form, ent_name, leg_unp, ent_unp, is_primary")
+        .eq("profile_id", profile.id)
+        .order("is_primary", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
   // Phase 7-UI follow-up — supported currencies выбранного Stripe-аккаунта.
   // Передаются в shared `resolveAvailableProviders` (frontend mirror SOT).
   // Если snapshot пуст — резолвер выдаёт R1 fallback (warning) и не дизейблит ничего;
