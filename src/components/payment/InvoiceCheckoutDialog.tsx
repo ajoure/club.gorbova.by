@@ -47,6 +47,11 @@ import { toast } from "sonner";
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
+import {
+  isDeliveryFinal,
+  type DeliveryStatusResponse,
+  type ChannelState,
+} from "@/lib/invoiceDelivery";
 
 export interface InvoiceCheckoutDialogProps {
   open: boolean;
