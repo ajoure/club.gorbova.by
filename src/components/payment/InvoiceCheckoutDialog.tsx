@@ -285,7 +285,7 @@ export function InvoiceCheckoutDialog({
         </DialogHeader>
 
         {step === "auth" && (
-          <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4">
             <InlineAuthForm
               contextNote="Чтобы выписать счёт, войдите или зарегистрируйтесь"
               onAuthenticated={() => setStep("payer")}
@@ -295,7 +295,7 @@ export function InvoiceCheckoutDialog({
 
         {step === "payer" && !showAddForm && (
           <>
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 space-y-4">
               {isLoadingLegal ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-5 w-5 animate-spin" />
@@ -307,7 +307,7 @@ export function InvoiceCheckoutDialog({
                     У вас пока нет реквизитов для выставления счёта. Добавьте
                     организацию или ИП — данные подтянутся автоматически по УНП.
                   </div>
-                  <Button onClick={() => setShowAddForm(true)} className="gap-2">
+                  <Button onClick={() => setShowAddForm(true)} className="gap-2 w-full sm:w-auto">
                     <Plus className="h-4 w-4" /> Добавить организацию или ИП
                   </Button>
                 </Card>
@@ -320,24 +320,26 @@ export function InvoiceCheckoutDialog({
                   {payers.map((row) => {
                     const unp = getUnp(row);
                     return (
-                      <Card key={row.id} className="p-3">
+                      <Card key={row.id} className="p-3 w-full max-w-full overflow-hidden">
                         <label className="flex items-start gap-3 cursor-pointer">
-                          <RadioGroupItem value={row.id} className="mt-1" />
+                          <RadioGroupItem value={row.id} className="mt-1 shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <div className="flex flex-wrap items-center gap-2 font-medium">
+                            <div className="flex flex-wrap items-center gap-2 font-medium min-w-0">
                               <Building2 className="h-4 w-4 shrink-0" />
-                              <span className="truncate">{getDisplayName(row)}</span>
+                              <span className="min-w-0 break-words [overflow-wrap:anywhere] font-medium">
+                                {getDisplayName(row)}
+                              </span>
                               {row.is_default && (
-                                <Badge variant="secondary" className="gap-1">
+                                <Badge variant="secondary" className="gap-1 shrink-0">
                                   <Star className="h-3 w-3" /> Основной
                                 </Badge>
                               )}
-                              <Badge variant="outline">
+                              <Badge variant="outline" className="shrink-0">
                                 {row.client_type === "entrepreneur" ? "ИП" : "Юрлицо"}
                               </Badge>
                             </div>
                             {unp && (
-                              <div className="text-xs text-muted-foreground mt-1">
+                              <div className="text-xs text-muted-foreground mt-1 break-words">
                                 УНП {unp}
                               </div>
                             )}
@@ -350,12 +352,16 @@ export function InvoiceCheckoutDialog({
               )}
             </div>
             {payers.length > 0 && (
-              <div className="shrink-0 border-t bg-background px-6 py-3 flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => setShowAddForm(true)}>
+              <div className="shrink-0 border-t bg-background px-4 sm:px-6 py-3 flex flex-col-reverse sm:flex-row gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowAddForm(true)}
+                  className="w-full sm:w-auto"
+                >
                   <Plus className="h-4 w-4 mr-1" /> Добавить организацию или ИП
                 </Button>
                 <Button
-                  className="ml-auto"
+                  className="w-full sm:w-auto sm:ml-auto"
                   disabled={!selectedPayerId}
                   onClick={() => setStep("confirm")}
                 >
