@@ -30,6 +30,7 @@ import { OutboundMediaPreview } from "@/components/admin/chat/OutboundMediaPrevi
 import { VideoNoteRecorder } from "@/components/admin/VideoNoteRecorder";
 import { VoiceRecorder } from "@/components/support/VoiceRecorder";
 import { useQuery } from "@tanstack/react-query";
+import { getClipboardFile } from "@/lib/clipboardImage";
 
 type MediaFileType = "photo" | "video" | "audio" | "video_note" | "voice" | "document";
 
@@ -211,9 +212,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     return "document";
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const acceptSelectedFile = (file: File, type?: MediaFileType) => {
     if (file.size > MAX_TICKET_ATTACHMENT_BYTES) {
       toast({
         title: "Файл слишком большой",
@@ -223,15 +222,25 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
       return;
     }
     setAttachedFile(file);
-    // Auto-detect type if not explicitly set (fallback)
-    if (!selectedFileType) {
-      setSelectedFileType(detectFileType(file));
-    }
+    setSelectedFileType(type || selectedFileType || detectFileType(file));
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    acceptSelectedFile(file);
     // Reset input so same file can be re-selected
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
       fileInputRef.current.accept = "*/*"; // Reset accept
     }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const file = getClipboardFile(e.clipboardData);
+    if (!file) return;
+    e.preventDefault();
+    acceptSelectedFile(file, detectFileType(file));
   };
 
   const handleVideoNoteRecorded = (file: File) => {
@@ -510,6 +519,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={isInternal ? "Внутренняя заметка..." : "Введите сообщение..."}
                 className="min-h-[80px] resize-none"
               />

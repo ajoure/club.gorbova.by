@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, typ
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadToTelegramMedia } from "@/components/admin/chat/uploadToTelegramMedia";
+import { getClipboardFile } from "@/lib/clipboardImage";
 import { format, isToday, isYesterday, isSameDay } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
@@ -1805,23 +1806,41 @@ export function ContactTelegramChat({
     }
   };
 
+  const acceptSelectedFile = (
+    file: File,
+    type?: "photo" | "video" | "audio" | "voice" | "video_note" | "document",
+  ) => {
+    const maxSize = type === "video" || type === "video_note" ? 50 * 1024 * 1024 : 20 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast.error(`Файл слишком большой (макс. ${maxSize / 1024 / 1024} МБ)`);
+      return;
+    }
+    setSelectedFile(file);
+    setSelectedFileType(type || null);
+    setShowMediaMenu(false);
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type?: "photo" | "video" | "audio" | "voice" | "video_note" | "document") => {
     const file = e.target.files?.[0];
-    if (file) {
-      // Validate file size
-      const maxSize = type === "video" || type === "video_note" ? 50 * 1024 * 1024 : 20 * 1024 * 1024;
-      if (file.size > maxSize) {
-        toast.error(`Файл слишком большой (макс. ${maxSize / 1024 / 1024} МБ)`);
-        return;
-      }
-      setSelectedFile(file);
-      setSelectedFileType(type || null);
-      setShowMediaMenu(false);
-    }
+    if (file) acceptSelectedFile(file, type);
     // Reset input
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const file = getClipboardFile(e.clipboardData);
+    if (!file) return;
+    e.preventDefault();
+    const type = file.type.startsWith("image/")
+      ? "photo"
+      : file.type.startsWith("video/")
+        ? "video"
+        : file.type.startsWith("audio/")
+          ? "audio"
+          : "document";
+    acceptSelectedFile(file, type);
   };
 
   const insertEmoji = (emoji: string) => {
@@ -2228,6 +2247,7 @@ export function ContactTelegramChat({
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyPress}
+            onPaste={handlePaste}
             placeholder="Введите сообщение..."
             className="min-h-[56px] max-h-[112px] resize-none flex-1 overflow-y-auto leading-snug"
             disabled={sendMutation.isPending || isUploading}
