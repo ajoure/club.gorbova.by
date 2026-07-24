@@ -226,6 +226,10 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
       sourceFilter !== "all" && row.channels[sourceFilter]
         ? sourceFilter
         : row.defaultActiveSource;
+    // Freeze the operator's chosen channel for this contact. Background list
+    // refreshes may change defaultActiveSource when another integration gets
+    // a message; they must not remount/switch the open chat under the cursor.
+    setActiveSourceByKey((prev) => ({ ...prev, [row.key]: initialSource }));
     const ch = row.channels[initialSource]!;
     setLastSelectedSourceKey(ch.key);
   };

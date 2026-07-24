@@ -191,9 +191,10 @@ export function ContactInstagramChat({
   useLayoutEffect(() => {
     const viewport = scrollRef.current;
     if (!viewport || isLoading) return;
-    const nearBottom =
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 160;
-    if (!didInitialScrollRef.current || (shouldStickToBottomRef.current && nearBottom)) {
+    // Use the position captured before the cache update. A large incoming
+    // image/message can increase scrollHeight enough that a post-render
+    // measurement falsely says the operator left the live tail.
+    if (!didInitialScrollRef.current || shouldStickToBottomRef.current) {
       viewport.scrollTop = viewport.scrollHeight;
       didInitialScrollRef.current = true;
     }

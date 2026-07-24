@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { getClipboardFile } from "@/lib/clipboardImage";
 
 /**
  * Outbound media контракт ManyChat / Meta IG (подтверждено пилотом + лог 400):
@@ -128,6 +129,13 @@ export function InstagramAttachComposer({
     if (f) acceptFile(f);
     // сбрасываем, чтобы можно было выбрать тот же файл повторно
     e.target.value = "";
+  };
+
+  const onPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const file = getClipboardFile(e.clipboardData);
+    if (!file) return;
+    e.preventDefault();
+    acceptFile(file);
   };
 
   // Drag & drop
@@ -355,6 +363,7 @@ export function InstagramAttachComposer({
           }
           value={text}
           onChange={(e) => onTextChange(e.target.value)}
+          onPaste={onPaste}
           disabled={sending || uploading}
         />
         <Button

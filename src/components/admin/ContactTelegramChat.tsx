@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, typ
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadToTelegramMedia } from "@/components/admin/chat/uploadToTelegramMedia";
+import { getClipboardFile } from "@/lib/clipboardImage";
 import { format, isToday, isYesterday, isSameDay } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
@@ -1048,7 +1049,6 @@ export function ContactTelegramChat({
     const vp = getScrollViewport();
     if (!vp) return;
     vp.scrollTo({ top: vp.scrollHeight, behavior });
-    bottomRef.current?.scrollIntoView({ block: "end", behavior });
   }, [getScrollViewport]);
 
   const startStickyScroll = useCallback((durationMs = 1800) => {
@@ -1637,7 +1637,11 @@ export function ContactTelegramChat({
       return vp.scrollHeight - vp.scrollTop - vp.clientHeight < 120;
     };
 
-    const shouldScroll = !didInitialScrollRef.current || isNearBottom();
+    // Decide from the position captured BEFORE React prepends/enriches rows.
+    // Stage 2 adds older history above the initial 20 messages; measuring the
+    // DOM after that prepend incorrectly looks like the operator scrolled up.
+    const shouldScroll =
+      !didInitialScrollRef.current || shouldStickToBottomRef.current;
     if (!shouldScroll) return;
 
     // Скрытый pin-to-bottom: моментально, без анимации.
@@ -1645,7 +1649,6 @@ export function ContactTelegramChat({
       const vp = getViewport();
       if (!vp) return;
       vp.scrollTop = vp.scrollHeight;
-      bottomRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
     };
 
     // 1) Пока первая раскладка и медиа догружаются, держим ленту у конца.
@@ -1679,7 +1682,7 @@ export function ContactTelegramChat({
         pinToBottom();
         return;
       }
-      if (isNearBottom()) pinToBottom();
+      if (shouldStickToBottomRef.current) pinToBottom();
     });
     const inner = viewport.firstElementChild as HTMLElement | null;
     if (inner) ro.observe(inner);
@@ -1687,7 +1690,7 @@ export function ContactTelegramChat({
 
     // 3) Картинки и видео — каждая догрузка двигает scrollHeight.
     const onMediaLoad = () => {
-      if (isNearBottom()) pinToBottom();
+      if (shouldStickToBottomRef.current) pinToBottom();
     };
     const attachLoadListeners = (root: ParentNode) => {
       const medias = Array.from(
@@ -1724,7 +1727,7 @@ export function ContactTelegramChat({
       }
       if (hasNewMedia) {
         attachLoadListeners(viewport);
-        if (isNearBottom()) pinToBottom();
+        if (shouldStickToBottomRef.current) pinToBottom();
       }
     });
     mo.observe(viewport, { childList: true, subtree: true });
@@ -1773,7 +1776,7 @@ export function ContactTelegramChat({
     if (vp) {
       vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
     }
-    bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    shouldStickToBottomRef.current = true;
     setUnreadCount(0);
   }, []);
 
@@ -1805,23 +1808,41 @@ export function ContactTelegramChat({
     }
   };
 
+  const acceptSelectedFile = (
+    file: File,
+    type?: "photo" | "video" | "audio" | "voice" | "video_note" | "document",
+  ) => {
+    const maxSize = type === "video" || type === "video_note" ? 50 * 1024 * 1024 : 20 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast.error(`Файл слишком большой (макс. ${maxSize / 1024 / 1024} МБ)`);
+      return;
+    }
+    setSelectedFile(file);
+    setSelectedFileType(type || null);
+    setShowMediaMenu(false);
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type?: "photo" | "video" | "audio" | "voice" | "video_note" | "document") => {
     const file = e.target.files?.[0];
-    if (file) {
-      // Validate file size
-      const maxSize = type === "video" || type === "video_note" ? 50 * 1024 * 1024 : 20 * 1024 * 1024;
-      if (file.size > maxSize) {
-        toast.error(`Файл слишком большой (макс. ${maxSize / 1024 / 1024} МБ)`);
-        return;
-      }
-      setSelectedFile(file);
-      setSelectedFileType(type || null);
-      setShowMediaMenu(false);
-    }
+    if (file) acceptSelectedFile(file, type);
     // Reset input
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const file = getClipboardFile(e.clipboardData);
+    if (!file) return;
+    e.preventDefault();
+    const type = file.type.startsWith("image/")
+      ? "photo"
+      : file.type.startsWith("video/")
+        ? "video"
+        : file.type.startsWith("audio/")
+          ? "audio"
+          : "document";
+    acceptSelectedFile(file, type);
   };
 
   const insertEmoji = (emoji: string) => {
@@ -2228,6 +2249,7 @@ export function ContactTelegramChat({
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyPress}
+            onPaste={handlePaste}
             placeholder="Введите сообщение..."
             className="min-h-[56px] max-h-[112px] resize-none flex-1 overflow-y-auto leading-snug"
             disabled={sendMutation.isPending || isUploading}
