@@ -162,21 +162,35 @@ export function HeroSection({ onCta }: { onCta: () => void }) {
 
         <div className="relative grid items-start gap-6 md:grid-cols-[minmax(0,600px)_1fr] md:gap-10 md:pt-12">
           <div className="relative z-10 flex flex-col items-start text-left">
-            <div className="relative mt-2 inline-block md:mt-3">
-              {crownImg && (
-                <img
-                  src={crownImg}
-                  alt=""
-                  aria-hidden
-                  className="absolute -left-1 -top-4 h-6 w-8 object-contain md:-top-6 md:h-7 md:w-10"
-                />
-              )}
-              <h1
-                className="max-w-[355px] text-[44px] font-bold uppercase leading-[1.02] md:max-w-none md:text-[64px] md:leading-[0.98]"
-                style={{ color: CB_PALETTE.accent, fontFamily: SF_FONT, letterSpacing: "-0.01em" }}
+            <div className="relative mt-2 inline-flex items-start gap-3 md:mt-3">
+              <div className="relative">
+                {crownImg && (
+                  <img
+                    src={crownImg}
+                    alt=""
+                    aria-hidden
+                    className="absolute -left-1 -top-4 h-6 w-8 object-contain md:-top-6 md:h-7 md:w-10"
+                  />
+                )}
+                <h1
+                  className="max-w-[320px] text-[40px] font-bold uppercase leading-[1.02] md:max-w-none md:text-[64px] md:leading-[0.98]"
+                  style={{ color: CB_PALETTE.accent, fontFamily: SF_FONT, letterSpacing: "-0.01em" }}
+                >
+                  {headline}
+                </h1>
+              </div>
+              {/* Mobile NEW badge (desktop version lives in the portrait column) */}
+              <span
+                className="mt-1 inline-block shrink-0 rounded-[6px] px-2.5 py-1 text-[11px] font-bold uppercase md:hidden"
+                style={{
+                  background: "#343434",
+                  color: CB_PALETTE.bg,
+                  fontFamily: SF_FONT,
+                  letterSpacing: "0.05em",
+                }}
               >
-                {headline}
-              </h1>
+                {newBadge}
+              </span>
             </div>
 
             <p
