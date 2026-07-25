@@ -322,25 +322,27 @@ async function cleanup(admin: any, runId: string, body: any) {
         .from('referral_balance_transactions')
         .select('id')
         .in('partner_id', partnerIds);
+      deleted['_tx_found'] = (txIds?.length ?? 0) as any;
       if (txIds?.length) {
-        const { count: ec } = await admin
+        const { count: ec, error: eeErr } = await admin
           .from('referral_balance_entries')
           .delete({ count: 'exact' })
           .in('transaction_id', txIds.map((x: any) => x.id));
         deleted['referral_balance_entries'] = ec ?? 0;
+        if (eeErr) deleted['referral_balance_entries_err'] = eeErr.message as any;
       }
-      const { count: sc } = await admin.from('referral_sale_attributions').delete({ count: 'exact' }).in('partner_id', partnerIds);
+      const { count: sc, error: seErr } = await admin.from('referral_sale_attributions').delete({ count: 'exact' }).in('partner_id', partnerIds);
       deleted['referral_sale_attributions'] = sc ?? 0;
-      const { count: tc } = await admin.from('referral_balance_transactions').delete({ count: 'exact' }).in('partner_id', partnerIds);
+      if (seErr) deleted['referral_sale_attributions_err'] = seErr.message as any;
+      const { count: tc, error: teErr } = await admin.from('referral_balance_transactions').delete({ count: 'exact' }).in('partner_id', partnerIds);
       deleted['referral_balance_transactions'] = tc ?? 0;
+      if (teErr) deleted['referral_balance_transactions_err'] = teErr.message as any;
       const { count: rc } = await admin.from('referral_relationships').delete({ count: 'exact' }).in('partner_id', partnerIds);
       deleted['referral_relationships(partner)'] = rc ?? 0;
       const { count: rc2 } = await admin.from('referral_relationships').delete({ count: 'exact' }).in('referred_profile_id', profileIds);
       deleted['referral_relationships(referred)'] = rc2 ?? 0;
       const { count: lc } = await admin.from('referral_program_links').delete({ count: 'exact' }).in('partner_id', partnerIds);
       deleted['referral_program_links'] = lc ?? 0;
-      const { count: pc0 } = await admin.from('referral_partners').delete({ count: 'exact' }).in('id', partnerIds);
-      deleted['referral_partners'] = pc0 ?? 0;
     }
 
     // Delete orders BEFORE partners/profiles to release FKs
