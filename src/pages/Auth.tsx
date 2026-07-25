@@ -80,6 +80,13 @@ function detectRecoveryFlow(): boolean {
   return false;
 }
 
+function normalizeInternalRedirect(value: string | null): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return "/dashboard";
+  }
+  return value;
+}
+
 export default function Auth() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -158,7 +165,7 @@ export default function Auth() {
   };
 
   // Get redirectTo from URL params
-  const redirectTo = searchParams.get("redirectTo") || "/dashboard";
+  const redirectTo = normalizeInternalRedirect(searchParams.get("redirectTo"));
 
   // Password validation state
   const passwordValidation = useMemo(() => validateUserPassword(password), [password]);
@@ -198,8 +205,8 @@ export default function Auth() {
     // Only redirect if user is logged in AND not in password update mode
     if (user && mode !== "update_password") {
       // Сначала проверяем redirectTo из URL
-      const urlRedirect = searchParams.get("redirectTo");
-      if (urlRedirect) {
+      const urlRedirect = normalizeInternalRedirect(searchParams.get("redirectTo"));
+      if (searchParams.get("redirectTo")) {
         // iOS Safari guard: don't restore heavy routes from URL either
         if (shouldIgnoreLastRouteOnIOS(urlRedirect)) {
           console.info('[Auth] Ignoring heavy redirectTo on iOS Safari:', urlRedirect);
@@ -465,6 +472,9 @@ export default function Auth() {
         }
 
         const cleanPhone = phone.replace(/[^\d+]/g, '');
+        // Preserve a deep link (including its #anchor) across email
+        // confirmation, where the provider returns through /auth.
+        overwriteLastRoute(redirectTo);
         const signUpResult = await signUp(email, password, firstName.trim(), lastName.trim(), cleanPhone);
         if (signUpResult.error) {
           const errorMessage = signUpResult.error.message?.toLowerCase() || '';

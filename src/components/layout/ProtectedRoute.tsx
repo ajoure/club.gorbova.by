@@ -58,9 +58,9 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   // Save route for post-login redirect
   useEffect(() => {
     if (user && !loading) {
-      saveLastRoute(location.pathname, location.search);
+      saveLastRoute(location.pathname, `${location.search}${location.hash}`);
     }
-  }, [user, loading, location.pathname, location.search]);
+  }, [user, loading, location.pathname, location.search, location.hash]);
 
   // State matrix
   if (loading || (!user && !settled)) {
@@ -75,7 +75,9 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     if (location.pathname === "/products") {
       return <Navigate to="/" replace />;
     }
-    const redirectTo = encodeURIComponent(location.pathname + location.search);
+    const redirectTo = encodeURIComponent(
+      location.pathname + location.search + location.hash,
+    );
     return <Navigate to={`/auth?redirectTo=${redirectTo}`} replace />;
   }
 
