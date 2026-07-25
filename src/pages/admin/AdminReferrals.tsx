@@ -35,7 +35,7 @@ export default function AdminReferrals() {
           rows.push(...(data ?? []));
           if (!data || data.length < 1000) break;
         }
-        return rows;
+        return { data: rows, error: null as any };
       };
       const [settings, products, relationships, sales, payouts, summary] = await Promise.all([
         client.from("referral_program_settings").select("*").eq("singleton", true).single(),

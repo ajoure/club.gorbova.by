@@ -14863,9 +14863,17 @@ export type Database = {
           public_id: string | null
           public_subtitle: string | null
           public_title: string | null
+          referral_bonus_eligible: boolean
+          referral_club_first_payment_percent_bps: number | null
           referral_commission_percent_bps: number | null
+          referral_commission_scheme: string | null
           referral_customer_discount_percent_bps: number | null
           referral_settings_mode: string
+          referral_tier_1_commission_percent_bps: number | null
+          referral_tier_1_limit: number | null
+          referral_tier_2_commission_percent_bps: number | null
+          referral_tier_2_limit: number | null
+          referral_tier_3_commission_percent_bps: number | null
           slug: string | null
           status: string
           telegram_club_id: string | null
@@ -14888,9 +14896,17 @@ export type Database = {
           public_id?: string | null
           public_subtitle?: string | null
           public_title?: string | null
+          referral_bonus_eligible?: boolean
+          referral_club_first_payment_percent_bps?: number | null
           referral_commission_percent_bps?: number | null
+          referral_commission_scheme?: string | null
           referral_customer_discount_percent_bps?: number | null
           referral_settings_mode?: string
+          referral_tier_1_commission_percent_bps?: number | null
+          referral_tier_1_limit?: number | null
+          referral_tier_2_commission_percent_bps?: number | null
+          referral_tier_2_limit?: number | null
+          referral_tier_3_commission_percent_bps?: number | null
           slug?: string | null
           status?: string
           telegram_club_id?: string | null
@@ -14913,9 +14929,17 @@ export type Database = {
           public_id?: string | null
           public_subtitle?: string | null
           public_title?: string | null
+          referral_bonus_eligible?: boolean
+          referral_club_first_payment_percent_bps?: number | null
           referral_commission_percent_bps?: number | null
+          referral_commission_scheme?: string | null
           referral_customer_discount_percent_bps?: number | null
           referral_settings_mode?: string
+          referral_tier_1_commission_percent_bps?: number | null
+          referral_tier_1_limit?: number | null
+          referral_tier_2_commission_percent_bps?: number | null
+          referral_tier_2_limit?: number | null
+          referral_tier_3_commission_percent_bps?: number | null
           slug?: string | null
           status?: string
           telegram_club_id?: string | null
@@ -15708,6 +15732,67 @@ export type Database = {
           },
         ]
       }
+      referral_bonus_reservations: {
+        Row: {
+          amount_minor: number
+          applied_order_id: string | null
+          checkout_key: string
+          created_at: string
+          expires_at: string
+          id: string
+          partner_id: string
+          product_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amount_minor: number
+          applied_order_id?: string | null
+          checkout_key: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          partner_id: string
+          product_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amount_minor?: number
+          applied_order_id?: string | null
+          checkout_key?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          partner_id?: string
+          product_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_bonus_reservations_applied_order_id_fkey"
+            columns: ["applied_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_bonus_reservations_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_bonus_reservations_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       referral_customer_credit_entries: {
         Row: {
           amount_minor: number
@@ -15913,11 +15998,67 @@ export type Database = {
           },
         ]
       }
+      referral_program_links: {
+        Row: {
+          created_at: string
+          id: string
+          link_code: string
+          partner_id: string
+          product_id: string | null
+          program_kind: string
+          status: string
+          target_path: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          link_code?: string
+          partner_id: string
+          product_id?: string | null
+          program_kind?: string
+          status?: string
+          target_path: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          link_code?: string
+          partner_id?: string
+          product_id?: string | null
+          program_kind?: string
+          status?: string
+          target_path?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_program_links_partner_id_fkey"
+            columns: ["partner_id"]
+            isOneToOne: false
+            referencedRelation: "referral_partners"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_program_links_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       referral_program_settings: {
         Row: {
           accrual_enabled: boolean
           base_currency: string
+          club_first_payment_percent_bps: number
           commission_percent_bps: number
+          commission_scheme: string
           created_at: string
           customer_discount_percent_bps: number
           enabled_at: string | null
@@ -15925,13 +16066,20 @@ export type Database = {
           id: string
           is_enabled: boolean
           minimum_payout_minor: number
+          partner_bonus_enabled: boolean
           partner_portal_enabled: boolean
           payout_requests_enabled: boolean
           shadow_mode: boolean
           singleton: boolean
           split_60_40_enabled: boolean
+          telegram_notifications_enabled: boolean
           terms_url: string | null
           terms_version: string | null
+          tier_1_commission_percent_bps: number
+          tier_1_limit: number
+          tier_2_commission_percent_bps: number
+          tier_2_limit: number
+          tier_3_commission_percent_bps: number
           tracking_enabled: boolean
           updated_at: string
           updated_by: string | null
@@ -15940,7 +16088,9 @@ export type Database = {
         Insert: {
           accrual_enabled?: boolean
           base_currency?: string
+          club_first_payment_percent_bps?: number
           commission_percent_bps?: number
+          commission_scheme?: string
           created_at?: string
           customer_discount_percent_bps?: number
           enabled_at?: string | null
@@ -15948,13 +16098,20 @@ export type Database = {
           id?: string
           is_enabled?: boolean
           minimum_payout_minor?: number
+          partner_bonus_enabled?: boolean
           partner_portal_enabled?: boolean
           payout_requests_enabled?: boolean
           shadow_mode?: boolean
           singleton?: boolean
           split_60_40_enabled?: boolean
+          telegram_notifications_enabled?: boolean
           terms_url?: string | null
           terms_version?: string | null
+          tier_1_commission_percent_bps?: number
+          tier_1_limit?: number
+          tier_2_commission_percent_bps?: number
+          tier_2_limit?: number
+          tier_3_commission_percent_bps?: number
           tracking_enabled?: boolean
           updated_at?: string
           updated_by?: string | null
@@ -15963,7 +16120,9 @@ export type Database = {
         Update: {
           accrual_enabled?: boolean
           base_currency?: string
+          club_first_payment_percent_bps?: number
           commission_percent_bps?: number
+          commission_scheme?: string
           created_at?: string
           customer_discount_percent_bps?: number
           enabled_at?: string | null
@@ -15971,13 +16130,20 @@ export type Database = {
           id?: string
           is_enabled?: boolean
           minimum_payout_minor?: number
+          partner_bonus_enabled?: boolean
           partner_portal_enabled?: boolean
           payout_requests_enabled?: boolean
           shadow_mode?: boolean
           singleton?: boolean
           split_60_40_enabled?: boolean
+          telegram_notifications_enabled?: boolean
           terms_url?: string | null
           terms_version?: string | null
+          tier_1_commission_percent_bps?: number
+          tier_1_limit?: number
+          tier_2_commission_percent_bps?: number
+          tier_2_limit?: number
+          tier_3_commission_percent_bps?: number
           tracking_enabled?: boolean
           updated_at?: string
           updated_by?: string | null
@@ -23211,6 +23377,10 @@ export type Database = {
         Args: { p_amount_minor: number }
         Returns: string
       }
+      referral_create_program_link: {
+        Args: { p_product_id?: string; p_target_path: string; p_title: string }
+        Returns: Json
+      }
       referral_customer_credit_available: {
         Args: { p_profile_id: string }
         Returns: number
@@ -23220,6 +23390,10 @@ export type Database = {
         Returns: string
       }
       referral_ensure_current_partner: { Args: never; Returns: Json }
+      referral_get_my_bonus_wallet: {
+        Args: { p_product_id?: string }
+        Returns: Json
+      }
       referral_get_my_customer_credit: { Args: never; Returns: Json }
       referral_get_my_dashboard: { Args: never; Returns: Json }
       referral_is_admin: { Args: { p_user_id: string }; Returns: boolean }
@@ -23234,6 +23408,16 @@ export type Database = {
         Args: {
           p_charge_amount_minor: number
           p_checkout_key: string
+          p_requested_minor: number
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      referral_reserve_partner_bonus: {
+        Args: {
+          p_charge_amount_minor: number
+          p_checkout_key: string
+          p_product_id: string
           p_requested_minor: number
           p_user_id: string
         }
