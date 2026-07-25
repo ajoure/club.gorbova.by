@@ -71,6 +71,8 @@ interface InitiatePayload {
   comment?: string | null;
   website?: string;
   customer_credit_requested_minor?: number;
+  partner_bonus_requested_minor?: number;
+  partner_bonus_checkout_key?: string;
 }
 
 function normalizePhone(raw: string): string {
@@ -372,6 +374,20 @@ Deno.serve(async (req: Request) => {
         referral_customer_credit_reservation_id: reservation.reservationId,
       } : {}),
     };
+    const bonusReservation = await supabaseAdmin.rpc('referral_reserve_partner_bonus', {
+      p_user_id: userId,
+      p_requested_minor: Math.max(0, Math.round(Number(body.partner_bonus_requested_minor ?? 0))),
+      p_charge_amount_minor: amountMinor,
+      p_checkout_key: `rr:partner-bonus:${body.partner_bonus_checkout_key || offerContactHash}`,
+      p_product_id: product.id,
+    });
+    if (bonusReservation.error) return errorResponse('partner_bonus_reservation_failed', 400);
+    const bonusAppliedMinor = Math.max(0, Math.round(Number(bonusReservation.data?.applied_minor ?? 0)));
+    amountMinor = Math.max(100, amountMinor - bonusAppliedMinor);
+    if (bonusAppliedMinor > 0) {
+      referralCreditMeta.referral_partner_bonus_applied_minor = bonusAppliedMinor;
+      referralCreditMeta.referral_partner_bonus_reservation_id = bonusReservation.data?.reservation_id;
+    }
   }
   if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
     return errorResponse("amount_fully_covered_or_invalid", 400);

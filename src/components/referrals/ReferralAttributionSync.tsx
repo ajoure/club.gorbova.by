@@ -34,12 +34,20 @@ export function ReferralAttributionSync() {
     const attach = async () => {
       // The profiles row is trigger-created and can lag the first auth event briefly.
       for (let attempt = 0; attempt < 4 && !cancelled; attempt += 1) {
-        const { error } = await (supabase.rpc as any)("referral_attach_current_profile", {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: attachResult, error } = await (supabase.rpc as any)("referral_attach_current_profile", {
           p_partner_code: capturedCode,
           p_captured_at: capturedAtIso,
         });
 
         if (!error) {
+          try {
+            if (attachResult?.attached && attachResult?.relationship_id) {
+              void supabase.functions.invoke('referral-notify', { body: { event_type: 'registration', relationship_id: attachResult.relationship_id } });
+            }
+          } catch (notifyError) {
+            console.warn('[ReferralAttributionSync] registration notification failed', notifyError);
+          }
           localStorage.removeItem(REFERRAL_STORAGE_KEY);
           return;
         }

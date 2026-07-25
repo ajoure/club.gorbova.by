@@ -69,6 +69,9 @@ export interface CreateCheckoutParams {
   customer_credit_requested_minor?: number;
   /** Stable per checkout attempt. Prevents repeated clicks from reserving the wallet twice. */
   customer_credit_checkout_key?: string;
+  /** Partner's internal bonus wallet. Never accepted for open-ended subscriptions. */
+  partner_bonus_requested_minor?: number;
+  partner_bonus_checkout_key?: string;
 }
 
 export interface CreateCheckoutSuccess {
@@ -178,6 +181,34 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     } catch (error) {
       console.error('[create-payment-checkout] customer credit reservation failed; checkout stopped', error);
       return { success: false, error: 'Could not safely reserve customer discount credit' };
+    }
+  }
+  const requestedPartnerBonusMinor = Math.max(0, Math.round(Number(params.partner_bonus_requested_minor ?? 0)));
+  if (requestedPartnerBonusMinor > 0 && !allowsImmediateDiscount) {
+    return { success: false, error: 'Partner bonus cannot be used for recurring subscriptions' };
+  }
+  if (requestedPartnerBonusMinor > 0) {
+    try {
+      const bonusReservation = await supabase.rpc('referral_reserve_partner_bonus', {
+        p_user_id: user_id,
+        p_requested_minor: requestedPartnerBonusMinor,
+        p_charge_amount_minor: amount,
+        p_checkout_key: `checkout:partner-bonus:${params.partner_bonus_checkout_key || crypto.randomUUID()}`,
+        p_product_id: product_id,
+      });
+      if (bonusReservation.error) throw bonusReservation.error;
+      const appliedMinor = Math.max(0, Math.round(Number(bonusReservation.data?.applied_minor ?? 0)));
+      amount = Math.max(100, amount - appliedMinor);
+      if (appliedMinor > 0) {
+        extraMeta = {
+          ...extraMeta,
+          referral_partner_bonus_applied_minor: appliedMinor,
+          referral_partner_bonus_reservation_id: bonusReservation.data?.reservation_id,
+        };
+      }
+    } catch (error) {
+      console.error('[create-payment-checkout] partner bonus reservation failed; checkout stopped', error);
+      return { success: false, error: 'Could not safely reserve partner bonus' };
     }
   }
   // ============================================================

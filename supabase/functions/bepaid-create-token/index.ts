@@ -34,6 +34,8 @@ interface CreateTokenRequest {
   useMitTokenization?: boolean;
   customerCreditRequestedMinor?: number;
   customerCreditCheckoutKey?: string;
+  partnerBonusRequestedMinor?: number;
+  partnerBonusCheckoutKey?: string;
 }
 
 interface ProductInfo {
@@ -108,6 +110,8 @@ Deno.serve(async (req) => {
       useMitTokenization, // PATCH-2: MIT flow - use checkout API instead of subscriptions
       customerCreditRequestedMinor,
       customerCreditCheckoutKey,
+      partnerBonusRequestedMinor,
+      partnerBonusCheckoutKey,
     }: CreateTokenRequest = await req.json();
 
     if (useMitTokenization) {
@@ -740,6 +744,13 @@ Deno.serve(async (req) => {
         customer_credit_checkout_key:
           typeof customerCreditCheckoutKey === 'string' && customerCreditCheckoutKey.length <= 200
             ? customerCreditCheckoutKey
+            : undefined,
+        partner_bonus_requested_minor: isOneTime
+          ? Math.max(0, Math.round(Number(partnerBonusRequestedMinor ?? 0)))
+          : 0,
+        partner_bonus_checkout_key:
+          typeof partnerBonusCheckoutKey === 'string' && partnerBonusCheckoutKey.length <= 200
+            ? partnerBonusCheckoutKey
             : undefined,
         meta_extra: {
           composable_checkout: composableQuote,

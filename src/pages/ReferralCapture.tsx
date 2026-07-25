@@ -10,7 +10,9 @@ export default function ReferralCapture() {
   useEffect(() => {
     const code = partnerCode?.trim();
     if (code) storeCapturedReferral(code);
-    navigate(`/auth?mode=signup${code ? `&ref=${encodeURIComponent(code)}` : ""}`, { replace: true });
+    const target = new URLSearchParams(window.location.search).get('target');
+    const safeTarget = target && target.startsWith('/') && !target.startsWith('//') && !target.includes('://') ? target : null;
+    navigate(`/auth?mode=signup${code ? `&ref=${encodeURIComponent(code)}` : ""}${safeTarget ? `&redirectTo=${encodeURIComponent(safeTarget)}` : ""}`, { replace: true });
   }, [navigate, partnerCode]);
 
   return (

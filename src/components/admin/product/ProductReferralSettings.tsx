@@ -10,12 +10,20 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Mode = "inherit" | "custom" | "disabled";
+type Scheme = "flat" | "tiered" | "club_first_payment";
 
 export function ProductReferralSettings({ product }: { product: any }) {
   const updateProduct = useUpdateProductV2();
   const [mode, setMode] = useState<Mode>(product.referral_settings_mode ?? "inherit");
   const [commission, setCommission] = useState(String(Number(product.referral_commission_percent_bps ?? 1000) / 100));
   const [discount, setDiscount] = useState(String(Number(product.referral_customer_discount_percent_bps ?? 0) / 100));
+  const [scheme, setScheme] = useState<Scheme>(product.referral_commission_scheme ?? "flat");
+  const [bonusEligible, setBonusEligible] = useState(product.referral_bonus_eligible !== false);
+  const [tier1Limit, setTier1Limit] = useState(String(product.referral_tier_1_limit ?? 10));
+  const [tier2Limit, setTier2Limit] = useState(String(product.referral_tier_2_limit ?? 20));
+  const [tier1Commission, setTier1Commission] = useState(String(Number(product.referral_tier_1_commission_percent_bps ?? 1000) / 100));
+  const [tier2Commission, setTier2Commission] = useState(String(Number(product.referral_tier_2_commission_percent_bps ?? 2000) / 100));
+  const [tier3Commission, setTier3Commission] = useState(String(Number(product.referral_tier_3_commission_percent_bps ?? 3000) / 100));
   const { data: defaults } = useQuery({
     queryKey: ["referral-program-default-percentages"],
     queryFn: async () => {
@@ -30,6 +38,13 @@ export function ProductReferralSettings({ product }: { product: any }) {
     setMode(product.referral_settings_mode ?? "inherit");
     setCommission(String(Number(product.referral_commission_percent_bps ?? defaults?.commission_percent_bps ?? 1000) / 100));
     setDiscount(String(Number(product.referral_customer_discount_percent_bps ?? defaults?.customer_discount_percent_bps ?? 0) / 100));
+    setScheme(product.referral_commission_scheme ?? "flat");
+    setBonusEligible(product.referral_bonus_eligible !== false);
+    setTier1Limit(String(product.referral_tier_1_limit ?? 10));
+    setTier2Limit(String(product.referral_tier_2_limit ?? 20));
+    setTier1Commission(String(Number(product.referral_tier_1_commission_percent_bps ?? 1000) / 100));
+    setTier2Commission(String(Number(product.referral_tier_2_commission_percent_bps ?? 2000) / 100));
+    setTier3Commission(String(Number(product.referral_tier_3_commission_percent_bps ?? 3000) / 100));
   }, [product, defaults]);
 
   const toBps = (value: string) => Math.round(Number(value.replace(",", ".")) * 100);
@@ -42,6 +57,13 @@ export function ProductReferralSettings({ product }: { product: any }) {
       referral_settings_mode: mode,
       referral_commission_percent_bps: mode === "custom" ? commissionBps : null,
       referral_customer_discount_percent_bps: mode === "custom" ? discountBps : null,
+      referral_commission_scheme: mode === "disabled" ? null : scheme,
+      referral_bonus_eligible: bonusEligible,
+      referral_tier_1_limit: Math.max(1, Math.round(Number(tier1Limit))),
+      referral_tier_2_limit: Math.max(1, Math.round(Number(tier2Limit))),
+      referral_tier_1_commission_percent_bps: toBps(tier1Commission),
+      referral_tier_2_commission_percent_bps: toBps(tier2Commission),
+      referral_tier_3_commission_percent_bps: toBps(tier3Commission),
     } as any);
   };
 
@@ -71,6 +93,15 @@ export function ProductReferralSettings({ product }: { product: any }) {
             <div className="space-y-2"><Label>Скидка приглашённому, %</Label><Input type="number" min="0" max="100" step="0.01" value={discount} onChange={(e) => setDiscount(e.target.value)} /></div>
           </div>
         )}
+        {mode !== "disabled" && <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2"><Label>Схема комиссии</Label><Select value={scheme} onValueChange={(value) => setScheme(value as Scheme)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="flat">Общий процент</SelectItem><SelectItem value="tiered">Ступени 10 / 20 / далее</SelectItem><SelectItem value="club_first_payment">Club: только первый платёж</SelectItem></SelectContent></Select></div>
+          <label className="flex items-center justify-between rounded-md border px-3"><span className="text-sm font-medium">Разрешить оплату баллами</span><input type="checkbox" checked={bonusEligible} onChange={(event) => setBonusEligible(event.target.checked)} /></label>
+        </div>}
+        {mode !== "disabled" && scheme === "tiered" && <div className="grid gap-4 sm:grid-cols-3">
+          <div className="space-y-2"><Label>Первые, чел.</Label><Input type="number" min="1" value={tier1Limit} onChange={(e) => setTier1Limit(e.target.value)} /></div>
+          <div className="space-y-2"><Label>Следующие, чел.</Label><Input type="number" min="1" value={tier2Limit} onChange={(e) => setTier2Limit(e.target.value)} /></div>
+          <div className="space-y-2"><Label>Проценты 1 / 2 / 3</Label><div className="flex gap-1"><Input type="number" min="0" max="100" step="0.01" value={tier1Commission} onChange={(e) => setTier1Commission(e.target.value)} /><Input type="number" min="0" max="100" step="0.01" value={tier2Commission} onChange={(e) => setTier2Commission(e.target.value)} /><Input type="number" min="0" max="100" step="0.01" value={tier3Commission} onChange={(e) => setTier3Commission(e.target.value)} /></div></div>
+        </div>}
         <p className="text-xs text-muted-foreground">Проценты фиксируются в снимке продажи. Последующее изменение настройки не меняет уже начисленные суммы.</p>
         <Button onClick={save} disabled={updateProduct.isPending}>Сохранить настройки продукта</Button>
       </CardContent>

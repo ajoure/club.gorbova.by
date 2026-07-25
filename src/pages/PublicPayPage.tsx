@@ -58,6 +58,7 @@ interface InstallmentInfo {
 }
 
 interface PaymentLinkInfo {
+  product_id: string;
   product_name: string;
   product_description: string | null;
   product_category: string | null;
@@ -112,6 +113,7 @@ export default function PublicPayPage() {
   const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
   const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating'>('idle');
   const [useCustomerCredit, setUseCustomerCredit] = useState(false);
+  const [usePartnerBonus, setUsePartnerBonus] = useState(false);
 
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
@@ -159,11 +161,24 @@ export default function PublicPayPage() {
   const { data: customerCredit } = useQuery({
     queryKey: ['referral-customer-credit', user?.id],
     queryFn: async (): Promise<{ available_minor: number; currency: string }> => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error } = await (supabase.rpc as any)('referral_get_my_customer_credit');
       if (error) throw error;
       return data ?? { available_minor: 0, currency: 'BYN' };
     },
     enabled: !!user?.id,
+    retry: false,
+  });
+
+  const { data: partnerBonus } = useQuery({
+    queryKey: ['referral-partner-bonus', user?.id, linkInfo?.product_id],
+    queryFn: async (): Promise<{ available_minor: number; eligible: boolean }> => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase.rpc as any)('referral_get_my_bonus_wallet', { p_product_id: linkInfo?.product_id });
+      if (error) throw error;
+      return data ?? { available_minor: 0, eligible: false };
+    },
+    enabled: !!user && !!linkInfo?.product_id,
     retry: false,
   });
 
@@ -216,6 +231,10 @@ export default function PublicPayPage() {
       if (useCustomerCredit && customerCredit?.available_minor) {
         body.customer_credit_requested_minor = customerCredit.available_minor;
         body.customer_credit_checkout_key = savedCardIdempotencyKeyRef.current;
+      }
+      if (usePartnerBonus && partnerBonus?.eligible && partnerBonus.available_minor) {
+        body.partner_bonus_requested_minor = partnerBonus.available_minor;
+        body.partner_bonus_checkout_key = savedCardIdempotencyKeyRef.current;
       }
 
       // ALWAYS read access token immediately before POST (post-inline-login session)
@@ -319,6 +338,9 @@ export default function PublicPayPage() {
             useCustomerCredit && customerCredit?.available_minor
               ? customerCredit.available_minor
               : 0,
+          partner_bonus_requested_minor:
+            usePartnerBonus && partnerBonus?.eligible ? partnerBonus.available_minor : 0,
+          partner_bonus_checkout_key: savedCardIdempotencyKeyRef.current,
         }),
       });
       const data = await res.json();
@@ -442,6 +464,11 @@ export default function PublicPayPage() {
         timeZone: 'Europe/Minsk',
       }).format(new Date(activeSubscriptionData.access_end_at))
     : null;
+  const partnerBonusAvailable = Number(partnerBonus?.eligible ? partnerBonus.available_minor : 0);
+  const canUsePartnerBonus = !!user && (!isSubscription || isInstallment) && partnerBonusAvailable > 0;
+  const partnerBonusToApply = canUsePartnerBonus && usePartnerBonus
+    ? Math.min(partnerBonusAvailable, Math.max(0, linkInfo.amount - 100))
+    : 0;
 
   // PAY-D visibility: NULL OR equal — public link OR personal link of current user.
   const ownsOrPublic =
@@ -600,6 +627,13 @@ export default function PublicPayPage() {
                       : ''}
                   </span>
                 </span>
+              </label>
+            )}
+
+            {canUsePartnerBonus && (
+              <label className="mb-6 flex cursor-pointer items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-50/50 p-4 text-left dark:bg-emerald-950/20">
+                <Checkbox checked={usePartnerBonus} onCheckedChange={(checked) => setUsePartnerBonus(checked === true)} className="mt-0.5" />
+                <span className="space-y-1"><span className="block text-sm font-medium">Использовать партнёрские баллы</span><span className="block text-xs text-muted-foreground">Доступно {(partnerBonusAvailable / 100).toFixed(2)} BYN{usePartnerBonus && partnerBonusToApply > 0 ? ` · к оплате будет зачтено ${(partnerBonusToApply / 100).toFixed(2)} BYN` : ''}</span></span>
               </label>
             )}
 

@@ -253,6 +253,8 @@ export function PaymentDialog({
   const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
   const [customerCreditMinor, setCustomerCreditMinor] = useState(0);
   const [useCustomerCredit, setUseCustomerCredit] = useState(false);
+  const [partnerBonusMinor, setPartnerBonusMinor] = useState(0);
+  const [usePartnerBonus, setUsePartnerBonus] = useState(false);
   // Telegram link hooks
   const { data: telegramStatus, refetch: refetchTelegramStatus, isLoading: isTelegramStatusLoading } = useTelegramLinkStatus();
   const startTelegramLink = useStartTelegramLink();
@@ -303,6 +305,7 @@ export function PaymentDialog({
   };
 
   const loadCustomerCredit = async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.rpc as any)('referral_get_my_customer_credit');
     if (error) {
       console.error('[PaymentDialog] loadCustomerCredit failed:', error);
@@ -310,6 +313,17 @@ export function PaymentDialog({
       return;
     }
     setCustomerCreditMinor(Math.max(0, Number(data?.available_minor ?? 0)));
+  };
+
+  const loadPartnerBonus = async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase.rpc as any)('referral_get_my_bonus_wallet', { p_product_id: productId });
+    if (error) {
+      console.error('[PaymentDialog] loadPartnerBonus failed:', error);
+      setPartnerBonusMinor(0);
+      return;
+    }
+    setPartnerBonusMinor(Math.max(0, Number(data?.eligible ? data?.available_minor : 0)));
   };
 
   // Reset state when dialog opens
@@ -321,12 +335,15 @@ export function PaymentDialog({
         setExistingUserId(user.id);
         loadSavedCards(user.id);
         loadCustomerCredit();
+        loadPartnerBonus();
         return; // Skip full reset — keep formData, step, selectedOffer intact
       }
 
       setSavedCards([]);
       setCustomerCreditMinor(0);
       setUseCustomerCredit(false);
+      setPartnerBonusMinor(0);
+      setUsePartnerBonus(false);
       setIsLoadingCard(false);
       setSelectedMethod('new_card');
       savedCardIdempotencyKeyRef.current = crypto.randomUUID();
@@ -358,6 +375,7 @@ export function PaymentDialog({
         // Check for saved payment method
         loadSavedCards(user.id);
         loadCustomerCredit();
+        loadPartnerBonus();
       } else {
         // User is not authenticated - start with email step
         setFormData({ email: "", firstName: "", lastName: "", phone: "+375", password: "" });
@@ -373,6 +391,7 @@ export function PaymentDialog({
       authInProgressRef.current = false;
       setPaymentError(null);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, user, session, isClubProduct, isTelegramLinked, isTelegramStatusLoading]);
 
   // PAY-K: для one_time — выставить дефолтную сохранённую карту, иначе 'new_card'.
@@ -740,6 +759,8 @@ export function PaymentDialog({
           payment_method_id: paymentMethodId,
           idempotency_key,
           customer_credit_requested_minor: useCustomerCredit ? customerCreditMinor : 0,
+          partner_bonus_requested_minor: usePartnerBonus ? partnerBonusMinor : 0,
+          partner_bonus_checkout_key: savedCardIdempotencyKeyRef.current,
         }),
       });
       const data = await res.json();
@@ -942,6 +963,8 @@ export function PaymentDialog({
           useMitTokenization: shouldUseMitTokenization,
           customerCreditRequestedMinor: useCustomerCredit ? customerCreditMinor : 0,
           customerCreditCheckoutKey: savedCardIdempotencyKeyRef.current,
+          partnerBonusRequestedMinor: usePartnerBonus ? partnerBonusMinor : 0,
+          partnerBonusCheckoutKey: savedCardIdempotencyKeyRef.current,
         },
       });
 
@@ -1643,6 +1666,16 @@ export function PaymentDialog({
                 <span className="space-y-1">
                   <span className="block text-sm font-medium">Использовать накопленную скидку</span>
                   <span className="block text-xs text-muted-foreground">Доступно {(customerCreditMinor / 100).toFixed(2)} BYN</span>
+                </span>
+              </label>
+            )}
+
+            {partnerBonusMinor > 0 && isOneTimeFlow && (
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-50/50 p-3 dark:bg-emerald-950/20">
+                <Checkbox checked={usePartnerBonus} onCheckedChange={(checked) => setUsePartnerBonus(checked === true)} className="mt-0.5" />
+                <span className="space-y-1">
+                  <span className="block text-sm font-medium">Использовать партнёрские баллы</span>
+                  <span className="block text-xs text-muted-foreground">Доступно {(partnerBonusMinor / 100).toFixed(2)} BYN. Баллы не применяются к подпискам.</span>
                 </span>
               </label>
             )}
