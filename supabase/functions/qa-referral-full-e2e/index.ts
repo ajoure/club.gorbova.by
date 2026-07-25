@@ -364,6 +364,9 @@ async function cleanup(admin: any, runId: string, body: any) {
     const { count: prc, error: prErr } = await admin.from('profiles').delete({ count: 'exact' }).in('id', profileIds);
     deleted['profiles'] = prc ?? 0;
     if (prErr) deleted['profiles_err'] = prErr.message as any;
+  }
+
+
 
   const { count: nc } = await admin.from('notification_outbox').delete({ count: 'exact' }).contains('payload', { qa_e2e_run_id: runId });
   deleted['notification_outbox'] = nc ?? 0;
