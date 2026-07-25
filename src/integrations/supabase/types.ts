@@ -8778,84 +8778,6 @@ export type Database = {
           },
         ]
       }
-      ilex_documents: {
-        Row: {
-          content: string | null
-          created_at: string | null
-          doc_date: string | null
-          doc_number: string | null
-          doc_type: string | null
-          extracted_articles: Json | null
-          id: string
-          ilex_id: string
-          metadata: Json | null
-          saved_by: string
-          search_query: string | null
-          source_url: string | null
-          title: string
-          updated_at: string | null
-        }
-        Insert: {
-          content?: string | null
-          created_at?: string | null
-          doc_date?: string | null
-          doc_number?: string | null
-          doc_type?: string | null
-          extracted_articles?: Json | null
-          id?: string
-          ilex_id: string
-          metadata?: Json | null
-          saved_by: string
-          search_query?: string | null
-          source_url?: string | null
-          title: string
-          updated_at?: string | null
-        }
-        Update: {
-          content?: string | null
-          created_at?: string | null
-          doc_date?: string | null
-          doc_number?: string | null
-          doc_type?: string | null
-          extracted_articles?: Json | null
-          id?: string
-          ilex_id?: string
-          metadata?: Json | null
-          saved_by?: string
-          search_query?: string | null
-          source_url?: string | null
-          title?: string
-          updated_at?: string | null
-        }
-        Relationships: []
-      }
-      ilex_settings: {
-        Row: {
-          connection_status: string | null
-          id: string
-          last_connection_check: string | null
-          session_cookie: string | null
-          updated_at: string | null
-          updated_by: string | null
-        }
-        Insert: {
-          connection_status?: string | null
-          id?: string
-          last_connection_check?: string | null
-          session_cookie?: string | null
-          updated_at?: string | null
-          updated_by?: string | null
-        }
-        Update: {
-          connection_status?: string | null
-          id?: string
-          last_connection_check?: string | null
-          session_cookie?: string | null
-          updated_at?: string | null
-          updated_by?: string | null
-        }
-        Relationships: []
-      }
       impersonation_sessions: {
         Row: {
           actor_user_id: string
@@ -9803,6 +9725,41 @@ export type Database = {
           },
         ]
       }
+      legal_anchor_aliases: {
+        Row: {
+          created_at: string
+          current_anchor: string | null
+          document_id: string
+          id: string
+          old_anchor: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          current_anchor?: string | null
+          document_id: string
+          id?: string
+          old_anchor: string
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          current_anchor?: string | null
+          document_id?: string
+          id?: string
+          old_anchor?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_anchor_aliases_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "legal_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       legal_details_entity_person_links: {
         Row: {
           acts_on_basis: string | null
@@ -10036,6 +9993,146 @@ export type Database = {
         }
         Relationships: []
       }
+      legal_document_versions: {
+        Row: {
+          checksum: string
+          content_html: string | null
+          content_text: string
+          created_at: string
+          document_id: string
+          effective_at: string | null
+          id: string
+          is_current: boolean
+          revision_key: string
+          revision_label: string | null
+          source_url: string | null
+          structure: Json
+        }
+        Insert: {
+          checksum: string
+          content_html?: string | null
+          content_text: string
+          created_at?: string
+          document_id: string
+          effective_at?: string | null
+          id?: string
+          is_current?: boolean
+          revision_key: string
+          revision_label?: string | null
+          source_url?: string | null
+          structure?: Json
+        }
+        Update: {
+          checksum?: string
+          content_html?: string | null
+          content_text?: string
+          created_at?: string
+          document_id?: string
+          effective_at?: string | null
+          id?: string
+          is_current?: boolean
+          revision_key?: string
+          revision_label?: string | null
+          source_url?: string | null
+          structure?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_document_versions_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "legal_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_documents: {
+        Row: {
+          category: string
+          checksum: string | null
+          content_html: string | null
+          content_text: string | null
+          created_at: string | null
+          created_by: string | null
+          doc_date: string | null
+          doc_number: string | null
+          doc_type: string | null
+          effective_at: string | null
+          external_id: string
+          extracted_articles: Json | null
+          id: string
+          is_published: boolean
+          last_synced_at: string | null
+          metadata: Json | null
+          organ: string | null
+          revision_label: string | null
+          search_query: string | null
+          slug: string
+          source: string
+          source_url: string | null
+          status: string
+          structure: Json
+          title: string
+          updated_at: string | null
+        }
+        Insert: {
+          category?: string
+          checksum?: string | null
+          content_html?: string | null
+          content_text?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          doc_date?: string | null
+          doc_number?: string | null
+          doc_type?: string | null
+          effective_at?: string | null
+          external_id: string
+          extracted_articles?: Json | null
+          id?: string
+          is_published?: boolean
+          last_synced_at?: string | null
+          metadata?: Json | null
+          organ?: string | null
+          revision_label?: string | null
+          search_query?: string | null
+          slug: string
+          source?: string
+          source_url?: string | null
+          status?: string
+          structure?: Json
+          title: string
+          updated_at?: string | null
+        }
+        Update: {
+          category?: string
+          checksum?: string | null
+          content_html?: string | null
+          content_text?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          doc_date?: string | null
+          doc_number?: string | null
+          doc_type?: string | null
+          effective_at?: string | null
+          external_id?: string
+          extracted_articles?: Json | null
+          id?: string
+          is_published?: boolean
+          last_synced_at?: string | null
+          metadata?: Json | null
+          organ?: string | null
+          revision_label?: string | null
+          search_query?: string | null
+          slug?: string
+          source?: string
+          source_url?: string | null
+          status?: string
+          structure?: Json
+          title?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       legal_entities_requisites: {
         Row: {
           created_at: string
@@ -10091,6 +10188,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      legislation_settings: {
+        Row: {
+          connection_status: string | null
+          id: string
+          last_connection_check: string | null
+          last_sync_at: string | null
+          last_sync_message: string | null
+          last_sync_status: string | null
+          source: string
+          sync_enabled: boolean
+          sync_interval_minutes: number
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          connection_status?: string | null
+          id?: string
+          last_connection_check?: string | null
+          last_sync_at?: string | null
+          last_sync_message?: string | null
+          last_sync_status?: string | null
+          source?: string
+          sync_enabled?: boolean
+          sync_interval_minutes?: number
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          connection_status?: string | null
+          id?: string
+          last_connection_check?: string | null
+          last_sync_at?: string | null
+          last_sync_message?: string | null
+          last_sync_status?: string | null
+          source?: string
+          sync_enabled?: boolean
+          sync_interval_minutes?: number
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: []
       }
       lesson_attachments: {
         Row: {
@@ -22985,6 +23124,23 @@ export type Database = {
           failed: number
           meta: Json
           sent: number
+        }[]
+      }
+      get_legal_document_preview: {
+        Args: { p_slug: string }
+        Returns: {
+          category: string
+          doc_date: string
+          doc_number: string
+          doc_type: string
+          effective_at: string
+          last_synced_at: string
+          organ: string
+          revision_label: string
+          slug: string
+          source_url: string
+          status: string
+          title: string
         }[]
       }
       get_live_event_scenario: {
