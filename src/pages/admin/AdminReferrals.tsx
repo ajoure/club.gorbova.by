@@ -57,6 +57,7 @@ export default function AdminReferrals() {
       const { data, count, error } = await (supabase as any)
         .from("referral_partners")
         .select("id,public_id,partner_code,status,joined_at,profiles:profile_id(full_name,email)", { count: "exact" })
+        .neq("status", "closed")
         .order("joined_at", { ascending: false })
         .order("id", { ascending: false })
         .range(from, from + PARTNERS_PAGE_SIZE - 1);
