@@ -307,86 +307,82 @@ async function verify(admin: any, runId: string, body: any) {
 }
 
 async function cleanup(admin: any, runId: string, body: any) {
-  const referrerUid = body.referrer_user_id as string | undefined;
-  const inviteeUid = body.invitee_user_id as string | undefined;
-  const partnerId = body.partner_id as string | undefined;
-  const inviteeProfileId = body.invitee_profile_id as string | undefined;
-
+  const wipeAll = body.wipe_all === true;
   const deleted: Record<string, number> = {};
-  const del = async (table: string, filter: any) => {
-    const q = admin.from(table).delete({ count: 'exact' });
-    for (const [k, v] of Object.entries(filter)) q.eq(k, v as string);
-    const { count, error } = await q;
-    if (error) throw new Error(`del ${table}: ${error.message}`);
-    deleted[table] = (deleted[table] ?? 0) + (count ?? 0);
-  };
 
-  // Sale attributions and balance chain by partner
-  if (partnerId) {
-    // Fetch tx ids first to delete entries
-    const { data: txIds } = await admin
-      .from('referral_balance_transactions')
+  // Discover QA profiles either by run_id or by prefix
+  const q = admin.from('profiles').select('id, user_id, email');
+  const { data: qaProfiles } = wipeAll
+    ? await q.like('email', 'qa.ref.%')
+    : await q.contains('meta', { qa_e2e_run_id: runId });
+  const profileIds = (qaProfiles ?? []).map((p: any) => p.id);
+  const userIds = (qaProfiles ?? []).map((p: any) => p.user_id).filter(Boolean);
+
+  if (profileIds.length) {
+    const { data: parts } = await admin
+      .from('referral_partners')
       .select('id')
-      .eq('partner_id', partnerId);
-    if (txIds?.length) {
-      const ids = txIds.map((x: any) => x.id);
-      const { count: ec } = await admin
-        .from('referral_balance_entries')
-        .delete({ count: 'exact' })
-        .in('transaction_id', ids);
-      deleted['referral_balance_entries'] = ec ?? 0;
+      .in('profile_id', profileIds);
+    const partnerIds = (parts ?? []).map((x: any) => x.id);
+
+    if (partnerIds.length) {
+      const { data: txIds } = await admin
+        .from('referral_balance_transactions')
+        .select('id')
+        .in('partner_id', partnerIds);
+      if (txIds?.length) {
+        const { count: ec } = await admin
+          .from('referral_balance_entries')
+          .delete({ count: 'exact' })
+          .in('transaction_id', txIds.map((x: any) => x.id));
+        deleted['referral_balance_entries'] = ec ?? 0;
+      }
+      const { count: sc } = await admin.from('referral_sale_attributions').delete({ count: 'exact' }).in('partner_id', partnerIds);
+      deleted['referral_sale_attributions'] = sc ?? 0;
+      const { count: tc } = await admin.from('referral_balance_transactions').delete({ count: 'exact' }).in('partner_id', partnerIds);
+      deleted['referral_balance_transactions'] = tc ?? 0;
+      const { count: rc } = await admin.from('referral_relationships').delete({ count: 'exact' }).in('partner_id', partnerIds);
+      deleted['referral_relationships(partner)'] = rc ?? 0;
+      const { count: rc2 } = await admin.from('referral_relationships').delete({ count: 'exact' }).in('referred_profile_id', profileIds);
+      deleted['referral_relationships(referred)'] = rc2 ?? 0;
+      const { count: lc } = await admin.from('referral_program_links').delete({ count: 'exact' }).in('partner_id', partnerIds);
+      deleted['referral_program_links'] = lc ?? 0;
+      const { count: pc0 } = await admin.from('referral_partners').delete({ count: 'exact' }).in('id', partnerIds);
+      deleted['referral_partners'] = pc0 ?? 0;
     }
-    await del('referral_sale_attributions', { partner_id: partnerId });
-    await del('referral_balance_transactions', { partner_id: partnerId });
-    await del('referral_relationships', { partner_id: partnerId });
-    await del('referral_program_links', { partner_id: partnerId });
-    await del('referral_partners', { id: partnerId });
+
+    const { data: qaOrders } = await admin.from('orders_v2').select('id').in('profile_id', profileIds);
+    const orderIds = (qaOrders ?? []).map((o: any) => o.id);
+    if (orderIds.length) {
+      const { count: pc } = await admin.from('payments_v2').delete({ count: 'exact' }).in('order_id', orderIds);
+      deleted['payments_v2'] = pc ?? 0;
+      const { count: oc } = await admin.from('orders_v2').delete({ count: 'exact' }).in('id', orderIds);
+      deleted['orders_v2'] = oc ?? 0;
+    }
+
+    const { count: prc } = await admin.from('profiles').delete({ count: 'exact' }).in('id', profileIds);
+    deleted['profiles'] = prc ?? 0;
   }
 
-  // Orders + payments by qa tag
-  const { data: qaOrders } = await admin
-    .from('orders_v2')
-    .select('id')
-    .contains('meta', { qa_e2e_run_id: runId });
-  if (qaOrders?.length) {
-    const orderIds = qaOrders.map((o: any) => o.id);
-    const { count: pc } = await admin
-      .from('payments_v2')
-      .delete({ count: 'exact' })
-      .in('order_id', orderIds);
-    deleted['payments_v2'] = pc ?? 0;
-    const { count: oc } = await admin
-      .from('orders_v2')
-      .delete({ count: 'exact' })
-      .in('id', orderIds);
-    deleted['orders_v2'] = oc ?? 0;
-  }
-
-  // Domain events (referral only) referencing these order ids — best-effort keep out
-  // Notification outbox by payload tag
-  const { count: nc } = await admin
-    .from('notification_outbox')
-    .delete({ count: 'exact' })
-    .contains('payload', { qa_e2e_run_id: runId });
+  const { count: nc } = await admin.from('notification_outbox').delete({ count: 'exact' }).contains('payload', { qa_e2e_run_id: runId });
   deleted['notification_outbox'] = nc ?? 0;
 
-  // Profiles + auth users
-  if (inviteeProfileId) {
-    const { count: prc } = await admin
-      .from('profiles')
-      .delete({ count: 'exact' })
-      .eq('id', inviteeProfileId);
-    deleted['profiles(invitee)'] = prc ?? 0;
-  }
-  for (const uid of [referrerUid, inviteeUid]) {
-    if (!uid) continue;
-    // profile row(s) by user_id (referrer profile may still exist)
-    await admin.from('profiles').delete().eq('user_id', uid);
+  let authDeleted = 0;
+  for (const uid of userIds) {
     const { error } = await admin.auth.admin.deleteUser(uid);
-    if (error && !error.message.includes('not_found')) {
-      deleted[`auth_user_${uid}_err`] = 1 as any;
+    if (!error) authDeleted++;
+  }
+  // Also delete any qa auth users still around by email
+  if (wipeAll) {
+    const { data: userList } = await admin.auth.admin.listUsers({ perPage: 200 });
+    for (const u of userList?.users ?? []) {
+      if (u.email?.startsWith('qa.ref.')) {
+        const { error } = await admin.auth.admin.deleteUser(u.id);
+        if (!error) authDeleted++;
+      }
     }
   }
+  deleted['auth_users'] = authDeleted;
 
-  return json(200, { ok: true, run_id: runId, deleted });
+  return json(200, { ok: true, run_id: runId, wipe_all: wipeAll, deleted });
 }
