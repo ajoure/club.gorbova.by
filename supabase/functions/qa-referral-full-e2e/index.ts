@@ -103,12 +103,20 @@ async function provision(admin: any, runId: string, callerUid: string) {
   const refProfileId = await upsertProfile(referrer.id, referrerEmail);
   const invProfileId = await upsertProfile(invitee.id, inviteeEmail);
 
-  // Ensure partner via existing RPC
-  const { data: partnerId, error: pErr } = await admin.rpc(
-    'referral_admin_ensure_partner',
-    { p_profile_id: refProfileId },
-  );
+  // Direct insert as service_role (auth.uid() is null in edge functions)
+  const partnerCode = 'REF-QA-' + runId.slice(0, 8).toUpperCase();
+  const { data: partnerRow, error: pErr } = await admin
+    .from('referral_partners')
+    .insert({
+      profile_id: refProfileId,
+      partner_code: partnerCode,
+      status: 'active',
+      metadata: { qa_e2e_run_id: runId },
+    })
+    .select('id')
+    .single();
   if (pErr) throw new Error(`ensure_partner: ${pErr.message}`);
+  const partnerId = partnerRow.id as string;
 
   // Create relationship (referrer's partner → invitee profile)
   const { data: rel, error: rErr } = await admin
