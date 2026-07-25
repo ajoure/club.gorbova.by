@@ -240,21 +240,18 @@ const buttonStyle = (offer: TariffOffer, index: number) => {
     : { background: "#ffffff", color: CB_PALETTE.accent, borderColor: CB_PALETTE.accent };
 };
 
-const BADGE_ASSETS: Record<Badge, { src: string; width: number; alt: string }> = {
+const BADGE_STYLES: Record<Badge, { label: string; minWidth: number }> = {
   VIP: {
-    src: "https://static.tildacdn.com/tild3163-6437-4533-b336-366331613231/___86.png",
-    width: 28,
-    alt: "VIP",
+    label: "VIP",
+    minWidth: 35,
   },
   Grand: {
-    src: "https://static.tildacdn.com/tild3263-3864-4830-b339-386461376561/Grand_1.png",
-    width: 44,
-    alt: "Grand",
+    label: "GRAND",
+    minWidth: 52,
   },
   Business: {
-    src: "https://static.tildacdn.com/tild3536-3030-4634-b331-383233363261/Grand_2.png",
-    width: 58,
-    alt: "Business",
+    label: "BUSINESS",
+    minWidth: 66,
   },
 };
 
@@ -268,7 +265,7 @@ function FeatureRow({
   item: FeatureItem;
   dark?: boolean;
 }) {
-  const badge = item.badge ? BADGE_ASSETS[item.badge] : null;
+  const badge = item.badge ? BADGE_STYLES[item.badge] : null;
   return (
     <li
       className="flex min-w-0 items-start gap-[9px]"
@@ -294,20 +291,22 @@ function FeatureRow({
           →
         </span>
       )}
-      {badge ? (
-        <img
-          src={badge.src}
-          alt={badge.alt}
-          width={badge.width}
-          className="mt-[2px] h-auto shrink-0 object-contain"
-          style={{ width: badge.width }}
-          loading="lazy"
-        />
-      ) : null}
-      <span className="min-w-0">
-        {item.bold ? <strong className="font-bold">{item.bold}</strong> : null}
-        {item.bold && item.text ? " " : null}
-        {item.text}
+      <span className="flex min-w-0 items-start gap-[8px]">
+        {badge ? (
+          <span
+            data-cb-native-feature-badge={item.badge}
+            aria-label={badge.label}
+            className="mt-[1px] inline-flex h-[21px] shrink-0 items-center justify-center rounded-[4px] bg-black px-[5px] text-center text-[10px] font-bold uppercase leading-none tracking-[-0.01em] text-white"
+            style={{ minWidth: badge.minWidth }}
+          >
+            {badge.label}
+          </span>
+        ) : null}
+        <span className="min-w-0">
+          {item.bold ? <strong className="font-bold">{item.bold}</strong> : null}
+          {item.bold && item.text ? " " : null}
+          {item.text}
+        </span>
       </span>
     </li>
   );

@@ -49,6 +49,21 @@ describe("CbNative tariff access matrix", () => {
     expect(clubRow).toBeTruthy();
   });
 
+  it("renders compact text badges inline without the legacy transparent PNG assets", () => {
+    const { container } = render(
+      <CbNativeTariffCard tariff={tariff} index={2} onSelectOffer={() => undefined} />,
+    );
+
+    const badges = container.querySelectorAll("[data-cb-native-feature-badge]");
+    expect(badges.length).toBeGreaterThan(0);
+    expect(Array.from(badges).map((badge) => badge.textContent)).toEqual(
+      expect.arrayContaining(["VIP", "GRAND", "BUSINESS"]),
+    );
+    expect(
+      container.querySelector('img[alt="VIP"], img[alt="Grand"], img[alt="Business"]'),
+    ).toBeNull();
+  });
+
   it("renders visual prices from the product card configuration", () => {
     const { container } = render(
       <CbNativeTariffCard
