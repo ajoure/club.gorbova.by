@@ -343,18 +343,27 @@ async function cleanup(admin: any, runId: string, body: any) {
       deleted['referral_partners'] = pc0 ?? 0;
     }
 
+    // Delete orders BEFORE partners/profiles to release FKs
     const { data: qaOrders } = await admin.from('orders_v2').select('id').in('profile_id', profileIds);
     const orderIds = (qaOrders ?? []).map((o: any) => o.id);
     if (orderIds.length) {
-      const { count: pc } = await admin.from('payments_v2').delete({ count: 'exact' }).in('order_id', orderIds);
+      const { count: pc, error: peErr } = await admin.from('payments_v2').delete({ count: 'exact' }).in('order_id', orderIds);
       deleted['payments_v2'] = pc ?? 0;
-      const { count: oc } = await admin.from('orders_v2').delete({ count: 'exact' }).in('id', orderIds);
+      if (peErr) deleted['payments_v2_err'] = peErr.message as any;
+      const { count: oc, error: oeErr } = await admin.from('orders_v2').delete({ count: 'exact' }).in('id', orderIds);
       deleted['orders_v2'] = oc ?? 0;
+      if (oeErr) deleted['orders_v2_err'] = oeErr.message as any;
     }
 
-    const { count: prc } = await admin.from('profiles').delete({ count: 'exact' }).in('id', profileIds);
+    if (partnerIds.length) {
+      const { count: pc0, error: peErr } = await admin.from('referral_partners').delete({ count: 'exact' }).in('id', partnerIds);
+      deleted['referral_partners'] = pc0 ?? 0;
+      if (peErr) deleted['referral_partners_err'] = peErr.message as any;
+    }
+
+    const { count: prc, error: prErr } = await admin.from('profiles').delete({ count: 'exact' }).in('id', profileIds);
     deleted['profiles'] = prc ?? 0;
-  }
+    if (prErr) deleted['profiles_err'] = prErr.message as any;
 
   const { count: nc } = await admin.from('notification_outbox').delete({ count: 'exact' }).contains('payload', { qa_e2e_run_id: runId });
   deleted['notification_outbox'] = nc ?? 0;
