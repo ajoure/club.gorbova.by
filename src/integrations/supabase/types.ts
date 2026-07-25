@@ -23505,6 +23505,14 @@ export type Database = {
         }
         Returns: Json
       }
+      referral_admin_attach_historical_profile: {
+        Args: {
+          p_partner_profile_id: string
+          p_reason: string
+          p_referred_profile_id: string
+        }
+        Returns: string
+      }
       referral_admin_attach_profile: {
         Args: {
           p_partner_profile_id: string
@@ -23512,6 +23520,14 @@ export type Database = {
           p_referred_profile_id: string
         }
         Returns: string
+      }
+      referral_admin_credit_historical_order: {
+        Args: {
+          p_order_id: string
+          p_reason: string
+          p_relationship_id: string
+        }
+        Returns: Json
       }
       referral_admin_decide_payout: {
         Args: {
@@ -23527,6 +23543,18 @@ export type Database = {
         Returns: string
       }
       referral_admin_get_summary: { Args: never; Returns: Json }
+      referral_admin_list_historical_orders: {
+        Args: { p_relationship_id: string }
+        Returns: {
+          commissionable: boolean
+          created_at: string
+          order_id: string
+          order_number: string
+          paid_minor: number
+          payments_count: number
+          product_name: string
+        }[]
+      }
       referral_attach_current_profile: {
         Args: { p_captured_at: string; p_partner_code: string }
         Returns: Json
