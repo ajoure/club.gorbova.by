@@ -171,7 +171,7 @@ async function scenarios(admin: any, runId: string, body: any) {
   scenarios.push({ scenario: 'club_renewal', order_id: clubOrder.id, sale_count_after: sale2Count });
 
   // --- Scenario 3: One-time product (10% flat expected). Use a non-Club product. ---
-  const oneTimeProductId = await findOneTimeProduct(admin);
+  const oneTimeProductId = (body.one_time_product_id as string | undefined) ?? (await findOneTimeProduct(admin));
   let sale3 = null;
   if (oneTimeProductId) {
     const otOrder = await insertOrder(admin, {
