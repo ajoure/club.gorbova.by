@@ -143,7 +143,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "training", label: "Тренинги", path: "/admin/training-modules", icon: "GraduationCap", order: 10, permission: "content.view" },
       { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram", icon: "MessageCircle", order: 11 },
       { id: "live-events", label: "Эфиры", path: "/admin/live-events", icon: "Video", order: 12, permission: "content.edit" },
-      { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 13, permission: "news.view" },
+      { id: "legislation", label: "Законодательство", path: "/admin/legislation", icon: "Library", order: 13, permission: "content.view" },
       { id: "telegram-invite-audit", label: "Telegram invite audit", path: "/admin/telegram/invite-audit", icon: "ShieldCheck", order: 14, permission: "telegram.clubs.manage" },
     ],
   },
@@ -184,12 +184,26 @@ export function removeDuplicateItems(settings: MenuSettings): MenuSettings {
 
 // Merge new DEFAULT_MENU items into saved settings
 function mergeMenuSettings(saved: MenuSettings): MenuSettings {
-  // 1. Filter out deprecated + reposition items from ALL saved groups FIRST
+  // Preserve the user's saved placement while migrating the discontinued
+  // provider-specific menu item to the canonical legislation module.
   const cleanedSaved = saved.map(group => ({
     ...group,
-    items: (group.items || []).filter(
-      item => !DEPRECATED_ITEM_IDS.has(item.id) && !REPOSITION_ITEM_IDS.has(item.id)
-    ),
+    items: (group.items || [])
+      .map((item) =>
+        item.id === "ilex"
+          ? {
+              ...item,
+              id: "legislation",
+              label: "Законодательство",
+              path: "/admin/legislation",
+              icon: "Library",
+              permission: "content.view",
+            }
+          : item,
+      )
+      .filter(
+        item => !DEPRECATED_ITEM_IDS.has(item.id) && !REPOSITION_ITEM_IDS.has(item.id)
+      ),
   }));
   
   // 2. Collect ALL item IDs from cleaned saved groups to prevent duplicates
@@ -292,12 +306,15 @@ export function useAdminMenuSettings() {
       const hasReposition = savedItems.some(group =>
         group.items?.some(item => REPOSITION_ITEM_IDS.has(item.id))
       );
+      const hasLegacyLegislationItem = savedItems.some(group =>
+        group.items?.some(item => item.id === "ilex")
+      );
       
       // Merge (which filters deprecated items)
       const cleaned = mergeMenuSettings(savedItems);
       
       // One-time auto-cleanup with guards
-      if ((hasDeprecated || hasReposition) && data?.id) {
+      if ((hasDeprecated || hasReposition || hasLegacyLegislationItem) && data?.id) {
 
         // Guard 1: Check if data actually changed (idempotency)
         const savedJson = JSON.stringify(savedItems);

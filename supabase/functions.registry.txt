@@ -86,6 +86,7 @@ bepaid-subscription-audit-cron
 log-deployment
 training-copy-move
 manage-news-schedule
+legislation-sync
 instagram-webhook
 instagram-admin-chat
 manychat-inbound

@@ -89,7 +89,7 @@ const routeLabels: Record<string, string> = {
   "/admin/document-templates": "Шаблоны документов",
   "/admin/training-modules": "Учебные модули",
   "/admin/editorial": "Редакция",
-  "/admin/ilex": "ILEX",
+  "/admin/legislation": "Законодательство",
   "/admin/marketing": "Маркетинг",
   "/admin/bepaid-archive-import": "Импорт архива bePaid",
 };

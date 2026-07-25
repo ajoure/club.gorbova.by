@@ -88,6 +88,7 @@ const Money = lazy(() => import("./pages/Money"));
 const AI = lazy(() => import("./pages/AI"));
 const DocumentGeneration = lazy(() => import("./pages/DocumentGeneration"));
 const Knowledge = lazy(() => import("./pages/Knowledge"));
+const LegislationDocument = lazy(() => import("./pages/LegislationDocument"));
 const LiveEvents = lazy(() => import("./pages/LiveEvents"));
 const BusinessTraining = lazy(() => import("./pages/BusinessTraining"));
 const BusinessTrainingContent = lazy(() => import("./pages/BusinessTrainingContent"));
@@ -145,7 +146,7 @@ const AdminSupport = lazy(() => import("./pages/admin/AdminSupport"));
 const AdminNews = lazy(() => import("./pages/admin/AdminNews"));
 const AdminCommunication = lazy(() => import("./pages/admin/AdminCommunication"));
 const AdminEditorial = lazy(() => import("./pages/admin/AdminEditorial"));
-const AdminIlex = lazy(() => import("./pages/admin/AdminIlex"));
+const AdminLegislation = lazy(() => import("./pages/admin/AdminLegislation"));
 const AdminAI = lazy(() => import("./pages/admin/AdminAI"));
 const AdminDocuments = lazy(() => import("./pages/admin/AdminDocuments"));
 const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingInsights"));
@@ -241,6 +242,7 @@ const App = () => {
               <Route path="/close-year" element={<LazyRoute><CloseYear /></LazyRoute>} />
               <Route path="/business-training" element={<LazyRoute><BusinessTraining /></LazyRoute>} />
               <Route path="/club" element={<Landing />} />
+              <Route path="/knowledge/laws/:slug" element={<LazyRoute><LegislationDocument /></LazyRoute>} />
               
               <Route path="/banned" element={<LazyRoute><Banned /></LazyRoute>} />
               <Route path="/live" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="live"><LiveEvents /></SectionGuard></LazyRoute></ProtectedRoute>} />
@@ -371,7 +373,7 @@ const App = () => {
               {/* Admin routes - Editorial */}
               <Route path="/admin/editorial" element={<ProtectedRoute><LazyRoute><AdminEditorial /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/editorial/sources" element={<Navigate to="/admin/editorial" replace />} />
-              <Route path="/admin/ilex" element={<ProtectedRoute><LazyRoute><AdminIlex /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/legislation" element={<ProtectedRoute><LazyRoute><AdminLegislation /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/ai" element={<ProtectedRoute><LazyRoute><AdminAI /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/documents" element={<ProtectedRoute><LazyRoute><AdminDocuments /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/marketing" element={<ProtectedRoute><LazyRoute><AdminMarketingInsights /></LazyRoute></ProtectedRoute>} />

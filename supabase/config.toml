@@ -140,3 +140,8 @@ verify_jwt = true
 
 [functions.temp-cbold-dump]
 verify_jwt = false
+
+[functions.legislation-sync]
+# Manual synchronization is restricted by the platform JWT wall and an
+# in-function content.edit/super-admin authorization check.
+verify_jwt = true

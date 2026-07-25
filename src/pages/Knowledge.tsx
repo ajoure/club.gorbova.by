@@ -21,6 +21,7 @@ import { useContainerLessons } from "@/hooks/useContainerLessons";
 import { useKbQuestions, formatTimecode } from "@/hooks/useKbQuestions";
 import { ModuleCard } from "@/components/training/ModuleCard";
 import { LessonCard } from "@/components/training/LessonCard";
+import { LegislationCatalog } from "@/components/legislation/LegislationCatalog";
 import { 
   Search, 
   MessageCircleQuestion, 
@@ -218,17 +219,7 @@ function QuestionsContent({ searchQuery, hasAccess, restrictedTariffs, sortOrder
 
 // Legislation tab content component
 function LegislationContent() {
-  return (
-    <GlassCard className="text-center py-16">
-      <Scale className="h-16 w-16 text-muted-foreground/30 mx-auto mb-6" />
-      <h3 className="text-xl font-semibold text-foreground mb-2">
-        Раздел наполняется нормативными актами
-      </h3>
-      <p className="text-muted-foreground max-w-md mx-auto">
-        Здесь будут размещены ссылки на актуальные законы, постановления и другие нормативные документы Республики Беларусь
-      </p>
-    </GlassCard>
-  );
+  return <LegislationCatalog />;
 }
 
 // Restricted access banner for users without tariff access

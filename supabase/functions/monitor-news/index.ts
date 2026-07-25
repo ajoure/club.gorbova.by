@@ -150,50 +150,6 @@ const RELEVANCE_KEYWORDS = [
   "минфин", "минэконом", "минтруд",
 ];
 
-// Helper to get iLex session cookie for authenticated scraping
-async function getIlexSession(): Promise<string | null> {
-  const login = Deno.env.get('ILEX_LOGIN');
-  const password = Deno.env.get('ILEX_PASSWORD');
-  
-  if (!login || !password) {
-    console.log('[monitor-news] iLex credentials not configured');
-    return null;
-  }
-  
-  try {
-    console.log('[monitor-news] Authenticating with iLex...');
-    const response = await fetch('https://ilex-private.ilex.by/public/service-login', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-      body: JSON.stringify({ login, password }),
-    });
-    
-    if (!response.ok) {
-      console.error('[monitor-news] iLex auth failed:', response.status);
-      return null;
-    }
-    
-    const setCookie = response.headers.get('set-cookie');
-    if (setCookie) {
-      console.log('[monitor-news] iLex session obtained');
-      return setCookie;
-    }
-    
-    const body = await response.json().catch(() => null);
-    if (body?.token) {
-      return `Authorization: Bearer ${body.token}`;
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('[monitor-news] iLex auth error:', error);
-    return null;
-  }
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -490,9 +446,6 @@ async function runScraping(
 
     const styleProfile = channelData?.settings?.style_profile || null;
 
-    // Get iLex session for authenticated sources
-    const ilexSession = await getIlexSession();
-
     // P0.9.1-6: Get active sources with rotation (oldest first, NULL first)
     // SOURCES_PER_RUN can be configured, default 25, hard cap 50
     const sourcesPerRun = Math.min(Math.max(limit, 25), 50);
@@ -533,7 +486,6 @@ async function runScraping(
         const { items: scrapedItems, errorCode, errorDetails, stage } = await scrapeSourceWithFallback(
           source,
           firecrawlKey,
-          ilexSession,
           supabase,
           byEgressConfig
         );
@@ -882,7 +834,6 @@ function normalizeDate(dateStr: string): string | undefined {
 async function scrapeSourceWithFallback(
   source: NewsSource,
   firecrawlKey: string | undefined,
-  ilexSession: string | null,
   supabase: SupabaseClient,
   byEgressConfig: ByEgressConfig | null = null
 ): Promise<{ items: ScrapedItem[]; errorCode?: string; errorDetails?: Record<string, unknown>; stage?: string }> {
@@ -896,20 +847,15 @@ async function scrapeSourceWithFallback(
   
   const checkTimeout = () => Date.now() - startTime > MAX_RUNTIME_MS;
 
-  // Check if this is iLex source that requires authentication
-  const isIlexSource = source.url.includes('ilex-private.ilex.by');
-  if (isIlexSource || config.requires_auth) {
-    if (!ilexSession) {
-      console.log(`[monitor-news] ${source.name} requires auth but no session available`);
-      await logScrapeAttempt(supabase, source, "auth_check", source.url, "none", "auth_required", "No iLex session", Date.now() - startTime, 0);
-      return { 
-        items: [], 
-        errorCode: 'auth_required',
-        errorDetails: { message: 'Source requires authentication but no session available' },
-        stage: 'auth_check',
-      };
-    }
-    console.log(`[monitor-news] Using authenticated session for ${source.name}`);
+  if (config.requires_auth) {
+    console.log(`[monitor-news] ${source.name} requires unsupported interactive authentication`);
+    await logScrapeAttempt(supabase, source, "auth_check", source.url, "none", "auth_required", "Authenticated sources are not supported", Date.now() - startTime, 0);
+    return {
+      items: [],
+      errorCode: "auth_required",
+      errorDetails: { message: "Authenticated sources are not supported" },
+      stage: "auth_check",
+    };
   }
 
   // ===== STAGE 1: RSS (if configured) =====
@@ -1002,8 +948,7 @@ async function scrapeSourceWithFallback(
   const initialProxyMode = config.proxy_mode || "auto";
   
   console.log(`[monitor-news] ${source.name}: STAGE 2 - HTML scrape (proxy: ${initialProxyMode})...`);
-  // P0.9.1-2: Pass ilexSession to scrapeUrlWithProxy
-  const htmlResult1 = await scrapeUrlWithProxy(source.url, firecrawlKey as string, effectiveCountry, initialProxyMode, ilexSession);
+  const htmlResult1 = await scrapeUrlWithProxy(source.url, firecrawlKey as string, effectiveCountry, initialProxyMode);
   
   await logScrapeAttempt(
     supabase, source, `html_${initialProxyMode}`, source.url, initialProxyMode,
@@ -1030,8 +975,7 @@ async function scrapeSourceWithFallback(
   // ===== STAGE 3: HTML enhanced (if auto failed with retryable error) =====
   if (initialProxyMode !== "enhanced" && shouldRetryWithEnhanced(htmlResult1.errorCode)) {
     console.log(`[monitor-news] ${source.name}: STAGE 3 - retrying with enhanced proxy...`);
-    // P0.9.1-2: Pass ilexSession to retry
-    const htmlResult2 = await scrapeUrlWithProxy(source.url, firecrawlKey as string, effectiveCountry, "enhanced", ilexSession);
+    const htmlResult2 = await scrapeUrlWithProxy(source.url, firecrawlKey as string, effectiveCountry, "enhanced");
     
     await logScrapeAttempt(
       supabase, source, "html_enhanced", source.url, "enhanced",
@@ -1061,8 +1005,7 @@ async function scrapeSourceWithFallback(
     console.log(`[monitor-news] ${source.name}: STAGE 4 - trying fallback URL...`);
     
     // Try fallback with enhanced proxy directly
-    // P0.9.1-2: Pass ilexSession to fallback
-    const fallbackResult = await scrapeUrlWithProxy(config.fallback_url, firecrawlKey as string, effectiveCountry, "enhanced", ilexSession);
+    const fallbackResult = await scrapeUrlWithProxy(config.fallback_url, firecrawlKey as string, effectiveCountry, "enhanced");
     
     await logScrapeAttempt(
       supabase, source, "fallback", config.fallback_url, "enhanced",
@@ -1094,20 +1037,12 @@ function shouldRetryWithEnhanced(errorCode: string | undefined): boolean {
   return ["400", "401", "403", "408", "429", "timeout", "500", "502", "503", "504"].includes(errorCode);
 }
 
-// P0.9.1-2: Helper to extract just the cookie NAME=VALUE from set-cookie header
-function extractCookieValue(setCookie: string): string {
-  // set-cookie: JSESSIONID=abc123; Path=/; HttpOnly → JSESSIONID=abc123
-  const match = setCookie.match(/^([^;]+)/);
-  return match ? match[1] : setCookie;
-}
-
-// P0.9.1-2: Helper to scrape a single URL with Firecrawl (with sessionCookie support)
+// Helper to scrape a single URL with Firecrawl
 async function scrapeUrlWithProxy(
   url: string,
   firecrawlKey: string,
   country: string,
-  proxyMode: "auto" | "enhanced",
-  sessionCookie?: string | null  // P0.9.1-2: Added sessionCookie param
+  proxyMode: "auto" | "enhanced"
 ): Promise<{ content: string | null; errorCode?: string; errorDetails?: Record<string, unknown> }> {
   try {
     const requestBody: Record<string, unknown> = {
@@ -1128,11 +1063,6 @@ async function scrapeUrlWithProxy(
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
       "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
     };
-
-    // P0.9.1-2: Add session cookie if provided (for authenticated sources like iLex)
-    if (sessionCookie) {
-      headers["Cookie"] = extractCookieValue(sessionCookie);
-    }
 
     // P0.9.4: Use stealth headers for enhanced mode (NOT premium which causes 400)
     if (proxyMode === "enhanced") {
