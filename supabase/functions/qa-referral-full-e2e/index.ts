@@ -51,11 +51,14 @@ Deno.serve(async (req) => {
       return await provision(admin, runId, callerUid);
     } else if (action === 'scenarios') {
       return await scenarios(admin, runId, body);
+    } else if (action === 'finite_installment') {
+      return await finiteInstallment(admin, runId, body);
     } else if (action === 'verify') {
       return await verify(admin, runId, body);
     } else if (action === 'cleanup') {
       return await cleanup(admin, runId, body);
     }
+
     return json(400, { error: 'unknown action' });
   } catch (e) {
     return json(400, { error: String((e as Error)?.message ?? e) });
