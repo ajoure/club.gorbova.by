@@ -23373,6 +23373,10 @@ export type Database = {
         Args: { p_captured_at: string; p_partner_code: string }
         Returns: Json
       }
+      referral_close_partner_for_profile: {
+        Args: { _profile_id: string; _reason: string }
+        Returns: undefined
+      }
       referral_create_payout_request: {
         Args: { p_amount_minor: number }
         Returns: string
