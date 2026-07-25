@@ -21280,25 +21280,46 @@ export type Database = {
         }
         Returns: string
       }
-      admin_create_deal_from_payment: {
-        Args: {
-          p_access_end: string
-          p_access_start: string
-          p_actor_user_id: string
-          p_customer_email: string
-          p_final_amount: number
-          p_final_currency: string
-          p_grant_access: boolean
-          p_idempotency_key: string
-          p_payment_id: string
-          p_product_id: string
-          p_profile_id: string
-          p_raw_source: string
-          p_request_hash: string
-          p_tariff_id: string
-        }
-        Returns: Json
-      }
+      admin_create_deal_from_payment:
+        | {
+            Args: {
+              p_access_end: string
+              p_access_start: string
+              p_actor_user_id: string
+              p_customer_email: string
+              p_final_amount: number
+              p_final_currency: string
+              p_grant_access: boolean
+              p_idempotency_key: string
+              p_payment_id: string
+              p_product_id: string
+              p_profile_id: string
+              p_raw_source: string
+              p_request_hash: string
+              p_tariff_id: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_access_end: string
+              p_access_start: string
+              p_actor_user_id: string
+              p_customer_email: string
+              p_final_amount: number
+              p_final_currency: string
+              p_grant_access: boolean
+              p_idempotency_key: string
+              p_offer_id: string
+              p_payment_id: string
+              p_product_id: string
+              p_profile_id: string
+              p_raw_source: string
+              p_request_hash: string
+              p_tariff_id: string
+            }
+            Returns: Json
+          }
       admin_create_manual_payment_v1: {
         Args: {
           p_actor_user_id: string
