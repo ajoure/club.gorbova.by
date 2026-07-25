@@ -31,7 +31,7 @@ async function assertAdmin(req: Request) {
   if (error || !claims?.claims?.sub) throw new Error('unauthorized');
   const uid = claims.claims.sub as string;
   const admin = createClient(SUPABASE_URL, SERVICE_KEY);
-  const { data: isAdmin } = await admin.rpc('referral_is_admin', { _user_id: uid });
+  const { data: isAdmin } = await admin.rpc('referral_is_admin', { p_user_id: uid });
   if (!isAdmin) throw new Error('forbidden: not admin');
   return { admin, callerUid: uid };
 }
