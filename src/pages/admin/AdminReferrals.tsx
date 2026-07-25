@@ -40,8 +40,8 @@ export default function AdminReferrals() {
       const [settings, products, relationships, sales, payouts, summary] = await Promise.all([
         client.from("referral_program_settings").select("*").eq("singleton", true).single(),
         client.from("products_v2").select("id,name,referral_settings_mode,referral_commission_percent_bps,referral_customer_discount_percent_bps,referral_commission_scheme,referral_bonus_eligible").order("name"),
-        fetchAll("referral_relationships", "id,public_id,partner_id,attached_at,status,referred:referred_profile_id(full_name,email),partner:partner_id(partner_code,profiles:profile_id(full_name,email))", "attached_at"),
-        fetchAll("referral_sale_attributions", "id,public_id,partner_id,status,commission_percent_bps,commission_minor,reversed_minor,created_at,product:product_id(name)", "created_at"),
+        fetchAll("referral_relationships", "id,public_id,partner_id,attached_at,status,source,manual_reason,metadata,referred:referred_profile_id(full_name,email),partner:partner_id(partner_code,profiles:profile_id(full_name,email))", "attached_at"),
+        fetchAll("referral_sale_attributions", "id,public_id,partner_id,status,commission_percent_bps,commission_minor,reversed_minor,created_at,metadata,product:product_id(name)", "created_at"),
         client.from("referral_payout_requests").select("id,public_id,partner_id,amount_minor,status,requested_at,payment_reference").order("requested_at", { ascending: false }).limit(100),
         client.rpc("referral_admin_get_summary"),
       ]);
@@ -116,6 +116,7 @@ export default function AdminReferrals() {
         <TabsTrigger value="overview" className="text-xs font-medium sm:text-sm">Обзор</TabsTrigger>
         <TabsTrigger value="partners" className="text-xs font-medium sm:text-sm">Партнёры <span className="ml-1 text-muted-foreground">{partnersCount.toLocaleString("ru-BY")}</span></TabsTrigger>
         <TabsTrigger value="payouts" className="text-xs font-medium sm:text-sm">Выплаты</TabsTrigger>
+        <TabsTrigger value="manual" className="text-xs font-medium sm:text-sm">Ручные внесения</TabsTrigger>
         <TabsTrigger value="products" className="text-xs font-medium sm:text-sm">Продукты</TabsTrigger>
         <TabsTrigger value="settings" className="text-xs font-medium sm:text-sm">Настройки</TabsTrigger>
       </TabsList>
@@ -155,6 +156,21 @@ export default function AdminReferrals() {
           <div className="divide-y">
             {data.payouts.map((p: any) => <CompactRow key={p.id} title={p.public_id} meta={new Date(p.requested_at).toLocaleDateString("ru-BY")} aside={<div className="flex items-center gap-2"><span className="font-medium">{formatBynMinor(p.amount_minor)}</span><Badge variant="secondary" className="text-[11px] font-medium">{p.status}</Badge>{p.status === "pending" && <><Button size="sm" variant="outline" className="h-7 px-2 text-xs font-medium" onClick={() => decidePayout.mutate({ id: p.id, decision: "rejected" })}>Отклонить</Button><Button size="sm" className="h-7 px-2 text-xs font-medium" onClick={() => decidePayout.mutate({ id: p.id, decision: "paid" })}>Погасить</Button></>}</div>} />)}
             {!data.payouts.length && <Empty>Заявок пока нет.</Empty>}
+          </div>
+        </Section>
+      </TabsContent>
+
+      <TabsContent value="manual" className="space-y-4">
+        <Section title="Исторические рекомендации" subtitle="Связи и начисления, которые администратор внёс для существующих контактов">
+          <div className="divide-y">
+            {data.relationships.filter((relationship: any) => relationship.metadata?.administrative_historical).map((relationship: any) => <CompactRow key={relationship.id} title={`${relationship.partner?.profiles?.full_name || relationship.partner?.profiles?.email || relationship.partner?.partner_code || "Партнёр"} → ${relationship.referred?.full_name || relationship.referred?.email || "Пользователь"}`} meta={`Связь внесена администратором · ${relationship.manual_reason || "основание не указано"} · ${new Date(relationship.attached_at).toLocaleDateString("ru-BY")}`} aside={<Badge variant="secondary" className="text-[11px] font-medium">Ручная связь</Badge>} />)}
+            {!data.relationships.some((relationship: any) => relationship.metadata?.administrative_historical) && <Empty>Ручных исторических связей пока нет. Откройте карточку контакта → «Рефералы» и укажите рекомендателя.</Empty>}
+          </div>
+        </Section>
+        <Section title="Исторические начисления" subtitle="Суммы рассчитаны сервером по правилам продукта и отмечены в журнале">
+          <div className="divide-y">
+            {data.sales.filter((sale: any) => sale.metadata?.administrative_historical).map((sale: any) => <CompactRow key={sale.id} title={sale.product?.name || "Продукт"} meta={`Внесено администратором · ${Number(sale.commission_percent_bps) / 100}% · ${new Date(sale.created_at).toLocaleDateString("ru-BY")}`} aside={<><span className="font-medium">{formatBynMinor(Number(sale.commission_minor) - Number(sale.reversed_minor))}</span><Badge variant="secondary" className="text-[11px] font-medium">Ручное начисление</Badge></>} />)}
+            {!data.sales.some((sale: any) => sale.metadata?.administrative_historical) && <Empty>Ручных начислений пока нет.</Empty>}
           </div>
         </Section>
       </TabsContent>
