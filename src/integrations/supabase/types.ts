@@ -23702,14 +23702,40 @@ export type Database = {
       referral_admin_list_historical_orders: {
         Args: { p_relationship_id: string }
         Returns: {
+          can_reverse: boolean
           commissionable: boolean
           created_at: string
+          credit_action: string
           order_id: string
           order_number: string
           paid_minor: number
           payments_count: number
           product_name: string
+          sale_commission_minor: number
+          sale_id: string
+          sale_reversed_minor: number
+          sale_status: string
         }[]
+      }
+      referral_admin_reassign_relationship: {
+        Args: {
+          p_new_partner_profile_id: string
+          p_reason: string
+          p_relationship_id: string
+        }
+        Returns: string
+      }
+      referral_admin_restore_sale_attribution: {
+        Args: { p_reason: string; p_sale_id: string }
+        Returns: Json
+      }
+      referral_admin_reverse_sale_attribution: {
+        Args: { p_reason: string; p_sale_id: string }
+        Returns: Json
+      }
+      referral_admin_revoke_relationship: {
+        Args: { p_reason: string; p_relationship_id: string }
+        Returns: undefined
       }
       referral_attach_current_profile: {
         Args: { p_captured_at: string; p_partner_code: string }
