@@ -209,6 +209,80 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
     staleTime: 30000,
   });
 
+  // One CRM deal can contain a primary product and delayed add-on modules.
+  // These rows make the already purchased, not-yet-opened modules visible to
+  // the manager without creating a second deal or a premature entitlement.
+  const { data: scheduledModuleAccesses, isLoading: scheduledModuleAccessesLoading } = useQuery({
+    queryKey: ["deal-scheduled-module-accesses", deal?.id],
+    enabled: !!deal?.id && open,
+    queryFn: async () => {
+      if (!deal?.id) return [];
+      const { data: group, error: groupError } = await (supabase as any)
+        .from("order_groups")
+        .select("id")
+        .eq("primary_order_id", deal.id)
+        .maybeSingle();
+      if (groupError) throw groupError;
+      if (!group?.id) return [];
+      const { data, error } = await (supabase as any)
+        .from("scheduled_product_access")
+        .select(`
+          id, status, access_delivery_mode, opens_at, purchase_confirmed_at,
+          products_v2:product_id(name, code), tariffs:tariff_id(name, code)
+        `)
+        .eq("order_group_id", group.id)
+        .in("status", ["scheduled", "activating", "failed"])
+        .order("purchase_confirmed_at", { ascending: false });
+      if (error) throw error;
+      return data as any[];
+    },
+  });
+
+  // The primary CRM deal is the source of truth for the whole basket. Keep the
+  // composition visible here instead of making managers search for child orders.
+  const { data: dealComposition, isLoading: dealCompositionLoading } = useQuery({
+    queryKey: ["deal-composition", deal?.id],
+    enabled: !!deal?.id && open,
+    queryFn: async () => {
+      if (!deal?.id) return [];
+      const { data: group, error: groupError } = await (supabase as any)
+        .from("order_groups")
+        .select("id")
+        .eq("primary_order_id", deal.id)
+        .maybeSingle();
+      if (groupError) throw groupError;
+      if (!group?.id) return [];
+      const { data, error } = await (supabase as any)
+        .from("order_group_items")
+        .select(`
+          id, role, sort_order, item_snapshot,
+          products_v2:product_id(name, code), tariffs:tariff_id(name, code)
+        `)
+        .eq("order_group_id", group.id)
+        .order("sort_order");
+      if (error) throw error;
+      return data as any[];
+    },
+  });
+
+  const openScheduledModuleMutation = useMutation({
+    mutationFn: async (scheduledAccessId: string) => {
+      const { data, error } = await supabase.functions.invoke("activate-scheduled-product-access", {
+        body: { scheduled_access_id: scheduledAccessId },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Не удалось открыть доступ");
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Доступ к модулю открыт");
+      queryClient.invalidateQueries({ queryKey: ["deal-scheduled-module-accesses", deal?.id] });
+      queryClient.invalidateQueries({ queryKey: ["deal-subscription", deal?.id] });
+      queryClient.invalidateQueries({ queryKey: ["user-purchase-entitlements"] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Не удалось открыть доступ"),
+  });
+
   // Fetch subscription for this deal
   const { data: subscription } = useQuery({
     queryKey: ["deal-subscription", deal?.id],
@@ -961,7 +1035,86 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
 
 
             {/* Внутренняя рассрочка (canonical bepaid finite subscription) */}
+            {(dealCompositionLoading || (dealComposition?.length ?? 0) > 0) && (
+              <Card className="border-primary/15">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Package className="w-4 h-4 text-primary" />
+                    Состав заказа
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {dealCompositionLoading ? <Skeleton className="h-16 w-full" /> : dealComposition?.map((item: any) => {
+                    const snapshot = (item.item_snapshot && typeof item.item_snapshot === "object") ? item.item_snapshot : {};
+                    const price = Number(snapshot.final_price ?? snapshot.price ?? 0);
+                    const label = item.products_v2?.name || snapshot.product_name || "Продукт";
+                    return (
+                      <div key={item.id} className="flex items-start justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium truncate">{label}</span>
+                            <Badge variant="outline" className="shrink-0 text-[10px]">
+                              {item.role === "primary" ? "Основной" : "Модуль"}
+                            </Badge>
+                          </div>
+                          {(item.tariffs?.name || snapshot.tariff_name) && (
+                            <p className="text-xs text-muted-foreground mt-0.5">{item.tariffs?.name || snapshot.tariff_name}</p>
+                          )}
+                        </div>
+                        {Number.isFinite(price) && price > 0 && (
+                          <span className="shrink-0 text-sm font-medium">
+                            {price.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {deal.currency || "BYN"}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            )}
+
             <InternalInstallmentBlock order={deal} />
+
+            {(scheduledModuleAccessesLoading || (scheduledModuleAccesses?.length ?? 0) > 0) && (
+              <Card className="border-primary/15 bg-primary/[0.02]">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-primary" />
+                    Купленные модули с отложенным доступом
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {scheduledModuleAccessesLoading ? <Skeleton className="h-20 w-full" /> : scheduledModuleAccesses?.map((access: any) => {
+                    const isFixedDate = access.access_delivery_mode === "fixed_date";
+                    const notice = isFixedDate && access.opens_at
+                      ? `Автоматическое открытие: ${format(new Date(access.opens_at), "d MMMM yyyy 'в' HH:mm", { locale: ru })}`
+                      : "Откроется вручную администратором";
+                    return (
+                      <div key={access.id} className="rounded-lg border bg-background p-3 space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-medium text-sm">{access.products_v2?.name || "Дополнительный модуль"}</div>
+                            {access.tariffs?.name && <div className="text-xs text-muted-foreground mt-0.5">{access.tariffs.name}</div>}
+                          </div>
+                          <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-300">Куплен</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{notice}</p>
+                        {access.access_delivery_mode === "manual" && (
+                          <Button
+                            size="sm"
+                            onClick={() => openScheduledModuleMutation.mutate(access.id)}
+                            disabled={openScheduledModuleMutation.isPending}
+                          >
+                            <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
+                            Открыть доступ сейчас
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Payments */}
             <Card>

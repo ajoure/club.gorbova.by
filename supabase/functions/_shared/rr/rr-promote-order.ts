@@ -21,6 +21,7 @@
  *
  * Никаких hardcode продуктов/тарифов/сумм. Всё берётся из orders_v2.
  */
+import { finalizeComposablePurchase } from "../finalize-composable-purchase.ts";
 
 export type RRPromoteSource = "rr-webhook" | "rr-fulfill-order" | "rr-reconciler";
 
@@ -55,7 +56,7 @@ export async function promoteAuthorizedRRPayment(
     signHashShort: string;
   },
 ): Promise<RRPromoteResult> {
-  const { supabaseAdmin, supabaseUrl, serviceRoleKey } = deps;
+  const { supabaseAdmin } = deps;
   const { orderId, source, rrStatusRaw, signHashShort } = input;
 
   // 1) Atomic promotion RPC.
@@ -118,89 +119,27 @@ export async function promoteAuthorizedRRPayment(
     };
   }
 
-  if (paymentId) {
-    const { data: settled, error: settleError } = await supabaseAdmin.rpc(
-      "settle_composable_order_group",
-      { _primary_order_id: orderId, _payment_id: paymentId },
-    );
-    if (settleError || settled?.ok === false) {
-      const error = settleError?.message ?? String(settled?.error ?? "not_confirmed");
-      await recordEvent(supabaseAdmin, orderId, "rr_group_settlement_failed", {
-        source, payment_id: paymentId, error,
-      });
-      return {
-        ok: false, promote_state: state, fulfillment_state: "failed",
-        grant_error: `group_settlement_failed: ${error}`,
-        payment_id: paymentId, details: promote,
-      };
-    }
-  }
-
-  const { data: groupRows, error: groupRowsError } = await supabaseAdmin
-    .from("order_group_items")
-    .select("order_id,sort_order,order_group:order_groups!inner(primary_order_id)")
-    .eq("order_group.primary_order_id", orderId)
-    .not("order_id", "is", null)
-    .order("sort_order");
-  if (groupRowsError) {
-    return {
-      ok: false, promote_state: state, fulfillment_state: "failed",
-      grant_error: `group_items_lookup_failed: ${groupRowsError.message}`,
-      payment_id: paymentId, details: promote,
-    };
-  }
-  const grantOrderIds = groupRows?.length
-    ? groupRows.map((row: any) => String(row.order_id))
-    : [orderId];
-
-  // 2) Grant each product independently. Reconciler retries idempotently.
-  const grantUrl = `${supabaseUrl}/functions/v1/grant-access-for-order`;
-
-  let grantStatus = 0;
+  // 2) Fulfil all independently sold lines through one canonical boundary.
+  // It grants available products and records delayed modules as purchased.
+  let grantStatus = 200;
   let grantHttpOk = true;
   let grantOk = true;
   let grantError: string | null = null;
-  const grantBody: any = { orders: [] };
-  let grantAlreadyFulfilled = true;
-
-  for (const grantOrderId of grantOrderIds) {
-    const ac = new AbortController();
-    const timeoutId = setTimeout(() => ac.abort(), 20_000);
-    try {
-      const resp = await fetch(grantUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${serviceRoleKey}`,
-          "apikey": serviceRoleKey,
-        },
-        body: JSON.stringify({ orderId: grantOrderId, source }),
-        signal: ac.signal,
-      });
-      const responseBody = await resp.json().catch(() => null);
-      const orderOk = resp.ok && responseBody?.success === true;
-      grantStatus = orderOk ? (grantStatus || resp.status) : resp.status;
-      grantHttpOk = grantHttpOk && resp.ok;
-      grantOk = grantOk && orderOk;
-      grantAlreadyFulfilled = grantAlreadyFulfilled &&
-        responseBody?.already_fulfilled === true;
-      grantBody.orders.push({
-        order_id: grantOrderId, status: resp.status, success: orderOk,
-        already_fulfilled: responseBody?.already_fulfilled === true,
-      });
-      if (!orderOk && !grantError) {
-        grantError = `order_${grantOrderId}:${
-          responseBody ? JSON.stringify(responseBody).slice(0, 300) : `http_${resp.status}`
-        }`;
-      }
-    } catch (e) {
-      grantOk = false;
-      grantHttpOk = false;
-      grantStatus = 0;
-      grantError ||= `order_${grantOrderId}:${(e as Error).message}`;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+  let grantAlreadyFulfilled = false;
+  let grantBody: any = { orders: [] };
+  try {
+    const finalized = await finalizeComposablePurchase(supabaseAdmin, {
+      primaryOrderId: orderId,
+      paymentId,
+      source,
+    });
+    grantOk = finalized.state !== "awaiting_full_payment";
+    grantBody = { state: finalized.state, order_group_id: finalized.order_group_id, orders: finalized.items };
+  } catch (error) {
+    grantOk = false;
+    grantHttpOk = false;
+    grantStatus = 500;
+    grantError = error instanceof Error ? error.message : String(error);
   }
 
   // 3) Mark fulfillment. Only 'completed' when grant is CONFIRMED by response body.
@@ -217,7 +156,7 @@ export async function promoteAuthorizedRRPayment(
       grant_already_fulfilled: grantAlreadyFulfilled,
       grant_response_summary: {
         success: grantOk,
-        order_count: grantOrderIds.length,
+        order_count: grantBody.orders?.length ?? 0,
         orders: grantBody.orders,
       },
     },

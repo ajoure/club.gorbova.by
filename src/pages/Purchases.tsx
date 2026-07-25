@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CreditCard, ShoppingBag, History, ClipboardList, FileText, MessageCircle, BookOpen } from "lucide-react";
+import { CreditCard, ShoppingBag, History, ClipboardList, FileText, MessageCircle, BookOpen, Clock3, LockKeyhole } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OrderDocuments } from "@/components/purchases/OrderDocuments";
 import { format } from "date-fns";
@@ -136,6 +136,16 @@ interface Entitlement {
   } | null;
 }
 
+interface ScheduledProductAccess {
+  id: string;
+  status: "scheduled" | "activating" | "failed";
+  access_delivery_mode: "fixed_date" | "manual";
+  opens_at: string | null;
+  purchase_confirmed_at: string | null;
+  products_v2: { name: string; code: string } | null;
+  tariffs: { name: string; code: string } | null;
+}
+
 export default function Purchases() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -219,6 +229,28 @@ export default function Purchases() {
 
       if (error) throw error;
       return data as Entitlement[];
+    },
+    enabled: !!user,
+  });
+
+  // A delayed module is already purchased, but is intentionally not an active
+  // entitlement until its configured opening date or a manager's manual action.
+  const { data: scheduledAccesses, isLoading: scheduledAccessesLoading } = useQuery({
+    queryKey: ["user-scheduled-product-access", user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data, error } = await (supabase as any)
+        .from("scheduled_product_access")
+        .select(`
+          id, status, access_delivery_mode, opens_at, purchase_confirmed_at,
+          products_v2:product_id(name, code),
+          tariffs:tariff_id(name, code)
+        `)
+        .eq("user_id", user.id)
+        .in("status", ["scheduled", "activating", "failed"])
+        .order("purchase_confirmed_at", { ascending: false });
+      if (error) throw error;
+      return data as ScheduledProductAccess[];
     },
     enabled: !!user,
   });
@@ -472,6 +504,56 @@ export default function Purchases() {
             )}
           </CardContent>
         </Card>
+
+        {/* Paid modules with intentionally delayed access */}
+        {(scheduledAccessesLoading || (scheduledAccesses?.length ?? 0) > 0) && (
+          <Card className="overflow-hidden border-primary/15 bg-primary/[0.02]">
+            <CardHeader className="pb-3 px-4 sm:px-6">
+              <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                <Clock3 className="h-5 w-5 shrink-0 text-primary" />
+                Купленные модули
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Покупка подтверждена. Доступ откроется по условиям программы.
+              </p>
+            </CardHeader>
+            <CardContent className="px-3 sm:px-6">
+              {scheduledAccessesLoading ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {(scheduledAccesses ?? []).map((access) => {
+                    const productName = access.products_v2?.name || "Дополнительный модуль";
+                    const tariffName = access.tariffs?.name;
+                    const isFixedDate = access.access_delivery_mode === "fixed_date";
+                    const opensAt = access.opens_at ? new Date(access.opens_at) : null;
+                    const notice = isFixedDate && opensAt
+                      ? `Доступ откроется ${format(opensAt, "d MMMM yyyy 'в' HH:mm", { locale: ru })}.`
+                      : "Доступ откроет администратор. Мы сообщим вам сразу после открытия.";
+                    return (
+                      <div key={access.id} className="flex items-start justify-between gap-3 rounded-xl border border-border/60 bg-card p-4 sm:p-5">
+                        <div className="min-w-0 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <LockKeyhole className="h-4 w-4 shrink-0 text-primary" />
+                            <h3 className="font-medium text-foreground text-sm sm:text-base">{productName}</h3>
+                          </div>
+                          {tariffName && <p className="text-xs text-muted-foreground">{tariffName}</p>}
+                          <p className="text-xs sm:text-sm text-muted-foreground">{notice}</p>
+                        </div>
+                        <span className="shrink-0 text-xs font-medium text-amber-800 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-300 rounded-full px-2.5 py-1">
+                          Куплен
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* History Section with Tabs */}
         <Card className="overflow-hidden">

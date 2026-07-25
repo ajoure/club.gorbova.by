@@ -3689,7 +3689,8 @@ Deno.serve(async (req) => {
         } catch (_) {}
       }
 
-      // 6. Grant access via grant-access-for-order
+      // 6. Finalize the complete purchase group. A paid add-on must retain its
+      // own access lifecycle even though CRM shows one primary deal.
       // §A.2 short-circuit: if REBILL flow handled (mode=on terminal), skip legacy grant
       // to prevent double-grant. Downstream subscription resolution + date sync still run.
       let grantedSubscriptionV2Id: string | null = null;
@@ -3705,18 +3706,22 @@ Deno.serve(async (req) => {
       } else {
       try {
         const grantResp = await fetch(
-          `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
+          `${Deno.env.get('SUPABASE_URL')}/functions/v1/finalize-composable-purchase`,
           {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
             },
-            body: JSON.stringify({ orderId: linkOrder.id }),
+            body: JSON.stringify({
+              primary_order_id: linkOrder.id,
+              payment_id: payUpsertResult.id,
+              source: 'bepaid-webhook:link-order-subscription',
+            }),
           }
         );
         const grantResult = await grantResp.json();
-        console.log('[WEBHOOK-LINK-ORDER] grant-access-for-order result:', grantResp.status, grantResult);
+        console.log('[WEBHOOK-LINK-ORDER] finalize-composable-purchase result:', grantResp.status, grantResult);
         
         // PATCH P2.1: If grant-access failed — log CRITICAL audit + webhook_event
         if (!grantResp.ok) {
@@ -4996,18 +5001,24 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 7. Grant access
+      // 7. Finalize the complete checkout. A composable checkout can contain
+      // the primary tariff plus several modules, so this boundary must receive
+      // the recorded payment id and settle/grant the whole order group.
       try {
         const grantResp = await fetch(
-          `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
+          `${Deno.env.get('SUPABASE_URL')}/functions/v1/finalize-composable-purchase`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
-            body: JSON.stringify({ orderId: linkOrderV2.id }),
+            body: JSON.stringify({
+              primary_order_id: linkOrderV2.id,
+              payment_id: linkPayResult.id,
+              source: 'bepaid-webhook:payment-link',
+            }),
           }
         );
         const grantResult = await grantResp.json();
-        console.log('[WEBHOOK-LINK] grant-access result:', grantResp.status, grantResult);
+        console.log('[WEBHOOK-LINK] checkout finalization result:', grantResp.status, grantResult);
         if (!grantResp.ok) {
           await supabase.from('audit_logs').insert({
             actor_type: 'system', actor_label: 'bepaid-webhook',

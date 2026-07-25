@@ -50,7 +50,7 @@ export async function resolveComposableCheckout(
   const { data: addonRules, error: addonError } = await admin
     .from("offer_addons")
     .select(
-      "id,addon_product_id,addon_tariff_id,addon_offer_id,pricing_mode,fixed_amount,discount_percent,is_required,is_default_selected,allow_repurchase_after_expiry,sort_order,visible_from,visible_to,addon_product:products_v2!offer_addons_addon_product_id_fkey(id,name,currency,is_active),addon_tariff:tariffs!offer_addons_addon_tariff_id_fkey(id,name,is_active),addon_offer:tariff_offers!offer_addons_addon_offer_id_fkey(id,amount,is_active)",
+      "id,addon_product_id,addon_tariff_id,addon_offer_id,pricing_mode,fixed_amount,discount_percent,is_required,is_default_selected,allow_repurchase_after_expiry,access_delivery_mode,access_opens_at,access_duration_days,sort_order,visible_from,visible_to,addon_product:products_v2!offer_addons_addon_product_id_fkey(id,name,currency,is_active),addon_tariff:tariffs!offer_addons_addon_tariff_id_fkey(id,name,is_active),addon_offer:tariff_offers!offer_addons_addon_offer_id_fkey(id,amount,is_active)",
     )
     .eq("parent_offer_id", input.parentOfferId)
     .eq("is_active", true)
@@ -109,6 +109,10 @@ export async function resolveComposableCheckout(
     fixed_amount: rule.fixed_amount == null ? null : Number(rule.fixed_amount),
     discount_percent:
       rule.discount_percent == null ? null : Number(rule.discount_percent),
+    access_delivery_mode: rule.access_delivery_mode ?? "immediate",
+    access_opens_at: rule.access_opens_at ?? null,
+    access_duration_days:
+      rule.access_duration_days == null ? null : Number(rule.access_duration_days),
     sort_order: rule.sort_order,
   }))];
 
@@ -145,6 +149,10 @@ export async function resolveComposableCheckout(
       is_required: rule.is_required,
       is_default_selected: rule.is_default_selected,
       allow_repurchase_after_expiry: rule.allow_repurchase_after_expiry,
+      access_delivery_mode: rule.access_delivery_mode ?? "immediate",
+      access_opens_at: rule.access_opens_at ?? null,
+      access_duration_days:
+        rule.access_duration_days == null ? null : Number(rule.access_duration_days),
     })),
   };
 }

@@ -126,10 +126,23 @@ Deno.serve(async (req) => {
           },
         });
 
+        const { data: finalizeResult, error: finalizeError } = await supabase.functions.invoke(
+          'finalize-composable-purchase',
+          {
+            body: {
+              primary_order_id: order_id,
+              payment_id: existingPayment.id,
+              source: 'admin-link-payment-to-order:existing',
+            },
+          },
+        );
+
         return successResponse({
           payment_id: existingPayment.id,
           order_id,
           note: 'payment_already_existed',
+          fulfillment: finalizeResult ?? null,
+          fulfillment_warning: finalizeError?.message ?? null,
         });
       }
     }
@@ -228,10 +241,40 @@ Deno.serve(async (req) => {
 
     console.log(`[admin-link-payment-to-order] Success: payment_id=${newPayment.id}, order_id=${order_id}`);
 
+    // The matched invoice/deal already owns the full primary product + modules
+    // composition. Never create a second single-product deal during bank
+    // reconciliation; finalization settles the group and fulfils every line.
+    const { data: finalizeResult, error: finalizeError } = await supabase.functions.invoke(
+      'finalize-composable-purchase',
+      {
+        body: {
+          primary_order_id: order_id,
+          payment_id: newPayment.id,
+          source: 'admin-link-payment-to-order',
+        },
+      },
+    );
+    if (finalizeError) {
+      console.error('[admin-link-payment-to-order] fulfillment warning:', finalizeError);
+      await supabase.from('audit_logs').insert({
+        actor_user_id: actor_id,
+        action: 'admin.link_payment_to_order.fulfillment_failed',
+        target_user_id: finalUserId,
+        meta: {
+          queue_id,
+          order_id,
+          payment_id: newPayment.id,
+          error: finalizeError.message,
+        },
+      });
+    }
+
     return successResponse({
       payment_id: newPayment.id,
       order_id,
       profile_id: finalProfileId,
+      fulfillment: finalizeResult ?? null,
+      fulfillment_warning: finalizeError?.message ?? null,
     });
 
   } catch (error) {

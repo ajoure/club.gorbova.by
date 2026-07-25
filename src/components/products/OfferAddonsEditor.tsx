@@ -9,10 +9,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2 } from "lucide-react";
+import { CalendarClock, Check, Clock3, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 type PricingMode = "offer_price" | "fixed_price" | "percent_discount" | "free";
+type AccessDeliveryMode = "immediate" | "fixed_date" | "manual";
+
+const toIso = (value: string) => value ? new Date(value).toISOString() : null;
+const toLocalDateTime = (value: string | null | undefined) => {
+  if (!value) return "";
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+};
+
+const accessModeLabel: Record<AccessDeliveryMode, string> = {
+  immediate: "Сразу после оплаты",
+  fixed_date: "В назначенную дату",
+  manual: "Вручную администратором",
+};
 
 export function OfferAddonsEditor({ productId }: { productId: string }) {
   const qc = useQueryClient();
@@ -27,6 +42,11 @@ export function OfferAddonsEditor({ productId }: { productId: string }) {
   const [pricingValue, setPricingValue] = useState("");
   const [required, setRequired] = useState(false);
   const [defaultSelected, setDefaultSelected] = useState(false);
+  const [accessMode, setAccessMode] = useState<AccessDeliveryMode>("immediate");
+  const [accessOpensAt, setAccessOpensAt] = useState("");
+  const [accessDurationDays, setAccessDurationDays] = useState("");
+  const [bulkAccessMode, setBulkAccessMode] = useState<AccessDeliveryMode>("immediate");
+  const [bulkAccessOpensAt, setBulkAccessOpensAt] = useState("");
 
   const parentTariffIds = useMemo(() => (parentTariffs ?? []).map((t) => t.id), [parentTariffs]);
   const { data: parentOffers } = useQuery({
@@ -71,7 +91,14 @@ export function OfferAddonsEditor({ productId }: { productId: string }) {
       if (!parentOfferId || !addonProductId || !addonTariffId || !addonOfferId) {
         throw new Error("Выберите основную кнопку, продукт, тариф и кнопку модуля");
       }
+      if (accessMode === "fixed_date" && !accessOpensAt) {
+        throw new Error("Укажите дату и время открытия модуля");
+      }
       const numeric = pricingValue === "" ? null : Number(pricingValue);
+      const durationDays = accessDurationDays === "" ? null : Number(accessDurationDays);
+      if (durationDays !== null && (!Number.isInteger(durationDays) || durationDays <= 0)) {
+        throw new Error("Срок доступа укажите целым числом дней");
+      }
       const payload: any = {
         parent_offer_id: parentOfferId,
         addon_product_id: addonProductId,
@@ -83,6 +110,9 @@ export function OfferAddonsEditor({ productId }: { productId: string }) {
         is_required: required,
         is_default_selected: required || defaultSelected,
         allow_repurchase_after_expiry: true,
+        access_delivery_mode: accessMode,
+        access_opens_at: accessMode === "fixed_date" ? toIso(accessOpensAt) : null,
+        access_duration_days: durationDays,
         sort_order: (rules?.length ?? 0) + 1,
       };
       const { error } = await (supabase as any).from("offer_addons").insert(payload);
@@ -92,6 +122,7 @@ export function OfferAddonsEditor({ productId }: { productId: string }) {
       qc.invalidateQueries({ queryKey: ["offer-addons"] });
       setAddonOfferId(""); setPricingMode("offer_price"); setPricingValue("");
       setRequired(false); setDefaultSelected(false);
+      setAccessMode("immediate"); setAccessOpensAt(""); setAccessDurationDays("");
       toast.success("Дополнительный продукт добавлен к кнопке");
     },
     onError: (error: Error) => toast.error(error.message),
@@ -103,13 +134,32 @@ export function OfferAddonsEditor({ productId }: { productId: string }) {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["offer-addons"] }),
   });
+  const bulkUpdateAccess = useMutation({
+    mutationFn: async () => {
+      if (!parentOfferId) throw new Error("Сначала выберите кнопку основного тарифа");
+      if (bulkAccessMode === "fixed_date" && !bulkAccessOpensAt) {
+        throw new Error("Укажите общую дату и время открытия");
+      }
+      const { error } = await (supabase as any).from("offer_addons").update({
+        access_delivery_mode: bulkAccessMode,
+        access_opens_at: bulkAccessMode === "fixed_date" ? toIso(bulkAccessOpensAt) : null,
+      }).eq("parent_offer_id", parentOfferId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["offer-addons"] });
+      toast.success("Режим открытия применён ко всем модулям этой кнопки");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   return (
     <div className="space-y-4">
       <div>
         <h3 className="font-semibold">Дополнительные продукты в корзине</h3>
         <p className="text-sm text-muted-foreground">
-          Настройка действует для конкретной кнопки тарифа. Модуль остаётся самостоятельным продуктом.
+          Включите модули для конкретной кнопки тарифа, задайте цену и момент открытия.
+          Покупка модуля видна клиенту сразу, даже если сам доступ откроется позднее.
         </p>
       </div>
       <GlassCard className="p-4 grid gap-4 md:grid-cols-2">
@@ -166,6 +216,41 @@ export function OfferAddonsEditor({ productId }: { productId: string }) {
                 value={pricingValue} onChange={(e) => setPricingValue(e.target.value)} />}
           </div>
         </div>
+        <div className="space-y-2">
+          <Label>Когда открыть доступ к модулю</Label>
+          <Select value={accessMode} onValueChange={(value) => {
+            const next = value as AccessDeliveryMode;
+            setAccessMode(next);
+            if (next !== "fixed_date") setAccessOpensAt("");
+          }}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="immediate">Сразу после оплаты</SelectItem>
+              <SelectItem value="fixed_date">В назначенную дату</SelectItem>
+              <SelectItem value="manual">Вручную администратором</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {accessMode === "fixed_date" && (
+          <div className="space-y-2">
+            <Label>Дата и время открытия</Label>
+            <Input
+              type="datetime-local"
+              value={accessOpensAt}
+              onChange={(event) => setAccessOpensAt(event.target.value)}
+            />
+          </div>
+        )}
+        <div className="space-y-2">
+          <Label>Срок доступа после открытия, дней</Label>
+          <Input
+            type="number"
+            min="1"
+            placeholder="По настройкам тарифа"
+            value={accessDurationDays}
+            onChange={(event) => setAccessDurationDays(event.target.value)}
+          />
+        </div>
         <div className="flex items-center gap-6 md:col-span-2">
           <label className="flex items-center gap-2 text-sm"><Switch checked={required} onCheckedChange={setRequired} />Обязательный</label>
           <label className="flex items-center gap-2 text-sm"><Switch checked={defaultSelected} onCheckedChange={setDefaultSelected} />Выбран по умолчанию</label>
@@ -174,19 +259,164 @@ export function OfferAddonsEditor({ productId }: { productId: string }) {
           </Button>
         </div>
       </GlassCard>
+
+      <GlassCard className="p-4 space-y-3 border-primary/20 bg-primary/[0.03]">
+        <div className="flex items-start gap-3">
+          <CalendarClock className="h-5 w-5 text-primary mt-0.5" />
+          <div>
+            <h4 className="font-medium">Открытие всех модулей этой кнопки</h4>
+            <p className="text-xs text-muted-foreground">
+              Массовая настройка перезапишет режим и дату у всех добавленных модулей выбранного тарифа.
+            </p>
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+          <Select value={bulkAccessMode} onValueChange={(value) => {
+            const next = value as AccessDeliveryMode;
+            setBulkAccessMode(next);
+            if (next !== "fixed_date") setBulkAccessOpensAt("");
+          }}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="immediate">Сразу после оплаты</SelectItem>
+              <SelectItem value="fixed_date">В одну назначенную дату</SelectItem>
+              <SelectItem value="manual">Открыть все вручную</SelectItem>
+            </SelectContent>
+          </Select>
+          {bulkAccessMode === "fixed_date" ? (
+            <Input
+              type="datetime-local"
+              value={bulkAccessOpensAt}
+              onChange={(event) => setBulkAccessOpensAt(event.target.value)}
+            />
+          ) : <div />}
+          <Button
+            variant="outline"
+            onClick={() => bulkUpdateAccess.mutate()}
+            disabled={!parentOfferId || bulkUpdateAccess.isPending}
+          >
+            <Check className="h-4 w-4 mr-2" />Применить ко всем
+          </Button>
+        </div>
+      </GlassCard>
+
       <div className="space-y-2">
         {(rules ?? []).map((rule: any) => (
-          <GlassCard key={rule.id} className="p-3 flex items-center gap-3">
-            <div className="flex-1">
-              <div className="font-medium">{rule.parent_offer?.tariffs?.name} → {rule.addon_product?.name}</div>
-              <div className="text-xs text-muted-foreground">{rule.addon_tariff?.name} · {rule.addon_offer?.button_label}</div>
-            </div>
-            <Badge variant="outline">{rule.pricing_mode === "free" ? "Бесплатно" : rule.pricing_mode === "percent_discount" ? `−${rule.discount_percent}%` : rule.pricing_mode === "fixed_price" ? `${rule.fixed_amount}` : `${rule.addon_offer?.amount}`}</Badge>
-            {rule.is_required && <Badge>Обязательный</Badge>}
-            <Button variant="ghost" size="icon" onClick={() => remove.mutate(rule.id)}><Trash2 className="h-4 w-4" /></Button>
-          </GlassCard>
+          <AddonAccessRuleRow
+            key={rule.id}
+            rule={rule}
+            onSaved={() => qc.invalidateQueries({ queryKey: ["offer-addons"] })}
+            onRemove={() => remove.mutate(rule.id)}
+          />
         ))}
       </div>
     </div>
+  );
+}
+
+function AddonAccessRuleRow({
+  rule,
+  onSaved,
+  onRemove,
+}: {
+  rule: any;
+  onSaved: () => void;
+  onRemove: () => void;
+}) {
+  const [mode, setMode] = useState<AccessDeliveryMode>(
+    rule.access_delivery_mode ?? "immediate",
+  );
+  const [opensAt, setOpensAt] = useState(toLocalDateTime(rule.access_opens_at));
+  const [durationDays, setDurationDays] = useState(
+    rule.access_duration_days == null ? "" : String(rule.access_duration_days),
+  );
+  const save = useMutation({
+    mutationFn: async () => {
+      if (mode === "fixed_date" && !opensAt) throw new Error("Укажите дату открытия");
+      const normalizedDuration = durationDays === "" ? null : Number(durationDays);
+      if (normalizedDuration !== null && (!Number.isInteger(normalizedDuration) || normalizedDuration <= 0)) {
+        throw new Error("Срок доступа укажите целым числом дней");
+      }
+      const { error } = await (supabase as any).from("offer_addons").update({
+        access_delivery_mode: mode,
+        access_opens_at: mode === "fixed_date" ? toIso(opensAt) : null,
+        access_duration_days: normalizedDuration,
+      }).eq("id", rule.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      onSaved();
+      toast.success("Настройка открытия сохранена");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <GlassCard className="p-3 space-y-3">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="font-medium">
+            {rule.parent_offer?.tariffs?.name} → {rule.addon_product?.name}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {rule.addon_tariff?.name} · {rule.addon_offer?.button_label}
+          </div>
+        </div>
+        <Badge variant="outline">
+          {rule.pricing_mode === "free"
+            ? "Бесплатно"
+            : rule.pricing_mode === "percent_discount"
+              ? `−${rule.discount_percent}%`
+              : rule.pricing_mode === "fixed_price"
+                ? `${rule.fixed_amount}`
+                : `${rule.addon_offer?.amount}`}
+        </Badge>
+        {rule.is_required && <Badge>Обязательный</Badge>}
+        <Button variant="ghost" size="icon" onClick={onRemove}>
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+      <div className="grid gap-2 md:grid-cols-[1fr_1fr_180px_auto]">
+        <Select value={mode} onValueChange={(value) => {
+          const next = value as AccessDeliveryMode;
+          setMode(next);
+          if (next !== "fixed_date") setOpensAt("");
+        }}>
+          <SelectTrigger className="h-9">
+            <Clock3 className="h-4 w-4 mr-2 text-muted-foreground" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.entries(accessModeLabel).map(([value, label]) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {mode === "fixed_date" ? (
+          <Input
+            className="h-9"
+            type="datetime-local"
+            value={opensAt}
+            onChange={(event) => setOpensAt(event.target.value)}
+          />
+        ) : <div />}
+        <Input
+          className="h-9"
+          type="number"
+          min="1"
+          placeholder="Срок, дней"
+          value={durationDays}
+          onChange={(event) => setDurationDays(event.target.value)}
+        />
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => save.mutate()}
+          disabled={save.isPending}
+        >
+          <Save className="h-4 w-4 mr-2" />Сохранить
+        </Button>
+      </div>
+    </GlassCard>
   );
 }
