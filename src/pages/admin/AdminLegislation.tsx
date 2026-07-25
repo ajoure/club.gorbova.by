@@ -57,7 +57,7 @@ export default function AdminLegislation() {
         .order("category")
         .order("title");
       if (error) throw error;
-      return (data ?? []) as LegalDocument[];
+      return (data ?? []) as unknown as LegalDocument[];
     },
   });
 
