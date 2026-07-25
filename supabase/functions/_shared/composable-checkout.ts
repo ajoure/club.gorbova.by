@@ -1,4 +1,5 @@
 export type PricingMode = "offer_price" | "fixed_price" | "percent_discount" | "free";
+export type AccessDeliveryMode = "immediate" | "fixed_date" | "manual";
 
 export interface QuoteSourceItem {
   role: "primary" | "addon";
@@ -11,6 +12,9 @@ export interface QuoteSourceItem {
   pricing_mode?: PricingMode;
   fixed_amount?: number | null;
   discount_percent?: number | null;
+  access_delivery_mode?: AccessDeliveryMode;
+  access_opens_at?: string | null;
+  access_duration_days?: number | null;
   sort_order?: number;
 }
 

@@ -1,6 +1,6 @@
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useLocation, useNavigate } from "react-router-dom";
-import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat, Link2 } from "lucide-react";
+import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat, Link2, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAutoRenewalAlerts } from "@/hooks/useAutoRenewalAlerts";
 import { usePaymentIssuesCounters } from "@/hooks/admin/usePaymentIssuesCounters";
@@ -13,6 +13,7 @@ import { BepaidStatementTabContent } from "@/components/admin/payments/BepaidSta
 import { BepaidSubscriptionsTabContent } from "@/components/admin/payments/BepaidSubscriptionsTabContent";
 import { LinksTabContent } from "@/components/admin/payments/links/LinksTabContent";
 import { PaymentIssuesTabContent } from "@/components/admin/payments/PaymentIssuesTabContent";
+import { InvoicesTabContent } from "@/components/admin/payments/InvoicesTabContent";
 
 // PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 (PATCH-F): «Проблемы с оплатой» скрыта из nav.
 // Route /admin/payments/payment-issues остаётся доступным напрямую (legacy hidden);
@@ -20,6 +21,7 @@ import { PaymentIssuesTabContent } from "@/components/admin/payments/PaymentIssu
 const tabs = [
   { id: "transactions", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
   { id: "links", label: "Ссылки", icon: Link2, path: "/admin/payments/links" },
+  { id: "invoices", label: "Счета", icon: FileText, path: "/admin/payments/invoices" },
   { id: "auto-renewals", label: "Автопродления", icon: RefreshCw, path: "/admin/payments/auto-renewals" },
   { id: "bepaid-subs", label: "Подписки", icon: Repeat, path: "/admin/payments/bepaid-subscriptions" },
   { id: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
@@ -96,6 +98,7 @@ export default function AdminPaymentsHub() {
         >
           {activeTab === "transactions" && <PaymentsTabContent />}
           {activeTab === "links" && <LinksTabContent />}
+          {activeTab === "invoices" && <InvoicesTabContent />}
           {activeTab === "auto-renewals" && <AutoRenewalsTabContent />}
           {activeTab === "bepaid-subs" && <BepaidSubscriptionsTabContent />}
           {activeTab === "payment-issues" && <PaymentIssuesTabContent />}

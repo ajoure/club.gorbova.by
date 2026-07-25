@@ -414,8 +414,10 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     }
 
     // Winner (or no-pi rare path): run full lifecycle exactly once.
-    await supabase.functions.invoke('grant-access-for-order', {
-      body: { order_id: order_id_meta, source: 'stripe_webhook', provider: 'stripe' },
+    // A composable checkout has one visible CRM deal and several access lines.
+    // Finalize the entire group so selected modules are not lost after Stripe.
+    await supabase.functions.invoke('finalize-composable-purchase', {
+      body: { primary_order_id: order_id_meta, payment_id, source: 'stripe_webhook:checkout.session.completed' },
     });
     if (inserted && payment_id) {
       notifyAdminPaymentEvent(supabase, {
@@ -539,8 +541,8 @@ async function dispatch(event: StripeEvent, account_code: string): Promise<{ ord
     }
     // Winner only: ensure grant-access runs at least once even if checkout.session.completed
     // arrived AFTER PI (race). grant-access-for-order is idempotent.
-    await supabase.functions.invoke('grant-access-for-order', {
-      body: { order_id: order_id_meta, source: 'stripe_webhook', provider: 'stripe' },
+    await supabase.functions.invoke('finalize-composable-purchase', {
+      body: { primary_order_id: order_id_meta, payment_id, source: 'stripe_webhook:payment_intent.succeeded' },
     });
     if (payment_id) {
       notifyAdminPaymentEvent(supabase, {
