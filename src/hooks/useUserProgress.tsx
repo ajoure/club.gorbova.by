@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { extractTrainingAssetPaths } from "@/components/admin/lesson-editor/blocks/extractTrainingAssetPaths";
-import { deleteTrainingAssets, type DeleteTrainingAssetsResult } from "@/components/admin/lesson-editor/blocks/uploadToTrainingAssets";
+import { extractTrainingAssetReferences, type TrainingAssetReference } from "@/components/admin/lesson-editor/blocks/extractTrainingAssetPaths";
+import { deleteTrainingAssetReferences } from "@/components/admin/lesson-editor/blocks/uploadToTrainingAssets";
 import { toast } from "sonner";
 
 export interface BlockProgress {
@@ -164,10 +164,10 @@ export function useUserProgress(lessonId: string) {
       }
 
       if (existing?.response) {
-        const paths = extractTrainingAssetPaths(existing.response);
-        if (paths.length > 0) {
-          console.warn("[resetBlockProgress] Cleaning up storage paths:", paths);
-          const result = await deleteTrainingAssets(paths, { type: "lesson", id: lessonId }, "progress_reset_block");
+        const references = extractTrainingAssetReferences(existing.response);
+        if (references.length > 0) {
+          console.warn("[resetBlockProgress] Cleaning up storage references:", references);
+          const result = await deleteTrainingAssetReferences(references, { type: "lesson", id: lessonId }, "progress_reset_block");
           if (!result.ok) {
             console.error("[resetBlockProgress] Cleanup failed, STOP:", result.error, "blocked_paths:", result.blocked_paths);
             toast.error(`Не удалось очистить файлы (${result.error}), сброс прогресса отменён`);
@@ -211,16 +211,16 @@ export function useUserProgress(lessonId: string) {
       }
 
       if (allProgress && allProgress.length > 0) {
-        const allPaths: string[] = [];
+        const allReferences: TrainingAssetReference[] = [];
         for (const rec of allProgress) {
           if (rec.response) {
-            allPaths.push(...extractTrainingAssetPaths(rec.response));
+            allReferences.push(...extractTrainingAssetReferences(rec.response));
           }
         }
-        const uniquePaths = [...new Set(allPaths)];
-        if (uniquePaths.length > 0) {
-          console.warn("[resetLessonProgress] Cleaning up storage paths:", uniquePaths);
-          const result = await deleteTrainingAssets(uniquePaths, { type: "lesson", id: lessonId }, "progress_reset_lesson");
+        const uniqueReferences = Array.from(new Map(allReferences.map((reference) => [`${reference.bucket}:${reference.path}`, reference])).values());
+        if (uniqueReferences.length > 0) {
+          console.warn("[resetLessonProgress] Cleaning up storage references:", uniqueReferences);
+          const result = await deleteTrainingAssetReferences(uniqueReferences, { type: "lesson", id: lessonId }, "progress_reset_lesson");
           if (!result.ok) {
             console.error("[resetLessonProgress] Cleanup failed, STOP:", result.error, "blocked_paths:", result.blocked_paths);
             toast.error(`Не удалось очистить файлы (${result.error}), сброс прогресса отменён`);

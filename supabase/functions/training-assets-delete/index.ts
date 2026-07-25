@@ -11,6 +11,8 @@ const corsHeaders = {
 const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/", "ai-covers/", "training-covers/", "lesson-covers/"];
 const LESSON_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/"];
 const MAX_PATHS_PER_BATCH = 50;
+const TRAINING_ASSETS_BUCKET = "training-assets";
+const STUDENT_SUBMISSIONS_BUCKET = "student-submissions";
 
 /** Паттерны для извлечения storagePath из Supabase Storage URL (public, signed, raw) */
 const STORAGE_URL_PATTERNS = [
@@ -24,15 +26,20 @@ interface DeleteRequest {
   paths: string[];
   reason: string;
   entity?: { type: string; id: string };
+  bucket?: string;
 }
 
 // ─── Path validation (prefix + traversal only, no ownership) ───
 
-function isPathAllowed(path: string): boolean {
+function isPathAllowed(path: string, bucket: string): boolean {
   if (!path || typeof path !== "string") return false;
   if (path.includes("..") || path.includes("//")) return false;
   if (path.startsWith("/")) return false;
-  return ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix));
+  if (bucket === STUDENT_SUBMISSIONS_BUCKET) {
+    const segments = path.split("/");
+    return segments.length >= 5 && segments.every(Boolean) && segments[0] === "student-uploads";
+  }
+  return bucket === TRAINING_ASSETS_BUCKET && ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
 // ─── Normalize value to storagePath ───
@@ -244,12 +251,19 @@ Deno.serve(async (req: Request) => {
     // Кешируем роль один раз
     const [{ data: isAdmin }, { data: isSuper }] = await Promise.all([
       adminClient.rpc("has_role_v2", { _user_id: user.id, _role_code: "admin" }),
-      adminClient.rpc("has_role_v2", { _user_id: user.id, _role_code: "superadmin" }),
+      adminClient.rpc("has_role_v2", { _user_id: user.id, _role_code: "super_admin" }),
     ]);
     const isAdminOrSuper = !!(isAdmin || isSuper);
 
     const body: DeleteRequest = await req.json();
     const { mode, paths, reason, entity } = body;
+    const bucket = body.bucket || TRAINING_ASSETS_BUCKET;
+
+    if (![TRAINING_ASSETS_BUCKET, STUDENT_SUBMISSIONS_BUCKET].includes(bucket)) {
+      return new Response(JSON.stringify({ error: "Invalid storage bucket" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
 
     // Валидация входных данных
     if (!mode || !["dry_run", "execute"].includes(mode)) {
@@ -297,7 +311,7 @@ Deno.serve(async (req: Request) => {
       const path = normalizeToStoragePath(rawPath) ?? rawPath;
 
       // Basic guards: prefix + traversal (только по нормализованному)
-      if (!isPathAllowed(path)) {
+      if (!isPathAllowed(path, bucket)) {
         blockedPaths.push(rawPath);
         continue;
       }
@@ -384,7 +398,7 @@ Deno.serve(async (req: Request) => {
 
     // Удаление ТОЛЬКО finalDeletePaths (без shared)
     const { data: removeData, error: removeError } = await adminClient.storage
-      .from("training-assets")
+        .from(bucket)
       .remove(finalDeletePaths);
 
     const deletedCount = removeData?.length ?? 0;
@@ -409,6 +423,7 @@ Deno.serve(async (req: Request) => {
         reason,
         entity: entity || null,
         initiated_by_user_id: user.id,
+        bucket,
       },
     });
 

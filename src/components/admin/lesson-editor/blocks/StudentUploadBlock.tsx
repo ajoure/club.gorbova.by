@@ -27,6 +27,7 @@ export interface StudentUploadContentData {
 
 interface UploadedFileData {
   storage_path: string;
+  storage_bucket?: string;
   original_name: string;
   size: number;
   mime: string;
@@ -317,11 +318,12 @@ function StudentUploadStudentView({
           batch.map(async (file) => {
             const result = await uploadToTrainingAssets(
               file, "student-uploads", content.maxSizeMB || 50,
-              undefined, allowedExts.length > 0 ? allowedExts : undefined, ownerId
+              undefined, allowedExts.length > 0 ? allowedExts : undefined, ownerId, "student-submissions"
             );
             if (!result) return null;
             return {
               storage_path: result.storagePath,
+              storage_bucket: result.storageBucket,
               original_name: file.name,
               size: file.size,
               mime: file.type || "application/octet-stream",
@@ -352,11 +354,16 @@ function StudentUploadStudentView({
     const file = uploadedFiles[idx];
     if (!file?.storage_path) return;
     try {
-      await deleteTrainingAssets(
+      const result = await deleteTrainingAssets(
         [file.storage_path],
         { type: "lesson", id: lessonId! },
-        "student_file_delete"
+        "student_file_delete",
+        file.storage_bucket || "training-assets"
       );
+      if (!result.ok) {
+        toast.error("Не удалось удалить файл из хранилища. Данные ответа сохранены.");
+        return;
+      }
       const updated = uploadedFiles.filter((_, i) => i !== idx);
       setUploadedFiles(updated);
       await saveFiles(updated);
