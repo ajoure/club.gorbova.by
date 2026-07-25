@@ -23552,6 +23552,10 @@ export type Database = {
         Returns: string
       }
       referral_ensure_current_partner: { Args: never; Returns: Json }
+      referral_ensure_registration_link: {
+        Args: { _partner_id: string }
+        Returns: string
+      }
       referral_get_my_bonus_wallet: {
         Args: { p_product_id?: string }
         Returns: Json
