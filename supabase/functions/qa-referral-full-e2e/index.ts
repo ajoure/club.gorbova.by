@@ -200,6 +200,88 @@ async function scenarios(admin: any, runId: string, body: any) {
   return json(200, { ok: true, run_id: runId, scenarios });
 }
 
+async function finiteInstallment(admin: any, runId: string, body: any) {
+  const inviteeProfileId = body.invitee_profile_id as string;
+  if (!inviteeProfileId) return json(400, { error: 'invitee_profile_id required' });
+
+  const productId = (body.one_time_product_id as string | undefined) ?? (await findOneTimeProduct(admin));
+  if (!productId) return json(400, { error: 'no eligible one-time flat product found' });
+
+  const installmentCount = 3;
+  const perPayment = 30;
+  const total = perPayment * installmentCount;
+
+  const { data: order, error: oErr } = await admin
+    .from('orders_v2')
+    .insert({
+      order_number: `QA-${runId.slice(0, 8)}-finite-inst-${Date.now()}`,
+      profile_id: inviteeProfileId,
+      product_id: productId,
+      base_price: total,
+      final_price: total,
+      currency: 'BYN',
+      status: 'draft',
+      is_trial: false,
+      meta: {
+        qa_e2e_run_id: runId,
+        qa_tag: 'finite_installment',
+        installment: {
+          selected_installment_months: installmentCount,
+          installment_count: installmentCount,
+          per_payment_minor: perPayment * 100,
+          as_finite_subscription: true,
+        },
+      },
+    })
+    .select('id')
+    .single();
+  if (oErr) throw new Error(`insert finite installment order: ${oErr.message}`);
+
+  const paymentIds: string[] = [];
+  for (let i = 1; i <= installmentCount; i++) {
+    const { data: p, error: pErr } = await admin
+      .from('payments_v2')
+      .insert({
+        order_id: order.id,
+        amount: perPayment,
+        currency: 'BYN',
+        status: 'succeeded',
+        paid_at: new Date().toISOString(),
+        is_recurring: false,
+        meta: { qa_e2e_run_id: runId, qa_tag: `finite_installment_${i}`, installment_index: i, installment_count: installmentCount },
+      })
+      .select('id')
+      .single();
+    if (pErr) throw new Error(`insert installment payment ${i}: ${pErr.message}`);
+    paymentIds.push(p.id);
+    if (i === 1) {
+      await admin.from('orders_v2').update({ status: 'paid', paid_amount: perPayment }).eq('id', order.id);
+    } else {
+      await admin.from('orders_v2').update({ paid_amount: perPayment * i, updated_at: new Date().toISOString() }).eq('id', order.id);
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  const firstSale = await waitSale(admin, order.id);
+  const finalCount = await countSalesForOrder(admin, order.id);
+
+  return json(200, {
+    ok: true,
+    run_id: runId,
+    scenario: 'finite_installment',
+    order_id: order.id,
+    product_id: productId,
+    installment_count: installmentCount,
+    per_payment_minor: perPayment * 100,
+    payments: paymentIds,
+    sale: firstSale,
+    sale_count_total: finalCount,
+    expected_sale_count: 1,
+    pass: finalCount === 1,
+  });
+}
+
+
 async function insertOrder(admin: any, opts: any) {
   const { data, error } = await admin
     .from('orders_v2')
