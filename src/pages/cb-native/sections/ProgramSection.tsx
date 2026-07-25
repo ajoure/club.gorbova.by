@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import { rec, CB_PALETTE } from "../manifest";
 
 /**
@@ -47,6 +48,7 @@ const ORDERED: Item[] = [
 
 export const PROGRAM_MODULE_COUNT = ORDERED.filter((item) => item.kind === "module").length;
 export const PROGRAM_CALLOUT_COUNT = ORDERED.filter((item) => item.kind === "callout").length;
+export const PROGRAM_COLLAPSED_ITEM_COUNT = 2;
 
 type ModuleContent = {
   badge: string;
@@ -641,11 +643,22 @@ function GridCallout({ id }: { id: string }) {
   );
 }
 
-export function ProgramSection({ onCta }: { onCta: () => void }) {
+export function ProgramSection({ onCta: _onCta }: { onCta: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
   const cta = rec("rec779963654").text[0] ?? "СМОТРЕТЬ всю программу";
+  const visibleItems = expanded ? ORDERED : ORDERED.slice(0, PROGRAM_COLLAPSED_ITEM_COUNT);
+
+  const toggleProgramme = () => {
+    if (expanded) {
+      sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    setExpanded((current) => !current);
+  };
 
   return (
     <section
+      ref={sectionRef}
       id="rec776467165"
       data-cb-native-section="program"
       className="py-16 lg:py-24"
@@ -661,8 +674,8 @@ export function ProgramSection({ onCta }: { onCta: () => void }) {
           МОДУЛЕ ОБУЧЕНИЯ
         </h2>
 
-        <div data-cb-native-program-list>
-          {ORDERED.map((item) => {
+        <div id="cb-native-programme-list" data-cb-native-program-list>
+          {visibleItems.map((item) => {
             if (item.kind === "module") return <ReferenceModule key={item.id} id={item.id} />;
             if (item.variant === "dark") return <DarkCallout key={item.id} id={item.id} />;
             if (item.variant === "magenta") return <MagentaCallout key={item.id} id={item.id} />;
@@ -673,13 +686,14 @@ export function ProgramSection({ onCta }: { onCta: () => void }) {
         <div className="mt-3 text-center" id="rec779963654">
           <button
             type="button"
-            onClick={onCta}
+            onClick={toggleProgramme}
+            aria-expanded={expanded}
+            aria-controls="cb-native-programme-list"
             data-cb-native-program-cta
-            data-cb-native-anchor-target="#tariffs"
             className="inline-flex h-[62px] items-center justify-center rounded-[30px] px-10 text-[15px] font-bold uppercase tracking-wide shadow-[0_8px_22px_rgba(228,34,194,0.35)] transition hover:opacity-90"
             style={{ background: CB_PALETTE.accent, color: CB_PALETTE.bg }}
           >
-            {cta}
+            {expanded ? "Свернуть" : cta}
           </button>
         </div>
       </div>
