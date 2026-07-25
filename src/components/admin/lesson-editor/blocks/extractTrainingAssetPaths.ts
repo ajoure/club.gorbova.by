@@ -5,6 +5,13 @@
 
 const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/", "ai-covers/", "training-covers/", "lesson-covers/"];
 
+export type TrainingAssetBucket = "training-assets" | "student-submissions";
+
+export interface TrainingAssetReference {
+  bucket: TrainingAssetBucket;
+  path: string;
+}
+
 function isValidPath(p: unknown): p is string {
   if (!p || typeof p !== "string") return false;
   if (p.includes("..") || p.includes("//") || p.startsWith("/")) return false;
@@ -49,8 +56,15 @@ function extractPathFromUrl(url: unknown): string | null {
  * - student progress response: { files: [{ storage_path: "..." }] }
  * - legacy progress: { file: { storage_path: "..." } } или { storage_path: "..." }
  */
-export function extractTrainingAssetPaths(input: unknown): string[] {
-  const found = new Set<string>();
+export function extractTrainingAssetReferences(input: unknown): TrainingAssetReference[] {
+  const found = new Map<string, TrainingAssetReference>();
+
+  const add = (path: string, rawBucket: unknown) => {
+    const bucket: TrainingAssetBucket = rawBucket === "student-submissions"
+      ? "student-submissions"
+      : "training-assets";
+    found.set(`${bucket}:${path}`, { bucket, path });
+  };
 
   function walk(obj: unknown): void {
     if (!obj || typeof obj !== "object") return;
@@ -63,12 +77,12 @@ export function extractTrainingAssetPaths(input: unknown): string[] {
     const record = obj as Record<string, unknown>;
 
     // Direct path fields
-    if (isValidPath(record.storagePath)) found.add(record.storagePath);
-    if (isValidPath(record.storage_path)) found.add(record.storage_path);
+    if (isValidPath(record.storagePath)) add(record.storagePath, record.storage_bucket);
+    if (isValidPath(record.storage_path)) add(record.storage_path, record.storage_bucket);
 
     // Public URL → storagePath extraction (audio/file blocks store url)
     const urlPath = extractPathFromUrl(record.url);
-    if (urlPath) found.add(urlPath);
+    if (urlPath) add(urlPath, record.storage_bucket);
 
     // Recurse into ALL values of the object
     for (const key of Object.keys(record)) {
@@ -80,7 +94,12 @@ export function extractTrainingAssetPaths(input: unknown): string[] {
   }
 
   walk(input);
-  return Array.from(found).sort();
+  return Array.from(found.values()).sort((a, b) => `${a.bucket}:${a.path}`.localeCompare(`${b.bucket}:${b.path}`));
+}
+
+/** Совместимый список путей для существующих материалов публичного bucket. */
+export function extractTrainingAssetPaths(input: unknown): string[] {
+  return Array.from(new Set(extractTrainingAssetReferences(input).map((reference) => reference.path))).sort();
 }
 
 /**

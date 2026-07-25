@@ -3,8 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
-import { extractPathsFromBlocks, extractPathsFromProgress } from "@/components/admin/lesson-editor/blocks/extractTrainingAssetPaths";
-import { deleteTrainingAssets, type DeleteTrainingAssetsResult } from "@/components/admin/lesson-editor/blocks/uploadToTrainingAssets";
+import { extractPathsFromBlocks, extractTrainingAssetReferences, type TrainingAssetReference } from "@/components/admin/lesson-editor/blocks/extractTrainingAssetPaths";
+import { deleteTrainingAssetReferences, type DeleteTrainingAssetsResult } from "@/components/admin/lesson-editor/blocks/uploadToTrainingAssets";
 import { useMonthGate, type MonthGateLessonInput } from "@/hooks/useMonthGate";
 
 export interface LessonAttachment {
@@ -252,7 +252,7 @@ export function useTrainingLessons(moduleId?: string) {
   const deleteLesson = async (id: string): Promise<boolean> => {
     try {
       // P2: Собираем все storage paths перед удалением урока
-      const allPaths: string[] = [];
+      const allReferences: TrainingAssetReference[] = [];
 
       // A) Пути из lesson_blocks.content
       const { data: blocks, error: blocksError } = await supabase
@@ -267,7 +267,7 @@ export function useTrainingLessons(moduleId?: string) {
       }
 
       if (blocks && blocks.length > 0) {
-        allPaths.push(...extractPathsFromBlocks(blocks));
+        allReferences.push(...extractPathsFromBlocks(blocks).map((path) => ({ bucket: "training-assets" as const, path })));
       }
 
       // B) Пути из user_lesson_progress.response (student uploads)
@@ -283,16 +283,18 @@ export function useTrainingLessons(moduleId?: string) {
       }
 
       if (progressRecords && progressRecords.length > 0) {
-        allPaths.push(...extractPathsFromProgress(progressRecords));
+        for (const record of progressRecords) {
+          allReferences.push(...extractTrainingAssetReferences(record.response));
+        }
       }
 
       // Дедуп
-      const uniquePaths = [...new Set(allPaths)];
+      const uniqueReferences = Array.from(new Map(allReferences.map((reference) => [`${reference.bucket}:${reference.path}`, reference])).values());
 
       // Удаляем файлы из Storage (если есть) — с STOP-guard
-      if (uniquePaths.length > 0) {
-        console.warn(`[deleteLesson] Cleaning up ${uniquePaths.length} storage paths for lesson ${id}`);
-        const result = await deleteTrainingAssets(uniquePaths, { type: "lesson", id }, "lesson_deleted");
+      if (uniqueReferences.length > 0) {
+        console.warn(`[deleteLesson] Cleaning up ${uniqueReferences.length} storage references for lesson ${id}`);
+        const result = await deleteTrainingAssetReferences(uniqueReferences, { type: "lesson", id }, "lesson_deleted");
         if (!result.ok) {
           console.error("[deleteLesson] Storage cleanup failed, STOP:", result.error, "blocked_paths:", result.blocked_paths);
           toast.error(`Не удалось очистить файлы урока (${result.error}), удаление отменено`);

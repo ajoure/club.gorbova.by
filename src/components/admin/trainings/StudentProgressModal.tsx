@@ -75,6 +75,7 @@ interface PointARow {
 
 interface UploadedFileItem {
   storage_path: string;
+  storage_bucket?: string;
   original_name: string;
   size?: number;
   mime?: string;
@@ -114,13 +115,13 @@ function normalizeUploadFiles(resp: any): UploadedFileItem[] {
   return [];
 }
 
-async function downloadFile(storagePath: string, originalName: string) {
+async function downloadFile(storagePath: string, originalName: string, storageBucket = "training-assets") {
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData?.session?.access_token;
     if (!token) return;
     const baseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const url = `${baseUrl}/functions/v1/training-assets-download?path=${encodeURIComponent(storagePath)}&name=${encodeURIComponent(originalName)}`;
+    const url = `${baseUrl}/functions/v1/training-assets-download?path=${encodeURIComponent(storagePath)}&name=${encodeURIComponent(originalName)}&bucket=${encodeURIComponent(storageBucket)}`;
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) throw new Error("Download failed");
     const blob = await res.blob();
@@ -226,7 +227,7 @@ function BlockResponseDetail({ block, response, lessonBlocks }: {
               <div key={fi} className="flex items-center gap-2">
                 <FileIcon className={`h-4 w-4 shrink-0 ${colorClass}`} />
                 <button
-                  onClick={() => downloadFile(file.storage_path, file.original_name)}
+                  onClick={() => downloadFile(file.storage_path, file.original_name, file.storage_bucket)}
                   className="text-sm text-primary hover:underline truncate"
                 >
                   {file.original_name}
