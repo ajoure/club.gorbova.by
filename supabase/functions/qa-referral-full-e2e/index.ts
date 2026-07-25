@@ -82,41 +82,33 @@ async function provision(admin: any, runId: string, callerUid: string) {
   const referrer = await mkUser(referrerEmail);
   const invitee = await mkUser(inviteeEmail);
 
-  const upsertProfile = async (uid: string, email: string) => {
-    const { data, error } = await admin
-      .from('profiles')
-      .upsert(
-        {
-          user_id: uid,
-          email,
-          status: 'active',
-          meta: { qa_e2e_run_id: runId },
-        },
-        { onConflict: 'user_id' },
-      )
-      .select('id')
-      .single();
-    if (error) throw new Error(`profile ${email}: ${error.message}`);
-    return data.id as string;
+  // Profiles are auto-created by handle_new_user trigger; fetch by user_id.
+  const fetchProfile = async (uid: string, email: string) => {
+    for (let i = 0; i < 10; i++) {
+      const { data } = await admin.from('profiles').select('id').eq('user_id', uid).maybeSingle();
+      if (data?.id) {
+        await admin.from('profiles').update({ email, meta: { qa_e2e_run_id: runId } }).eq('id', data.id);
+        return data.id as string;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new Error(`profile not created for ${email}`);
   };
+  const refProfileId = await fetchProfile(referrer.id, referrerEmail);
+  const invProfileId = await fetchProfile(invitee.id, inviteeEmail);
 
-  const refProfileId = await upsertProfile(referrer.id, referrerEmail);
-  const invProfileId = await upsertProfile(invitee.id, inviteeEmail);
-
-  // Direct insert as service_role (auth.uid() is null in edge functions)
-  const partnerCode = 'REF-QA-' + runId.slice(0, 8).toUpperCase();
-  const { data: partnerRow, error: pErr } = await admin
-    .from('referral_partners')
-    .insert({
-      profile_id: refProfileId,
-      partner_code: partnerCode,
-      status: 'active',
-      metadata: { qa_e2e_run_id: runId },
-    })
-    .select('id')
-    .single();
-  if (pErr) throw new Error(`ensure_partner: ${pErr.message}`);
-  const partnerId = partnerRow.id as string;
+  // Partner auto-created by referral_profile_create_partner trigger; fetch it.
+  const getPartner = async (profileId: string) => {
+    for (let i = 0; i < 10; i++) {
+      const { data } = await admin.from('referral_partners').select('id').eq('profile_id', profileId).maybeSingle();
+      if (data?.id) return data.id as string;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new Error(`partner not auto-created for profile ${profileId}`);
+  };
+  const partnerId = await getPartner(refProfileId);
+  // Ensure metadata tag for cleanup discovery
+  await admin.from('referral_partners').update({ metadata: { qa_e2e_run_id: runId } }).eq('id', partnerId);
 
   // Create relationship (referrer's partner → invitee profile)
   const { data: rel, error: rErr } = await admin
