@@ -34,7 +34,7 @@ export function useLegalDocument(slug: string | undefined, enabled = true) {
         .maybeSingle();
 
       if (error) throw error;
-      return data as LegalDocument | null;
+      return data as unknown as LegalDocument | null;
     },
   });
 }
