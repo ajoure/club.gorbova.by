@@ -255,8 +255,25 @@ Deno.serve(async (req) => {
     let unchanged = 0;
     const errors: Array<{ externalId: string; error: string }> = [];
 
+    const FRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
     for (const code of catalogue) {
       try {
+        // Cheap pre-check: skip codes already synced recently to save CPU
+        // across sequential invocations (edge-runtime CPU cap).
+        const { data: preExisting } = await admin
+          .from("legal_documents")
+          .select("id,last_synced_at")
+          .eq("source", "etalon")
+          .eq("external_id", code.externalId)
+          .maybeSingle();
+        if (
+          preExisting?.last_synced_at &&
+          Date.now() - new Date(preExisting.last_synced_at).getTime() < FRESH_WINDOW_MS
+        ) {
+          unchanged += 1;
+          continue;
+        }
+
         const parsed = parseDocument(
           await fetchHtml(code.url),
           code.title,
