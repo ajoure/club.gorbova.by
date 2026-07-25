@@ -13,6 +13,7 @@ interface Body {
   profileId: string;
   productId: string;
   tariffId: string;
+  offerId?: string | null;
   finalAmount: number;
   finalCurrency: string;
   accessStart: string; // ISO
@@ -47,6 +48,7 @@ function normalizeForHash(b: Body): string {
     profileId: b.profileId,
     productId: b.productId,
     tariffId: b.tariffId,
+    offerId: b.offerId ?? "",
     finalAmount: Number(b.finalAmount).toFixed(2),
     finalCurrency: String(b.finalCurrency || "").toUpperCase(),
     accessStart: b.accessStart,
@@ -104,6 +106,9 @@ Deno.serve(async (req) => {
   for (const k of ["paymentId","profileId","productId","tariffId"] as const) {
     if (!uuidRe.test(String((body as any)[k]))) return bad(400, "invalid_uuid", { field: k });
   }
+  if (body.offerId && !uuidRe.test(String(body.offerId))) {
+    return bad(400, "invalid_uuid", { field: "offerId" });
+  }
   const tStart = new Date(body.accessStart).getTime();
   const tEnd = new Date(body.accessEnd).getTime();
   if (!Number.isFinite(tStart) || !Number.isFinite(tEnd)) {
@@ -124,6 +129,7 @@ Deno.serve(async (req) => {
     p_profile_id:      body.profileId,
     p_product_id:      body.productId,
     p_tariff_id:       body.tariffId,
+    p_offer_id:        body.offerId ?? null,
     p_final_amount:    body.finalAmount,
     p_final_currency:  body.finalCurrency,
     p_access_start:    body.accessStart,
@@ -155,6 +161,7 @@ Deno.serve(async (req) => {
       err === "profile_not_found"      ? 404 :
       err === "product_invalid"        ? 422 :
       err === "tariff_invalid"         ? 422 :
+      err === "offer_invalid"          ? 422 :
       err === "ghost_cannot_grant"     ? 422 :
       err === "invalid_access_range"   ? 400 :
       err === "invalid_currency"       ? 400 :
@@ -191,12 +198,36 @@ Deno.serve(async (req) => {
   const shouldGrant = body.grantAccess && !isGhost && !dealOnly;
   if (shouldGrant) {
     try {
+      // The reconciliation form snapshots a concrete access window.  Pass the
+      // same window to the canonical writer instead of making it fall back to
+      // the legacy 30-day default.  The exact offer is already persisted by
+      // the SQL transaction and is therefore available to all downstream
+      // resolvers before this call begins.
+      const accessDurationDays = Math.max(
+        1,
+        Math.round((tEnd - tStart) / (24 * 60 * 60 * 1000)),
+      );
       const { data: grantResult, error: grantError } = await admin.functions.invoke(
         "grant-access-for-order",
-        { body: { orderId, source: "admin_from_payment" } },
+        {
+          body: {
+            orderId,
+            source: "admin_from_payment",
+            customAccessDays: accessDurationDays,
+            customAccessStartAt: body.accessStart,
+          },
+        },
       );
-      if (grantError || (grantResult as any)?.error) {
-        grantErrorCode = ((grantResult as any)?.error) || grantError?.message || "unknown";
+      const grantFailure =
+        grantError ||
+        (grantResult as any)?.error ||
+        (grantResult as any)?.success !== true;
+      if (grantFailure) {
+        grantErrorCode =
+          (grantResult as any)?.error ||
+          (grantResult as any)?.warning ||
+          grantError?.message ||
+          "grant_not_confirmed";
       } else {
         grantSuccess = true;
         subscriptionId = (grantResult as any)?.subscription_id ?? null;
@@ -222,6 +253,7 @@ Deno.serve(async (req) => {
         payment_source: body.rawSource,
         provider: result.provider,
         profile_id: body.profileId,
+        offer_id: body.offerId ?? null,
         source_amount: result.source_amount,
         source_currency: result.source_currency,
         order_final_price: body.finalAmount,
@@ -256,6 +288,7 @@ Deno.serve(async (req) => {
       grant_success: grantSuccess,
       grant_error_code: grantErrorCode,
       subscription_id: subscriptionId,
+      offer_id: result.offer_id ?? body.offerId ?? null,
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );
