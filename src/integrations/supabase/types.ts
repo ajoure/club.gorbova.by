@@ -12384,6 +12384,9 @@ export type Database = {
       }
       offer_addons: {
         Row: {
+          access_delivery_mode: string
+          access_duration_days: number | null
+          access_opens_at: string | null
           addon_offer_id: string
           addon_product_id: string
           addon_tariff_id: string
@@ -12404,6 +12407,9 @@ export type Database = {
           visible_to: string | null
         }
         Insert: {
+          access_delivery_mode?: string
+          access_duration_days?: number | null
+          access_opens_at?: string | null
           addon_offer_id: string
           addon_product_id: string
           addon_tariff_id: string
@@ -12424,6 +12430,9 @@ export type Database = {
           visible_to?: string | null
         }
         Update: {
+          access_delivery_mode?: string
+          access_duration_days?: number | null
+          access_opens_at?: string | null
           addon_offer_id?: string
           addon_product_id?: string
           addon_tariff_id?: string
@@ -16750,6 +16759,134 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      scheduled_product_access: {
+        Row: {
+          access_delivery_mode: string
+          access_duration_days: number | null
+          access_snapshot: Json
+          activated_at: string | null
+          activated_by: string | null
+          activation_attempts: number
+          created_at: string
+          grant_result: Json | null
+          id: string
+          last_error: string | null
+          meta: Json
+          offer_id: string
+          opens_at: string | null
+          order_group_id: string
+          order_group_item_id: string
+          order_id: string
+          product_id: string
+          profile_id: string | null
+          purchase_confirmed_at: string
+          status: string
+          tariff_id: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          access_delivery_mode: string
+          access_duration_days?: number | null
+          access_snapshot?: Json
+          activated_at?: string | null
+          activated_by?: string | null
+          activation_attempts?: number
+          created_at?: string
+          grant_result?: Json | null
+          id?: string
+          last_error?: string | null
+          meta?: Json
+          offer_id: string
+          opens_at?: string | null
+          order_group_id: string
+          order_group_item_id: string
+          order_id: string
+          product_id: string
+          profile_id?: string | null
+          purchase_confirmed_at?: string
+          status?: string
+          tariff_id: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          access_delivery_mode?: string
+          access_duration_days?: number | null
+          access_snapshot?: Json
+          activated_at?: string | null
+          activated_by?: string | null
+          activation_attempts?: number
+          created_at?: string
+          grant_result?: Json | null
+          id?: string
+          last_error?: string | null
+          meta?: Json
+          offer_id?: string
+          opens_at?: string | null
+          order_group_id?: string
+          order_group_item_id?: string
+          order_id?: string
+          product_id?: string
+          profile_id?: string | null
+          purchase_confirmed_at?: string
+          status?: string
+          tariff_id?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scheduled_product_access_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scheduled_product_access_order_group_id_fkey"
+            columns: ["order_group_id"]
+            isOneToOne: false
+            referencedRelation: "order_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scheduled_product_access_order_group_item_id_fkey"
+            columns: ["order_group_item_id"]
+            isOneToOne: true
+            referencedRelation: "order_group_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scheduled_product_access_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: true
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scheduled_product_access_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scheduled_product_access_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scheduled_product_access_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       scrape_logs: {
         Row: {
