@@ -33,7 +33,10 @@ export function HeroSection({ onCta }: { onCta: () => void }) {
 
   const heroImg =
     r.images.find((u) => u.includes("img5-removebg-previe")) ?? r.images[6];
-  const crownImg = r.images[0];
+  // The manifest begins with a video-format pictogram. The crown is the icon
+  // of the first course-detail item, so using index 0 in the headline renders
+  // the boxed "play" glyph on mobile instead of the brand crown.
+  const crownImg = r.images[1];
 
   // Canonical order per manifest: [start, format, duration, conferences, npa]
   const infoItems = [
