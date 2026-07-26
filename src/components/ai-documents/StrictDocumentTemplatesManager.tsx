@@ -1209,7 +1209,16 @@ export function StrictDocumentTemplatesManager({
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={uploading}>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={handleUpload} disabled={uploading || !uploadFile || !uploadName.trim()}>
+            <AlertDialogAction
+              // AlertDialogAction closes its dialog by default.  Keep it open while the
+              // asynchronous upload runs so an RLS/Storage error remains visible and the
+              // administrator can correct it without selecting the file again.
+              onClick={(event) => {
+                event.preventDefault();
+                void handleUpload();
+              }}
+              disabled={uploading || !uploadFile || !uploadName.trim()}
+            >
               {uploading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />}
               Загрузить
             </AlertDialogAction>
