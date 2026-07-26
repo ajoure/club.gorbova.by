@@ -9993,6 +9993,44 @@ export type Database = {
         }
         Relationships: []
       }
+      legal_document_search_chunks: {
+        Row: {
+          anchor: string
+          document_id: string
+          id: number
+          kind: string
+          ordinal: number
+          search_vector: unknown
+          text: string
+        }
+        Insert: {
+          anchor: string
+          document_id: string
+          id?: never
+          kind?: string
+          ordinal: number
+          search_vector?: unknown
+          text: string
+        }
+        Update: {
+          anchor?: string
+          document_id?: string
+          id?: never
+          kind?: string
+          ordinal?: number
+          search_vector?: unknown
+          text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_document_search_chunks_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "legal_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       legal_document_versions: {
         Row: {
           checksum: string
@@ -24160,6 +24198,22 @@ export type Database = {
       search_global: {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: Json
+      }
+      search_legal_documents: {
+        Args: { p_limit?: number; p_query: string }
+        Returns: {
+          anchor: string
+          category: string
+          doc_date: string
+          doc_number: string
+          document_id: string
+          kind: string
+          rank: number
+          slug: string
+          snippet: string
+          status: string
+          title: string
+        }[]
       }
       search_profile_ids_by_company: {
         Args: { p_query: string }
