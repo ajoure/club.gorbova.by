@@ -56,6 +56,20 @@ function safeGroupSettings(raw: unknown): RepeatGroupSettings {
     : {};
 }
 
+type OwnerDelivery = { email?: boolean; telegram?: boolean; to_email?: string };
+function safeOwnerDelivery(raw: unknown): OwnerDelivery {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const value = raw as Record<string, unknown>;
+  const email = typeof value.email === "boolean" ? value.email : undefined;
+  const telegram = typeof value.telegram === "boolean" ? value.telegram : undefined;
+  const to_email = scalar(value.to_email).toLowerCase();
+  return {
+    ...(email === undefined ? {} : { email }),
+    ...(telegram === undefined ? {} : { telegram }),
+    ...(to_email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to_email) ? { to_email: to_email.slice(0, 320) } : {}),
+  };
+}
+
 async function lookupMnsByUnp(url: string, service: string, unp: string) {
   const response = await fetch(`${url}/functions/v1/grp-lookup`, {
     method: "POST",
@@ -101,7 +115,7 @@ async function getCallerUserId(req: Request, url: string, anon: string): Promise
 
 async function loadLink(admin: any, token: string) {
   const { data: link } = await admin.from("document_package_external_links")
-    .select("id, public_token, external_form_id, owner_profile_id, selected_legal_entity_id, is_active, revoked_at")
+    .select("id, public_token, external_form_id, owner_profile_id, selected_legal_entity_id, is_active, revoked_at, metadata")
     .eq("public_token", token).maybeSingle();
   if (!link || !link.is_active || link.revoked_at) return { error: "link_not_found" };
   const { data: form } = await admin.from("document_package_external_forms")
@@ -144,6 +158,73 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = String(body?.action || "read");
 
+    if (action === "owner_forms" || action === "owner_history") {
+      const userId = await getCallerUserId(req, url, anon);
+      if (!userId) return json({ error: "unauthorized" }, 401);
+      const packageTemplateId = scalar(body.package_template_id);
+      if (!packageTemplateId) return json({ error: "package_template_required" }, 400);
+      const { data: profile } = await admin.from("profiles").select("id").eq("user_id", userId).maybeSingle();
+      if (!profile) return json({ error: "profile_not_found" }, 404);
+      const { data: allowed } = await admin.rpc("profile_can_use_document_package", {
+        p_profile_id: profile.id,
+        p_package_template_id: packageTemplateId,
+      });
+      if (allowed !== true) return json({ error: "forbidden" }, 403);
+
+      const { data: items, error: itemsError } = await admin.from("document_package_template_items")
+        .select("id").eq("package_template_id", packageTemplateId);
+      if (itemsError) throw itemsError;
+      const itemIds = (items ?? []).map((item: any) => item.id);
+      if (action === "owner_forms") {
+        if (!itemIds.length) return json({ forms: [] });
+        const { data: forms, error: formsError } = await admin.from("document_package_external_forms")
+          .select("id, title, description, delivery")
+          .in("package_template_item_id", itemIds)
+          .eq("is_active", true)
+          .order("created_at");
+        if (formsError) throw formsError;
+        return json({ forms: forms ?? [] });
+      }
+
+      if (!itemIds.length) return json({ submissions: [] });
+      const { data: packageForms, error: packageFormsError } = await admin.from("document_package_external_forms")
+        .select("id")
+        .in("package_template_item_id", itemIds);
+      if (packageFormsError) throw packageFormsError;
+      const formIds = (packageForms ?? []).map((form: any) => form.id);
+      if (!formIds.length) return json({ submissions: [] });
+      const { data: submissions, error: submissionsError } = await admin.from("document_package_external_submissions")
+        .select("id, status, submitted_at, generated_at, generated_document_ids")
+        .eq("owner_profile_id", profile.id)
+        .in("external_form_id", formIds)
+        .order("submitted_at", { ascending: false })
+        .limit(50);
+      if (submissionsError) throw submissionsError;
+      const documentIds = [...new Set((submissions ?? []).flatMap((submission: any) => Array.isArray(submission.generated_document_ids) ? submission.generated_document_ids : []))];
+      const documentsById = new Map<string, any>();
+      if (documentIds.length) {
+        const { data: documents, error: documentsError } = await admin.from("ai_generated_documents")
+          .select("id, title, file_name, storage_bucket, file_path")
+          .eq("profile_id", profile.id)
+          .in("id", documentIds);
+        if (documentsError) throw documentsError;
+        for (const document of documents ?? []) {
+          let signedUrl: string | null = null;
+          if (document.file_path) {
+            const { data: signed } = await admin.storage
+              .from(document.storage_bucket || "documents")
+              .createSignedUrl(document.file_path, 3600);
+            signedUrl = signed?.signedUrl ?? null;
+          }
+          documentsById.set(document.id, { id: document.id, title: document.title, file_name: document.file_name, url: signedUrl });
+        }
+      }
+      return json({ submissions: (submissions ?? []).map((submission: any) => ({
+        ...submission,
+        documents: (submission.generated_document_ids ?? []).map((id: string) => documentsById.get(id)).filter(Boolean),
+      })) });
+    }
+
     if (action === "create_link") {
       const userId = await getCallerUserId(req, url, anon);
       if (!userId) return json({ error: "unauthorized" }, 401);
@@ -156,8 +237,10 @@ Deno.serve(async (req) => {
       const { data: legal } = await admin.from("client_legal_details").select("id").eq("id", legalEntityId).eq("profile_id", profile.id).maybeSingle();
       const { data: allowed } = await admin.rpc("profile_can_use_document_package", { p_profile_id: profile.id, p_package_template_id: item?.package_template_id });
       if (!item || !legal || allowed !== true) return json({ error: "forbidden" }, 403);
+      const delivery = safeOwnerDelivery(body.delivery);
       const { data: link, error } = await admin.from("document_package_external_links").insert({
         external_form_id: formId, owner_profile_id: profile.id, selected_legal_entity_id: legalEntityId,
+        metadata: Object.keys(delivery).length ? { delivery } : {},
       }).select("public_token").single();
       if (error) throw error;
       return json({ token: link.public_token });
@@ -296,8 +379,9 @@ Deno.serve(async (req) => {
     // Генерация закончена — доставку делает существующий канонический sender.
     // В него передаётся только ID созданного документа, а не storage-пути.
     const delivery = (ctx.form.delivery ?? {}) as Record<string, boolean>;
-    const wantsEmail = delivery.email !== false;
-    const wantsTelegram = delivery.telegram !== false;
+    const ownerDelivery = safeOwnerDelivery((ctx.link.metadata as Record<string, unknown> | null)?.delivery);
+    const wantsEmail = ownerDelivery.email ?? (delivery.email !== false);
+    const wantsTelegram = ownerDelivery.telegram ?? (delivery.telegram !== false);
     if (delivery.pdf === false && delivery.docx === false) {
       await admin.from("document_package_external_submissions").update({
         status: "failed", error_code: "delivery_format_not_selected",
@@ -320,6 +404,7 @@ Deno.serve(async (req) => {
           send_telegram: wantsTelegram,
           send_pdf: delivery.pdf !== false,
           send_docx: delivery.docx !== false,
+          to_email: ownerDelivery.to_email,
           external_submission_id: submission.id,
         }),
       });

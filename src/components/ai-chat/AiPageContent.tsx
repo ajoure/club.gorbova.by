@@ -558,7 +558,10 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
     switch (s) {
       case "ai": return AI_SUB_TABS;
       case "requisites": return REQ_SUB_TABS;
-      case "doc-packages": return PACKAGE_SUB_TABS;
+      // Клиентский список пакетов рендерит PackagesWorkspace. Оставлять здесь
+      // фиксированную «Идеологию» означало показывать один и тот же переключатель
+      // дважды и вводило в заблуждение при выборе другого пакета.
+      case "doc-packages": return mode === "user" ? [] : PACKAGE_SUB_TABS;
       default: return DOC_SUB_TABS;
     }
   };
