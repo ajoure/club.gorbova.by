@@ -20,6 +20,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Trash2, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -62,6 +63,7 @@ const SOURCE_TYPE_LABELS: Record<TableRepeatColumnSourceType, string> = {
   empty: "Пусто",
   assignment_metadata: "Сырое metadata (advanced)",
   submission_field: "Поле строки внешней анкеты",
+  submission_template: "Шаблон ячейки из полей строки",
 };
 
 const CASE_OPTIONS = [
@@ -122,6 +124,7 @@ export function TableRepeatColumnRow({
   // Список source_type без advanced для non-super_admin.
   const sourceTypes: TableRepeatColumnSourceType[] = isExternalSource ? [
     "submission_field",
+    "submission_template",
     "package_field",
     "static_text",
     "row_number",
@@ -142,7 +145,8 @@ export function TableRepeatColumnRow({
     column.source_type === "package_field" ||
     column.source_type === "static_text" ||
     column.source_type === "assignment_metadata" ||
-    column.source_type === "submission_field";
+    column.source_type === "submission_field" ||
+    column.source_type === "submission_template";
 
   const sourceKeyMissing =
     showSourceKey && (!column.source_key || column.source_key.trim() === "");
@@ -153,6 +157,8 @@ export function TableRepeatColumnRow({
       ? "Значение пакетного поля одинаковое для всех строк."
       : column.source_type === "submission_field"
         ? "Значение выбирается из каждой строки повторяемой группы внешней анкеты."
+      : column.source_type === "submission_template"
+        ? "Соберите содержимое одной ячейки из нескольких полей строки. Допустимы {{pf-XXXXXX}}, |format=words для суммы и |format=short для даты."
       : column.source_type === "static_text"
         ? "Статичный текст будет одинаковым во всех строках."
         : column.source_type === "row_number"
@@ -378,6 +384,21 @@ export function TableRepeatColumnRow({
               </SelectContent>
             </Select>
           )}
+        </div>
+      )}
+
+      {column.source_type === "submission_template" && (
+        <div className="space-y-1">
+          <div className="text-[10px] text-muted-foreground font-medium">Шаблон содержимого ячейки</div>
+          <Textarea
+            value={column.source_key ?? ""}
+            onChange={(e) => onChange({ source_key: e.target.value })}
+            placeholder={"{{pf-000017}}\nУНП: {{pf-000019}}"}
+            className="min-h-20 text-[11px] font-mono"
+          />
+          <div className="text-[10px] text-muted-foreground">
+            Поля пакета: {packageFields.map((field) => `{{${field.public_id}}}`).join(" · ")}
+          </div>
         </div>
       )}
 

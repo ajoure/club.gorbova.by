@@ -566,7 +566,7 @@ Deno.serve(async (req) => {
     // Контекст-гейт (требование привязки к пакету) выполняется ниже, после цикла.
     const packageTokens: Array<{
       placeholder: string;
-      kind: 'requisite' | 'role' | 'package_field';
+      kind: 'requisite' | 'role' | 'package_field' | 'table_total';
       public_id?: string;
       format?: string | null;
       case_modifier?: string | null;
@@ -645,14 +645,18 @@ Deno.serve(async (req) => {
         packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'package_field', public_id: c.public_id, format: c.format, case_modifier: c.case_modifier });
         continue;
       }
+      if (c.kind === 'package_table_total') {
+        packageTokens.push({ placeholder: `{{${inside}}}`, kind: 'table_total', public_id: c.public_id, format: c.format, case_modifier: null });
+        continue;
+      }
     }
 
     // Контекст-гейт для pf-* (PATCH-PACKAGE-CUSTOM-FIELDS-V1 итерация 2, A5):
     // если в шаблоне есть {{pf-XXXXXX}}, шаблон ОБЯЗАН быть привязан к пакету
     // через document_package_template_items (template_id → package_template_id).
     // Иначе активация недопустима (package_token_outside_package_context).
-    const pfTokens = packageTokens.filter((t) => t.kind === 'package_field');
-    if (pfTokens.length > 0) {
+    const packageScopedTokens = packageTokens.filter((t) => t.kind === 'package_field' || t.kind === 'table_total');
+    if (packageScopedTokens.length > 0) {
       const { data: bindRows, error: bindErr } = await supabase
         .from('document_package_template_items')
         .select('package_template_id')
@@ -663,11 +667,11 @@ Deno.serve(async (req) => {
       }
       const isPackageBound = (bindRows ?? []).length > 0;
       if (!isPackageBound) {
-        for (const pt of pfTokens) {
+        for (const pt of packageScopedTokens) {
           validationErrors.push({
             code: 'package_token_outside_package_context',
             placeholder: pt.placeholder,
-            message: 'Токен {{pf-XXXXXX}} допустим только в шаблонах, привязанных к пакету через «Пакеты документов». Привяжите шаблон к пакету или удалите токен.',
+            message: 'Токен пакета допустим только в шаблонах, привязанных к пакету через «Пакеты документов». Привяжите шаблон к пакету или удалите токен.',
           });
         }
       }

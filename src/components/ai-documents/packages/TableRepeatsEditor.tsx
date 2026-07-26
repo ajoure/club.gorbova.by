@@ -41,6 +41,7 @@ import {
   validateTableRepeatConfig,
   type TableRepeatColumn,
   type TableRepeatConfig,
+  type TableRepeatAggregate,
   type TableRepeatIssue,
 } from "@/lib/documents/tableRepeatSpec";
 import { readAssignmentCustomFieldDefs } from "@/lib/documents/assignmentCustomFieldsSpec";
@@ -70,6 +71,15 @@ function configsEqual(a: TableRepeatConfig[], b: TableRepeatConfig[]): boolean {
 
 function blankColumn(cellIndex: number): TableRepeatColumn {
   return { cell_index: cellIndex, source_type: "role_person" };
+}
+
+function nextAggregateId(existing: Iterable<string>): string {
+  let max = 0;
+  for (const id of existing) {
+    const match = /^TT-(\d{6,})$/.exec(id);
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  return `TT-${String(max + 1).padStart(6, "0")}`;
 }
 
 function ensureRoleCustomDefs(
@@ -245,6 +255,23 @@ export function TableRepeatsEditor({
         return { ...c, columns: c.columns.filter((_, i) => i !== colIdx) };
       }),
     );
+  };
+  const addAggregate = (cfgId: string) => {
+    setDraft((prev) => (prev ?? []).map((cfg) => {
+      if (cfg.id !== cfgId) return cfg;
+      const id = nextAggregateId((cfg.aggregates ?? []).map((aggregate) => aggregate.id));
+      const aggregate: TableRepeatAggregate = { id, label: "Итог по строкам", source_field_public_id: "" };
+      return { ...cfg, aggregates: [...(cfg.aggregates ?? []), aggregate] };
+    }));
+  };
+  const updateAggregate = (cfgId: string, aggregateIndex: number, patch: Partial<TableRepeatAggregate>) => {
+    setDraft((prev) => (prev ?? []).map((cfg) => {
+      if (cfg.id !== cfgId) return cfg;
+      return { ...cfg, aggregates: (cfg.aggregates ?? []).map((aggregate, index) => index === aggregateIndex ? { ...aggregate, ...patch } : aggregate) };
+    }));
+  };
+  const removeAggregate = (cfgId: string, aggregateIndex: number) => {
+    setDraft((prev) => (prev ?? []).map((cfg) => cfg.id === cfgId ? { ...cfg, aggregates: (cfg.aggregates ?? []).filter((_, index) => index !== aggregateIndex) } : cfg));
   };
 
   const copyMarker = async (id: string) => {
@@ -499,6 +526,30 @@ export function TableRepeatsEditor({
                             </div>
                           )}
                         </div>
+
+                        {isExternal && (
+                          <div className="space-y-1.5 rounded-md border border-dashed border-border/60 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Итоги по строкам</div>
+                                <div className="text-[10px] text-muted-foreground">Суммы считаются при генерации из заполненных строк. Скопируйте токен в DOCX; с <code>|format=words</code> он выводится прописью.</div>
+                              </div>
+                              <Button type="button" variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => addAggregate(cfg.id)}>
+                                <Plus className="h-3 w-3 mr-1" /> Итог
+                              </Button>
+                            </div>
+                            {(cfg.aggregates ?? []).map((aggregate, aggregateIndex) => (
+                              <div key={aggregate.id} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-end rounded border border-border/40 p-2">
+                                <div className="space-y-1"><div className="text-[10px] text-muted-foreground">Название</div><Input className="h-7 text-[11px]" value={aggregate.label ?? ""} onChange={(event) => updateAggregate(cfg.id, aggregateIndex, { label: event.target.value })} placeholder="Например: Личные средства" /></div>
+                                <div className="space-y-1"><div className="text-[10px] text-muted-foreground">Суммировать поле</div><Select value={aggregate.source_field_public_id} onValueChange={(value) => updateAggregate(cfg.id, aggregateIndex, { source_field_public_id: value })}><SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="Числовое поле…" /></SelectTrigger><SelectContent>{packageFields.map((field) => <SelectItem key={field.public_id} value={field.public_id} className="text-[11px]">{field.label} · {field.public_id}</SelectItem>)}</SelectContent></Select></div>
+                                <div className="space-y-1"><div className="text-[10px] text-muted-foreground">Фильтр (поле=значения)</div><Input className="h-7 text-[11px] font-mono" value={aggregate.filter_field_public_id ? `${aggregate.filter_field_public_id}=${(aggregate.filter_values ?? []).join(",")}` : ""} onChange={(event) => { const [field, values] = event.target.value.split("="); updateAggregate(cfg.id, aggregateIndex, { filter_field_public_id: /^pf-\d{6}$/.test(field?.trim() ?? "") ? field.trim() : undefined, filter_values: values ? values.split(",").map((value) => value.trim()).filter(Boolean) : undefined }); }} placeholder="pf-000030=own_cash,personal_card" /></div>
+                                <div className="flex gap-1"><Button type="button" variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => navigator.clipboard.writeText(`{{tableTotal:${aggregate.id}}}`).then(() => toast.success("Токен итога скопирован"), () => toast.error("Не удалось скопировать"))}><ClipboardCopy className="h-3 w-3" /></Button><Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeAggregate(cfg.id, aggregateIndex)}><Trash2 className="h-3.5 w-3.5" /></Button></div>
+                                <div className="md:col-span-4 text-[10px] text-muted-foreground">Токены: <code>{`{{tableTotal:${aggregate.id}}}`}</code> · <code>{`{{tableTotal:${aggregate.id}|format=words}}`}</code></div>
+                              </div>
+                            ))}
+                            {(cfg.aggregates ?? []).length === 0 && <div className="text-[11px] text-muted-foreground">Итогов пока нет.</div>}
+                          </div>
+                        )}
 
                         {issues.length > 0 && (
                           <ul className="space-y-1">

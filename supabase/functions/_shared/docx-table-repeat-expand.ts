@@ -25,6 +25,7 @@ import {
   type TableRepeatConfig,
 } from './table-repeat-spec.ts';
 import { renderTableRepeatCell, type RowRenderContext } from './table-repeat-cell-render.ts';
+import { formatAmountWithWordsByRublesAndKopecks } from './amount-with-words.ts';
 
 // PizZip-совместимый file API (тот же, что использует canonical-document-generate-strict).
 interface PizZipLike {
@@ -53,6 +54,52 @@ export interface TableRepeatExpansionReport {
   applied: boolean;
   super_admin: boolean;
   markers: TableRepeatMarkerReport[];
+}
+
+type SubmissionFieldDef = { data_type: string; options: Record<string, unknown> | null };
+
+function collectSubmissionFieldIds(cfg: TableRepeatConfig): string[] {
+  const out = new Set<string>();
+  for (const column of cfg.columns) {
+    if (column.source_type === 'submission_field' && column.source_key) out.add(column.source_key);
+    if (column.source_type === 'submission_template' && column.source_key) {
+      for (const match of column.source_key.matchAll(/\{\{(pf-\d{6})(?:\|format=[a-z_]+)?\}\}/g)) out.add(match[1]);
+    }
+  }
+  for (const aggregate of cfg.aggregates ?? []) {
+    out.add(aggregate.source_field_public_id);
+    if (aggregate.filter_field_public_id) out.add(aggregate.filter_field_public_id);
+  }
+  return [...out];
+}
+
+function rowMatchesAggregate(
+  values: Record<string, unknown>,
+  aggregate: NonNullable<TableRepeatConfig['aggregates']>[number],
+): boolean {
+  if (!aggregate.filter_field_public_id || !aggregate.filter_values?.length) return true;
+  const actual = values[aggregate.filter_field_public_id];
+  const sourceValues = Array.isArray(actual) ? actual.map(String) : [String(actual ?? '')];
+  return sourceValues.some((value) => aggregate.filter_values!.includes(value));
+}
+
+function calculateAggregate(
+  rows: Array<Record<string, unknown>>,
+  aggregate: NonNullable<TableRepeatConfig['aggregates']>[number],
+): number {
+  return rows.reduce((sum, values) => {
+    if (!rowMatchesAggregate(values, aggregate)) return sum;
+    const raw = values[aggregate.source_field_public_id];
+    const numeric = typeof raw === 'string'
+      ? Number(raw.replace(/\s+/g, '').replace(',', '.'))
+      : Number(raw);
+    return Number.isFinite(numeric) ? sum + numeric : sum;
+  }, 0);
+}
+
+function formatAggregate(value: number, modifier: string | undefined): string {
+  if (modifier === 'words') return formatAmountWithWordsByRublesAndKopecks(value, 'BYN');
+  return value.toFixed(2).replace('.', ',');
 }
 
 export interface TableRepeatExpansionInput {
@@ -365,6 +412,7 @@ export async function applyTableRepeatExpansion(
   const assignmentsCache = new Map<string, Array<{ person_id: string | null; metadata: unknown }>>();
   // persons cache: id → row
   const personById = new Map<string, Record<string, unknown>>();
+  const aggregateValues = new Map<string, number>();
 
   for (const trId of trIdsInDoc) {
     const cfg = configs.find((c) => c.id === trId);
@@ -419,6 +467,9 @@ export async function applyTableRepeatExpansion(
           failed_occurrences: countOccurrences(originalXml, trId), cell_codes_summary: {}, source_types_count: {},
           severity: 'error', code: 'tr_config_invalid' });
         continue;
+      }
+      for (const aggregate of cfg.aggregates ?? []) {
+        aggregateValues.set(aggregate.id, calculateAggregate(submissionValuesRows, aggregate));
       }
     } else {
       // Load role catalog (cache)
@@ -549,6 +600,25 @@ export async function applyTableRepeatExpansion(
       }
     }
 
+    // Definitions are necessary to render select labels, dates and money words
+    // from rows of the public form. The values themselves stay in the external
+    // submission rows and are never put into metadata.
+    const submissionFieldDefs = new Map<string, SubmissionFieldDef>();
+    if (externalSource) {
+      const ids = collectSubmissionFieldIds(cfg);
+      if (ids.length > 0) {
+        const { data: definitions } = await input.supabase
+          .from('document_package_field_catalog')
+          .select('public_id, data_type, options')
+          .eq('package_template_id', input.packageTemplateId)
+          .in('public_id', ids)
+          .eq('is_active', true);
+        for (const def of (definitions ?? []) as Array<{ public_id: string; data_type: string; options: Record<string, unknown> | null }>) {
+          submissionFieldDefs.set(def.public_id, { data_type: def.data_type, options: def.options });
+        }
+      }
+    }
+
     // Expand each occurrence (across the WHOLE document, not just first one).
     const cellCodes: Record<string, number> = {};
     const sourceTypesCount: Record<string, number> = {};
@@ -630,6 +700,7 @@ export async function applyTableRepeatExpansion(
           knownCustomKeysForRole: knownCustomKeys,
           isSuperAdmin: !!input.isSuperAdmin,
           submissionValues: submissionValuesRows[rowIdx],
+          submissionFieldDefs,
         };
 
         // Сначала вычислим map cell_index → value
@@ -697,6 +768,13 @@ export async function applyTableRepeatExpansion(
     }
     report.markers.push(markerReport);
   }
+
+  // Totals are a separate service namespace. Their definitions live in the
+  // editable table-repeat configuration, while DOCX sees stable tokens only.
+  workingXml = workingXml.replace(/\{\{tableTotal:(TT-\d{6,})(?:\|format=([a-z_]+))?\}\}/g, (whole, id: string, format: string | undefined) => {
+    const value = aggregateValues.get(id);
+    return value == null ? '' : formatAggregate(value, format);
+  });
 
   // Defensive: убедимся, что НИ один маркер `{{tableRepeat:` не остался.
   if (workingXml.includes('{{tableRepeat:')) {

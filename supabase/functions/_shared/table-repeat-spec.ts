@@ -13,7 +13,8 @@ export type TableRepeatColumnSourceType =
   | "row_number"
   | "empty"
   | "assignment_metadata"
-  | "submission_field";
+  | "submission_field"
+  | "submission_template";
 
 export interface TableRepeatColumn {
   cell_index: number;
@@ -23,6 +24,14 @@ export interface TableRepeatColumn {
   format?: string;
 }
 
+export interface TableRepeatAggregate {
+  id: string;
+  label?: string;
+  source_field_public_id: string;
+  filter_field_public_id?: string;
+  filter_values?: string[];
+}
+
 export interface TableRepeatConfig {
   id: string;
   source_kind?: "role_assignments" | "external_submission";
@@ -30,6 +39,7 @@ export interface TableRepeatConfig {
   repeat_group_key?: string;
   label?: string;
   columns: TableRepeatColumn[];
+  aggregates?: TableRepeatAggregate[];
 }
 
 export const TABLE_REPEAT_MARKER_REGEX = /\{\{tableRepeat:(TR-\d{6,})\}\}/g;
@@ -79,7 +89,8 @@ export function readTableRepeats(
         source_type !== "row_number" &&
         source_type !== "empty" &&
         source_type !== "assignment_metadata" &&
-        source_type !== "submission_field"
+        source_type !== "submission_field" &&
+        source_type !== "submission_template"
       ) {
         continue;
       }
@@ -93,6 +104,25 @@ export function readTableRepeats(
     if (role_catalog_id) cfg.role_catalog_id = role_catalog_id;
     if (repeat_group_key) cfg.repeat_group_key = repeat_group_key;
     if (typeof obj.label === "string") cfg.label = obj.label;
+    const aggregatesRaw = Array.isArray(obj.aggregates) ? obj.aggregates : [];
+    const aggregates: TableRepeatAggregate[] = [];
+    for (const aggregate of aggregatesRaw) {
+      if (!aggregate || typeof aggregate !== "object") continue;
+      const a = aggregate as Record<string, unknown>;
+      const aggregateId = typeof a.id === "string" ? a.id : "";
+      const sourceField = typeof a.source_field_public_id === "string" ? a.source_field_public_id : "";
+      if (!/^TT-\d{6,}$/.test(aggregateId) || !/^pf-\d{6}$/.test(sourceField)) continue;
+      const parsed: TableRepeatAggregate = { id: aggregateId, source_field_public_id: sourceField };
+      if (typeof a.label === "string") parsed.label = a.label;
+      if (typeof a.filter_field_public_id === "string" && /^pf-\d{6}$/.test(a.filter_field_public_id)) {
+        parsed.filter_field_public_id = a.filter_field_public_id;
+      }
+      if (Array.isArray(a.filter_values)) {
+        parsed.filter_values = a.filter_values.filter((v): v is string => typeof v === "string" && v.length > 0);
+      }
+      aggregates.push(parsed);
+    }
+    if (aggregates.length > 0) cfg.aggregates = aggregates;
     out.push(cfg);
   }
   return out;
@@ -106,6 +136,8 @@ export type TableRepeatIssueCode =
   | "negative_cell_index"
   | "non_integer_cell_index"
   | "missing_source_key"
+  | "missing_aggregate_source"
+  | "duplicate_aggregate_id"
   | "orphan_custom_key";
 
 export interface TableRepeatIssue {
@@ -189,7 +221,8 @@ export function validateTableRepeatConfig(
       col.source_type === "assignment_custom_field" ||
       col.source_type === "package_field" ||
       col.source_type === "static_text" ||
-      col.source_type === "submission_field"
+      col.source_type === "submission_field" ||
+      col.source_type === "submission_template"
     ) {
       if (!col.source_key || col.source_key === "") {
         issues.push({
@@ -215,6 +248,19 @@ export function validateTableRepeatConfig(
           `Колонка ${col.cell_index + 1}: доп. поле «${col.source_key}» ` +
           `больше не определено в schema роли. Конфиг сохранится как orphan-ref.`,
       });
+    }
+  }
+
+  const aggregateIds = new Set<string>();
+  for (const aggregate of cfg.aggregates ?? []) {
+    if (aggregateIds.has(aggregate.id)) {
+      issues.push({ code: "duplicate_aggregate_id", severity: "error", source_key: aggregate.id,
+        message: `Итог ${aggregate.id} указан в строке дважды.` });
+    }
+    aggregateIds.add(aggregate.id);
+    if (!aggregate.source_field_public_id) {
+      issues.push({ code: "missing_aggregate_source", severity: "error", source_key: aggregate.id,
+        message: `Для итога ${aggregate.id} не выбрано числовое поле строки.` });
     }
   }
 

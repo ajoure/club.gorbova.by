@@ -137,6 +137,16 @@ function classify(
       hint: `Поле пакета ${pfId} (${field.label}). Значение читается из document_package_session_field_values.` };
   }
 
+  if (c.kind === "package_table_total") {
+    return { token, severity: "valid", code: "package_table_total_ok",
+      hint: "Итог повторяемой строки. Формула и фильтр редактируются в «Повторяемых строках таблиц», значение рассчитывается при генерации." };
+  }
+
+  if (c.kind === "package_table_repeat") {
+    return { token, severity: "valid", code: "package_table_repeat_ok",
+      hint: "Служебный маркер повторяемой строки таблицы." };
+  }
+
 
   if (c.kind === "package_role") {
     const lnId = c.public_id;

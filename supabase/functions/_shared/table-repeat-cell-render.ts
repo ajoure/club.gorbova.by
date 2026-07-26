@@ -21,6 +21,7 @@ import {
   formatLnDate,
 } from './ln-subfield-spec.ts';
 import { isCaseModifier } from './case-format.ts';
+import { formatAmountWithWordsByRublesAndKopecks } from './amount-with-words.ts';
 import type { TableRepeatColumn } from './table-repeat-spec.ts';
 
 export interface CellRenderResult {
@@ -107,6 +108,68 @@ export interface RowRenderContext {
   isSuperAdmin?: boolean;
   /** Values from one row of a generic public-form repeat group, keyed by pf-id. */
   submissionValues?: Record<string, unknown>;
+  /** Catalog fields are supplied only for external repeat groups. */
+  submissionFieldDefs?: Map<string, {
+    data_type: string;
+    options?: Record<string, unknown> | null;
+  }>;
+}
+
+function formatSubmissionValue(
+  publicId: string,
+  raw: unknown,
+  format: string | undefined,
+  defs?: RowRenderContext['submissionFieldDefs'],
+): string {
+  if (raw == null || raw === '') return '';
+  const def = defs?.get(publicId);
+  const dataType = def?.data_type ?? 'text';
+  if (dataType === 'number' || dataType === 'year') {
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric)) return '';
+    if (format === 'words') return formatAmountWithWordsByRublesAndKopecks(numeric, 'BYN');
+    return String(numeric);
+  }
+  if (dataType === 'date') {
+    const iso = String(raw);
+    const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    if (!isoMatch) return '';
+    if (format === 'full') {
+      return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Minsk' })
+        .format(new Date(`${iso}T12:00:00+03:00`));
+    }
+    return `${isoMatch[3]}.${isoMatch[2]}.${isoMatch[1]}`;
+  }
+  if (dataType === 'select') {
+    const choices = (def?.options?.choices as Array<{ value?: unknown; label?: unknown }> | undefined) ?? [];
+    const found = choices.find((choice) => String(choice.value) === String(raw));
+    return format === 'value' ? String(raw) : String(found?.label ?? raw);
+  }
+  if (dataType === 'multiselect') {
+    const values = Array.isArray(raw) ? raw : [];
+    const choices = (def?.options?.choices as Array<{ value?: unknown; label?: unknown }> | undefined) ?? [];
+    return values.map((value) => {
+      const found = choices.find((choice) => String(choice.value) === String(value));
+      return format === 'value' ? String(value) : String(found?.label ?? value);
+    }).join(String(def?.options?.separator ?? ', '));
+  }
+  return String(raw);
+}
+
+function renderSubmissionTemplate(
+  template: string,
+  ctx: RowRenderContext,
+): CellRenderResult {
+  const token = /\{\{(pf-\d{6})(?:\|format=([a-z_]+))?\}\}/g;
+  let hadUnknown = false;
+  const value = template.replace(token, (_whole, publicId: string, format: string | undefined) => {
+    if (!ctx.submissionFieldDefs?.has(publicId)) {
+      hadUnknown = true;
+      return '';
+    }
+    return formatSubmissionValue(publicId, ctx.submissionValues?.[publicId], format, ctx.submissionFieldDefs);
+  });
+  return hadUnknown ? { value, code: 'submission_template_field_unknown' } : { value };
 }
 
 export function renderTableRepeatCell(
@@ -141,8 +204,11 @@ export function renderTableRepeatCell(
       if (!col.source_key) return { value: '', code: 'missing_source_key' };
       const raw = ctx.submissionValues?.[col.source_key];
       if (raw == null || raw === '') return { value: '', code: 'submission_field_empty' };
-      return { value: typeof raw === 'string' ? raw : String(raw) };
+      return { value: formatSubmissionValue(col.source_key, raw, col.format, ctx.submissionFieldDefs) };
     }
+    case 'submission_template':
+      if (!col.source_key) return { value: '', code: 'missing_source_key' };
+      return renderSubmissionTemplate(col.source_key, ctx);
     default:
       return { value: '', code: 'tr_column_resolve_failed' };
   }
