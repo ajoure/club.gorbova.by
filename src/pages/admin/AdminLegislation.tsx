@@ -196,7 +196,7 @@ export default function AdminLegislation() {
               Законодательство
             </h1>
             <p className="text-muted-foreground">
-              Кодексы из ЭТАЛОН-ONLINE и документы, загруженные вручную
+              Кодексы и нормативные правовые акты Республики Беларусь
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -351,7 +351,7 @@ export default function AdminLegislation() {
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-medium">{document.title}</p>
                     <Badge variant="outline">
-                      {document.source === "etalon" ? "ЭТАЛОН" : "Вручную"}
+                      {document.source === "manual" ? "Вручную" : "Автоматически"}
                     </Badge>
                     <Badge variant="secondary">
                       {document.category === "codes" ? "Кодекс" : "НПА"}

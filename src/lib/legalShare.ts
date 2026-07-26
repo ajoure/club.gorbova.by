@@ -1,6 +1,13 @@
 export const getLegalSharePath = (ref: string, anchor?: string | null) =>
   `/l/${encodeURIComponent(ref)}${anchor ? `/${encodeURIComponent(anchor)}` : ""}`;
 
+export const getLegalShareUrl = (ref: string, anchor?: string | null) => {
+  const base = import.meta.env.VITE_SUPABASE_URL;
+  return `${base}/functions/v1/l/${encodeURIComponent(ref)}${
+    anchor ? `/${encodeURIComponent(anchor)}` : ""
+  }`;
+};
+
 export const getLegalDocumentPath = (slug: string, anchor?: string | null) =>
   `/knowledge/laws/${encodeURIComponent(slug)}${anchor ? `#${encodeURIComponent(anchor)}` : ""}`;
 
