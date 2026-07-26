@@ -1,0 +1,8 @@
+-- Baseline marker for a migration applied directly in the managed Lovable Cloud
+-- environment. The production migration journal contains version 20260726203601
+-- and the target schema already has repeat_group_settings plus
+-- dpe_forms_repeat_group_settings_object_chk.
+--
+-- Keep this file intentionally empty: it reconciles the repository migration
+-- history with the applied production version and prevents either previously
+-- committed duplicate from being executed in a later managed run.
