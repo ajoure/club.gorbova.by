@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -16,11 +15,6 @@ import { AlertCircle, Camera, CheckCircle2, FileUp, Loader2, Plus, Send, Trash2 
 type PublicField = { id: string; public_id: string; label: string; description: string | null; data_type: string; options: any; required: boolean; input_rules: Record<string, unknown> };
 type FormData = { title: string; description: string | null; allow_attachments: boolean; regular_fields: PublicField[]; repeat_groups: Record<string, PublicField[]>; today: string };
 
-function localDate(value?: string | null) {
-  if (!value) return undefined;
-  const [y, m, d] = value.split("-").map(Number);
-  return y && m && d ? new Date(y, m - 1, d) : undefined;
-}
 function choices(field: PublicField): Array<{ value: string; label: string }> {
   const raw = field.options?.choices ?? field.options?.options ?? [];
   return Array.isArray(raw) ? raw.map((x: any) => typeof x === "string" ? { value: x, label: x } : { value: String(x.value), label: String(x.label ?? x.value) }) : [];
@@ -43,7 +37,7 @@ export default function ExternalDocumentFormPage() {
     enabled: !!token,
   });
   const form = formQuery.data;
-  const maxDate = useMemo(() => localDate(form?.today), [form?.today]);
+  const maxDate = useMemo(() => form?.today || undefined, [form?.today]);
   useEffect(() => {
     if (!form) return;
     setGroups((previous) => {
@@ -107,8 +101,8 @@ export default function ExternalDocumentFormPage() {
   </PageShell>;
 }
 
-function PublicFieldControl({ field, value, onChange, maxDate }: { field: PublicField; value: unknown; onChange: (value: unknown) => void; maxDate?: Date }) {
+function PublicFieldControl({ field, value, onChange, maxDate }: { field: PublicField; value: unknown; onChange: (value: unknown) => void; maxDate?: string }) {
   const required = field.required; const help = field.description;
-  return <div className="space-y-1.5"><Label className="text-sm">{field.label}{required ? <span className="text-destructive"> *</span> : null}</Label>{help ? <p className="text-xs text-muted-foreground">{help}</p> : null}{field.data_type === "date" ? <DatePicker value={localDate(typeof value === "string" ? value : "")} onChange={(d) => onChange(d ? format(d, "yyyy-MM-dd") : "")} maxDate={field.input_rules?.no_future ? maxDate : undefined} placeholder="Выберите дату" /> : field.data_type === "select" ? <Select value={String(value ?? "")} onValueChange={onChange}><SelectTrigger><SelectValue placeholder="Выберите вариант" /></SelectTrigger><SelectContent>{choices(field).map((x) => <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}</SelectContent></Select> : field.data_type === "multiselect" ? <div className="rounded-xl border border-input p-2 space-y-2">{choices(field).map((x) => { const selected = Array.isArray(value) ? value.map(String) : []; return <label key={x.value} className="text-sm flex items-center gap-2"><Checkbox checked={selected.includes(x.value)} onCheckedChange={(yes) => onChange(yes ? [...selected, x.value] : selected.filter((v) => v !== x.value))} />{x.label}</label>; })}</div> : field.data_type === "checkbox" ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={value === true} onCheckedChange={onChange} /> Да</label> : field.data_type === "number" || field.data_type === "year" ? <Input type="number" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} /> : <Textarea value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} className="min-h-10" />}</div>;
+  return <div className="space-y-1.5"><Label className="text-sm">{field.label}{required ? <span className="text-destructive"> *</span> : null}</Label>{help ? <p className="text-xs text-muted-foreground">{help}</p> : null}{field.data_type === "date" ? <DatePicker value={typeof value === "string" ? value : ""} onChange={onChange} maxDate={field.input_rules?.no_future ? maxDate : undefined} placeholder="Выберите дату" /> : field.data_type === "select" ? <Select value={String(value ?? "")} onValueChange={onChange}><SelectTrigger><SelectValue placeholder="Выберите вариант" /></SelectTrigger><SelectContent>{choices(field).map((x) => <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}</SelectContent></Select> : field.data_type === "multiselect" ? <div className="rounded-xl border border-input p-2 space-y-2">{choices(field).map((x) => { const selected = Array.isArray(value) ? value.map(String) : []; return <label key={x.value} className="text-sm flex items-center gap-2"><Checkbox checked={selected.includes(x.value)} onCheckedChange={(yes) => onChange(yes ? [...selected, x.value] : selected.filter((v) => v !== x.value))} />{x.label}</label>; })}</div> : field.data_type === "checkbox" ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={value === true} onCheckedChange={onChange} /> Да</label> : field.data_type === "number" || field.data_type === "year" ? <Input type="number" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} /> : <Textarea value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} className="min-h-10" />}</div>;
 }
 function PageShell({ children }: { children: React.ReactNode }) { return <main className="min-h-screen bg-[radial-gradient(circle_at_top,hsla(var(--primary)/.14),transparent_38%),linear-gradient(135deg,hsl(var(--background)),hsl(var(--muted)/.55),hsl(var(--background)))] px-3 py-6 sm:px-6 sm:py-10 flex items-center justify-center">{children}</main>; }
