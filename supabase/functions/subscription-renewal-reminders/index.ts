@@ -190,8 +190,7 @@ async function resolveProviderNextChargeAt(
  * PATCH ONE-TIME-CLASSIFIER v1: ID-first detection of one-time products.
  * Returns true ONLY when:
  *  1) tariff_id has at least one active offer, AND
- *  2) NO active offer has offer_type='subscription', AND
- *  3) user has NO active provider_managed subscription for this product.
+ *  2) NO active offer has a recurring/subscription lifecycle.
  * requires_card_tokenization is used as a SECONDARY signal (logged in meta only),
  * never as sole source of truth.
  * Conservative: any error / missing data returns false (treat as recurring).
@@ -204,9 +203,9 @@ async function isOneTimeProduct(
 ): Promise<{ oneTime: boolean; signals: Record<string, any> }> {
   // PATCH RENEWAL-RESOLVER v2 (2026-04-28):
   // Source of truth = active tariff_offers of the PRODUCT.
-  // A product is "one-time" only when none of its active offers are recurring,
-  // installment, or a subscription offer. The user's current sub state is irrelevant
-  // for this classification (it is used only for «Подписка уже активна» messaging).
+  // A product has an informational access-expiry lifecycle when none of its
+  // active offers are recurring/subscription offers. A finite installment is
+  // intentionally included: it ends after N charges and cannot be renewed.
   const signals: Record<string, any> = {
     tariff_id: tariffId,
     product_id: productId,
@@ -231,6 +230,29 @@ async function isOneTimeProduct(
     signals.error = err instanceof Error ? err.message : String(err);
     return { oneTime: false, signals };
   }
+}
+
+function isFiniteInstallmentSubscriptionMeta(metaValue: unknown): boolean {
+  const meta =
+    metaValue && typeof metaValue === 'object'
+      ? metaValue as Record<string, any>
+      : {};
+  const installment =
+    meta.installment && typeof meta.installment === 'object'
+      ? meta.installment as Record<string, any>
+      : {};
+  const progress =
+    meta.installment_progress && typeof meta.installment_progress === 'object'
+      ? meta.installment_progress as Record<string, any>
+      : {};
+
+  return (
+    meta.payment_method === 'internal_installment' ||
+    meta.model === 'bepaid_finite_subscription' ||
+    installment.model === 'bepaid_finite_subscription' ||
+    progress.model === 'bepaid_finite_subscription' ||
+    installment.as_finite_subscription === true
+  );
 }
 
 /**
@@ -539,26 +561,21 @@ async function sendTelegramReminder(
 🎯 *Тариф:* ${safeTariffName}
 📆 *Доступ до:* ${formattedDate}${amountLine}${chargeTimeLine}`;
 
-    // PATCH ONE-TIME v2: тёплые тексты с эмодзи, точное время, нейтральный CTA (ЛК)
+    // Non-renewable access: date-only informational text. No renewal language
+    // and no CTA, because one-time products and finite installments end.
     if (isOneTime) {
       if (daysLeft === 7) {
         message = `📅 *Доступ скоро заканчивается*
 
-${safeNamePrefix}напоминаем: доступ к *${safeProductName}* заканчивается *${formattedDate}*.
-
-Это разовая покупка — продление не требуется. ✅ Спасибо, что были с нами!`;
+${safeNamePrefix}доступ к *${safeProductName}* заканчивается *${formattedDate}*.`;
       } else if (daysLeft === 3) {
         message = `⏰ *Осталось 3 дня доступа*
 
-${safeNamePrefix}доступ к *${safeProductName}* заканчивается *${formattedDate}*.
-
-Это разовая покупка — продление не требуется. ✅`;
+${safeNamePrefix}доступ к *${safeProductName}* заканчивается *${formattedDate}*.`;
       } else if (daysLeft === 1) {
         message = `🔔 *Завтра заканчивается доступ*
 
-${safeNamePrefix}это последнее напоминание: доступ к *${safeProductName}* заканчивается *${formattedDate}*.
-
-Это разовая покупка — продление не требуется. ✅ Благодарим за доверие!`;
+${safeNamePrefix}доступ к *${safeProductName}* заканчивается *${formattedDate}*.`;
       }
     }
     // PATCH RENEWAL+PAYMENTS.1 B3: Unified texts — SBS vs non-SBS (2 buttons)
@@ -620,12 +637,10 @@ ${renewalDetailsBlock}
 
     if (!message) return { sent: false, logged: false, logError: 'Invalid daysLeft', skipReason: null, failReason: null };
 
-    // PATCH ONE-TIME v1: replyMarkup — one-time gets only "Manage in cabinet" (no paylink CTAs)
+    // Non-renewable access gets no buttons at all.
     let replyMarkup: any;
     if (isOneTime) {
-      replyMarkup = {
-        inline_keyboard: [[{ text: '👤 Открыть личный кабинет', url: 'https://club.gorbova.by/purchases' }]],
-      };
+      replyMarkup = undefined;
     } else if (hasSBS) {
       replyMarkup = {
         inline_keyboard: [[{ text: '📋 Управление подпиской', url: 'https://club.gorbova.by/purchases' }]],
@@ -802,15 +817,10 @@ async function sendEmailReminder(
     let bodyHtml = '';
 
     // PATCH RENEWAL+PAYMENTS.1 B4: Build CTA section — SBS vs 2 buttons
-    // PATCH ONE-TIME v2: one-time → нейтральная кнопка «Открыть личный кабинет», без слов «продление»
+    // Non-renewable access is informational only: no CTA.
     let ctaHtml = '';
     if (isOneTime) {
-      ctaHtml = `
-        <p style="margin-top: 24px;">
-          <a href="https://club.gorbova.by/purchases" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
-            👤 Открыть личный кабинет
-          </a>
-        </p>`;
+      ctaHtml = '';
     } else if (hasSBS) {
       ctaHtml = `
         <p style="color: #059669; margin: 16px 0;">✅ Автопродление активно. Подписка продлится автоматически. Отключить можно в кабинете.</p>
@@ -860,8 +870,6 @@ async function sendEmailReminder(
               <p style="margin: 0 0 8px 0;"><strong>📦 Продукт:</strong> ${productName}</p>
               <p style="margin: 0;"><strong>📆 Доступ до:</strong> ${formattedDate}</p>
             </div>
-            <p style="color: #4b5563; margin: 16px 0;">Это разовая покупка — продление не требуется. ✅ Спасибо, что были с нами!</p>
-            ${statusSection}
             <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
           </div>`;
       }
@@ -1237,6 +1245,7 @@ Deno.serve(async (req) => {
           tariff_id,
           billing_type,
           payment_method_id,
+          meta,
           tariffs (
             id,
             name,
@@ -1309,6 +1318,7 @@ Deno.serve(async (req) => {
         // PATCH ONE-TIME v1: classify product (ID-first) — SOT: tariff_offers.meta.recurring.is_recurring
         const classify = await isOneTimeProduct(supabase, sub.tariff_id, userId, productId);
         const productIsOneTime = classify.oneTime;
+        const finiteInstallment = isFiniteInstallmentSubscriptionMeta((sub as any).meta);
 
         // PATCH AMOUNT-RESOLVER v4: resolve amount ONLY for recurring/installment products.
         // For one-time products amount stays 0 → template renders info-only branch (no amount line, no CTA).
@@ -1436,7 +1446,7 @@ Deno.serve(async (req) => {
         // B4: Branch 1 (access-end reminder) applies ONLY to subscriptions without an
         // active provider-managed auto-charge. Provider-managed subs (recurring + finite
         // installments) are covered by Branch 2 (upcoming-charge reminders) below.
-        if (currentSubHasProviderManaged && !productIsOneTime) {
+        if (currentSubHasProviderManaged && (!productIsOneTime || finiteInstallment)) {
           await supabase.from('audit_logs').insert({
             action: 'reminders.branch1_skipped_provider_managed',
             actor_type: 'system',
@@ -1448,6 +1458,7 @@ Deno.serve(async (req) => {
               days_left: daysLeft,
               reason: 'handled_by_upcoming_charge_reminder',
               exact_provider_subscription_match: true,
+              finite_installment: finiteInstallment,
             },
           });
           continue;
@@ -1475,7 +1486,7 @@ Deno.serve(async (req) => {
               },
             });
           }
-        } else if (currentSubHasProviderManaged && !productIsOneTime) {
+        } else if (currentSubHasProviderManaged && (!productIsOneTime || finiteInstallment)) {
           await supabase.from('audit_logs').insert({
             action: 'reminders.paylink_cta_suppressed_sbs',
             actor_type: 'system',

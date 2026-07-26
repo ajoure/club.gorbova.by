@@ -123,6 +123,10 @@ import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallmentsTabContent } from "@/components/installments/ContactInstallmentsTabContent";
+import {
+  isFiniteInstallmentProviderSubscription,
+  removeProviderSubscriptionById,
+} from "@/lib/providerSubscriptionLifecycle";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
@@ -858,9 +862,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
       }
       return data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions'] });
-      queryClient.invalidateQueries({ queryKey: ['bepaid-subscriptions-admin'] });
+    onSuccess: (_data, providerSubId) => {
+      // Provider + local DB cancellation is already confirmed by mutationFn.
+      // Remove the row from every matching contact cache immediately, then
+      // reconcile in the background. This prevents the misleading state where
+      // toast says «отменена», but the same active card remains on screen.
+      queryClient.setQueriesData(
+        { queryKey: ['contact-provider-subscriptions'] },
+        (rows: unknown[] | undefined) =>
+          removeProviderSubscriptionById(rows, providerSubId),
+      );
+      void queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions'] });
+      void queryClient.invalidateQueries({ queryKey: ['bepaid-subscriptions-admin'] });
       toast.success('Подписка bePaid отменена');
     },
     onError: (error: Error) => {
@@ -2477,6 +2490,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                   if (!LIVE_PROVIDER_STATES.has(sub?.state)) return false;
                   if (isProviderDead(sub)) return false;
                   if (!isRealProviderSubscription(sub)) return false;
+                  // A bounded bePaid sbs_* is the transport for an internal
+                  // installment. It belongs in «Рассрочки», not «Подписки».
+                  if (isFiniteInstallmentProviderSubscription(sub)) return false;
                   return true;
                 };
                 const healthyProviderSubs = allProviderSubs.filter(isHealthyProviderSub);
