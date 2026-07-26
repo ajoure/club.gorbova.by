@@ -4,6 +4,7 @@ import { getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
+import { isRetryExhausted, resolveEffectiveRetryPolicy } from '../_shared/renewal-retry-policy.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -653,7 +654,7 @@ Deno.serve(async (req) => {
         .select(`
           *,
           subscriptions_v2 (
-            id, user_id, payment_method_id, payment_token,
+            id, user_id, payment_method_id, payment_token, meta,
             products_v2 ( name, currency )
           )
         `)
@@ -823,14 +824,15 @@ Deno.serve(async (req) => {
           })
           .eq('id', payment.id);
 
-        // Update installment status back to pending (or failed if max attempts)
-        const maxAttempts = 3;
-        const newStatus = (installment.charge_attempts || 0) + 1 >= maxAttempts ? 'failed' : 'pending';
+        const newAttempts = (installment.charge_attempts || 0) + 1;
+        const retryPolicy = resolveEffectiveRetryPolicy(subscription.meta);
+        const newStatus = isRetryExhausted(newAttempts, retryPolicy) ? 'failed' : 'pending';
         
         await supabase
           .from('installment_payments')
           .update({ 
             status: newStatus,
+            charge_attempts: newAttempts,
             error_message: chargeResult.error,
           })
           .eq('id', installment_id);
