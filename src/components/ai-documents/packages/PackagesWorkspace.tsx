@@ -52,6 +52,7 @@ import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel
 import { PackageGenerationPanel } from "./PackageGenerationPanel";
 import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
 import { ExternalDocumentFormBuilder } from "./ExternalDocumentFormBuilder";
+import { DocumentGenerationAccessPanel } from "./DocumentGenerationAccessPanel";
 
 const ADMIN_TABS = ["templates", "anketa", "roles", "external", "placeholders", "validation", "generation"] as const;
 const USER_TABS = ["anketa", "generation"] as const;
@@ -409,6 +410,10 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
           </p>
         )}
       </GlassCard>
+
+      {isAdminUI && (
+        <DocumentGenerationAccessPanel packages={packages} />
+      )}
 
 
       {/* Подвкладки пакета */}
