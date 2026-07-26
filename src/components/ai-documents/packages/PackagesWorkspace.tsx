@@ -52,9 +52,9 @@ import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel
 import { PackageGenerationPanel } from "./PackageGenerationPanel";
 import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
 import { ExternalDocumentFormBuilder } from "./ExternalDocumentFormBuilder";
-import { DocumentGenerationAccessPanel } from "./DocumentGenerationAccessPanel";
+import { PackageAccessPanel } from "./PackageAccessPanel";
 
-const ADMIN_TABS = ["templates", "anketa", "roles", "external", "placeholders", "validation", "generation"] as const;
+const ADMIN_TABS = ["templates", "anketa", "roles", "access", "external", "placeholders", "validation", "generation"] as const;
 const USER_TABS = ["anketa", "generation"] as const;
 
 
@@ -66,6 +66,7 @@ interface PackageOption {
   name: string;
   description: string | null;
   is_active: boolean;
+  is_available_to_all: boolean;
   profile_id: string | null;
 }
 
@@ -92,7 +93,7 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("document_package_templates")
-        .select("id, code, name, description, is_active, profile_id")
+        .select("id, code, name, description, is_active, is_available_to_all, profile_id")
         .order("name", { ascending: true });
       if (error) throw error;
       return (data ?? []) as PackageOption[];
@@ -411,11 +412,6 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
         )}
       </GlassCard>
 
-      {isAdminUI && (
-        <DocumentGenerationAccessPanel packages={packages} />
-      )}
-
-
       {/* Подвкладки пакета */}
       {selectedPackage ? (
         <Tabs value={tab} onValueChange={setTab} className="space-y-3">
@@ -436,6 +432,13 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
               <HelpTooltip helpKey="" customShort="Роли и кастомные поля, которые встречаются в шаблонах пакета." alwaysShow>
                 <TabsTrigger value="roles">
                   <Users className="h-3.5 w-3.5 mr-1.5" /> Роли и поля пакета
+                </TabsTrigger>
+              </HelpTooltip>
+            )}
+            {isAdminUI && (
+              <HelpTooltip helpKey="" customShort="Доступ именно к выбранному пакету: всем авторизованным клиентам или через продукты." alwaysShow>
+                <TabsTrigger value="access">
+                  <ShieldCheck className="h-3.5 w-3.5 mr-1.5" /> Доступ пакета
                 </TabsTrigger>
               </HelpTooltip>
             )}
@@ -484,6 +487,17 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
             <TabsContent value="roles" className="space-y-4">
               <PackageRolesManager packageTemplateId={selectedPackage.id} />
               <PackageFieldsManager packageTemplateId={selectedPackage.id} />
+            </TabsContent>
+          )}
+
+          {isAdminUI && (
+            <TabsContent value="access">
+              <PackageAccessPanel
+                packageId={selectedPackage.id}
+                packageName={selectedPackage.name}
+                isActive={selectedPackage.is_active}
+                isAvailableToAll={selectedPackage.is_available_to_all}
+              />
             </TabsContent>
           )}
 
