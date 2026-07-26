@@ -6,11 +6,11 @@ import {
   BookOpen,
   Check,
   ChevronDown,
+  Copy,
   ListTree,
   Landmark,
   Lock,
   Scale,
-  Share2,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -25,7 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { getKnowledgeTabPath } from "@/lib/knowledgeNavigation";
-import { buildLegalShareText, getLegalShareUrl } from "@/lib/legalShare";
+import { getLegalShareUrl } from "@/lib/legalShare";
 import {
   useLegalDocument,
   useLegalDocumentPreview,
@@ -162,28 +162,16 @@ export default function LegislationDocument() {
     })();
   }, [document, location.hash, location.pathname, location.search]);
 
-  const shareAnchor = async (anchor?: string) => {
+  const copyAnchor = async (anchor?: string) => {
     if (!document) return;
     const url = getLegalShareUrl(document.external_id, anchor);
-    const text = buildLegalShareText(document.title, url, anchor);
 
     try {
-      if (navigator.share) {
-        await navigator.share({
-          title: document.title,
-          text: text.split("\n")[0],
-          url,
-        });
-      } else {
-        await navigator.clipboard.writeText(text);
-      }
+      await navigator.clipboard.writeText(url);
       setCopiedAnchor(anchor ?? "document");
       window.setTimeout(() => setCopiedAnchor(null), 1800);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      await navigator.clipboard.writeText(text);
-      setCopiedAnchor(anchor ?? "document");
-      window.setTimeout(() => setCopiedAnchor(null), 1800);
+      console.error("Не удалось скопировать ссылку", error);
     }
   };
 
@@ -249,13 +237,12 @@ export default function LegislationDocument() {
         <div className="pointer-events-none absolute -left-24 -top-16 -z-10 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
         <nav
           aria-label="Навигация по нормативному акту"
-          className="fixed bottom-4 right-3 z-40 flex flex-col gap-2 sm:bottom-6 sm:right-6"
+          className="fixed right-3 top-20 z-40 flex items-center gap-2 sm:right-6 sm:top-24"
         >
           <Button
             asChild
-            variant="outline"
-            size="icon"
-            className="h-11 w-11 rounded-full border-border/60 bg-background/85 shadow-lg backdrop-blur-xl"
+            size="sm"
+            className="h-10 rounded-full bg-primary px-3 text-primary-foreground shadow-xl hover:bg-primary/90"
           >
             <Link
               to={LEGISLATION_PATH}
@@ -263,13 +250,13 @@ export default function LegislationDocument() {
               title="Законодательство"
             >
               <ArrowLeft className="h-4 w-4" />
+              <span className="ml-1.5 hidden sm:inline">Законодательство</span>
             </Link>
           </Button>
           <Button
             type="button"
-            variant="outline"
             size="icon"
-            className="h-11 w-11 rounded-full border-border/60 bg-background/85 shadow-lg backdrop-blur-xl"
+            className="h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90"
             aria-label="К началу документа"
             title="К началу документа"
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
@@ -299,14 +286,14 @@ export default function LegislationDocument() {
                   size="sm"
                   variant="outline"
                   className="h-7 rounded-full bg-background/60 px-3"
-                  onClick={() => shareAnchor()}
+                  onClick={() => copyAnchor()}
                 >
                   {copiedAnchor === "document" ? (
                     <Check className="mr-1.5 h-3.5 w-3.5 text-green-600" />
                   ) : (
-                    <Share2 className="mr-1.5 h-3.5 w-3.5" />
+                    <Copy className="mr-1.5 h-3.5 w-3.5" />
                   )}
-                  {copiedAnchor === "document" ? "Готово" : "Поделиться"}
+                  {copiedAnchor === "document" ? "Скопировано" : "Копировать ссылку"}
                 </Button>
               </div>
               <h1 className="text-xl font-semibold leading-snug sm:text-2xl">
@@ -399,14 +386,14 @@ export default function LegislationDocument() {
                   size="icon"
                   variant="ghost"
                   className="h-8 w-8 shrink-0 opacity-60 group-hover:opacity-100"
-                  aria-label="Поделиться ссылкой на этот фрагмент"
-                  title="Поделиться"
-                  onClick={() => shareAnchor(node.id)}
+                  aria-label="Копировать ссылку на этот фрагмент"
+                  title="Копировать ссылку"
+                  onClick={() => copyAnchor(node.id)}
                 >
                   {copiedAnchor === node.id ? (
                     <Check className="h-4 w-4 text-green-600" />
                   ) : (
-                    <Share2 className="h-4 w-4" />
+                    <Copy className="h-4 w-4" />
                   )}
                 </Button>
               </div>

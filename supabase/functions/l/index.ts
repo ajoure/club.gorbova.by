@@ -41,8 +41,11 @@ Deno.serve(async (req) => {
   const preview = (data?.[0] ?? null) as SharePreview | null;
   if (error || !preview) return new Response("Document not found", { status: 404 });
 
-  const anchorLabel = anchor?.startsWith("art-")
-    ? `Статья ${anchor.slice(4).replaceAll("-", ".")}`
+  const anchorMatch = anchor?.match(/^art-([^-]+(?:-[^-]+)*?)(?:-par-(\d+))?$/);
+  const anchorLabel = anchorMatch
+    ? `Статья ${anchorMatch[1].replaceAll("-", ".")}${
+        anchorMatch[2] ? `, абзац ${anchorMatch[2]}` : ""
+      }`
     : null;
   const title = `${anchorLabel ? `${anchorLabel} — ` : ""}${preview.title}`;
   const description = [
