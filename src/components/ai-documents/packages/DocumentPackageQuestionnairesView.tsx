@@ -40,6 +40,7 @@ import { usePackageRoleCatalog } from "@/hooks/usePackageRoleCatalog";
 import { useDocumentItemRoleAssignments } from "@/hooks/useDocumentItemRoleAssignments";
 import { usePackageSessionFields } from "@/hooks/usePackageSessionFields";
 import { InlineCreateRoleDialog } from "./InlineCreateRoleDialog";
+import { ExternalDocumentLinkIssuer } from "./ExternalDocumentLinkIssuer";
 import { PackageFieldsClientForm } from "./PackageFieldsClientForm";
 import { PackageDocumentCard } from "./PackageDocumentCard";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
@@ -269,6 +270,14 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
         )}
       </GlassCard>
 
+      {profileId && legalEntityId && (
+        <ExternalDocumentLinkIssuer
+          packageTemplateId={packageTemplateId}
+          profileId={profileId}
+          legalEntityId={legalEntityId}
+        />
+      )}
+
       {/* Общие orphan-поля пакета (диагностика): pf каталога, не вставленные ни в один шаблон. */}
       {sessionId && orphanCount > 0 && (
         <GlassCard className="p-4 border-amber-200/60 dark:border-amber-900/40">
@@ -338,4 +347,3 @@ export function DocumentPackageQuestionnairesView({ packageTemplateId, packageNa
     </div>
   );
 }
-

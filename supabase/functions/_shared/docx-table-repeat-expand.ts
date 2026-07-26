@@ -61,6 +61,7 @@ export interface TableRepeatExpansionInput {
   packageSessionId: string;
   packageTemplateItemId: string;
   packageTemplateId: string;
+  externalSubmissionId?: string | null;
   itemMetadata: unknown;
   isSuperAdmin: boolean;
   /** pf-XXXXXX → rendered value (то же, что прочая часть strict уже отдаёт). */
@@ -385,13 +386,48 @@ export async function applyTableRepeatExpansion(
       continue;
     }
 
-    // Load role catalog (cache)
-    let role = roleCatalogCache.get(cfg.role_catalog_id);
-    if (!role) {
+    const externalSource = cfg.source_kind === 'external_submission';
+    const roleId = cfg.role_catalog_id ?? '';
+    let knownCustomKeys = new Set<string>();
+    let assignments: Array<{ person_id: string | null; metadata: unknown }> = [];
+    let submissionValuesRows: Array<Record<string, unknown>> = [];
+
+    // Generic public-form repeat group: the persisted values are the source of
+    // truth.  It intentionally does not manufacture people/role assignments.
+    if (externalSource) {
+      if (!input.externalSubmissionId || !cfg.repeat_group_key) {
+        workingXml = stripAllOccurrences(workingXml, trId);
+        report.markers.push({ tr_id: trId, rows_count: 0, columns_count: cfg.columns.length,
+          occurrence_count: countOccurrences(originalXml, trId), ok_occurrences: 0,
+          failed_occurrences: countOccurrences(originalXml, trId), cell_codes_summary: {}, source_types_count: {},
+          severity: 'error', code: 'tr_external_submission_missing' });
+        continue;
+      }
+      const { data: rows } = await input.supabase
+        .from('document_package_external_submission_rows')
+        .select('values, row_index')
+        .eq('submission_id', input.externalSubmissionId)
+        .eq('repeat_group_key', cfg.repeat_group_key)
+        .order('row_index', { ascending: true });
+      submissionValuesRows = (rows ?? []).map((r: any) => (r.values && typeof r.values === 'object' ? r.values : {}));
+      assignments = submissionValuesRows.map(() => ({ person_id: null, metadata: {} }));
+      const cfgErrors = validateTableRepeatConfig(cfg).filter((issue) => issue.severity === 'error');
+      if (cfgErrors.length > 0) {
+        workingXml = stripAllOccurrences(workingXml, trId);
+        report.markers.push({ tr_id: trId, rows_count: 0, columns_count: cfg.columns.length,
+          occurrence_count: countOccurrences(originalXml, trId), ok_occurrences: 0,
+          failed_occurrences: countOccurrences(originalXml, trId), cell_codes_summary: {}, source_types_count: {},
+          severity: 'error', code: 'tr_config_invalid' });
+        continue;
+      }
+    } else {
+      // Load role catalog (cache)
+      let role = roleCatalogCache.get(roleId);
+      if (!role) {
       const { data: roleRow } = await input.supabase
         .from('document_package_role_catalog')
         .select('id, role_key, package_template_id, metadata')
-        .eq('id', cfg.role_catalog_id)
+        .eq('id', roleId)
         .maybeSingle();
       if (!roleRow) {
         workingXml = stripAllOccurrences(workingXml, trId);
@@ -411,9 +447,9 @@ export async function applyTableRepeatExpansion(
         continue;
       }
       role = roleRow as { role_key: string; package_template_id: string; metadata: unknown };
-      roleCatalogCache.set(cfg.role_catalog_id, role);
+      roleCatalogCache.set(roleId, role);
     }
-    if (role.package_template_id !== input.packageTemplateId) {
+    if (role!.package_template_id !== input.packageTemplateId) {
       workingXml = stripAllOccurrences(workingXml, trId);
       report.markers.push({
         tr_id: trId,
@@ -432,13 +468,13 @@ export async function applyTableRepeatExpansion(
     }
 
     // known custom keys for schema check
-    const roleMeta = (role.metadata && typeof role.metadata === 'object')
-      ? role.metadata as Record<string, unknown>
+    const roleMeta = (role!.metadata && typeof role!.metadata === 'object')
+      ? role!.metadata as Record<string, unknown>
       : {};
     const acfRaw = Array.isArray(roleMeta['assignment_custom_fields'])
       ? roleMeta['assignment_custom_fields']
       : [];
-    const knownCustomKeys = new Set<string>();
+    knownCustomKeys = new Set<string>();
     for (const f of acfRaw) {
       if (f && typeof f === 'object' && typeof (f as { key?: unknown }).key === 'string') {
         knownCustomKeys.add((f as { key: string }).key);
@@ -467,19 +503,20 @@ export async function applyTableRepeatExpansion(
     }
 
     // load assignments
-    let assignments = assignmentsCache.get(cfg.role_catalog_id);
+    assignments = assignmentsCache.get(roleId);
     if (!assignments) {
       const { data: asgs } = await input.supabase
         .from('document_package_item_role_assignments')
         .select('person_id, metadata, sort_order, created_at, id')
         .eq('package_session_id', input.packageSessionId)
         .eq('package_template_item_id', input.packageTemplateItemId)
-        .eq('role_catalog_id', cfg.role_catalog_id)
+        .eq('role_catalog_id', roleId)
         .eq('is_active', true)
         .order('sort_order', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: true });
       assignments = (asgs ?? []) as Array<{ person_id: string | null; metadata: unknown }>;
-      assignmentsCache.set(cfg.role_catalog_id, assignments);
+      assignmentsCache.set(roleId, assignments);
+    }
     }
 
     // load persons (batch)
@@ -592,6 +629,7 @@ export async function applyTableRepeatExpansion(
           pfCache,
           knownCustomKeysForRole: knownCustomKeys,
           isSuperAdmin: !!input.isSuperAdmin,
+          submissionValues: submissionValuesRows[rowIdx],
         };
 
         // Сначала вычислим map cell_index → value

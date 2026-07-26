@@ -39,7 +39,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FileStack, ClipboardList, FileText, Users, ShieldCheck, Sparkles,
-  Plus, Pencil, Trash2, MoreHorizontal, Power, PowerOff, Tag,
+  Plus, Pencil, Trash2, MoreHorizontal, Power, PowerOff, Tag, ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useRbac } from "@/hooks/useRbac";
@@ -51,8 +51,9 @@ import { TemplateBindingControl } from "./TemplateBindingControl";
 import { PackageTemplateValidationPanel } from "./PackageTemplateValidationPanel";
 import { PackageGenerationPanel } from "./PackageGenerationPanel";
 import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
+import { ExternalDocumentFormBuilder } from "./ExternalDocumentFormBuilder";
 
-const ADMIN_TABS = ["templates", "anketa", "roles", "placeholders", "validation", "generation"] as const;
+const ADMIN_TABS = ["templates", "anketa", "roles", "external", "placeholders", "validation", "generation"] as const;
 const USER_TABS = ["anketa", "generation"] as const;
 
 
@@ -434,6 +435,13 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
               </HelpTooltip>
             )}
             {isAdminUI && (
+              <HelpTooltip helpKey="" customShort="Настройка безопасной внешней ссылки: она использует только поля и шаблон этого пакета." alwaysShow>
+                <TabsTrigger value="external">
+                  <ExternalLink className="h-3.5 w-3.5 mr-1.5" /> Внешние анкеты
+                </TabsTrigger>
+              </HelpTooltip>
+            )}
+            {isAdminUI && (
               <HelpTooltip helpKey="" customShort="Те же плейсхолдеры, что и во вкладке «Документы → Плейсхолдеры». Удобно копировать прямо отсюда, не выходя из пакета." alwaysShow>
                 <TabsTrigger value="placeholders">
                   <Tag className="h-3.5 w-3.5 mr-1.5" /> Плейсхолдеры
@@ -471,6 +479,12 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
             <TabsContent value="roles" className="space-y-4">
               <PackageRolesManager packageTemplateId={selectedPackage.id} />
               <PackageFieldsManager packageTemplateId={selectedPackage.id} />
+            </TabsContent>
+          )}
+
+          {isAdminUI && (
+            <TabsContent value="external">
+              <ExternalDocumentFormBuilder packageTemplateId={selectedPackage.id} />
             </TabsContent>
           )}
 

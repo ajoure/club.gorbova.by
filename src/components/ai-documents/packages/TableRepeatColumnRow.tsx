@@ -45,6 +45,8 @@ export interface TableRepeatColumnRowProps {
   roleCustomDefs: AssignmentCustomFieldDef[];
   /** Поля пакета (pf-XXXXXX). */
   packageFields: PackageFieldChoice[];
+  /** Внешняя анкета хранит строки без назначений ролей. */
+  isExternalSource?: boolean;
   /** Признак дубля cell_index с другой колонкой — для подсветки. */
   duplicateCellIndex?: boolean;
   onChange: (next: Partial<TableRepeatColumn>) => void;
@@ -59,6 +61,7 @@ const SOURCE_TYPE_LABELS: Record<TableRepeatColumnSourceType, string> = {
   row_number: "Номер строки",
   empty: "Пусто",
   assignment_metadata: "Сырое metadata (advanced)",
+  submission_field: "Поле строки внешней анкеты",
 };
 
 const CASE_OPTIONS = [
@@ -111,12 +114,19 @@ export function TableRepeatColumnRow({
   isSuperAdmin,
   roleCustomDefs,
   packageFields,
+  isExternalSource = false,
   duplicateCellIndex,
   onChange,
   onRemove,
 }: TableRepeatColumnRowProps) {
   // Список source_type без advanced для non-super_admin.
-  const sourceTypes: TableRepeatColumnSourceType[] = [
+  const sourceTypes: TableRepeatColumnSourceType[] = isExternalSource ? [
+    "submission_field",
+    "package_field",
+    "static_text",
+    "row_number",
+    "empty",
+  ] : [
     "role_person",
     "assignment_custom_field",
     "package_field",
@@ -131,7 +141,8 @@ export function TableRepeatColumnRow({
     column.source_type === "assignment_custom_field" ||
     column.source_type === "package_field" ||
     column.source_type === "static_text" ||
-    column.source_type === "assignment_metadata";
+    column.source_type === "assignment_metadata" ||
+    column.source_type === "submission_field";
 
   const sourceKeyMissing =
     showSourceKey && (!column.source_key || column.source_key.trim() === "");
@@ -140,6 +151,8 @@ export function TableRepeatColumnRow({
   const helperHint =
     column.source_type === "package_field"
       ? "Значение пакетного поля одинаковое для всех строк."
+      : column.source_type === "submission_field"
+        ? "Значение выбирается из каждой строки повторяемой группы внешней анкеты."
       : column.source_type === "static_text"
         ? "Статичный текст будет одинаковым во всех строках."
         : column.source_type === "row_number"
@@ -338,10 +351,10 @@ export function TableRepeatColumnRow({
         </div>
       )}
 
-      {column.source_type === "package_field" && (
+      {(column.source_type === "package_field" || column.source_type === "submission_field") && (
         <div className="space-y-1">
           <div className="text-[10px] text-muted-foreground font-medium">
-            Поле пакета (pf-XXXXXX)
+            {column.source_type === "submission_field" ? "Поле строки (pf-XXXXXX)" : "Поле пакета (pf-XXXXXX)"}
           </div>
           {packageFields.length === 0 ? (
             <div className="text-[11px] text-muted-foreground">

@@ -40,6 +40,7 @@ const SlotFixturePage = import.meta.env.DEV
   : null;
 const EmbedFormPage = lazy(() => import("./pages/embed/EmbedFormPage"));
 const DocumentDownloadPage = lazy(() => import("./pages/DocumentDownloadPage"));
+const ExternalDocumentFormPage = lazy(() => import("./pages/ExternalDocumentFormPage"));
 
 // Lazy-loaded pages - code splitting for bundle optimization
 const Accountant = lazy(() => import("./pages/Accountant"));
@@ -228,6 +229,7 @@ const App = () => {
               <Route path="/pay" element={<LazyRoute><Pay /></LazyRoute>} />
               <Route path="/payment/result" element={<LazyRoute><PaymentResultPage /></LazyRoute>} />
               <Route path="/document-download/:documentId" element={<LazyRoute><DocumentDownloadPage /></LazyRoute>} />
+              <Route path="/document-form/:token" element={<LazyRoute><ExternalDocumentFormPage /></LazyRoute>} />
               <Route path="/privacy" element={<LazyRoute><Privacy /></LazyRoute>} />
               <Route path="/consent" element={<LazyRoute><Consent /></LazyRoute>} />
               <Route path="/instruction" element={<LazyRoute><Instruction /></LazyRoute>} />
