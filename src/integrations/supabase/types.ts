@@ -7252,7 +7252,6 @@ export type Database = {
           description: string | null
           id: string
           is_active: boolean
-          is_available_to_all: boolean
           is_system: boolean
           name: string
           profile_id: string | null
@@ -7265,7 +7264,6 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean
-          is_available_to_all?: boolean
           is_system?: boolean
           name: string
           profile_id?: string | null
@@ -7278,7 +7276,6 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean
-          is_available_to_all?: boolean
           is_system?: boolean
           name?: string
           profile_id?: string | null
@@ -22598,10 +22595,6 @@ export type Database = {
       }
       create_global_document_package: {
         Args: { _description?: string; _is_active?: boolean; _name: string }
-        Returns: Json
-      }
-      set_global_document_package_default_access: {
-        Args: { _is_available_to_all: boolean; _package_id: string }
         Returns: Json
       }
       create_position_catalog_entry: {
