@@ -21,6 +21,7 @@ import { resolveKillSwitchMode } from './rebill_builders.ts';
 import { buildRebillDepsAdapter } from './rebill_deps_adapter.ts';
 // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: shared bepaid tracking parser SOT
 import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
+import { sendChargeLifecycleNotification } from '../_shared/charge-lifecycle-notifications.ts';
 
 
 const corsHeaders = {
@@ -1994,8 +1995,20 @@ Deno.serve(async (req) => {
         // of the plan). UI/report semantics ("Завершена") are carried by
         // meta.installment_status='completed' below, not by the enum value.
         const finiteTerminalStatus = 'expired';
+        const previousRetryObservability = (subV2Meta.retry_observability || {}) as Record<string, any>;
+        const successfulRetryObservability = {
+          ...previousRetryObservability,
+          current_attempts: 0,
+          successful_attempts: paidCycles,
+          total_attempts: Number(previousRetryObservability.failed_attempts || 0) + paidCycles,
+          cycle_started_at: now.toISOString(),
+          last_attempt_at: now.toISOString(),
+          last_attempt_status: 'succeeded',
+          source: 'bepaid_paid_billing_cycles',
+        };
         const stepCPatch: Record<string, unknown> = {
           billing_type: 'provider_managed',
+          charge_attempts: 0,
           // Stage 2: next_charge_at stays populated until the final cycle for
           // finite internal installments; only the LAST paid cycle nulls it out.
           // auto_renew=false is a local marker only for finite internal installments.
@@ -2011,6 +2024,10 @@ Deno.serve(async (req) => {
             ...subV2Meta,
             bepaid_subscription_id: subscriptionId,
             bepaid_activated_at: now.toISOString(),
+            retry_observability: successfulRetryObservability,
+            last_charge_attempt_at: now.toISOString(),
+            last_charge_attempt_success: true,
+            last_charge_attempt_error: null,
             ...(subIsInstallmentFinite
               ? {
                   model: 'bepaid_finite_subscription',
@@ -2130,6 +2147,10 @@ Deno.serve(async (req) => {
             : renewAt.toISOString(),
           card_last4: subscription?.card?.last_4 || body.card?.last_4 || null,
           card_brand: subscription?.card?.brand || body.card?.brand || null,
+          meta: {
+            ...providerSubMetaForGuard,
+            retry_observability: successfulRetryObservability,
+          },
         };
         await supabase
           .from('provider_subscriptions')
@@ -2230,11 +2251,17 @@ Deno.serve(async (req) => {
 
             if (paidRowsError) {
               console.error('[WEBHOOK-SUBSCRIPTION] installment_progress payments query failed', paidRowsError);
-              await audit('bepaid.installment_progress.query_failed', {
-                original_order_id: originalOrderIdForGuard,
-                subscription_v2_id: subscriptionV2Id,
-                error: String(paidRowsError?.message || paidRowsError),
-                severity: 'WARN',
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.installment_progress.query_failed',
+                target_user_id: subV2.user_id,
+                meta: {
+                  original_order_id: originalOrderIdForGuard,
+                  subscription_v2_id: subscriptionV2Id,
+                  error: String(paidRowsError?.message || paidRowsError),
+                  severity: 'WARN',
+                },
               });
               // Skip progress write: paid_total would be incorrect (=0).
             } else {
@@ -2688,6 +2715,71 @@ Deno.serve(async (req) => {
           }
         }
 
+        // Derive the counter from idempotent payment facts. Re-delivery of the
+        // same provider_payment_id updates the existing row and cannot inflate it.
+        const previousRetryObservability =
+          ((subV2.meta || {}).retry_observability || {}) as Record<string, unknown>;
+        const { count: totalFailedAttemptCount } = await supabase
+          .from('payments_v2')
+          .select('id', { count: 'exact', head: true })
+          .eq('provider', 'bepaid')
+          .eq('status', 'failed')
+          .eq('is_recurring', true)
+          .contains('meta', { bepaid_subscription_id: subscriptionId });
+        let currentCycleAttemptQuery = supabase
+          .from('payments_v2')
+          .select('id', { count: 'exact', head: true })
+          .eq('provider', 'bepaid')
+          .eq('status', 'failed')
+          .eq('is_recurring', true)
+          .contains('meta', { bepaid_subscription_id: subscriptionId });
+        const cycleStartedAt = String(previousRetryObservability.cycle_started_at || '');
+        if (cycleStartedAt && Number.isFinite(Date.parse(cycleStartedAt))) {
+          currentCycleAttemptQuery = currentCycleAttemptQuery.gte('created_at', cycleStartedAt);
+        }
+        const { count: currentCycleAttemptCount } = await currentCycleAttemptQuery;
+        const factualFailedAttempts = Number(totalFailedAttemptCount || 0);
+        const factualCurrentCycleAttempts = Number(currentCycleAttemptCount || 0);
+        const attemptObservedAt = new Date().toISOString();
+        const retryObservability = {
+          ...previousRetryObservability,
+          current_attempts: factualCurrentCycleAttempts,
+          failed_attempts: factualFailedAttempts,
+          total_attempts:
+            factualFailedAttempts +
+            Number(previousRetryObservability.successful_attempts || 0),
+          last_attempt_at: attemptObservedAt,
+          last_attempt_status: 'failed',
+          source: 'payments_v2_distinct_provider_payment_id',
+        };
+        await supabase
+          .from('subscriptions_v2')
+          .update({
+            charge_attempts: factualCurrentCycleAttempts,
+            meta: {
+              ...(subV2.meta || {}),
+              retry_observability: retryObservability,
+              last_charge_attempt_at: attemptObservedAt,
+              last_charge_attempt_success: false,
+              last_charge_attempt_error: String(errMsg).slice(0, 500),
+            },
+          })
+          .eq('id', subscriptionV2Id);
+        const { data: providerAttemptRow } = await supabase
+          .from('provider_subscriptions')
+          .select('meta')
+          .eq('provider_subscription_id', subscriptionId)
+          .maybeSingle();
+        await supabase
+          .from('provider_subscriptions')
+          .update({
+            meta: {
+              ...((providerAttemptRow?.meta || {}) as Record<string, unknown>),
+              retry_observability: retryObservability,
+            },
+          })
+          .eq('provider_subscription_id', subscriptionId);
+
         const subV2MetaFail = (subV2.meta || {}) as Record<string, any>;
         const failInstallmentCount = Number(subV2MetaFail.installment_count ?? 0);
         const failIsFinite =
@@ -2716,6 +2808,20 @@ Deno.serve(async (req) => {
             retry_pending: true,
             next_charge_at: failNextChargeIso,
           },
+        });
+
+        await sendChargeLifecycleNotification({
+          supabase,
+          event: failIsFinite ? 'installment_charge_failed' : 'subscription_charge_failed',
+          userId: subV2.user_id,
+          subscriptionV2Id,
+          providerSubscriptionId: subscriptionId,
+          transactionUid,
+          productName: subV2.products_v2?.name || null,
+          tariffName: subV2.tariffs?.name || null,
+          amount: failAmount,
+          currency: failCurrency,
+          errorMessage: String(errMsg),
         });
 
 
@@ -2786,8 +2892,7 @@ Deno.serve(async (req) => {
           /exhaust|retries|attempts|no_more_attempts|max_retry/.test(grReason) ||
           /exhaust|retries|attempts/.test(cancellationReason);
         const hasProviderExhaustEvidence =
-          termIsFinite &&
-          termPaidCycles < termInstallmentCount &&
+          (!termIsFinite || termPaidCycles < termInstallmentCount) &&
           (
             reasonMentionsExhaust ||
             (Number.isFinite(attemptsLeft) && attemptsLeft === 0)
@@ -2807,12 +2912,14 @@ Deno.serve(async (req) => {
         await supabase
           .from('subscriptions_v2')
           .update({
+            status: termIsRetryExhausted ? 'past_due' : subV2.status,
             auto_renew: false,
             next_charge_at: null,
             meta: {
               ...termMeta,
               bepaid_terminal_at: now.toISOString(),
               bepaid_terminal_state: subscriptionState,
+              ...(termIsRetryExhausted ? { retry_status: 'exhausted' } : {}),
               ...(termIsFinite
                 ? {
                     paid_billing_cycles: termPaidCycles,
@@ -2832,7 +2939,9 @@ Deno.serve(async (req) => {
           actor_user_id: null,
           actor_label: 'bepaid-webhook',
           action: termIsRetryExhausted
-            ? 'bepaid.subscription.installment_retry_exhausted'
+            ? (termIsFinite
+                ? 'bepaid.subscription.installment_retry_exhausted'
+                : 'bepaid.subscription.retry_exhausted')
             : 'billing.inv22.autorenew_disabled_from_provider_state',
           target_user_id: subV2.user_id,
           meta: {
@@ -2860,6 +2969,24 @@ Deno.serve(async (req) => {
               : {}),
           },
         });
+
+        if (termIsRetryExhausted) {
+          await sendChargeLifecycleNotification({
+            supabase,
+            event: termIsFinite
+              ? 'installment_charge_retry_exhausted'
+              : 'subscription_charge_retry_exhausted',
+            userId: subV2.user_id,
+            subscriptionV2Id,
+            providerSubscriptionId: subscriptionId,
+            productName: subV2.products_v2?.name || null,
+            tariffName: subV2.tariffs?.name || null,
+            meta: {
+              paid_billing_cycles: termPaidCycles,
+              installment_count: termInstallmentCount,
+            },
+          });
+        }
 
 
 

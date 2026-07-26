@@ -1,6 +1,7 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { getSubscriptionToken, isSkip } from '../_shared/token-resolver.ts';
+import { isRetryExhausted, resolveEffectiveRetryPolicy } from '../_shared/renewal-retry-policy.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -215,14 +216,13 @@ Deno.serve(async (req) => {
       .select(`
         *,
         subscriptions_v2 (
-          id, user_id, payment_method_id, payment_token, status,
+          id, user_id, payment_method_id, payment_token, status, meta,
           products_v2 ( name, currency )
         )
       `)
       .eq('status', 'pending')
       .not('status', 'in', '("cancelled","forgiven")')
       .lte('due_date', now.toISOString())
-      .lt('charge_attempts', 5) // Max 5 attempts with backoff
       .order('due_date', { ascending: true })
       .limit(50); // Process in batches
     
@@ -230,6 +230,8 @@ Deno.serve(async (req) => {
     const backoffHours = [0, 1, 4, 24, 72];
     const filteredInstallments = (dueInstallments || []).filter(inst => {
       const attempts = inst.charge_attempts || 0;
+      const retryPolicy = resolveEffectiveRetryPolicy(inst.subscriptions_v2?.meta);
+      if (isRetryExhausted(attempts, retryPolicy)) return false;
       if (attempts === 0) return true;
       
       const lastAttempt = inst.last_attempt_at ? new Date(inst.last_attempt_at) : null;
@@ -318,6 +320,19 @@ Deno.serve(async (req) => {
       if (isSkip(tokenResult)) {
         console.log(`Skipping installment ${installment.id}: ${tokenResult.reason}`, tokenResult.details);
 
+        // The lock reserves an attempt before token resolution. No provider
+        // request happened here, so restore the factual counter and release
+        // processing → pending instead of leaving the installment stuck.
+        await supabase
+          .from('installment_payments')
+          .update({
+            status: 'pending',
+            charge_attempts: installment.charge_attempts || 0,
+            error_message: tokenResult.reason,
+          })
+          .eq('id', installment.id)
+          .eq('status', 'processing');
+
         // Audit ghost-token и payment_method_inactive
         if (tokenResult.reason === 'ghost_token_no_payment_method' || tokenResult.reason === 'payment_method_inactive') {
           await supabase.from('audit_logs').insert({
@@ -338,7 +353,9 @@ Deno.serve(async (req) => {
       const effectiveToken = tokenResult.token;
       console.log(`Token resolved for installment ${installment.id} via ${tokenResult.source}`);
 
-
+      let providerRequestStarted = false;
+      let providerResponseReceived = false;
+      let providerTransactionStatus: string | null = null;
       try {
         // Stage 3: lock уже захвачен выше через атомарный update pending → processing
 
@@ -404,6 +421,7 @@ Deno.serve(async (req) => {
           }
         });
 
+        providerRequestStarted = true;
         const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
           method: 'POST',
           headers: {
@@ -416,7 +434,9 @@ Deno.serve(async (req) => {
         });
 
         const chargeResult = await chargeResponse.json();
+        providerResponseReceived = true;
         const txStatus = chargeResult.transaction?.status;
+        providerTransactionStatus = txStatus || null;
         const txUid = chargeResult.transaction?.uid;
 
         if (txStatus === 'successful') {
@@ -569,15 +589,16 @@ Deno.serve(async (req) => {
             })
             .eq('id', payment.id);
 
-          // Update installment - back to pending or failed if max attempts (5 with backoff)
-          const maxAttempts = 5;
+          // The atomic pending→processing lock above already reserved this attempt.
           const newAttempts = (installment.charge_attempts || 0) + 1;
-          const newStatus = newAttempts >= maxAttempts ? 'failed' : 'pending';
+          const retryPolicy = resolveEffectiveRetryPolicy(subscription.meta);
+          const newStatus = isRetryExhausted(newAttempts, retryPolicy) ? 'failed' : 'pending';
           
           await supabase
             .from('installment_payments')
             .update({ 
               status: newStatus,
+              charge_attempts: newAttempts,
               error_message: errorMessage,
             })
             .eq('id', installment.id);
@@ -594,6 +615,9 @@ Deno.serve(async (req) => {
               payment_number: installment.payment_number,
               total_payments: installment.total_payments,
               error_message: errorMessage,
+              charge_attempts: newAttempts,
+              max_charge_attempts: retryPolicy.maxAttempts,
+              retry_policy_source: retryPolicy.source,
             },
           );
 
@@ -618,14 +642,35 @@ Deno.serve(async (req) => {
       } catch (error) {
         console.error(`Error processing installment ${installment.id}:`, error);
         
-        // Revert to pending status
+        // Before a provider request we can safely release the lock. Once a
+        // request started, an exception is ambiguous (the bank may have
+        // charged successfully), so keep the row in processing for
+        // reconciliation and never auto-charge it again.
         await supabase
           .from('installment_payments')
           .update({ 
-            status: 'pending',
+            status: providerRequestStarted ? 'processing' : 'pending',
+            charge_attempts: (installment.charge_attempts || 0) + (providerRequestStarted ? 1 : 0),
             error_message: error instanceof Error ? error.message : 'Unknown error',
           })
           .eq('id', installment.id);
+
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_label: 'installment-charge-cron',
+          action: providerRequestStarted
+            ? 'installment.charge_reconciliation_required'
+            : 'installment.charge_preflight_failed',
+          target_user_id: installment.user_id,
+          meta: {
+            installment_id: installment.id,
+            subscription_id: subscription.id,
+            provider_request_started: providerRequestStarted,
+            provider_response_received: providerResponseReceived,
+            provider_transaction_status: providerTransactionStatus,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
 
         results.failed++;
         results.errors.push(`${installment.id}: ${error instanceof Error ? error.message : 'Unknown error'}`);

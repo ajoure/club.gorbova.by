@@ -8,6 +8,11 @@ import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve
 import { syncEntitlement } from '../_shared/entitlement-sync.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
+import {
+  accessDayHasEnded,
+  isRetryExhausted,
+  resolveEffectiveRetryPolicy,
+} from '../_shared/renewal-retry-policy.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -80,7 +85,12 @@ function classifyFailureReason(sub: any): string {
   if (!sub.payment_method_id) return 'no_card';
   if (!sub.payment_methods?.provider_token) return 'no_token';
   if (sub.payment_methods?.status !== 'active') return 'pm_inactive';
-  if ((sub.charge_attempts || 0) >= 3) return 'max_attempts';
+  if (
+    isRetryExhausted(
+      sub.charge_attempts || 0,
+      resolveEffectiveRetryPolicy(sub.meta),
+    )
+  ) return 'max_attempts';
   
   // Check cooldown (6 hours since last attempt)
   const lastAttempt = sub.meta?.last_charge_attempt_at;
@@ -528,6 +538,75 @@ interface ChargeResult {
   amount_source?: string;
   skipped?: boolean;
   skip_reason?: string;
+}
+
+async function revokeRetryExhaustedAfterAccessDay(
+  supabase: any,
+  nowIso: string,
+  runId: string,
+): Promise<{ checked: number; expired: number; revoked: number; skipped: number }> {
+  const summary = { checked: 0, expired: 0, revoked: 0, skipped: 0 };
+  const { data: candidates, error } = await supabase
+    .from('subscriptions_v2')
+    .select('id, user_id, profile_id, order_id, product_id, tariff_id, access_end_at, status, meta')
+    .in('status', ['active', 'past_due'])
+    .contains('meta', { retry_status: 'exhausted' })
+    .not('access_end_at', 'is', null)
+    .limit(100);
+  if (error) throw error;
+
+  for (const sub of candidates || []) {
+    summary.checked++;
+    if (!accessDayHasEnded(sub.access_end_at, nowIso)) {
+      summary.skipped++;
+      continue;
+    }
+
+    const eventKey = `retry-exhausted-expire:${sub.id}:${String(sub.access_end_at).slice(0, 10)}`;
+    const revoke = await executeRevoke(supabase, {
+      userId: sub.user_id,
+      profileId: sub.profile_id,
+      orderId: sub.order_id,
+      targetType: 'subscription_tier',
+      targetKey: `${sub.user_id}:${sub.tariff_id || sub.product_id || 'unknown'}`,
+      targetRef: sub.product_id,
+      subscriptionId: sub.id,
+      reasonCode: 'payment_failed',
+      reconcileBasis: 'provider_retry_exhausted_after_access_calendar_day',
+      sourceEventType: 'cron',
+      sourceEventKey: eventKey,
+      sourceSubjectType: 'subscription',
+      sourceSubjectRef: sub.id,
+      metadata: { access_end_at: sub.access_end_at, run_id: runId },
+    });
+
+    await supabase.from('subscriptions_v2').update({
+      status: 'expired',
+      auto_renew: false,
+      updated_at: nowIso,
+      meta: {
+        ...(sub.meta || {}),
+        access_revoked_after_retry_exhausted_at: nowIso,
+        access_revoke_execution_key: revoke.executionKey || null,
+      },
+    }).eq('id', sub.id);
+    summary.expired++;
+
+    if (revoke.revoked) {
+      await supabase.functions.invoke('telegram-revoke-access', {
+        body: {
+          user_id: sub.user_id,
+          reason: 'payment_failed',
+          parent_event_key: eventKey,
+          parent_execution_key: revoke.executionKey || null,
+        },
+      });
+      summary.revoked++;
+    } else {
+      summary.skipped++;
+    }
+  }
+  return summary;
 }
 
 // F10: Check if charge was already attempted today (APP_TZ date comparison)
@@ -1954,7 +2033,7 @@ async function chargeSubscription(
     } else {
       // Payment failed
       const attempts = (subscription.charge_attempts || 0) + 1;
-      const maxAttempts = 3;
+      const retryPolicy = resolveEffectiveRetryPolicy(subMeta);
       const errorMsg = chargeResult.transaction?.message || 'Payment failed';
 
       await supabase
@@ -1967,12 +2046,11 @@ async function chargeSubscription(
         .eq('id', payment.id);
 
       // PATCH: Update meta AFTER failed charge attempt
-      if (attempts >= maxAttempts) {
+      if (isRetryExhausted(attempts, retryPolicy)) {
         // Check if access has also expired before revoking
-        const accessEndAt = new Date(subscription.access_end_at);
         const now = new Date();
         
-        if (accessEndAt < now) {
+        if (accessDayHasEnded(subscription.access_end_at, now.toISOString())) {
           // Both max attempts reached AND access expired - revoke
           await supabase
             .from('subscriptions_v2')
@@ -2146,7 +2224,6 @@ Deno.serve(async (req) => {
         .lte('next_charge_at', endOfDayIso)
         .in('status', ['active', 'trial', 'past_due'])
         .eq('auto_renew', true)
-        .lt('charge_attempts', 3)
         .limit(100);
 
       const diagnostics: DiagnosticResult[] = (dueSubscriptions || []).map((sub: any) => ({
@@ -2192,6 +2269,11 @@ Deno.serve(async (req) => {
 
     // ========== EXECUTE mode - actually charge subscriptions ==========
     const chargeRunId = crypto.randomUUID();
+    const retryExhaustedAccessCleanup = await revokeRetryExhaustedAfterAccessDay(
+      supabase,
+      nowIso,
+      chargeRunId,
+    );
     
     // PATCH: Select ALL candidates due today (with or without card) for accurate statistics
     const { data: allCandidates, error: queryError } = await supabase
@@ -2203,7 +2285,6 @@ Deno.serve(async (req) => {
       .lte('next_charge_at', endOfDayIso)  // Use end of day instead of nowIso
       .in('status', ['active', 'trial', 'past_due'])
       .eq('auto_renew', true)
-      .lt('charge_attempts', 3)
       .limit(100);
 
     if (queryError) {
@@ -2212,7 +2293,12 @@ Deno.serve(async (req) => {
     }
 
     // PATCH: Apply gate - filter out subscriptions already attempted today
-    const subscriptionsToProcess = (allCandidates || []).filter(sub => !wasChargeAttemptedToday(sub, todayKey, toTzDateKey, APP_TZ));
+    const subscriptionsToProcess = (allCandidates || []).filter((sub) => {
+      if (isRetryExhausted(sub.charge_attempts || 0, resolveEffectiveRetryPolicy(sub.meta))) {
+        return false;
+      }
+      return !wasChargeAttemptedToday(sub, todayKey, toTzDateKey, APP_TZ);
+    });
     const skippedAlreadyAttempted = (allCandidates?.length || 0) - subscriptionsToProcess.length;
 
     // PATCH RENEWAL+PAYMENTS.1 A1: Split candidates into provider_managed (chargeable), MIT-disabled, and no_card
@@ -2322,8 +2408,7 @@ Deno.serve(async (req) => {
         console.log(`Trial auto-charge ${sub.id}: ${result.success ? 'charged' : 'failed'}`);
       } else {
         // No auto-charge, expire the subscription only if access_end_at has passed
-        const accessEndAt = new Date(sub.access_end_at);
-        if (accessEndAt < now) {
+        if (accessDayHasEnded(sub.access_end_at, nowIso)) {
           await supabase
             .from('subscriptions_v2')
             .update({
@@ -2387,6 +2472,7 @@ Deno.serve(async (req) => {
       success: results.filter(r => r.success).length,
       failed: results.filter(r => !r.success && !r.skipped).length,
       no_card: results.filter(r => r.skip_reason === 'no_card').length,
+      retry_exhausted_access_cleanup: retryExhaustedAccessCleanup,
       results,
     };
 
