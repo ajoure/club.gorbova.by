@@ -48,3 +48,17 @@ export type LegalDocumentPreview = Pick<
   | "source_url"
   | "last_synced_at"
 >;
+
+export interface LegalSearchResult {
+  document_id: string;
+  slug: string;
+  title: string;
+  category: LegalCategory;
+  status: string;
+  doc_date: string | null;
+  doc_number: string | null;
+  anchor: string;
+  kind: LegalStructureNode["kind"];
+  snippet: string;
+  rank: number;
+}

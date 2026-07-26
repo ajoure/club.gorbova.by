@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { ArrowLeft, Check, Copy, Lock, Scale } from "lucide-react";
+import {
+  ArrowLeft,
+  BookOpen,
+  Check,
+  Copy,
+  Landmark,
+  Lock,
+  Scale,
+} from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/badge";
@@ -183,7 +191,8 @@ export default function LegislationDocument() {
 
   return (
     <DashboardLayout>
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="relative mx-auto max-w-5xl space-y-6 pb-8">
+        <div className="pointer-events-none absolute -left-24 -top-16 -z-10 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
         <Button asChild variant="ghost" size="sm">
           <Link to="/knowledge">
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -191,31 +200,49 @@ export default function LegislationDocument() {
           </Link>
         </Button>
 
-        <GlassCard className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            <Badge>{document.status === "active" ? "Действует" : document.status}</Badge>
-            <Badge variant="outline">
-              {document.source === "etalon" ? "ЭТАЛОН-ONLINE" : "Загружено вручную"}
-            </Badge>
-          </div>
-          <h1 className="text-2xl font-bold leading-tight">{document.title}</h1>
-          <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
-            {document.doc_date && <span>Дата: {document.doc_date}</span>}
-            {document.doc_number && <span>№ {document.doc_number}</span>}
-            {document.revision_label && <span>{document.revision_label}</span>}
+        <GlassCard className="relative overflow-hidden border-primary/15 bg-gradient-to-br from-primary/[0.12] via-background to-violet-500/[0.06] p-6 sm:p-8">
+          <Landmark className="pointer-events-none absolute -bottom-10 -right-5 h-44 w-44 text-primary/[0.045]" />
+          <div className="relative flex items-start gap-4">
+            <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary sm:flex">
+              <BookOpen className="h-6 w-6" />
+            </div>
+            <div className="min-w-0 flex-1 space-y-4">
+              <div className="flex flex-wrap gap-2">
+                <Badge>
+                  {document.status === "active" ? "Действует" : document.status}
+                </Badge>
+                <Badge variant="outline" className="bg-background/60">
+                  {document.source === "etalon"
+                    ? "ЭТАЛОН-ONLINE"
+                    : "Загружено вручную"}
+                </Badge>
+              </div>
+              <h1 className="text-2xl font-bold leading-tight sm:text-3xl">
+                {document.title}
+              </h1>
+              <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
+                {document.doc_date && (
+                  <span>Дата: {document.doc_date}</span>
+                )}
+                {document.doc_number && <span>№ {document.doc_number}</span>}
+                {document.revision_label && (
+                  <span>{document.revision_label}</span>
+                )}
+              </div>
+            </div>
           </div>
         </GlassCard>
 
-        <article className="space-y-3">
+        <article className="space-y-3 rounded-2xl border bg-card/80 px-3 py-4 shadow-sm backdrop-blur sm:px-5 sm:py-6">
           {nodes.map((node) => (
             <div
               id={node.id}
               key={node.id}
-              className={`group scroll-mt-24 rounded-xl px-4 py-3 transition-colors ${
+              className={`group scroll-mt-24 rounded-xl px-4 py-3 transition-all ${
                 node.kind === "article" ||
                 node.kind === "chapter" ||
                 node.kind === "section"
-                  ? "mt-7 bg-muted/40 font-semibold"
+                  ? "mt-7 border border-border/50 bg-muted/45 font-semibold"
                   : "leading-relaxed"
               }`}
             >

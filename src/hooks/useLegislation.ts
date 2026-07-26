@@ -1,6 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { LegalDocument, LegalDocumentPreview } from "@/types/legislation";
+import type {
+  LegalDocument,
+  LegalDocumentPreview,
+  LegalSearchResult,
+} from "@/types/legislation";
 
 export function usePublishedLegislation() {
   return useQuery({
@@ -50,6 +54,32 @@ export function useLegalDocumentPreview(slug: string | undefined) {
 
       if (error) throw error;
       return (data?.[0] ?? null) as LegalDocumentPreview | null;
+    },
+  });
+}
+
+export function useLegislationSearch(
+  query: string,
+  limit = 30,
+  enabled = true,
+) {
+  const normalizedQuery = query.trim();
+
+  return useQuery({
+    queryKey: ["legislation", "search", normalizedQuery, limit],
+    enabled: enabled && normalizedQuery.length >= 2,
+    staleTime: 60_000,
+    queryFn: async (): Promise<LegalSearchResult[]> => {
+      const { data, error } = await supabase.rpc(
+        "search_legal_documents" as never,
+        {
+          p_query: normalizedQuery,
+          p_limit: limit,
+        } as never,
+      );
+
+      if (error) throw error;
+      return (data ?? []) as unknown as LegalSearchResult[];
     },
   });
 }
