@@ -40,6 +40,19 @@ Deno.serve(async (req) => {
 
     const userId = claimsData.claims.sub;
 
+    // Admin bypass: admin/super_admin видят события даже при закрытом replay/архиве.
+    // Add-only; обычные пользователи проходят прежний фильтр.
+    let isAdmin = false;
+    try {
+      const [adminRes, superRes] = await Promise.all([
+        supabase.rpc('has_role_v2', { _user_id: userId, _role_code: 'admin' }),
+        supabase.rpc('has_role_v2', { _user_id: userId, _role_code: 'super_admin' }),
+      ]);
+      isAdmin = Boolean(adminRes.data) || Boolean(superRes.data);
+    } catch (e) {
+      console.warn('[live-events-list] role check failed, treating as non-admin:', e);
+    }
+
     // Fetch all published events
     const { data: events, error: eventsError } = await supabase
       .from('live_events')
@@ -71,17 +84,19 @@ Deno.serve(async (req) => {
         _live_event_id: event.id,
       });
 
-      if (hasAccess) {
+      if (hasAccess || isAdmin) {
         accessibleEvents.push(event);
       }
     }
 
-    // Filter out events in terminal states without replay
+    // Filter out events in terminal states without replay (admin сохраняет видимость).
     const visibleEvents = accessibleEvents.filter(e => {
+      if (isAdmin) return true;
       if (e.platform_status === 'ended' && !e.replay_enabled) return false;
       if (e.platform_status === 'archived') return false;
       return true;
     });
+
 
     return new Response(
       JSON.stringify({

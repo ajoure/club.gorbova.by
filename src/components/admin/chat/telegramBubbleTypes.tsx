@@ -213,7 +213,7 @@ export interface MessageBubbleProps {
   onDelete: (dbId: string, telegramMessageId: number) => void;
   onReact: (id: string, emoji: string) => void;
   onQuoteClick: (dbId: string) => void;
-  onMediaRefresh: () => void;
+  onMediaRefresh: (messageDbId: string) => void;
   emojiList: ReadonlyArray<string>;
 }
 

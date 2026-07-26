@@ -1,0 +1,2 @@
+ALTER TABLE public.live_events ADD COLUMN IF NOT EXISTS launches_end_at timestamptz NULL;
+COMMENT ON COLUMN public.live_events.launches_end_at IS 'Autowebinar deadline: after this timestamp no NEW personal sessions may be created (JIT/on_demand/one_time). Active sessions finish normally. NULL = no deadline. Add-only, nullable.';

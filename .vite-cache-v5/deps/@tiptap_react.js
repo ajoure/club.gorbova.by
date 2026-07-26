@@ -1,3 +1,4 @@
+"use client";
 import {
   deepEqual
 } from "./chunk-FX47Z3IB.js";
@@ -18,9 +19,9 @@ import {
   ResizableNodeView,
   ResizableNodeview,
   Tracker,
+  attrsEqual,
   callOrReturn,
   canInsertNode,
-  cancelPositionCheck,
   combineTransactionSteps,
   commands_exports,
   createAtomBlockMarkdownSpec,
@@ -67,6 +68,7 @@ import {
   getSchemaTypeByName,
   getSchemaTypeNameByName,
   getSplittedAttributes,
+  getStyleProperty,
   getText,
   getTextBetween,
   getTextContentFromNodes,
@@ -89,6 +91,7 @@ import {
   isNodeActive,
   isNodeEmpty,
   isNodeSelection,
+  isNodeViewSelected,
   isNumber,
   isPlainObject,
   isRegExp,
@@ -99,6 +102,7 @@ import {
   markInputRule,
   markPasteRule,
   markdown_exports,
+  marksEqual,
   mergeAttributes,
   mergeDeep,
   minMax,
@@ -114,7 +118,6 @@ import {
   resolveExtensions,
   resolveFocusPosition,
   rewriteUnknownContent,
-  schedulePositionCheck,
   selectionToInsertionEnd,
   serializeAttributes,
   sortExtensions,
@@ -124,8 +127,8 @@ import {
   textblockTypeInputRule,
   updateMarkViewAttributes,
   wrappingInputRule
-} from "./chunk-SXIQHOR3.js";
-import "./chunk-YLIL3JKF.js";
+} from "./chunk-TN6A4YI7.js";
+import "./chunk-E5N3B3CE.js";
 import {
   require_shim
 } from "./chunk-PU3CAANW.js";
@@ -134,7 +137,7 @@ import {
 } from "./chunk-NZAIND7N.js";
 import {
   require_react_dom
-} from "./chunk-FKMA2RKD.js";
+} from "./chunk-3I6JAFN6.js";
 import {
   require_react
 } from "./chunk-UVNPGZG7.js";
@@ -266,9 +269,20 @@ var Portals = ({ contentComponent }) => {
   );
   return (0, import_jsx_runtime.jsx)(import_jsx_runtime.Fragment, { children: Object.values(renderers) });
 };
-function getInstance() {
+function createContentComponent() {
   const subscribers = /* @__PURE__ */ new Set();
   let renderers = {};
+  let isNotificationQueued = false;
+  const notifySubscribers = () => {
+    if (isNotificationQueued || !subscribers.size) {
+      return;
+    }
+    isNotificationQueued = true;
+    queueMicrotask(() => {
+      isNotificationQueued = false;
+      subscribers.forEach((subscriber) => subscriber());
+    });
+  };
   return {
     /**
      * Subscribe to the editor instance's changes.
@@ -293,7 +307,7 @@ function getInstance() {
         ...renderers,
         [id]: import_react_dom.default.createPortal(renderer.reactElement, renderer.element, id)
       };
-      subscribers.forEach((subscriber) => subscriber());
+      notifySubscribers();
     },
     /**
      * Removes a NodeView Renderer from the editor.
@@ -302,19 +316,14 @@ function getInstance() {
       const nextRenderers = { ...renderers };
       delete nextRenderers[id];
       renderers = nextRenderers;
-      subscribers.forEach((subscriber) => subscriber());
+      notifySubscribers();
     }
   };
 }
 var PureEditorContent = class extends import_react2.default.Component {
   constructor(props) {
-    var _a;
     super(props);
     this.editorContentRef = import_react2.default.createRef();
-    this.initialized = false;
-    this.state = {
-      hasContentComponentInitialized: Boolean((_a = props.editor) == null ? void 0 : _a.contentComponent)
-    };
   }
   componentDidMount() {
     this.init();
@@ -334,24 +343,10 @@ var PureEditorContent = class extends import_react2.default.Component {
       editor.setOptions({
         element
       });
-      editor.contentComponent = getInstance();
-      if (!this.state.hasContentComponentInitialized) {
-        this.unsubscribeToContentComponent = editor.contentComponent.subscribe(() => {
-          this.setState((prevState) => {
-            if (!prevState.hasContentComponentInitialized) {
-              return {
-                hasContentComponentInitialized: true
-              };
-            }
-            return prevState;
-          });
-          if (this.unsubscribeToContentComponent) {
-            this.unsubscribeToContentComponent();
-          }
-        });
-      }
+      editor.contentComponent = createContentComponent();
       editor.createNodeViews();
-      this.initialized = true;
+      editor.isEditorContentInitialized = true;
+      this.forceUpdate();
     }
   }
   componentWillUnmount() {
@@ -360,14 +355,11 @@ var PureEditorContent = class extends import_react2.default.Component {
     if (!editor) {
       return;
     }
-    this.initialized = false;
+    editor.isEditorContentInitialized = false;
     if (!editor.isDestroyed) {
       editor.view.setProps({
         nodeViews: {}
       });
-    }
-    if (this.unsubscribeToContentComponent) {
-      this.unsubscribeToContentComponent();
     }
     editor.contentComponent = null;
     try {
@@ -505,26 +497,24 @@ var EditorInstanceManager = class _EditorInstanceManager {
     this.subscriptions.forEach((cb) => cb());
   }
   getInitialEditor() {
-    if (this.options.current.immediatelyRender === void 0) {
-      if (isSSR || isNext) {
-        if (isDev) {
-          throw new Error(
-            "Tiptap Error: SSR has been detected, please set `immediatelyRender` explicitly to `false` to avoid hydration mismatches."
-          );
-        }
-        return null;
+    const explicit = this.options.current.immediatelyRender;
+    let immediatelyRender = explicit != null ? explicit : true;
+    if (isSSR) {
+      if (immediatelyRender && isDev) {
+        console.warn(
+          "SSR detected. `immediatelyRender` has been set to false to avoid hydration mismatches"
+        );
       }
-      return this.createEditor();
+      immediatelyRender = false;
+    } else if (isNext && explicit === void 0) {
+      immediatelyRender = false;
+      if (isDev) {
+        console.warn(
+          "Next.js detected. `immediatelyRender` defaults to false to avoid hydration mismatches. Pass `immediatelyRender: true` explicitly if you are rendering the editor only on the client."
+        );
+      }
     }
-    if (this.options.current.immediatelyRender && isSSR && isDev) {
-      throw new Error(
-        "Tiptap Error: SSR has been detected, and `immediatelyRender` has been set to `true` this is an unsupported configuration that may result in errors, explicitly set `immediatelyRender` to `false` to avoid hydration mismatches."
-      );
-    }
-    if (this.options.current.immediatelyRender) {
-      return this.createEditor();
-    }
-    return null;
+    return immediatelyRender ? this.createEditor() : null;
   }
   /**
    * Create a new editor instance. And attach event listeners.
@@ -580,6 +570,14 @@ var EditorInstanceManager = class _EditorInstanceManager {
       onDelete: (...args) => {
         var _a, _b;
         return (_b = (_a = this.options.current).onDelete) == null ? void 0 : _b.call(_a, ...args);
+      },
+      onMount: (...args) => {
+        var _a, _b;
+        return (_b = (_a = this.options.current).onMount) == null ? void 0 : _b.call(_a, ...args);
+      },
+      onUnmount: (...args) => {
+        var _a, _b;
+        return (_b = (_a = this.options.current).onUnmount) == null ? void 0 : _b.call(_a, ...args);
       }
     };
     const editor = new Editor(optionsToApply);
@@ -766,8 +764,15 @@ var ReactNodeViewContext = (0, import_react5.createContext)({
   nodeViewContentRef: () => {
   }
 });
-var ReactNodeViewContentProvider = ({ children, content }) => {
-  return (0, import_react5.createElement)(ReactNodeViewContext.Provider, { value: { nodeViewContentChildren: content } }, children);
+var ReactNodeViewContentProvider = ({
+  children,
+  content
+}) => {
+  return (0, import_react5.createElement)(
+    ReactNodeViewContext.Provider,
+    { value: { nodeViewContentChildren: content } },
+    children
+  );
 };
 var useReactNodeView = () => (0, import_react5.useContext)(ReactNodeViewContext);
 function NodeViewContent({
@@ -862,7 +867,7 @@ var ReactRenderer = class {
     if (className) {
       this.element.classList.add(...className.split(" "));
     }
-    if (this.editor.isInitialized) {
+    if (this.editor.isEditorContentInitialized) {
       (0, import_react_dom2.flushSync)(() => {
         this.render();
       });
@@ -902,9 +907,23 @@ var ReactRenderer = class {
   }
   /**
    * Re-renders the React component with new props.
+   * Skips the render if none of the supplied props actually changed,
+   * to avoid unnecessary portal re-creation.
    */
   updateProps(props = {}) {
     if (this.destroyed) {
+      return;
+    }
+    let changed = false;
+    const keys = Object.keys(props);
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      if (props[key] !== this.props[key]) {
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) {
       return;
     }
     this.props = {
@@ -953,7 +972,10 @@ var ReactMarkView = class extends MarkView {
   constructor(component, props, options) {
     super(component, props, options);
     const { as = "span", attrs, className = "" } = options || {};
-    const componentProps = { ...props, updateAttributes: this.updateAttributes.bind(this) };
+    const componentProps = {
+      ...props,
+      updateAttributes: this.updateAttributes.bind(this)
+    };
     this.contentDOMElement = document.createElement("span");
     const markViewContentRef = (el) => {
       if (el && !el.contains(this.contentDOMElement)) {
@@ -963,9 +985,11 @@ var ReactMarkView = class extends MarkView {
     const context = {
       markViewContentRef
     };
-    const ReactMarkViewProvider = import_react7.default.memo((componentProps2) => {
-      return (0, import_jsx_runtime6.jsx)(ReactMarkViewContext.Provider, { value: context, children: import_react7.default.createElement(component, componentProps2) });
-    });
+    const ReactMarkViewProvider = import_react7.default.memo(
+      (componentProps2) => {
+        return (0, import_jsx_runtime6.jsx)(ReactMarkViewContext.Provider, { value: context, children: import_react7.default.createElement(component, componentProps2) });
+      }
+    );
     ReactMarkViewProvider.displayName = "ReactMarkView";
     this.renderer = new ReactRenderer(ReactMarkViewProvider, {
       editor: props.editor,
@@ -991,6 +1015,17 @@ var ReactNodeView = class extends NodeView {
   constructor(component, props, options) {
     super(component, props, options);
     this.selectionRafId = null;
+    this.handlePositionUpdate = () => {
+      const newPos = this.getPos();
+      if (typeof newPos !== "number" || newPos === this.currentPos) {
+        return;
+      }
+      this.currentPos = newPos;
+      this.renderer.updateProps({ getPos: () => this.getPos() });
+      if (typeof this.options.attrs === "function") {
+        this.updateElementAttributes();
+      }
+    };
     this.cachedExtensionWithSyncedStorage = null;
     if (!this.node.isLeaf) {
       if (this.options.contentDOMElementTag) {
@@ -1006,6 +1041,9 @@ var ReactNodeView = class extends NodeView {
         return;
       }
       contentTarget.appendChild(this.contentDOMElement);
+    }
+    if (this.options.trackNodeViewPosition) {
+      this.editor.on("update", this.handlePositionUpdate);
     }
   }
   /**
@@ -1048,6 +1086,7 @@ var ReactNodeView = class extends NodeView {
       deleteNode: () => this.deleteNode(),
       ref: (0, import_react9.createRef)()
     };
+    const mountProps = props;
     if (!this.component.displayName) {
       const capitalizeFirstChar = (string) => {
         return string.charAt(0).toUpperCase() + string.substring(1);
@@ -1065,9 +1104,11 @@ var ReactNodeView = class extends NodeView {
     };
     const context = { onDragStart, nodeViewContentRef };
     const Component = this.component;
-    const ReactNodeViewProvider = (0, import_react9.memo)((componentProps) => {
-      return (0, import_jsx_runtime7.jsx)(ReactNodeViewContext.Provider, { value: context, children: (0, import_react9.createElement)(Component, componentProps) });
-    });
+    const ReactNodeViewProvider = (0, import_react9.memo)(
+      (componentProps) => {
+        return (0, import_jsx_runtime7.jsx)(ReactNodeViewContext.Provider, { value: context, children: (0, import_react9.createElement)(Component, componentProps) });
+      }
+    );
     ReactNodeViewProvider.displayName = "ReactNodeView";
     let as = this.node.isInline ? "span" : "div";
     if (this.options.as) {
@@ -1077,12 +1118,13 @@ var ReactNodeView = class extends NodeView {
     this.handleSelectionUpdate = this.handleSelectionUpdate.bind(this);
     this.renderer = new ReactRenderer(ReactNodeViewProvider, {
       editor: this.editor,
-      props,
+      props: mountProps,
       as,
       className: `node-${this.node.type.name} ${className}`.trim()
     });
     this.editor.on("selectionUpdate", this.handleSelectionUpdate);
     this.updateElementAttributes();
+    this.currentPos = this.getPos();
   }
   /**
    * Return the DOM element.
@@ -1116,12 +1158,17 @@ var ReactNodeView = class extends NodeView {
     }
     this.selectionRafId = requestAnimationFrame(() => {
       this.selectionRafId = null;
-      const { from, to } = this.editor.state.selection;
-      const pos = this.getPos();
+      const pos = this.currentPos;
       if (typeof pos !== "number") {
         return;
       }
-      if (from <= pos && to >= pos + this.node.nodeSize) {
+      const isSelected = isNodeViewSelected({
+        selection: this.editor.state.selection,
+        pos,
+        nodeSize: this.node.nodeSize,
+        selectedOnTextSelection: this.options.selectedOnTextSelection
+      });
+      if (isSelected) {
         if (this.renderer.props.selected) {
           return;
         }
@@ -1155,6 +1202,7 @@ var ReactNodeView = class extends NodeView {
       this.node = node;
       this.decorations = decorations;
       this.innerDecorations = innerDecorations;
+      this.currentPos = this.getPos();
       return this.options.update({
         oldNode,
         oldDecorations,
@@ -1162,16 +1210,36 @@ var ReactNodeView = class extends NodeView {
         newDecorations: decorations,
         oldInnerDecorations,
         innerDecorations,
-        updateProps: () => rerenderComponent({ node, decorations, innerDecorations, extension: this.extensionWithSyncedStorage })
+        updateProps: () => rerenderComponent({
+          node,
+          decorations,
+          innerDecorations,
+          extension: this.extensionWithSyncedStorage
+        })
       });
     }
-    if (node === this.node && this.decorations === decorations && this.innerDecorations === innerDecorations) {
+    const nodeChanged = node !== this.node;
+    if (!nodeChanged) {
+      this.node = node;
+      this.decorations = decorations;
+      this.innerDecorations = innerDecorations;
       return true;
     }
+    const newPos = this.getPos();
     this.node = node;
     this.decorations = decorations;
     this.innerDecorations = innerDecorations;
-    rerenderComponent({ node, decorations, innerDecorations, extension: this.extensionWithSyncedStorage });
+    this.currentPos = newPos;
+    const extraProps = {
+      node,
+      decorations,
+      innerDecorations,
+      extension: this.extensionWithSyncedStorage
+    };
+    if (this.options.trackNodeViewPosition) {
+      extraProps.getPos = () => this.getPos();
+    }
+    rerenderComponent(extraProps);
     return true;
   }
   /**
@@ -1200,6 +1268,9 @@ var ReactNodeView = class extends NodeView {
   destroy() {
     this.renderer.destroy();
     this.editor.off("selectionUpdate", this.handleSelectionUpdate);
+    if (this.options.trackNodeViewPosition) {
+      this.editor.off("update", this.handlePositionUpdate);
+    }
     this.contentDOMElement = null;
     if (this.selectionRafId) {
       cancelAnimationFrame(this.selectionRafId);
@@ -1247,12 +1318,15 @@ function useTiptapState(selector, equalityFn) {
     equalityFn
   });
 }
-function TiptapWrapper({ editor, instance, children }) {
-  const resolvedEditor = editor != null ? editor : instance;
+function TiptapWrapper({ children, ...props }) {
+  const resolvedEditor = "editor" in props ? props.editor : props.instance;
   if (!resolvedEditor) {
     throw new Error("Tiptap: An editor instance is required. Pass a non-null `editor` prop.");
   }
-  const tiptapContextValue = (0, import_react10.useMemo)(() => ({ editor: resolvedEditor }), [resolvedEditor]);
+  const tiptapContextValue = (0, import_react10.useMemo)(
+    () => ({ editor: resolvedEditor }),
+    [resolvedEditor]
+  );
   const legacyContextValue = (0, import_react10.useMemo)(() => ({ editor: resolvedEditor }), [resolvedEditor]);
   return (0, import_jsx_runtime8.jsx)(EditorContext.Provider, { value: legacyContextValue, children: (0, import_jsx_runtime8.jsx)(TiptapContext.Provider, { value: tiptapContextValue, children }) });
 }
@@ -1306,14 +1380,15 @@ export {
   TiptapContext,
   TiptapWrapper,
   Tracker,
+  attrsEqual,
   callOrReturn,
   canInsertNode,
-  cancelPositionCheck,
   combineTransactionSteps,
   commands_exports as commands,
   createAtomBlockMarkdownSpec,
   createBlockMarkdownSpec,
   createChainableState,
+  createContentComponent,
   createDocument,
   h as createElement,
   createInlineMarkdownSpec,
@@ -1356,6 +1431,7 @@ export {
   getSchemaTypeByName,
   getSchemaTypeNameByName,
   getSplittedAttributes,
+  getStyleProperty,
   getText,
   getTextBetween,
   getTextContentFromNodes,
@@ -1378,6 +1454,7 @@ export {
   isNodeActive,
   isNodeEmpty,
   isNodeSelection,
+  isNodeViewSelected,
   isNumber,
   isPlainObject,
   isRegExp,
@@ -1388,6 +1465,7 @@ export {
   markInputRule,
   markPasteRule,
   markdown_exports as markdown,
+  marksEqual,
   mergeAttributes,
   mergeDeep,
   minMax,
@@ -1403,7 +1481,6 @@ export {
   resolveExtensions,
   resolveFocusPosition,
   rewriteUnknownContent,
-  schedulePositionCheck,
   selectionToInsertionEnd,
   serializeAttributes,
   sortExtensions,

@@ -34,7 +34,6 @@ import type { CrmPipelineStage } from "@/services/pipelineService";
 interface Props {
   pipelineId: string;
   pipelineName?: string;
-  isDefaultPipeline?: boolean;
   search?: string;
   productId?: string | null;
   tariffIds?: string[];
@@ -51,14 +50,14 @@ const formatCurrency = (v: number, currency?: string | null) =>
     maximumFractionDigits: 0,
   }).format(v);
 
-export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, extraFilters, onOpenDeal }: Props) {
+export function DealsKanbanBoard({ pipelineId, pipelineName, search, productId, tariffIds, dateFrom, dateTo, extraFilters, onOpenDeal }: Props) {
   const { canWrite, isSuperAdmin } = usePermissions();
   const canEdit = canWrite("deals") || isSuperAdmin();
 
   const { stages, isLoading: stagesLoading, createStage, renameStage, updateStageColor, deleteStage, reorderStages } =
     usePipelineStages(pipelineId);
   const { deals, isLoading: dealsLoading, moveDeal, groupByStage, getStageTotals } =
-    useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, extraFilters });
+    useDealsBoard({ pipelineId, search, productId, tariffIds, dateFrom, dateTo, extraFilters });
 
   const dealIds = useMemo(() => deals.map((d) => d.id), [deals]);
   const { data: taskSummaryByDeal = {} } = useDealTaskSummary(dealIds);
@@ -509,9 +508,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
           <KanbanBulkActionsBar
             selectedIds={selectedDealIds}
             allDeals={deals}
-            stages={stages}
             pipelineId={pipelineId}
-            pipelineName={pipelineName}
             totalBoardDeals={deals.length}
             onClearSelection={clearSelection}
             onSelectAll={selectAll}

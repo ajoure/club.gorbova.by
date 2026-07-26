@@ -7,6 +7,8 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { resolveProviderChoice, isValidProviderChoice, type CustomerProvider } from '../_shared/resolve-provider-choice.ts';
+import { materializeComposableOrderGroup } from '../_shared/materialize-composable-order-group.ts';
+import { buildFiniteInstallmentOrderMeta } from './installment-meta.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -84,6 +86,7 @@ Deno.serve(async (req) => {
       }
 
       return jsonResponse({
+        product_id: link.product_id,
         product_name: product?.name || 'Продукт',
         product_description: product?.description || null,
         product_category: product?.category || null,
@@ -109,6 +112,7 @@ Deno.serve(async (req) => {
         // Phase 5-C — provider_mode + allowed_payment_providers для пользовательского выбора.
         provider_mode: (link as any).provider_mode ?? 'fixed',
         allowed_payment_providers: allowedPaymentProviders ?? null,
+        composable_checkout: linkMetaGet.composable_checkout ?? null,
       });
     }
 
@@ -118,11 +122,15 @@ Deno.serve(async (req) => {
 
     // POST — create checkout
     const body = await req.json();
-    const { url_token, email, replacement_of_subscription_v2_id, provider_choice } = body as {
+    const { url_token, email, replacement_of_subscription_v2_id, provider_choice, customer_credit_requested_minor, customer_credit_checkout_key, partner_bonus_requested_minor, partner_bonus_checkout_key } = body as {
       url_token?: string;
       email?: string;
       replacement_of_subscription_v2_id?: string;
       provider_choice?: 'bepaid' | 'stripe';
+      customer_credit_requested_minor?: number;
+      customer_credit_checkout_key?: string;
+      partner_bonus_requested_minor?: number;
+      partner_bonus_checkout_key?: string;
     };
 
     if (!url_token) {
@@ -315,57 +323,16 @@ Deno.serve(async (req) => {
     // Stage L3: пробрасываем installment-meta из payment_links.meta.installment в orders_v2.meta.
     // Webhook bepaid (LINK-ORDER) использует эти поля для материализации installment_payments.
     const linkMeta = (link.meta || {}) as Record<string, any>;
+    const composableCheckout =
+      linkMeta.composable_checkout && typeof linkMeta.composable_checkout === 'object'
+        ? linkMeta.composable_checkout as Record<string, any>
+        : null;
     const linkInstallment = (linkMeta.installment || null) as Record<string, any> | null;
     const hasInstallment = !!linkInstallment && Number(linkInstallment.selected_installment_months) >= 2;
     // PATCH INSTALLMENT-RETRY-POLICY: legacy-ссылки могли быть созданы с payment_type='one_time',
     // но фактически содержат installment meta → защитно повышаем до 'subscription'.
     const effectivePaymentType = hasInstallment ? 'subscription' : (link.payment_type as 'one_time' | 'subscription');
-    const installmentMetaExtra = hasInstallment
-      ? {
-          installment_count: Number(linkInstallment!.selected_installment_months),
-          installment_per_payment_amount_byn: Number(linkInstallment!.per_payment_amount_byn),
-          installment_total_amount_byn: Number(linkInstallment!.per_payment_amount_byn) * Number(linkInstallment!.selected_installment_months),
-          installment: {
-            interval_days: Number(linkInstallment!.interval_days ?? 30),
-            first_payment_delay_days: Number(linkInstallment!.first_payment_delay_days ?? 0),
-            rounding_mode: String(linkInstallment!.rounding_mode ?? 'round_half_up_byn'),
-            max_installment_months: Number(linkInstallment!.max_installment_months ?? linkInstallment!.selected_installment_months),
-            source: 'payment_link',
-            // PATCH INSTALLMENT-PUBLIC-LINK: маркер для shared checkout — оформить как finite bePaid subscription.
-            as_finite_subscription: true,
-            billing_cycles: Number(linkInstallment!.selected_installment_months),
-            // PATCH A4 — retry policy пробрасываем БЕЗ преобразования отсутствующего значения в 0.
-            //   null/undefined → provider_default (checkout возьмёт bePaid дефолт 3);
-            //   явный 0        → unlimited_requested (capability gate в checkout);
-            //   1..10          → limited.
-            max_charge_attempts:
-              linkInstallment!.max_charge_attempts === null ||
-              linkInstallment!.max_charge_attempts === undefined ||
-              linkInstallment!.max_charge_attempts === ''
-                ? null
-                : Number(linkInstallment!.max_charge_attempts),
-            retry_policy_mode:
-              linkInstallment!.retry_policy_mode ??
-              (linkInstallment!.max_charge_attempts === null ||
-              linkInstallment!.max_charge_attempts === undefined ||
-              linkInstallment!.max_charge_attempts === ''
-                ? 'provider_default'
-                : Number(linkInstallment!.max_charge_attempts) === 0
-                ? 'unlimited_requested'
-                : 'limited'),
-            // B2 corrective. Явно транспонируем charge_notifications из link.meta
-            // в installment-scope, чтобы shared checkout сохранил snapshot без
-            // дополнительного чтения offer.meta.
-            ...(linkInstallment!.charge_notifications
-              ? {
-                  charge_notifications: linkInstallment!.charge_notifications,
-                  charge_notifications_source:
-                    linkInstallment!.charge_notifications_source ?? 'link',
-                }
-              : {}),
-          },
-        }
-      : {};
+    const installmentMetaExtra = buildFiniteInstallmentOrderMeta(linkInstallment);
 
     // B2 corrective. Non-installment subscription: явный transfer recurring.charge_notifications.
     const linkRecurring = (linkMeta.recurring || null) as Record<string, any> | null;
@@ -397,6 +364,7 @@ Deno.serve(async (req) => {
         payment_link_id: link.id,
         ...installmentMetaExtra,
         ...recurringMetaExtra,
+        ...(composableCheckout ? { composable_checkout: composableCheckout } : {}),
         // Phase 5-C — фиксируем фактический выбор в audit-trail order'а.
         provider_choice_resolution: {
           mode: providerMode,
@@ -409,9 +377,32 @@ Deno.serve(async (req) => {
       provider: effectiveProvider,
       account_code: effectiveAccountCode,
       currency: link.currency ?? (effectiveProvider === 'stripe' ? 'EUR' : 'BYN'),
+      customer_credit_requested_minor:
+        effectivePaymentType === 'one_time' || hasInstallment
+          ? Math.max(0, Math.round(Number(customer_credit_requested_minor ?? 0)))
+          : 0,
+      customer_credit_checkout_key:
+        typeof customer_credit_checkout_key === 'string' && customer_credit_checkout_key.length <= 200
+          ? customer_credit_checkout_key
+          : undefined,
+      partner_bonus_requested_minor:
+        effectivePaymentType === 'one_time' || hasInstallment
+          ? Math.max(0, Math.round(Number(partner_bonus_requested_minor ?? 0)))
+          : 0,
+      partner_bonus_checkout_key:
+        typeof partner_bonus_checkout_key === 'string' && partner_bonus_checkout_key.length <= 200
+          ? partner_bonus_checkout_key
+          : undefined,
     });
 
     if (!result.success) {
+      if (result.error === 'already_has_active_subscription' && result.conflict) {
+        return jsonResponse({
+          success: false,
+          error: 'already_has_active_subscription',
+          conflict: result.conflict,
+        });
+      }
       if (result.error === 'existing_subscription_conflict' && result.conflict) {
         return jsonResponse({
           success: false,
@@ -453,6 +444,26 @@ Deno.serve(async (req) => {
       });
     }
 
+    let orderGroupId: string | null = null;
+    if (composableCheckout && Array.isArray(composableCheckout.items) && composableCheckout.items.length > 0) {
+      try {
+        orderGroupId = await materializeComposableOrderGroup(supabase, {
+          primaryOrderId: result.order_id,
+          quote: composableCheckout,
+          source: 'admin_payment_link',
+          idempotencyKey: `payment_link:${link.id}:order:${result.order_id}`,
+        });
+      } catch (groupError) {
+        console.error('[public-checkout] composable group materialization failed', {
+          payment_link_id: link.id,
+          order_id: result.order_id,
+          error: (groupError as Error).message,
+        });
+        return errorResponse('composable_order_materialization_failed', 500);
+      }
+      await supabase.from('payment_links').update({ order_group_id: orderGroupId }).eq('id', link.id);
+    }
+
     // Audit log (создание checkout-сессии). Счётчик НЕ инкрементируем здесь — это делает webhook.
     await supabase.from('audit_logs').insert({
       actor_type: 'system',
@@ -462,6 +473,7 @@ Deno.serve(async (req) => {
       meta: {
         payment_link_id: link.id,
         order_id: result.order_id,
+        order_group_id: orderGroupId,
         amount: link.amount,
         payment_type: link.payment_type,
       },
@@ -471,6 +483,7 @@ Deno.serve(async (req) => {
       success: true,
       redirect_url: result.redirect_url,
       order_id: result.order_id,
+      order_group_id: orderGroupId,
     });
 
   } catch (error) {

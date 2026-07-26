@@ -30,20 +30,18 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
 import {
   Loader2,
-  CheckCircle2,
   FileText,
   Plus,
   ArrowLeft,
   Building2,
-  Download,
   Star,
-  Copy,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
-import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
+import { OrderSummary, type OrderSummaryLine } from "@/components/checkout/OrderSummary";
+import { InvoiceDeliverySuccess } from "@/components/payment/InvoiceDeliverySuccess";
 
 export interface InvoiceCheckoutDialogProps {
   open: boolean;
@@ -52,6 +50,7 @@ export interface InvoiceCheckoutDialogProps {
   productName: string;
   tariffName?: string;
   offerId: string;
+  addonOfferIds?: string[];
   amount: number;
   currency?: string;
 }
@@ -82,6 +81,14 @@ function getDisplayName(d: ClientLegalDetails): string {
   return "Плательщик";
 }
 
+/** DD.MM.YYYY из ISO строки, либо сегодня. */
+function formatDate(iso?: string | null): string {
+  const d = iso ? new Date(iso) : new Date();
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}.${mm}.${d.getFullYear()}`;
+}
+
 function getUnp(d: ClientLegalDetails): string | null {
   return d.client_type === "entrepreneur" ? d.ent_unp : d.leg_unp;
 }
@@ -93,6 +100,7 @@ export function InvoiceCheckoutDialog({
   productName,
   tariffName,
   offerId,
+  addonOfferIds = [],
   amount,
   currency = "BYN",
 }: InvoiceCheckoutDialogProps) {
@@ -102,6 +110,36 @@ export function InvoiceCheckoutDialog({
   const [showAddForm, setShowAddForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<InvoiceResult | null>(null);
+  const [quoteItems, setQuoteItems] = useState<OrderSummaryLine[]>([]);
+  const [quoteCurrency, setQuoteCurrency] = useState<string>(currency);
+  const [quoteTotal, setQuoteTotal] = useState<number | null>(null);
+
+  // Immutable snapshot состава заказа — читается один раз при открытии диалога
+  // и переживает переключение шагов Back/Forward.
+  useEffect(() => {
+    if (!open || !offerId) return;
+    let active = true;
+    void supabase.functions.invoke("composable-checkout-quote", {
+      body: { parent_offer_id: offerId, addon_offer_ids: addonOfferIds },
+    }).then(({ data, error }) => {
+      if (!active || error || !data || (data as any).error) return;
+      const q = data as any;
+      const items: OrderSummaryLine[] = (q.items ?? []).map((it: any) => ({
+        role: it.role,
+        product_name: it.product_name,
+        tariff_name: it.tariff_name ?? null,
+        list_amount: Number(it.list_amount ?? 0),
+        final_amount: Number(it.final_amount ?? 0),
+        discount_amount: Number(it.discount_amount ?? 0),
+        discount_percent: it.discount_percent ?? null,
+        pricing_mode: it.pricing_mode,
+      }));
+      setQuoteItems(items);
+      setQuoteCurrency(String(q.currency ?? currency));
+      setQuoteTotal(Number(q.total ?? amount));
+    });
+    return () => { active = false; };
+  }, [open, offerId, JSON.stringify(addonOfferIds), amount, currency]);
 
   const {
     legalDetails,
@@ -198,6 +236,7 @@ export function InvoiceCheckoutDialog({
           body: JSON.stringify({
             product_id: productId,
             offer_id: offerId,
+            addon_offer_ids: addonOfferIds,
             legal_details_id: selectedPayer.id,
           }),
         },
@@ -225,31 +264,28 @@ export function InvoiceCheckoutDialog({
     }
   }
 
-  /** DD.MM.YYYY из ISO строки, либо сегодня. */
-  function formatDate(iso?: string | null): string {
-    const d = iso ? new Date(iso) : new Date();
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    return `${dd}.${mm}.${d.getFullYear()}`;
-  }
+
+
 
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[720px] max-h-[92vh] max-h-[92dvh] p-0 flex flex-col gap-0 overflow-hidden">
-        <DialogHeader className="px-6 pt-6 pb-3 border-b shrink-0">
-          <DialogTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Счёт на оплату — {productName}
-            {tariffName ? ` · ${tariffName}` : ""}
+        <DialogHeader className="px-4 sm:px-6 pt-5 sm:pt-6 pb-3 border-b shrink-0">
+          <DialogTitle className="flex items-start gap-2 pr-8 text-base sm:text-lg break-words [overflow-wrap:anywhere]">
+            <FileText className="h-5 w-5 shrink-0 mt-0.5" />
+            <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+              Счёт на оплату — {productName}
+              {tariffName ? ` · ${tariffName}` : ""}
+            </span>
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="break-words">
             Оплата по банковскому реквизиту для юридического лица или ИП
           </DialogDescription>
         </DialogHeader>
 
         {step === "auth" && (
-          <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4">
             <InlineAuthForm
               contextNote="Чтобы выписать счёт, войдите или зарегистрируйтесь"
               onAuthenticated={() => setStep("payer")}
@@ -259,7 +295,7 @@ export function InvoiceCheckoutDialog({
 
         {step === "payer" && !showAddForm && (
           <>
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 space-y-4">
               {isLoadingLegal ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-5 w-5 animate-spin" />
@@ -271,7 +307,7 @@ export function InvoiceCheckoutDialog({
                     У вас пока нет реквизитов для выставления счёта. Добавьте
                     организацию или ИП — данные подтянутся автоматически по УНП.
                   </div>
-                  <Button onClick={() => setShowAddForm(true)} className="gap-2">
+                  <Button onClick={() => setShowAddForm(true)} className="gap-2 w-full sm:w-auto">
                     <Plus className="h-4 w-4" /> Добавить организацию или ИП
                   </Button>
                 </Card>
@@ -284,24 +320,26 @@ export function InvoiceCheckoutDialog({
                   {payers.map((row) => {
                     const unp = getUnp(row);
                     return (
-                      <Card key={row.id} className="p-3">
+                      <Card key={row.id} className="p-3 w-full max-w-full overflow-hidden">
                         <label className="flex items-start gap-3 cursor-pointer">
-                          <RadioGroupItem value={row.id} className="mt-1" />
+                          <RadioGroupItem value={row.id} className="mt-1 shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <div className="flex flex-wrap items-center gap-2 font-medium">
+                            <div className="flex flex-wrap items-center gap-2 font-medium min-w-0">
                               <Building2 className="h-4 w-4 shrink-0" />
-                              <span className="truncate">{getDisplayName(row)}</span>
+                              <span className="min-w-0 break-words [overflow-wrap:anywhere] font-medium">
+                                {getDisplayName(row)}
+                              </span>
                               {row.is_default && (
-                                <Badge variant="secondary" className="gap-1">
+                                <Badge variant="secondary" className="gap-1 shrink-0">
                                   <Star className="h-3 w-3" /> Основной
                                 </Badge>
                               )}
-                              <Badge variant="outline">
+                              <Badge variant="outline" className="shrink-0">
                                 {row.client_type === "entrepreneur" ? "ИП" : "Юрлицо"}
                               </Badge>
                             </div>
                             {unp && (
-                              <div className="text-xs text-muted-foreground mt-1">
+                              <div className="text-xs text-muted-foreground mt-1 break-words">
                                 УНП {unp}
                               </div>
                             )}
@@ -314,12 +352,16 @@ export function InvoiceCheckoutDialog({
               )}
             </div>
             {payers.length > 0 && (
-              <div className="shrink-0 border-t bg-background px-6 py-3 flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => setShowAddForm(true)}>
+              <div className="shrink-0 border-t bg-background px-4 sm:px-6 py-3 flex flex-col-reverse sm:flex-row gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowAddForm(true)}
+                  className="w-full sm:w-auto"
+                >
                   <Plus className="h-4 w-4 mr-1" /> Добавить организацию или ИП
                 </Button>
                 <Button
-                  className="ml-auto"
+                  className="w-full sm:w-auto sm:ml-auto"
                   disabled={!selectedPayerId}
                   onClick={() => setStep("confirm")}
                 >
@@ -331,8 +373,8 @@ export function InvoiceCheckoutDialog({
         )}
 
         {step === "payer" && showAddForm && (
-          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-            <div className="flex items-center justify-between">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <Button
                 variant="ghost"
                 size="sm"
@@ -345,7 +387,7 @@ export function InvoiceCheckoutDialog({
                 Добавить организацию или ИП
               </div>
             </div>
-            <Card className="p-4">
+            <Card className="p-3 sm:p-4">
               <OrganizationDetailsForm
                 initialData={null}
                 onSubmit={handleAddPayerSubmit}
@@ -358,46 +400,45 @@ export function InvoiceCheckoutDialog({
 
         {step === "confirm" && selectedPayer && (
           <>
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-              <Card className="p-4 space-y-3">
-                <div className="text-sm">
-                  <div className="text-muted-foreground">Продукт</div>
-                  <div className="font-medium">
-                    {productName}
-                    {tariffName ? ` · ${tariffName}` : ""}
-                  </div>
-                </div>
-                <div className="text-sm">
-                  <div className="text-muted-foreground">Плательщик</div>
-                  <div className="font-medium">{getDisplayName(selectedPayer)}</div>
-                  {getUnp(selectedPayer) && (
-                    <div className="text-xs text-muted-foreground">
-                      УНП {getUnp(selectedPayer)}
-                    </div>
-                  )}
-                </div>
-                <div className="text-sm">
-                  <div className="text-muted-foreground">К оплате</div>
-                  <div className="font-medium text-lg">
-                    {amount} {currency}
-                  </div>
-                </div>
-                <div className="text-xs text-muted-foreground pt-2 border-t">
-                  После нажатия кнопки будет создан заказ, сформирован PDF-счёт
-                  и отправлен на email плательщика (а также в Telegram, если он привязан).
-                </div>
+            <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 space-y-4">
+              <OrderSummary
+                items={
+                  quoteItems.length > 0
+                    ? quoteItems
+                    : [{
+                        role: "primary",
+                        product_name: productName,
+                        tariff_name: tariffName ?? null,
+                        list_amount: amount,
+                        final_amount: amount,
+                      }]
+                }
+                currency={quoteCurrency || currency}
+                total={quoteTotal ?? amount}
+                payerLabel={
+                  `${getDisplayName(selectedPayer)}${
+                    getUnp(selectedPayer) ? ` · УНП ${getUnp(selectedPayer)}` : ""
+                  }`
+                }
+                paymentMethodLabel="Счёт на юрлицо / ИП"
+              />
+              <Card className="p-3 text-xs text-muted-foreground break-words">
+                После нажатия кнопки будет создан заказ и сформирован PDF-счёт.
+                Копии на email и в Telegram уходят автоматически после готовности PDF;
+                статусы доставки вы увидите на следующем экране.
               </Card>
             </div>
-            <div className="shrink-0 border-t bg-background px-6 py-3 flex gap-2">
+            <div className="shrink-0 border-t bg-background px-4 sm:px-6 py-3 flex flex-col-reverse sm:flex-row gap-2">
               <Button
                 variant="outline"
                 onClick={() => setStep("payer")}
                 disabled={submitting}
+                className="w-full sm:w-auto"
               >
                 <ArrowLeft className="h-4 w-4 mr-1" /> Назад
               </Button>
               <Button
-                className="ml-auto"
+                className="w-full sm:w-auto sm:ml-auto"
                 onClick={handleIssueInvoice}
                 disabled={submitting}
               >
@@ -413,78 +454,33 @@ export function InvoiceCheckoutDialog({
           </>
         )}
 
-        {step === "success" && result && (() => {
-          const displayNumber = result.document_number ?? result.invoice_number;
-          const displayDate = formatDate(result.document_issued_at);
-          const purposeText = `Оплата по счёту №${displayNumber} от ${displayDate}`;
-          return (
-            <>
-              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 text-center">
-                <div className="flex justify-center">
-                  <CheckCircle2 className="h-12 w-12 text-green-600" />
-                </div>
-                <div>
-                  <div className="text-lg font-semibold">
-                    Счёт № {displayNumber} сформирован
-                  </div>
-                  <div className="text-sm text-muted-foreground mt-1">
-                    Отправка на email и в Telegram запущена и придёт в течение
-                    нескольких минут. Также PDF можно скачать сразу.
-                  </div>
-                </div>
-                <Card className="p-3 text-left text-sm bg-muted/40">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1">
-                      <div className="text-muted-foreground text-xs uppercase tracking-wide mb-1">
-                        При оплате в назначении платежа укажите
-                      </div>
-                      <div className="font-medium break-words select-all">
-                        {purposeText}
-                      </div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="shrink-0"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(purposeText);
-                          toast.success("Скопировано");
-                        } catch {
-                          toast.error("Не удалось скопировать");
-                        }
-                      }}
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </Card>
-              </div>
-              <div className="shrink-0 border-t bg-background px-6 py-3 flex flex-col sm:flex-row gap-2">
-                {result.document_id && (
-                  <Button
-                    variant="outline"
-                    onClick={async () => {
-                      const r = await downloadDocumentBlob(result.document_id!, "pdf");
-                      if (r.ok === false) {
-                        toast.error(r.message);
-                      } else {
-                        toast.success("Скачивание началось");
-                      }
-                    }}
-                  >
-                    <Download className="h-4 w-4 mr-1" /> Скачать PDF
-                  </Button>
-                )}
-                <Button className="sm:ml-auto" onClick={() => handleClose(false)}>
-                  Готово
-                </Button>
-              </div>
-            </>
-          );
-        })()}
+        {step === "success" && result && (
+          <InvoiceDeliverySuccess
+            documentId={result.document_id}
+            invoiceNumber={result.invoice_number}
+            documentNumber={result.document_number}
+            documentIssuedAt={result.document_issued_at}
+            orderId={result.order_id}
+            onDocumentReady={(r) =>
+              setResult((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      document_id: r.document_id,
+                      document_number: r.document_number ?? prev.document_number,
+                      document_issued_at:
+                        r.document_issued_at ?? prev.document_issued_at,
+                    }
+                  : prev,
+              )
+            }
+            onClose={() => handleClose(false)}
+          />
+
+        )}
 
       </DialogContent>
     </Dialog>
   );
 }
+

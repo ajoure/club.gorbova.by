@@ -71,13 +71,23 @@ Deno.serve(async (req) => {
 
     const { data: event, error: eErr } = await admin
       .from('live_events')
-      .select('id, event_type, autoweb_mode, autoweb_config, is_published, scheduled_at')
+      .select('id, event_type, autoweb_mode, autoweb_config, is_published, scheduled_at, launches_end_at')
       .eq('id', liveEventId)
       .maybeSingle();
     if (eErr || !event) return jsonRes({ status: 'not_found' }, 404);
     if (!event.is_published) return jsonRes({ status: 'unpublished' }, 403);
     if (event.event_type !== 'autowebinar') {
       return jsonRes({ status: 'unsupported_event_type' }, 400);
+    }
+
+    // Phase D gate: launches_end_at. Новые персональные сессии не создаются после дедлайна.
+    // Активные сессии не трогаем — они завершатся штатно через autoweb-session-heartbeat.
+    if (event.launches_end_at && Date.now() >= new Date(event.launches_end_at as string).getTime()) {
+      return jsonRes({
+        status: 'launches_closed',
+        reason: 'launches_end_at_passed',
+        launches_end_at: event.launches_end_at,
+      }, 410);
     }
 
     const mode = event.autoweb_mode as string;
@@ -87,8 +97,9 @@ Deno.serve(async (req) => {
 
     const cfg = (event.autoweb_config ?? {}) as Record<string, any>;
     const duration = Number(cfg?.video?.duration_seconds ?? 3600);
-    const replayWindowH = Number(cfg?.replay?.window_hours ?? 0);
-    const replayDelayMin = Number(cfg?.replay?.delay_minutes ?? 0);
+    // Контракт: ends_at — конец ЖИВОЙ фазы (starts_at + duration).
+    // Пауза перед повтором и replay.window_hours НЕ входят в ends_at;
+    // autoweb-room-state вычисляет replay_opens_at/replay_ends_at отдельно.
 
     let startsAt: Date;
     let chosenOffset = 0;
@@ -111,9 +122,7 @@ Deno.serve(async (req) => {
       startsAt = event.scheduled_at ? new Date(event.scheduled_at as string) : new Date();
     }
 
-    const endsAt = new Date(
-      startsAt.getTime() + duration * 1000 + replayDelayMin * 60_000 + replayWindowH * 3600_000,
-    );
+    const endsAt = new Date(startsAt.getTime() + duration * 1000);
 
     // --- DEDUPE ---
     const nowIso = new Date().toISOString();

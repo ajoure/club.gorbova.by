@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { SAVED_CARD_PAYMENTS_ENABLED } from "@/config/paymentFeatures";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Info, AlertTriangle, Repeat, Shield } from "lucide-react";
+import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Info, AlertTriangle, Repeat, Shield, Eye, EyeOff } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -36,6 +37,9 @@ import {
   cancelOldSubscriptionForReplacement,
   type SubscriptionConflictInfo,
 } from "@/lib/subscriptionReplacement";
+import { USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
+import { OrderSummary } from "@/components/checkout/OrderSummary";
+import { useComposableQuoteSummary } from "@/hooks/useComposableQuoteSummary";
 
 interface SubscriptionMessage {
   title?: string;           // "Ежемесячная подписка" / "Подписка на Клуб"
@@ -54,6 +58,7 @@ interface PaymentDialogProps {
   currency?: string;
   tariffCode?: string;
   offerId?: string;
+  addonOfferIds?: string[];
   isTrial?: boolean;
   trialDays?: number;
   isClubProduct?: boolean;
@@ -73,7 +78,10 @@ const emailSchema = z.string().email("Введите корректный email"
 const phoneSchema = z.string().refine((val) => isValidPhoneNumber(val), {
   message: "Введите корректный номер телефона",
 });
-const passwordSchema = z.string().min(6, "Пароль должен быть не менее 6 символов");
+const passwordSchema = z.string().min(
+  USER_PASSWORD_MIN_LENGTH,
+  `Пароль должен быть не менее ${USER_PASSWORD_MIN_LENGTH} символов`,
+);
 
 // Translate payment errors to Russian
 function translatePaymentError(error: string): string {
@@ -150,6 +158,7 @@ export function PaymentDialog({
   currency,
   tariffCode,
   offerId,
+  addonOfferIds = [],
   isTrial,
   trialDays,
   isClubProduct,
@@ -163,6 +172,13 @@ export function PaymentDialog({
 }: PaymentDialogProps) {
   const displayCurrency = currency || "BYN";
   const paymentDescription = tariffName ? `${productName} — ${tariffName}` : productName;
+  const quoteSummary = useComposableQuoteSummary({
+    open,
+    offerId,
+    addonOfferIds,
+    fallbackCurrency: displayCurrency,
+    fallbackTotal: Number(price),
+  });
   // B8/B9. Публичный flow рассрочки: клиент явно выбирает N в диапазоне 2..max.
   // installmentCount оставлен как legacy alias для fallback.
   const installmentMaxMonthsResolved: number | null =
@@ -210,6 +226,8 @@ export function PaymentDialog({
   const [existingUserId, setExistingUserId] = useState<string | null>(null);
   const [emailCheckResult, setEmailCheckResult] = useState<EmailCheckResult | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
   // PAY-I: список сохранённых карт; всегда disabled в PaymentDialog (см. mem://ui/payments/saved-card-client-policy).
   const [savedCards, setSavedCards] = useState<Array<{ id: string; brand: string; last4: string; exp_month: number | null; exp_year: number | null; is_default: boolean }>>([]);
   const [isLoadingCard, setIsLoadingCard] = useState(false);
@@ -233,6 +251,10 @@ export function PaymentDialog({
   const [conflictData, setConflictData] = useState<SubscriptionConflictInfo | null>(null);
   const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating'>('idle');
   const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
+  const [customerCreditMinor, setCustomerCreditMinor] = useState(0);
+  const [useCustomerCredit, setUseCustomerCredit] = useState(false);
+  const [partnerBonusMinor, setPartnerBonusMinor] = useState(0);
+  const [usePartnerBonus, setUsePartnerBonus] = useState(false);
   // Telegram link hooks
   const { data: telegramStatus, refetch: refetchTelegramStatus, isLoading: isTelegramStatusLoading } = useTelegramLinkStatus();
   const startTelegramLink = useStartTelegramLink();
@@ -245,6 +267,11 @@ export function PaymentDialog({
 
   // PAY-I: грузим список активных bePaid-карт. Селектим только нечувствительные поля.
   const loadSavedCards = async (userId: string) => {
+    if (!SAVED_CARD_PAYMENTS_ENABLED) {
+      setSavedCards([]);
+      setSelectedMethod('new_card');
+      return;
+    }
     setIsLoadingCard(true);
     try {
       const { data, error } = await supabase
@@ -277,6 +304,28 @@ export function PaymentDialog({
     }
   };
 
+  const loadCustomerCredit = async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase.rpc as any)('referral_get_my_customer_credit');
+    if (error) {
+      console.error('[PaymentDialog] loadCustomerCredit failed:', error);
+      setCustomerCreditMinor(0);
+      return;
+    }
+    setCustomerCreditMinor(Math.max(0, Number(data?.available_minor ?? 0)));
+  };
+
+  const loadPartnerBonus = async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase.rpc as any)('referral_get_my_bonus_wallet', { p_product_id: productId });
+    if (error) {
+      console.error('[PaymentDialog] loadPartnerBonus failed:', error);
+      setPartnerBonusMinor(0);
+      return;
+    }
+    setPartnerBonusMinor(Math.max(0, Number(data?.eligible ? data?.available_minor : 0)));
+  };
+
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
@@ -285,10 +334,16 @@ export function PaymentDialog({
         authInProgressRef.current = false;
         setExistingUserId(user.id);
         loadSavedCards(user.id);
+        loadCustomerCredit();
+        loadPartnerBonus();
         return; // Skip full reset — keep formData, step, selectedOffer intact
       }
 
       setSavedCards([]);
+      setCustomerCreditMinor(0);
+      setUseCustomerCredit(false);
+      setPartnerBonusMinor(0);
+      setUsePartnerBonus(false);
       setIsLoadingCard(false);
       setSelectedMethod('new_card');
       savedCardIdempotencyKeyRef.current = crypto.randomUUID();
@@ -319,6 +374,8 @@ export function PaymentDialog({
         
         // Check for saved payment method
         loadSavedCards(user.id);
+        loadCustomerCredit();
+        loadPartnerBonus();
       } else {
         // User is not authenticated - start with email step
         setFormData({ email: "", firstName: "", lastName: "", phone: "+375", password: "" });
@@ -334,13 +391,14 @@ export function PaymentDialog({
       authInProgressRef.current = false;
       setPaymentError(null);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, user, session, isClubProduct, isTelegramLinked, isTelegramStatusLoading]);
 
   // PAY-K: для one_time — выставить дефолтную сохранённую карту, иначе 'new_card'.
   // Для subscription/trial — всегда 'new_card' (карты disabled, PAY-I behavior).
   const isOneTimeFlow = !isSubscription && !isTrial;
   useEffect(() => {
-    if (!isOneTimeFlow || savedCards.length === 0) {
+    if (!SAVED_CARD_PAYMENTS_ENABLED || !isOneTimeFlow || savedCards.length === 0) {
       if (selectedMethod !== 'new_card') setSelectedMethod('new_card');
       return;
     }
@@ -538,6 +596,10 @@ export function PaymentDialog({
     if (!phoneValidation.success) {
       newErrors.phone = phoneValidation.error.errors[0].message;
     }
+    const passwordValidation = passwordSchema.safeParse(formData.password);
+    if (!passwordValidation.success) {
+      newErrors.password = passwordValidation.error.errors[0].message;
+    }
 
     if (!privacyConsent) {
       toast.error("Необходимо согласиться с Политикой конфиденциальности");
@@ -696,6 +758,9 @@ export function PaymentDialog({
           url_token: bridgeData.url_token,
           payment_method_id: paymentMethodId,
           idempotency_key,
+          customer_credit_requested_minor: useCustomerCredit ? customerCreditMinor : 0,
+          partner_bonus_requested_minor: usePartnerBonus ? partnerBonusMinor : 0,
+          partner_bonus_checkout_key: savedCardIdempotencyKeyRef.current,
         }),
       });
       const data = await res.json();
@@ -757,6 +822,7 @@ export function PaymentDialog({
           body: {
             product_id: productId,
             offer_id: offerId,
+            addon_offer_ids: addonOfferIds,
             // Публичный клиент не выбирает N — сервер берёт точное значение из
             // tariff_offers.installment_count. Поле оставлено для совместимости
             // и игнорируется сервером на публичном пути.
@@ -818,7 +884,11 @@ export function PaymentDialog({
             return;
           }
           // Same-pair subscription conflict — show keep/replace UI, do NOT redirect to /purchases
-          if (data?.error === 'existing_subscription_conflict' && data?.conflict) {
+          if (
+            (data?.error === 'existing_subscription_conflict'
+              || data?.error === 'already_has_active_subscription')
+            && data?.conflict
+          ) {
             setConflictData(data.conflict as SubscriptionConflictInfo);
             setStep('ready');
             setIsLoading(false);
@@ -828,7 +898,11 @@ export function PaymentDialog({
         }
 
         if (!data.success) {
-          if (data?.error === 'existing_subscription_conflict' && data?.conflict) {
+          if (
+            (data?.error === 'existing_subscription_conflict'
+              || data?.error === 'already_has_active_subscription')
+            && data?.conflict
+          ) {
             setConflictData(data.conflict as SubscriptionConflictInfo);
             setStep('ready');
             setIsLoading(false);
@@ -874,15 +948,23 @@ export function PaymentDialog({
           customerPhone: formData.phone,
           customerFirstName: formData.firstName,
           customerLastName: formData.lastName,
+          // Never retransmit an existing user's login password to a payment
+          // function. This field is only for creating a brand-new Auth user.
+          customerPassword: existingUserId ? undefined : formData.password,
           existingUserId,
           description: paymentDescription,
           tariffCode,
           offerId,
+          addonOfferIds,
           isTrial,
           trialDays,
           isOneTime: isOneTimePayment,
           // PATCH-3: Signal MIT flow to avoid creating bePaid subscription
           useMitTokenization: shouldUseMitTokenization,
+          customerCreditRequestedMinor: useCustomerCredit ? customerCreditMinor : 0,
+          customerCreditCheckoutKey: savedCardIdempotencyKeyRef.current,
+          partnerBonusRequestedMinor: usePartnerBonus ? partnerBonusMinor : 0,
+          partnerBonusCheckoutKey: savedCardIdempotencyKeyRef.current,
         },
       });
 
@@ -908,7 +990,9 @@ export function PaymentDialog({
 
         const fallbackMessage = isOneTimePayment
           ? "Не удалось открыть страницу оплаты. Попробуйте ещё раз."
-          : "Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.";
+          : isTrial
+            ? data?.error || "Не удалось активировать демо-доступ. Попробуйте ещё раз."
+            : "Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.";
 
         if (data?.fallback) {
           setPaymentError(fallbackMessage);
@@ -918,6 +1002,24 @@ export function PaymentDialog({
         }
 
         throw new Error(data.error || "Ошибка создания платежа");
+      }
+
+      // The free no-card trial creates the Auth user server-side together with
+      // the paid order. Sign the new user in with the password chosen above so
+      // the success redirect opens the purchased content, not another signup.
+      if (isTrial && data.newUserCreated && formData.password) {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: formData.email.toLowerCase().trim(),
+          password: formData.password,
+        });
+        if (signInError) {
+          console.error("[PaymentDialog] trial account sign-in failed:", signInError);
+          const authUrl = new URL("/auth", window.location.origin);
+          authUrl.searchParams.set("redirectTo", data.redirectUrl || "/purchases");
+          authUrl.searchParams.set("email", formData.email.toLowerCase().trim());
+          window.location.href = authUrl.toString();
+          return;
+        }
       }
 
       // Redirect to bePaid checkout page
@@ -1032,23 +1134,36 @@ export function PaymentDialog({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password">Пароль</Label>
-              <Input
-                id="dialog_auth_password"
-                name="dialog_auth_password"
-                type="password"
-                placeholder="••••••••"
-                value={formData.password}
-                onChange={(e) => {
-                  setFormData(prev => ({ ...prev, password: e.target.value }));
-                  setErrors(prev => ({ ...prev, password: undefined }));
-                  setLoginError(null);
-                }}
-                required
-                disabled={isLoading}
-                allowAutofill
-                autoComplete="current-password"
-              />
+              <Label htmlFor="dialog_auth_password">Пароль</Label>
+              <div className="relative">
+                <Input
+                  id="dialog_auth_password"
+                  name="dialog_auth_password"
+                  type={showLoginPassword ? "text" : "password"}
+                  placeholder="••••••"
+                  value={formData.password}
+                  onChange={(e) => {
+                    setFormData(prev => ({ ...prev, password: e.target.value }));
+                    setErrors(prev => ({ ...prev, password: undefined }));
+                    setLoginError(null);
+                  }}
+                  required
+                  disabled={isLoading}
+                  allowAutofill
+                  autoComplete="current-password"
+                  className="pr-11"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword((visible) => !visible)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label={showLoginPassword ? "Скрыть пароль" : "Показать пароль"}
+                  aria-pressed={showLoginPassword}
+                  disabled={isLoading}
+                >
+                  {showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
               {errors.password && (
                 <p className="text-sm text-destructive">{errors.password}</p>
               )}
@@ -1172,8 +1287,48 @@ export function PaymentDialog({
               )}
             </div>
 
+            <div className="space-y-2">
+              <Label htmlFor="dialog_signup_password">Придумайте пароль</Label>
+              <div className="relative">
+                <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                <Input
+                  id="dialog_signup_password"
+                  name="dialog_signup_password"
+                  type={showSignupPassword ? "text" : "password"}
+                  placeholder={`Минимум ${USER_PASSWORD_MIN_LENGTH} символов`}
+                  value={formData.password}
+                  onChange={(e) => {
+                    setFormData(prev => ({ ...prev, password: e.target.value }));
+                    setErrors(prev => ({ ...prev, password: undefined }));
+                  }}
+                  required
+                  minLength={USER_PASSWORD_MIN_LENGTH}
+                  disabled={isLoading}
+                  allowAutofill
+                  autoComplete="new-password"
+                  className={`pl-10 pr-11 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${errors.password ? 'border-destructive' : ''}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSignupPassword((visible) => !visible)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label={showSignupPassword ? "Скрыть пароль" : "Показать пароль"}
+                  aria-pressed={showSignupPassword}
+                  disabled={isLoading}
+                >
+                  {showSignupPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              {errors.password && (
+                <p className="text-sm text-destructive">{errors.password}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Минимум {USER_PASSWORD_MIN_LENGTH} символов. Специальные символы не обязательны.
+              </p>
+            </div>
+
             <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-3 text-sm text-muted-foreground">
-              <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на указанный email.</p>
+              <p>После активации вы сразу войдёте в личный кабинет с этим email и паролем.</p>
             </div>
 
             {/* Privacy consent checkbox */}
@@ -1306,7 +1461,9 @@ export function PaymentDialog({
             {paymentError && (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Не удалось продолжить оплату</AlertTitle>
+                <AlertTitle>
+                  {isTrial ? "Не удалось активировать демо-доступ" : "Не удалось продолжить оплату"}
+                </AlertTitle>
                 <AlertDescription>{paymentError}</AlertDescription>
               </Alert>
             )}
@@ -1315,10 +1472,12 @@ export function PaymentDialog({
               <Alert className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
                 <Repeat className="h-4 w-4 text-amber-600" />
                 <AlertTitle className="text-amber-800 dark:text-amber-200">
-                  У вас уже есть активная подписка на этот продукт
+                  Новую подписку пока создать нельзя
                 </AlertTitle>
                 <AlertDescription className="space-y-3">
                   <div className="text-sm space-y-1 text-amber-800 dark:text-amber-200">
+                    <p>У вас уже есть действующая или ожидающая оплаты подписка на этот продукт.</p>
+                    <p>Чтобы исключить двойное списание, сначала отмените её.</p>
                     <p>Статус: {conflictData.status}</p>
                     {conflictData.access_end_at && (
                       <p>
@@ -1358,7 +1517,7 @@ export function PaymentDialog({
                       className="w-full min-w-0"
                     >
                       <Repeat className="mr-2 h-4 w-4 shrink-0" />
-                      <span className="truncate">Заменить подписку</span>
+                      <span className="truncate">Отменить старую и создать новую</span>
                     </Button>
                   </div>
                 </AlertDescription>
@@ -1497,6 +1656,36 @@ export function PaymentDialog({
               </div>
             )}
 
+            {customerCreditMinor > 0 && isOneTimeFlow && (
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-primary/5 p-3">
+                <Checkbox
+                  checked={useCustomerCredit}
+                  onCheckedChange={(checked) => setUseCustomerCredit(checked === true)}
+                  className="mt-0.5"
+                />
+                <span className="space-y-1">
+                  <span className="block text-sm font-medium">Использовать накопленную скидку</span>
+                  <span className="block text-xs text-muted-foreground">Доступно {(customerCreditMinor / 100).toFixed(2)} BYN</span>
+                </span>
+              </label>
+            )}
+
+            {partnerBonusMinor > 0 && isOneTimeFlow && (
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-50/50 p-3 dark:bg-emerald-950/20">
+                <Checkbox checked={usePartnerBonus} onCheckedChange={(checked) => setUsePartnerBonus(checked === true)} className="mt-0.5" />
+                <span className="space-y-1">
+                  <span className="block text-sm font-medium">Использовать партнёрские баллы</span>
+                  <span className="block text-xs text-muted-foreground">Доступно {(partnerBonusMinor / 100).toFixed(2)} BYN. Баллы не применяются к подпискам.</span>
+                </span>
+              </label>
+            )}
+
+            {customerCreditMinor > 0 && isSubscription && !isTrial && (
+              <p className="rounded-lg border border-amber-500/30 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-950/20 dark:text-amber-200">
+                Накопленная скидка не применяется к подписке с автоплатежом. Она доступна для разовых покупок и рассрочек.
+              </p>
+            )}
+
             {/* PAY-I: сохранённые карты при subscription/trial — disabled, info-only */}
             {savedCards.length > 0 && !isOneTimeFlow && isSubscription && !isTrial && (
               <div className="rounded-lg border border-border/40 bg-card/40 p-3 space-y-2">
@@ -1623,7 +1812,17 @@ export function PaymentDialog({
             </DialogHeader>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto p-6 pt-4">
+          <div className="flex-1 min-h-0 overflow-y-auto p-6 pt-4 space-y-4">
+            {quoteSummary.items.length > 0 && quoteSummary.total != null && (
+              <OrderSummary
+                items={quoteSummary.items}
+                currency={quoteSummary.currency}
+                total={quoteSummary.total}
+                subtotal={quoteSummary.subtotal ?? undefined}
+                adjustmentAmount={quoteSummary.adjustmentAmount}
+                density="admin"
+              />
+            )}
             {renderStep()}
           </div>
         </DialogContent>
@@ -1641,36 +1840,24 @@ export function PaymentDialog({
           
           <div className="space-y-4">
             <p className="text-muted-foreground">
-              Вы уже воспользовались бесплатным пробным периодом для этого продукта.
+              Бесплатный демо-доступ к этому продукту можно активировать только один раз.
             </p>
             
-            <div className="rounded-lg bg-primary/10 border border-primary/20 p-4 space-y-2">
-              <div className="flex items-center gap-2 text-primary">
-                <CheckCircle className="h-5 w-5" />
-                <span className="font-medium">Продолжите со скидкой!</span>
+            <div className="rounded-lg bg-muted/60 border border-border p-4 space-y-2">
+              <div className="flex items-center gap-2 text-foreground">
+                <Info className="h-5 w-5" />
+                <span className="font-medium">Не успели воспользоваться доступом?</span>
               </div>
               <p className="text-sm text-muted-foreground">
-                Оформите полную подписку, чтобы продолжить пользоваться всеми возможностями {productName}.
+                Обратитесь в поддержку. Сотрудник сможет проверить ситуацию и при необходимости разрешить повторную активацию.
               </p>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex justify-end">
               <Button
-                variant="outline"
                 onClick={() => setShowTrialUsedModal(false)}
-                className="flex-1"
               >
-                Закрыть
-              </Button>
-              <Button
-                onClick={() => {
-                  setShowTrialUsedModal(false);
-                  // Navigate to product page or stay with current flow (without trial)
-                  // The user can still purchase without trial option from the same dialog
-                }}
-                className="flex-1"
-              >
-                Купить полный тариф
+                Понятно
               </Button>
             </div>
           </div>

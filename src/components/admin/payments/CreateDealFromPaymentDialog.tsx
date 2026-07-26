@@ -61,9 +61,13 @@ export function CreateDealFromPaymentDialog({
   // Form state
   const [finalAmount, setFinalAmount] = useState(amount);
   const [finalCurrency, setFinalCurrency] = useState(currency);
-  const [grantAccess, setGrantAccess] = useState(false);
+  // Successful payment is a fulfilment event.  Keep the toggle for the rare
+  // historical/deal-only case, but never make a manager opt in manually for
+  // the normal "payment → paid deal → access" path.
+  const [grantAccess, setGrantAccess] = useState(true);
   const [productId, setProductId] = useState("");
   const [tariffId, setTariffId] = useState("");
+  const [offerId, setOfferId] = useState("");
   const [accessDays, setAccessDays] = useState(30);
   const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
     const dealDate = paidAt ? new Date(paidAt) : new Date();
@@ -76,6 +80,7 @@ export function CreateDealFromPaymentDialog({
   // Products and tariffs
   const [products, setProducts] = useState<any[]>([]);
   const [tariffs, setTariffs] = useState<any[]>([]);
+  const [offers, setOffers] = useState<any[]>([]);
 
   // Load initial contact if profileId provided
   useEffect(() => {
@@ -101,6 +106,26 @@ export function CreateDealFromPaymentDialog({
     }
   }, [productId]);
 
+  // The selected payment button is part of the commercial source of truth.
+  // Its offer_id is persisted on the resulting order, so documents, CRM
+  // routing and fulfilment use the exact offer that the manager selected.
+  useEffect(() => {
+    if (tariffId) {
+      loadOffers(tariffId);
+      const tariff = tariffs.find((item) => item.id === tariffId);
+      const configuredDays = Number(tariff?.access_days);
+      if (Number.isFinite(configuredDays) && configuredDays > 0) {
+        handleDaysChange(configuredDays);
+      }
+    } else {
+      setOffers([]);
+      setOfferId("");
+    }
+  // `tariffs` deliberately participates: tariffs may arrive after the
+  // selection was restored by the browser.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tariffId, tariffs]);
+
   // Reset state when dialog closes
   useEffect(() => {
     if (!open) {
@@ -109,9 +134,10 @@ export function CreateDealFromPaymentDialog({
       setContactResults([]);
       setFinalAmount(amount);
       setFinalCurrency(currency);
-      setGrantAccess(false);
+      setGrantAccess(true);
       setProductId("");
       setTariffId("");
+      setOfferId("");
       setAccessDays(30);
       const dealDate = paidAt ? new Date(paidAt) : new Date();
       setDateRange({ from: dealDate, to: addDays(dealDate, 30) });
@@ -139,11 +165,32 @@ export function CreateDealFromPaymentDialog({
   const loadTariffs = async (prodId: string) => {
     const { data } = await supabase
       .from("tariffs")
-      .select("id, name, code")
+      .select("id, name, code, access_days")
       .eq("product_id", prodId)
       .eq("is_active", true)
       .order("name");
     setTariffs(data || []);
+  };
+
+  const loadOffers = async (selectedTariffId: string) => {
+    const { data, error } = await supabase
+      .from("tariff_offers")
+      .select("id, button_label, amount, offer_type, payment_method, is_primary, sort_order")
+      .eq("tariff_id", selectedTariffId)
+      .eq("is_active", true)
+      .order("sort_order");
+    if (error) {
+      toast.error("Не удалось загрузить кнопки оплаты тарифа");
+      setOffers([]);
+      setOfferId("");
+      return;
+    }
+    const available = data || [];
+    setOffers(available);
+    setOfferId((current) => {
+      if (available.some((offer) => offer.id === current)) return current;
+      return available.find((offer) => offer.is_primary)?.id || available[0]?.id || "";
+    });
   };
 
   const searchContacts = async () => {
@@ -170,7 +217,9 @@ export function CreateDealFromPaymentDialog({
     if (dateRange?.from) {
       setDateRange({
         from: dateRange.from,
-        to: addDays(dateRange.from, days - 1),
+        // The access-end date is exclusive in the canonical entitlement flow,
+        // so a 30-day tariff must span a full 30 calendar days.
+        to: addDays(dateRange.from, days),
       });
     }
   };
@@ -178,7 +227,9 @@ export function CreateDealFromPaymentDialog({
   const handleDateRangeChange = (range: DateRange | undefined) => {
     setDateRange(range);
     if (range?.from && range?.to) {
-      setAccessDays(differenceInDays(range.to, range.from) + 1);
+      // End is stored as an exclusive boundary and is passed unchanged to the
+      // canonical grant function. Keep the visible number in that same unit.
+      setAccessDays(Math.max(1, differenceInDays(range.to, range.from)));
     }
   };
 
@@ -214,6 +265,10 @@ export function CreateDealFromPaymentDialog({
     }
     if (!productId || !tariffId) {
       toast.error("Выберите продукт и тариф");
+      return;
+    }
+    if (offers.length > 0 && !offerId) {
+      toast.error("Выберите кнопку оплаты, по которой поступил платёж");
       return;
     }
     if (!dateRange?.from || !dateRange?.to) {
@@ -253,7 +308,7 @@ export function CreateDealFromPaymentDialog({
       // при том же ключе, но другом содержании возвращает 409 idempotency_conflict.
       const idempotencyKey =
         `admin-create-deal:v2:${paymentId}:${rawSource}:${selectedContact.id}` +
-        `:${productId}:${tariffId}:${finalAmount}:${finalCurrency}` +
+        `:${productId}:${tariffId}:${offerId || "no-offer"}:${finalAmount}:${finalCurrency}` +
         `:${accessStart.toISOString()}:${accessEnd.toISOString()}:${grantAccess ? 1 : 0}`;
 
       const { data, error } = await supabase.functions.invoke("admin-create-deal-from-payment", {
@@ -263,6 +318,7 @@ export function CreateDealFromPaymentDialog({
           profileId: selectedContact.id,
           productId,
           tariffId,
+          offerId: offerId || null,
           finalAmount,
           finalCurrency,
           accessStart: accessStart.toISOString(),
@@ -437,6 +493,27 @@ export function CreateDealFromPaymentDialog({
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          {/* Payment button / offer: a paid order must retain the exact CTA
+              configuration that was used, not only the broad tariff. */}
+          <div className="space-y-2">
+            <Label>Кнопка оплаты</Label>
+            <Select value={offerId} onValueChange={setOfferId} disabled={!tariffId || offers.length === 0}>
+              <SelectTrigger>
+                <SelectValue placeholder={tariffId ? "Выберите кнопку оплаты" : "Сначала выберите тариф"} />
+              </SelectTrigger>
+              <SelectContent>
+                {offers.map((offer) => (
+                  <SelectItem key={offer.id} value={offer.id}>
+                    {offer.button_label} · {Number(offer.amount).toLocaleString("ru-RU")} {finalCurrency}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {tariffId && offers.length === 0 && (
+              <p className="text-xs text-amber-600">У этого тарифа пока нет активной кнопки оплаты. Сделка будет создана без привязки к кнопке.</p>
+            )}
           </div>
 
           {/* Date Range */}

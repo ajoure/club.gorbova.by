@@ -1,254 +1,116 @@
-# CRM Companies — Discovery (Phase 0)
-
-Дата: 2026-07-07. Read-only. Никаких DDL/DML.
-
-Цель: подготовить безопасный план внедрения canonical-сущности `companies` без поломки текущих оплат, документов, доступов и CRM.
-
----
+# Discovery: карта системы перед добавлением сущности «Компания»
 
-## 1. Executive summary
-
-1. Полноценной CRM-сущности «Компания» в системе **нет**. Юрлицо сегодня существует как «реквизиты конкретного клиента» — привязано к `profile_id`/`owner_profile_id`, дедупа по УНП нет, база «прозвона» негде.
-2. Уже существуют **два параллельных источника юрлиц**:
-   - Legacy: `client_legal_details` — используется документами, оплатой, пакетами.
-   - v2: `legal_entities_requisites` (jsonb, `source_legacy_id → client_legal_details.id`) — активно мигрируется, но остаётся owner-bound.
-   Оба привязаны к клиенту-физлицу, а не к самой компании.
-3. Инфраструктура для новой сущности **есть**: `tenants` (system UUID `00000000-0000-0000-0000-000000000001`), `has_role_v2()`, `public_id_sequences`, `audit_logs`, `domain_events`, `crm_activity_log`, `calls.workspace_id/public_id`, ГРП-обогащение (`grp-lookup` edge function).
-4. `orders_v2` уже имеет `payer_type` (20 записей `legal_entity` против 4035 individual), но **`company_id` нет**. Связка «заказ ↔ ЮЛ» сейчас только косвенная — через `generated_documents.client_details_id` (в БД сейчас всего 1 такая запись из 20 legal-заказов).
-5. Дубли по УНП уже есть: как минимум одна пара `193405000` — двое разных клиентов, одна компания. Backfill без нормализации создаст ещё больше дублей.
-6. **Рекомендация:** Вариант A — отдельная таблица `companies` + `company_contacts`, `client_legal_details`/`legal_entities_requisites` остаются как **источники upsert** и как billing/document input, не удаляются, ссылки на них не ломаем. Compat-слой между `companies.id ↔ client_legal_details.id` фиксируется отдельным bridge-полем (`selected_company_id` nullable параллельно с `selected_legal_entity_id`), documents module мигрируем отдельной задачей вне этого спринта.
+Дата: 2026-07-23. Автор: инженерный агент. Режим: read-only.
 
----
+## 0. TL;DR
 
-## 2. Карта существующих таблиц
+Сущность «Компания» **уже реализована в БД и частично в UI**. Отдельно создавать таблицы `companies` / `company_contacts` / поле `orders_v2.company_id` **не нужно** — они существуют и покрыты RLS, RPC и триггерами. Спринт сводится к:
 
-### 2.1. Юрлица
+1. UI-надстройке: `CompanyDetailSheet`, вкладка «Компании» в `ContactDetailSheet`, поле «Компания» в `DealDetailSheet`, пункт в сайдбаре.
+2. Достройке автопривязки: `client_legal_details` → `companies` уже есть RPC `crm_company_upsert_from_billing` + backfill, но **DB-триггера INSERT/UPDATE на `client_legal_details` нет** — привязка идёт через явные RPC (см. §5).
+3. Достройке связи «сделка ↔ компания»: `orders_v2.company_id` заполнен для 388/4275 заказов; таблица `company_order_links` существует, но **пуста (0 строк)** — не используется. Нужно решение: остаться на `orders_v2.company_id` или начать писать в `company_order_links`.
 
-| Таблица | Роль сейчас | Владелец | Строк | Ключевые поля | Решение |
-|---|---|---|---|---|---|
-| `client_legal_details` | Legacy SoT реквизитов ЛК (individual/entrepreneur/legal_entity + billing/document) | `profile_id → profiles(id) ON DELETE CASCADE` | 42 (23/9+1/4+4) | `leg_unp`, `ent_unp`, `leg_name`, `leg_address_structured`, `bank_*`, `grp_*` | Источник для backfill; **не удалять**, ссылки FK живы (`generated_documents.client_details_id`, `document_package_sessions.selected_legal_entity_id`, `document_package_session_participants.legal_entity_id`, `corporate_draft_sessions.legal_details_id`, `legal_details_entity_person_links.legal_details_id`) |
-| `legal_entities_requisites` | v2 таблица, jsonb + `source_legacy_id` | `tenant_id`, `owner_user_id`, `owner_profile_id` | 11 (8 ИП + 3 ЮЛ, все `scope=system_customer`) | `data->>'leg_unp'/'ent_unp'/…`, `source_legacy_id → client_legal_details.id` | Второй источник для backfill; переиспользуем RLS-паттерн через `tenant_id`/`user_tenant_ids`; не трогаем |
-| `individual_requisites` | Аналог для физлиц | тот же | — | jsonb | Вне scope спринта |
-| `legal_details_persons` | Люди-подписанты (директор/представитель), отдельные от `profiles` | `profile_id` (владелец) | 4 (2 profile) | ФИО, паспорт, банк, `personal_number` | Маппим в `company_contacts` через `legal_details_entity_person_links`; `person_id` сохраняем для документов через compat-таблицу (см. Phase 10) |
-| `legal_details_entity_person_links` | Связь legacy ЮЛ ↔ подписант | `legal_details_id`, `person_id`, `role_type`, `role_catalog_id`, `position_catalog_id`, `share_percent`, `acts_on_basis`, `is_primary`, `start_date/end_date` | — | | Источник для `company_contacts` (relationship_type=director/signer/representative) |
-| `legal_details_roles_catalog`, `legal_details_positions_catalog` | Справочники ролей/должностей | — | — | | Переиспользуем в `company_contacts` (FK-совместимо) |
-| `tenants` / `tenant_memberships` | Multi-tenant инфраструктура | `is_personal=true` у всех | 1 system tenant `000...001` | | Используем `system tenant` как DEFAULT `workspace_id` для новых таблиц |
+Продукт «Сделки» в системе — это `orders_v2` + `crm_pipelines` / `crm_pipeline_stages` / `crm_pipeline_product_bindings`. Отдельной таблицы `crm_deals` **нет** (её упоминание в задаче — устаревший термин).
 
-### 2.2. Заказы / оплаты / доступ
+## 1. Существующие таблицы (public)
 
-| Таблица | Что там уже есть | Что понадобится | Риск |
-|---|---|---|---|
-| `orders_v2` | `payer_type` (individual/legal_entity), `profile_id`, `pipeline_id`, `pipeline_stage_id`, `offer_id`, `product_id`, `user_id` | nullable `company_id` | Изменение опциональности `profile_id` запрещено |
-| `payments_v2` | привязка к order | — | Не трогаем |
-| `subscriptions_v2` | `profile_id` | — | Не трогаем |
-| `entitlements` | всегда `profile_id` | Ничего. Компания **не** получает entitlement | Инвариант в system_health |
-| `access_grant_ledger`, `entitlement_orders` | audit доступа | — | — |
-| `generated_documents` | `client_details_id → client_legal_details(id)`, `order_id`, `profile_id` | Backfill source для `orders_v2.company_id` (`gd.client_details_id → cld → company`) | Compat FK живой |
-| `corporate_draft_sessions`, `document_package_sessions`, `document_package_session_participants` | `legal_entity_id`/`selected_legal_entity_id` → `client_legal_details` | Параллельный nullable `selected_company_id` в Phase 1; UI-picker обновим в Phase 10 | Ломать FK на CLD нельзя |
-| `document_package_item_role_assignments.person_id → legal_details_persons` | | Compat-таблица `company_contact_person_map` для связи `company_contacts.id ↔ legal_details_persons.id` | — |
+Все с RLS enabled.
 
-### 2.3. CRM / задачи / звонки
+### 1.1 companies (6151 строк)
+Ключевые колонки: `id`, `public_id`, `workspace_id`, `company_kind`, `country`, `unp_normalized`, `full_name`, `short_name`, `legal_form`, `legal_address` (+ `legal_address_structured` jsonb), `email`, `phone`, `director_name`, `director_position`, `acts_on_basis`, `bank_account`, `bank_name`, `bank_code`, `status`, `merged_into_company_id`, `archived_at`, `grp_*` (снимок из ЕГР), `metadata` jsonb, стандартные `created_at/updated_at/created_by/updated_by`.
 
-| Таблица | Что уже есть | Что нужно | Риск |
-|---|---|---|---|
-| `crm_pipelines`, `crm_pipeline_stages` | — | Не трогаем | — |
-| `crm_tasks` | `workspace_id`, `public_id`, `contact_id`, `deal_id`, `order_id`, `pipeline_*`, `offer_id`, `product_id`, `tariff_id`, `meta jsonb` | nullable `company_id` | Автоматики (`crm_task_automation_rules`) — проверить при добавлении, что новые правила не ломают старые |
-| `crm_activity_log` | лента активности | Пишем compact-запись при create/close/link | — |
-| `calls` | `workspace_id`, `public_id`, `contact_id`, `deal_id`, `manager_user_id`, `phone_*` | nullable `company_id` + link по номеру | Existing calls не ломать (link_status уже есть) |
-| `call_events`, `call_sync_queue`, `sms_messages` | | — | — |
-| `import_jobs`, `import_mapping_rules` | общий импорт | Переиспользовать для company import, если позволит структура; иначе создать `company_import_batches/rows` (Phase 9) | Проверить в Phase 9 |
+Политики: `companies_read_rbac / insert_rbac / update_rbac / delete_rbac`.
 
-### 2.4. Инфраструктура, которую переиспользуем
+### 1.2 company_contacts (19 строк) — M2M компания↔профиль
+`id, company_id, profile_id, external_full_name, external_email, external_phone, relationship_type, is_billing_contact, is_primary, source, source_client_legal_details_map_id, metadata, …`.
+Политики `*_rbac` на все CRUD.
 
-- `public_id_sequences` + шаблон `trg_set_*_public_id` → генерация `CMP-000001` / `CNT-000001`.
-- `has_role_v2(uuid, text)` → RLS для `admin`/`super_admin`/`employee`.
-- `user_tenant_ids(auth.uid())` → workspace-scope.
-- `audit_logs` → аудит.
-- `domain_events` + `domain_executions` → события `crm.company.*`.
-- `update_updated_at_column()` → триггер updated_at.
-- Edge functions: `grp-lookup` (ГРП-обогащение), паттерн `amocrm-mass-import`/`import-contacts-gc`/`admin-import-bepaid-statement-csv` — для импорта.
+### 1.3 company_order_links (0 строк) — M2M компания↔заказ
+`id, workspace_id, company_id, order_id, relationship_role, source, source_client_legal_details_id, metadata, unlinked_at, unlinked_by, unlink_reason, …`.
+Policy: только SELECT для CRM staff. Таблица подготовлена, но writer'ы её не наполняют.
 
----
+### 1.4 client_legal_details_company_map (19 строк)
+`id, client_legal_details_id, company_id, linked_at, linked_by, metadata, …`. Полный RBAC.
 
-## 3. Карта edge functions / RPC (по гриппе `supabase/functions/`)
+### 1.5 Вспомогательные (все с RLS)
+- `company_external_ids` — интеграционные ID (amoCRM/1C/…).
+- `company_sync_queue` (service-only ALL) — очередь фоновой синхронизации.
+- `company_contact_persons` / `company_contact_person_links` — контактные лица без profile_id.
+- `company_files`, `company_notes`, `company_relationships`.
+- `company_import_batches`, `company_import_ledger` — импорт из Google Sheets.
 
-Прямо касаются юрлиц/реквизитов/импорта:
+### 1.6 orders_v2 (4275 строк, 388 c company_id)
+Уже есть `company_id uuid` (nullable). Также `payer_type` и связь на `profile_id`. Отдельная таблица `crm_deals` **не существует** — «сделка» = запись в `orders_v2`, стадия воронки хранится в `pipeline_id` / `pipeline_stage_id` (см. `crm_pipelines`, `crm_pipeline_stages`, `crm_pipeline_product_bindings`).
 
-- `grp-lookup` — enrichment УНП → ГРП. **Переиспользуем** в `crm_company_grp_refresh`.
-- `admin-import-bepaid-statement-csv`, `amocrm-mass-import`, `amocrm-contacts-import`, `getcourse-import-deals`, `getcourse-import-file`, `import-contacts-gc`, `import-telegram-history`, `bepaid-report-import`, `bepaid-archive-import`, `ai-import-analyzer` — паттерны CSV/XLSX импорта с dry-run + execute. **Reference** для `company-import-*`.
-- `admin-purge-imported-transactions`, `amocrm-import-rollback` — rollback-паттерн.
+### 1.7 client_legal_details (50 строк)
+Ключевые поля для юрлица: `leg_name`, `leg_unp`, `leg_address` (+ structured), `leg_org_form`, `leg_director_*`, `leg_acts_on_basis`, `bank_account/name/code`, `grp_*` (снимок ЕГР), `phone`, `email`, `status`, `purpose`, `validation_*`. `profile_id` — обязательный, `client_type ∈ {individual, ent, legal}`.
 
-RPC, которые пишут `client_legal_details` / `legal_entities_requisites`: определяются в Phase 0.1 через `pg_proc` в момент реализации (для план-документа — reserved).
+## 2. RPC / функции (public.crm_company_*)
 
----
+Готовый набор: `crm_company_get_or_create`, `crm_company_create_from_billing`, `crm_company_upsert_from_billing`, `crm_company_update`, `crm_company_archive`, `crm_company_restore`, `crm_company_merge`, `crm_company_link_contact`, `crm_company_link_order`, `crm_company_unlink_order`, `crm_company_relationship_upsert / list`, `crm_company_contact_person_upsert / link / list`, `crm_company_external_id_upsert / list`, `crm_company_external_reconcile_preview`, `crm_company_grp_refetch`, `crm_company_sheet_import_batch_start / apply`, `crm_company_sync_worker_claim / complete`, `crm_company_sync_admin_retry / dismiss`, `crm_company_sync_enqueue`, `crm_company_sync_health`, `crm_company_backfill_billing_cld`, `crm_company_quality_summary`, `crm_company_invariants_report`, `search_companies`, `company_feed_list`, `company_note_create/delete`, `resolve_generated_document_company`, `crm_order_resolve_company`.
 
-## 4. Карта UI
+Триггерные хелперы: `_crm_company_emit_domain_event`, `_crm_company_order_activity`, `_crm_company_resolve_or_create_internal`, `crm_companies_normalize_phone_tg`, `crm_normalize_company_phone`, `crm_company_relationship_guard`, `crm_company_parse_callback_at`, `set_companies_public_id`.
 
-| Файл | Что делает | Реакция в спринте |
-|---|---|---|
-| `src/pages/settings/LegalDetails.tsx` | Страница ЛК: создание/редактирование `client_legal_details` | В Phase 4 добавляем skрытый sync-call в `CompanyService.upsertFromLegalDetails()` (RPC + safety-net trigger) — UI не меняется |
-| `src/components/legal-details/*` (LegalEntity/Entrepreneur/Individual/Organization DetailsForm, `FieldLabelWithId`) | Формы | Не трогаем |
-| `src/hooks/useLegalDetails.tsx`, `useLegalDetailsFields.ts`, `useEntityPersonLinks.ts`, `useEntityDuplicateCheck.ts`, `useGrpRefresh.ts`, `usePersonDuplicateCheck.ts` | Хуки legacy | Переиспользуем `useGrpRefresh`, `useEntityDuplicateCheck` |
-| `src/components/requisites-v2/RequisitesV2Manager.tsx`, `src/hooks/useRequisitesV2.ts`, `src/lib/requisites-v2/fieldMap.ts` | v2 менеджер | Дополним sync в Company, UI без изменений |
-| `src/components/ai-requisites/*` (PersonLinkedEntitiesBlock, PersonFieldsForm, EntityTableView, EntityRecordSheet) | AI-редактор реквизитов | Не трогаем |
-| `src/components/ai-documents/LegalDetailsPickerDialog.tsx`, `DealPayerDocumentsCard.tsx`, `packages/*` | Пикер юрлиц в документах | Phase 10: добавить companies-picker, compat через bridge-поле |
-| `src/components/payment/InvoiceCheckoutDialog.tsx`, `src/components/purchases/InvoiceActPreviewDialog.tsx` | Оплата ЮЛ + инвойсы/акты | Читают CLD — не трогаем |
-| `src/components/admin/ContactDetailSheet.tsx` (существует) | Карточка контакта в CRM | Phase 8: добавляем вкладку «Компании», старые вкладки не меняем |
-| `src/components/admin/DealDetailSheet.tsx` | Карточка сделки | Phase 5.1: добавляем блоки «Компания» / «Основной контакт» / «Доп. контакты» |
-| Списки сделок/контактов, `AdminExecutors.tsx` | | Не трогаем |
-| **Новое**: `/admin/companies` (list + import), `CompanyDetailSheet` через общий `EntityDetailSheet` shell (Phase 7). Shell выносим из существующего ContactDetailSheet — без copy-paste |
+Вывод: логика создания/обновления/поиска/слияния/связей полностью покрыта — UI должен вызывать существующие RPC и **не писать напрямую** в таблицы.
 
----
+## 3. Существующий UI
 
-## 5. SQL-отчёты
+- Роут `/admin/companies` → `src/pages/admin/AdminCompanies.tsx` (2084 строки). Уже подключён в `src/App.tsx:293` и в маппинге заголовков сайдбара `AdminLayout.tsx:26`. **Пункта в самом меню сайдбара — нет** (только title/permission mapping); нужен видимый item «Компании» между «Контакты» и «Сделки» (проверить блок с элементами меню — не найдено в первом экране, добавить).
+- `src/components/admin/CompanySheetImportDialog.tsx` — импорт из Google Sheets (готов).
+- `src/components/admin/CompanySyncQueuePanel.tsx` — панель admin-мониторинга очереди синхронизации (готова).
+- `CompanyDetailSheet` / карточка компании (Sheet/Drawer) — **отсутствует**. `ContactDetailSheet` не имеет вкладки «Компании». `DealDetailSheet` не имеет поля «Компания».
 
-### 5.1. `client_legal_details` — количество/уникальность
+## 4. Reusable компоненты
 
-| src | rows | unique_unp | missing_unp |
-|---|---|---|---|
-| legal_entity | 8 | 7 | 0 |
-| entrepreneur | 10 | 10 | 0 |
+- `ContactDetailSheet` (`src/components/admin/ContactDetailSheet.tsx`) — паттерн для нового `CompanyDetailSheet` (вкладки: Профиль, Реквизиты, Контакты, Сделки, Лента, Задачи, Документы).
+- `DealDetailSheet` (`src/components/admin/DealDetailSheet.tsx`) — точка добавления поля «Компания».
+- `ClickableContactName` — аналог для «ClickableCompanyName» (клик → открыть sheet поверх текущего).
+- `CrmTasksSection`, `ContactFeedTab`, `DealDocumentsCard`, `ContactPaymentsTab` — переиспользовать, передавая `entity_type='company'`.
 
-Individual (`purpose=billing/document`): 24 записи — вне scope компании.
+## 5. Автопривязка ЛК → Company: текущее состояние
 
-### 5.2. `legal_entities_requisites`
+- **DB-триггера INSERT/UPDATE на `client_legal_details` нет.** Проверено через `information_schema.triggers` — ни одного триггера на этой таблице.
+- Есть RPC `crm_company_upsert_from_billing(client_legal_details_id)` и backfill `crm_company_backfill_billing_cld` — они выполняют upsert по UNP и создают запись в `client_legal_details_company_map`.
+- В текущем flow эти RPC вызываются:
+  - из фронта ЛК/админки при сохранении реквизитов (нужно валидировать в PR по интеграции),
+  - из backfill/sheet-import,
+  - НЕ вызываются автоматически из БД.
+- `orders_v2.company_id` заполнен для 388 заказов — очевидно ручным/бэкграундным `crm_order_resolve_company`. `company_order_links` при этом пуст → второй канал не активирован.
 
-| subject_type | rows | unique_unp | with_legacy_id |
-|---|---|---|---|
-| entrepreneur | 8 | 8 | 8 |
-| legal_entity | 3 | 3 | 3 |
+**Решение для спринта**: не создавать новый триггер вслепую — сначала подтвердить, что все места записи `client_legal_details` (RPC/edge functions/фронт) вызывают `crm_company_upsert_from_billing`. Если да — оставить как есть; если нет — добавить AFTER INSERT OR UPDATE OF `leg_unp, leg_name, …` триггер, вызывающий `crm_company_upsert_from_billing(NEW.id)` внутри `SECURITY DEFINER` (риск: RLS/`workspace_id`, `created_by`; см. §7).
 
-**Все 11 записей v2 имеют `source_legacy_id`** — маппинг legacy↔v2 полный, дубли upsert-а по паре легко разрешить.
+## 6. Пробелы к закрытию в спринте
 
-### 5.3. Дубли по нормализованному УНП внутри `client_legal_details`
+1. **UI: `CompanyDetailSheet`** (карточка компании как Sheet поверх). Использует RPC `crm_company_*` + `company_feed_list` + `company_notes` + `crm_company_contact_persons_list` + звонки/SMS/email существующими секциями.
+2. **UI: пункт «Компании» в сайдбаре** между «Контакты» и «Сделки». Роут и permission уже настроены.
+3. **UI: вкладка «Компании» в `ContactDetailSheet`** — список из `company_contacts` по `profile_id`, кнопка «Привязать к компании» (поиск через `search_companies` RPC по названию/УНП, привязка через `crm_company_link_contact`).
+4. **UI: поле «Компания» в `DealDetailSheet`** — чтение `orders_v2.company_id`, поиск через `search_companies`, установка/снятие через `crm_company_link_order` / `crm_company_unlink_order`. Клик по названию открывает `CompanyDetailSheet` поверх.
+5. **Автопривязка ЛК → Company при создании сделки ЮЛ**: подтвердить, что `invoice-checkout-issue` (edge function) и создание сделки с `payer_type=legal_entity` вызывают `crm_order_resolve_company`/`crm_company_link_order`. Если нет — вызвать в конце flow, идемпотентно.
+6. **Опционально**: включить запись в `company_order_links` параллельно `orders_v2.company_id` (двойная запись до депрекации `company_id`), либо явно оставить `orders_v2.company_id` как источник истины и не трогать `company_order_links`. **Рекомендация**: оставить `orders_v2.company_id` источником истины (уже 388 строк, RLS, все writer'ы знают о нём), `company_order_links` использовать только для M2M-ролей (плательщик/получатель), если продуктовый кейс появится.
 
-| unp | rows | profiles | distinct_names |
-|---|---|---|---|
-| 193405000 | 2 | 2 | 1 |
+## 7. Риски
 
-Одна компания у двух разных клиентов. Backfill без нормализации создаст 2 company. Правильно: 1 company + 2 `company_contacts`.
+- **workspace_id / RBAC**: `companies`, `company_order_links` имеют `workspace_id` — новые вставки должны его заполнять корректно, иначе `*_rbac` policy отфильтрует.
+- **RLS на `client_legal_details`**: любой новый триггер, upsert'ящий `companies`, должен быть `SECURITY DEFINER` с явным `search_path=public`, иначе fail из-за политик на companies.
+- **Дублирование по UNP**: `companies.unp_normalized` — ключ для upsert; при пустом `leg_unp` (ИП без УНП, физлицо) upsert должен не выполняться, иначе получим фантомные пустые компании (сейчас 6151 запись — возможно, среди них уже есть шум, проверить `crm_company_quality_summary`).
+- **CRM-роутинг сделок**: не должен ломаться от появления/непоявления `company_id` — сейчас 3887/4275 заказов без `company_id` работают нормально. Правило pipeline routing использует `product_id/tariff_id`, не `company_id`.
+- **UI-подрыв**: `AdminCompanies.tsx` (2084 строки) уже существует — новый пункт меню откроет реальный, но, возможно, тяжёлый экран. Проверить его текущее состояние отдельно перед релизом.
+- **`crm_deals` не существует** — задачи, упоминающие `crm_deals`, интерпретировать как `orders_v2` + `crm_pipelines*`.
 
-### 5.4. Заказы ЮЛ и связь с документами
+## 8. Итоговое действие для последующих задач спринта
 
-| legal_orders | with_profile | with_generated_doc | distinct_cld |
-|---|---|---|---|
-| 20 | 20 | 1 | 1 |
+- Задачу «Схема БД и backend сущности Компания» (307db7ab) — **урезать**: не создавать `companies` / `company_contacts` / `orders_v2.company_id` (уже есть). Скоуп сводится к:
+  - опциональному триггеру `AFTER INSERT OR UPDATE` на `client_legal_details` → `crm_company_upsert_from_billing`, если аудит покажет пропуски;
+  - проверке заполнения `workspace_id` в новых вставках через UI-RPC.
+- Задачи 128f5da9, 91bb7937, 4886fffb — **чисто UI + подключение существующих RPC**, миграции не требуются (или минимальные).
 
-Только 1/20 legal-заказов имеет `generated_documents.client_details_id`. Значит **backfill `orders_v2.company_id` через `generated_documents` покроет только 5%**. Остальные 19 придётся линковать эвристикой (email/phone → matching CLD → company) с флагом `low_confidence` и админ-review-очередью.
+## 9. Что было проверено (read-only)
 
-### 5.5. UI-обеспечение
+- `information_schema.tables/columns` — все companies-таблицы и их колонки.
+- `pg_policies` + `pg_tables.rowsecurity` — RLS/policies перечислены.
+- `information_schema.triggers` — триггеров на `client_legal_details` / `companies` / `orders_v2` для company-логики **не найдено** (только эмиссия domain events).
+- `pg_proc` — 40+ `crm_company_*` функций.
+- Счётчики: `companies=6151`, `company_contacts=19`, `company_order_links=0`, `client_legal_details_company_map=19`, `client_legal_details=50`, `orders_v2=4275` (388 с `company_id`).
+- Фронт: `src/App.tsx` (роут), `src/components/layout/AdminLayout.tsx` (title/permission), `src/pages/admin/AdminCompanies.tsx` (существует, 2084 строки), `CompanySheetImportDialog`, `CompanySyncQueuePanel`. `CompanyDetailSheet` — отсутствует.
 
-- system tenant: `00000000-0000-0000-0000-000000000001` (уже существует, `is_personal=false`, name=`system`) → используем как DEFAULT `workspace_id`.
-- `has_role_v2`, `user_tenant_ids`, `has_role` — все три функции существуют.
-
----
-
-## 6. Compatibility matrix
-
-| Сущность | Текущий смысл | Будущая роль | company_id? | Мигрировать сейчас? | Риск | Рекомендация |
-|---|---|---|---|---|---|---|
-| `client_legal_details` | SoT legacy реквизитов | Источник backfill + billing/document input | нет | нет | Разрыв FK у документов | Оставить, добавить bridge-таблицу `client_legal_details_company_map(client_details_id UNIQUE, company_id, confidence)` |
-| `legal_entities_requisites` | v2 owner-bound | Второй источник backfill | нет | нет | Дубли, если сначала не нормализовать | UPSERT по `(country, normalized_unp)` |
-| `legal_details_persons` | Люди-подписанты | Совместимо с company_contacts через compat-map | нет | нет | Ломать `document_package_item_role_assignments.person_id` нельзя | `company_contact_person_map(company_contact_id, person_id)` |
-| `orders_v2` | Заказ | Заказ с company | **да, nullable** | Backfill 5% через `generated_documents`, остальное — эвристика с флагом | Изменение `profile_id` запрещено | Add-only колонка + backfill в Phase 3 |
-| `generated_documents` | Документ | — | нет | нет | — | Читаем `client_details_id` для backfill |
-| `document_package_sessions` | Сессия пакета | Добавить `selected_company_id nullable` параллельно `selected_legal_entity_id` | параллельно | Phase 10 | UI-picker | Не удалять `selected_legal_entity_id` |
-| `corporate_draft_sessions` | Черновик | То же | параллельно | Phase 10 | | |
-| `crm_tasks` | Задача | Задача по company | **да, nullable** | Phase 1.4 | Automation rules | Add-only |
-| `calls` | Звонок | Звонок по company | **да, nullable** | Phase 1.4 | link_status логика | Add-only |
-| `profiles` | Контакт/физлицо | Contact | нет | Не трогаем | Access breakage | — |
-| `entitlements`, `subscriptions_v2`, `payments_v2`, `access_grant_ledger`, `entitlement_orders` | Access/оплата за profile | То же | **нет** | Никогда | Тихая выдача доступа компании | Инвариант: `NOT EXISTS entitlement.company_id` |
-
----
-
-## 7. Сравнение архитектурных вариантов
-
-### Вариант A — отдельная `companies` + `company_contacts` — **рекомендуется**
-
-За: чистая CRM-сущность, поддерживает базу прозвона без клиента, дедуп по УНП, совместимо с amoCRM/Pipedrive/HubSpot, не ломает access.
-
-Против: две новые таблицы + bridge-map, двухнедельный спринт с обязательным Phase 0.
-
-### Вариант B — `profiles.type = contact/company`
-
-Против: `profiles.id` используется в entitlements/telegram/subscriptions — riск тихой выдачи доступа компании, ломает RLS-паттерны, поля физлица и юрлица разной природы, дедуп по УНП конфликтует с дедупом по email. **Отклонён**.
-
-### Вариант C — `legal_entities_requisites` как CRM-сущность
-
-Против: таблица owner/tenant-bound (одна компания у двух клиентов = две строки), нельзя хранить «компанию для прозвона без клиента», нет `public_id`, RLS через `owner_user_id` не подходит для CRM-глобальной сущности. **Отклонён**, но используем как **источник backfill**.
-
----
-
-## 8. Risk matrix
-
-| Риск | Где | Вероятность | Последствие | Как закрываем | Blocker? |
-|---|---|---|---|---|---|
-| Выдать entitlement компании | Phase 5.3 | средняя | Доступ уходит не туда | Инвариант system_health + гвард в `grant_entitlement` RPC | **Blocker** |
-| Тихая перезапись реквизитов из ЛК | Phase 4 | высокая | Клиентские данные затираются | Правило: `updated_by IS NOT NULL AND source != 'grp'` → не перезаписываем, пишем в `system_health_discovery_findings` | **Blocker** |
-| Backfill создаст дубли | Phase 3 | высокая | Задвоение company | `normalize_unp()` + `UNIQUE(workspace_id, country, tax_id_normalized)` + dry-run обязателен | **Blocker** |
-| Разрыв FK у документов | Phase 10 | средняя | Пакеты не открываются | Не удаляем `selected_legal_entity_id`; добавляем параллельное `selected_company_id` | **Blocker** |
-| Потеря `profile_id` в orders_v2 | Phase 5 | низкая | Access ломается | `profile_id` остаётся, добавляем nullable `company_id` | **Blocker** |
-| Automation rules сломают старые задачи | Phase 1.4 | низкая | Задачи не создаются | Add-only колонка + правила без `company_id` продолжают работать | non-blocker |
-| Импорт создаст мусор | Phase 9 | средняя | Загрязнение базы | Обязательный dry-run + review-очередь + rollback | non-blocker |
-| Смешение подписанта и `profile` | Phase 3 | средняя | Ложная связь access | `company_contacts.profile_id` только если `legal_details_persons.profile_id` = существующий `profiles.id` от того же клиента; иначе — не создаём link, только `person_id` в compat-map | **Blocker** |
-| Ломается ContactDetailSheet | Phase 7-8 | низкая | UI регресс | Shell выносим в отдельный компонент, старые вкладки не трогаем; регресс-чек в Phase 11 | non-blocker |
-| Ломаются звонки | Phase 1.4 | низкая | Регресс call flow | `company_id` nullable, link_status не меняем | non-blocker |
-| Дубли `legal_entities_requisites` ↔ `client_legal_details` при backfill | Phase 3 | высокая | Задвоение | `source_legacy_id` уже связывает 11/11 v2 с CLD → идём от CLD, v2 подтягиваем | **Blocker** |
-
----
-
-## 9. Инварианты для system_health
-
-1. `NOT EXISTS entitlement WHERE company_id IS NOT NULL AND profile_id IS NULL` (после Phase 5).
-2. `company_contacts.company_id` и `profile_id` ссылаются на существующие строки.
-3. Не более одной `is_primary=true` строки на компанию.
-4. `UNIQUE(workspace_id, country_code, tax_id_normalized)` не нарушается.
-5. `orders_v2 WHERE payer_type='legal_entity' AND matched_legal_details IS NOT NULL AND company_id IS NULL` → таких быть не должно (после Phase 5.1 backfill).
-6. Оплаченный legal-заказ имеет либо `profile_id` = access recipient, либо явный `meta.access_status='pending_access_recipient'` + открытая `crm_task`.
-7. Все `company_contact_person_map.person_id` ссылаются на существующий `legal_details_persons.id`.
-
----
-
-## 10. Финальные решения по compat-слою
-
-1. **`client_legal_details` не удаляем** — остаётся SoT legacy для документов и оплаты; ссылки FK остаются рабочими. Bridge-таблица `client_legal_details_company_map(client_details_id PK, company_id, confidence, matched_at)` — Phase 1.
-2. **`document_package_sessions.selected_legal_entity_id`** остаётся. Параллельно добавляем nullable `selected_company_id`. UI переключаем в Phase 10.
-3. **`legal_details_persons`** остаются SoT подписантов для документов. Bridge `company_contact_person_map(company_contact_id, person_id)`.
-4. **ЛК → Company sync**: основной путь — RPC `crm_company_upsert_from_legal_details(source_table, source_id)` + edge function; **DB-триггер** на `client_legal_details` / `legal_entities_requisites` — только `AFTER INSERT/UPDATE`, вызывает RPC через `pg_net` в фоне или пишет в `notification_outbox`, чтобы гарантировать sync при прямых INSERT/UPDATE мимо сервиса (пример — админ-правки, миграции, скрипты). Триггер идемпотентный.
-5. **Access**: инвариант в system_health + explicit гвард в RPC выдачи entitlement — компания без `access_recipient` в `company_contacts` не может получить entitlement. Заказ ЮЛ без контакта → `meta.access_status='pending_access_recipient'` + `crm_task` типа «Указать получателя доступа».
-6. **Automations `crm_task_automation_rules`**: `company_id` в `crm_tasks` — nullable, старые правила не меняются; в Phase 1.4 добавляется опциональный target `company`.
-7. **UI shell**: выносим `EntityDetailSheet` (header + tabs + timeline + actions) из существующего `ContactDetailSheet` в общий компонент; `ContactDetailSheet` и новый `CompanyDetailSheet` — тонкие обёртки поверх shell с entity-specific профильной вкладкой. Copy-paste запрещён.
-
----
-
-## 11. Открытые вопросы (для решения перед Phase 1)
-
-1. Нормализация УНП для не-BY контрагентов — сейчас все УНП белорусские, но `country_code` в модели предусмотрен. **Решение**: пока `normalize_unp(x, 'BY')` — 9 цифр; для других стран — no-op с флагом `is_normalized=false`, дедуп только внутри BY.
-2. Кого назначать `assignee_user_id` при bulk-создании задач на прозвон — round-robin по менеджерам или ручной выбор в UI импорта. **Решение**: ручной выбор в форме импорта, RR можно добавить позже.
-3. Куда пишет ГРП-refresh при конфликте: перезаписывает `companies.grp_snapshot` полностью, но `name/address/legal_form` — только если поле пустое или флаг `sync_from_grp=true`.
-
----
-
-## 12. Что не трогаем в этом спринте
-
-- `profiles`, `user_roles_v2`, `roles`.
-- `entitlements`, `access_grant_ledger`, `entitlement_orders`, `subscriptions_v2`, `payments_v2`.
-- `client_legal_details`, `legal_details_persons`, `legal_details_entity_person_links` — только чтение.
-- `orders_v2.profile_id`, `orders_v2.payer_type` — только добавление `company_id`.
-- Существующие RPC создания заказа/выдачи entitlement — только add-only гварды.
-- `LegalDetails.tsx`, `LegalDetailsPickerDialog`, `InvoiceCheckoutDialog`, `DealPayerDocumentsCard` — только чтение.
-- `crm_pipelines/stages`, `crm_activity_log` (add-only INSERT).
-
----
-
-## 13. DoD Phase 0
-
-- [x] Документ создан: `.lovable/architecture/companies_sprint_discovery.md`.
-- [x] Все существующие таблицы юрлиц и связи описаны.
-- [x] SQL-отчёты по дублям УНП, покрытию backfill, legal-заказам собраны.
-- [x] Рекомендация: Вариант A (отдельная `companies` + `company_contacts`).
-- [x] Risk matrix закрыт: blocker-риски имеют явное закрытие в плане.
-- [x] Compat-слой зафиксирован (bridge-таблицы, параллельные nullable поля, safety-net triggers).
-- [x] Открытые вопросы перечислены (3 шт., решения предложены).
-
-**Phase 0 закрыт.** Готовы к Phase 1 — миграция canonical data model. Перед стартом Phase 1 подтверждаем решения из раздела 10-11 и запрашиваем approval миграции.
+Данные и код не изменялись.

@@ -2,7 +2,10 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveUserIds, getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
+import { referralDiscountMeta, resolveReferralCheckoutDiscount } from '../_shared/referral-checkout-discount.ts';
 import { resolveOrderRouting, buildNegativeSnapshot, auditNegativeSnapshot } from '../_shared/crm-routing.ts';
+import { resolveComposableCheckout } from '../_shared/resolve-composable-checkout.ts';
+import { materializeComposableOrderGroup } from '../_shared/materialize-composable-order-group.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,6 +19,7 @@ interface CreateTokenRequest {
   customerPhone?: string;
   customerFirstName?: string;
   customerLastName?: string;
+  customerPassword?: string;
   existingUserId?: string | null;
   description?: string;
   tariffCode?: string; // For tariff identification: 'chat', 'full', 'business'
@@ -23,10 +27,15 @@ interface CreateTokenRequest {
   isTrial?: boolean; // Trial payment flag
   trialDays?: number; // Trial duration in days
   offerId?: string; // Offer ID for virtual card blocking check
+  addonOfferIds?: string[];
   isOneTime?: boolean; // One-time payment (no subscription/recurring), e.g., consultations
   // PATCH-2: MIT flow control - if true, use checkout payment API (NOT subscriptions API)
   // This saves the card token for future MIT charges without creating a bePaid subscription
   useMitTokenization?: boolean;
+  customerCreditRequestedMinor?: number;
+  customerCreditCheckoutKey?: string;
+  partnerBonusRequestedMinor?: number;
+  partnerBonusCheckoutKey?: string;
 }
 
 interface ProductInfo {
@@ -88,6 +97,7 @@ Deno.serve(async (req) => {
       customerPhone,
       customerFirstName,
       customerLastName,
+      customerPassword,
       existingUserId,
       description,
       tariffCode,
@@ -95,15 +105,45 @@ Deno.serve(async (req) => {
       isTrial,
       trialDays,
       offerId,
+      addonOfferIds = [],
       isOneTime,
       useMitTokenization, // PATCH-2: MIT flow - use checkout API instead of subscriptions
+      customerCreditRequestedMinor,
+      customerCreditCheckoutKey,
+      partnerBonusRequestedMinor,
+      partnerBonusCheckoutKey,
     }: CreateTokenRequest = await req.json();
+
+    if (useMitTokenization) {
+      return jsonResponse({
+        success: false,
+        error: 'saved_cards_disabled',
+        message: 'Сохранение карты отключено. Используйте защищённую страницу оплаты.',
+      }, 410);
+    }
 
     if (!productId || !customerEmail) {
       return new Response(
         JSON.stringify({ success: false, error: 'Product ID and email are required' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // `skipRedirect` is an internal test path. It creates order records while
+    // deliberately bypassing the provider checkout, so it must never be
+    // callable by a public/anonymous checkout request.
+    if (skipRedirect) {
+      if (!authUserId) {
+        return jsonResponse({ error: 'Unauthorized', code: 'test_payment_requires_super_admin' }, 401);
+      }
+
+      const { data: isSuperAdmin, error: roleError } = await supabase.rpc('has_role_v2', {
+        _user_id: authUserId,
+        _role_code: 'super_admin',
+      });
+      if (roleError || !isSuperAdmin) {
+        return jsonResponse({ error: 'Forbidden', code: 'test_payment_requires_super_admin' }, 403);
+      }
     }
 
     const emailLower = customerEmail.toLowerCase().trim();
@@ -331,7 +371,14 @@ Deno.serve(async (req) => {
       } else {
         // Create new user
         console.log('Creating new user for email:', emailLower);
-        newUserPassword = generatePassword();
+        newUserPassword = customerPassword || generatePassword();
+
+        if (customerPassword && customerPassword.length < 6) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Пароль должен содержать минимум 6 символов' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
         
         const fullName = customerFirstName && customerLastName 
           ? `${customerFirstName} ${customerLastName}`.trim()
@@ -508,7 +555,6 @@ Deno.serve(async (req) => {
           customer_last_name: customerLastName || null,
           customer_phone: customerPhone || null,
           new_user_created: newUserCreated,
-          new_user_password: newUserCreated ? newUserPassword : null,
           requires_card_tokenization: false,
           auto_charge_after_trial: false,
           crm_routing_snapshot: ncSnapshot,
@@ -605,7 +651,6 @@ Deno.serve(async (req) => {
             redirectUrl,
             isTrialNoCard: true,
             newUserCreated,
-            newUserPassword: newUserCreated ? newUserPassword : null,
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -673,21 +718,42 @@ Deno.serve(async (req) => {
       }
 
       const origin = req.headers.get('origin') || 'https://lovable.app';
+      const composableQuote = offerId
+        ? await resolveComposableCheckout(supabase, {
+            parentOfferId: offerId,
+            addonOfferIds,
+          })
+        : null;
       const checkoutResult = await createPaymentCheckout({
         supabase,
         user_id: userId as string,
         product_id: productId,
         tariff_id: tariffIdForCheckout,
-        amount: Math.round(productInfo.price * 100),
+        amount: Math.round((composableQuote?.total ?? productInfo.price) * 100),
         payment_type: 'one_time',
-        description: description || productInfo.name,
+        description: composableQuote
+          ? composableQuote.items.map((item) => item.product_name).join('; ')
+          : (description || productInfo.name),
         offer_id: offerId,
         origin,
         actor_type: 'system',
         provider: effectiveProvider,
         account_code: effectiveAccountCode,
         currency: productInfo.currency || (effectiveProvider === 'stripe' ? 'BYN' : undefined),
+        customer_credit_requested_minor: Math.max(0, Math.round(Number(customerCreditRequestedMinor ?? 0))),
+        customer_credit_checkout_key:
+          typeof customerCreditCheckoutKey === 'string' && customerCreditCheckoutKey.length <= 200
+            ? customerCreditCheckoutKey
+            : undefined,
+        partner_bonus_requested_minor: isOneTime
+          ? Math.max(0, Math.round(Number(partnerBonusRequestedMinor ?? 0)))
+          : 0,
+        partner_bonus_checkout_key:
+          typeof partnerBonusCheckoutKey === 'string' && partnerBonusCheckoutKey.length <= 200
+            ? partnerBonusCheckoutKey
+            : undefined,
         meta_extra: {
+          composable_checkout: composableQuote,
           provider_choice_resolution: {
             mode: 'fixed',
             chosen: effectiveProvider,
@@ -705,6 +771,22 @@ Deno.serve(async (req) => {
           offerId: offerId || null,
           provider: effectiveProvider,
         });
+      }
+      if (composableQuote && checkoutResult.order_id) {
+        try {
+          await materializeComposableOrderGroup(supabase, {
+            primaryOrderId: checkoutResult.order_id,
+            quote: composableQuote,
+            source: 'public_card_checkout',
+            idempotencyKey: `card:${checkoutResult.order_id}`,
+          });
+        } catch (error) {
+          console.error('[bepaid-create-token] composable materialization failed', error);
+          return paymentFallbackResponse('Не удалось сохранить состав покупки. Платёж не начат.', {
+            flow: 'one_time_checkout_early',
+            orderId: checkoutResult.order_id,
+          });
+        }
       }
 
       return new Response(
@@ -825,6 +907,22 @@ Deno.serve(async (req) => {
       }
     }
 
+    let legacyReferralMeta: Record<string, unknown> = {};
+    if (productInfo.isV2 && userId) {
+      const quote = await resolveReferralCheckoutDiscount({
+        supabase, userId, productId, amountMinor: Math.round(paymentAmount * 100),
+        allowImmediateDiscount: isOneTime === true,
+      });
+      paymentAmount = quote.finalAmountMinor / 100;
+      legacyReferralMeta = referralDiscountMeta(quote);
+      if (trialConfig?.auto_charge_amount) {
+        const recurringQuote = await resolveReferralCheckoutDiscount({
+          supabase, userId, productId, amountMinor: Math.round(trialConfig.auto_charge_amount * 100),
+          allowImmediateDiscount: false,
+        });
+        trialConfig.auto_charge_amount = recurringQuote.finalAmountMinor / 100;
+      }
+    }
     console.log('Final payment amount:', paymentAmount, 'BYN');
 
     // Create order in database (using legacy orders table for compatibility)
@@ -846,11 +944,11 @@ Deno.serve(async (req) => {
           customer_last_name: customerLastName,
           customer_phone: customerPhone,
           new_user_created: newUserCreated,
-          new_user_password: newUserCreated ? newUserPassword : null,
           tariff_code: tariffCode || null,
           is_trial: isTrial || false,
           trial_days: trialConfig?.trial_days || null,
           auto_charge_amount: trialConfig?.auto_charge_amount || null,
+          ...legacyReferralMeta,
         }
       })
       .select()

@@ -144,6 +144,20 @@ All colors MUST be HSL.
   overscroll-behavior-y: auto;
 }
 
+/* Контакт-центр в iOS PWA: элементы управления не попадают под notch/home bar.
+   max() сохраняет обычные отступы и добавляет safe-area только при необходимости. */
+.contact-center-safe-top {
+  padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
+  padding-left: max(0.5rem, env(safe-area-inset-left, 0px));
+  padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
+}
+
+.contact-center-safe-bottom {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+}
+
 /* Горизонтальный scroll-контейнер таблиц.
    - инерционный скролл на iOS;
    - touch-action: pan-x pan-y — оба направления остаются жестами,
@@ -167,6 +181,55 @@ body.impersonation-active {
 
 body.impersonation-active .impersonation-offset {
   padding-top: var(--impersonation-bar-height, 0px);
+}
+
+/* -------------------------------------------------------------------------
+   Entity record sheet — glassmorphism tint variants.
+   Contact (cool sky-blue), Company (neutral lilac), Deal (pale sage-green).
+   Kept intentionally pale, desaturated, translucent — no bright gradients.
+   ------------------------------------------------------------------------- */
+.entity-shell {
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid hsl(0 0% 100% / 0.35);
+  box-shadow: 0 10px 40px -12px hsl(220 40% 20% / 0.18);
+}
+.dark .entity-shell {
+  border-color: hsl(220 20% 40% / 0.25);
+  box-shadow: 0 10px 40px -12px hsl(220 40% 2% / 0.55);
+}
+
+.entity-shell-contact {
+  background: linear-gradient(160deg,
+    hsl(205 55% 96% / 0.92) 0%,
+    hsl(210 45% 93% / 0.88) 100%);
+}
+.dark .entity-shell-contact {
+  background: linear-gradient(160deg,
+    hsl(210 35% 12% / 0.88) 0%,
+    hsl(215 30% 9% / 0.92) 100%);
+}
+
+.entity-shell-company {
+  background: linear-gradient(160deg,
+    hsl(260 30% 96% / 0.92) 0%,
+    hsl(265 22% 93% / 0.88) 100%);
+}
+.dark .entity-shell-company {
+  background: linear-gradient(160deg,
+    hsl(260 20% 13% / 0.88) 0%,
+    hsl(265 18% 10% / 0.92) 100%);
+}
+
+.entity-shell-deal {
+  background: linear-gradient(160deg,
+    hsl(140 30% 95% / 0.92) 0%,
+    hsl(150 22% 92% / 0.88) 100%);
+}
+.dark .entity-shell-deal {
+  background: linear-gradient(160deg,
+    hsl(150 22% 12% / 0.88) 0%,
+    hsl(145 20% 9% / 0.92) 100%);
 }
 
 /* Mobile utilities */
@@ -517,4 +580,3 @@ body.impersonation-active .impersonation-offset {
   font-size: 0.85em;
   border: 1px dashed hsl(20 90% 50% / 0.6);
 }
-

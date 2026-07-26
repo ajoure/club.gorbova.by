@@ -36,6 +36,7 @@ admin-delete-payment-preview
 admin-delete-payment-execute
 # PATCH-STRIPE-DOCUMENTS-DRAWER-V2 — registry-only entry (deploy reserved for Approve D)
 admin-payment-documents-resolve
+admin-invoice-checkout-issue
 auth-actions
 auth-check-email
 bepaid-create-token
@@ -85,6 +86,7 @@ bepaid-subscription-audit-cron
 log-deployment
 training-copy-move
 manage-news-schedule
+legislation-sync
 instagram-webhook
 instagram-admin-chat
 manychat-inbound
@@ -121,3 +123,7 @@ document-field-resolver-v2-snapshot
 
 
 
+
+# Invoice delivery status/retry (per-channel visibility)
+invoice-delivery-status
+invoice-delivery-retry

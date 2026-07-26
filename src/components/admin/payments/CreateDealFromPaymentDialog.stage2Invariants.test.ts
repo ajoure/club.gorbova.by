@@ -61,7 +61,7 @@ describe("Stage 2 · CreateDealFromPaymentDialog — payments-v2 firewall & atom
     expect(CODE).toMatch(/const\s+idempotencyKey\s*=/);
   });
 
-  it("Stage 2R · idempotencyKey covers full request payload (profileId/product/tariff/grantAccess)", () => {
+  it("Stage 2R · idempotencyKey covers full request payload (profileId/product/tariff/offer/grantAccess)", () => {
     // Ключ должен зависеть от контакта, продукта, тарифа и режима доступа —
     // иначе изменение любого из этих полей вернёт чужую сделку через replay.
     const keyBlockMatch = CODE.match(/const\s+idempotencyKey\s*=[\s\S]{0,600}?;/);
@@ -72,6 +72,7 @@ describe("Stage 2 · CreateDealFromPaymentDialog — payments-v2 firewall & atom
     expect(keyBlock).toMatch(/selectedContact\.id|profileId/);
     expect(keyBlock).toMatch(/productId/);
     expect(keyBlock).toMatch(/tariffId/);
+    expect(keyBlock).toMatch(/offerId/);
     expect(keyBlock).toMatch(/finalAmount/);
     expect(keyBlock).toMatch(/finalCurrency/);
     expect(keyBlock).toMatch(/accessStart/);
@@ -93,6 +94,18 @@ describe("Stage 2 · CreateDealFromPaymentDialog — payments-v2 firewall & atom
     expect(CODE).toMatch(/rawSource\s*[:,]/);
     expect(CODE).toMatch(/paymentId\s*[:,]/);
     expect(CODE).not.toMatch(/provider:\s*["'](bepaid|stripe|rr|bank)["']/);
+  });
+
+  it("persists the selected payment button as offerId and defaults successful payments to grant access", () => {
+    expect(CODE).toMatch(/offerId\s*[:,]/);
+    expect(CODE).toMatch(/useState\(true\)/);
+  });
+
+  it("uses the tariff access window without the legacy 30-day fallback", () => {
+    expect(CODE).toMatch(/select\(["']id, name, code, access_days["']\)/);
+    expect(CODE).toMatch(/handleDaysChange\(configuredDays\)/);
+    expect(CODE).toMatch(/to:\s*addDays\(dateRange\.from, days\)/);
+    expect(CODE).toMatch(/differenceInDays\(range\.to, range\.from\)/);
   });
 
   it("does NOT call grant-access-for-order directly (grant is chained by the edge)", () => {

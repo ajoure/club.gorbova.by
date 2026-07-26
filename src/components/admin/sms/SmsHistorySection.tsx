@@ -31,6 +31,7 @@ interface SmsRow {
 
 interface Props {
   contactId?: string;
+  companyId?: string;
   dealId?: string;
   bare?: boolean;
 }
@@ -59,30 +60,34 @@ function StatusIcon({ status }: { status: string }) {
   return <Clock className="h-4 w-4 text-muted-foreground" />;
 }
 
-export function SmsHistorySection({ contactId, dealId, bare = false }: Props) {
-  const enabled = Boolean(contactId || dealId);
+export function SmsHistorySection({ contactId, companyId, dealId, bare = false }: Props) {
+  const enabled = Boolean(contactId || companyId || dealId);
   const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!enabled) return;
-    const filter = contactId ? `contact_id=eq.${contactId}` : `deal_id=eq.${dealId}`;
+    const filter = contactId
+      ? `contact_id=eq.${contactId}`
+      : companyId
+        ? `company_id=eq.${companyId}`
+        : `deal_id=eq.${dealId}`;
     const channel = supabase
-      .channel(`sms-${contactId ?? dealId}`)
+      .channel(`sms-${contactId ?? companyId ?? dealId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "sms_messages", filter },
         () => {
-          queryClient.invalidateQueries({ queryKey: ["sms-history", { contactId, dealId }] });
+          queryClient.invalidateQueries({ queryKey: ["sms-history", { contactId, companyId, dealId }] });
         },
       )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [enabled, contactId, dealId, queryClient]);
+  }, [enabled, contactId, companyId, dealId, queryClient]);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["sms-history", { contactId, dealId }],
+    queryKey: ["sms-history", { contactId, companyId, dealId }],
     enabled,
     queryFn: async (): Promise<SmsRow[]> => {
       let q = supabase
@@ -91,6 +96,7 @@ export function SmsHistorySection({ contactId, dealId, bare = false }: Props) {
         .order("created_at", { ascending: false })
         .limit(100);
       if (contactId) q = q.eq("contact_id", contactId);
+      else if (companyId) q = (q as any).eq("company_id", companyId);
       if (dealId) q = q.eq("deal_id", dealId);
       const { data, error } = await q;
       if (error) throw error;

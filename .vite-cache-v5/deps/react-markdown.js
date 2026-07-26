@@ -41,7 +41,7 @@ import {
   unreachable,
   values,
   visit
-} from "./chunk-4OCITFLB.js";
+} from "./chunk-RULLNR2C.js";
 import "./chunk-W2HZVVEF.js";
 import {
   require_jsx_runtime
@@ -512,49 +512,63 @@ var require_common = __commonJS({
         createDebug2.namespaces = namespaces;
         createDebug2.names = [];
         createDebug2.skips = [];
-        let i;
-        const split = (typeof namespaces === "string" ? namespaces : "").split(/[\s,]+/);
-        const len = split.length;
-        for (i = 0; i < len; i++) {
-          if (!split[i]) {
-            continue;
-          }
-          namespaces = split[i].replace(/\*/g, ".*?");
-          if (namespaces[0] === "-") {
-            createDebug2.skips.push(new RegExp("^" + namespaces.slice(1) + "$"));
+        const split = (typeof namespaces === "string" ? namespaces : "").trim().replace(/\s+/g, ",").split(",").filter(Boolean);
+        for (const ns of split) {
+          if (ns[0] === "-") {
+            createDebug2.skips.push(ns.slice(1));
           } else {
-            createDebug2.names.push(new RegExp("^" + namespaces + "$"));
+            createDebug2.names.push(ns);
           }
         }
       }
+      function matchesTemplate(search2, template) {
+        let searchIndex = 0;
+        let templateIndex = 0;
+        let starIndex = -1;
+        let matchIndex = 0;
+        while (searchIndex < search2.length) {
+          if (templateIndex < template.length && (template[templateIndex] === search2[searchIndex] || template[templateIndex] === "*")) {
+            if (template[templateIndex] === "*") {
+              starIndex = templateIndex;
+              matchIndex = searchIndex;
+              templateIndex++;
+            } else {
+              searchIndex++;
+              templateIndex++;
+            }
+          } else if (starIndex !== -1) {
+            templateIndex = starIndex + 1;
+            matchIndex++;
+            searchIndex = matchIndex;
+          } else {
+            return false;
+          }
+        }
+        while (templateIndex < template.length && template[templateIndex] === "*") {
+          templateIndex++;
+        }
+        return templateIndex === template.length;
+      }
       function disable2() {
         const namespaces = [
-          ...createDebug2.names.map(toNamespace),
-          ...createDebug2.skips.map(toNamespace).map((namespace) => "-" + namespace)
+          ...createDebug2.names,
+          ...createDebug2.skips.map((namespace) => "-" + namespace)
         ].join(",");
         createDebug2.enable("");
         return namespaces;
       }
       function enabled(name2) {
-        if (name2[name2.length - 1] === "*") {
-          return true;
-        }
-        let i;
-        let len;
-        for (i = 0, len = createDebug2.skips.length; i < len; i++) {
-          if (createDebug2.skips[i].test(name2)) {
+        for (const skip of createDebug2.skips) {
+          if (matchesTemplate(name2, skip)) {
             return false;
           }
         }
-        for (i = 0, len = createDebug2.names.length; i < len; i++) {
-          if (createDebug2.names[i].test(name2)) {
+        for (const ns of createDebug2.names) {
+          if (matchesTemplate(name2, ns)) {
             return true;
           }
         }
         return false;
-      }
-      function toNamespace(regexp) {
-        return regexp.toString().substring(2, regexp.toString().length - 2).replace(/\.\*\?$/, "*");
       }
       function coerce(val) {
         if (val instanceof Error) {
@@ -716,7 +730,7 @@ var require_browser = __commonJS({
     function load() {
       let r;
       try {
-        r = exports.storage.getItem("debug");
+        r = exports.storage.getItem("debug") || exports.storage.getItem("DEBUG");
       } catch (error) {
       }
       if (!r && typeof process !== "undefined" && "env" in process) {
@@ -6384,7 +6398,7 @@ var CallableInstance = (
    * @param {string | symbol} property
    * @returns {(...parameters: Array<unknown>) => unknown}
    */
-  function(property) {
+  (function(property) {
     const self2 = this;
     const constr = self2.constructor;
     const proto = (
@@ -6399,7 +6413,7 @@ var CallableInstance = (
     };
     Object.setPrototypeOf(apply, proto);
     return apply;
-  }
+  })
 );
 
 // node_modules/unified/lib/index.js

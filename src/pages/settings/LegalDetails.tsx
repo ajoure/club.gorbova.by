@@ -19,7 +19,8 @@ import {
   User,
   Building2,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Pencil,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -42,7 +43,7 @@ export default function LegalDetailsSettings() {
   if (REQUISITES_V2_UI_ENABLED) {
     return (
       <DashboardLayout>
-        <div className="max-w-4xl mx-auto">
+        <div className="w-full min-w-0 max-w-4xl mx-auto">
           <RequisitesV2Manager
             scope="system_customer"
             title="Реквизиты для документов"
@@ -145,9 +146,10 @@ export default function LegalDetailsSettings() {
   if (mode === "create" || mode === "edit") {
     return (
       <DashboardLayout>
-        <div className="max-w-4xl mx-auto space-y-6">
-          <div className="flex items-center gap-4">
+        <div className="w-full min-w-0 max-w-4xl mx-auto space-y-4 sm:space-y-6">
+          <div className="flex min-w-0 items-start gap-2 sm:items-center sm:gap-4">
             <Button 
+              className="shrink-0"
               variant="ghost" 
               size="icon"
               onClick={() => {
@@ -157,18 +159,18 @@ export default function LegalDetailsSettings() {
             >
               <ChevronLeft className="h-5 w-5" />
             </Button>
-            <div>
-              <h1 className="text-2xl font-bold text-foreground">
+            <div className="min-w-0">
+              <h1 className="break-words text-xl font-bold text-foreground sm:text-2xl">
                 {mode === "edit" ? "Редактировать реквизиты" : "Новые реквизиты"}
               </h1>
-              <p className="text-muted-foreground">
+              <p className="break-words text-sm text-muted-foreground sm:text-base">
                 {mode === "edit" ? "Измените данные для документов" : "Заполните данные для закрывающих документов"}
               </p>
             </div>
           </div>
 
-          <Card>
-            <CardHeader>
+          <Card className="min-w-0">
+            <CardHeader className="p-4 sm:p-6">
               <CardTitle className="text-lg">Тип плательщика</CardTitle>
               <CardDescription>
                 Выберите тип для правильного заполнения документов
@@ -182,8 +184,14 @@ export default function LegalDetailsSettings() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent className="pt-6">
+          <Card className="min-w-0">
+            <CardContent className="p-4 sm:p-6 sm:pt-6">
+              {mode === "edit" && (
+                <div className="mb-5 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-muted-foreground">
+                  Изменения будут использоваться только для новых документов.
+                  Уже сформированные счета и акты останутся без изменений.
+                </div>
+              )}
               {renderForm()}
             </CardContent>
           </Card>
@@ -194,16 +202,16 @@ export default function LegalDetailsSettings() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Реквизиты для документов</h1>
-          <p className="text-muted-foreground">Данные для формирования счёт-актов и закрывающих документов</p>
+      <div className="w-full min-w-0 max-w-4xl mx-auto space-y-4 sm:space-y-6">
+        <div className="min-w-0">
+          <h1 className="break-words text-xl font-bold text-foreground sm:text-2xl">Реквизиты для документов</h1>
+          <p className="break-words text-sm text-muted-foreground sm:text-base">Данные для формирования счёт-актов и закрывающих документов</p>
         </div>
 
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
+        <Card className="min-w-0 overflow-hidden">
+          <CardHeader className="p-4 sm:p-6">
+            <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
                 <CardTitle className="flex items-center gap-2">
                   <FileText className="h-5 w-5" />
                   Мои реквизиты
@@ -212,13 +220,13 @@ export default function LegalDetailsSettings() {
                   Сохранённые данные для автоматического формирования документов
                 </CardDescription>
               </div>
-              <Button onClick={() => setMode("create")} className="gap-2">
+              <Button onClick={() => setMode("create")} className="w-full gap-2 sm:w-auto">
                 <Plus className="h-4 w-4" />
-                Добавить
+                Добавить реквизиты
               </Button>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
             {isLoading ? (
               <div className="space-y-4">
                 <Skeleton className="h-20 w-full" />
@@ -229,16 +237,16 @@ export default function LegalDetailsSettings() {
                 {legalDetails.map((details) => (
                   <div
                     key={details.id}
-                    className="flex items-center justify-between p-4 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer"
+                    className="flex min-w-0 flex-col gap-3 rounded-lg border bg-muted/30 p-3 transition-colors hover:bg-muted/50 cursor-pointer sm:flex-row sm:items-center sm:justify-between sm:p-4"
                     onClick={() => openEdit(details)}
                   >
-                    <div className="flex items-center gap-4">
-                      <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                    <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
+                      <div className="shrink-0 p-2 rounded-lg bg-primary/10 text-primary">
                         {getTypeIcon(details.client_type as ClientType)}
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium">{getDisplayName(details)}</span>
+                          <span className="break-words font-medium">{getDisplayName(details)}</span>
                           {details.is_default && (
                             <Badge variant="secondary" className="gap-1">
                               <Star className="h-3 w-3" />
@@ -268,7 +276,17 @@ export default function LegalDetailsSettings() {
                       </div>
                     </div>
                     
-                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex w-full items-center justify-end gap-2 border-t pt-3 sm:w-auto sm:border-0 sm:pt-0" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => openEdit(details)}
+                        aria-label={`Изменить реквизиты: ${getDisplayName(details)}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                        Изменить
+                      </Button>
                       {!details.is_default && (
                         <Button
                           variant="outline"
@@ -308,8 +326,8 @@ export default function LegalDetailsSettings() {
         </Card>
 
         {/* Info card */}
-        <Card className="bg-muted/30 border-dashed">
-          <CardContent className="pt-6">
+        <Card className="min-w-0 bg-muted/30 border-dashed">
+          <CardContent className="p-4 sm:p-6 sm:pt-6">
             <div className="flex gap-4">
               <div className="shrink-0">
                 <FileText className="h-5 w-5 text-primary" />

@@ -9,6 +9,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { Globe, ExternalLink, Link2, Unlink, Copy, Plus, Minus, AlertTriangle, CheckCircle2, XCircle, Info } from "lucide-react";
@@ -16,8 +17,9 @@ import { toast } from "sonner";
 import { getCanonicalPricingUrl, getCanonicalPageUrl } from "@/lib/productCanonicalUrl";
 import { resolveProductPageState, getProductPageDiagnostic, type ProductPageDiagnostic } from "@/lib/resolveProductPageState";
 import { copyToClipboard } from "@/utils/clipboardUtils";
-import { slugify } from "@/utils/slugify";
 import type { SiteBlock } from "@/services/sitePages/types";
+import { saveProductPageAddress } from "@/services/sitePages/ProductSitePageAdminService";
+import { normalizeProductPageSlug, suggestProductPageSlug } from "@/lib/productPageAddress";
 
 interface ProductSitePageBindingProps {
   productId: string;
@@ -44,6 +46,7 @@ interface SitePageOption {
 export function ProductSitePageBinding({ productId, primaryDomain, productName }: ProductSitePageBindingProps) {
   const queryClient = useQueryClient();
   const [selectOpen, setSelectOpen] = useState(false);
+  const [pageSlugDraft, setPageSlugDraft] = useState("");
 
   // Fetch the canonical page for this product (including blocks for pricing detection)
   const { data: linkedPage, isLoading: pageLoading } = useQuery({
@@ -183,43 +186,17 @@ export function ProductSitePageBinding({ productId, primaryDomain, productName }
   // Create selling page with pricing block
   const createSellingPageMutation = useMutation({
     mutationFn: async () => {
-      const baseSlug = slugify(productName || "product");
-      // Check uniqueness
-      const { data: existing } = await (supabase.from("site_pages") as any)
-        .select("slug")
-        .eq("slug", baseSlug)
-        .maybeSingle();
-      const finalSlug = existing ? `${baseSlug}-${Date.now().toString(36)}` : baseSlug;
-
-      const pricingBlock: SiteBlock = {
-        id: crypto.randomUUID(),
-        type: "pricing",
-        version: 1,
-        content: { product_id: productId, title: "", subtitle: "" },
-        settings: {
-          paddingTop: 0, paddingBottom: 0, backgroundColor: "", backgroundImage: "",
-          textColor: "", fullWidth: false, maxWidth: "lg" as const,
-          hideOnMobile: false, hideOnDesktop: false,
-        },
-        metadata: {},
-      };
-
-      const { data: user } = await supabase.auth.getUser();
-      if (!user?.user?.id) throw new Error("Not authenticated");
-
-      const { error } = await (supabase.from("site_pages") as any).insert({
-        title: productName || "Тарифы",
-        slug: finalSlug,
-        product_id: productId,
-        blocks: [pricingBlock],
-        status: "draft",
-        created_by: user.user.id,
+      const address = pageSlugDraft || suggestProductPageSlug(productName || "product");
+      return saveProductPageAddress({
+        productId,
+        productName: productName || "Тарифы",
+        address,
       });
-      if (error) throw error;
     },
-    onSuccess: () => {
+    onSuccess: (page) => {
       invalidateAll();
-      toast.success("Продающая страница создана");
+      setPageSlugDraft("");
+      toast.success(`Продающая страница /${page.slug} создана`);
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -314,6 +291,16 @@ export function ProductSitePageBinding({ productId, primaryDomain, productName }
                 )}
               </SelectContent>
             </Select>
+            <div className="flex items-center rounded-md border border-input bg-background h-7">
+              <span className="pl-2 text-[11px] text-muted-foreground">gorbova.by/</span>
+              <Input
+                value={pageSlugDraft}
+                onChange={(e) => setPageSlugDraft(e.target.value)}
+                onBlur={() => setPageSlugDraft((value) => normalizeProductPageSlug(value))}
+                placeholder={suggestProductPageSlug(productName || "product")}
+                className="h-6 w-36 border-0 px-1 text-[11px] focus-visible:ring-0"
+              />
+            </div>
             <Button
               variant="outline"
               size="sm"

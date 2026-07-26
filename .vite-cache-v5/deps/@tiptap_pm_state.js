@@ -8,7 +8,7 @@ import {
   SelectionRange,
   TextSelection,
   Transaction
-} from "./chunk-YLIL3JKF.js";
+} from "./chunk-E5N3B3CE.js";
 import "./chunk-OL46QLBJ.js";
 export {
   AllSelection,
@@ -21,4 +21,3 @@ export {
   TextSelection,
   Transaction
 };
-//# sourceMappingURL=@tiptap_pm_state.js.map

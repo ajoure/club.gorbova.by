@@ -21,6 +21,7 @@
  *
  * Никаких hardcode продуктов/тарифов/сумм. Всё берётся из orders_v2.
  */
+import { finalizeComposablePurchase } from "../finalize-composable-purchase.ts";
 
 export type RRPromoteSource = "rr-webhook" | "rr-fulfill-order" | "rr-reconciler";
 
@@ -55,7 +56,7 @@ export async function promoteAuthorizedRRPayment(
     signHashShort: string;
   },
 ): Promise<RRPromoteResult> {
-  const { supabaseAdmin, supabaseUrl, serviceRoleKey } = deps;
+  const { supabaseAdmin } = deps;
   const { orderId, source, rrStatusRaw, signHashShort } = input;
 
   // 1) Atomic promotion RPC.
@@ -118,54 +119,27 @@ export async function promoteAuthorizedRRPayment(
     };
   }
 
-  // 2) Grant access. Retryable — не критично, если упадёт: reconciler повторит.
-  const grantUrl = `${supabaseUrl}/functions/v1/grant-access-for-order`;
-  const ac = new AbortController();
-  const timeoutId = setTimeout(() => ac.abort(), 20_000);
-
-  let grantStatus = 0;
-  let grantHttpOk = false;
-  let grantOk = false;
+  // 2) Fulfil all independently sold lines through one canonical boundary.
+  // It grants available products and records delayed modules as purchased.
+  let grantStatus = 200;
+  let grantHttpOk = true;
+  let grantOk = true;
   let grantError: string | null = null;
-  let grantBody: any = null;
   let grantAlreadyFulfilled = false;
-
+  let grantBody: any = { orders: [] };
   try {
-    const resp = await fetch(grantUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${serviceRoleKey}`,
-        "apikey": serviceRoleKey,
-      },
-      body: JSON.stringify({ orderId, source }),
-      signal: ac.signal,
+    const finalized = await finalizeComposablePurchase(supabaseAdmin, {
+      primaryOrderId: orderId,
+      paymentId,
+      source,
     });
-    grantStatus = resp.status;
-    grantHttpOk = resp.ok;
-    try {
-      grantBody = await resp.json();
-    } catch {
-      grantBody = null;
-    }
-    // Success ONLY when function explicitly reports success=true.
-    // already_fulfilled=true with success=true is a confirmed idempotent grant.
-    // Any other 2xx (success=false, warning=no_user_id, missing_product, etc.)
-    // stays retryable — reconciler must retry later.
-    const bodySuccess = grantBody && grantBody.success === true;
-    grantAlreadyFulfilled = !!(grantBody && grantBody.already_fulfilled === true);
-    grantOk = grantHttpOk && bodySuccess;
-    if (!grantOk) {
-      const bodyStr = grantBody ? JSON.stringify(grantBody).slice(0, 400) : "<no-json>";
-      grantError = grantHttpOk
-        ? `grant_not_confirmed: ${bodyStr}`
-        : `http_${grantStatus}: ${bodyStr}`;
-    }
-  } catch (e) {
-    grantError = (e as Error).message;
-    grantStatus = 0;
-  } finally {
-    clearTimeout(timeoutId);
+    grantOk = finalized.state !== "awaiting_full_payment";
+    grantBody = { state: finalized.state, order_group_id: finalized.order_group_id, orders: finalized.items };
+  } catch (error) {
+    grantOk = false;
+    grantHttpOk = false;
+    grantStatus = 500;
+    grantError = error instanceof Error ? error.message : String(error);
   }
 
   // 3) Mark fulfillment. Only 'completed' when grant is CONFIRMED by response body.
@@ -180,14 +154,11 @@ export async function promoteAuthorizedRRPayment(
       grant_http_ok: grantHttpOk,
       grant_success: grantOk,
       grant_already_fulfilled: grantAlreadyFulfilled,
-      grant_response_summary: grantBody
-        ? {
-            success: grantBody.success ?? null,
-            warning: grantBody.warning ?? null,
-            already_fulfilled: grantBody.already_fulfilled ?? null,
-            error: grantBody.error ?? null,
-          }
-        : null,
+      grant_response_summary: {
+        success: grantOk,
+        order_count: grantBody.orders?.length ?? 0,
+        orders: grantBody.orders,
+      },
     },
   });
 

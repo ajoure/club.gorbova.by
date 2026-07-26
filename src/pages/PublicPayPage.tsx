@@ -19,6 +19,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { normalizeEdgeFunctionError } from '@/utils/normalizeEdgeFunctionError';
+import { SAVED_CARD_PAYMENTS_ENABLED } from '@/config/paymentFeatures';
 import { LandingHeader } from '@/components/landing/LandingHeader';
 import { LandingFooter } from '@/components/landing/LandingFooter';
 import { GlassCard } from '@/components/ui/GlassCard';
@@ -40,6 +41,7 @@ import { cancelOldSubscriptionForReplacement, type SubscriptionConflictInfo } fr
 import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Repeat, Plus } from 'lucide-react';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { CustomerProviderChoice } from '@/components/payments/CustomerProviderChoice';
 import { resolveProviderChoice, type CustomerProvider } from '@/utils/resolveCustomerProviderChoice';
 
@@ -56,6 +58,7 @@ interface InstallmentInfo {
 }
 
 interface PaymentLinkInfo {
+  product_id: string;
   product_name: string;
   product_description: string | null;
   product_category: string | null;
@@ -73,6 +76,21 @@ interface PaymentLinkInfo {
   provider?: 'bepaid' | 'stripe' | null;
   provider_mode?: 'fixed' | 'customer_choice' | null;
   allowed_payment_providers?: ('bepaid' | 'stripe')[] | null;
+  composable_checkout?: {
+    currency: string;
+    subtotal: number;
+    adjustment_amount: number;
+    adjustment_reason?: string | null;
+    total: number;
+    items: Array<{
+      role: 'primary' | 'addon';
+      product_name: string;
+      tariff_name: string;
+      list_amount: number;
+      discount_amount: number;
+      final_amount: number;
+    }>;
+  } | null;
 }
 
 interface SavedCard {
@@ -91,8 +109,11 @@ export default function PublicPayPage() {
   const [error, setError] = useState<string | null>(null);
   const [identityError, setIdentityError] = useState<string | null>(null);
   const [conflictData, setConflictData] = useState<SubscriptionConflictInfo | null>(null);
+  const [activeSubscriptionData, setActiveSubscriptionData] = useState<SubscriptionConflictInfo | null>(null);
   const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
   const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating'>('idle');
+  const [useCustomerCredit, setUseCustomerCredit] = useState(false);
+  const [usePartnerBonus, setUsePartnerBonus] = useState(false);
 
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
@@ -133,7 +154,31 @@ export default function PublicPayPage() {
       if (error) throw error;
       return (data || []) as SavedCard[];
     },
+    enabled: SAVED_CARD_PAYMENTS_ENABLED && !!user?.id,
+    retry: false,
+  });
+
+  const { data: customerCredit } = useQuery({
+    queryKey: ['referral-customer-credit', user?.id],
+    queryFn: async (): Promise<{ available_minor: number; currency: string }> => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase.rpc as any)('referral_get_my_customer_credit');
+      if (error) throw error;
+      return data ?? { available_minor: 0, currency: 'BYN' };
+    },
     enabled: !!user?.id,
+    retry: false,
+  });
+
+  const { data: partnerBonus } = useQuery({
+    queryKey: ['referral-partner-bonus', user?.id, linkInfo?.product_id],
+    queryFn: async (): Promise<{ available_minor: number; eligible: boolean }> => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase.rpc as any)('referral_get_my_bonus_wallet', { p_product_id: linkInfo?.product_id });
+      if (error) throw error;
+      return data ?? { available_minor: 0, eligible: false };
+    },
+    enabled: !!user && !!linkInfo?.product_id,
     retry: false,
   });
 
@@ -149,6 +194,7 @@ export default function PublicPayPage() {
     !!linkInfo &&
     (linkInfo.link_user_id === null || linkInfo.link_user_id === user.id);
   const _showSavedCardSelectorEarly =
+    SAVED_CARD_PAYMENTS_ENABLED &&
     _ownsOrPublicEarly &&
     !_isSubscriptionEarly &&
     !_isInstallmentEarly &&
@@ -175,12 +221,21 @@ export default function PublicPayPage() {
     setIsProcessing(true);
     setError(null);
     setIdentityError(null);
+    setActiveSubscriptionData(null);
 
     try {
       const body: Record<string, unknown> = { url_token: token };
       if (payerEmail) body.email = payerEmail;
       if (replacementId) body.replacement_of_subscription_v2_id = replacementId;
       if (providerChoice) body.provider_choice = providerChoice;
+      if (useCustomerCredit && customerCredit?.available_minor) {
+        body.customer_credit_requested_minor = customerCredit.available_minor;
+        body.customer_credit_checkout_key = savedCardIdempotencyKeyRef.current;
+      }
+      if (usePartnerBonus && partnerBonus?.eligible && partnerBonus.available_minor) {
+        body.partner_bonus_requested_minor = partnerBonus.available_minor;
+        body.partner_bonus_checkout_key = savedCardIdempotencyKeyRef.current;
+      }
 
       // ALWAYS read access token immediately before POST (post-inline-login session)
       const { data: { session } } = await supabase.auth.getSession();
@@ -196,6 +251,11 @@ export default function PublicPayPage() {
       });
 
       const data = await res.json();
+      if (data?.error === 'already_has_active_subscription' && data?.conflict) {
+        setConflictData(data.conflict as SubscriptionConflictInfo);
+        setIsProcessing(false);
+        return;
+      }
       if (data?.error === 'existing_subscription_conflict' && data?.conflict) {
         setConflictData(data.conflict as SubscriptionConflictInfo);
         setIsProcessing(false);
@@ -274,6 +334,13 @@ export default function PublicPayPage() {
           url_token: token,
           payment_method_id: paymentMethodId,
           idempotency_key,
+          customer_credit_requested_minor:
+            useCustomerCredit && customerCredit?.available_minor
+              ? customerCredit.available_minor
+              : 0,
+          partner_bonus_requested_minor:
+            usePartnerBonus && partnerBonus?.eligible ? partnerBonus.available_minor : 0,
+          partner_bonus_checkout_key: savedCardIdempotencyKeyRef.current,
         }),
       });
       const data = await res.json();
@@ -384,6 +451,24 @@ export default function PublicPayPage() {
   const priceFormatted = formatPrice(linkInfo.amount, linkInfo.currency);
   const needsIdentity = linkInfo.requires_identity_input && !user;
   const isSubscription = linkInfo.payment_type === 'subscription';
+  const customerCreditAvailable = Number(customerCredit?.available_minor ?? 0);
+  const canUseCustomerCredit = !!user && (!isSubscription || isInstallment) && customerCreditAvailable > 0;
+  const customerCreditToApply = canUseCustomerCredit && useCustomerCredit
+    ? Math.min(customerCreditAvailable, Math.max(0, linkInfo.amount - 100))
+    : 0;
+  const activeUntil = activeSubscriptionData?.access_end_at
+    ? new Intl.DateTimeFormat('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        timeZone: 'Europe/Minsk',
+      }).format(new Date(activeSubscriptionData.access_end_at))
+    : null;
+  const partnerBonusAvailable = Number(partnerBonus?.eligible ? partnerBonus.available_minor : 0);
+  const canUsePartnerBonus = !!user && (!isSubscription || isInstallment) && partnerBonusAvailable > 0;
+  const partnerBonusToApply = canUsePartnerBonus && usePartnerBonus
+    ? Math.min(partnerBonusAvailable, Math.max(0, linkInfo.amount - 100))
+    : 0;
 
   // PAY-D visibility: NULL OR equal — public link OR personal link of current user.
   const ownsOrPublic =
@@ -391,6 +476,7 @@ export default function PublicPayPage() {
     (linkInfo.link_user_id === null || linkInfo.link_user_id === user.id);
   // PAY-D: saved-card selector — one_time only (subscription handled by PAY-E).
   const showSavedCardSelector =
+    SAVED_CARD_PAYMENTS_ENABLED &&
     ownsOrPublic &&
     !isSubscription &&
     !isInstallment &&
@@ -402,12 +488,14 @@ export default function PublicPayPage() {
   const isStripeSubscription = isSubscription && linkInfo.provider === 'stripe';
   // PAY-E-LITE: для bePaid subscription показываем сохранённые карты в disabled-режиме + уведомление.
   const showSubscriptionDisabledCards =
+    SAVED_CARD_PAYMENTS_ENABLED &&
     ownsOrPublic &&
     isSubscription &&
     !isStripeSubscription &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
-  const showSubscriptionFallbackHint = ownsOrPublic && isSubscription && !isStripeSubscription;
+  const showSubscriptionFallbackHint =
+    SAVED_CARD_PAYMENTS_ENABLED && ownsOrPublic && isSubscription && !isStripeSubscription;
   const showStripeSubscriptionHint = ownsOrPublic && isStripeSubscription;
 
 
@@ -446,6 +534,34 @@ export default function PublicPayPage() {
             {linkInfo.description && (
               <p className="text-center text-muted-foreground mb-6">{linkInfo.description}</p>
             )}
+
+            {linkInfo.composable_checkout?.items?.length ? (
+              <div className="rounded-lg border bg-card/50 p-4 mb-6 space-y-2">
+                <p className="text-sm font-medium">Состав покупки</p>
+                {linkInfo.composable_checkout.items.map((item, index) => (
+                  <div key={`${item.product_name}-${index}`} className="flex items-start justify-between gap-3 text-sm">
+                    <span>
+                      <span className="font-medium">{item.product_name}</span>
+                      <span className="block text-xs text-muted-foreground">{item.tariff_name}</span>
+                    </span>
+                    <span className="whitespace-nowrap">{item.final_amount} {linkInfo.composable_checkout!.currency}</span>
+                  </div>
+                ))}
+                {linkInfo.composable_checkout.adjustment_amount !== 0 && (
+                  <div className="flex justify-between border-t pt-2 text-sm text-muted-foreground">
+                    <span>{linkInfo.composable_checkout.adjustment_reason || "Корректировка менеджера"}</span>
+                    <span>
+                      {linkInfo.composable_checkout.adjustment_amount > 0 ? "+" : ""}
+                      {linkInfo.composable_checkout.adjustment_amount} {linkInfo.composable_checkout.currency}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between border-t pt-2 font-semibold">
+                  <span>Итого</span>
+                  <span>{linkInfo.composable_checkout.total} {linkInfo.composable_checkout.currency}</span>
+                </div>
+              </div>
+            ) : null}
 
             <div className="space-y-3 mb-8">
               <div className="flex items-center gap-3 text-sm">
@@ -495,6 +611,38 @@ export default function PublicPayPage() {
               )}
             </div>
 
+            {canUseCustomerCredit && (
+              <label className="mb-6 flex cursor-pointer items-start gap-3 rounded-lg border bg-primary/5 p-4 text-left">
+                <Checkbox
+                  checked={useCustomerCredit}
+                  onCheckedChange={(checked) => setUseCustomerCredit(checked === true)}
+                  className="mt-0.5"
+                />
+                <span className="space-y-1">
+                  <span className="block text-sm font-medium">Использовать накопленную скидку</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Доступно {(customerCreditAvailable / 100).toFixed(2)} BYN
+                    {useCustomerCredit && customerCreditToApply > 0
+                      ? ` · к оплате будет зачтено ${(customerCreditToApply / 100).toFixed(2)} BYN`
+                      : ''}
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {canUsePartnerBonus && (
+              <label className="mb-6 flex cursor-pointer items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-50/50 p-4 text-left dark:bg-emerald-950/20">
+                <Checkbox checked={usePartnerBonus} onCheckedChange={(checked) => setUsePartnerBonus(checked === true)} className="mt-0.5" />
+                <span className="space-y-1"><span className="block text-sm font-medium">Использовать партнёрские баллы</span><span className="block text-xs text-muted-foreground">Доступно {(partnerBonusAvailable / 100).toFixed(2)} BYN{usePartnerBonus && partnerBonusToApply > 0 ? ` · к оплате будет зачтено ${(partnerBonusToApply / 100).toFixed(2)} BYN` : ''}</span></span>
+              </label>
+            )}
+
+            {isSubscription && !isInstallment && customerCreditAvailable > 0 && (
+              <p className="mb-6 rounded-lg border border-amber-500/30 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-950/20 dark:text-amber-200">
+                Накопленная скидка не применяется к подписке с автоплатежом. Её можно использовать при следующей разовой покупке или рассрочке.
+              </p>
+            )}
+
             {/* Non-identity payment errors only — identity errors stay inside form */}
             {error && (
               <div className="flex items-center gap-2 text-destructive text-sm mb-4 p-3 rounded-md bg-destructive/10">
@@ -503,21 +651,35 @@ export default function PublicPayPage() {
               </div>
             )}
 
+            {activeSubscriptionData && linkInfo.payment_type === 'subscription' && (
+              <Alert className="mb-4 border-emerald-500/50 bg-emerald-50 dark:bg-emerald-950/20">
+                <CheckCircle className="h-4 w-4 text-emerald-600" />
+                <AlertTitle className="text-emerald-800 dark:text-emerald-200">
+                  Подписка уже оплачена и активна
+                </AlertTitle>
+                <AlertDescription className="text-emerald-800 dark:text-emerald-200">
+                  Повторное списание не выполнялось.
+                  {activeUntil ? ` Доступ действует до ${activeUntil}.` : ' Доступ уже продлён.'}
+                </AlertDescription>
+              </Alert>
+            )}
+
             {conflictData && linkInfo.payment_type === 'subscription' && (
               <Alert className="mb-4 border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
                 <Repeat className="h-4 w-4 text-amber-600" />
                 <AlertTitle className="text-amber-800 dark:text-amber-200">
-                  У вас уже есть активная подписка на этот продукт
+                  Новую подписку пока создать нельзя
                 </AlertTitle>
                 <AlertDescription className="space-y-3 text-amber-800 dark:text-amber-200">
-                  <p>Можно оставить текущую подписку или заменить её новой оплатой.</p>
+                  <p>У вас уже есть действующая или ожидающая оплаты подписка на этот продукт.</p>
+                  <p>Чтобы исключить двойное списание, сначала отмените её.</p>
                   <div className="flex flex-col sm:flex-row gap-2">
                     <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => setConflictData(null)}>
                       Оставить текущую
                     </Button>
                     <Button type="button" size="sm" className="flex-1" disabled={isProcessing || replaceStep !== 'idle'} onClick={() => setShowReplaceConfirm(true)}>
                       {replaceStep !== 'idle' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Repeat className="mr-2 h-4 w-4" />}
-                      Заменить подписку
+                      Отменить старую и создать новую
                     </Button>
                   </div>
                 </AlertDescription>
@@ -596,7 +758,7 @@ export default function PublicPayPage() {
               </Alert>
             )}
 
-            {!needsIdentity && !needsProviderChoice && !isProviderMisconfigured && (
+            {!needsIdentity && !needsProviderChoice && !isProviderMisconfigured && !activeSubscriptionData && (
               <Button
                 size="lg"
                 className="w-full"

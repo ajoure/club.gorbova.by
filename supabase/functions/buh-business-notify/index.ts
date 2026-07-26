@@ -32,7 +32,7 @@ function buildNoCardText(profile: { full_name?: string | null } | null) {
 ${prefix}скоро закончится доступ к «Бухгалтерия как бизнес».
 
 Для продления оплатите по ссылке:
-🔗 https://business-training.gorbova.by/purchases
+🔗 https://gorbova.by/purchases
 
 Если нужна помощь — напишите мне!
 

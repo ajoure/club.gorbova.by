@@ -45,6 +45,7 @@ const routeLabels: Record<string, string> = {
   "/settings/payment-methods": "Оплата и карты",
   "/settings/legal-details": "Реквизиты",
   "/settings/consents": "Согласия",
+  "/settings/partnership": "Партнёрство",
   
   // Admin - CRM
   "/admin": "Администрирование",
@@ -88,7 +89,7 @@ const routeLabels: Record<string, string> = {
   "/admin/document-templates": "Шаблоны документов",
   "/admin/training-modules": "Учебные модули",
   "/admin/editorial": "Редакция",
-  "/admin/ilex": "ILEX",
+  "/admin/legislation": "Законодательство",
   "/admin/marketing": "Маркетинг",
   "/admin/bepaid-archive-import": "Импорт архива bePaid",
 };

@@ -1,8 +1,8 @@
 // Cache bust v4
-import { useState, useEffect } from "react";
+import { lazy, Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { Send, LifeBuoy, Inbox, Settings, ChevronDown, MessageSquare, Mail, Instagram, Layers } from "lucide-react";
+import { Send, LifeBuoy, Inbox, Settings, ChevronDown, MessageSquare, Mail, Instagram, Layers, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -12,18 +12,41 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
-// Import tab contents
-import { SupportTabContent } from "@/components/admin/communication/SupportTabContent";
-import { BroadcastsTabContent } from "@/components/admin/communication/BroadcastsTabContent";
-import { InboxTabContent } from "@/components/admin/communication/InboxTabContent";
-import { CommunicationSettingsTabContent } from "@/components/admin/communication/CommunicationSettingsTabContent";
-import { UnifiedInboxView } from "@/components/admin/communication/unified/UnifiedInboxView";
 import { useUnifiedInboxFlag } from "@/hooks/useContactCenterFeatureFlag";
 
 // Import unread hooks
 import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
 import { useUnreadEmailCount } from "@/hooks/useEmailInbox";
 import { useUnreadTicketsCount } from "@/hooks/useUnreadTicketsCount";
+
+const InboxTabContent = lazy(() =>
+  import("@/components/admin/communication/InboxTabContent").then((module) => ({
+    default: module.InboxTabContent,
+  })),
+);
+const UnifiedInboxView = lazy(() =>
+  import("@/components/admin/communication/unified/UnifiedInboxView").then((module) => ({
+    default: module.UnifiedInboxView,
+  })),
+);
+const BroadcastsTabContent = lazy(() =>
+  import("@/components/admin/communication/BroadcastsTabContent").then((module) => ({
+    default: module.BroadcastsTabContent,
+  })),
+);
+const CommunicationSettingsTabContent = lazy(() =>
+  import("@/components/admin/communication/CommunicationSettingsTabContent").then((module) => ({
+    default: module.CommunicationSettingsTabContent,
+  })),
+);
+
+function ContactCenterPanelFallback() {
+  return (
+    <div className="h-full flex items-center justify-center text-muted-foreground">
+      <Loader2 className="h-5 w-5 animate-spin" aria-label="Загрузка контакт-центра" />
+    </div>
+  );
+}
 
 const tabs = [
   { id: "inbox", label: "Сообщения", icon: Inbox },
@@ -234,13 +257,15 @@ export default function AdminCommunication() {
 
         {/* Tab Content */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {activeTab === "inbox" && (
-            inboxChannel === "all" && unifiedEnabled
-              ? <UnifiedInboxView sourceFilter="all" />
-              : <InboxTabContent defaultChannel={inboxChannel === "all" ? "telegram" : inboxChannel} />
-          )}
-          {activeTab === "broadcasts" && <BroadcastsTabContent />}
-          {activeTab === "settings" && <CommunicationSettingsTabContent />}
+          <Suspense fallback={<ContactCenterPanelFallback />}>
+            {activeTab === "inbox" && (
+              inboxChannel === "all" && unifiedEnabled
+                ? <UnifiedInboxView sourceFilter="all" />
+                : <InboxTabContent defaultChannel={inboxChannel === "all" ? "telegram" : inboxChannel} />
+            )}
+            {activeTab === "broadcasts" && <BroadcastsTabContent />}
+            {activeTab === "settings" && <CommunicationSettingsTabContent />}
+          </Suspense>
         </div>
       </div>
     </AdminLayout>

@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import * as tus from "tus-js-client";
+import type { TrainingAssetReference } from "./extractTrainingAssetPaths";
 
 // Файлы больше этого порога идут через resumable TUS upload (обходит ~50MB limit API gateway)
 const TUS_THRESHOLD_BYTES = 6 * 1024 * 1024; // 6 MB
@@ -86,7 +87,7 @@ function extensionToMime(ext: string): string {
 }
 
 /**
- * Общая утилита загрузки файлов в бакет training-assets.
+ * Общая утилита загрузки файлов в бакеты обучения.
  *
  * Валидация: файл проходит если (mimeOk ИЛИ extOk).
  *
@@ -96,8 +97,9 @@ function extensionToMime(ext: string): string {
  * @param acceptMimePrefix — опциональный MIME-префикс для фильтрации
  * @param allowedExtensions — опциональный allowlist расширений
  * @param ownerId          — опциональный ID владельца (lessonId/moduleId) для изоляции пути
+ * @param bucket           — bucket назначения; студентские работы всегда отправляются в private bucket
  *
- * @returns { publicUrl, storagePath } или null при ошибке
+ * @returns { publicUrl, storagePath, storageBucket } или null при ошибке
  */
 export async function uploadToTrainingAssets(
   file: File,
@@ -105,8 +107,9 @@ export async function uploadToTrainingAssets(
   maxSizeMB: number,
   acceptMimePrefix?: string,
   allowedExtensions?: string[],
-  ownerId?: string
-): Promise<{ publicUrl: string; storagePath: string } | null> {
+  ownerId?: string,
+  bucket = "training-assets"
+): Promise<{ publicUrl: string; storagePath: string; storageBucket: string } | null> {
   const fileExtension = "." + (file.name.split(".").pop()?.toLowerCase() || "");
 
   // Валидация типа: проходит если mimeOk ИЛИ extOk
@@ -184,7 +187,7 @@ export async function uploadToTrainingAssets(
       await uploadViaTus({
         file: uploadBody,
         fileName: file.name,
-        bucket: "training-assets",
+        bucket,
         filePath,
         contentType: resolvedContentType,
         token,
@@ -198,7 +201,7 @@ export async function uploadToTrainingAssets(
     }
   } else {
     const { error: uploadError } = await supabase.storage
-      .from("training-assets")
+      .from(bucket)
       .upload(filePath, uploadBody, { upsert: false, contentType: resolvedContentType });
 
     if (uploadError) {
@@ -208,11 +211,13 @@ export async function uploadToTrainingAssets(
     }
   }
 
-  const { data: urlData } = supabase.storage
-    .from("training-assets")
-    .getPublicUrl(filePath);
+  // Public URL нужен только для публичных материалов уроков. Студенческие
+  // работы никогда не получают прямую ссылку и открываются через Edge Function.
+  const publicUrl = bucket === "training-assets"
+    ? supabase.storage.from(bucket).getPublicUrl(filePath).data.publicUrl
+    : "";
 
-  return { publicUrl: urlData.publicUrl, storagePath: filePath };
+  return { publicUrl, storagePath: filePath, storageBucket: bucket };
 }
 
 /**
@@ -293,13 +298,53 @@ const EMPTY_RESULT: DeleteTrainingAssetsResult = {
 };
 
 /**
+ * Удаляет ссылки из публичного и приватного bucket раздельно. Это важно для
+ * student-submissions: путь один и тот же, но доступ к нему — другой.
+ */
+export async function deleteTrainingAssetReferences(
+  references: TrainingAssetReference[],
+  entity?: { type: string; id: string },
+  reason = "client_delete"
+): Promise<DeleteTrainingAssetsResult> {
+  const groups = new Map<string, string[]>();
+  for (const reference of references) {
+    const paths = groups.get(reference.bucket) ?? [];
+    paths.push(reference.path);
+    groups.set(reference.bucket, paths);
+  }
+
+  const results = await Promise.all(
+    Array.from(groups.entries()).map(([bucket, paths]) =>
+      deleteTrainingAssets([...new Set(paths)], entity, reason, bucket)
+    )
+  );
+
+  const failed = results.find((result) => !result.ok);
+  if (failed) return failed;
+
+  return results.reduce<DeleteTrainingAssetsResult>((total, result) => ({
+    ok: true,
+    requested_count: total.requested_count + result.requested_count,
+    allowed_count: total.allowed_count + result.allowed_count,
+    blocked_count: total.blocked_count + result.blocked_count,
+    deleted_count: total.deleted_count + result.deleted_count,
+    blocked_paths: [...total.blocked_paths, ...result.blocked_paths],
+    deleted_paths: [...total.deleted_paths, ...result.deleted_paths],
+    skipped_shared_count: (total.skipped_shared_count ?? 0) + (result.skipped_shared_count ?? 0),
+    shared_paths: [...(total.shared_paths ?? []), ...(result.shared_paths ?? [])],
+    attempted_delete_count: (total.attempted_delete_count ?? 0) + (result.attempted_delete_count ?? 0),
+  }), { ...EMPTY_RESULT, shared_paths: [], attempted_delete_count: 0 });
+}
+
+/**
  * Безопасное удаление файлов из training-assets через Edge Function.
  * Возвращает структурированный результат для STOP-guards.
  */
 export async function deleteTrainingAssets(
   paths: string[],
   entity?: { type: string; id: string },
-  reason = "client_delete"
+  reason = "client_delete",
+  bucket = "training-assets"
 ): Promise<DeleteTrainingAssetsResult> {
   if (!paths || paths.length === 0) return { ...EMPTY_RESULT };
 
@@ -339,7 +384,7 @@ export async function deleteTrainingAssets(
 
     const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
     const fnUrl = `https://${projectId}.supabase.co/functions/v1/training-assets-delete`;
-    const baseBody = { paths: safePaths, reason, entity: entity || undefined };
+    const baseBody = { paths: safePaths, reason, entity: entity || undefined, bucket };
 
     // Шаг 1: dry_run
     const dryRes = await fetch(fnUrl, {

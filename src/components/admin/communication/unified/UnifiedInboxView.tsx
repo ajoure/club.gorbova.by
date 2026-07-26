@@ -15,10 +15,13 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
-import { Search, MessageSquare, RefreshCw, ArrowLeft, Check, Star, Pin } from "lucide-react";
+import { Search, MessageSquare, RefreshCw, Check, Star, Pin } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { INBOX_DIALOGS_QK } from "@/constants/inboxQueryKeys";
+import {
+  INBOX_DIALOGS_QK,
+  UNREAD_MESSAGES_COUNT_QK,
+} from "@/constants/inboxQueryKeys";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   normalizeTelegramNumericSearch,
@@ -59,7 +62,15 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 250);
   const serverSearch = normalizeTelegramSearchInput(debouncedSearch);
-  const { contactRows, isLoading, errors, counts } = useUnifiedInbox({ enabled: true, search: serverSearch });
+  const {
+    contactRows,
+    isLoading,
+    errors,
+    counts,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useUnifiedInbox({ enabled: true, search: serverSearch });
   type FilterKind = "all" | "unread" | "favorite" | "pinned";
   const [filterKind, setFilterKind] = useState<FilterKind>("all");
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -152,6 +163,28 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     estimateSize: () => 88,
     overscan: 5,
   });
+  const virtualItems = virtualizer.getVirtualItems();
+
+  // Подгружаем следующую страницу до того, как оператор упрётся в конец.
+  // Список остаётся виртуализированным: количество DOM-узлов не растёт вместе
+  // с историей, поэтому длинная лента не блокирует скролл на iOS.
+  useEffect(() => {
+    const last = virtualItems[virtualItems.length - 1];
+    if (
+      last &&
+      last.index >= filtered.length - 8 &&
+      hasNextPage &&
+      !isFetchingNextPage
+    ) {
+      void fetchNextPage();
+    }
+  }, [
+    virtualItems,
+    filtered.length,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  ]);
 
   // Resolve selected: сначала пробуем текущий key; если исчез — ищем grouped
   // row, содержащую lastSelectedSourceKey (обработка attach IG → merge).
@@ -193,6 +226,10 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
       sourceFilter !== "all" && row.channels[sourceFilter]
         ? sourceFilter
         : row.defaultActiveSource;
+    // Freeze the operator's chosen channel for this contact. Background list
+    // refreshes may change defaultActiveSource when another integration gets
+    // a message; they must not remount/switch the open chat under the cursor.
+    setActiveSourceByKey((prev) => ({ ...prev, [row.key]: initialSource }));
     const ch = row.channels[initialSource]!;
     setLastSelectedSourceKey(ch.key);
   };
@@ -344,7 +381,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         );
         registerSelfMark(userId, 2500);
         try {
-          const { error } = await supabase.rpc("mark_dialog_read_v2" as any, {
+          const { data, error } = await supabase.rpc("mark_dialog_read_v2" as any, {
             p_user_id: userId,
             p_boundary: boundary,
           });
@@ -352,16 +389,57 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
             clearSelfMark(userId);
             throw error;
           }
+          const result = Array.isArray(data) ? data[0] : data;
+          if (!result) throw new Error("сервер не вернул результат");
+          const remainingUnread = Number((result as any).remaining_unread_count) || 0;
+
+          // UnifiedInbox uses a dedicated raw-RPC cache. Updating only
+          // INBOX_DIALOGS_QK leaves the unified row and its badges stale even
+          // though the database update succeeded.
+          queryClient.setQueriesData<any>(
+            { queryKey: ["unified-inbox-telegram"] },
+            (old) => {
+              if (!old?.pages) return old;
+              return {
+                ...old,
+                pages: old.pages.map((page: any) => ({
+                  ...page,
+                  rows: Array.isArray(page.rows)
+                    ? page.rows.map((dialog: any) =>
+                        dialog?.user_id === userId
+                          ? { ...dialog, unread_count: remainingUnread }
+                          : dialog,
+                      )
+                    : page.rows,
+                })),
+              };
+            },
+          );
+          queryClient.setQueriesData<any[]>(
+            { queryKey: INBOX_DIALOGS_QK },
+            (old) =>
+              Array.isArray(old)
+                ? old.map((dialog: any) =>
+                    dialog?.user_id === userId
+                      ? { ...dialog, unread_count: remainingUnread }
+                      : dialog,
+                  )
+                : old,
+          );
         } catch (e) {
           clearSelfMark(userId);
           throw e;
         }
-        queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["unified-inbox-telegram"] }),
+          queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK }),
+          queryClient.invalidateQueries({ queryKey: UNREAD_MESSAGES_COUNT_QK }),
+        ]);
         toast.success("Отмечено прочитанным · Telegram");
         return;
       }
       if (ch.source === "instagram") {
-        await supabase.functions.invoke("instagram-admin-chat", {
+        const { error } = await supabase.functions.invoke("instagram-admin-chat", {
           body: {
             action: "mark_read",
             instagram_account_id: sr.meta.instagramAccountId,
@@ -369,6 +447,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
             sender_id: sr.meta.instagramPeerId ?? undefined,
           },
         });
+        if (error) throw error;
         queryClient.invalidateQueries({ queryKey: ["unified-ig-dialogs"] });
         toast.success("Отмечено прочитанным · Instagram");
         return;
@@ -461,7 +540,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
         )}
       </div>
 
-      <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto">
+      <div ref={parentRef} className="touch-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain">
         {isLoading ? (
           <div className="p-8 text-center text-muted-foreground">
             <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
@@ -473,8 +552,11 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
             <p className="text-muted-foreground text-sm">Ничего не найдено</p>
           </div>
         ) : (
-          <div className="relative p-1.5" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-            {virtualizer.getVirtualItems().map((vr) => {
+          <div
+            className="relative p-1.5"
+            style={{ height: `${virtualizer.getTotalSize() + (isFetchingNextPage ? 36 : 0)}px` }}
+          >
+            {virtualItems.map((vr) => {
               const row = filtered[vr.index];
               const rowActiveSource: UnifiedSource =
                 row.key === selected?.key
@@ -575,6 +657,16 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                 </div>
               );
             })}
+            {isFetchingNextPage && (
+              <div
+                className="absolute inset-x-0 flex h-9 items-center justify-center text-muted-foreground"
+                style={{ transform: `translateY(${virtualizer.getTotalSize()}px)` }}
+                aria-live="polite"
+              >
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                <span className="text-[11px]">Загружаю ещё…</span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -583,7 +675,12 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
 
   const rightPanel = selected && activeChannel ? (
     <div className="h-full flex flex-col">
-      <UnifiedChatHeader contact={selected} activeSource={activeSource} />
+      <UnifiedChatHeader
+        contact={selected}
+        activeSource={activeSource}
+        onBack={isMobile ? () => setSelectedKey(null) : undefined}
+        compactMobile={isMobile}
+      />
       <ChannelPicker
         contact={selected}
         activeSource={activeSource}
@@ -625,18 +722,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     return (
       <div className="h-full min-h-0 flex flex-col overflow-hidden">
         {selected ? (
-          <>
-            <div className="p-2 border-b flex items-center gap-2 shrink-0">
-              <Button variant="ghost" size="icon" onClick={() => setSelectedKey(null)}>
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              <span className="text-sm font-semibold truncate">{selected.displayName}</span>
-              {selected.availableSources.map((s) => (
-                <SourceBadge key={s} source={s} label={selected.channels[s]?.sourceRow.sourceLabel ?? null} />
-              ))}
-            </div>
-            <div className="flex-1 min-h-0 h-full max-h-full overflow-hidden">{rightPanel}</div>
-          </>
+          <div className="flex-1 min-h-0 h-full max-h-full overflow-hidden touch-pan-y">{rightPanel}</div>
         ) : (
           dialogList
         )}

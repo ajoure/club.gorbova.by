@@ -16,6 +16,10 @@ import {
   Pause
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  toDownloadTelegramDocumentUrl,
+  toInlineTelegramDocumentUrl,
+} from "@/lib/telegramDocumentUrl";
 import { MediaLightbox } from "./MediaLightbox";
 import { AudioPlayer } from "./AudioPlayer";
 import { VoiceMessageBubble } from "./VoiceMessageBubble";
@@ -457,7 +461,7 @@ export function ChatMediaMessage({
   if (hasFile) {
     const handleDownload = () => {
       const a = document.createElement("a");
-      a.href = fileUrl!;
+      a.href = toDownloadTelegramDocumentUrl(fileUrl!, fileName);
       a.download = fileName || "file";
       a.target = "_blank";
       a.rel = "noopener noreferrer";
@@ -466,15 +470,14 @@ export function ChatMediaMessage({
       document.body.removeChild(a);
     };
 
-    const isOfficeDoc = /\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/i.test(fileName || "");
     const handleOpenInNewTab = () => {
-      if (isOfficeDoc && fileUrl) {
-        // Office/RTF файлы браузер не умеет открывать — показываем через Office Online Viewer
-        const viewerUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(fileUrl)}`;
-        window.open(viewerUrl, "_blank", "noopener,noreferrer");
-        return;
-      }
-      window.open(fileUrl!, "_blank", "noopener,noreferrer");
+      // Private signed Telegram files cannot be fetched reliably by external
+      // Office viewers. Open the protected Storage URL directly instead.
+      window.open(
+        toInlineTelegramDocumentUrl(fileUrl!),
+        "_blank",
+        "noopener,noreferrer",
+      );
     };
 
     return (

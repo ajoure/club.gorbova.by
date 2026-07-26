@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { normalizeInstagram } from "@/lib/normalizeInstagram";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
-import { Loader2, Upload, X, CalendarIcon } from "lucide-react";
+import { Loader2, Upload, X, CalendarIcon, Eye, EyeOff } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -21,6 +21,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
 import { getFieldDisplayLabel } from "@/lib/formFieldLabel";
+import { USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
 
 interface FormField {
   label: string;
@@ -39,6 +40,8 @@ interface FormField {
 interface FormSectionProps {
   content: Record<string, unknown>;
   pageId?: string;
+  /** Stable published block ID, used by the server to resolve form settings. */
+  blockId?: string;
   /** True when rendered inside admin editor preview — disables real submit */
   isPreview?: boolean;
 }
@@ -78,9 +81,12 @@ type AuthFormStep =
 type TelegramUiStatus = "idle" | "starting" | "pending" | "linked" | "failed" | "skipped";
 
 const emailSchema = z.string().email("Введите корректный email");
-const passwordSchema = z.string().min(6, "Пароль должен быть не менее 6 символов");
+const passwordSchema = z.string().min(
+  USER_PASSWORD_MIN_LENGTH,
+  `Пароль должен быть не менее ${USER_PASSWORD_MIN_LENGTH} символов`,
+);
 
-export function FormSection({ content, pageId, isPreview }: FormSectionProps) {
+export function FormSection({ content, pageId, blockId, isPreview }: FormSectionProps) {
   const title = (content.title as string) || "";
   const subtitle = (content.subtitle as string) || "";
   const buttonText = (content.buttonText as string) || "Отправить";
@@ -90,7 +96,7 @@ export function FormSection({ content, pageId, isPreview }: FormSectionProps) {
   const telegramLinkEnabled = (content.telegram_link as boolean) ?? false;
 
   if (!authMode) {
-    return <LegacyFormSection content={content} pageId={pageId} isPreview={isPreview} />;
+    return <LegacyFormSection content={content} pageId={pageId} blockId={blockId} isPreview={isPreview} />;
   }
 
   return (
@@ -102,6 +108,7 @@ export function FormSection({ content, pageId, isPreview }: FormSectionProps) {
       fields={fields}
       telegramLinkEnabled={telegramLinkEnabled}
       pageId={pageId}
+      blockId={blockId}
       content={content}
       isPreview={isPreview}
     />
@@ -109,7 +116,7 @@ export function FormSection({ content, pageId, isPreview }: FormSectionProps) {
 }
 
 // ─── Legacy form (auth_mode=false) — расширенный набор типов полей ───
-function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
+function LegacyFormSection({ content, pageId, blockId, isPreview }: FormSectionProps) {
   const title = (content.title as string) || "";
   const subtitle = (content.subtitle as string) || "";
   const buttonText = (content.buttonText as string) || "Отправить";
@@ -265,6 +272,7 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
 
       const payload: Record<string, unknown> = {
         page_id: pageId,
+        block_id: blockId,
         redirect_url: redirectUrl || undefined,
         fields: submissionFields,
         submission_token: submissionTokenRef.current,
@@ -644,6 +652,7 @@ interface AuthFormSectionProps {
   fields: FormField[];
   telegramLinkEnabled: boolean;
   pageId?: string;
+  blockId?: string;
   content: Record<string, unknown>;
   isPreview?: boolean;
 }
@@ -656,6 +665,7 @@ function AuthFormSection({
   fields,
   telegramLinkEnabled,
   pageId,
+  blockId,
   content,
   isPreview,
 }: AuthFormSectionProps) {
@@ -670,6 +680,7 @@ function AuthFormSection({
   // System auth fields
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
@@ -957,6 +968,7 @@ function AuthFormSection({
 
       const payload: Record<string, unknown> = {
         page_id: pageId,
+        block_id: blockId,
         auth_mode: true,
         redirect_url: redirectUrl || undefined,
         fields: submissionFields,
@@ -1093,14 +1105,25 @@ function AuthFormSection({
           <label className="block text-sm font-medium text-foreground mb-1">
             Пароль <span className="text-destructive">*</span>
           </label>
-          <input
-            type="password"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder="Ваш пароль"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
+          <div className="relative">
+            <input
+              type={showPassword ? "text" : "password"}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 pr-11 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder="Ваш пароль"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((visible) => !visible)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+              aria-pressed={showPassword}
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
         {error && <p className="text-sm text-destructive text-center">{error}</p>}
         {inlineAuth.step === "password_reset_sent" && (
@@ -1177,14 +1200,26 @@ function AuthFormSection({
           <label className="block text-sm font-medium text-foreground mb-1">
             Пароль <span className="text-destructive">*</span>
           </label>
-          <input
-            type="password"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder="Минимум 6 символов"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
+          <div className="relative">
+            <input
+              type={showPassword ? "text" : "password"}
+              minLength={USER_PASSWORD_MIN_LENGTH}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 pr-11 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder={`Минимум ${USER_PASSWORD_MIN_LENGTH} символов`}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((visible) => !visible)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+              aria-pressed={showPassword}
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
         {error && <p className="text-sm text-destructive text-center">{error}</p>}
         <button

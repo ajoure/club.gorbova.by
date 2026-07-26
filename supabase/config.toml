@@ -1,5 +1,8 @@
 project_id = "hdjgkjceownmmnrqqtuz"
 
+[functions.composable-checkout-quote]
+verify_jwt = false
+
 
 
 
@@ -8,32 +11,6 @@ project_id = "hdjgkjceownmmnrqqtuz"
 verify_jwt = true
 
 [functions.auth-email-hook]
-verify_jwt = false
-
-# Public provider callbacks.  Each handler validates its provider signature
-# itself; this only removes the platform JWT wall required for a callback.
-[functions.stripe-webhook]
-verify_jwt = false
-
-[functions.bepaid-webhook]
-verify_jwt = false
-
-[functions.telegram-webhook]
-verify_jwt = false
-
-[functions.instagram-webhook]
-verify_jwt = false
-
-[functions.getcourse-webhook]
-verify_jwt = false
-
-[functions.amocrm-webhook]
-verify_jwt = false
-
-[functions.payment-methods-webhook]
-verify_jwt = false
-
-[functions.public-webhook-deploy-probe]
 verify_jwt = false
 
 [functions.request-inline-otp]
@@ -59,7 +36,20 @@ verify_jwt = false
 [functions.notify-order-purchased]
 verify_jwt = true
 
+# Referral notifications accept an authenticated referral registration call
+# and a service-role sale event from the paid-order pipeline.
+[functions.referral-notify]
+verify_jwt = false
+
 [functions.autoweb-session-heartbeat]
+verify_jwt = true
+
+[functions.autoweb-room-state]
+verify_jwt = true
+
+# The function also validates the caller's administrator/presenter role before
+# it exposes a private Kinescope-derived audio file or a transcript download.
+[functions.live-event-media]
 verify_jwt = true
 
 [functions.public-rr-installment-initiate]
@@ -80,4 +70,86 @@ verify_jwt = true
 [functions.grant-access-for-order]
 verify_jwt = true
 
+# Historical acquiring recovery is an admin-only mutation. The platform JWT
+# wall is backed by an in-function has_role_v2(admin|super_admin) check.
+[functions.admin-backfill-2026-orders]
+verify_jwt = true
 
+# One-off storage migration: platform JWT plus in-function admin/super_admin
+# guard and an explicit confirmation phrase before any source object is removed.
+[functions.admin-migrate-student-submissions]
+verify_jwt = true
+
+# External providers call these endpoints directly. Each function performs
+# its own provider-specific validation before processing a request.
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.bepaid-webhook]
+verify_jwt = false
+
+[functions.telegram-webhook]
+verify_jwt = false
+
+[functions.instagram-webhook]
+verify_jwt = false
+
+[functions.manychat-inbound]
+# External ManyChat calls authenticate inside the function with the
+# per-instance X-ManyChat-Token shared secret.
+verify_jwt = false
+
+[functions.instagram-admin-chat]
+verify_jwt = true
+
+[functions.instagram-media-proxy]
+verify_jwt = true
+
+[functions.getcourse-webhook]
+verify_jwt = false
+
+[functions.amocrm-webhook]
+verify_jwt = false
+
+[functions.vochi-webhook]
+# VOCHI is an external provider and cannot send a Supabase JWT. The handler
+# requires integration_credentials.secrets.webhook_token for every request.
+verify_jwt = false
+
+[functions.payment-methods-webhook]
+verify_jwt = false
+
+[functions.public-webhook-deploy-probe]
+verify_jwt = false
+
+# Phase 4E: the platform JWT gate runs before the in-function admin-role check.
+# The function also validates an explicit allowed-origin list at runtime.
+[functions.company-sync-admin]
+verify_jwt = true
+
+# Phase 4D: invoked by pg_cron via net.http_post with a vault-backed
+# X-Worker-Secret header. Authorization is enforced inside the function
+# (shared-secret gate + service-role client). Must remain JWT-less.
+[functions.company-sync-worker]
+verify_jwt = false
+
+# Stage 1 CRM automation worker. The function additionally compares the
+# Authorization bearer to the service-role secret before claiming jobs.
+[functions.crm-pipeline-automation-worker]
+verify_jwt = true
+
+[functions.temp-cbold-dump]
+verify_jwt = false
+
+[functions.legislation-sync]
+# Manual synchronization is restricted by the platform JWT wall and an
+# in-function content.edit/super-admin authorization check.
+verify_jwt = true
+
+[functions.legal-og-image]
+# Public social-preview image. It exposes only metadata from published documents.
+verify_jwt = false
+
+[functions.l]
+# Public short-link landing page with document-specific social metadata.
+verify_jwt = false

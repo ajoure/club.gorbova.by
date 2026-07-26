@@ -3,13 +3,43 @@ import {
   markInputRule,
   markPasteRule,
   mergeAttributes
-} from "./chunk-SXIQHOR3.js";
-import "./chunk-YLIL3JKF.js";
+} from "./chunk-TN6A4YI7.js";
+import "./chunk-E5N3B3CE.js";
 import "./chunk-OL46QLBJ.js";
 
 // node_modules/@tiptap/extension-code/dist/index.js
 var inputRegex = /(^|[^`])`([^`]+)`(?!`)$/;
 var pasteRegex = /(^|[^`])`([^`]+)`(?!`)/g;
+var inputRegexMatch = (text) => {
+  const match = /`([^`]+)`(?!`)$/.exec(text);
+  if (!match) {
+    return null;
+  }
+  if (match.index > 0 && text[match.index - 1] === "`") {
+    return null;
+  }
+  return {
+    index: match.index,
+    text: match[0],
+    replaceWith: match[1]
+  };
+};
+var pasteRegexMatch = (text) => {
+  const regex = /`([^`]+)`(?!`)/g;
+  const matches = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > 0 && text[match.index - 1] === "`") {
+      continue;
+    }
+    matches.push({
+      index: match.index,
+      text: match[0],
+      replaceWith: match[1]
+    });
+  }
+  return matches;
+};
 var Code = Mark.create({
   name: "code",
   addOptions() {
@@ -57,7 +87,7 @@ var Code = Mark.create({
   addInputRules() {
     return [
       markInputRule({
-        find: inputRegex,
+        find: inputRegexMatch,
         type: this.type
       })
     ];
@@ -65,7 +95,7 @@ var Code = Mark.create({
   addPasteRules() {
     return [
       markPasteRule({
-        find: pasteRegex,
+        find: pasteRegexMatch,
         type: this.type
       })
     ];
@@ -76,6 +106,8 @@ export {
   Code,
   index_default as default,
   inputRegex,
-  pasteRegex
+  inputRegexMatch,
+  pasteRegex,
+  pasteRegexMatch
 };
 //# sourceMappingURL=@tiptap_extension-code.js.map

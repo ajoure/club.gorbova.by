@@ -106,10 +106,14 @@ export function useInboxRealtimeInvalidation(): void {
     const channel = supabase
       .channel("inbox-realtime-bus")
       .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "telegram_messages" },
-        (payload) => {
-          const row = payload.new as { direction?: string } | null;
+        "postgres_changes" as unknown as "system",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "telegram_messages",
+        } as never,
+        (payload: { new: { direction?: string } | null }) => {
+          const row = payload.new;
           markInbox();
           if (row?.direction === "incoming") {
             markUnread();
@@ -117,17 +121,16 @@ export function useInboxRealtimeInvalidation(): void {
         },
       )
       .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "telegram_messages" },
-        (payload) => {
-          const row = payload.new as
-            | { direction?: string; is_read?: boolean; user_id?: string }
-            | null;
-          // Coordinator-guard: если этот user_id только что был помечен
-          // нашей собственной mutation, RPC уже вернула remaining_unread_count
-          // и кэш точечно пропатчен. Realtime-эхо своего UPDATE не должен
-          // плодить параллельный refetch. Чужие изменения и любые INSERT
-          // продолжают инвалидировать как обычно.
+        "postgres_changes" as unknown as "system",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "telegram_messages",
+        } as never,
+        (payload: {
+          new: { direction?: string; is_read?: boolean; user_id?: string } | null;
+        }) => {
+          const row = payload.new;
           if (
             row?.direction === "incoming" &&
             row?.is_read === true &&
@@ -142,8 +145,12 @@ export function useInboxRealtimeInvalidation(): void {
         },
       )
       .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "telegram_messages" },
+        "postgres_changes" as unknown as "system",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "telegram_messages",
+        } as never,
         () => {
           markInbox();
           markUnread();
@@ -164,18 +171,30 @@ export function useInboxRealtimeInvalidation(): void {
       ? supabase
           .channel("inbox-realtime-bus-unified")
           .on(
-            "postgres_changes",
-            { event: "*", schema: "public", table: "instagram_messages" },
+            "postgres_changes" as unknown as "system",
+            {
+              event: "*",
+              schema: "public",
+              table: "instagram_messages",
+            } as never,
             () => markIg(),
           )
           .on(
-            "postgres_changes",
-            { event: "*", schema: "public", table: "support_tickets" },
+            "postgres_changes" as unknown as "system",
+            {
+              event: "*",
+              schema: "public",
+              table: "support_tickets",
+            } as never,
             () => markSupport(),
           )
           .on(
-            "postgres_changes",
-            { event: "INSERT", schema: "public", table: "ticket_messages" },
+            "postgres_changes" as unknown as "system",
+            {
+              event: "INSERT",
+              schema: "public",
+              table: "ticket_messages",
+            } as never,
             () => markSupport(),
           )
           .subscribe((status) => {

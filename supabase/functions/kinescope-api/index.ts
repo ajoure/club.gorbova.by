@@ -132,34 +132,42 @@ serve(async (req) => {
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-    const { data: userData, error: userErr } = await userClient.auth.getUser();
-    if (userErr || !userData?.user) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
+
+    // PATCH KINESCOPE-INTERNAL-AUTH: internal service-to-service calls (e.g. live-event-lifecycle)
+    // send SUPABASE_SERVICE_ROLE_KEY as Bearer. Treat that as trusted admin without user lookup.
+    const isServiceRoleCall = token === supabaseKey;
     const adminSvc = createClient(supabaseUrl, supabaseKey);
-    const { data: isAdmin } = await adminSvc.rpc("has_role_v2", {
-      _user_id: userData.user.id, _role_code: "admin",
-    });
-    const { data: isSuper } = await adminSvc.rpc("has_role_v2", {
-      _user_id: userData.user.id, _role_code: "super_admin",
-    });
-    if (!isAdmin && !isSuper) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Forbidden" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+
+    if (!isServiceRoleCall) {
+      const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+      const { data: userData, error: userErr } = await userClient.auth.getUser();
+      if (userErr || !userData?.user) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Unauthorized" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      const { data: isAdmin } = await adminSvc.rpc("has_role_v2", {
+        _user_id: userData.user.id, _role_code: "admin",
+      });
+      const { data: isSuper } = await adminSvc.rpc("has_role_v2", {
+        _user_id: userData.user.id, _role_code: "super_admin",
+      });
+      if (!isAdmin && !isSuper) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Forbidden" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
     }
+
 
     const request: KinescopeRequest = await req.json();
     const { action, instance_id, api_token: directToken, project_id, folder_id, video_id, live_event_id, page = 1, per_page = 100 } = request;
 
-    console.log(`Kinescope API action: ${action} actor: ${userData.user.id}`);
+    console.log(`Kinescope API action: ${action} internal: ${isServiceRoleCall}`);
 
     // Get API token
     let apiToken = directToken || null;

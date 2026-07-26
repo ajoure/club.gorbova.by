@@ -37,6 +37,18 @@ Deno.test("2) live: starts_at <= now < ends_at", () => {
   });
   assertEquals(r.phase, "live");
   assertEquals(r.ends_at.toISOString(), "2030-01-01T11:00:00.000Z");
+  assertEquals(r.session_playback_position_seconds, 1800);
+});
+
+Deno.test("2a) late join is clamped to the video duration and replay starts at zero", () => {
+  const starts = new Date("2030-01-01T10:00:00Z");
+  const atEnd = computeRoomState({
+    now: new Date("2030-01-01T11:00:00Z"),
+    starts_at: starts, duration_seconds: DURATION,
+    replay: REPLAY_IMMEDIATE, viewer_controls: VC, saved_position_seconds: 0,
+  });
+  assertEquals(atEnd.phase, "replay");
+  assertEquals(atEnd.session_playback_position_seconds, 0);
 });
 
 Deno.test("3) replay with open_strategy=immediate", () => {

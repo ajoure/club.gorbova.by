@@ -25,6 +25,7 @@ import { Loader2, Send, Mail } from "lucide-react";
 interface ComposeEmailDialogProps {
   recipientEmail: string | null;
   recipientName?: string | null;
+  companyId?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
@@ -33,6 +34,7 @@ interface ComposeEmailDialogProps {
 export function ComposeEmailDialog({ 
   recipientEmail, 
   recipientName,
+  companyId,
   open, 
   onOpenChange,
   onSuccess,
@@ -106,13 +108,14 @@ export function ComposeEmailDialog({
       `;
 
       const { data, error } = await supabase.functions.invoke("send-email", {
-        body: {
+          body: {
           to: recipientEmail,
           subject: subject.trim(),
           html: htmlBody,
           text: body.trim(),
           account_id: selectedAccountId || undefined,
-        },
+          context: companyId ? { company_id: companyId } : undefined,
+          },
       });
 
       if (error) throw error;

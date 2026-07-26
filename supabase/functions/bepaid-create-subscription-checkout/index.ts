@@ -4,6 +4,8 @@ import {
   validateReplacementSubscription,
   classifySameProductState,
 } from '../_shared/subscription-conflict.ts';
+import { referralDiscountMeta, resolveReferralCheckoutDiscount } from '../_shared/referral-checkout-discount.ts';
+import { guardProviderSubscriptionOffer } from '../_shared/provider-subscription-offer-guard.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -234,30 +236,71 @@ Deno.serve(async (req) => {
     let currency = 'BYN';
     let intervalDays = 30;
 
-    // Try offer first
+    // Resolve and validate the selected offer. A finite installment must never
+    // fall through to this renewable subscription writer.
     const effectiveOfferId = offerId;
-    if (effectiveOfferId) {
-      const { data: offerData } = await supabase
-        .from('tariff_offers')
-        .select('auto_charge_amount, amount, meta')
-        .eq('id', effectiveOfferId)
-        .maybeSingle();
+    if (!effectiveOfferId) {
+      return new Response(JSON.stringify({
+        error: 'offerId is required for provider-managed subscription checkout',
+        code: 'INVALID_OFFER',
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
-      if (offerData) {
-        const offerMeta = (offerData.meta || {}) as Record<string, any>;
-        const recurringConfig = offerMeta.recurring || {};
-        
-        const amount = offerData.auto_charge_amount || offerData.amount;
-        if (amount && Number(amount) > 0) {
-          amountCents = Math.round(Number(amount) * 100);
-        }
-        
-        if (recurringConfig.billing_period_mode === 'month') {
-          intervalDays = 30;
-        } else if (recurringConfig.billing_period_days) {
-          intervalDays = Number(recurringConfig.billing_period_days);
-        }
-      }
+    const { data: offerData, error: offerError } = await supabase
+      .from('tariff_offers')
+      .select('id, tariff_id, is_active, payment_method, is_installment, installment_count, auto_charge_amount, amount, meta')
+      .eq('id', effectiveOfferId)
+      .maybeSingle();
+
+    if (offerError) {
+      console.error('[bepaid-sub-checkout] Offer lookup failed:', offerError);
+      return new Response(JSON.stringify({ error: 'Failed to resolve offer', code: 'INVALID_OFFER' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const offerGuard = guardProviderSubscriptionOffer(offerData, tariff.id);
+    if (!offerGuard.ok) {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'bepaid-create-subscription-checkout',
+        action: 'bepaid.subscription.create_blocked',
+        target_user_id: userId,
+        meta: {
+          reason: offerGuard.code,
+          product_id: productId,
+          tariff_id: tariff.id,
+          offer_id: effectiveOfferId,
+          payment_method: offerData?.payment_method ?? null,
+          installment_count: offerData?.installment_count ?? null,
+        },
+      });
+      return new Response(JSON.stringify({
+        error: offerGuard.code === 'FINITE_INSTALLMENT_REQUIRES_INSTALLMENT_CHECKOUT'
+          ? 'Рассрочку необходимо оформить через конечный план платежей.'
+          : 'Некорректный оффер подписки.',
+        code: offerGuard.code,
+      }), {
+        status: offerGuard.status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const offerMeta = (offerData.meta || {}) as Record<string, any>;
+    const recurringConfig = offerMeta.recurring || {};
+    const amount = offerData.auto_charge_amount || offerData.amount;
+    if (amount && Number(amount) > 0) {
+      amountCents = Math.round(Number(amount) * 100);
+    }
+    if (recurringConfig.billing_period_mode === 'month') {
+      intervalDays = 30;
+    } else if (recurringConfig.billing_period_days) {
+      intervalDays = Number(recurringConfig.billing_period_days);
     }
 
     // Fallback to tariff price
@@ -283,6 +326,14 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    const referralQuote = await resolveReferralCheckoutDiscount({
+      supabase, userId: userId!, productId, amountMinor: amountCents,
+      allowImmediateDiscount: false,
+    });
+    const baseAmountCents = amountCents;
+    amountCents = referralQuote.finalAmountMinor;
+    const referralMeta = referralDiscountMeta(referralQuote);
 
     // === PATCH PAYMENT-CONFLICT: shared exact-pair guard + replacement validation ===
     if (!userId || !productId || !tariff?.id) {
@@ -414,7 +465,7 @@ Deno.serve(async (req) => {
         tariff_id: tariff.id,
         offer_id: effectiveOfferId || null,
         order_number: orderNumber,
-        base_price: amountMoney,
+        base_price: baseAmountCents / 100,
         final_price: amountMoney,
         is_trial: false,
         paid_amount: 0,
@@ -422,9 +473,11 @@ Deno.serve(async (req) => {
         status: 'pending',
         deal_date: new Date().toISOString(),
         meta: {
+          payment_type: 'subscription',
           payment_flow: 'provider_managed_checkout',
           source: 'bepaid-create-subscription-checkout',
           expected_amount: amountMoney,
+          ...referralMeta,
         },
         purchase_snapshot: buildPurchaseSnapshot({
           product_id: productId,

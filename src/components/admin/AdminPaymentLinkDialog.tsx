@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -37,6 +38,10 @@ import {
   AlertTriangle, MousePointerClick, CreditCard, RefreshCw, Info, Users
 } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
+import { AddonPicker } from "@/components/checkout/AddonPicker";
+import { OrderSummary, type OrderSummaryLine } from "@/components/checkout/OrderSummary";
+import { InvoiceDeliverySuccess } from "@/components/payment/InvoiceDeliverySuccess";
+
 import { useTariffOffers, type TariffOffer } from "@/hooks/useTariffOffers";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 import { copyToClipboard } from "@/utils/clipboardUtils";
@@ -177,6 +182,10 @@ export function AdminPaymentLinkDialog({
   const effectiveTelegramUserId = isPublicMode ? null : telegramUserId;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [selectPortalContainer, setSelectPortalContainer] = useState<HTMLElement | null>(null);
+  const setDialogContentRef = useCallback((node: HTMLDivElement | null) => {
+    setSelectPortalContainer(node);
+  }, []);
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [selectedTariffId, setSelectedTariffId] = useState<string>("");
   // selectedOfferId — пользовательский override; если пуст, используется resolver.offer.id
@@ -193,6 +202,27 @@ export function AdminPaymentLinkDialog({
   const [combinedPending, setCombinedPending] = useState(false);
   // Stage L: выбранный срок рассрочки (только для installment-офферов)
   const [selectedInstallmentMonths, setSelectedInstallmentMonths] = useState<number | null>(null);
+  const [selectedAddonOfferIds, setSelectedAddonOfferIds] = useState<string[]>([]);
+  const [adjustmentReason, setAdjustmentReason] = useState("");
+  // Sprint «Составные продажи ЦБ» — panels для invoice (ЮЛ/ИП/ФЛ) и Ресурс развития (RR).
+  const [invoicePanelOpen, setInvoicePanelOpen] = useState(false);
+  const [rrPanelOpen, setRrPanelOpen] = useState(false);
+  const [invoicePayerType, setInvoicePayerType] = useState<"individual" | "entrepreneur" | "legal_entity">("legal_entity");
+  const [invoiceLegalDetailsId, setInvoiceLegalDetailsId] = useState<string>("");
+  const [invoicePending, setInvoicePending] = useState(false);
+  const [rrPending, setRrPending] = useState(false);
+  // Blocker fix ORD-26-02827: invoice delivery success внутри админского flow.
+  const [invoiceIssueResult, setInvoiceIssueResult] = useState<
+    | null
+    | {
+        document_id: string | null;
+        invoice_number: string;
+        document_number: string | null;
+        document_issued_at: string | null;
+        order_id: string | null;
+      }
+  >(null);
+
   // Phase 4.1 — provider routing UI state
   const [provider, setProvider] = useState<"bepaid" | "stripe">("bepaid");
   const [stripeAccountCode, setStripeAccountCode] = useState<string>("");
@@ -244,6 +274,28 @@ export function AdminPaymentLinkDialog({
       setStripeAccountCode((def as any).account_code);
     }
   }, [stripeAccounts, stripeAccountCode]);
+
+  // Sprint «Составные продажи ЦБ» — legal_details целевого пользователя (для invoice ЮЛ/ИП).
+  // Канонический резолвер: тот же путь, что public InvoiceCheckoutDialog / useLegalDetails —
+  // profiles.user_id → client_legal_details.profile_id. Флаг «по-умолчанию» — is_default
+  // (единственный boolean в схеме; is_primary в client_legal_details не существует и раньше
+  // ронял весь select, из-за чего резолвер молча возвращал пустой массив → «нет карточек»).
+  const { data: targetLegalDetails } = useQuery({
+    queryKey: ["admin-payment-link-target-legal-details", userId],
+    enabled: !!userId && invoicePanelOpen,
+    queryFn: async () => {
+      const { data: profile } = await supabase
+        .from("profiles").select("id").eq("user_id", userId!).maybeSingle();
+      if (!profile) return [];
+      const { data, error } = await supabase
+        .from("client_legal_details")
+        .select("id, client_type, leg_name, leg_org_form, ent_name, leg_unp, ent_unp, is_default")
+        .eq("profile_id", profile.id)
+        .order("is_default", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
 
   // Phase 7-UI follow-up — supported currencies выбранного Stripe-аккаунта.
   // Передаются в shared `resolveAvailableProviders` (frontend mirror SOT).
@@ -316,6 +368,24 @@ export function AdminPaymentLinkDialog({
   // Stripe Price. Frontend не является SOT — финальная валидация выполняется на backend.
   const visibleOffers = activeOffers;
 
+  // Sprint «Составные продажи ЦБ» — sibling invoice / RR офферы того же тарифа.
+  // Никаких хардкод UUID — источник истины tariff_offers.offer_type / meta.bank_installment.rr_runtime.
+  const invoiceSiblingOffer = useMemo(
+    () => (allOffers || []).find((o: any) => o.is_active && o.offer_type === "invoice") ?? null,
+    [allOffers],
+  );
+  const rrSiblingOffer = useMemo(
+    () =>
+      (allOffers || []).find(
+        (o: any) =>
+          o.is_active &&
+          o.offer_type === "bank_installment" &&
+          o?.meta?.bank_installment?.rr_runtime?.enabled === true &&
+          o?.meta?.bank_installment?.rr_runtime?.provider === "rr",
+      ) ?? null,
+    [allOffers],
+  );
+
   // Автосброс selectedOfferId, если выбранная кнопка вышла из visibleOffers (смена провайдера/типа).
   useEffect(() => {
     if (!selectedOfferId) return;
@@ -344,6 +414,39 @@ export function AdminPaymentLinkDialog({
     }
     return resolved.offer;
   }, [resolved, selectedOfferId, allOffers]);
+
+  const { data: composableQuote, isFetching: composableQuoteLoading } = useQuery({
+    queryKey: ["composable-checkout-quote", effectiveOffer?.id, selectedAddonOfferIds],
+    enabled: !!effectiveOffer?.id,
+    queryFn: async () => {
+      const parentOfferId = effectiveOffer!.id;
+      const { data, error } = await supabase.functions.invoke("composable-checkout-quote", {
+        body: { parent_offer_id: parentOfferId, addon_offer_ids: selectedAddonOfferIds },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Не удалось рассчитать комплект");
+      // Тегируем ответ id-оффера, чтобы UI мог отбросить stale-квоты, пришедшие для
+      // предыдущего продукта/тарифа (защита от race при быстром переключении).
+      return { ...(data as any), __parentOfferId: parentOfferId };
+    },
+    staleTime: 0,
+  });
+
+  // Считаем quote «свежей» только если она относится к текущему effectiveOffer.
+  const quoteMatchesCurrentOffer =
+    !!effectiveOffer?.id && composableQuote?.__parentOfferId === effectiveOffer.id;
+
+
+  useEffect(() => {
+    setSelectedAddonOfferIds([]);
+    setAdjustmentReason("");
+  }, [effectiveOffer?.id]);
+
+  useEffect(() => {
+    if (composableQuote?.subtotal != null) {
+      setCustomAmount(String(composableQuote.subtotal));
+    }
+  }, [composableQuote?.subtotal]);
 
   // Hotfix-1 — авто-default Stripe-валюты от offer.currency / offer.meta.currency / 'BYN'.
   // Не перетирает выбор админа, если он уже вручную поменял валюту.
@@ -673,8 +776,9 @@ ${amountLine}
     },
   });
 
-  // Reset на смене продукта
-  useEffect(() => {
+  // Явный сброс всех состояний, которые зависят от выбранного продукта.
+  // НЕ трогает selectedProductId — вызывающая сторона сама выставляет новое значение.
+  const resetProductDependentState = useCallback(() => {
     setSelectedTariffId("");
     setSelectedOfferId("");
     setCustomAmount("");
@@ -682,57 +786,53 @@ ${amountLine}
     setConflictData(null);
     setReplaceStep("idle");
     setShowCancelConfirm(false);
-  }, [selectedProductId]);
+    setSelectedAddonOfferIds([]);
+    setAdjustmentReason("");
+    setInvoicePanelOpen(false);
+    setRrPanelOpen(false);
+    setInvoiceLegalDetailsId("");
+    setInvoiceIssueResult(null);
+    setSelectedInstallmentMonths(null);
+    queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
+  }, [queryClient]);
 
-  // Reset offer override на смене тарифа
-  useEffect(() => {
+  // Сброс состояний, зависящих от тарифа (не трогает product/tariff id).
+  const resetTariffDependentState = useCallback(() => {
     setSelectedOfferId("");
     setCustomAmount("");
     setGeneratedUrl(null);
     setConflictData(null);
     setReplaceStep("idle");
     setShowCancelConfirm(false);
-  }, [selectedTariffId]);
+    setSelectedAddonOfferIds([]);
+    setAdjustmentReason("");
+    setInvoicePanelOpen(false);
+    setRrPanelOpen(false);
+    setInvoiceIssueResult(null);
+    queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
+  }, [queryClient]);
 
-  // Сбрасывать stale conflict при смене типа оплаты или конкретного offer
-  useEffect(() => {
-    setConflictData(null);
-    setReplaceStep("idle");
-    setShowCancelConfirm(false);
-  }, [paymentType, selectedOfferId]);
+  // Явные хендлеры Select: атомарно принимают новый id и очищают только dependent state.
+  const handleProductChange = useCallback((newProductId: string) => {
+    if (newProductId === selectedProductId) return;
+    setSelectedProductId(newProductId);
+    resetProductDependentState();
+  }, [selectedProductId, resetProductDependentState]);
 
-  // Автоподстановка суммы при смене effective offer.
-  // ВАЖНО: offer.amount хранится в BYN — НЕ делить на 100.
-  useEffect(() => {
-    if (effectiveOffer) {
-      setCustomAmount(String(Number(effectiveOffer.amount)));
-      setGeneratedUrl(null);
-      // Индивидуальная ссылка: по умолчанию N = точное количество платежей из оффера,
-      // но админ может изменить на любое значение 2..12.
-      if ((effectiveOffer as any).payment_method === "internal_installment") {
-        // Priority: precise installment_count > legacy meta.installment.max_months.
-        const legacy = Number((effectiveOffer as any).installment_count ?? 0);
-        const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
-        const defaultN = legacy >= 2 ? Math.min(12, legacy) : (metaMax >= 2 ? Math.min(12, metaMax) : null);
-        setSelectedInstallmentMonths(defaultN);
-        if (paymentType !== "one_time") setPaymentType("one_time");
-      } else {
-        setSelectedInstallmentMonths(null);
-      }
-    } else if (
-      !resolved.ok &&
-      tariffPrices?.price &&
-      !customAmount
-    ) {
-      setCustomAmount(String(tariffPrices.price));
-      setSelectedInstallmentMonths(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveOffer?.id]);
+  const handleTariffChange = useCallback((newTariffId: string) => {
+    if (newTariffId === selectedTariffId) return;
+    resetTariffDependentState();
+    setSelectedTariffId(newTariffId);
+  }, [selectedTariffId, resetTariffDependentState]);
 
-  // Reset при закрытии диалога
+  // Полный reset выполняется ТОЛЬКО на переходе диалога false → true.
+  // Никаких зависимостей от productId/tariffId/queryClient — иначе они будут
+  // затирать только что выбранный продукт при перерендерах.
+  const prevOpenRef = useRef(open);
   useEffect(() => {
-    if (!open) {
+    const wasOpen = prevOpenRef.current;
+    prevOpenRef.current = open;
+    if (open && !wasOpen) {
       setSelectedProductId("");
       setSelectedTariffId("");
       setSelectedOfferId("");
@@ -744,8 +844,21 @@ ${amountLine}
       setConflictData(null);
       setReplaceStep("idle");
       setSelectedInstallmentMonths(null);
+      setSelectedAddonOfferIds([]);
+      setAdjustmentReason("");
+      setInvoicePanelOpen(false);
+      setRrPanelOpen(false);
+      setInvoicePayerType("legal_entity");
+      setInvoiceLegalDetailsId("");
+      setInvoiceIssueResult(null);
+      setInvoicePending(false);
+      setRrPending(false);
+      queryClient.removeQueries({ queryKey: ["composable-checkout-quote"] });
     }
-  }, [open]);
+  }, [open, queryClient]);
+
+
+
 
   // PATCH PAYMENT-CONFLICT v3: конфликт product-level (без tariff_id) и только для подписки.
   const isCurrentConflict = useMemo(() => {
@@ -757,6 +870,25 @@ ${amountLine}
   const selectedProduct = products?.find((p) => p.id === selectedProductId);
   const selectedTariff = tariffs?.find((t) => t.id === selectedTariffId);
   const amount = parseFloat(customAmount) || 0;
+  const composableSubtotal = Number(composableQuote?.subtotal ?? 0);
+  const composableCurrency = composableQuote?.currency ?? previewCurrency;
+  const composableItems = Array.isArray(composableQuote?.items) ? composableQuote.items : [];
+  const composableAvailableAddons = Array.isArray(composableQuote?.available_addons)
+    ? composableQuote.available_addons
+    : [];
+  const composableAdjustment = composableQuote
+    ? Math.round((amount - composableSubtotal) * 100) / 100
+    : 0;
+  const composableSnapshot = composableQuote ? {
+    version: 1,
+    currency: composableCurrency,
+    items: composableItems,
+    subtotal: composableSubtotal,
+    adjustment_amount: composableAdjustment,
+    adjustment_reason: composableAdjustment === 0 ? null : adjustmentReason.trim(),
+    total: amount,
+    selected_addon_offer_ids: selectedAddonOfferIds,
+  } : null;
 
   // CTA #1: «Создать ссылку и открыть оплату» → admin-create-payment-link
   //   (создаёт orders_v2 + bePaid checkout, возвращает redirect_url для немедленной оплаты)
@@ -774,6 +906,12 @@ ${amountLine}
       }
       if (amount <= 0) {
         throw new Error("Введите корректную сумму");
+      }
+      if (composableAdjustment !== 0 && !adjustmentReason.trim()) {
+        throw new Error("Укажите причину скидки или наценки");
+      }
+      if (selectedAddonOfferIds.length > 0) {
+        throw new Error("Для комплекта используйте кнопку «Создать ссылку»: состав заказа фиксируется в платёжной ссылке.");
       }
       // Stage L: installment-офферы не поддерживаются writer'ом admin-create-payment-link.
       // Используйте «Создать ссылку» (admin-create-public-link) — там реализован полный installment-flow.
@@ -806,7 +944,14 @@ ${amountLine}
       );
 
       if (error) throw error;
-      if (!data.success && data.error === "existing_subscription_conflict" && data.conflict) {
+      if (
+        !data.success
+        && (
+          data.error === "existing_subscription_conflict"
+          || data.error === "already_has_active_subscription"
+        )
+        && data.conflict
+      ) {
         // PATCH PAYMENT-CONFLICT v3: принимаем конфликт только если это same-product для текущего выбора.
         if (data.conflict.product_id === selectedProductId) {
           setConflictData(data.conflict);
@@ -849,6 +994,9 @@ ${amountLine}
       if (amount <= 0) {
         throw new Error("Введите корректную сумму");
       }
+      if (composableAdjustment !== 0 && !adjustmentReason.trim()) {
+        throw new Error("Укажите причину скидки или наценки");
+      }
 
       const { data, error } = await supabase.functions.invoke(
         "admin-create-public-link",
@@ -867,6 +1015,7 @@ ${amountLine}
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "admin_manual",
             cta_contract_version: 1,
+            composable_quote: composableSnapshot,
             // Stage L: installment payload (writer ignore-ит, если поля null/false).
             ...(isInstallmentOffer && selectedInstallmentMonths
               ? {
@@ -912,6 +1061,102 @@ ${amountLine}
       toast.error("Ошибка: " + (error as Error).message);
     },
   });
+
+  // Sprint «Составные продажи ЦБ» — invoice writer (admin-invoice-checkout-issue).
+  // Selected addons + composite total идут в один order_group.
+  const handleIssueInvoice = async () => {
+    if (!userId) { toast.error("Только для карточки контакта"); return; }
+    if (!invoiceSiblingOffer) { toast.error("У тарифа нет invoice-оффера"); return; }
+    if (!selectedProductId) { toast.error("Выберите продукт"); return; }
+    if ((invoicePayerType === "legal_entity" || invoicePayerType === "entrepreneur") && !invoiceLegalDetailsId) {
+      toast.error("Выберите реквизиты плательщика");
+      return;
+    }
+    setInvoicePending(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-invoice-checkout-issue", {
+        body: {
+          target_user_id: userId,
+          product_id: selectedProductId,
+          offer_id: invoiceSiblingOffer.id,
+          addon_offer_ids: selectedAddonOfferIds,
+          payer_type: invoicePayerType,
+          legal_details_id: invoicePayerType === "individual" ? null : invoiceLegalDetailsId,
+          adjustment_reason: adjustmentReason.trim() || null,
+        },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      const payload = data as any;
+      // Не заявляем «отправлено» — реальные статусы покажет InvoiceDeliverySuccess.
+      toast.success(`Счёт ${payload.invoice_number ?? "выписан"}. PDF готовится…`);
+      queryClient.invalidateQueries({ queryKey: ["payment-links-enriched"] });
+      queryClient.invalidateQueries({ queryKey: ["contact-orders"] });
+      setInvoicePanelOpen(false);
+      setInvoiceIssueResult({
+        document_id: payload.document_id ?? null,
+        invoice_number: payload.invoice_number ?? "—",
+        document_number: payload.document_number ?? null,
+        document_issued_at: payload.document_issued_at ?? null,
+        order_id: payload.order_id ?? null,
+      });
+
+    } catch (e: any) {
+      toast.error("Ошибка счёта: " + (e?.message ?? "unknown"));
+    } finally {
+      setInvoicePending(false);
+    }
+  };
+
+  // Sprint «Составные продажи ЦБ» — Resource Development админ-flow
+  // (переиспользует public-rr-installment-initiate: принимает PII контакта).
+  const handleInitiateRr = async () => {
+    if (!rrSiblingOffer) { toast.error("У тарифа нет RR-оффера"); return; }
+    if (!selectedProductId) { toast.error("Выберите продукт"); return; }
+    setRrPending(true);
+    try {
+      // Тянем PII целевого профиля из БД (SoT — profiles).
+      let name = userName || "";
+      let email = userEmail || "";
+      let phone = "";
+      if (userId) {
+        const { data: p } = await supabase
+          .from("profiles")
+          .select("full_name, email, phone")
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (p) {
+          name = name || (p as any).full_name || "";
+          email = email || (p as any).email || "";
+          phone = (p as any).phone || "";
+        }
+      }
+      if (!name || !email || !phone) {
+        toast.error("Для RR требуется имя, email и телефон контакта");
+        return;
+      }
+      const { data, error } = await supabase.functions.invoke("public-rr-installment-initiate", {
+        body: {
+          offer_id: rrSiblingOffer.id,
+          addon_offer_ids: selectedAddonOfferIds,
+          name, email, phone,
+        },
+      });
+      if (error) throw error;
+      const redirect = (data as any)?.redirect_url ?? (data as any)?.url ?? null;
+      if (!redirect) throw new Error((data as any)?.error || "RR не вернул redirect_url");
+      setGeneratedUrl(redirect);
+      queryClient.invalidateQueries({ queryKey: ["contact-orders"] });
+      toast.success("Ссылка RR сформирована");
+      setRrPanelOpen(false);
+    } catch (e: any) {
+      toast.error("Ошибка RR: " + (e?.message ?? "unknown"));
+    } finally {
+      setRrPending(false);
+    }
+  };
+
+
 
   const sendToTelegramMutation = useMutation({
     mutationFn: async () => {
@@ -961,6 +1206,10 @@ ${amountLine}
   // ссылка ВСЁ РАВНО создана и видна пользователю (ничего не теряется).
   const handleCreateAndSendTelegram = async () => {
     if (!selectedProductId || !selectedTariffId || !effectiveOffer || amount <= 0) return;
+    if (composableAdjustment !== 0 && !adjustmentReason.trim()) {
+      toast.error("Укажите причину скидки или наценки");
+      return;
+    }
     setCombinedPending(true);
     try {
       const { data, error } = await supabase.functions.invoke(
@@ -979,6 +1228,7 @@ ${amountLine}
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "telegram_combined",
             cta_contract_version: 1,
+            composable_quote: composableSnapshot,
             ...(isInstallmentOffer && selectedInstallmentMonths
               ? {
                   installment_offer: true,
@@ -1100,7 +1350,7 @@ ${amountLine}
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-lg w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
+        <DialogContent ref={setDialogContentRef} className="w-[min(92vw,820px)] sm:max-w-[820px] max-h-[calc(100dvh-2rem)] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
               <Link2 className="h-5 w-5 shrink-0" />
@@ -1189,11 +1439,11 @@ ${amountLine}
                 {productsLoading ? (
                   <Skeleton className="h-10 w-full" />
                 ) : (
-                  <Select value={selectedProductId} onValueChange={setSelectedProductId}>
-                    <SelectTrigger>
+                  <Select value={selectedProductId} onValueChange={handleProductChange}>
+                    <SelectTrigger aria-label="Продукт">
                       <SelectValue placeholder="Выберите продукт" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent container={selectPortalContainer}>
                       {activeProducts.map((product) => (
                         <SelectItem key={product.id} value={product.id}>
                           {product.name}
@@ -1214,11 +1464,11 @@ ${amountLine}
                   {tariffsLoading ? (
                     <Skeleton className="h-10 w-full" />
                   ) : tariffs && tariffs.length > 0 ? (
-                    <Select value={selectedTariffId} onValueChange={setSelectedTariffId}>
-                      <SelectTrigger>
+                    <Select value={selectedTariffId} onValueChange={handleTariffChange}>
+                      <SelectTrigger aria-label="Тариф">
                         <SelectValue placeholder="Выберите тариф" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent container={selectPortalContainer}>
                         {tariffs.filter((t) => t.is_active).map((tariff) => (
                           <SelectItem key={tariff.id} value={tariff.id}>
                             {tariff.name}
@@ -1359,7 +1609,7 @@ ${amountLine}
                           <Label className="text-xs">Stripe-подключение</Label>
                           <Select value={stripeAccountCode} onValueChange={setStripeAccountCode}>
                             <SelectTrigger><SelectValue placeholder="Выберите аккаунт" /></SelectTrigger>
-                            <SelectContent>
+                            <SelectContent container={selectPortalContainer}>
                               {(stripeAccounts ?? []).map((a: any) => {
                                 const name = (a.account_name ?? "").trim() || "Stripe — подключение без названия";
                                 return (
@@ -1383,7 +1633,7 @@ ${amountLine}
                           >
 
                             <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
+                            <SelectContent container={selectPortalContainer}>
                               {STRIPE_CURRENCY_OPTIONS.map((code) => {
                                 const check = isStripeCurrencyDisabled(code);
                                 return (
@@ -1536,7 +1786,7 @@ ${amountLine}
                         <SelectTrigger>
                           <SelectValue placeholder="Выберите кнопку…" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent container={selectPortalContainer}>
                           {visibleOffers.map((o) => {
                             const isSub = !!o.meta?.recurring?.is_recurring;
                             return (
@@ -1604,6 +1854,69 @@ ${amountLine}
                 </div>
               )}
 
+              {selectedProductId && selectedTariffId && effectiveOffer && quoteMatchesCurrentOffer && (composableAvailableAddons.length > 0 || composableQuoteLoading) && (
+                <div className="rounded-lg border bg-card p-4 space-y-3">
+                  <div>
+                    <p className="text-sm font-medium">Дополнительные продукты</p>
+                    <p className="text-xs text-muted-foreground">
+                      Они войдут в одну сделку и общую сумму, а доступ будет выдан отдельно по каждой позиции.
+                    </p>
+                  </div>
+                  <AddonPicker
+                    addons={composableAvailableAddons as any}
+                    selectedIds={selectedAddonOfferIds}
+                    currency={composableCurrency}
+                    loading={composableQuoteLoading}
+                    density="admin"
+                    onToggle={(id, next) =>
+                      setSelectedAddonOfferIds((prev) =>
+                        next
+                          ? [...new Set([...prev, id])]
+                          : prev.filter((x) => x !== id),
+                      )
+                    }
+                  />
+                  <div className="flex justify-between border-t pt-2 text-sm font-medium">
+                    <span>Сумма комплекта до ручной корректировки</span>
+                    <span>{composableSubtotal} {composableCurrency}</span>
+                  </div>
+                </div>
+              )}
+
+              {selectedProductId && selectedTariffId && effectiveOffer && quoteMatchesCurrentOffer && composableItems.length > 0 && (
+                <OrderSummary
+                  items={composableItems.map((it: any) => ({
+                    role: it.role,
+                    product_name: it.product_name,
+                    tariff_name: it.tariff_name ?? null,
+                    list_amount: Number(it.list_amount ?? 0),
+                    final_amount: Number(it.final_amount ?? 0),
+                    discount_amount: Number(it.discount_amount ?? 0),
+                    discount_percent: it.discount_percent ?? null,
+                    pricing_mode: it.pricing_mode,
+                  })) as OrderSummaryLine[]}
+                  currency={composableCurrency}
+                  total={amount}
+                  subtotal={composableSubtotal}
+                  adjustmentAmount={composableAdjustment}
+                  adjustmentReason={adjustmentReason.trim() || null}
+                  paymentMethodLabel={
+                    invoicePanelOpen
+                      ? "Счёт на юрлицо / ИП"
+                      : rrPanelOpen
+                        ? "Ресурс развития"
+                        : paymentType === "subscription"
+                          ? "Подписка (карта)"
+                          : isInstallmentOffer
+                            ? "Рассрочка (internal_installment)"
+                            : "Карта"
+                  }
+                  density="admin"
+                />
+              )}
+
+
+
               {/* Сумма */}
               {selectedTariffId && (
                 <div className="rounded-lg border bg-card p-4 space-y-2">
@@ -1628,12 +1941,31 @@ ${amountLine}
                       Это полная стоимость продукта. Сумма каждого платежа рассчитывается автоматически по выбранному сроку рассрочки ниже.
                     </p>
                   )}
+                  {composableQuote && composableAdjustment !== 0 && (
+                    <div className="space-y-2 pt-2">
+                      <Label htmlFor="adjustment-reason">
+                        Причина {composableAdjustment < 0 ? "скидки" : "наценки"}
+                      </Label>
+                      <Input
+                        id="adjustment-reason"
+                        value={adjustmentReason}
+                        onChange={(e) => setAdjustmentReason(e.target.value)}
+                        placeholder="Например: персональная скидка 10%"
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Корректировка: {composableAdjustment > 0 ? "+" : ""}{composableAdjustment} {previewCurrency}.
+                        Она применяется к общей сумме комплекта.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
               {/* Индивидуальная ссылка: N всегда 2..12, независимо от настроек кнопки.
-                  Админ может изменить количество платежей и сумму. Публичная кнопка не меняется. */}
-              {selectedTariffId && isInstallmentOffer && (() => {
+                  Админ может изменить количество платежей и сумму. Публичная кнопка не меняется.
+                  Скрываем для invoice/RR — там нет рассрочки, только счёт/RR-ссылка. */}
+              {selectedTariffId && isInstallmentOffer && !invoicePanelOpen && !rrPanelOpen && (() => {
                 const intervalDays = Number((effectiveOffer as any)?.installment_interval_days ?? 30);
                 const offerAmountByn = Number((effectiveOffer as any)?.amount ?? 0);
                 const offerN = installmentMaxMonths ?? null;
@@ -1669,7 +2001,7 @@ ${amountLine}
                     <SelectTrigger>
                       <SelectValue placeholder="Выберите количество…" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent container={selectPortalContainer}>
                       {Array.from({ length: 11 }, (_, i) => i + 2).map((n) => (
                         <SelectItem key={n} value={String(n)}>
                           {n} {pluralPayment(n)}
@@ -1819,6 +2151,117 @@ ${amountLine}
                 </div>
               )}
 
+              {/* Sprint «Составные продажи ЦБ» — дополнительные сценарии checkout.
+                  Кнопки видны только если у тарифа есть sibling offer соответствующего типа. */}
+              {selectedTariffId && (invoiceSiblingOffer || rrSiblingOffer) && (
+                <div className="rounded-lg border bg-card/50 p-3 space-y-3">
+                  <p className="text-sm font-medium">Дополнительные сценарии оплаты</p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {invoiceSiblingOffer && (
+                      <Button
+                        type="button"
+                        variant={invoicePanelOpen ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => { setInvoicePanelOpen((v) => !v); setRrPanelOpen(false); }}
+                      >
+                        Счёт для юрлица/ИП
+                      </Button>
+                    )}
+                    {rrSiblingOffer && (
+                      <Button
+                        type="button"
+                        variant={rrPanelOpen ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => { setRrPanelOpen((v) => !v); setInvoicePanelOpen(false); }}
+                      >
+                        Ресурс развития
+                      </Button>
+                    )}
+                  </div>
+
+                  {invoicePanelOpen && invoiceSiblingOffer && (
+                    <div className="space-y-3 pt-2 border-t">
+                      <div className="space-y-1.5">
+                        <Label>Плательщик</Label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(["legal_entity", "entrepreneur", "individual"] as const).map((t) => (
+                            <Button
+                              key={t}
+                              type="button"
+                              size="sm"
+                              variant={invoicePayerType === t ? "default" : "outline"}
+                              onClick={() => setInvoicePayerType(t)}
+                            >
+                              {t === "legal_entity" ? "ЮЛ" : t === "entrepreneur" ? "ИП" : "ФЛ"}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                      {invoicePayerType !== "individual" && (
+                        <div className="space-y-1.5">
+                          <Label>Реквизиты плательщика</Label>
+                          {(targetLegalDetails ?? []).length === 0 ? (
+                            <p className="text-xs text-muted-foreground">
+                              У контакта нет карточек реквизитов. Добавьте их из карточки контакта.
+                            </p>
+                          ) : (
+                            <select
+                              className="w-full h-9 rounded-md border bg-background px-2 text-sm"
+                              value={invoiceLegalDetailsId}
+                              onChange={(e) => setInvoiceLegalDetailsId(e.target.value)}
+                            >
+                              <option value="">— выберите —</option>
+                              {(targetLegalDetails ?? [])
+                                .filter((d: any) =>
+                                  invoicePayerType === "legal_entity"
+                                    ? d.client_type === "legal_entity"
+                                    : d.client_type === "entrepreneur",
+                                )
+                                .map((d: any) => (
+                                  <option key={d.id} value={d.id}>
+                                    {d.leg_org_form ? `${d.leg_org_form} ` : ""}
+                                    {d.leg_name || d.ent_name || "—"}
+                                    {d.leg_unp || d.ent_unp ? ` · УНП ${d.leg_unp || d.ent_unp}` : ""}
+                                    {d.is_default ? " · основные" : ""}
+                                  </option>
+                                ))}
+                            </select>
+                          )}
+                        </div>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="w-full"
+                        disabled={invoicePending || !selectedProductId}
+                        onClick={handleIssueInvoice}
+                      >
+                        {invoicePending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                        Выписать счёт
+                      </Button>
+                    </div>
+                  )}
+
+                  {rrPanelOpen && rrSiblingOffer && (
+                    <div className="space-y-3 pt-2 border-t">
+                      <p className="text-xs text-muted-foreground">
+                        Будет создана ссылка через Ресурс развития на общую сумму состава.
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="w-full"
+                        disabled={rrPending || !selectedProductId}
+                        onClick={handleInitiateRr}
+                      >
+                        {rrPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                        Сформировать ссылку RR
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-2">
                 <Button
                   type="button"
@@ -1880,6 +2323,45 @@ ${amountLine}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={!!invoiceIssueResult}
+        onOpenChange={(v) => { if (!v) setInvoiceIssueResult(null); }}
+      >
+        <DialogContent className="sm:max-w-[560px] p-0 flex flex-col gap-0 overflow-hidden">
+          <DialogHeader className="px-6 pt-6 pb-3 border-b shrink-0">
+            <DialogTitle>Счёт выписан</DialogTitle>
+            <DialogDescription>
+              Проверьте, что PDF сформирован и оба канала доставки отработали.
+            </DialogDescription>
+          </DialogHeader>
+          {invoiceIssueResult && (
+            <InvoiceDeliverySuccess
+              documentId={invoiceIssueResult.document_id}
+              invoiceNumber={invoiceIssueResult.invoice_number}
+              documentNumber={invoiceIssueResult.document_number}
+              documentIssuedAt={invoiceIssueResult.document_issued_at}
+              orderId={invoiceIssueResult.order_id}
+              onDocumentReady={(r) =>
+                setInvoiceIssueResult((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        document_id: r.document_id,
+                        document_number: r.document_number ?? prev.document_number,
+                        document_issued_at:
+                          r.document_issued_at ?? prev.document_issued_at,
+                      }
+                    : prev,
+                )
+              }
+              onClose={() => setInvoiceIssueResult(null)}
+              layout="dialog"
+            />
+          )}
+
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

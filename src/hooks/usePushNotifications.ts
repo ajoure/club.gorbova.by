@@ -53,7 +53,8 @@ export function usePushNotifications() {
   const { user } = useAuth();
   const [state, setState] = useState<PushState>("loading");
 
-  // Check current state on mount
+  // Reconcile the browser subscription with the current authenticated user.
+  // A browser-only subscription is not deliverable until it exists in the DB.
   useEffect(() => {
     // iOS Safari (not standalone PWA) — special state
     if (isIOSSafari()) {
@@ -80,14 +81,57 @@ export function usePushNotifications() {
       return;
     }
 
-    // Check if already subscribed
-    navigator.serviceWorker.ready.then((reg) => {
-      reg.pushManager.getSubscription().then((sub) => {
+    if (!user?.id) {
+      setState("prompt");
+      return;
+    }
+
+    let cancelled = false;
+    const reconcile = async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
         console.log("[Push] Current subscription:", sub ? "active" : "none");
-        setState(sub ? "subscribed" : "prompt");
-      });
-    });
-  }, []);
+        if (!sub) {
+          if (!cancelled) setState("prompt");
+          return;
+        }
+
+        const json = sub.toJSON();
+        const p256dh = json.keys?.p256dh;
+        const auth = json.keys?.auth;
+        if (!json.endpoint || !p256dh || !auth) {
+          console.error("[Push] Existing subscription has incomplete keys");
+          if (!cancelled) setState("prompt");
+          return;
+        }
+
+        const { error } = await supabase.from("push_subscriptions" as any).upsert(
+          {
+            user_id: user.id,
+            endpoint: json.endpoint,
+            p256dh,
+            auth,
+          },
+          { onConflict: "endpoint" },
+        );
+        if (error) {
+          console.error("[Push] Subscription reconciliation failed:", error.message);
+          if (!cancelled) setState("prompt");
+          return;
+        }
+
+        if (!cancelled) setState("subscribed");
+      } catch (err) {
+        console.error("[Push] Subscription state check failed:", err);
+        if (!cancelled) setState("prompt");
+      }
+    };
+    void reconcile();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
   // Register SW on mount
   useEffect(() => {

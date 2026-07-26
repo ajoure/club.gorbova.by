@@ -27,6 +27,8 @@ export const EVENT_LABELS: Record<string, string> = {
   "admin.revoke_access": "Отзыв доступа",
   "telegram.access_granted": "Доступ в Telegram",
   "telegram.access_revoked": "Отзыв доступа в Telegram",
+  JOIN_APPROVED: "Заявка в Telegram одобрена",
+  JOIN_DECLINED: "Заявка в Telegram отклонена",
   
   // ===== Telegram regrant =====
   "telegram.regrant_dry_run": "Проверка восстановления доступов",

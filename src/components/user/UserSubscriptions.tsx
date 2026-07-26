@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
-import { useActiveAccessRuleProducts, isCurrentValidAccess, isHistoricalAccess } from "@/hooks/useAccessValidation";
+import { isCurrentPurchasedAccess } from "@/hooks/useAccessValidation";
 
 export function UserSubscriptions() {
   const { user } = useAuth();
@@ -19,8 +19,6 @@ export function UserSubscriptions() {
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
   const [showFinished, setShowFinished] = useState(false);
-  const { data: productsWithRules = new Set<string>() } = useActiveAccessRuleProducts();
-
   const { data: subscriptions, isLoading } = useQuery({
     queryKey: ["user-subscriptions", user?.id],
     queryFn: async () => {
@@ -120,11 +118,11 @@ export function UserSubscriptions() {
 
   // Split into active and finished
   const activeSubscriptions = subscriptions?.filter(s => 
-    isCurrentValidAccess(s as any, productsWithRules)
+    isCurrentPurchasedAccess(s as any)
   ) || [];
 
   const finishedSubscriptions = subscriptions?.filter(s => 
-    isHistoricalAccess(s as any, productsWithRules)
+    !isCurrentPurchasedAccess(s as any)
   ) || [];
 
   // Dedup entitlements against ONLY currently valid subscriptions (not canceled/archived/superseded)
@@ -138,8 +136,7 @@ export function UserSubscriptions() {
     if (e.expires_at && new Date(e.expires_at) < new Date()) return false;
     const product = e.products_v2 as any;
     if (product?.is_active === false) return false;
-    const productId = e.product_id;
-    return productId && productsWithRules.has(productId);
+    return true;
   });
 
   const finishedSubscriptionProductIds = new Set(

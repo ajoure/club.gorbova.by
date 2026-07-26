@@ -31,6 +31,10 @@ export function getContactUrl(contactId: string) {
   return `${window.location.origin}/admin/contacts?contact=${contactId}`;
 }
 
+export function getCompanyUrl(companyId: string) {
+  return `${window.location.origin}/admin/companies?company=${companyId}`;
+}
+
 export function getDealUrl(dealId: string) {
   return `${window.location.origin}/admin/deals?deal=${dealId}`;
 }

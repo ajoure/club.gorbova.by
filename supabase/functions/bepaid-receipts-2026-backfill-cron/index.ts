@@ -32,6 +32,7 @@ import {
   isBepaidCredsError,
 } from "../_shared/bepaid-credentials.ts";
 import { fetchReceiptUrl } from "../_shared/bepaid-receipt-fetch.ts";
+import { buildOrderHeaderReconcilePatch } from "./order-header-reconcile.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -96,6 +97,8 @@ Deno.serve(async (req) => {
     bepaid_endpoint_not_found: 0,
     bepaid_no_receipt_url: 0,
     transport_failed: 0,
+    order_headers_reconciled: 0,
+    order_header_reconcile_failed: 0,
     aborted_reason: null as string | null,
     sample_filled_ids: [] as string[],
   };
@@ -110,7 +113,7 @@ Deno.serve(async (req) => {
     // the same 25 failing rows are picked up on every cron tick.
     const { data: payments, error: fetchErr } = await supabase
       .from("payments_v2")
-      .select("id, provider_payment_id, receipt_url, provider_response, meta")
+      .select("id, order_id, amount, provider_payment_id, paid_at, receipt_url, provider_response, meta")
       .in("origin", SCOPE_ORIGINS)
       .in("status", SCOPE_STATUSES)
       .is("receipt_url", null)
@@ -145,6 +148,79 @@ Deno.serve(async (req) => {
           },
         }).eq("id", p.id);
         metrics.pre_classified[preReason] = (metrics.pre_classified[preReason] || 0) + 1;
+
+        // A successful subscription payment can be recovered without a normal
+        // bePaid notification (phantom transaction UID). Downstream access may
+        // already be complete while the linked order header remains pending.
+        // Reconcile only that stale header, guarded against overwriting any
+        // independently finalized or deleted order. Never re-run fulfillment.
+        const bepaidSubscriptionId = String(freshMeta.bepaid_subscription_id || "");
+        if (
+          preReason === "subscription_phantom_uid_skipped" &&
+          p.order_id &&
+          p.provider_payment_id &&
+          bepaidSubscriptionId.startsWith("sbs_")
+        ) {
+          const reconciledAt = new Date().toISOString();
+          const patch = buildOrderHeaderReconcilePatch({
+            paymentId: p.id,
+            amount: Number(p.amount),
+            providerPaymentId: p.provider_payment_id,
+            bepaidSubscriptionId,
+          }, reconciledAt);
+
+          const { data: orderBefore, error: orderReadError } = await supabase
+            .from("orders_v2")
+            .select("id,status,paid_amount,is_deleted,meta")
+            .eq("id", p.order_id)
+            .maybeSingle();
+
+          if (orderReadError) {
+            metrics.order_header_reconcile_failed++;
+          } else if (
+            orderBefore &&
+            orderBefore.status === "pending" &&
+            Number(orderBefore.paid_amount || 0) === 0 &&
+            orderBefore.is_deleted === false
+          ) {
+            const { data: updatedOrder, error: orderUpdateError } = await supabase
+              .from("orders_v2")
+              .update({
+                status: patch.status,
+                paid_amount: patch.paid_amount,
+                provider: patch.provider,
+                provider_payment_id: patch.provider_payment_id,
+                bepaid_subscription_id: patch.bepaid_subscription_id,
+                meta: { ...((orderBefore.meta as Record<string, unknown>) || {}), ...patch.reconcile_meta },
+              })
+              .eq("id", p.order_id)
+              .eq("status", "pending")
+              .eq("paid_amount", 0)
+              .eq("is_deleted", false)
+              .select("id")
+              .maybeSingle();
+
+            if (orderUpdateError || !updatedOrder) {
+              metrics.order_header_reconcile_failed++;
+            } else {
+              metrics.order_headers_reconciled++;
+              await supabase.from("audit_logs").insert({
+                action: "order_header_reconcile_from_succeeded_payment",
+                actor_type: "system",
+                actor_user_id: null,
+                actor_label: BATCH_ID,
+                entity_type: "order",
+                entity_id: p.order_id,
+                meta: {
+                  reason: "stale_pending_after_bepaid_subscription_phantom_uid_backfill",
+                  payment_v2_id: p.id,
+                  before: orderBefore,
+                  after: { ...patch, reconcile_meta: patch.reconcile_meta },
+                },
+              });
+            }
+          }
+        }
         continue;
       }
 

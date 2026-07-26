@@ -10,16 +10,19 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-const signInWithOtp = vi.fn().mockResolvedValue({ error: null });
-const functionsInvoke = vi.fn();
+const { signInWithOtp, functionsInvoke } = vi.hoisted(() => ({
+  signInWithOtp: vi.fn().mockResolvedValue({ error: null }),
+  functionsInvoke: vi.fn(),
+}));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     auth: {
-      signInWithOtp: (...a: any[]) => signInWithOtp(...a),
+      signInWithOtp,
       verifyOtp: vi.fn(),
       updateUser: vi.fn(),
+      signOut: vi.fn(),
     },
-    functions: { invoke: (...a: any[]) => functionsInvoke(...a) },
+    functions: { invoke: functionsInvoke },
   },
 }));
 
@@ -36,6 +39,10 @@ describe("InlineEmailOtpForm", () => {
   it("existing profile → OTP step directly, one-time-code AutoFill contract present", async () => {
     functionsInvoke.mockResolvedValueOnce({
       data: { exists: true, hasPassword: true, profile_name: "Existing User" },
+      error: null,
+    });
+    functionsInvoke.mockResolvedValueOnce({
+      data: { success: true },
       error: null,
     });
     signInWithOtp.mockClear();
@@ -56,7 +63,7 @@ describe("InlineEmailOtpForm", () => {
     expect(otpInput!.getAttribute("maxlength")).toBe("6");
   });
 
-  it("new user → shows details step; does NOT call signInWithOtp before submit", async () => {
+  it("new user → requires matching passwords and exposes password visibility controls", async () => {
     functionsInvoke.mockResolvedValueOnce({
       data: { exists: false, hasPassword: false, profile_name: null },
       error: null,
@@ -70,6 +77,31 @@ describe("InlineEmailOtpForm", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Имя")).toBeTruthy());
     expect(signInWithOtp).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /Получить код/i })).toBeTruthy();
+    expect(screen.getByLabelText("Создайте пароль")).toBeTruthy();
+    expect(screen.getByLabelText("Повторите пароль")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Показать пароль" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Показать повтор пароля" })).toBeTruthy();
+    expect(screen.getByLabelText("Требования к паролю").textContent).toContain("Минимум 6 символов");
+
+    const submit = screen.getByRole("button", { name: /Получить код/i }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("Создайте пароль"), {
+      target: { value: "test12" },
+    });
+    fireEvent.change(screen.getByLabelText("Повторите пароль"), {
+      target: { value: "test13" },
+    });
+    expect(screen.getByText("Пароли не совпадают")).toBeTruthy();
+    expect(submit.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("Повторите пароль"), {
+      target: { value: "test12" },
+    });
+    fireEvent.change(screen.getByLabelText("Имя"), {
+      target: { value: "Ирина" },
+    });
+    expect(screen.getByText("Пароли совпадают")).toBeTruthy();
+    expect(submit.disabled).toBe(false);
   });
 });

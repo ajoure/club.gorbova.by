@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { CheckCircle2, Loader2, Send, MessageCircle, Mail } from "lucide-react";
@@ -21,11 +22,14 @@ import {
 } from "@/hooks/useTelegramLink";
 import type { BankInstallmentRuntime } from "@/lib/bankInstallment";
 import { startBankInstallment } from "@/lib/startBankInstallment";
+import { OrderSummary } from "@/components/checkout/OrderSummary";
+import { useComposableQuoteSummary } from "@/hooks/useComposableQuoteSummary";
 
 interface LeadRequestDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   offerId: string;
+  addonOfferIds?: string[];
   offerLabel?: string;
   /** Название продукта — показывается в подзаголовке шапки как контекст. */
   productName?: string;
@@ -68,6 +72,7 @@ export function LeadRequestDialog({
   open,
   onOpenChange,
   offerId,
+  addonOfferIds = [],
   offerLabel,
   productName,
   tariffName,
@@ -81,6 +86,11 @@ export function LeadRequestDialog({
 }: LeadRequestDialogProps) {
   const { user, session } = useAuth();
   const { data: telegramStatus, refetch: refetchTelegram } = useTelegramLinkStatus();
+  const quoteSummary = useComposableQuoteSummary({
+    open,
+    offerId,
+    addonOfferIds,
+  });
 
   const contextSubtitle = [productName, tariffName].filter(Boolean).join(" · ");
   const headerSubtitle = contextSubtitle && (offerLabel || priceLabel)
@@ -91,6 +101,8 @@ export function LeadRequestDialog({
   const [details, setDetails] = useState<DetailsForm>(emptyDetails);
   const [submitting, setSubmitting] = useState(false);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [customerCreditMinor, setCustomerCreditMinor] = useState(0);
+  const [useCustomerCredit, setUseCustomerCredit] = useState(false);
   const openedAtRef = useRef<number>(Date.now());
   // Tracks previous `open` value so reset only fires on closed → open.
   // PATCH-INLINE-OTP-FIX-BROKEN-FLOW v3: auth session updates (user/session
@@ -136,6 +148,14 @@ export function LeadRequestDialog({
     };
   }, [open, user, profileLoaded]);
 
+  useEffect(() => {
+    if (!open || !user || !bankInstallmentRuntime?.enabled) return;
+    (async () => {
+      const { data, error } = await (supabase.rpc as any)('referral_get_my_customer_credit');
+      if (!error) setCustomerCreditMinor(Math.max(0, Number(data?.available_minor ?? 0)));
+    })();
+  }, [open, user, bankInstallmentRuntime?.enabled]);
+
   const canSubmit = useMemo(
     () => details.name.trim().length > 0 && details.phone.trim().length >= 5,
     [details.name, details.phone],
@@ -161,6 +181,7 @@ export function LeadRequestDialog({
         try {
           const res = await startBankInstallment({
             offerId,
+            addonOfferIds,
             runtime: bankInstallmentRuntime,
             legacyBankLinkUrl: bankLinkUrl,
             legacyBankLinkLabel: bankLinkLabel,
@@ -171,6 +192,7 @@ export function LeadRequestDialog({
               email,
               comment: details.comment.trim() || null,
             },
+            customerCreditRequestedMinor: useCustomerCredit ? customerCreditMinor : 0,
           });
           if (res.mode === "runtime") {
             window.location.href = res.paymentUrl;
@@ -271,6 +293,17 @@ export function LeadRequestDialog({
                   : "Проверьте контактные данные — менеджер свяжется с вами."}
               </DialogDescription>
             </DialogHeader>
+            {quoteSummary.items.length > 0 && quoteSummary.total != null && (
+              <OrderSummary
+                items={quoteSummary.items}
+                currency={quoteSummary.currency}
+                total={quoteSummary.total}
+                subtotal={quoteSummary.subtotal ?? undefined}
+                adjustmentAmount={quoteSummary.adjustmentAmount}
+                density="admin"
+                className="mb-2"
+              />
+            )}
             <form onSubmit={handleSubmitLead} className="space-y-4">
               {/* honeypot */}
               <input
@@ -349,6 +382,15 @@ export function LeadRequestDialog({
                   Email <strong>{session?.user?.email}</strong> уже привязан к
                   вашему аккаунту и будет использован для связи.
                 </p>
+              )}
+              {bankInstallmentRuntime?.enabled && customerCreditMinor > 0 && (
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-primary/5 p-3">
+                  <Checkbox checked={useCustomerCredit} onCheckedChange={(checked) => setUseCustomerCredit(checked === true)} className="mt-0.5" />
+                  <span className="space-y-1">
+                    <span className="block text-sm font-medium">Использовать накопленную скидку</span>
+                    <span className="block text-xs text-muted-foreground">Доступно {(customerCreditMinor / 100).toFixed(2)} BYN</span>
+                  </span>
+                </label>
               )}
               <Button
                 type="submit"

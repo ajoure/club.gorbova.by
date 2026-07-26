@@ -7,6 +7,8 @@ export interface NotificationLog {
   subscription_id: string;
   event_type: string;
   status: string;
+  days_before?: number;
+  effective_charge_at?: string;
   reason?: string;
   error_message?: string;
   created_at: string;
@@ -16,6 +18,7 @@ interface NotificationStatusIndicatorsProps {
   subscriptionId: string;
   channel: 'telegram' | 'email';
   logs: NotificationLog[];
+  nextChargeAt?: string | null;
   onOpenContact?: () => void;
 }
 
@@ -59,6 +62,7 @@ export function NotificationStatusIndicators({
   subscriptionId,
   channel,
   logs,
+  nextChargeAt,
   onOpenContact,
 }: NotificationStatusIndicatorsProps) {
   const days = [7, 3, 1] as const;
@@ -67,9 +71,15 @@ export function NotificationStatusIndicators({
   const latestLogsMap = new Map<string, NotificationLog>();
   for (const log of logs) {
     if (log.subscription_id !== subscriptionId) continue;
-    const existing = latestLogsMap.get(log.event_type);
+    if (
+      nextChargeAt &&
+      log.effective_charge_at &&
+      new Date(log.effective_charge_at).getTime() !== new Date(nextChargeAt).getTime()
+    ) continue;
+    const eventType = log.event_type || `subscription_reminder_${log.days_before}d`;
+    const existing = latestLogsMap.get(eventType);
     if (!existing || new Date(log.created_at) > new Date(existing.created_at)) {
-      latestLogsMap.set(log.event_type, log);
+      latestLogsMap.set(eventType, log);
     }
   }
   

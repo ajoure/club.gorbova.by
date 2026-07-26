@@ -16,9 +16,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ArrowRight, Trash2, Download, X, Loader2, CheckSquare, FileSpreadsheet, FileText } from "lucide-react";
-import { bulkAssignDealsToStage } from "@/services/pipelineService";
-import { useQueryClient } from "@tanstack/react-query";
+import { ArrowRight, Trash2, Download, X, Loader2, CheckSquare, FileSpreadsheet, FileText, Handshake } from "lucide-react";
+import { bulkMoveDealsToPipeline } from "@/services/pipelineService";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useDealsBulkDelete } from "@/hooks/useDealsBulkDelete";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -26,13 +26,16 @@ import { exportToExcel, exportToCSV, type ExportColumn } from "@/utils/exportTab
 import type { CrmPipelineStage } from "@/services/pipelineService";
 import type { BoardDeal } from "@/hooks/useDealsBoard";
 import { cn } from "@/lib/utils";
+import { usePipelines } from "@/hooks/usePipelines";
+import { supabase } from "@/integrations/supabase/client";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { BulkCreateDealsDialog } from "./BulkCreateDealsDialog";
 
 interface Props {
   selectedIds: Set<string>;
   allDeals: BoardDeal[];
-  stages: CrmPipelineStage[];
   pipelineId: string;
-  pipelineName?: string;
   totalBoardDeals: number;
   onClearSelection: () => void;
   onSelectAll: () => void;
@@ -52,9 +55,7 @@ const EXPORT_COLUMNS: ExportColumn<BoardDeal>[] = [
 export function KanbanBulkActionsBar({
   selectedIds,
   allDeals,
-  stages,
   pipelineId,
-  pipelineName,
   totalBoardDeals,
   onClearSelection,
   onSelectAll,
@@ -65,8 +66,31 @@ export function KanbanBulkActionsBar({
 
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
-  const [moveTargetStage, setMoveTargetStage] = useState<CrmPipelineStage | null>(null);
+  const [targetPipelineId, setTargetPipelineId] = useState(pipelineId);
+  const [targetStageId, setTargetStageId] = useState("");
   const [isMoving, setIsMoving] = useState(false);
+  const [showCreateFromDeals, setShowCreateFromDeals] = useState(false);
+  const { pipelines } = usePipelines();
+  const { data: targetStages = [], isLoading: targetStagesLoading } = useQuery({
+    queryKey: ["crm-pipeline-stages", targetPipelineId, "bulk-move"],
+    enabled: showMoveDialog && !!targetPipelineId,
+    queryFn: async (): Promise<CrmPipelineStage[]> => {
+      const { data, error } = await supabase.from("crm_pipeline_stages").select("*")
+        .eq("pipeline_id", targetPipelineId).order("order_index");
+      if (error) throw error;
+      return (data ?? []) as unknown as CrmPipelineStage[];
+    },
+  });
+  const moveTargetStage = targetStages.find((stage) => stage.id === targetStageId) ?? null;
+  const targetPipeline = pipelines.find((item) => item.id === targetPipelineId) ?? null;
+  const pipelineName = pipelines.find((item) => item.id === pipelineId)?.name ?? "";
+
+  useEffect(() => {
+    if (!showMoveDialog || targetStages.length === 0) return;
+    if (!targetStages.some((stage) => stage.id === targetStageId)) {
+      setTargetStageId((targetStages.find((stage) => stage.is_default) ?? targetStages[0]).id);
+    }
+  }, [showMoveDialog, targetStageId, targetStages]);
 
   const deleteMutation = useDealsBulkDelete({
     onSuccess: () => {
@@ -96,16 +120,18 @@ export function KanbanBulkActionsBar({
     setIsMoving(true);
     try {
       const ids = Array.from(selectedIds);
-      const result = await bulkAssignDealsToStage(ids, pipelineId, moveTargetStage.id);
-      toast.success(`Перемещено ${result.affected} сделок в «${moveTargetStage.name}»`);
+      const result = await bulkMoveDealsToPipeline(ids, targetPipelineId, moveTargetStage.id);
+      toast.success(`Перемещено ${result.affected} сделок в «${targetPipeline?.name ?? "Воронка"} / ${moveTargetStage.name}»`);
       qc.invalidateQueries({ queryKey: ["deals-board"] });
+      qc.invalidateQueries({ queryKey: ["admin-deals"] });
+      qc.invalidateQueries({ queryKey: ["pipeline-deal-counts"] });
       onClearSelection();
     } catch (err: any) {
       toast.error("Ошибка перемещения: " + (err?.message || String(err)));
     } finally {
       setIsMoving(false);
       setShowMoveDialog(false);
-      setMoveTargetStage(null);
+      setTargetStageId("");
     }
   };
 
@@ -155,28 +181,21 @@ export function KanbanBulkActionsBar({
         <div className="h-5 w-px bg-border/40" />
 
         {/* Move */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs">
-              <ArrowRight className="h-3.5 w-3.5" />
-              Переместить
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="center" className="w-56">
-            {stages.map((s) => (
-              <DropdownMenuItem
-                key={s.id}
-                onClick={() => {
-                  setMoveTargetStage(s);
-                  setShowMoveDialog(true);
-                }}
-              >
-                <div className="w-2 h-2 rounded-full mr-2 shrink-0" style={{ backgroundColor: s.color }} />
-                {s.name}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {canDelete && <>
+          <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => {
+            setTargetPipelineId(pipelineId);
+            setTargetStageId("");
+            setShowMoveDialog(true);
+          }}>
+            <ArrowRight className="h-3.5 w-3.5" />
+            Переместить
+          </Button>
+
+          <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs text-emerald-700 hover:text-emerald-800" onClick={() => setShowCreateFromDeals(true)}>
+            <Handshake className="h-3.5 w-3.5" />
+            Создать на основании
+          </Button>
+        </>}
 
         {/* Export */}
         <DropdownMenu>
@@ -236,20 +255,32 @@ export function KanbanBulkActionsBar({
             <AlertDialogTitle>Переместить {count} сделок?</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-1.5">
-                <p>
-                  <strong>{count}</strong> сделок будут перемещены в стадию{" "}
-                  <strong>«{moveTargetStage?.name}»</strong>
-                  {pipelineName && <> в воронке <strong>«{pipelineName}»</strong></>}.
-                </p>
+                <p>Выберите целевую воронку и стадию. Сделки, задачи, платежи и лента сохранятся.</p>
                 <p className="text-xs text-muted-foreground">
                   Затронуто стадий: {affectedStages.size}
                 </p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Воронка</Label>
+              <Select value={targetPipelineId} onValueChange={(value) => { setTargetPipelineId(value); setTargetStageId(""); }}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Выберите воронку" /></SelectTrigger>
+                <SelectContent>{pipelines.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Стадия</Label>
+              <Select value={targetStageId} onValueChange={setTargetStageId} disabled={targetStagesLoading || targetStages.length === 0}>
+                <SelectTrigger className="h-9"><SelectValue placeholder={targetStagesLoading ? "Загрузка…" : "Выберите стадию"} /></SelectTrigger>
+                <SelectContent>{targetStages.map((stage) => <SelectItem key={stage.id} value={stage.id}>{stage.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isMoving}>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={handleMoveConfirm} disabled={isMoving}>
+            <AlertDialogAction onClick={handleMoveConfirm} disabled={isMoving || !moveTargetStage}>
               {isMoving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Переместить
             </AlertDialogAction>
@@ -291,6 +322,18 @@ export function KanbanBulkActionsBar({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <BulkCreateDealsDialog
+        open={showCreateFromDeals}
+        onOpenChange={setShowCreateFromDeals}
+        sourceType="deal"
+        sourceIds={Array.from(selectedIds)}
+        defaultPipelineId={pipelineId}
+        onCreated={() => {
+          qc.invalidateQueries({ queryKey: ["deals-board"] });
+          qc.invalidateQueries({ queryKey: ["admin-deals"] });
+          onClearSelection();
+        }}
+      />
     </>
   );
 }

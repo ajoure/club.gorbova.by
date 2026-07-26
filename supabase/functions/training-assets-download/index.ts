@@ -7,16 +7,23 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
 
+const TRAINING_ASSETS_BUCKET = "training-assets";
+const STUDENT_SUBMISSIONS_BUCKET = "student-submissions";
+const STUDENT_SUBMISSION_SIGNED_URL_TTL_SECONDS = 60;
 // Строгий allowlist префиксов — только наши папки в training-assets
 const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/", "form-uploads/"];
 
-function isPathAllowed(path: string): boolean {
+function isPathAllowed(path: string, bucket: string): boolean {
   if (!path || typeof path !== "string") return false;
   // Запрет path traversal
   if (path.includes("..") || path.includes("//")) return false;
   // Запрет leading slash
   if (path.startsWith("/")) return false;
-  return ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix));
+  if (bucket === STUDENT_SUBMISSIONS_BUCKET) {
+    const segments = path.split("/");
+    return segments.length >= 5 && segments.every(Boolean) && segments[0] === "student-uploads";
+  }
+  return bucket === TRAINING_ASSETS_BUCKET && ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
 Deno.serve(async (req: Request) => {
@@ -36,9 +43,10 @@ Deno.serve(async (req: Request) => {
     const url = new URL(req.url);
     const path = url.searchParams.get("path") || "";
     const name = url.searchParams.get("name") || "file";
+    const bucket = url.searchParams.get("bucket") || TRAINING_ASSETS_BUCKET;
 
     // Guard: проверяем path
-    if (!isPathAllowed(path)) {
+    if (!isPathAllowed(path, bucket)) {
       return new Response(
         JSON.stringify({ error: "Invalid or forbidden path" }),
         {
@@ -48,8 +56,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Аутентификация: проверяем JWT (опционально — файлы из публичного бакета)
-    // Для максимальной безопасности можно включить; пока пропускаем т.к. training-assets публичный
+    // Аутентификация обязательна и для legacy-файлов, и для private student submissions.
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(
@@ -93,7 +100,7 @@ Deno.serve(async (req: Request) => {
       });
       const { data: isSuperAdm } = await adminClient.rpc("has_role_v2", {
         _user_id: user.id,
-        _role_code: "superadmin",
+        _role_code: "super_admin",
       });
       if (!isAdm && !isSuperAdm) {
         return new Response(
@@ -122,7 +129,7 @@ Deno.serve(async (req: Request) => {
         });
         const { data: isSuperAdm } = await adminClient.rpc("has_role_v2", {
           _user_id: user.id,
-          _role_code: "superadmin",
+          _role_code: "super_admin",
         });
         if (!isAdm && !isSuperAdm) {
           return new Response(
@@ -133,8 +140,36 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Безопасное имя для Content-Disposition
+    const safeName = name
+      .replace(/[^\w.\-_а-яёА-ЯЁ\s]/g, "_")
+      .replace(/_{2,}/g, "_")
+      .substring(0, 200);
+
+    // Private student work is handed off only after the owner/admin check
+    // above.  The temporary signed URL keeps the storage object private and
+    // avoids proxying large video or archive files through the Edge Function.
+    if (bucket === STUDENT_SUBMISSIONS_BUCKET) {
+      const { data: signed, error: signedError } = await adminClient.storage
+        .from(bucket)
+        .createSignedUrl(path, STUDENT_SUBMISSION_SIGNED_URL_TTL_SECONDS, {
+          download: safeName,
+        });
+      if (signedError || !signed?.signedUrl) {
+        console.error("Signed URL error:", signedError);
+        return new Response(
+          JSON.stringify({ error: "File not found or download failed" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(null, {
+        status: 302,
+        headers: { ...corsHeaders, Location: signed.signedUrl, "Cache-Control": "no-store" },
+      });
+    }
+
     const { data: fileData, error: downloadError } = await adminClient.storage
-      .from("training-assets")
+      .from(bucket)
       .download(path);
 
     if (downloadError || !fileData) {
@@ -147,12 +182,6 @@ Deno.serve(async (req: Request) => {
         }
       );
     }
-
-    // Безопасное имя для Content-Disposition
-    const safeName = name
-      .replace(/[^\w.\-_а-яёА-ЯЁ\s]/g, "_")
-      .replace(/_{2,}/g, "_")
-      .substring(0, 200);
 
     // Определяем Content-Type из blob
     const contentType = fileData.type || "application/octet-stream";

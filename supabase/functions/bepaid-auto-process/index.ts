@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -38,6 +39,71 @@ interface QueueItem {
   transaction_type: string | null;
   reference_transaction_uid: string | null;
   raw_payload: any;
+}
+
+async function ensureCanonicalPayment(
+  supabase: any,
+  item: QueueItem,
+  order: { id: string; profile_id?: string | null; final_price?: number | null; currency?: string | null },
+  profileId: string | null,
+  paidAt: string,
+) {
+  if (!item.bepaid_uid) {
+    throw new Error(`Queue item ${item.id} has no bePaid UID`);
+  }
+
+  const amount = item.amount ?? order.final_price;
+  if (!amount || amount <= 0) {
+    throw new Error(`Queue item ${item.id} has invalid payment amount`);
+  }
+
+  const paymentRow = {
+    order_id: order.id,
+    profile_id: profileId || order.profile_id || null,
+    amount,
+    currency: item.currency || order.currency || "BYN",
+    status: "succeeded",
+    provider: "bepaid",
+    provider_payment_id: item.bepaid_uid,
+    paid_at: paidAt,
+    card_last4: item.card_last4,
+    card_brand: item.card_brand,
+    provider_response: item.raw_payload || {
+      card_last4: item.card_last4,
+      card_holder: item.card_holder,
+      card_brand: item.card_brand,
+    },
+    meta: {
+      source: "bepaid_auto_process",
+      queue_id: item.id,
+      tracking_id: item.tracking_id,
+      customer_email: item.customer_email,
+    },
+  };
+
+  const { error: writeError } = await supabase
+    .from("payments_v2")
+    .upsert(paymentRow, {
+      onConflict: "provider,provider_payment_id",
+      ignoreDuplicates: true,
+    });
+
+  if (writeError) {
+    throw new Error(`payments_v2 write failed: ${writeError.message}`);
+  }
+
+  const { data: persisted, error: verifyError } = await supabase
+    .from("payments_v2")
+    .select("id,order_id")
+    .eq("provider", "bepaid")
+    .eq("provider_payment_id", item.bepaid_uid)
+    .maybeSingle();
+
+  if (verifyError || !persisted) {
+    throw new Error(`payments_v2 verification failed: ${verifyError?.message || "row missing"}`);
+  }
+
+  return persisted;
 }
 
 // Transliterate Latin name to Cyrillic for matching
@@ -150,9 +216,15 @@ Deno.serve(async (req) => {
       // Process single item by ID
       query = query.eq('id', queueItemId);
     } else {
-      // Process batch of pending items - skip manually_linked and those with matched_order_id
+      // Retry rows abandoned in "processing" after a worker interruption.
+      // Fresh processing rows stay excluded so concurrent workers cannot claim them.
+      const staleProcessingCutoff = new Date(
+        Date.now() - 2 * 60 * 60 * 1000,
+      ).toISOString();
       query = query
-        .in('status', ['pending', 'error'])
+        .or(
+          `status.in.(pending,error),and(status.eq.processing,updated_at.lt.${staleProcessingCutoff})`,
+        )
         .is('matched_order_id', null) // Skip already linked payments
         .lt('attempts', 5)
         .order('created_at', { ascending: true })
@@ -245,7 +317,7 @@ Deno.serve(async (req) => {
               const { data: orderByTracking } = await supabase
                 .from('orders_v2')
                 .select('id, order_number, profile_id, user_id')
-                .eq('tracking_id', item.tracking_id)
+                .eq('meta->>tracking_id', item.tracking_id)
                 .maybeSingle();
               
               if (orderByTracking) {
@@ -348,6 +420,57 @@ Deno.serve(async (req) => {
         let profileId = item.matched_profile_id;
         let profileUserId: string | null = null;
         let matchedBy = null;
+        const parsedTracking = parseBepaidTrackingId(item.tracking_id);
+        let subscriptionContext: {
+          id: string;
+          profile_id: string | null;
+          user_id: string | null;
+          product_id: string | null;
+          tariff_id: string | null;
+          offer_id: string | null;
+          order_id: string | null;
+        } | null = null;
+
+        // Recurring recoveries already carry the canonical subscriptions_v2 ID
+        // in tracking_id. Resolve identity and catalog IDs from that record
+        // before any fuzzy email/name/product matching.
+        if (parsedTracking.subscriptionV2Id) {
+          const { data: resolvedSubscription, error: subscriptionError } = await supabase
+            .from('subscriptions_v2')
+            .select('id, profile_id, user_id, product_id, tariff_id, order_id')
+            .eq('id', parsedTracking.subscriptionV2Id)
+            .maybeSingle();
+
+          if (subscriptionError) {
+            throw new Error(`Subscription resolver failed: ${subscriptionError.message}`);
+          }
+
+          if (resolvedSubscription) {
+            let resolvedOfferId: string | null = null;
+            if (resolvedSubscription.order_id) {
+              const { data: sourceOrder } = await supabase
+                .from('orders_v2')
+                .select('offer_id')
+                .eq('id', resolvedSubscription.order_id)
+                .maybeSingle();
+              resolvedOfferId = sourceOrder?.offer_id || null;
+            }
+
+            subscriptionContext = {
+              ...resolvedSubscription,
+              offer_id: resolvedOfferId,
+            };
+            profileId = profileId || resolvedSubscription.profile_id;
+            // The profile is canonical for identity. Historical subscriptions
+            // may carry a pre-migration/orphan user_id, so let the normal
+            // profile loader below resolve the current user_id.
+            profileUserId = null;
+            matchedBy = 'subscription_tracking_id';
+            console.log(
+              `[BEPAID-AUTO-PROCESS] Resolved recurring context from subscription ${resolvedSubscription.id}`,
+            );
+          }
+        }
 
         // 1a. Try email match
         if (!profileId && item.customer_email) {
@@ -507,17 +630,38 @@ Deno.serve(async (req) => {
         // Step 2: Find product mapping - PRIORITY: offer_id > plan_title > fuzzy
         let mapping = null;
         const planTitle = item.product_name || item.tariff_name;
+
+        // 2a. CANONICAL recurring resolution: the active subscription is the
+        // source of truth for product/tariff/offer. Prefer an existing mapping,
+        // but synthesize the minimal writer context when plan-title mappings
+        // are absent or stale.
+        if (subscriptionContext?.product_id && subscriptionContext?.tariff_id) {
+          mapping = (allMappings || []).find((candidate) =>
+            candidate.product_id === subscriptionContext!.product_id &&
+            candidate.tariff_id === subscriptionContext!.tariff_id &&
+            (!subscriptionContext!.offer_id || candidate.offer_id === subscriptionContext!.offer_id)
+          ) || {
+            product_id: subscriptionContext.product_id,
+            tariff_id: subscriptionContext.tariff_id,
+            offer_id: subscriptionContext.offer_id,
+            auto_create_order: true,
+            bepaid_plan_title: 'resolved_from_subscriptions_v2',
+          };
+          console.log(
+            `[BEPAID-AUTO-PROCESS] Matched recurring catalog from subscriptions_v2: product=${subscriptionContext.product_id}, tariff=${subscriptionContext.tariff_id}`,
+          );
+        }
         
-        // 2a. PRIORITY 1: Extract offer_id from tracking_id
+        // 2b. PRIORITY 1: Extract offer_id from tracking_id
         const offerIdFromTracking = extractOfferIdFromTrackingId(item.tracking_id);
-        if (offerIdFromTracking) {
+        if (!mapping && offerIdFromTracking) {
           mapping = (allMappings || []).find(m => m.offer_id === offerIdFromTracking);
           if (mapping) {
             console.log(`[BEPAID-AUTO-PROCESS] Matched by offer_id from tracking_id: ${offerIdFromTracking}`);
           }
         }
         
-        // 2b. PRIORITY 2: Try exact match by plan_title (только если offer_id не найден)
+        // 2c. PRIORITY 2: Try exact match by plan_title (только если offer_id не найден)
         if (!mapping && planTitle) {
           mapping = (allMappings || []).find(m => 
             m.bepaid_plan_title === planTitle ||
@@ -528,7 +672,7 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 2c. PRIORITY 3: Try fuzzy match on description
+        // 2d. PRIORITY 3: Try fuzzy match on description
         if (!mapping && item.description) {
           const { tariffType, isTrial } = parseTariffFromDescription(item.description);
           console.log(`[BEPAID-AUTO-PROCESS] Parsed description: tariffType=${tariffType}, isTrial=${isTrial}`);
@@ -555,7 +699,7 @@ Deno.serve(async (req) => {
           }
         }
 
-        // 2d. PATCH-ID-FIRST: If still no mapping, try to resolve by tracking_id order → product_id
+        // 2e. PATCH-ID-FIRST: If still no mapping, try to resolve by tracking_id order → product_id
         // Instead of text-matching 'клуб'/'club', use ID-based resolution
         if (!mapping && item.tracking_id) {
           // Extract order_id from tracking_id formats: "link:order:{uuid}" or "{order_uuid}_{offer_uuid}"
@@ -585,7 +729,7 @@ Deno.serve(async (req) => {
           }
         }
 
-        // 2e. Legacy fallback: description-based club matching (deprecated, for unlinked historical transactions only)
+        // 2f. Legacy fallback: description-based club matching (deprecated, for unlinked historical transactions only)
         if (!mapping && item.description) {
           const descLower = item.description.toLowerCase();
           if (descLower.includes('клуб') || descLower.includes('club')) {
@@ -641,8 +785,8 @@ Deno.serve(async (req) => {
         if (item.tracking_id) {
           const { data } = await supabase
             .from('orders_v2')
-            .select('id, order_number')
-            .eq('tracking_id', item.tracking_id)
+            .select('id, order_number, profile_id, final_price, currency')
+            .eq('meta->>tracking_id', item.tracking_id)
             .maybeSingle();
           existingOrder = data;
         }
@@ -650,7 +794,7 @@ Deno.serve(async (req) => {
         if (!existingOrder && item.bepaid_uid) {
           const { data } = await supabase
             .from('orders_v2')
-            .select('id, order_number')
+            .select('id, order_number, profile_id, final_price, currency')
             .contains('purchase_snapshot', { bepaid_uid: item.bepaid_uid })
             .maybeSingle();
           existingOrder = data;
@@ -660,6 +804,14 @@ Deno.serve(async (req) => {
           console.log(`[BEPAID-AUTO-PROCESS] Order already exists: ${existingOrder.order_number}`);
           
           if (!dryRun) {
+            const existingPaidAt = item.paid_at || item.created_at_bepaid || item.created_at;
+            await ensureCanonicalPayment(
+              supabase,
+              item,
+              existingOrder,
+              profileId,
+              existingPaidAt,
+            );
             await supabase
               .from('payment_reconcile_queue')
               .update({ 
@@ -770,30 +922,8 @@ Deno.serve(async (req) => {
 
           console.log(`[BEPAID-AUTO-PROCESS] Created order: ${newOrder.order_number}`);
 
-          // Create payment record with REAL payment date
-          await supabase.from('payments_v2').insert({
-            order_id: newOrder.id,
-            profile_id: profileId,
-            amount: finalAmount,
-            currency: item.currency || 'BYN',
-            status: 'succeeded',
-            provider: 'bepaid',
-            provider_payment_id: item.bepaid_uid,
-            payment_method: 'card',
-            paid_at: paidAt, // Use real payment date!
-            provider_response: {
-              card_last4: item.card_last4,
-              card_holder: item.card_holder,
-              card_brand: item.card_brand,
-            },
-            meta: {
-              customer_full_name: customerFullName,
-              customer_email: item.customer_email,
-              customer_phone: item.customer_phone,
-              ip_address: item.ip_address,
-              description: item.description,
-            },
-          });
+          // Persist and verify the canonical payment before any queue success.
+          await ensureCanonicalPayment(supabase, item, newOrder, profileId, paidAt);
 
           // Calculate access period (used for both subscription and entitlement)
           let trialDays = 0;

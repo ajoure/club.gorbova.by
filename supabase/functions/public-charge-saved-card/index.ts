@@ -32,6 +32,9 @@ import {
   buildNegativeSnapshot,
   auditNegativeSnapshot,
 } from '../_shared/crm-routing.ts';
+import { referralDiscountMeta, resolveReferralCheckoutDiscount } from '../_shared/referral-checkout-discount.ts';
+import { reserveReferralCustomerCredit } from '../_shared/referral-customer-credit.ts';
+import { SAVED_CARDS_DISABLED, savedCardsDisabledResponse } from '../_shared/saved-cards-disabled.ts';
 
 // Active (non-final) payment statuses — verified against payments_v2 enum on 2026-04-26.
 // Real enum values: pending, processing, succeeded, failed, refunded, canceled.
@@ -41,6 +44,9 @@ interface ChargeBody {
   url_token?: string;
   payment_method_id?: string;
   idempotency_key?: string;
+  customer_credit_requested_minor?: number;
+  partner_bonus_requested_minor?: number;
+  partner_bonus_checkout_key?: string;
 }
 
 Deno.serve(async (req) => {
@@ -49,6 +55,9 @@ Deno.serve(async (req) => {
   }
   if (req.method !== 'POST') {
     return errorResponse('Method not allowed', 405);
+  }
+  if (SAVED_CARDS_DISABLED) {
+    return savedCardsDisabledResponse(corsHeaders);
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -70,7 +79,7 @@ Deno.serve(async (req) => {
 
     // --- 2. Body validation ----------------------------------------------
     const body = (await req.json().catch(() => ({}))) as ChargeBody;
-    const { url_token, payment_method_id, idempotency_key } = body;
+    const { url_token, payment_method_id, idempotency_key, customer_credit_requested_minor, partner_bonus_requested_minor, partner_bonus_checkout_key } = body;
     if (!url_token || typeof url_token !== 'string') {
       return errorResponse('missing_url_token', 400);
     }
@@ -199,7 +208,6 @@ Deno.serve(async (req) => {
       .from('payments_v2')
       .select('id, order_id, status, meta, amount, currency, orders_v2!inner(id, user_id, meta)')
       .eq('user_id', authUser.id)
-      .eq('amount', link.amount / 100)
       .eq('currency', link.currency)
       .in('status', ACTIVE_PAYMENT_STATUSES as unknown as string[])
       .gte('created_at', new Date(Date.now() - 2 * 60 * 1000).toISOString())
@@ -251,7 +259,29 @@ Deno.serve(async (req) => {
     const profile = profileRes.data as any;
     const profileId = profile?.id || null;
     const customerEmail = profile?.email || authUser.email || 'unknown@example.com';
-    const amountKopecks = link.amount;
+    const referralQuote = await resolveReferralCheckoutDiscount({
+      supabase, userId: targetUserId, productId: link.product_id, amountMinor: link.amount,
+      allowImmediateDiscount: true,
+    });
+    let amountKopecks = referralQuote.finalAmountMinor;
+    const reservation = await reserveReferralCustomerCredit({
+      supabase,
+      userId: targetUserId,
+      chargeAmountMinor: amountKopecks,
+      requestedMinor: Math.max(0, Math.round(Number(customer_credit_requested_minor ?? 0))),
+      checkoutKey: `saved-card:${idempotency_key || crypto.randomUUID()}`,
+    });
+    amountKopecks -= reservation.appliedMinor;
+    const bonusReservation = await supabase.rpc('referral_reserve_partner_bonus', {
+      p_user_id: targetUserId,
+      p_requested_minor: Math.max(0, Math.round(Number(partner_bonus_requested_minor ?? 0))),
+      p_charge_amount_minor: amountKopecks,
+      p_checkout_key: `saved-card:partner-bonus:${partner_bonus_checkout_key || idempotency_key || crypto.randomUUID()}`,
+      p_product_id: link.product_id,
+    });
+    if (bonusReservation.error) return errorResponse('partner_bonus_reservation_failed', 400);
+    const bonusAppliedMinor = Math.max(0, Math.round(Number(bonusReservation.data?.applied_minor ?? 0)));
+    amountKopecks = Math.max(100, amountKopecks - bonusAppliedMinor);
     const amountByn = amountKopecks / 100;
     const accessDays = tariff.access_days || 30;
     const nowDt = new Date();
@@ -283,6 +313,7 @@ Deno.serve(async (req) => {
     const orderMeta: Record<string, any> = {
       type: 'system_payment_link',
       description: link.description || null,
+      ...(bonusAppliedMinor > 0 ? { referral_partner_bonus_reservation_id: bonusReservation.data?.reservation_id, referral_partner_bonus_applied_minor: bonusAppliedMinor } : {}),
       created_by: null,
       product_name: product.name,
       tariff_name: tariff.name,
@@ -290,6 +321,12 @@ Deno.serve(async (req) => {
       payment_link_id: link.id,
       source: 'saved_card_public_pay',
       payment_method_id,
+      payment_type: 'one_time',
+      ...referralDiscountMeta(referralQuote),
+      ...(reservation.appliedMinor > 0 ? {
+        referral_customer_credit_applied_minor: reservation.appliedMinor,
+        referral_customer_credit_reservation_id: reservation.reservationId,
+      } : {}),
       ...(idempotency_key ? { idempotency_key } : {}),
       crm_routing_snapshot: crmSnapshot,
     };
@@ -303,7 +340,7 @@ Deno.serve(async (req) => {
         product_id: link.product_id,
         tariff_id: link.tariff_id,
         offer_id: link.offer_id || null,
-        base_price: amountByn,
+        base_price: referralQuote.baseAmountMinor / 100,
         final_price: amountByn,
         paid_amount: 0,
         currency: link.currency,

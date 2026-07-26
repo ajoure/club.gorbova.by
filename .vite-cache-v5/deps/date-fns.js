@@ -245,12 +245,12 @@ import {
   yearsToDays,
   yearsToMonths,
   yearsToQuarters
-} from "./chunk-2CNK6437.js";
+} from "./chunk-GBQIMY3N.js";
 import {
   isSameWeek,
   startOfWeek,
   toDate
-} from "./chunk-6FNJJH2Z.js";
+} from "./chunk-PH4L3SJA.js";
 import "./chunk-OL46QLBJ.js";
 export {
   add,
@@ -504,4 +504,3 @@ export {
   yearsToMonths,
   yearsToQuarters
 };
-//# sourceMappingURL=date-fns.js.map

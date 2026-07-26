@@ -8,8 +8,7 @@
  * === БИЗНЕС-ПРАВИЛО (PATCH PAYMENT-CONFLICT v3) ===
  *
  * Конфликт = same user_id + same product_id
- *          + status in CONFLICTING_STATUSES
- *          + provider-managed nature подтверждена.
+ *          + живая provider-managed подписка подтверждена.
  *
  * Provider-managed nature = существует строка в `provider_subscriptions`
  * для этой `subscription_v2_id` (provider id-полей в `subscriptions_v2` не существует).
@@ -38,10 +37,13 @@ type SupabaseClient = ReturnType<typeof createClient>;
 export const CONFLICTING_STATUSES = ['active', 'trial'] as const;
 
 /**
- * Provider states, которые считаются живой bePaid-связью для целей конфликта.
- * ТОЛЬКО 'active'. pending/redirecting/expired/canceled — мусор, не блокируют.
+ * Provider states, которые считаются живой рекуррентной связью для целей конфликта.
+ * pending — уже созданная provider-managed подписка/checkout. Пока она явно
+ * не отменена, новая same-product подписка запрещена: иначе один пользователь
+ * получает несколько sbs_* и после оплаты старой ссылки возможны двойные
+ * списания. failed_attempt — активный retry-цикл bePaid.
  */
-const BLOCKING_PROVIDER_STATES = ['active'] as const;
+export const BLOCKING_PROVIDER_STATES = ['active', 'trial', 'pending', 'past_due', 'failed_attempt'] as const;
 
 /** Финальные статусы, разрешённые для заменяемой подписки (из живого enum). */
 export const TERMINAL_STATUSES = ['canceled', 'superseded', 'expired', 'expired_reentry'] as const;
@@ -81,10 +83,13 @@ function formatForDisplay(dateStr: string | null): string | null {
 /**
  * Проверка product-level provider-managed конфликта.
  * Алгоритм:
- *   1. Найти все subscriptions_v2 same user + product + status in CONFLICTING_STATUSES.
+ *   1. Найти все subscriptions_v2 same user + product независимо от локального статуса.
  *   2. Для каждой проверить наличие записи в provider_subscriptions.
  *   3. Если есть хотя бы одна с provider-связью — это блокирующий конфликт.
- *   4. Если есть только зомби (без provider-связи) — игнорируем (data anomaly).
+ *   4. Если есть только строки без живой provider-связи — игнорируем (data anomaly).
+ *
+ * Локальный canceled/superseded не доказывает остановку автосписаний:
+ * provider active/failed_attempt остаётся SOT и блокирует новый checkout.
  *
  * fail-closed: при ошибке запроса возвращает `error` — caller обязан остановить flow.
  */
@@ -114,7 +119,6 @@ export async function checkSubscriptionConflict(
     .select('id, status, access_end_at, next_charge_at, billing_type, product_id, tariff_id, created_at')
     .eq('user_id', user_id)
     .eq('product_id', product_id)
-    .in('status', CONFLICTING_STATUSES as unknown as string[])
     .order('created_at', { ascending: false });
 
   if (guardError) {
@@ -309,7 +313,6 @@ export async function classifySameProductState(
     .select('id, status, tariff_id, access_end_at, next_charge_at, created_at')
     .eq('user_id', user_id)
     .eq('product_id', product_id)
-    .in('status', CONFLICTING_STATUSES as unknown as string[])
     .order('created_at', { ascending: false });
 
   if (candErr) {
@@ -506,4 +509,3 @@ export async function checkPendingCheckoutConflict(
   const stale = rows.map((r) => toInfo(r, 'cleanup_candidate'));
   return { status: 'stale_pending', stale };
 }
-

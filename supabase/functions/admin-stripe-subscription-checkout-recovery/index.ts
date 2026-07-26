@@ -5,25 +5,21 @@ import { handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_sha
 import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 import { stripeGetCheckoutSession } from '../_shared/acquiring/stripe-client.ts';
 import { activateStripeSubscriptionCheckout } from '../_shared/stripe-checkout-materialize.ts';
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
 
 const ALLOWED_SESSIONS = new Set<string>([
   'cs_live_a1Div6ZmYLt6VOpbmdE6VdDOKqXKP9aP3VOVF7HotCokKoQqGZTvjroZHV',
 ]);
 
-function svc() {
-  return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
   try {
+    const { supabase } = await requireSuperAdmin(req);
     const body = await req.json().catch(() => ({})) as { session_id?: string; account_code?: string };
     const session_id = body.session_id;
     if (!session_id || !ALLOWED_SESSIONS.has(session_id)) {
       return jsonResponse({ ok: false, error: 'session_not_in_allowlist' }, 403);
     }
-    const supabase = svc();
     const { resolveDefaultStripeAccount } = await import('../_shared/acquiring/default-account.ts');
     const acct = await resolveDefaultStripeAccount(supabase, body.account_code ?? 'stripe_poland');
     const code = acct.account_code;
@@ -39,6 +35,8 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, account_code: code, result: out });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown';
+    if (msg.startsWith('unauthorized')) return errorResponse(msg, 401);
+    if (msg.startsWith('forbidden')) return errorResponse(msg, 403);
     return errorResponse(msg, 500);
   }
 });

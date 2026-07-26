@@ -48,6 +48,7 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body = await req.json().catch(() => ({}));
+    const queueItemId = typeof body.queueItemId === "string" ? body.queueItemId : null;
     const maxAttempts = body.maxAttempts || 5;
     const batchSize = body.batchSize || 20;
     const excludeFileImport = body.excludeFileImport !== false; // Default: exclude file_import
@@ -65,12 +66,21 @@ serve(async (req) => {
     let query = supabase
       .from("payment_reconcile_queue")
       .select("id, bepaid_uid, customer_email, amount, currency, attempts, status, next_retry_at, last_error, source, created_at")
-      .in("status", ["pending", "error"])
-      .lt("attempts", maxAttempts)
-      .or(`next_retry_at.is.null,next_retry_at.lte.${now}`);
+      .limit(queueItemId ? 1 : batchSize * 3);
+
+    if (queueItemId) {
+      // Admin/support recovery: one exact row only. This intentionally accepts
+      // `successful` rows produced by bepaid-recover-payment.
+      query = query.eq("id", queueItemId);
+    } else {
+      query = query
+        .in("status", ["pending", "error"])
+        .lt("attempts", maxAttempts)
+        .or(`next_retry_at.is.null,next_retry_at.lte.${now}`);
+    }
     
     // Exclude file_import by default - these need manual cleanup
-    if (excludeFileImport) {
+    if (excludeFileImport && !queueItemId) {
       query = query.neq("source", "file_import");
     }
     
@@ -78,8 +88,7 @@ serve(async (req) => {
     // Note: This is a fallback if 'cancelled' status wasn't available
     
     const { data: allPendingItems, error: fetchError } = await query
-      .order("created_at", { ascending: true })
-      .limit(batchSize * 3); // Get more to sort properly
+      .order("created_at", { ascending: true });
 
     if (fetchError) {
       throw new Error(`Failed to fetch queue: ${fetchError.message}`);
@@ -117,7 +126,7 @@ serve(async (req) => {
         // Then by created_at (older first)
         return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
       })
-      .slice(0, batchSize); // Take only batchSize after sorting
+      .slice(0, queueItemId ? 1 : batchSize); // exact item or bounded batch
 
     console.log(`[bepaid-queue-cron] Found ${allPendingItems.length} items, processing ${sortedItems.length} after filtering and priority sort`);
     
@@ -152,10 +161,14 @@ serve(async (req) => {
           })
           .eq("id", item.id);
 
+        const cronSecret = Deno.env.get("CRON_SECRET");
+        if (!cronSecret) throw new Error("CRON_SECRET is not configured");
+
         const { data: processResult, error: processError } = await supabase.functions.invoke(
           "bepaid-auto-process",
           {
             body: { queueItemId: item.id },
+            headers: { "x-internal-key": cronSecret },
           }
         );
 

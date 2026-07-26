@@ -30,6 +30,7 @@ import { OutboundMediaPreview } from "@/components/admin/chat/OutboundMediaPrevi
 import { VideoNoteRecorder } from "@/components/admin/VideoNoteRecorder";
 import { VoiceRecorder } from "@/components/support/VoiceRecorder";
 import { useQuery } from "@tanstack/react-query";
+import { getClipboardFile } from "@/lib/clipboardImage";
 
 type MediaFileType = "photo" | "video" | "audio" | "video_note" | "voice" | "document";
 
@@ -61,6 +62,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   const [sendAsUserId, setSendAsUserId] = useState<string>("self");
   const scrollEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const shouldStickToBottomRef = useRef(true);
 
   // Load admin/support users for "Send as" dropdown
   const { data: supportSenders } = useQuery({
@@ -127,42 +129,51 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     }
   }, [ticketId, isAdmin]);
 
-  // Scroll to bottom on new messages (only if user is near bottom)
-  const AUTOSCROLL_THRESHOLD_PX = 120;
+  // Scroll to bottom on new messages only while the operator stays at the
+  // live tail. The flag is captured before React changes scrollHeight.
   const lastId = visibleMessages?.at(-1)?.id ?? '';
 
   const isFirstRender = useRef(true);
 
   useEffect(() => {
-    if (!scrollEndRef.current) return;
+    isFirstRender.current = true;
+    shouldStickToBottomRef.current = true;
+  }, [ticketId]);
 
-    // Always scroll on first render or when very few messages
-    if (isFirstRender.current || (visibleMessages?.length ?? 0) <= 1) {
-      isFirstRender.current = false;
-      scrollEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
-      return;
-    }
+  useEffect(() => {
+    if (!scrollEndRef.current) return;
 
     const root = scrollEndRef.current.closest('[data-radix-scroll-area-root]') as HTMLElement | null;
     const viewport = root?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
-    if (viewport) {
-      const { scrollTop, scrollHeight, clientHeight } = viewport;
-      const isNearBottom = scrollHeight - scrollTop - clientHeight < AUTOSCROLL_THRESHOLD_PX;
-      if (isNearBottom) {
-        scrollEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
-      }
+    if (!viewport) return;
+
+    if (isFirstRender.current || shouldStickToBottomRef.current) {
+      isFirstRender.current = false;
+      viewport.scrollTop = viewport.scrollHeight;
     }
   }, [visibleMessages?.length, lastId]);
+
+  useEffect(() => {
+    if (!scrollEndRef.current) return;
+    const root = scrollEndRef.current.closest('[data-radix-scroll-area-root]') as HTMLElement | null;
+    const viewport = root?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
+    if (!viewport) return;
+    const onScroll = () => {
+      shouldStickToBottomRef.current =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 120;
+    };
+    onScroll();
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, [ticketId]);
 
   // Show TG checkbox only for admin when user has telegram and bridge is on
   const canBridgeToTelegram = isAdmin && telegramBridgeEnabled && telegramUserId;
 
-  // Auto-enable sendToTelegram when bridge is available
+  // Telegram delivery is always an explicit per-message choice.
   useEffect(() => {
-    if (canBridgeToTelegram) {
-      setSendToTelegram(true);
-    }
-  }, [canBridgeToTelegram]);
+    setSendToTelegram(false);
+  }, [ticketId, canBridgeToTelegram]);
 
   // Voice preview URL lifecycle (cleanup revokes previous URL automatically)
   useEffect(() => {
@@ -213,9 +224,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     return "document";
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const acceptSelectedFile = (file: File, type?: MediaFileType) => {
     if (file.size > MAX_TICKET_ATTACHMENT_BYTES) {
       toast({
         title: "Файл слишком большой",
@@ -225,15 +234,25 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
       return;
     }
     setAttachedFile(file);
-    // Auto-detect type if not explicitly set (fallback)
-    if (!selectedFileType) {
-      setSelectedFileType(detectFileType(file));
-    }
+    setSelectedFileType(type || selectedFileType || detectFileType(file));
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    acceptSelectedFile(file);
     // Reset input so same file can be re-selected
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
       fileInputRef.current.accept = "*/*"; // Reset accept
     }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const file = getClipboardFile(e.clipboardData);
+    if (!file) return;
+    e.preventDefault();
+    acceptSelectedFile(file, detectFileType(file));
   };
 
   const handleVideoNoteRecorded = (file: File) => {
@@ -341,7 +360,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
 
   return (
     <div className="flex flex-col h-full">
-      <ScrollArea className="flex-1 p-4 overflow-x-hidden">
+      <ScrollArea className="touch-scroll flex-1 p-4 overflow-x-hidden overscroll-contain">
         {visibleMessages?.map((msg) => (
           <TicketMessage
             key={msg.id}
@@ -370,7 +389,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
       </ScrollArea>
 
       {!isClosed && (
-        <div className="border-t p-4">
+        <div className="contact-center-safe-bottom border-t p-4 shrink-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
           {isAdmin && (
             <div className="flex items-center gap-4 mb-2 flex-wrap">
               {/* "Send as" dropdown */}
@@ -413,7 +432,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
                     onCheckedChange={(checked) => setSendToTelegram(checked as boolean)}
                   />
                   <Label htmlFor="send-telegram" className="text-sm text-muted-foreground">
-                    {telegramMode === "notify" ? "Уведомить в Telegram" : "Отправить в Telegram"}
+                    {telegramMode === "notify" ? "Дополнительно уведомить в Telegram" : "Дополнительно отправить в Telegram"}
                   </Label>
                 </div>
               )}
@@ -512,6 +531,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={isInternal ? "Внутренняя заметка..." : "Введите сообщение..."}
                 className="min-h-[80px] resize-none"
               />

@@ -69,6 +69,12 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
     routePrefix: "/admin/contacts",
   },
   {
+    code: "referrals",
+    label: "Реферальная программа",
+    group: "crm",
+    routePrefix: "/admin/referrals",
+  },
+  {
     code: "companies",
     label: "Компании",
     group: "crm",
@@ -123,7 +129,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
   { code: "training",             label: "Тренинги",             group: "service", routePrefix: "/admin/training-modules", altPrefixes: ["/admin/training"] },
   { code: "club-members",         label: "Участники клуба",      group: "service", routePrefix: "/admin/integrations/telegram" },
   { code: "live-events",          label: "Эфиры",                group: "service", routePrefix: "/admin/live-events" },
-  { code: "ilex",                 label: "iLex",                 group: "service", routePrefix: "/admin/ilex" },
+  { code: "legislation",          label: "Законодательство",     group: "service", routePrefix: "/admin/legislation" },
   { code: "telegram-invite-audit",label: "Telegram invite audit",group: "service", routePrefix: "/admin/telegram/invite-audit" },
   { code: "support",              label: "Поддержка",            group: "service", routePrefix: "/admin/support" },
 ] as const;

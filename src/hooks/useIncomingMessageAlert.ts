@@ -8,8 +8,30 @@ import { supabase } from "@/integrations/supabase/client";
  */
 export function useIncomingMessageAlert() {
   const audioContextRef = useRef<AudioContext | null>(null);
+  const hasPushSubscriptionRef = useRef(true);
 
   // Initialize AudioContext on first user gesture to comply with browser autoplay policy
+  useEffect(() => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      hasPushSubscriptionRef.current = false;
+      return;
+    }
+
+    let cancelled = false;
+    navigator.serviceWorker.ready
+      .then((registration) => registration.pushManager.getSubscription())
+      .then((subscription) => {
+        if (!cancelled) hasPushSubscriptionRef.current = Boolean(subscription);
+      })
+      .catch(() => {
+        if (!cancelled) hasPushSubscriptionRef.current = false;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     const initAudio = () => {
       if (!audioContextRef.current) {
@@ -44,6 +66,11 @@ export function useIncomingMessageAlert() {
         (payload) => {
           console.log("[Alert] New incoming Telegram message:", (payload.new as any)?.id);
           playNotificationSound();
+          showFallbackNotification(
+            "Новое сообщение в Telegram",
+            getMessagePreview(payload.new),
+            `tg-realtime-${(payload.new as any)?.id || "new"}`,
+          );
         }
       )
       .on(
@@ -57,6 +84,11 @@ export function useIncomingMessageAlert() {
         (payload) => {
           console.log("[Alert] New incoming Instagram message:", (payload.new as any)?.id);
           playNotificationSound();
+          showFallbackNotification(
+            "Новое сообщение в Instagram",
+            getMessagePreview(payload.new),
+            `ig-realtime-${(payload.new as any)?.id || "new"}`,
+          );
         },
       )
       .on(
@@ -70,6 +102,11 @@ export function useIncomingMessageAlert() {
           if (row.author_type && row.author_type !== "user") return;
           console.log("[Alert] New ticket_message:", (payload.new as any)?.id);
           playNotificationSound();
+          showFallbackNotification(
+            "Новое сообщение в техподдержке",
+            getMessagePreview(payload.new),
+            `ticket-realtime-${(payload.new as any)?.id || "new"}`,
+          );
         },
       )
       .subscribe((status) => {
@@ -80,6 +117,36 @@ export function useIncomingMessageAlert() {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  function getMessagePreview(row: unknown): string {
+    const message = row as Record<string, unknown> | null;
+    const value = message?.message_text ?? message?.content ?? message?.text;
+    return typeof value === "string" && value.trim()
+      ? value.trim().slice(0, 120)
+      : "Откройте контакт-центр, чтобы прочитать сообщение";
+  }
+
+  function showFallbackNotification(title: string, body: string, tag: string) {
+    // The service-worker push is the primary path. Use the Realtime event only
+    // when this browser has permission but no active PushManager subscription.
+    if (hasPushSubscriptionRef.current) return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+
+    try {
+      const notification = new Notification(title, {
+        body,
+        icon: "/favicon.ico",
+        tag,
+      });
+      notification.onclick = () => {
+        window.focus();
+        window.location.assign("/admin/communication");
+        notification.close();
+      };
+    } catch (err) {
+      console.warn("[Alert] Could not show browser notification:", err);
+    }
+  }
 
   async function playNotificationSound() {
     try {

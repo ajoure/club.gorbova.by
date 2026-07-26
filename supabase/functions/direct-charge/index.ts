@@ -762,7 +762,12 @@ Deno.serve(async (req) => {
     }
 
     // For paid transactions, charge the card
-    console.log(`Charging ${amount} ${product.currency} using token ${paymentMethod.provider_token.substring(0, 8)}...`);
+    console.log('[direct-charge] Starting saved-card charge', {
+      amount,
+      currency: product.currency,
+      payment_method_id: paymentMethod.id,
+      has_saved_payment_token: Boolean(paymentMethod.provider_token),
+    });
 
     // Create payment record (amount in BYN, not kopecks - DB stores decimal)
     const { data: payment, error: paymentError } = await supabase
@@ -844,7 +849,14 @@ Deno.serve(async (req) => {
 
     console.log('bePaid gateway URLs:', { origin, returnUrl, notificationUrl });
 
-    console.log('Sending charge to bePaid Gateway:', JSON.stringify(chargePayload));
+    console.log('[direct-charge] Sending charge to bePaid Gateway', {
+      payment_id: payment.id,
+      order_id: order.id,
+      amount: chargePayload.request.amount,
+      currency: chargePayload.request.currency,
+      test: chargePayload.request.test,
+      has_saved_payment_token: Boolean(chargePayload.request.credit_card.token),
+    });
 
     const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
       method: 'POST',
@@ -861,12 +873,22 @@ Deno.serve(async (req) => {
     console.log(`bePaid charge response status: ${chargeResponse.status}`);
     
     const chargeResult = await chargeResponse.json();
-    console.log('bePaid charge response:', JSON.stringify(chargeResult));
+    console.log('[direct-charge] bePaid charge response summary', {
+      http_status: chargeResponse.status,
+      transaction_status: chargeResult.transaction?.status ?? null,
+      transaction_uid: chargeResult.transaction?.uid ?? null,
+      requires_redirect: Boolean(chargeResult.transaction?.redirect_url),
+    });
 
     // Handle non-200 responses from bePaid
     if (!chargeResponse.ok) {
       const errorMessage = chargeResult.message || chargeResult.error || `bePaid API error: ${chargeResponse.status}`;
-      console.error('bePaid API error:', errorMessage, chargeResult);
+      console.error('[direct-charge] bePaid API error', {
+        http_status: chargeResponse.status,
+        error_message: errorMessage,
+        transaction_status: chargeResult.transaction?.status ?? null,
+        transaction_uid: chargeResult.transaction?.uid ?? null,
+      });
       
       await supabase
         .from('payments_v2')

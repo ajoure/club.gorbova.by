@@ -27,7 +27,8 @@ export type LifecycleEvent =
   | "installment_charge_failed"
   | "installment_charge_retry_exhausted"
   | "installment_completed"
-  | "subscription_charge_failed";
+  | "subscription_charge_failed"
+  | "subscription_charge_retry_exhausted";
 
 export type ChargeChannel = "telegram" | "email";
 
@@ -64,6 +65,7 @@ function isGated(event: LifecycleEvent, policy: ReturnType<typeof resolveChargeN
     case "subscription_charge_failed":
       return policy.notify_on_failure ? { gated: false } : { gated: true, reason: "notify_on_failure_disabled" };
     case "installment_charge_retry_exhausted":
+    case "subscription_charge_retry_exhausted":
       return policy.notify_on_retry_exhausted ? { gated: false } : { gated: true, reason: "notify_on_retry_exhausted_disabled" };
     case "installment_completed":
       return { gated: false }; // completion is always informational
@@ -80,6 +82,8 @@ function buildIdempotencyKey(args: SendLifecycleArgs, channel: ChargeChannel): s
       return `installment_charge_failed:${subject}:${evidence}:${channel}`;
     case "installment_charge_retry_exhausted":
       return `installment_charge_retry_exhausted:${subject}:${channel}`;
+    case "subscription_charge_retry_exhausted":
+      return `subscription_charge_retry_exhausted:${subject}:${channel}`;
     case "installment_completed":
       return `installment_completed:${args.subscriptionV2Id}:${channel}`;
     case "subscription_charge_failed":
@@ -101,7 +105,10 @@ function fmtAmountDecimal(a: number | null | undefined, c: string | null | undef
   return `${num.toFixed(2)} ${c || "BYN"}`;
 }
 function fmtAmountForEvent(event: LifecycleEvent, a: number | null | undefined, c: string | null | undefined): string {
-  if (event === "subscription_charge_failed") return fmtAmountDecimal(a, c);
+  if (
+    event === "subscription_charge_failed" ||
+    event === "subscription_charge_retry_exhausted"
+  ) return fmtAmountDecimal(a, c);
   return fmtAmountWholeByn(a, c); // installment_* → whole BYN
 }
 
@@ -115,6 +122,8 @@ function renderTelegram(args: SendLifecycleArgs): string {
       return `❌ *Не удалось списать платёж*\n\n📦 ${product}${amt ? `\n💳 Сумма: ${amt}` : ""}\n⚠️ Причина: ${err}\n\nМы повторим попытку автоматически. При необходимости обновите платёжную карту в личном кабинете.`;
     case "installment_charge_retry_exhausted":
       return `⛔️ *Попытки списания исчерпаны*\n\n📦 ${product}${amt ? `\n💳 Сумма: ${amt}` : ""}\n\nРассрочка приостановлена. Пожалуйста, свяжитесь с поддержкой или обновите платёжный метод.`;
+    case "subscription_charge_retry_exhausted":
+      return `⛔️ *Попытки списания исчерпаны*\n\n📦 ${product}${amt ? `\n💳 Сумма: ${amt}` : ""}\n\nПодписка приостановлена. Пожалуйста, свяжитесь с поддержкой или обновите платёжный метод.`;
     case "installment_completed":
       return `✅ *Рассрочка полностью погашена*\n\n📦 ${product}\n\nСпасибо! Все платежи по рассрочке успешно завершены.`;
   }
@@ -133,9 +142,10 @@ function renderEmail(args: SendLifecycleArgs): { subject: string; html: string }
         html: `<p>К сожалению, автоматическое списание не прошло.</p><p><b>Продукт:</b> ${product}${amt ? `<br/><b>Сумма:</b> ${amt}` : ""}<br/><b>Причина:</b> ${err}</p><p>Мы повторим попытку автоматически. При необходимости обновите платёжную карту в личном кабинете.</p>`,
       };
     case "installment_charge_retry_exhausted":
+    case "subscription_charge_retry_exhausted":
       return {
         subject: `Попытки списания исчерпаны — ${productPlain}`,
-        html: `<p>Попытки автоматического списания по рассрочке исчерпаны.</p><p><b>Продукт:</b> ${product}${amt ? `<br/><b>Сумма:</b> ${amt}` : ""}</p><p>Пожалуйста, свяжитесь с поддержкой или обновите платёжный метод, чтобы продолжить.</p>`,
+        html: `<p>Попытки автоматического списания исчерпаны.</p><p><b>Продукт:</b> ${product}${amt ? `<br/><b>Сумма:</b> ${amt}` : ""}</p><p>Пожалуйста, свяжитесь с поддержкой или обновите платёжный метод, чтобы продолжить.</p>`,
       };
     case "installment_completed":
       return {

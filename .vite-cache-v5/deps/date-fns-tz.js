@@ -1,8 +1,8 @@
 import {
   format,
   getDefaultOptions
-} from "./chunk-2CNK6437.js";
-import "./chunk-6FNJJH2Z.js";
+} from "./chunk-GBQIMY3N.js";
+import "./chunk-PH4L3SJA.js";
 import "./chunk-OL46QLBJ.js";
 
 // node_modules/date-fns-tz/dist/esm/_lib/tzIntlTimeZoneName/index.js
@@ -217,13 +217,21 @@ var formatters = {
       return "Z";
     }
     switch (token) {
+      // Hours and optional minutes
       case "X":
         return formatTimezoneWithOptionalMinutes(timezoneOffset);
+      // Hours, minutes and optional seconds without `:` delimeter
+      // Note: neither ISO-8601 nor JavaScript supports seconds in timezone offsets
+      // so this token always has the same output as `XX`
       case "XXXX":
       case "XX":
         return formatTimezone(timezoneOffset);
+      // Hours, minutes and optional seconds with `:` delimeter
+      // Note: neither ISO-8601 nor JavaScript supports seconds in timezone offsets
+      // so this token always has the same output as `XXX`
       case "XXXXX":
       case "XXX":
+      // Hours and minutes with `:` delimeter
       default:
         return formatTimezone(timezoneOffset, ":");
     }
@@ -232,13 +240,21 @@ var formatters = {
   x: function(date, token, options) {
     const timezoneOffset = getTimeZoneOffset(options.timeZone, date);
     switch (token) {
+      // Hours and optional minutes
       case "x":
         return formatTimezoneWithOptionalMinutes(timezoneOffset);
+      // Hours, minutes and optional seconds without `:` delimeter
+      // Note: neither ISO-8601 nor JavaScript supports seconds in timezone offsets
+      // so this token always has the same output as `xx`
       case "xxxx":
       case "xx":
         return formatTimezone(timezoneOffset);
+      // Hours, minutes and optional seconds with `:` delimeter
+      // Note: neither ISO-8601 nor JavaScript supports seconds in timezone offsets
+      // so this token always has the same output as `xxx`
       case "xxxxx":
       case "xxx":
+      // Hours and minutes with `:` delimeter
       default:
         return formatTimezone(timezoneOffset, ":");
     }
@@ -247,10 +263,12 @@ var formatters = {
   O: function(date, token, options) {
     const timezoneOffset = getTimeZoneOffset(options.timeZone, date);
     switch (token) {
+      // Short
       case "O":
       case "OO":
       case "OOO":
         return "GMT" + formatTimezoneShort(timezoneOffset, ":");
+      // Long
       case "OOOO":
       default:
         return "GMT" + formatTimezone(timezoneOffset, ":");
@@ -259,10 +277,12 @@ var formatters = {
   // Timezone (specific non-location)
   z: function(date, token, options) {
     switch (token) {
+      // Short
       case "z":
       case "zz":
       case "zzz":
         return tzIntlTimeZoneName("short", date, options);
+      // Long
       case "zzzz":
       default:
         return tzIntlTimeZoneName("long", date, options);

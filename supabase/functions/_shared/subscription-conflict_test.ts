@@ -12,7 +12,7 @@
 //     → НЕ создаст новой subscriptions_v2 и НЕ дёрнет bePaid /subscriptions.
 
 import { assertEquals } from "https://deno.land/std@0.224.0/testing/asserts.ts";
-import { classifySameProductState } from "./subscription-conflict.ts";
+import { checkSubscriptionConflict, classifySameProductState } from "./subscription-conflict.ts";
 
 const USER = "00000000-0000-0000-0000-00000000a001";
 const PRODUCT = "00000000-0000-0000-0000-0000000000b1";
@@ -64,14 +64,24 @@ function makeMock(opts: {
         return {
           select(_cols: string) {
             let subId: string | null = null;
+            let allowedStates: string[] | null = null;
+            let allowedProviders: string[] | null = null;
             const chain: any = {
               eq(col: string, val: any) { if (col === "subscription_v2_id") subId = val; return chain; },
-              in(_c: string, _v: any[]) { return chain; },
+              in(col: string, vals: any[]) {
+                if (col === "state") allowedStates = vals;
+                if (col === "provider") allowedProviders = vals;
+                return chain;
+              },
               limit(_n: number) { return chain; },
               async maybeSingle() {
                 if (opts.providerError) return { data: null, error: { message: "boom" } };
                 const v = subId ? opts.providerSubByV2[subId] ?? null : null;
-                return { data: v ? { ...v, provider: "bepaid" } : null, error: null };
+                const provider = "bepaid";
+                const matches = v
+                  && (!allowedStates || allowedStates.includes(v.state))
+                  && (!allowedProviders || allowedProviders.includes(provider));
+                return { data: matches ? { ...v, provider } : null, error: null };
               },
             };
             return chain;
@@ -131,9 +141,9 @@ Deno.test("classifySameProductState — replace_other_tariff when active+provide
 // PATCH PAYMENT-CONFLICT v4 — unpaid trash MUST NOT block checkout
 // =====================================================================
 
-Deno.test("v4: past_due alone → no_existing (status removed from CONFLICTING_STATUSES)", async () => {
-  // Ирина-like: past_due без provider linkage / с redirecting.
-  // past_due больше не входит в CONFLICTING_STATUSES → даже не дойдёт до provider check.
+Deno.test("v4: past_due + redirecting provider → no_existing", async () => {
+  // Ирина-like: локальный past_due с незавершённым redirecting у провайдера
+  // не блокирует; решение определяется provider state, а не локальным статусом.
   const supabase = makeMock({
     subs: [{ id: "v2-pastdue", status: "past_due", tariff_id: TARIFF_A }],
     providerSubByV2: { "v2-pastdue": { provider_subscription_id: "sbs_pd", state: "redirecting" } },
@@ -143,16 +153,18 @@ Deno.test("v4: past_due alone → no_existing (status removed from CONFLICTING_S
   if (r.status === "ok") assertEquals(r.decision, "no_existing");
 });
 
-Deno.test("v4: active sub but provider state=pending → no_existing (pending not blocking)", async () => {
-  // Mock не фильтрует по .in('state',...) — эмулируем фильтрацию через null.
-  // Реальный supabase отдаст null т.к. pending исключён из BLOCKING_PROVIDER_STATES.
+Deno.test("pending provider subscription blocks a duplicate same-product checkout", async () => {
   const supabase = makeMock({
     subs: [{ id: "v2-act", status: "active", tariff_id: TARIFF_A }],
-    providerSubByV2: { "v2-act": null },
+    providerSubByV2: { "v2-act": { provider_subscription_id: "sbs_pending", state: "pending" } },
   });
   const r = await classifySameProductState(supabase, { user_id: USER, product_id: PRODUCT, tariff_id: TARIFF_A });
   assertEquals(r.status, "ok");
-  if (r.status === "ok") assertEquals(r.decision, "no_existing");
+  if (r.status === "ok") {
+    assertEquals(r.decision, "extend_same_tariff");
+    assertEquals(r.existing?.provider_subscription_id, "sbs_pending");
+    assertEquals(r.existing?.provider_state, "pending");
+  }
 });
 
 Deno.test("classifySameProductState — fail-closed on subs query error", async () => {
@@ -202,4 +214,50 @@ Deno.test("classifySameProductState — missing tariff_id with provider sub → 
   const r = await classifySameProductState(supabase, { user_id: USER, product_id: PRODUCT, tariff_id: null });
   assertEquals(r.status, "ok");
   if (r.status === "ok") assertEquals(r.decision, "replace_other_tariff");
+});
+
+Deno.test("orphan guard — superseded local + failed_attempt provider blocks same-product checkout", async () => {
+  const supabase = makeMock({
+    subs: [{ id: "v2-superseded", status: "superseded", tariff_id: TARIFF_A }],
+    providerSubByV2: {
+      "v2-superseded": { provider_subscription_id: "sbs_retry", state: "failed_attempt" },
+    },
+  });
+
+  const classified = await classifySameProductState(supabase, {
+    user_id: USER,
+    product_id: PRODUCT,
+    tariff_id: TARIFF_A,
+  });
+  assertEquals(classified.status, "ok");
+  if (classified.status === "ok") {
+    assertEquals(classified.decision, "extend_same_tariff");
+    assertEquals(classified.existing?.provider_state, "failed_attempt");
+  }
+
+  const conflict = await checkSubscriptionConflict(supabase, {
+    user_id: USER,
+    product_id: PRODUCT,
+    providers: ["bepaid"],
+  });
+  assertEquals(conflict.status, "conflict");
+  if (conflict.status === "conflict") {
+    assertEquals(conflict.conflict.subscription_v2_id, "v2-superseded");
+    assertEquals(conflict.conflict.provider_subscription_id, "sbs_retry");
+  }
+});
+
+Deno.test("orphan guard — terminal local without live provider state stays non-blocking", async () => {
+  const supabase = makeMock({
+    subs: [{ id: "v2-canceled", status: "canceled", tariff_id: TARIFF_A }],
+    providerSubByV2: { "v2-canceled": null },
+  });
+
+  const classified = await classifySameProductState(supabase, {
+    user_id: USER,
+    product_id: PRODUCT,
+    tariff_id: TARIFF_A,
+  });
+  assertEquals(classified.status, "ok");
+  if (classified.status === "ok") assertEquals(classified.decision, "no_existing");
 });

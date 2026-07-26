@@ -423,49 +423,20 @@ export function useSendMessage() {
 
   return useMutation({
     mutationFn: async (data: CreateMessageData) => {
-      // Get user's full name for author_name
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("user_id", user!.id)
-        .single();
-
-      const { data: message, error } = await supabase
-        .from("ticket_messages")
-        .insert({
-          ticket_id: data.ticket_id,
-          author_id: user!.id,
-          author_type: data.author_type || "user",
-          author_name: data.author_name_override || profile?.full_name,
-          message: data.message,
-          attachments: (data.attachments || []) as unknown as import("@/integrations/supabase/types").Json,
-          is_internal: data.is_internal || false,
-          display_user_id: data.display_user_id || null,
-        })
-        .select()
-        .single();
-
+      if (!user) throw new Error("Необходимо войти в систему");
+      const { data: result, error } = await supabase.rpc("send_ticket_message_v2" as any, {
+        p_ticket_id: data.ticket_id,
+        p_message: data.message,
+        p_attachments: (data.attachments || []) as unknown as import("@/integrations/supabase/types").Json,
+        p_is_internal: data.is_internal || false,
+        p_display_user_id: data.display_user_id || null,
+      } as any);
       if (error) throw error;
-
-      // Update ticket flags
-      const updateData: Record<string, unknown> = {
-        updated_at: new Date().toISOString(),
-      };
-
-      if (data.author_type === "support") {
-        updateData.has_unread_user = true;
-        updateData.has_unread_admin = false;
-      } else {
-        updateData.has_unread_admin = true;
-        updateData.has_unread_user = false;
+      const response = result as unknown as { success?: boolean; message?: TicketMessage };
+      if (!response?.success || !response.message) {
+        throw new Error("Сервер не подтвердил отправку сообщения");
       }
-
-      await supabase
-        .from("support_tickets")
-        .update(updateData as any)
-        .eq("id", data.ticket_id);
-
-      return message;
+      return response.message;
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["ticket-messages", variables.ticket_id] });

@@ -17,6 +17,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 const signInWithOtp = vi.fn();
 const verifyOtp = vi.fn();
 const updateUser = vi.fn().mockResolvedValue({ data: {}, error: null });
+const signOut = vi.fn().mockResolvedValue({ error: null });
 const functionsInvoke = vi.fn();
 
 vi.mock("@/integrations/supabase/client", () => ({
@@ -25,6 +26,7 @@ vi.mock("@/integrations/supabase/client", () => ({
       signInWithOtp: (...args: any[]) => signInWithOtp(...args),
       verifyOtp: (...args: any[]) => verifyOtp(...args),
       updateUser: (...args: any[]) => updateUser(...args),
+      signOut: (...args: any[]) => signOut(...args),
     },
     functions: { invoke: (...args: any[]) => functionsInvoke(...args) },
   },
@@ -57,6 +59,7 @@ describe("useInlineEmailOtp", () => {
     signInWithOtp.mockReset();
     verifyOtp.mockReset();
     updateUser.mockClear();
+    signOut.mockClear();
     functionsInvoke.mockReset();
   });
 
@@ -95,14 +98,89 @@ describe("useInlineEmailOtp", () => {
     await act(async () => { await result.current.submitEmail("new@x.com"); });
     expect(functionsInvoke).toHaveBeenCalledTimes(1);
     await act(async () => {
-      await result.current.submitDetails({ firstName: "И", lastName: "П", phone: "+375" });
+      await result.current.submitDetails({
+        firstName: "И",
+        lastName: "П",
+        phone: "+375",
+        password: "test12",
+      });
     });
     const otpCall = functionsInvoke.mock.calls[1];
     expect(otpCall[0]).toBe("request-inline-otp");
     expect(otpCall[1].body.meta).toMatchObject({
       firstName: "И", lastName: "П", fullName: "И П", phone: "+375",
     });
+    expect(otpCall[1].body.meta).not.toHaveProperty("password");
     expect(result.current.step).toBe("sent");
+  });
+
+  it("new registration requires a valid password before sending OTP", async () => {
+    mockIdentify({ exists: false, profile_name: null });
+    const { result } = renderHook(() => useInlineEmailOtp());
+    await act(async () => { await result.current.submitEmail("new@x.com"); });
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await result.current.submitDetails({ firstName: "И", password: "123" });
+    });
+    expect(ok).toBe(false);
+    expect(result.current.error).toMatch(/6 символов.*букву.*цифру/i);
+    expect(functionsInvoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("sets new-user password only after OTP created a verified session", async () => {
+    mockIdentify({ exists: false, profile_name: null });
+    mockRequestOtp();
+    mockVerifyOtpFn({ data: { ok: true, token_hash: "th_new", user_id: "u-new" } });
+    verifyOtp.mockResolvedValueOnce({
+      data: { session: { access_token: "x" }, user: { id: "u-new" } }, error: null,
+    });
+    updateUser.mockResolvedValueOnce({ data: { user: { id: "u-new" } }, error: null });
+
+    const { result } = renderHook(() => useInlineEmailOtp());
+    await act(async () => { await result.current.submitEmail("new@x.com"); });
+    await act(async () => {
+      await result.current.submitDetails({
+        firstName: "И",
+        lastName: "П",
+        password: "test12",
+      });
+    });
+
+    expect(updateUser).not.toHaveBeenCalled();
+    let verified: any;
+    await act(async () => { verified = await result.current.verifyCode("123456"); });
+
+    expect(updateUser).toHaveBeenCalledWith({ password: "test12" });
+    expect(signOut).not.toHaveBeenCalled();
+    expect(verified).toEqual({ userId: "u-new" });
+    expect(result.current.step).toBe("authenticated");
+  });
+
+  it("does not authenticate when password setup fails after OTP verification", async () => {
+    mockIdentify({ exists: false, profile_name: null });
+    mockRequestOtp();
+    mockVerifyOtpFn({ data: { ok: true, token_hash: "th_new", user_id: "u-new" } });
+    verifyOtp.mockResolvedValueOnce({
+      data: { session: { access_token: "x" }, user: { id: "u-new" } }, error: null,
+    });
+    updateUser.mockResolvedValueOnce({
+      data: { user: null },
+      error: { message: "Password should be different" },
+    });
+
+    const { result } = renderHook(() => useInlineEmailOtp());
+    await act(async () => { await result.current.submitEmail("new@x.com"); });
+    await act(async () => {
+      await result.current.submitDetails({ firstName: "И", password: "test12" });
+    });
+
+    let verified: any;
+    await act(async () => { verified = await result.current.verifyCode("123456"); });
+
+    expect(verified).toBeNull();
+    expect(signOut).toHaveBeenCalledTimes(1);
+    expect(result.current.step).toBe("details");
+    expect(result.current.error).toMatch(/пароль не удалось сохранить/i);
   });
 
   it("request-inline-otp rate_limited keeps step and shows message", async () => {

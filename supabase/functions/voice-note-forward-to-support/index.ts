@@ -1,7 +1,7 @@
 // ============================================================================
 // voice-note-forward-to-support
 // ----------------------------------------------------------------------------
-// Пересылает голосовое сообщение из ленты контакта в Telegram админам-support
+// Пересылает голосовое сообщение из ленты контакта или компании в Telegram админам-support
 // (super_admin + admin с deals.edit) через основного бота.
 // Использует тот же RBAC-паттерн, что и telegram-notify-admins.
 // ============================================================================
@@ -49,12 +49,23 @@ Deno.serve(async (req) => {
     const fileId = body?.file_id as string | undefined;
     if (!fileId) return jsonResponse({ error: "missing_file_id" }, 400);
 
-    const { data: file, error: fErr } = await service
+    const { data: contactFile, error: contactFileErr } = await service
       .from("contact_files")
       .select("id, contact_id, name, storage_path, mime_type, meta")
       .eq("id", fileId)
       .maybeSingle();
-    if (fErr || !file) return jsonResponse({ error: "file_not_found" }, 404);
+    let fileTable: "contact_files" | "company_files" = "contact_files";
+    let file = contactFile as any;
+    if (contactFileErr || !contactFile) {
+      const { data: companyFile, error: companyFileErr } = await service
+        .from("company_files")
+        .select("id, company_id, name, storage_path, mime_type, meta")
+        .eq("id", fileId)
+        .maybeSingle();
+      if (companyFileErr || !companyFile) return jsonResponse({ error: "file_not_found" }, 404);
+      fileTable = "company_files";
+      file = companyFile as any;
+    }
 
     // Загружаем содержимое голосового
     const { data: blob, error: dlErr } = await service.storage.from("contact-files").download(file.storage_path);
@@ -68,21 +79,23 @@ Deno.serve(async (req) => {
     const fieldName = useVoice ? "voice" : "audio";
     const fileName = file.name || (useVoice ? "voice.ogg" : "voice.webm");
 
-    // Контекст контакта
-    const { data: contact } = await service
-      .from("profiles")
-      .select("id, full_name, email, phone")
-      .eq("id", file.contact_id)
-      .maybeSingle();
+    // Контекст сущности
+    const contact = fileTable === "contact_files"
+      ? (await service.from("profiles").select("id, full_name, email, phone").eq("id", file.contact_id).maybeSingle()).data
+      : null;
+    const company = fileTable === "company_files"
+      ? (await service.from("companies").select("id, public_id, full_name, email, phone").eq("id", file.company_id).maybeSingle()).data
+      : null;
 
     const transcript = (file.meta as any)?.transcript as string | undefined;
     const summary = (file.meta as any)?.summary as string | undefined;
 
     const captionLines = [
-      "🎙 <b>Голосовое из ленты контакта</b>",
-      contact?.full_name ? `👤 ${contact.full_name}` : null,
-      contact?.email ? `✉️ ${contact.email}` : null,
-      contact?.phone ? `📞 ${contact.phone}` : null,
+      fileTable === "company_files" ? "🎙 <b>Голосовое из ленты компании</b>" : "🎙 <b>Голосовое из ленты контакта</b>",
+      (company?.full_name || contact?.full_name) ? `👤 ${company?.full_name || contact?.full_name}` : null,
+      company?.public_id ? `🆔 ${company.public_id}` : null,
+      (company?.email || contact?.email) ? `✉️ ${company?.email || contact?.email}` : null,
+      (company?.phone || contact?.phone) ? `📞 ${company?.phone || contact?.phone}` : null,
       summary ? `\n<b>Сводка:</b>\n${summary}` : null,
       transcript && !summary ? `\n<b>Расшифровка:</b>\n${transcript.slice(0, 800)}` : null,
     ].filter(Boolean);
@@ -146,7 +159,7 @@ Deno.serve(async (req) => {
     await service.from("telegram_logs").insert({
       action: "VOICE_NOTE_FORWARDED",
       status: sent > 0 ? "success" : "warning",
-      meta: { file_id: fileId, contact_id: file.contact_id, sent, total: profiles.length, errors: errors.length ? errors : undefined },
+      meta: { file_id: fileId, contact_id: file.contact_id || null, company_id: file.company_id || null, source_table: fileTable, sent, total: profiles.length, errors: errors.length ? errors : undefined },
     });
 
     return jsonResponse({ ok: true, sent, total: profiles.length, errors: errors.length ? errors : undefined });

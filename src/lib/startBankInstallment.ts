@@ -10,6 +10,7 @@ import type { BankInstallmentRuntime } from "@/lib/bankInstallment";
 
 export interface StartBankInstallmentInput {
   offerId: string;
+  addonOfferIds?: string[];
   runtime?: BankInstallmentRuntime;
   legacyBankLinkUrl?: string;
   legacyBankLinkLabel?: string;
@@ -20,6 +21,9 @@ export interface StartBankInstallmentInput {
     email: string;
     comment?: string | null;
   };
+  customerCreditRequestedMinor?: number;
+  partnerBonusRequestedMinor?: number;
+  partnerBonusCheckoutKey?: string;
 }
 
 export type StartBankInstallmentResult =
@@ -46,10 +50,14 @@ export async function startBankInstallment(
       {
         body: {
           tariff_offer_id: input.offerId,
+          addon_offer_ids: input.addonOfferIds ?? [],
           name: input.contact.name,
           phone: input.contact.phone,
           email: input.contact.email,
           comment: input.contact.comment ?? null,
+          customer_credit_requested_minor: Math.max(0, Math.round(Number(input.customerCreditRequestedMinor ?? 0))),
+          partner_bonus_requested_minor: Math.max(0, Math.round(Number(input.partnerBonusRequestedMinor ?? 0))),
+          partner_bonus_checkout_key: input.partnerBonusCheckoutKey,
         },
       },
     );

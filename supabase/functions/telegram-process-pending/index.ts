@@ -184,6 +184,17 @@ Deno.serve(async (req) => {
             break;
           }
 
+          case 'referral_registration': {
+            message = `👤 По вашей реферальной ссылке зарегистрировался новый участник: <b>${String(payload.referred_name || 'участник')}</b>.`;
+            break;
+          }
+
+          case 'referral_sale': {
+            const amount = (Number(payload.commission_minor || 0) / 100).toFixed(2);
+            message = `🎉 Ваш реферал <b>${String(payload.referred_name || 'участник')}</b> совершил покупку <b>${String(payload.product_name || 'продукт')}</b>.\nНачислено: <b>${amount} BYN</b> бонусов.`;
+            break;
+          }
+
           default: {
             message = (payload.message as string) || 'У вас новое уведомление.';
           }

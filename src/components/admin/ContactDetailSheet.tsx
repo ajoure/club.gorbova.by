@@ -6,7 +6,7 @@ import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisp
 import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
-import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
+import { SHEET_SHELL_CLASS, getEntityShellClass } from "@/lib/sheetShell";
 import { useNavigate } from "react-router-dom";
 import { format, addDays, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -16,6 +16,7 @@ import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 import { getEventLabel } from "@/lib/eventLabels";
 import { formatContactName } from "@/lib/nameUtils";
+import { normalizeCompanyName } from "@/lib/companies/normalizeCompanyName";
 import { useActiveAccessRuleProducts, isCurrentValidAccess, isHistoricalAccess } from "@/hooks/useAccessValidation";
 import {
   Sheet,
@@ -114,12 +115,18 @@ import {
   Link2,
   Activity,
   Unlink,
+  Building2,
+  Gift,
 } from "lucide-react";
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallmentsTabContent } from "@/components/installments/ContactInstallmentsTabContent";
+import {
+  isFiniteInstallmentProviderSubscription,
+  removeProviderSubscriptionById,
+} from "@/lib/providerSubscriptionLifecycle";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
@@ -153,6 +160,7 @@ import { WebinarActivitySection } from "./contact/WebinarActivitySection";
 import { isStaffRole } from "@/lib/liveRoomRoles";
 import { useAuth } from "@/contexts/AuthContext";
 import { ContactChannelsSection } from "./ContactChannelsSection";
+import { ContactReferralsTab } from "./contact/ContactReferralsTab";
 
 // formatContactName imported from @/lib/nameUtils
 
@@ -194,12 +202,13 @@ interface ContactDetailSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   returnTo?: string;
+  onOpenCompany?: (companyId: string) => void;
 }
 
-export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: ContactDetailSheetProps) {
+export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOpenCompany }: ContactDetailSheetProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { hasPermission, isSuperAdmin, isAdmin } = usePermissions();
+  const { hasPermission, isSuperAdmin, isAdmin, canWrite } = usePermissions();
   const { role: authRole } = useAuth();
   const { startImpersonation, resetPassword } = useAdminUsers();
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
@@ -381,6 +390,33 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const resolvedStatus = profileData?.status ?? contact?.status ?? "active";
   const resolvedTelegramUserId = profileData?.telegram_user_id ?? contact?.telegram_user_id ?? null;
   const resolvedTelegramUsername = profileData?.telegram_username ?? contact?.telegram_username ?? null;
+
+  const linkedProfileIds = useMemo(
+    () => Array.from(new Set([contact?.id, resolvedUserId].filter(Boolean) as string[])),
+    [contact?.id, resolvedUserId],
+  );
+  const linkedCompaniesQuery = useQuery({
+    queryKey: ["contact-linked-companies", linkedProfileIds],
+    enabled: linkedProfileIds.length > 0,
+    queryFn: async () => {
+      const { data: links, error: linksError } = await supabase
+        .from("company_contacts")
+        .select("company_id, relationship_type, is_primary, is_billing_contact")
+        .in("profile_id", linkedProfileIds);
+      if (linksError) throw linksError;
+      const companyIds = Array.from(new Set((links ?? []).map((link) => link.company_id).filter(Boolean)));
+      if (companyIds.length === 0) return [];
+      const { data: companies, error: companiesError } = await supabase
+        .from("companies")
+        .select("id, public_id, full_name, short_name, company_kind, status, email, phone")
+        .in("id", companyIds);
+      if (companiesError) throw companiesError;
+      const byId = new Map((companies ?? []).map((company) => [company.id, company]));
+      return (links ?? [])
+        .map((link) => ({ ...link, company: byId.get(link.company_id) }))
+        .filter((link) => link.company);
+    },
+  });
 
   // Fetch Telegram user info (bio, etc.) from Telegram API
   const { data: telegramUserInfo } = useQuery({
@@ -757,12 +793,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   // PATCH-7: Fetch provider-managed subscriptions for contact
   const { data: contactProviderSubscriptions } = useQuery({
-    queryKey: ["contact-provider-subscriptions", contact?.user_id],
+    queryKey: ["contact-provider-subscriptions", contact?.id, resolvedUserId, contact?.email],
     queryFn: async () => {
-      if (!contact?.user_id) return [];
-      const { data, error } = await supabase
-        .from("provider_subscriptions")
-        .select(`
+      if (!contact?.id) return [];
+      const select = `
           id, provider, state, provider_subscription_id,
           next_charge_at, amount_cents, currency, card_brand, card_last4, created_at, last_charge_at, interval_days,
           subscription_v2_id, meta,
@@ -771,15 +805,45 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             products_v2 ( id, name ),
             tariffs ( id, name, product_id )
           )
-        `)
-        .eq("user_id", contact.user_id)
-        .in("state", ["active", "pending"])
+        `;
+      const identityFilters = [
+        contact.user_id ? `user_id.eq.${contact.user_id}` : null,
+        resolvedUserId ? `user_id.eq.${resolvedUserId}` : null,
+        `profile_id.eq.${contact.id}`,
+      ].filter(Boolean).join(',');
+
+      const linkedQuery = supabase
+        .from("provider_subscriptions")
+        .select(select)
+        .or(identityFilters)
+        .in("state", ["active", "trial", "pending", "past_due", "failed_attempt"])
         .order("created_at", { ascending: false });
-      
-      if (error) throw error;
-      return data;
+
+      // Discovery fallback for provider rows that were found by the bePaid list
+      // sync but have not yet been linked to a local user/profile. Exact email
+      // matching makes such a live external subscription visible and cancellable
+      // from the contact card without guessing by card last4.
+      const normalizedEmail = contact.email?.trim().toLowerCase();
+      const orphanQuery = normalizedEmail
+        ? supabase
+            .from("provider_subscriptions")
+            .select(select)
+            .eq("provider", "bepaid")
+            .is("user_id", null)
+            .ilike("raw_data->customer->>email", normalizedEmail)
+            .in("state", ["active", "trial", "pending", "past_due", "failed_attempt"])
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null });
+
+      const [linkedResult, orphanResult] = await Promise.all([linkedQuery, orphanQuery]);
+      if (linkedResult.error) throw linkedResult.error;
+      if (orphanResult.error) throw orphanResult.error;
+      return Array.from(new Map(
+        [...(linkedResult.data || []), ...(orphanResult.data || [])]
+          .map((row: any) => [row.provider_subscription_id, row]),
+      ).values());
     },
-    enabled: !!contact?.user_id,
+    enabled: !!contact?.id,
   });
 
   // PATCH-7: Admin cancel provider subscription mutation
@@ -789,12 +853,27 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         body: { subscription_ids: [providerSubId], source: 'admin_cancel' }
       });
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (!Array.isArray(data?.canceled) || !data.canceled.includes(providerSubId)) {
+        const failure = Array.isArray(data?.failed)
+          ? data.failed.find((item: { id?: string }) => item?.id === providerSubId)
+          : null;
+        throw new Error(failure?.error || 'bePaid не подтвердил отмену подписки');
+      }
       return data;
     },
-    onSuccess: () => {
-      if (contact?.user_id) {
-        queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact.user_id] });
-      }
+    onSuccess: (_data, providerSubId) => {
+      // Provider + local DB cancellation is already confirmed by mutationFn.
+      // Remove the row from every matching contact cache immediately, then
+      // reconcile in the background. This prevents the misleading state where
+      // toast says «отменена», but the same active card remains on screen.
+      queryClient.setQueriesData(
+        { queryKey: ['contact-provider-subscriptions'] },
+        (rows: unknown[] | undefined) =>
+          removeProviderSubscriptionById(rows, providerSubId),
+      );
+      void queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions'] });
+      void queryClient.invalidateQueries({ queryKey: ['bepaid-subscriptions-admin'] });
       toast.success('Подписка bePaid отменена');
     },
     onError: (error: Error) => {
@@ -835,20 +914,32 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   // PATCH 7: Sync bePaid subscription mutation
   const syncBepaidSubMutation = useMutation({
-    mutationFn: async (providerSubId: string) => {
+    mutationFn: async ({ providerSubId }: { providerSubId: string; silent?: boolean }) => {
       const { data, error } = await supabase.functions.invoke('bepaid-get-subscription-details', {
         body: { subscription_id: providerSubId }
       });
       if (error) throw error;
+      if (data?.success === false || data?.ok === false || data?.error) {
+        throw new Error(data?.details || data?.error || 'bePaid не вернул данные подписки');
+      }
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact?.user_id] });
       queryClient.invalidateQueries({ queryKey: ['contact-payments', contact?.id] });
       queryClient.invalidateQueries({ queryKey: ['contact-deals'] });
-      toast.success('Подписка синхронизирована');
+      if (!variables.silent) toast.success('Подписка синхронизирована');
     },
-    onError: (error: Error) => {
+    onError: (error: Error, variables) => {
+      // Opening a contact must not show an action error for a best-effort
+      // background refresh. Manual sync remains explicit and visible.
+      if (variables.silent) {
+        console.warn('[contact-provider-subscriptions] background sync failed', {
+          provider_subscription_id: variables.providerSubId,
+          error: error.message,
+        });
+        return;
+      }
       toast.error('Ошибка синхронизации: ' + error.message);
     },
   });
@@ -875,6 +966,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const autoSyncedIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
+    autoSyncCountRef.current = 0;
+    autoSyncedIdsRef.current.clear();
+  }, [contact?.id]);
+
+  useEffect(() => {
     if (!contactProviderSubscriptions || contactProviderSubscriptions.length === 0) return;
     if (syncBepaidSubMutation.isPending) return;
 
@@ -895,7 +991,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       if (autoSyncCountRef.current >= 3) break;
       autoSyncCountRef.current++;
       autoSyncedIdsRef.current.add(sub.provider_subscription_id);
-      syncBepaidSubMutation.mutate(sub.provider_subscription_id);
+      syncBepaidSubMutation.mutate({ providerSubId: sub.provider_subscription_id, silent: true });
     }
   }, [contactProviderSubscriptions, syncBepaidSubMutation.isPending]);
   const createProviderSubAdminMutation = useMutation({
@@ -1621,7 +1717,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   return (
     <>
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className={SHEET_SHELL_CLASS}>
+      <SheetContent className={getEntityShellClass("contact")}>
         {/* Compact header for mobile - with padding-right for close button */}
         <SheetHeader className="px-4 sm:px-6 pt-4 sm:pt-6 pb-0 pr-14 sm:pr-16 flex-shrink-0 space-y-1.5">
           {/* Row 1: Avatar + Name + Email */}
@@ -1756,6 +1852,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
             <TabsList className="mx-4 sm:mx-6 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
               <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
+              <TabsTrigger value="companies" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Building2 className="w-3 h-3 mr-1" />
+                Компании {linkedCompaniesQuery.data && linkedCompaniesQuery.data.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{linkedCompaniesQuery.data.length}</Badge>}
+              </TabsTrigger>
               <TabsTrigger value="feed" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <Activity className="w-3 h-3 mr-1" />
                 Лента
@@ -1803,6 +1903,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <TabsTrigger value="loyalty" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <Sparkles className="w-3 h-3 mr-1" />
                 Лояльность
+              </TabsTrigger>
+              <TabsTrigger value="referrals" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Gift className="w-3 h-3 mr-1" />
+                Рефералы
               </TabsTrigger>
               <TabsTrigger value="artifacts" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <BookOpen className="w-3 h-3 mr-1" />
@@ -1997,14 +2101,25 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </div>
           </TabsContent>
 
+          {/* Feed-вкладка вынесена ИЗ внешнего скролла:
+              скроллится только список событий внутри ContactFeedTab,
+              а composer остаётся прижат к низу карточки. */}
+          <TabsContent
+            value="feed"
+            forceMount
+            className="m-0 px-3 sm:px-4 pb-3 sm:pb-4 flex-1 min-h-0 flex flex-col overflow-hidden data-[state=inactive]:hidden"
+          >
+            <ContactFeedTab contactId={contact.id} embedded />
+          </TabsContent>
+
           {/* Все остальные вкладки — во внешнем скролле как раньше.
-              При активной Telegram-вкладке прячем этот контейнер,
+              При активной Telegram- или Feed-вкладке прячем этот контейнер,
               чтобы не было двойного скролла и pb-24 не съедал высоту. */}
           <div
             ref={scrollContainerRef}
-            className={cn("flex-1 overflow-y-auto", activeTab === "telegram" && "hidden")}
+            className={cn("flex-1 overflow-y-auto", (activeTab === "telegram" || activeTab === "feed") && "hidden")}
           >
-            <div className={cn("px-4 sm:px-6 py-4", activeTab === "feed" ? "pb-2" : "pb-24")}>
+            <div className="px-4 sm:px-6 py-4 pb-24">
             <TabsContent value="profile" className="m-0 space-y-4">
               {contact.id && (
                 <ContactChannelsSection
@@ -2018,15 +2133,26 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   <CardTitle className="text-sm text-muted-foreground">Контактные данные</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <Mail className="w-4 h-4 text-muted-foreground" />
-                      <span>{contact.email || "—"}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <span className="truncate">{contact.email || "—"}</span>
                     </div>
                     {contact.email && (
-                      <Button variant="ghost" size="sm" onClick={() => copyToClipboard(contact.email!, "Email")}>
-                        <Copy className="w-3 h-3" />
-                      </Button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2.5 text-xs"
+                          onClick={() => setComposeEmailOpen(true)}
+                        >
+                          <Mail className="w-3 h-3 mr-1" />
+                          Письмо
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-7 w-7" onClick={() => copyToClipboard(contact.email!, "Email")}>
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
                     )}
                   </div>
                   <Separator />
@@ -2107,22 +2233,6 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                     </>
                   )}
                   
-                  {/* Send email button */}
-                  {contact.email && (
-                    <>
-                      <Separator />
-                      <div className="pt-2">
-                        <Button
-                          variant="outline"
-                          className="w-full gap-2"
-                          onClick={() => setComposeEmailOpen(true)}
-                        >
-                          <Mail className="w-4 h-4" />
-                          Написать письмо
-                        </Button>
-                      </div>
-                    </>
-                  )}
                 </CardContent>
               </Card>
 
@@ -2342,7 +2452,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 // не должны переводить живое bePaid-автосписание в "ремонт".
                 // Зомби = провайдер реально мёртв (canceled/expired/terminated/404 в snapshot
                 // или INV-22 флаг). См. .lovable/plan.md + admin-repair-zombie-provider-subs.
-                const LIVE_PROVIDER_STATES = new Set(['active', 'trial', 'pending']);
+                // Карточка контакта показывает только фактически действующие
+                // рекурренты. pending/past_due/failed_attempt — неоплаченные
+                // или проблемные состояния; они остаются в диагностике и
+                // списке автоплатежей, но не маскируются под действующую
+                // подписку клиента.
+                const LIVE_PROVIDER_STATES = new Set(['active', 'trial']);
                 const DEAD_PROVIDER_SNAPSHOT_STATES = new Set([
                   'canceled', 'cancelled', 'expired', 'terminated', 'finished', 'failed',
                 ]);
@@ -2375,6 +2490,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   if (!LIVE_PROVIDER_STATES.has(sub?.state)) return false;
                   if (isProviderDead(sub)) return false;
                   if (!isRealProviderSubscription(sub)) return false;
+                  // A bounded bePaid sbs_* is the transport for an internal
+                  // installment. It belongs in «Рассрочки», not «Подписки».
+                  if (isFiniteInstallmentProviderSubscription(sub)) return false;
                   return true;
                 };
                 const healthyProviderSubs = allProviderSubs.filter(isHealthyProviderSub);
@@ -2418,7 +2536,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       const productName = sub.subscriptions_v2?.products_v2?.name || 'Подписка';
                       const tariffName = sub.subscriptions_v2?.tariffs?.name;
                       const displayName = tariffName ? `${productName} — ${tariffName}` : productName;
-                      const isActive = sub.state === 'active' || sub.state === 'pending';
+                      const isActive = LIVE_PROVIDER_STATES.has(sub.state);
                       const isBepaid = sub.provider === 'bepaid';
                       const providerLabel =
                         PROVIDER_BRAND_LABELS[String(sub.provider).toLowerCase()] ||
@@ -2531,7 +2649,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                   variant="outline"
                                   size="sm"
                                   className="h-7 w-7 p-0 rounded-full"
-                                  onClick={() => syncBepaidSubMutation.mutate(sub.provider_subscription_id)}
+                                  onClick={() => syncBepaidSubMutation.mutate({ providerSubId: sub.provider_subscription_id })}
                                   disabled={syncBepaidSubMutation.isPending}
                                   title="Синхронизировать с bePaid"
                                 >
@@ -2712,7 +2830,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                     }
                                   </span>
                                 </div>
-                                {(isSuperAdmin() || hasPermission("users.impersonate")) && trial.product_id && (
+                                {canWrite("contacts") && trial.product_id && (
                                   <div className="mt-2 flex justify-end">
                                     <Button
                                       variant="ghost"
@@ -2937,6 +3055,37 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   </CardContent>
                 </Card>
               ) : null}
+            </TabsContent>
+
+            <TabsContent value="companies" className="m-0 space-y-3">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Building2 className="h-4 w-4" /> Связанные компании
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {linkedCompaniesQuery.isLoading && <Skeleton className="h-16 w-full" />}
+                  {linkedCompaniesQuery.isError && <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Связанные компании временно недоступны.</div>}
+                  {!linkedCompaniesQuery.isLoading && !linkedCompaniesQuery.isError && linkedCompaniesQuery.data?.length === 0 && (
+                    <div className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">Контакт пока не связан с компаниями.</div>
+                  )}
+                  {(linkedCompaniesQuery.data ?? []).map(({ company }) => (
+                    <button
+                      type="button"
+                      key={company!.id}
+                      disabled={!onOpenCompany}
+                      className={cn("flex w-full items-center gap-3 rounded-lg border p-3 text-left", onOpenCompany && "cursor-pointer transition-colors hover:bg-muted/50", !onOpenCompany && "cursor-default")}
+                      onClick={onOpenCompany ? () => onOpenCompany(company!.id) : undefined}
+                    >
+                      <div className="rounded-lg bg-primary/10 p-2 text-primary"><Building2 className="h-4 w-4" /></div>
+                      <div className="min-w-0 flex-1">
+                        <span className="font-medium break-words">{normalizeCompanyName(company!.full_name)}</span>
+                      </div>
+                    </button>
+                  ))}
+                </CardContent>
+              </Card>
             </TabsContent>
 
             {/* Telegram-вкладка вынесена выше — за пределы внешнего скролла */}
@@ -3641,10 +3790,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <SmsHistorySection contactId={contact.id} bare />
             </TabsContent>
 
-            {/* Communications Tab */}
-            <TabsContent value="feed" className="m-0">
-              <ContactFeedTab contactId={contact.id} />
-            </TabsContent>
+            {/* value="feed" вынесен наверх — вне внешнего скролла */}
+
+
 
             {/* Consent Tab */}
             <TabsContent value="consent" className="m-0 space-y-4">
@@ -3761,6 +3909,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             {/* Loyalty Tab */}
             <TabsContent value="loyalty" className="m-0">
               <ContactLoyaltyTab contact={contact} />
+            </TabsContent>
+
+            <TabsContent value="referrals" className="m-0">
+              <ContactReferralsTab profileId={contact.id} />
             </TabsContent>
 
             {/* Artifacts Tab — Анкеты, обучение и вебинары */}

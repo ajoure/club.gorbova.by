@@ -37,6 +37,8 @@ interface ChatAction {
   message?: string;
   file?: FileData;
   bot_id?: string;
+  sender_type?: "bot" | "business";
+  business_account_id?: string;
   limit?: number;
   message_id?: number;
   db_message_id?: string;
@@ -248,6 +250,7 @@ async function telegramSendFile(
   file: FileData,
   caption?: string,
   replyToMessageId?: number | null,
+  businessConnectionId?: string | null,
 ) {
   // Load bytes from base64 (small files) or storage (large files)
   const bytes = await loadFileBytes(supabase, file);
@@ -274,6 +277,7 @@ async function telegramSendFile(
 
   const formData = new FormData();
   formData.append("chat_id", chatId.toString());
+  if (businessConnectionId) formData.append("business_connection_id", businessConnectionId);
   if (caption) formData.append("caption", caption);
   if (replyToMessageId) {
     formData.append("reply_parameters", JSON.stringify({
@@ -460,11 +464,17 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case "send_message": {
-        const { user_id, message, file, bot_id } = payload;
+        const { user_id, message, file, bot_id, sender_type, business_account_id } = payload;
         const replyToMessageId = (payload as any).reply_to_message_id as number | null | undefined;
 
         if (!user_id || (!message && !file)) {
           return new Response(JSON.stringify({ error: "user_id and (message or file) required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (sender_type && sender_type !== "bot" && sender_type !== "business") {
+          return new Response(JSON.stringify({ success: false, error: "invalid_sender_type" }), {
             status: 400,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
@@ -506,16 +516,96 @@ Deno.serve(async (req) => {
           });
         }
 
+        // Resolve the requested sender on the server. The browser may select a
+        // connection row id, but never supplies a raw Telegram connection id or
+        // token. We additionally require this exact dialog to have been seen
+        // through the selected Business account.
+        const { data: lastBusinessMessage } = await supabase
+          .from("telegram_messages")
+          .select("bot_id, business_connection_id, business_account_id")
+          .eq("user_id", user_id)
+          .eq("transport", "business")
+          .not("business_connection_id", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        let businessConnectionId: string | null = null;
+        let businessAccountId: string | null = null;
+        let businessBotId: string | null = null;
+        if (sender_type === "business") {
+          if (!business_account_id) {
+            return new Response(JSON.stringify({ success: false, error: "business_account_required" }), {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          const { data: businessConnection } = await supabase
+            .from("telegram_business_connections")
+            .select("id, bot_id, connection_id, is_enabled, can_reply")
+            .eq("id", business_account_id)
+            .maybeSingle();
+          if (!businessConnection?.is_enabled || !businessConnection?.can_reply) {
+            return new Response(JSON.stringify({
+              success: false,
+              error: "business_reply_unavailable",
+              message: "Telegram не разрешает отвечать от имени подключенного аккаунта",
+            }), {
+              status: 409,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          const { data: dialogConnection } = await supabase
+            .from("telegram_messages")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("transport", "business")
+            .eq("business_account_id", businessConnection.id)
+            .limit(1)
+            .maybeSingle();
+          if (!dialogConnection) {
+            return new Response(JSON.stringify({ success: false, error: "business_sender_not_available_for_dialog" }), {
+              status: 403,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          businessConnectionId = businessConnection.connection_id;
+          businessAccountId = businessConnection.id;
+          businessBotId = businessConnection.bot_id;
+        } else if (!sender_type && lastBusinessMessage?.business_connection_id) {
+          // Backward compatibility for older clients during a rolling deploy.
+          const { data: legacyConnection } = await supabase
+            .from("telegram_business_connections")
+            .select("id, bot_id, connection_id, is_enabled, can_reply")
+            .eq("bot_id", lastBusinessMessage.bot_id)
+            .eq("connection_id", lastBusinessMessage.business_connection_id)
+            .maybeSingle();
+          if (!legacyConnection?.is_enabled || !legacyConnection?.can_reply) {
+            return new Response(JSON.stringify({
+              success: false,
+              error: "business_reply_unavailable",
+              message: "Telegram не разрешает отвечать от имени подключенного аккаунта",
+            }), {
+              status: 409,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          businessConnectionId = legacyConnection.connection_id;
+          businessAccountId = legacyConnection.id;
+          businessBotId = legacyConnection.bot_id;
+        }
+
 
         // Get bot token
         let botToken: string | null = null;
         let usedBotId: string | null = null;
 
-        if (bot_id) {
+        const requestedBotId = businessConnectionId ? businessBotId : bot_id;
+        if (requestedBotId) {
           const { data: bot } = await supabase
             .from("telegram_bots")
             .select("id, bot_token_encrypted")
-            .eq("id", bot_id)
+            .eq("id", requestedBotId)
             .eq("status", "active")
             .single();
           if (bot?.bot_token_encrypted) {
@@ -625,6 +715,7 @@ Deno.serve(async (req) => {
               file,
               message || undefined,
               replyToMessageId ?? null,
+              businessConnectionId,
             );
           } catch (fileErr) {
             const fileErrorMessage = fileErr instanceof Error ? fileErr.message : String(fileErr);
@@ -662,6 +753,7 @@ Deno.serve(async (req) => {
             text: message,
             parse_mode: "HTML",
           };
+          if (businessConnectionId) sendBody.business_connection_id = businessConnectionId;
           if (replyToMessageId) {
             sendBody.reply_parameters = {
               message_id: replyToMessageId,
@@ -690,10 +782,17 @@ Deno.serve(async (req) => {
           });
           if (orphanMid) {
             try {
-              await telegramRequest(botToken, "deleteMessage", {
-                chat_id: profile.telegram_user_id,
-                message_id: orphanMid,
-              });
+              if (businessConnectionId) {
+                await telegramRequest(botToken, "deleteBusinessMessages", {
+                  business_connection_id: businessConnectionId,
+                  message_ids: [orphanMid],
+                });
+              } else {
+                await telegramRequest(botToken, "deleteMessage", {
+                  chat_id: profile.telegram_user_id,
+                  message_id: orphanMid,
+                });
+              }
             } catch (cleanupErr) {
               console.warn("[telegram-admin-chat] voice_cleanup_failed", cleanupErr);
             }
@@ -837,10 +936,27 @@ Deno.serve(async (req) => {
             storage_bucket: storageBucket,
             storage_path: storagePath,
             mime_type: file ? guessMimeType(file.name, file.type) : null,
+            source: businessConnectionId ? "telegram_business" : "contact_center",
+            message_origin: businessConnectionId ? "crm_operator" : null,
           },
+          transport: businessConnectionId ? "business" : "bot",
+          business_connection_id: businessConnectionId,
+          business_account_id: businessAccountId,
+          message_origin: businessConnectionId ? "crm_operator" : null,
         };
 
         await supabase.from("telegram_messages").insert(messageLogData);
+
+        if (businessAccountId) {
+          await supabase
+            .from("telegram_business_connections")
+            .update({
+              last_event_at: new Date().toISOString(),
+              last_error: sendResult.ok ? null : (sendResult.description || "telegram_send_failed"),
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", businessAccountId);
+        }
 
         // Also log to telegram_logs for consistency
         await supabase.from("telegram_logs").insert({
@@ -854,6 +970,8 @@ Deno.serve(async (req) => {
             file_type: file?.type,
             file_name: file?.name,
             sent_by_admin: user.id,
+            transport: businessConnectionId ? "business" : "bot",
+            business_connection_id: businessConnectionId,
           },
         });
 
@@ -917,14 +1035,6 @@ Deno.serve(async (req) => {
         };
 
         // Helper to detect non-PDF documents (DOCX, XLSX, CSV, etc.)
-        const isDocLike = (meta: any) => {
-          const ft = String(meta?.file_type || "").toLowerCase();
-          const mime = String(meta?.mime_type || "").toLowerCase();
-          return ft === "document" || 
-                 (mime.includes("application/") && !mime.includes("application/pdf")) || 
-                 mime.includes("text/");
-        };
-
         // === OPTIMIZED BATCH SIGNED URL GENERATION ===
         // P2: Parallel processing with concurrency limit, single batch audit log
         const CONCURRENCY_LIMIT = 10;
@@ -1271,14 +1381,23 @@ Deno.serve(async (req) => {
           });
         }
 
+        const { data: sourceMessage } = db_message_id
+          ? await supabase
+              .from("telegram_messages")
+              .select("bot_id, transport, business_connection_id, meta")
+              .eq("id", db_message_id)
+              .maybeSingle()
+          : { data: null };
+
         // Get bot token
         let botToken: string | null = null;
 
-        if (profile.telegram_link_bot_id) {
+        const editBotId = sourceMessage?.bot_id || profile.telegram_link_bot_id;
+        if (editBotId) {
           const { data: bot } = await supabase
             .from("telegram_bots")
             .select("bot_token_encrypted")
-            .eq("id", profile.telegram_link_bot_id)
+            .eq("id", editBotId)
             .single();
           if (bot?.bot_token_encrypted) {
             botToken = bot.bot_token_encrypted;
@@ -1307,12 +1426,16 @@ Deno.serve(async (req) => {
           });
         }
 
-        const editResult = await telegramRequest(botToken, "editMessageText", {
+        const editBody: Record<string, unknown> = {
           chat_id: profile.telegram_user_id,
           message_id: message_id,
           text: message,
           parse_mode: "HTML",
-        });
+        };
+        if (sourceMessage?.transport === "business" && sourceMessage.business_connection_id) {
+          editBody.business_connection_id = sourceMessage.business_connection_id;
+        }
+        const editResult = await telegramRequest(botToken, "editMessageText", editBody);
 
         if (editResult.ok && db_message_id) {
           // Update message in database
@@ -1320,7 +1443,7 @@ Deno.serve(async (req) => {
             .from("telegram_messages")
             .update({ 
               message_text: message,
-              meta: { edited: true, edited_at: new Date().toISOString() }
+              meta: { ...(sourceMessage?.meta || {}), edited: true, edited_at: new Date().toISOString() }
             })
             .eq("id", db_message_id);
         }
@@ -1369,14 +1492,23 @@ Deno.serve(async (req) => {
           });
         }
 
+        const { data: sourceMessage } = db_message_id
+          ? await supabase
+              .from("telegram_messages")
+              .select("bot_id, transport, business_connection_id")
+              .eq("id", db_message_id)
+              .maybeSingle()
+          : { data: null };
+
         // Get bot token
         let botToken: string | null = null;
 
-        if (profile.telegram_link_bot_id) {
+        const deleteBotId = sourceMessage?.bot_id || profile.telegram_link_bot_id;
+        if (deleteBotId) {
           const { data: bot } = await supabase
             .from("telegram_bots")
             .select("bot_token_encrypted")
-            .eq("id", profile.telegram_link_bot_id)
+            .eq("id", deleteBotId)
             .single();
           if (bot?.bot_token_encrypted) {
             botToken = bot.bot_token_encrypted;
@@ -1405,10 +1537,15 @@ Deno.serve(async (req) => {
           });
         }
 
-        const deleteResult = await telegramRequest(botToken, "deleteMessage", {
-          chat_id: profile.telegram_user_id,
-          message_id: message_id,
-        });
+        const deleteResult = sourceMessage?.transport === "business" && sourceMessage.business_connection_id
+          ? await telegramRequest(botToken, "deleteBusinessMessages", {
+              business_connection_id: sourceMessage.business_connection_id,
+              message_ids: [message_id],
+            })
+          : await telegramRequest(botToken, "deleteMessage", {
+              chat_id: profile.telegram_user_id,
+              message_id: message_id,
+            });
 
         if (deleteResult.ok && db_message_id) {
           // 1) Fetch message to find attached storage object (if any)
@@ -1479,6 +1616,7 @@ Deno.serve(async (req) => {
       case "process_media_jobs": {
         const limit = Math.min(Math.max(Number(payload.limit || 5), 1), 20);
         const filterUserId = payload.user_id || null;
+        const messageDbId = payload.db_message_id || null;
 
         const workerUrl = `${supabaseUrl}/functions/v1/telegram-media-worker`;
         const workerToken = Deno.env.get("TELEGRAM_MEDIA_WORKER_TOKEN");
@@ -1491,13 +1629,95 @@ Deno.serve(async (req) => {
         }
 
         try {
+          // Historical records may say `upload_status=pending` even when the
+          // original webhook failed before creating media_jobs. An explicit
+          // retry from the contact center repairs that missing queue item from
+          // the canonical Telegram message metadata.
+          if (messageDbId) {
+            const { data: sourceMessage, error: sourceError } = await supabase
+              .from("telegram_messages")
+              .select("id, user_id, bot_id, meta")
+              .eq("id", messageDbId)
+              .maybeSingle();
+
+            if (sourceError || !sourceMessage) {
+              return new Response(JSON.stringify({ error: "Message not found" }), {
+                status: 404,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              });
+            }
+            if (filterUserId && sourceMessage.user_id !== filterUserId) {
+              return new Response(JSON.stringify({ error: "Message does not belong to dialog" }), {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              });
+            }
+
+            const meta = (sourceMessage.meta || {}) as Record<string, unknown>;
+            const telegramFileId = String(meta.file_id || meta.telegram_file_id || "").trim();
+            if (!telegramFileId || !sourceMessage.bot_id) {
+              await supabase
+                .from("telegram_messages")
+                .update({
+                  meta: {
+                    ...meta,
+                    upload_status: "unavailable",
+                    upload_error: "legacy_file_reference_missing",
+                  },
+                })
+                .eq("id", messageDbId);
+              return new Response(JSON.stringify({
+                ok: true,
+                processed: 0,
+                unavailable: true,
+              }), {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              });
+            }
+
+            const { data: existingJob } = await supabase
+              .from("media_jobs")
+              .select("id, status")
+              .eq("message_db_id", messageDbId)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (!existingJob) {
+              const { error: insertJobError } = await supabase.from("media_jobs").insert({
+                message_db_id: messageDbId,
+                user_id: sourceMessage.user_id,
+                bot_id: sourceMessage.bot_id,
+                telegram_file_id: telegramFileId,
+                file_type: meta.file_type || null,
+                file_name: meta.file_name || null,
+              });
+              if (insertJobError) throw insertJobError;
+            } else if (existingJob.status !== "processing") {
+              const { error: resetJobError } = await supabase
+                .from("media_jobs")
+                .update({
+                  status: "pending",
+                  attempts: 0,
+                  last_error: null,
+                  locked_at: null,
+                })
+                .eq("id", existingJob.id);
+              if (resetJobError) throw resetJobError;
+            }
+          }
+
           const res = await fetch(workerUrl, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
               "X-Worker-Token": workerToken,
             },
-            body: JSON.stringify({ limit, user_id: filterUserId }),
+            body: JSON.stringify({
+              limit,
+              user_id: filterUserId,
+              message_db_id: messageDbId,
+            }),
           });
 
           const json = await res.json().catch(() => ({ ok: false, error: "bad_json" }));
@@ -1566,11 +1786,11 @@ Deno.serve(async (req) => {
                 return { id: msg.id, url: null };
               }
               try {
-                const signedOptions = isPdfLike(meta) 
+                // Return inline URLs for previews. The client derives a
+                // separate `download=filename` URL only for the Download action.
+                const signedOptions = isPdfLike(meta)
                   ? { download: false }
-                  : isDocLike(meta) 
-                    ? { download: meta.file_name || "file" }
-                    : undefined;
+                  : undefined;
 
                 const { data } = await supabase.storage
                   .from(meta.storage_bucket)

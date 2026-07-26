@@ -57,9 +57,18 @@ Deno.serve(async (req) => {
 
   const userId = claimsData.claims.sub as string;
 
-  const { data: isAdmin } = await serviceClient.rpc('has_role_v2', { _user_id: userId, _role_code: 'admin' });
-  const { data: isSuperAdmin } = await serviceClient.rpc('has_role_v2', { _user_id: userId, _role_code: 'super_admin' });
-  if (!isAdmin && !isSuperAdmin) {
+  const requiredAccess = action === 'get_history' || action === 'get_accounts'
+    ? 'view'
+    : 'manage';
+  const { data: hasCommunicationAccess, error: accessError } = await serviceClient.rpc(
+    'has_admin_section_access',
+    {
+      _user_id: userId,
+      _section_code: 'communication',
+      _min_level: requiredAccess,
+    },
+  );
+  if (accessError || !hasCommunicationAccess) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -276,7 +285,9 @@ async function getHistory(supabase: any, body: any) {
     .from('instagram_messages')
     .select('*')
     .eq('instagram_account_id', instagram_account_id)
-    .order('created_at', { ascending: true })
+    // Page from newest to oldest so offset=0 always contains the live tail.
+    // Reverse before returning to preserve the chat's chronological rendering.
+    .order('created_at', { ascending: false })
     .range(offset, offset + lim - 1);
 
   if (thread_id) {
@@ -288,7 +299,12 @@ async function getHistory(supabase: any, body: any) {
   const { data, error } = await query;
   if (error) throw error;
 
-  return new Response(JSON.stringify({ messages: data }), {
+  const page = [...(data || [])].reverse();
+  return new Response(JSON.stringify({
+    messages: page,
+    has_more: page.length === lim,
+    next_offset: offset + page.length,
+  }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 }

@@ -21,12 +21,13 @@ export interface BoardDeal {
   contact_name: string | null;
   contact_email: string | null;
   contact_avatar: string | null;
+  company_id: string | null;
+  company_name: string | null;
   is_trial: boolean;
 }
 
 interface UseDealsBoardOpts {
   pipelineId: string | null;
-  isDefaultPipeline?: boolean;
   search?: string;
   productId?: string | null;
   tariffIds?: string[];
@@ -35,9 +36,9 @@ interface UseDealsBoardOpts {
   extraFilters?: DealsExtraFilters;
 }
 
-export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, extraFilters }: UseDealsBoardOpts) {
+export function useDealsBoard({ pipelineId, search, productId, tariffIds, dateFrom, dateTo, extraFilters }: UseDealsBoardOpts) {
   const qc = useQueryClient();
-  const queryKey = ["deals-board", pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, extraFilters];
+  const queryKey = ["deals-board", pipelineId, search, productId, tariffIds, dateFrom, dateTo, extraFilters];
 
   const { data: deals = [], isLoading } = useQuery({
     queryKey,
@@ -47,7 +48,7 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
       let q = supabase
         .from("orders_v2")
         .select(`
-          id, order_number, status, final_price, currency,
+          id, order_number, status, final_price, currency, company_id,
           updated_at, created_at, pipeline_stage_id, pipeline_id,
           is_trial,
           products_v2(name),
@@ -57,12 +58,11 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
         // Stage 4R.1: exclude soft-deleted orders from active kanban/board
         .eq("is_deleted", false);
 
-      // Default pipeline: show its own deals + unassigned (NULL) deals
-      if (isDefaultPipeline) {
-        q = q.or(`pipeline_id.eq.${pipelineId},pipeline_id.is.null`);
-      } else {
-        q = q.eq("pipeline_id", pipelineId);
-      }
+      // A board view is read-only with respect to routing and must only show
+      // deals explicitly assigned to this pipeline. Unassigned deals have a
+      // separate list filter; silently mixing them into the default pipeline
+      // made opening "Основная" look as if new deals had been created there.
+      q = q.eq("pipeline_id", pipelineId);
 
       if (productId) q = q.eq("product_id", productId);
       if (tariffIds && tariffIds.length > 0) {
@@ -100,6 +100,12 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
         offset += PAGE;
       }
 
+      const companyIds = Array.from(new Set(allData.map((d: any) => d.company_id).filter(Boolean)));
+      const companyNames = new Map<string, string>();
+      if (companyIds.length) {
+        const { data: companies } = await (supabase as any).from("companies").select("id,full_name").in("id", companyIds);
+        (companies ?? []).forEach((company: any) => companyNames.set(company.id, company.full_name));
+      }
       return allData.map((d: any) => ({
         id: d.id,
         order_number: d.order_number,
@@ -115,6 +121,8 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
         contact_name: d.profiles?.full_name || null,
         contact_email: d.profiles?.email || null,
         contact_avatar: d.profiles?.avatar_url || null,
+        company_id: d.company_id || null,
+        company_name: d.company_id ? companyNames.get(d.company_id) || null : null,
         is_trial: d.is_trial || false,
       }));
     },

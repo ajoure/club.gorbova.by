@@ -43,6 +43,7 @@ import {
   Briefcase,
   ChevronLeft,
   ShieldCheck,
+  Pencil,
 } from "lucide-react";
 import {
   useRequisitesV2,
@@ -125,16 +126,16 @@ export function RequisitesV2Manager({ scope, title, description }: Props) {
   if (mode !== "list") {
     const isEdit = mode === "edit";
     return (
-      <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={backToList}>
+      <div className="min-w-0 space-y-4 sm:space-y-6">
+        <div className="flex min-w-0 items-start gap-2 sm:items-center sm:gap-3">
+          <Button className="shrink-0" variant="ghost" size="icon" onClick={backToList}>
             <ChevronLeft className="h-5 w-5" />
           </Button>
-          <div>
-            <h2 className="text-xl font-semibold">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold sm:text-xl">
               {isEdit ? "Редактировать реквизиты" : "Новые реквизиты"}
             </h2>
-            <p className="text-sm text-muted-foreground">
+            <p className="break-words text-sm text-muted-foreground">
               {SCOPE_LABEL[scope]} ·{" "}
               {tab === "legal_entity"
                 ? "Юридическое лицо"
@@ -145,8 +146,14 @@ export function RequisitesV2Manager({ scope, title, description }: Props) {
           </div>
         </div>
 
-        <Card>
-          <CardContent className="pt-6">
+        <Card className="min-w-0">
+          <CardContent className="p-4 sm:p-6 sm:pt-6">
+            {isEdit && (
+              <div className="mb-5 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-muted-foreground">
+                Изменения будут использоваться только для новых документов.
+                Уже сформированные счета и акты останутся без изменений.
+              </div>
+            )}
             {tab === "individual" ? (
               <IndividualRequisitesForm
                 scope={scope}
@@ -199,14 +206,14 @@ export function RequisitesV2Manager({ scope, title, description }: Props) {
 
   // ---------- List view ----------
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">{title}</h1>
-        <p className="text-muted-foreground">{description}</p>
+    <div className="min-w-0 space-y-4 sm:space-y-6">
+      <div className="min-w-0">
+        <h1 className="break-words text-xl font-bold sm:text-2xl">{title}</h1>
+        <p className="break-words text-sm text-muted-foreground sm:text-base">{description}</p>
       </div>
 
-      <Card className="bg-muted/30 border-dashed">
-        <CardContent className="pt-6 flex items-start gap-3 text-sm">
+      <Card className="min-w-0 bg-muted/30 border-dashed">
+        <CardContent className="flex items-start gap-3 p-4 text-sm sm:p-6 sm:pt-6">
           <ShieldCheck className="h-4 w-4 text-primary mt-0.5 shrink-0" />
           <div>
             <div className="font-medium">Новая модель реквизитов (v2)</div>
@@ -218,18 +225,18 @@ export function RequisitesV2Manager({ scope, title, description }: Props) {
         </CardContent>
       </Card>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as SubjectTab)}>
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="legal_entity">
-            <Building2 className="h-4 w-4 mr-2" />
+      <Tabs className="min-w-0" value={tab} onValueChange={(v) => setTab(v as SubjectTab)}>
+        <TabsList className="grid h-auto w-full grid-cols-3">
+          <TabsTrigger className="min-w-0 gap-1 px-1.5 py-2 sm:gap-2 sm:px-3" value="legal_entity">
+            <Building2 className="h-4 w-4 shrink-0" />
             Юрлицо
           </TabsTrigger>
-          <TabsTrigger value="entrepreneur">
-            <Briefcase className="h-4 w-4 mr-2" />
+          <TabsTrigger className="min-w-0 gap-1 px-1.5 py-2 sm:gap-2 sm:px-3" value="entrepreneur">
+            <Briefcase className="h-4 w-4 shrink-0" />
             ИП
           </TabsTrigger>
-          <TabsTrigger value="individual">
-            <User className="h-4 w-4 mr-2" />
+          <TabsTrigger className="min-w-0 gap-1 px-1.5 py-2 sm:gap-2 sm:px-3" value="individual">
+            <User className="h-4 w-4 shrink-0" />
             Физлицо
           </TabsTrigger>
         </TabsList>
@@ -350,9 +357,9 @@ function LegalSection({
   const subjectLabel = subjectType === "legal_entity" ? "ЮЛ" : "ИП";
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <div>
+    <Card className="min-w-0 overflow-hidden">
+      <CardHeader className="flex flex-col items-stretch gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div className="min-w-0">
           <CardTitle className="text-lg">
             [{SCOPE_LABEL[scope]}] [{subjectLabel}]
           </CardTitle>
@@ -360,12 +367,12 @@ function LegalSection({
             {rows.length} записей
           </CardDescription>
         </div>
-        <Button onClick={onCreate} className="gap-2">
+        <Button onClick={onCreate} className="w-full gap-2 sm:w-auto">
           <Plus className="h-4 w-4" />
-          Добавить
+          Добавить реквизиты
         </Button>
       </CardHeader>
-      <CardContent>
+      <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
         {isLoading ? (
           <div className="text-sm text-muted-foreground">Загрузка…</div>
         ) : rows.length === 0 ? (
@@ -388,7 +395,7 @@ function LegalSection({
               return (
                 <div
                   key={row.id}
-                  className="flex items-center justify-between p-4 rounded-lg border bg-muted/30 hover:bg-muted/50 cursor-pointer"
+                  className="flex min-w-0 flex-col gap-3 rounded-lg border bg-muted/30 p-3 transition-colors hover:bg-muted/50 cursor-pointer sm:flex-row sm:items-center sm:justify-between sm:p-4"
                   onClick={() => onEdit(row)}
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -411,16 +418,26 @@ function LegalSection({
                     </div>
                   </div>
                   <div
-                    className="flex items-center gap-2"
+                    className="flex w-full items-center justify-end gap-2 border-t pt-3 sm:w-auto sm:border-0 sm:pt-0"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => onEdit(row)}
+                      aria-label={`Изменить реквизиты: ${title}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                      Изменить
+                    </Button>
                     {!row.is_default && (
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => onSetDefault(row)}
                       >
-                        Сделать default
+                        Сделать основным
                       </Button>
                     )}
                     <Button
@@ -459,20 +476,20 @@ function IndividualSection({
   isLoading: boolean;
 }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <div>
+    <Card className="min-w-0 overflow-hidden">
+      <CardHeader className="flex flex-col items-stretch gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div className="min-w-0">
           <CardTitle className="text-lg">
             [{SCOPE_LABEL[scope]}] [ФЛ]
           </CardTitle>
           <CardDescription>{rows.length} записей</CardDescription>
         </div>
-        <Button onClick={onCreate} className="gap-2">
+        <Button onClick={onCreate} className="w-full gap-2 sm:w-auto">
           <Plus className="h-4 w-4" />
-          Добавить
+          Добавить реквизиты
         </Button>
       </CardHeader>
-      <CardContent>
+      <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
         {isLoading ? (
           <div className="text-sm text-muted-foreground">Загрузка…</div>
         ) : rows.length === 0 ? (
@@ -489,7 +506,7 @@ function IndividualSection({
               return (
                 <div
                   key={row.id}
-                  className="flex items-center justify-between p-4 rounded-lg border bg-muted/30 hover:bg-muted/50 cursor-pointer"
+                  className="flex min-w-0 flex-col gap-3 rounded-lg border bg-muted/30 p-3 transition-colors hover:bg-muted/50 cursor-pointer sm:flex-row sm:items-center sm:justify-between sm:p-4"
                   onClick={() => onEdit(row)}
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -512,16 +529,26 @@ function IndividualSection({
                     </div>
                   </div>
                   <div
-                    className="flex items-center gap-2"
+                    className="flex w-full items-center justify-end gap-2 border-t pt-3 sm:w-auto sm:border-0 sm:pt-0"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => onEdit(row)}
+                      aria-label={`Изменить реквизиты: ${d.full_name || "Физлицо"}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                      Изменить
+                    </Button>
                     {!row.is_default && (
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => onSetDefault(row)}
                       >
-                        Сделать default
+                        Сделать основным
                       </Button>
                     )}
                     <Button

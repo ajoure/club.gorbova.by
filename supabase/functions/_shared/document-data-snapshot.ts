@@ -23,6 +23,7 @@ import { formatAmountWithWordsByRublesAndKopecks } from './amount-with-words.ts'
 import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFields } from './executor-fields.ts';
 import { buildStandardFieldValues, mergeStandardIntoFields } from './standard-fields.ts';
 import { derivePaymentChannel } from './document-resolver-v2/payment-channel.ts';
+import { buildPurchaseCompositionTitle } from './purchase-composition-title.ts';
 import { resolveDocumentScenario, type PayerType } from './document-scenario-resolver.ts';
 import { buildTypedB97FieldValues, mergeTypedB97IntoFields } from './typed-fld-mapping.ts';
 
@@ -205,9 +206,15 @@ export async function snapshotOrderDocumentData(
       productDefaults = data?.meta?.document_defaults || null;
     }
 
-    // Customer legal_details — Sprint B: payer_type-aware cohort.
-    // SOT: orders_v2.payer_type. Match client_type=payer_type, prefer is_default,
-    // then most recently updated. Fallback to any default row + warning.
+    // Customer legal_details — Sprint B + PATCH-PAYER-EXPLICIT-ID.
+    // SOT приоритет:
+    //   1) order.meta.legal_details_id — явно выбран пользователем в UI
+    //      (invoice-checkout / admin-invoice-checkout). Валидируем ownership по
+    //      profile_id. При невалидном/чужом id customerRow=null + audit warning;
+    //      НИКОГДА не проваливаемся в default другого профиля — иначе PDF
+    //      подменит плательщика.
+    //   2) cohort по payer_type (is_default → updated_at) — legacy paid-flow.
+    //   3) fallback default row (warning) — только если cohort пустой.
     let customerRow: any = null;
     let customerResolutionSource = 'none';
     const orderPayerTypeForCustomer: PayerType = (order as any).payer_type === 'legal_entity'
@@ -215,7 +222,37 @@ export async function snapshotOrderDocumentData(
       : (order as any).payer_type === 'entrepreneur'
         ? 'entrepreneur'
         : 'individual';
-    if (order.profile_id) {
+    const explicitLegalDetailsId: string | null =
+      (order.meta as any)?.legal_details_id
+        || (order.meta as any)?.document_data?._provenance?.customer_legal_details_id
+        || null;
+    if (explicitLegalDetailsId) {
+      const { data: explicit, error: explicitErr } = await supabase
+        .from('client_legal_details')
+        .select('*')
+        .eq('id', explicitLegalDetailsId)
+        .maybeSingle();
+      if (explicitErr) {
+        await safeAudit(supabase, 'document_data.snapshot_error', {
+          order_id: orderId, table: 'client_legal_details', stage: 'load_customer_explicit',
+          explicit_legal_details_id: explicitLegalDetailsId, error: explicitErr.message,
+        });
+      }
+      if (explicit && order.profile_id && explicit.profile_id === order.profile_id) {
+        customerRow = explicit;
+        customerResolutionSource = 'explicit_order_meta_legal_details_id';
+      } else {
+        await safeAudit(supabase, 'document_data.snapshot_payer_explicit_mismatch', {
+          order_id: orderId,
+          explicit_legal_details_id: explicitLegalDetailsId,
+          explicit_profile_id: explicit?.profile_id ?? null,
+          order_profile_id: order.profile_id ?? null,
+        });
+        // НЕ падаем на default — оставляем customerRow=null, чтобы PDF-генератор
+        // сработал видимой ошибкой вместо тихой подмены плательщика.
+      }
+    }
+    if (!customerRow && order.profile_id) {
       const { data: cohort, error: cohortErr } = await supabase
         .from('client_legal_details')
         .select('*')
@@ -251,6 +288,7 @@ export async function snapshotOrderDocumentData(
       }
     }
 
+
     // Layered pick (offer wins, then tariff, then product).
     const pick = <T,>(key: string): T | null => {
       const o = offerDefaults?.[key];
@@ -262,23 +300,48 @@ export async function snapshotOrderDocumentData(
       return null;
     };
 
-    const liveAmount = order.final_price != null ? Number(order.final_price) : null;
+    const composableCheckout = orderMetaAny?.composable_checkout &&
+        Array.isArray(orderMetaAny.composable_checkout.items)
+      ? orderMetaAny.composable_checkout
+      : null;
+    const composableItems = composableCheckout?.items ?? [];
+    // Canonical composition title (primary + addons formatted as «. Модуль ...»).
+    let composableServiceName: string | null = null;
+    if (composableItems.length > 0) {
+      const primary = composableItems.find((i: any) => i?.role === 'primary') ?? composableItems[0];
+      const addons = composableItems
+        .filter((i: any) => i !== primary)
+        .sort((a: any, b: any) => (Number(a?.sort_order ?? 0) - Number(b?.sort_order ?? 0)));
+      composableServiceName = buildPurchaseCompositionTitle({
+        primary: { product_name: primary?.product_name, tariff_name: primary?.tariff_name },
+        addons: addons.map((a: any) => ({ product_name: a?.product_name })),
+      }) || null;
+    }
+    const composableTotal = composableCheckout?.total != null &&
+        Number.isFinite(Number(composableCheckout.total))
+      ? Number(composableCheckout.total)
+      : null;
+    const liveAmount = composableTotal ??
+      (order.final_price != null ? Number(order.final_price) : null);
     const liveCurrencyRaw = order.currency || pick<string>('currency') || 'BYN';
     const normCurrency = normalizeCurrency(liveCurrencyRaw) === 'UNKNOWN'
       ? liveCurrencyRaw
       : normalizeCurrency(liveCurrencyRaw);
 
-    const overrideAmount = offerDefaults?.amount_manual_override === true
+    const overrideAmount = !composableCheckout &&
+        offerDefaults?.amount_manual_override === true
       ? (offerDefaults?.amount ?? null)
       : null;
     const amount = overrideAmount != null ? Number(overrideAmount) : liveAmount;
 
     const quantity = (() => {
+      if (composableCheckout) return 1;
       const q = pick<number>('quantity');
       return q != null && Number(q) > 0 ? Number(q) : 1;
     })();
 
     const unitPrice = (() => {
+      if (composableCheckout && amount != null) return amount;
       const u = pick<number>('unit_price');
       if (u != null && Number(u) > 0) return Number(u);
       if (amount != null && quantity > 0) return Number((amount / quantity).toFixed(2));
@@ -456,9 +519,9 @@ export async function snapshotOrderDocumentData(
       },
       template_id: finalTemplateId,
       executor_id: explicitExecutorIdLayered,
-      service_name: pick<string>('service_name'),
+      service_name: composableServiceName || pick<string>('service_name'),
       service_description: pick<string>('service_description'),
-      unit: pick<string>('unit') || 'услуга',
+      unit: composableCheckout ? 'доступ' : (pick<string>('unit') || 'услуга'),
       quantity,
       unit_price: unitPrice,
       amount,
@@ -478,6 +541,11 @@ export async function snapshotOrderDocumentData(
       bank_credit_price: pick<number>('bank_credit_price') ?? amount,
       final_payment: pick<number>('final_payment') ?? 0,
       comment: pick<string>('comment') ?? null,
+      line_items: composableItems,
+      line_items_text: composableServiceName,
+      subtotal: composableCheckout?.subtotal ?? amount,
+      adjustment_amount: composableCheckout?.adjustment_amount ?? 0,
+      adjustment_reason: composableCheckout?.adjustment_reason ?? null,
       // Sprint A — payment.* SOT block (read-only snapshot of succeeded payments_v2 row).
       payment: paymentBlock,
       _provenance: {
@@ -521,7 +589,8 @@ export async function snapshotOrderDocumentData(
         // понять, какие тарифы упали на product.name-фоллбэк и требуют
         // заполнения document_defaults.service_name в кнопке.
         service_name_source:
-          (offerDefaults?.service_name ? 'offer'
+          (composableServiceName ? 'composable_checkout'
+            : offerDefaults?.service_name ? 'offer'
             : tariffDefaults?.service_name ? 'tariff'
             : productDefaults?.service_name ? 'product'
             : (productRow?.name ? 'fallback_product_name' : 'empty')),

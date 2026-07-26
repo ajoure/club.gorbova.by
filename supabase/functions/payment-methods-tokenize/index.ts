@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from "../_shared/bepaid-credentials.ts";
+import { SAVED_CARDS_DISABLED, savedCardsDisabledResponse } from "../_shared/saved-cards-disabled.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,6 +12,9 @@ const corsHeaders = {
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
+  }
+  if (SAVED_CARDS_DISABLED) {
+    return savedCardsDisabledResponse(corsHeaders);
   }
 
   try {
@@ -132,7 +136,12 @@ serve(async (req) => {
           },
         };
 
-        console.log('[tokenize] Creating tokenization checkout (card-only, amount=0, readonly):', JSON.stringify(checkoutData));
+        console.log('[tokenize] Creating tokenization checkout', {
+          amount: tokenizationAmount,
+          currency,
+          has_customer_email: Boolean(user.email),
+          has_customer_phone: Boolean(profile?.phone),
+        });
 
         // PATCH-D: Use strict credentials helper
         const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
@@ -147,10 +156,19 @@ serve(async (req) => {
         });
 
         const result = await response.json();
-        console.log('[tokenize] bePaid response:', JSON.stringify(result));
+        console.log('[tokenize] bePaid response summary', {
+          http_status: response.status,
+          checkout_created: Boolean(result.checkout?.redirect_url),
+          provider_status: result.response?.status ?? null,
+        });
 
         if (!response.ok || result.errors || result.response?.status === 'error') {
-          console.error('[tokenize] bePaid error:', result);
+          console.error('[tokenize] bePaid error', {
+            http_status: response.status,
+            provider_status: result.response?.status ?? null,
+            provider_message: result.response?.message ?? null,
+            has_provider_errors: Boolean(result.errors),
+          });
           return new Response(JSON.stringify({ 
             error: 'Failed to create tokenization session',
             details: result.response?.message || result.errors || 'Unknown error'
@@ -166,7 +184,7 @@ serve(async (req) => {
           actor_user_id: user.id,
           action: 'payment_method.tokenization_checkout_created',
           meta: {
-            checkout_token: result.checkout?.token,
+            checkout_token_present: Boolean(result.checkout?.token),
             amount: tokenizationAmount,
             currency,
             payment_methods_allowed: ['credit_card'],

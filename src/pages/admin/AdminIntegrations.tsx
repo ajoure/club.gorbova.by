@@ -22,6 +22,7 @@ import { SmartImportWizard } from "@/components/integrations/SmartImportWizard";
 import { TelegramBotsTab } from "@/components/telegram/TelegramBotsTab";
 import { TelegramClubsTab } from "@/components/telegram/TelegramClubsTab";
 import { TelegramLogsTab } from "@/components/telegram/TelegramLogsTab";
+import { TelegramBusinessAccountsTab } from "@/components/telegram/TelegramBusinessAccountsTab";
 import { MassBroadcastDialog } from "@/components/telegram/MassBroadcastDialog";
 import { OtherIntegrationsTab } from "@/components/integrations/kinescope/OtherIntegrationsTab";
 import { SocialIntegrationsTab } from "@/components/integrations/socials/SocialIntegrationsTab";
@@ -198,6 +199,7 @@ export default function AdminIntegrations() {
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
                 <TabsList className="w-full sm:w-auto">
                   <TabsTrigger value="bots">Боты</TabsTrigger>
+                  <TabsTrigger value="business">Личные аккаунты</TabsTrigger>
                   <TabsTrigger value="clubs">Клубы</TabsTrigger>
                   <TabsTrigger value="logs">Логи</TabsTrigger>
                 </TabsList>
@@ -208,6 +210,9 @@ export default function AdminIntegrations() {
               </div>
               <TabsContent value="bots" className="mt-4">
                 <TelegramBotsTab />
+                </TabsContent>
+                <TabsContent value="business" className="mt-4">
+                  <TelegramBusinessAccountsTab />
                 </TabsContent>
                 <TabsContent value="clubs" className="mt-4">
                   <TelegramClubsTab />

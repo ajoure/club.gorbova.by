@@ -88,77 +88,40 @@ Deno.serve(async (req) => {
 
   const ip = getClientIp(req);
   const ua = (req.headers.get("user-agent") || "").slice(0, 512);
-  const nowIso = new Date().toISOString();
 
-  // ----- Rate limits -----
-  // 1 письмо / 60 сек на email
-  const { data: lastRow } = await supabase
-    .from("inline_otp_codes")
-    .select("last_send_at")
-    .eq("email", email)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (lastRow?.last_send_at) {
-    const delta = Date.now() - new Date(lastRow.last_send_at).getTime();
-    if (delta < 60_000) {
-      return json({ error: "rate_limited", retry_after_s: Math.ceil((60_000 - delta) / 1000) }, 429);
-    }
-  }
-
-  // 5 писем / час на email
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const { count: emailHourCount } = await supabase
-    .from("inline_otp_codes")
-    .select("id", { count: "exact", head: true })
-    .eq("email", email)
-    .gte("created_at", oneHourAgo);
-  if ((emailHourCount || 0) >= 5) {
-    return json({ error: "rate_limited", retry_after_s: 900 }, 429);
-  }
-
-  // 20 писем / час на IP
-  if (ip) {
-    const { count: ipHourCount } = await supabase
-      .from("inline_otp_codes")
-      .select("id", { count: "exact", head: true })
-      .eq("ip", ip)
-      .gte("created_at", oneHourAgo);
-    if ((ipHourCount || 0) >= 20) {
-      return json({ error: "rate_limited", retry_after_s: 900 }, 429);
-    }
-  }
-
-  // ----- Revoke previous unused codes for this email/purpose -----
-  await supabase
-    .from("inline_otp_codes")
-    .update({ revoked_at: nowIso })
-    .eq("email", email)
-    .is("used_at", null)
-    .is("revoked_at", null);
-
-  // ----- Generate + store -----
+  // The database performs the checks, revocation, and insert under advisory
+  // locks. Splitting those steps in this public function lets simultaneous
+  // requests both pass the old SELECT-based rate limits.
   const code = generateOtpCode();
   const salt = generateSalt();
   const codeHash = await hmacOtp(code, salt, pepper);
-  const expiresAt = new Date(Date.now() + TTL_MIN * 60_000).toISOString();
-
-  const { error: insertErr } = await supabase.from("inline_otp_codes").insert({
-    email,
-    code_hash: codeHash,
-    salt,
-    flow_id: flowId,
-    purpose,
-    meta,
-    ip,
-    user_agent: ua,
-    expires_at: expiresAt,
-    last_send_at: nowIso,
-  });
-  if (insertErr) {
-    console.error("[request-inline-otp] insert failed:", insertErr);
+  const { data: issueRows, error: issueErr } = await supabase.rpc(
+    "issue_inline_otp_code",
+    {
+      p_email: email,
+      p_code_hash: codeHash,
+      p_salt: salt,
+      p_flow_id: flowId,
+      p_purpose: purpose,
+      p_meta: meta,
+      p_ip: ip,
+      p_user_agent: ua,
+      p_ttl_seconds: TTL_MIN * 60,
+    },
+  );
+  if (issueErr) {
+    console.error("[request-inline-otp] atomic issue failed:", issueErr);
     return json({ error: "internal_error" }, 500);
   }
+  const issue = Array.isArray(issueRows) ? issueRows[0] : null;
+  if (!issue) return json({ error: "internal_error" }, 500);
+  if (issue.status === "rate_limited") {
+    return json({ error: "rate_limited", retry_after_s: Number(issue.retry_after_s || 60) }, 429);
+  }
+  if (issue.status !== "issued" || !issue.expires_at) {
+    return json({ error: "internal_error" }, 500);
+  }
+  const expiresAt = String(issue.expires_at);
 
   // ----- Send email via Yandex SMTP -----
   const smtpPassword = Deno.env.get("YANDEX_SMTP_PASSWORD") || "";

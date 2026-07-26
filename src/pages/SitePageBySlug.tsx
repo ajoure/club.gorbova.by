@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { SiteRenderService } from "@/services/sitePages/SiteRenderService";
@@ -17,6 +17,7 @@ import { PublicPageFetchError } from "@/components/site-renderer/PublicPageFetch
 import { useSitePricingData } from "@/hooks/useSitePricingData";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { ComposableCheckoutDialog } from "@/components/payment/ComposableCheckoutDialog";
 import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialog";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
@@ -58,23 +59,24 @@ interface PendingOffer {
   offerId: string;
 }
 
-/**
- * Map an admin-HTML tariff key (data-lovable-tariff-key="…") to a tariff on the
- * linked product. Matches by substring of tariff.name (case-insensitive) so the
- * product's tariffs stay editable without HTML re-patch.
- * cb20 (Ценный бухгалтер): buh → «Бухгалтер», gl_buh → «Главный бухгалтер», biz-l → «Бизнес-леди».
- */
-const TARIFF_KEY_NAME_MATCH: Record<string, (name: string) => boolean> = {
-  buh: (n) => /^бухгалтер/i.test(n.trim()),
-  gl_buh: (n) => /главн\S*\s+бухгалтер/i.test(n),
-  "biz-l": (n) => /бизнес.?леди/i.test(n),
-};
+interface CheckoutSelection {
+  addonOfferIds: string[];
+  total: number;
+  currency: string;
+}
+
+function configuredTariffKey(tariff: {
+  code?: string | null;
+  meta?: Record<string, any> | null;
+}) {
+  return String(tariff.meta?.site_slot_key || tariff.code || "").trim();
+}
 
 /**
  * Select the offer that matches the requested flow.
  * - lead        → offer_type='lead'
  * - installment → pay_now + payment_method='internal_installment'
- * - invoice     → pay_now + detectInvoiceOnlyOffer=true
+ * - invoice     → explicitly configured invoice button
  * - payment     → pay_now, primary full_payment, ignoring installment/invoice-only
  */
 function pickOfferForFlow(offers: readonly any[], flow: Flow) {
@@ -82,10 +84,10 @@ function pickOfferForFlow(offers: readonly any[], flow: Flow) {
   if (flow === "lead") return active.find((o) => o.offer_type === "lead") || null;
   if (flow === "bank_installment") return active.find((o) => o.offer_type === "bank_installment") || null;
   if (flow === "invoice") {
-    // Каноничный invoice-оффер имеет offer_type='invoice'. Legacy: pay_now с document_scenarios.
+    // Legacy dynamic-slot pages use slot_role/site_button_variant on the offer.
     return (
       active.find((o) => o.offer_type === "invoice") ||
-      active.filter((o) => o.offer_type === "pay_now").find((o) => detectInvoiceOnlyOffer(o).isInvoiceOnly) ||
+      active.find((o) => detectInvoiceOnlyOffer(o).isInvoiceOnly) ||
       null
     );
   }
@@ -153,6 +155,8 @@ function collectLeadOptions(
 
 export default function SitePageBySlug() {
   const { slug } = useParams<{ slug: string }>();
+  const location = useLocation();
+  const navigate = useNavigate();
   const hashScrolled = useRef(false);
 
   const { data: resolution, isLoading, refetch } = useQuery({
@@ -166,10 +170,17 @@ export default function SitePageBySlug() {
   const blocks = (page?.blocks as unknown as SiteBlock[]) || [];
   const { pricingData } = useSitePricingData(blocks);
 
+  useEffect(() => {
+    if (resolution?.status !== "ok" || !resolution.canonicalSlug) return;
+    if (resolution.canonicalSlug === slug) return;
+    navigate(`/${resolution.canonicalSlug}${location.search}${location.hash}`, { replace: true });
+  }, [location.hash, location.search, navigate, resolution, slug]);
+
 
   // ─── site-action bridge: open offer ───
   const [pending, setPending] = useState<PendingOffer | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [checkoutSelection, setCheckoutSelection] = useState<CheckoutSelection | null>(null);
   const [preregOpen, setPreregOpen] = useState(false);
   const [preregOfferId, setPreregOfferId] = useState<string | null>(null);
   const [leadPickerOpen, setLeadPickerOpen] = useState(false);
@@ -267,7 +278,7 @@ export default function SitePageBySlug() {
       }
 
       // Dynamic-slot canonical path (Phase B). UUID-only; never falls back to
-      // the legacy TARIFF_KEY_NAME_MATCH regex resolver. Full revalidation:
+      // a name-based resolver. Full revalidation:
       //   1) offer_id is a UUID present in linkedProductData
       //   2) belongs to payload.tariff_id
       //   3) tariff belongs to linked product
@@ -394,13 +405,12 @@ export default function SitePageBySlug() {
         // pick offer that matches the requested flow. No UUIDs in the HTML.
         const flow = ACTION_TO_FLOW[detail.action as keyof typeof ACTION_TO_FLOW];
         const tariffKey = String(detail.payload?.tariff_key || "").trim();
-        const matcher = TARIFF_KEY_NAME_MATCH[tariffKey];
         const product = linkedProductDataRef.current;
-        if (!matcher || !product?.product?.id || !product.tariffs?.length) {
-          console.warn(`[site-action] ${detail.action}: no product data or unknown tariff_key`, { tariffKey });
+        if (!tariffKey || !product?.product?.id || !product.tariffs?.length) {
+          console.warn(`[site-action] ${detail.action}: no product data or empty tariff_key`, { tariffKey });
           return;
         }
-        const tariff = product.tariffs.find((t) => matcher(t.name || ""));
+        const tariff = product.tariffs.find((t) => configuredTariffKey(t) === tariffKey);
         if (!tariff) {
           console.warn(`[site-action] ${detail.action}: tariff not found`, { tariffKey });
           return;
@@ -495,6 +505,34 @@ export default function SitePageBySlug() {
       />
 
       {resolved && (() => {
+        const selection = checkoutSelection ?? {
+          addonOfferIds: [],
+          total: Number(resolved.offer.amount || 0),
+          currency: resolved.product.currency || "BYN",
+        };
+        if (
+          !checkoutSelection &&
+          resolved.offer.has_available_addons === true &&
+          resolved.offer.offer_type !== "lead" &&
+          resolved.offer.offer_type !== "bank_installment"
+        ) {
+          return (
+            <ComposableCheckoutDialog
+              open={paymentOpen}
+              onOpenChange={(v) => {
+                setPaymentOpen(v);
+                if (!v) {
+                  setPending(null);
+                  setCheckoutSelection(null);
+                }
+              }}
+              offerId={resolved.offer.id}
+              productName={resolved.product.public_title || resolved.product.name}
+              tariffName={resolved.tariff.name}
+              onContinue={setCheckoutSelection}
+            />
+          );
+        }
         if (resolved.offer.offer_type === "lead" || resolved.offer.offer_type === "bank_installment") {
           const bank = resolved.offer.offer_type === "bank_installment"
             ? readBankInstallmentMeta(resolved.offer)
@@ -504,9 +542,13 @@ export default function SitePageBySlug() {
               open={paymentOpen}
               onOpenChange={(v) => {
                 setPaymentOpen(v);
-                if (!v) setPending(null);
+                if (!v) {
+                  setPending(null);
+                  setCheckoutSelection(null);
+                }
               }}
               offerId={resolved.offer.id}
+              addonOfferIds={selection.addonOfferIds}
               offerLabel={resolved.offer.button_label}
               productName={resolved.product.public_title || resolved.product.name}
               tariffName={resolved.tariff.name}
@@ -523,14 +565,18 @@ export default function SitePageBySlug() {
               open={paymentOpen}
               onOpenChange={(v) => {
                 setPaymentOpen(v);
-                if (!v) setPending(null);
+                if (!v) {
+                  setPending(null);
+                  setCheckoutSelection(null);
+                }
               }}
               productId={resolved.product.id}
               productName={resolved.product.public_title || resolved.product.name}
               tariffName={resolved.tariff.name}
               offerId={resolved.offer.id}
-              amount={resolved.offer.amount}
-              currency={resolved.product.currency || "BYN"}
+              addonOfferIds={selection.addonOfferIds}
+              amount={selection.total}
+              currency={selection.currency}
             />
           );
         }
@@ -539,15 +585,19 @@ export default function SitePageBySlug() {
             open={paymentOpen}
             onOpenChange={(v) => {
               setPaymentOpen(v);
-              if (!v) setPending(null);
+              if (!v) {
+                setPending(null);
+                setCheckoutSelection(null);
+              }
             }}
             productId={resolved.product.id}
             productName={resolved.product.public_title || resolved.product.name}
             tariffName={resolved.tariff.name}
-            currency={resolved.product.currency || "BYN"}
-            price={String(resolved.offer.amount)}
+            currency={selection.currency}
+            price={String(selection.total)}
             tariffCode={resolved.tariff.code}
             offerId={resolved.offer.id}
+            addonOfferIds={selection.addonOfferIds}
             isTrial={resolved.offer.offer_type === "trial"}
             trialDays={resolved.offer.trial_days ?? undefined}
             isClubProduct={!!resolved.product.telegram_club_id}
@@ -558,7 +608,7 @@ export default function SitePageBySlug() {
             paymentMethod={resolved.offer.payment_method}
             installmentMaxMonths={resolved.offer.installment_count ?? null}
             installmentIntervalDays={(resolved.offer as any).installment_interval_days ?? null}
-            installmentTotalAmountKopecks={Math.round(Number(resolved.offer.amount) * 100)}
+            installmentTotalAmountKopecks={Math.round(selection.total * 100)}
           />
         );
       })()}
@@ -607,4 +657,3 @@ export default function SitePageBySlug() {
     </SiteSlotManifestContext.Provider>
   );
 }
-

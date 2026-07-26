@@ -514,7 +514,7 @@ function _getPrototypeOf(o) {
   };
   return _getPrototypeOf(o);
 }
-var DetailedError = function(_Error) {
+var DetailedError = (function(_Error) {
   function DetailedError2(message) {
     var _this;
     var causingErr = arguments.length > 1 && arguments[1] !== void 0 ? arguments[1] : null;
@@ -541,7 +541,7 @@ var DetailedError = function(_Error) {
   }
   _inherits(DetailedError2, _Error);
   return _createClass(DetailedError2);
-}(_wrapNativeSuper(Error));
+})(_wrapNativeSuper(Error));
 var error_default = DetailedError;
 
 // node_modules/tus-js-client/lib.esm/logger.js
@@ -597,7 +597,7 @@ function _toPrimitive2(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var NoopUrlStorage = function() {
+var NoopUrlStorage = (function() {
   function NoopUrlStorage2() {
     _classCallCheck2(this, NoopUrlStorage2);
   }
@@ -622,13 +622,12 @@ var NoopUrlStorage = function() {
       return Promise.resolve(null);
     }
   }]);
-}();
+})();
 
 // node_modules/js-base64/base64.mjs
-var version = "3.7.8";
+var version = "3.9.1";
 var VERSION = version;
-var _hasBuffer = typeof Buffer === "function";
-var _TD = typeof TextDecoder === "function" ? new TextDecoder() : void 0;
+var _TD = typeof TextDecoder === "function" ? new TextDecoder("utf-8", { ignoreBOM: true }) : void 0;
 var _TE = typeof TextEncoder === "function" ? new TextEncoder() : void 0;
 var b64ch = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
 var b64chs = Array.prototype.slice.call(b64ch);
@@ -653,8 +652,8 @@ var btoaPolyfill = (bin) => {
   }
   return pad ? asc.slice(0, pad - 3) + "===".substring(pad) : asc;
 };
-var _btoa = typeof btoa === "function" ? (bin) => btoa(bin) : _hasBuffer ? (bin) => Buffer.from(bin, "binary").toString("base64") : btoaPolyfill;
-var _fromUint8Array = _hasBuffer ? (u8a) => Buffer.from(u8a).toString("base64") : (u8a) => {
+var _btoa = typeof btoa === "function" ? (bin) => btoa(bin) : btoaPolyfill;
+var _fromUint8Array = typeof Uint8Array.prototype.toBase64 === "function" ? (u8a) => u8a.toBase64() : (u8a) => {
   const maxargs = 4096;
   let strs = [];
   for (let i = 0, l = u8a.length; i < l; i += maxargs) {
@@ -674,7 +673,7 @@ var cb_utob = (c) => {
 };
 var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
 var utob = (u) => u.replace(re_utob, cb_utob);
-var _encode = _hasBuffer ? (s) => Buffer.from(s, "utf8").toString("base64") : _TE ? (s) => _fromUint8Array(_TE.encode(s)) : (s) => _btoa(utob(s));
+var _encode = _TE ? (s) => _fromUint8Array(_TE.encode(s)) : (s) => _btoa(utob(s));
 var encode = (src, urlsafe = false) => urlsafe ? _mkUriSafe(_encode(src)) : _encode(src);
 var encodeURI = (src) => encode(src, true);
 var re_btou = /[\xC0-\xDF][\x80-\xBF]|[\xE0-\xEF][\x80-\xBF]{2}|[\xF0-\xF7][\x80-\xBF]{3}/g;
@@ -709,10 +708,10 @@ var atobPolyfill = (asc) => {
   }
   return binArray.join("");
 };
-var _atob = typeof atob === "function" ? (asc) => atob(_tidyB64(asc)) : _hasBuffer ? (asc) => Buffer.from(asc, "base64").toString("binary") : atobPolyfill;
-var _toUint8Array = _hasBuffer ? (a) => _U8Afrom(Buffer.from(a, "base64")) : (a) => _U8Afrom(_atob(a).split("").map((c) => c.charCodeAt(0)));
+var _atob = typeof atob === "function" ? (asc) => atob(_tidyB64(asc)) : atobPolyfill;
+var _toUint8Array = typeof Uint8Array.fromBase64 === "function" ? (a) => Uint8Array.fromBase64(a) : (a) => _U8Afrom(_atob(a).split("").map((c) => c.charCodeAt(0)));
 var toUint8Array = (a) => _toUint8Array(_unURI(a));
-var _decode = _hasBuffer ? (a) => Buffer.from(a, "base64").toString("utf8") : _TD ? (a) => _TD.decode(_toUint8Array(a)) : (a) => btou(_atob(a));
+var _decode = _TD ? (a) => _TD.decode(_toUint8Array(a)) : (a) => btou(_atob(a));
 var _unURI = (a) => _tidyB64(a.replace(/[-_]/g, (m0) => m0 == "-" ? "+" : "/"));
 var decode = (src) => _decode(_unURI(src));
 var isValid = (src) => {
@@ -1250,7 +1249,7 @@ var defaultOptions = {
   httpStack: null,
   protocol: PROTOCOL_TUS_V1
 };
-var BaseUpload = function() {
+var BaseUpload = (function() {
   function BaseUpload2(file, options) {
     _classCallCheck3(this, BaseUpload2);
     if ("resume" in options) {
@@ -1929,7 +1928,7 @@ var BaseUpload = function() {
       });
     }
   }]);
-}();
+})();
 function encodeMetadata(metadata) {
   return Object.entries(metadata).map(function(_ref3) {
     var _ref4 = _slicedToArray(_ref3, 2), key = _ref4[0], value = _ref4[1];
@@ -2122,7 +2121,7 @@ function _toPrimitive4(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var FileSource = function() {
+var FileSource = (function() {
   function FileSource2(file) {
     _classCallCheck4(this, FileSource2);
     this._file = file;
@@ -2146,7 +2145,7 @@ var FileSource = function() {
     value: function close() {
     }
   }]);
-}();
+})();
 
 // node_modules/tus-js-client/lib.esm/browser/sources/StreamSource.js
 function _typeof5(o) {
@@ -2213,7 +2212,7 @@ function concat(a, b) {
   }
   throw new Error("Unknown data type");
 }
-var StreamSource = function() {
+var StreamSource = (function() {
   function StreamSource2(reader) {
     _classCallCheck5(this, StreamSource2);
     this._buffer = void 0;
@@ -2275,7 +2274,7 @@ var StreamSource = function() {
       }
     }
   }]);
-}();
+})();
 
 // node_modules/tus-js-client/lib.esm/browser/fileReader.js
 function _typeof6(o) {
@@ -2587,13 +2586,13 @@ function _toPrimitive6(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var FileReader2 = function() {
+var FileReader2 = (function() {
   function FileReader3() {
     _classCallCheck6(this, FileReader3);
   }
   return _createClass6(FileReader3, [{
     key: "openFile",
-    value: function() {
+    value: (function() {
       var _openFile = _asyncToGenerator2(_regeneratorRuntime2().mark(function _callee(input, chunkSize) {
         var blob;
         return _regeneratorRuntime2().wrap(function _callee$(_context) {
@@ -2644,9 +2643,9 @@ var FileReader2 = function() {
         return _openFile.apply(this, arguments);
       }
       return openFile;
-    }()
+    })()
   }]);
-}();
+})();
 
 // node_modules/tus-js-client/lib.esm/browser/fileSignature.js
 function fingerprint(file, options) {
@@ -2715,7 +2714,7 @@ function _toPrimitive7(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var XHRHttpStack = function() {
+var XHRHttpStack = (function() {
   function XHRHttpStack2() {
     _classCallCheck7(this, XHRHttpStack2);
   }
@@ -2730,8 +2729,8 @@ var XHRHttpStack = function() {
       return "XHRHttpStack";
     }
   }]);
-}();
-var Request = function() {
+})();
+var Request = (function() {
   function Request2(method, url) {
     _classCallCheck7(this, Request2);
     this._xhr = new XMLHttpRequest();
@@ -2801,8 +2800,8 @@ var Request = function() {
       return this._xhr;
     }
   }]);
-}();
-var Response = function() {
+})();
+var Response = (function() {
   function Response2(xhr) {
     _classCallCheck7(this, Response2);
     this._xhr = xhr;
@@ -2828,7 +2827,7 @@ var Response = function() {
       return this._xhr;
     }
   }]);
-}();
+})();
 
 // node_modules/tus-js-client/lib.esm/browser/urlStorage.js
 function _typeof8(o) {
@@ -2890,7 +2889,7 @@ try {
 var key;
 var originalValue;
 var canStoreURLs = hasStorage;
-var WebStorageUrlStorage = function() {
+var WebStorageUrlStorage = (function() {
   function WebStorageUrlStorage2() {
     _classCallCheck8(this, WebStorageUrlStorage2);
   }
@@ -2937,7 +2936,7 @@ var WebStorageUrlStorage = function() {
       return results;
     }
   }]);
-}();
+})();
 
 // node_modules/tus-js-client/lib.esm/browser/index.js
 function _typeof9(o) {
@@ -3066,7 +3065,7 @@ var defaultOptions2 = _objectSpread2(_objectSpread2({}, upload_default.defaultOp
   urlStorage: canStoreURLs ? new WebStorageUrlStorage() : new NoopUrlStorage(),
   fingerprint
 });
-var Upload = function(_BaseUpload) {
+var Upload = (function(_BaseUpload) {
   function Upload2() {
     var file = arguments.length > 0 && arguments[0] !== void 0 ? arguments[0] : null;
     var options = arguments.length > 1 && arguments[1] !== void 0 ? arguments[1] : {};
@@ -3083,7 +3082,7 @@ var Upload = function(_BaseUpload) {
       return upload_default.terminate(url, options);
     }
   }]);
-}(upload_default);
+})(upload_default);
 var isSupported = typeof XMLHttpRequest === "function" && typeof Blob === "function" && typeof Blob.prototype.slice === "function";
 export {
   XHRHttpStack as DefaultHttpStack,
@@ -3097,8 +3096,6 @@ export {
 /*! Bundled license information:
 
 tus-js-client/lib.esm/upload.js:
-  (*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/facebook/regenerator/blob/main/LICENSE *)
-
 tus-js-client/lib.esm/browser/fileReader.js:
   (*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/facebook/regenerator/blob/main/LICENSE *)
 */

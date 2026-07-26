@@ -47,6 +47,8 @@ export interface CanonicalRenderInput {
   executor_id?: string | null;
   /** Customer legal_details_id; обычно резолвится из заказа */
   legal_details_id?: string | null;
+  /** Canonical CRM company; otherwise inferred from one active order link. */
+  company_id?: string | null;
   /** Подписант со стороны customer */
   signer_link_id?: string | null;
   /** Дополнительные ad-hoc значения; имеют наивысший приоритет */
@@ -284,6 +286,36 @@ export async function resolveCanonicalPayload(
     livePayment = (pays || []).find((p: any) => p.status === 'succeeded') || null;
   }
 
+  // 5b. Canonical CRM company. Explicit company_id wins. For an order context
+  // we infer a company only when exactly one active company_order_links company
+  // exists; ambiguity is surfaced as a controlled warning, never guessed.
+  let company: any = null;
+  let companyResolutionSource = 'none';
+  if (input.company_id) {
+    const { data } = await supabase.from('companies').select('*').eq('id', input.company_id).maybeSingle();
+    company = data;
+    companyResolutionSource = company ? 'explicit_company_id' : 'explicit_company_not_found';
+    if (!company) warnings.push('company_not_found');
+  } else if (order?.id) {
+    const { data: links } = await supabase
+      .from('company_order_links')
+      .select('company_id')
+      .eq('order_id', order.id)
+      .is('unlinked_at', null);
+    const companyIds = [...new Set((links || []).map((row: any) => row.company_id).filter(Boolean))];
+    if (companyIds.length === 1) {
+      const { data } = await supabase.from('companies').select('*').eq('id', companyIds[0]).maybeSingle();
+      company = data;
+      companyResolutionSource = company ? 'single_active_order_link' : 'linked_company_not_found';
+      if (!company) warnings.push('company_not_found');
+    } else if (companyIds.length > 1) {
+      companyResolutionSource = 'ambiguous_active_order_links';
+      warnings.push('company_order_link_ambiguous');
+    } else {
+      companyResolutionSource = 'no_active_order_link';
+    }
+  }
+
   // 6. Customer legal_details (Sprint B: payer_type-aware resolution).
   // SOT: orders_v2.payer_type. legal_entity → client_type='legal_entity',
   // individual → client_type='individual'. Within the cohort prefer is_default,
@@ -383,6 +415,16 @@ export async function resolveCanonicalPayload(
     'customer.account':         customer?.bank_account || '',
     'customer.passport':        customer?.ind_passport_series && customer?.ind_passport_number
                                   ? `${customer.ind_passport_series} ${customer.ind_passport_number}` : '',
+
+    'company.full_name':         company?.full_name || '',
+    'company.short_name':        company?.short_name || company?.full_name || '',
+    'company.unp':               company?.unp_normalized || '',
+    'company.legal_address':     company?.legal_address || '',
+    'company.director.name':     company?.director_name || '',
+    'company.director.position': company?.director_position || '',
+    'company.bank.account':      company?.bank_account || '',
+    'company.bank.name':          company?.bank_name || '',
+    'company.public_id':          company?.public_id || '',
 
     'deal.id':            order?.order_number || order?.id || '',
     'deal.product_name':  product?.name || '',
@@ -562,6 +604,7 @@ export async function resolveCanonicalPayload(
     }
     if (k.startsWith('executor.')) return 'executors';
     if (k.startsWith('customer.')) return 'client_legal_details / orders_v2';
+    if (k.startsWith('company.')) return company ? 'companies' : 'companies_missing';
     if (k.startsWith('deal.')) return 'orders_v2';
     if (k.startsWith('payment.')) {
       // Sprint A — payment.* источник = payments_v2 (snapshot или live).
@@ -626,6 +669,19 @@ export async function resolveCanonicalPayload(
                  raw: customer.leg_address || customer.ent_address || null },
     } : null,
     customer_resolution: { payer_type: payerType, source: customerResolutionSource, client_type: customer?.client_type || null },
+    company: company ? {
+      id: company.id,
+      public_id: company.public_id,
+      full_name: company.full_name,
+      short_name: company.short_name,
+      unp: company.unp_normalized,
+      legal_address: company.legal_address,
+      director_name: company.director_name,
+      director_position: company.director_position,
+      bank_account: company.bank_account,
+      bank_name: company.bank_name,
+    } : null,
+    company_resolution: { source: companyResolutionSource, company_id: company?.id || input.company_id || null },
     order: order ? { id: order.id, order_number: order.order_number, payer_type: (order as any).payer_type || null, product_id: order.product_id, tariff_id: order.tariff_id, final_price: order.final_price, currency: order.currency, status: order.status } : null,
     document: { number: docNumber, date: now.toISOString() },
     token_manifest: tokenManifest,
@@ -681,6 +737,7 @@ export async function generateCanonicalDocument(
   }
 
   const payload = await resolveCanonicalPayload(supabase, input);
+  const resolvedCompanyId = ((payload.snapshot as any)?.company_resolution?.company_id || input.company_id || null) as string | null;
 
   if (payload.missing_tokens.length > 0) {
     return { success: false, payload, error: `missing_required_tokens:${payload.missing_tokens.join(',')}` };
@@ -753,6 +810,7 @@ export async function generateCanonicalDocument(
       legal_details_id: input.legal_details_id || null,
       signer_link_id: input.signer_link_id || null,
       storage_bucket: opts.storageBucketOutput || 'documents',
+      company_id: resolvedCompanyId,
       idempotency_key: idempotencyKey,
       context_type: input.context_type || null,
       context_id: input.context_id || null,
@@ -971,6 +1029,7 @@ export async function generateCanonicalDocument(
     const { error: updErr } = await supabase.from('ai_generated_documents').update({
       title: `${payload.template.name} — ${docNumber}`,
       status: 'success',
+      company_id: resolvedCompanyId,
       file_path: filePath,
       file_name: fileName,
       file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -1006,6 +1065,7 @@ export async function generateCanonicalDocument(
       file_name: fileName,
       file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       storage_bucket: outBucket,
+      company_id: resolvedCompanyId,
       snapshot: payload.snapshot,
       missing_tokens: payload.missing_tokens,
       template_tokens_snapshot: { tokens: payload.template_tokens, manifest: payload.token_manifest },

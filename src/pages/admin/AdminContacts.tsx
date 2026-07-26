@@ -77,12 +77,14 @@ import { exportToExcel, exportToCSV, ExportColumn } from "@/utils/exportTableDat
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { CompanyDetailsSheet } from "@/pages/admin/AdminCompanies";
 
 import { LoyaltyBadge } from "@/components/admin/LoyaltyPulse";
 import { ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { BulkCreateDealsDialog } from "@/components/admin/deals/BulkCreateDealsDialog";
 import { MergeContactsDialog } from "@/components/admin/MergeContactsDialog";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
@@ -212,17 +214,19 @@ export default function AdminContacts() {
   const [activePreset, setActivePreset] = useState("active");
   const [displayLimit, setDisplayLimit] = useState(100);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showMergeDialog, setShowMergeDialog] = useState(false);
   const [showTelegramCleanup, setShowTelegramCleanup] = useState(false);
   const [showDemoCleanup, setShowDemoCleanup] = useState(false);
   const [showGCImport, setShowGCImport] = useState(false);
   const [showCreateContact, setShowCreateContact] = useState(false);
-  const { hasPermission, canWrite, isSuperAdmin } = usePermissions();
+  const { hasPermission, canWrite, isSuperAdmin, isAdmin } = usePermissions();
   
   // Bulk action dialogs
   const [showBulkArchiveDialog, setShowBulkArchiveDialog] = useState(false);
   const [showBulkInviteDialog, setShowBulkInviteDialog] = useState(false);
+  const [showBulkCreateDeals, setShowBulkCreateDeals] = useState(false);
   
   // Global search state
   const [globalSearchResults, setGlobalSearchResults] = useState<GlobalSearchResults | null>(null);
@@ -468,7 +472,35 @@ export default function AdminContacts() {
       // Server-side search
       if (debouncedSearch) {
         const s = debouncedSearch.trim();
-        query = query.or(`email.ilike.%${s}%,full_name.ilike.%${s}%,phone.ilike.%${s}%`);
+        let companyProfileIds: string[] = [];
+        const { data: rpcCompanyProfileIds, error: companySearchError } = await (supabase.rpc as any)("search_profile_ids_by_company", { p_query: s });
+        if (!companySearchError) {
+          companyProfileIds = ((rpcCompanyProfileIds ?? []) as string[]).filter(Boolean);
+        } else if (companySearchError.code === "PGRST202" || /schema cache|could not find the function/i.test(companySearchError.message || "")) {
+          // The managed migration may briefly lag the frontend publish. Keep the
+          // regular profile search usable and use a read-only compatibility path
+          // until the canonical RPC is available.
+          const { data: matchedCompanies, error: companiesError } = await supabase
+            .from("companies")
+            .select("id")
+            .or(`full_name.ilike.%${s}%,short_name.ilike.%${s}%,public_id.ilike.%${s}%,unp.ilike.%${s}%`)
+            .limit(1000);
+          if (companiesError) throw companiesError;
+          const companyIds = (matchedCompanies ?? []).map(({ id }) => id).filter(Boolean);
+          if (companyIds.length > 0) {
+            const { data: linkedProfiles, error: linksError } = await supabase
+              .from("company_contacts")
+              .select("profile_id")
+              .in("company_id", companyIds)
+              .not("profile_id", "is", null);
+            if (linksError) throw linksError;
+            companyProfileIds = (linkedProfiles ?? []).map(({ profile_id }) => profile_id).filter(Boolean) as string[];
+          }
+        } else {
+          throw companySearchError;
+        }
+        const companyIdFilter = companyProfileIds.length > 0 ? `,id.in.(${companyProfileIds.join(",")})` : "";
+        query = query.or(`email.ilike.%${s}%,full_name.ilike.%${s}%,phone.ilike.%${s}%${companyIdFilter}`);
       }
 
       const { data, error } = await query
@@ -1850,7 +1882,17 @@ export default function AdminContacts() {
             }
           }
         }}
+        onOpenCompany={(companyId) => {
+          setSelectedContactId(null);
+          setSelectedCompanyId(companyId);
+        }}
         returnTo={fromPage || undefined}
+      />
+      <CompanyDetailsSheet
+        companyId={selectedCompanyId}
+        canEdit={canWrite("companies") || isSuperAdmin()}
+        onClose={() => setSelectedCompanyId(null)}
+        onOpenCompany={setSelectedCompanyId}
       />
 
       {/* Selection Box for drag select */}
@@ -1871,9 +1913,17 @@ export default function AdminContacts() {
         onBulkMerge={selectedCount >= 2 ? () => setShowMergeDialog(true) : undefined}
         onBulkArchive={eligibleForArchive.length > 0 ? () => setShowBulkArchiveDialog(true) : undefined}
         onBulkCreateAccounts={eligibleForInvite.length > 0 ? () => setShowBulkInviteDialog(true) : undefined}
+        onBulkCreateDeals={canWrite("deals") || isSuperAdmin() ? () => setShowBulkCreateDeals(true) : undefined}
         totalCount={sortedContacts.length}
         entityName="контактов"
         onSelectAll={selectAll}
+      />
+      <BulkCreateDealsDialog
+        open={showBulkCreateDeals}
+        onOpenChange={setShowBulkCreateDeals}
+        sourceType="contact"
+        sourceIds={Array.from(selectedContactIds)}
+        onCreated={() => { clearSelection(); queryClient.invalidateQueries({ queryKey: ["admin-deals"] }); }}
       />
 
       {/* Merge Contacts Dialog */}

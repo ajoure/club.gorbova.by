@@ -180,10 +180,11 @@ async function fetchDetailsMultiPath(id: string, authString: string): Promise<{ 
 }
 
 // PATCH-U3: Multi-page list fetch with pagination
-async function fetchListAllPages(authString: string, maxPages: number = 6): Promise<{ items: BepaidSubscription[]; attempts: HostAttempt[] }> {
+async function fetchListAllPages(authString: string, maxPages: number = 100): Promise<{ items: BepaidSubscription[]; attempts: HostAttempt[]; truncated: boolean }> {
   const attempts: HostAttempt[] = [];
   const allItems: BepaidSubscription[] = [];
   const seenIds = new Set<string>();
+  let truncated = false;
   
   for (const host of BEPAID_HOSTS) {
     for (const basePath of LIST_PATHS) {
@@ -243,15 +244,20 @@ async function fetchListAllPages(authString: string, maxPages: number = 6): Prom
           foundItems = false;
         }
       }
+
+      if (foundItems && page > maxPages) {
+        truncated = true;
+        console.error(`[bepaid-list-subs] Pagination safety limit reached. host=${host}, path=${basePath}, max_pages=${maxPages}, items=${allItems.length}`);
+      }
       
       // If we got items from this host/path combo, return
       if (allItems.length > 0) {
-        return { items: allItems, attempts };
+        return { items: allItems, attempts, truncated };
       }
     }
   }
   
-  return { items: allItems, attempts };
+  return { items: allItems, attempts, truncated };
 }
 
 Deno.serve(async (req) => {
@@ -496,9 +502,57 @@ Deno.serve(async (req) => {
     const upsertedIds: string[] = [];
 
     // PATCH-U3: Step 1 - Fetch ALL pages from API
-    const { items: apiItems, attempts: apiAttempts } = await fetchListAllPages(authString, 6);
+    const { items: apiItems, attempts: apiAttempts, truncated: apiListTruncated } = await fetchListAllPages(authString);
     listAttempts.push(...apiAttempts);
     apiListCount = apiItems.length;
+
+    // Persist every provider row returned by the list endpoint. Previously a new
+    // subscription was only inserted when it also needed a detail request. A
+    // complete list item (card + next charge already present) therefore remained
+    // invisible to DB-backed cards, reconciliation and cancellation tools.
+    for (const sub of apiItems) {
+      if (!sub?.id) continue;
+      const existing = providerSubsMap.get(sub.id);
+      const state = normalizeStatus(sub.state || sub.status);
+      const existingMeta = (existing?.meta as Record<string, any>) || {};
+      const listSnapshot = {
+        ...((existingMeta?.provider_snapshot as Record<string, any>) || {}),
+        state,
+        next_billing_at: sub.next_billing_at,
+        credit_card: sub.credit_card,
+        plan: sub.plan,
+        customer: sub.customer,
+        last_transaction: sub.last_transaction,
+        created_at: sub.created_at,
+      };
+      const write = {
+        provider: 'bepaid',
+        provider_subscription_id: sub.id,
+        state,
+        next_charge_at: sub.next_billing_at || existing?.next_charge_at || null,
+        card_last4: sub.credit_card?.last_4 || existing?.card_last4 || null,
+        card_brand: sub.credit_card?.brand || existing?.card_brand || null,
+        amount_cents: sub.plan?.amount ?? existing?.amount_cents ?? null,
+        currency: sub.plan?.currency || existing?.currency || 'BYN',
+        raw_data: { ...((existing?.raw_data as Record<string, any>) || {}), ...sub },
+        meta: {
+          ...existingMeta,
+          provider_snapshot: listSnapshot,
+          snapshot_at: new Date().toISOString(),
+          discovered_via: existingMeta.discovered_via || 'bepaid_list',
+        },
+        updated_at: new Date().toISOString(),
+      };
+      const { error: persistError } = await supabase
+        .from('provider_subscriptions')
+        .upsert(write, { onConflict: 'provider,provider_subscription_id' });
+      if (persistError) {
+        console.error(`[bepaid-list-subs] Failed to persist provider subscription ${sub.id}: ${persistError.message}`);
+      } else if (!existing) {
+        providerSubsMap.set(sub.id, write);
+        upsertedIds.push(sub.id);
+      }
+    }
 
     // Merge API data with DB data
     const allSubscriptions: BepaidSubscription[] = [];
@@ -965,6 +1019,8 @@ Deno.serve(async (req) => {
           hosts_tried: BEPAID_HOSTS,
           paths_tried: LIST_PATHS,
           api_list_count: apiListCount,
+          api_list_complete: !apiListTruncated,
+          ...(apiListTruncated ? { pagination_error: 'BEPAID_LIST_TRUNCATED' } : {}),
           db_records_count: providerSubs?.length || 0,
           db_enriched_count: dbEnriched,
           details_fetched_count: detailsFetched,

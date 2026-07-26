@@ -9,7 +9,7 @@ import {
 } from "./chunk-KDVGFZWC.js";
 import {
   require_react_dom
-} from "./chunk-FKMA2RKD.js";
+} from "./chunk-3I6JAFN6.js";
 import {
   require_react
 } from "./chunk-UVNPGZG7.js";
@@ -202,10 +202,10 @@ var require_coreJsData = __commonJS({
 var require_isMasked = __commonJS({
   "node_modules/lodash/_isMasked.js"(exports, module) {
     var coreJsData = require_coreJsData();
-    var maskSrcKey = function() {
+    var maskSrcKey = (function() {
       var uid = /[^.]+$/.exec(coreJsData && coreJsData.keys && coreJsData.keys.IE_PROTO || "");
       return uid ? "Symbol(src)_1." + uid : "";
-    }();
+    })();
     function isMasked(func) {
       return !!maskSrcKey && maskSrcKey in func;
     }
@@ -1637,9 +1637,9 @@ var require_isArguments = __commonJS({
     var objectProto = Object.prototype;
     var hasOwnProperty = objectProto.hasOwnProperty;
     var propertyIsEnumerable = objectProto.propertyIsEnumerable;
-    var isArguments = baseIsArguments(/* @__PURE__ */ function() {
+    var isArguments = baseIsArguments(/* @__PURE__ */ (function() {
       return arguments;
-    }()) ? baseIsArguments : function(value) {
+    })()) ? baseIsArguments : function(value) {
       return isObjectLike(value) && hasOwnProperty.call(value, "callee") && !propertyIsEnumerable.call(value, "callee");
     };
     module.exports = isArguments;
@@ -1756,7 +1756,7 @@ var require_nodeUtil = __commonJS({
     var freeModule = freeExports && typeof module == "object" && module && !module.nodeType && module;
     var moduleExports = freeModule && freeModule.exports === freeExports;
     var freeProcess = moduleExports && freeGlobal.process;
-    var nodeUtil = function() {
+    var nodeUtil = (function() {
       try {
         var types = freeModule && freeModule.require && freeModule.require("util").types;
         if (types) {
@@ -1765,7 +1765,7 @@ var require_nodeUtil = __commonJS({
         return freeProcess && freeProcess.binding && freeProcess.binding("util");
       } catch (e) {
       }
-    }();
+    })();
     module.exports = nodeUtil;
   }
 });
@@ -2830,14 +2830,14 @@ var require_constant = __commonJS({
 var require_defineProperty = __commonJS({
   "node_modules/lodash/_defineProperty.js"(exports, module) {
     var getNative = require_getNative();
-    var defineProperty = function() {
+    var defineProperty = (function() {
       try {
         var func = getNative(Object, "defineProperty");
         func({}, "", {});
         return func;
       } catch (e) {
       }
-    }();
+    })();
     module.exports = defineProperty;
   }
 });
@@ -4929,7 +4929,7 @@ var require_baseCreate = __commonJS({
   "node_modules/lodash/_baseCreate.js"(exports, module) {
     var isObject5 = require_isObject();
     var objectCreate = Object.create;
-    var baseCreate = /* @__PURE__ */ function() {
+    var baseCreate = /* @__PURE__ */ (function() {
       function object() {
       }
       return function(proto) {
@@ -4944,7 +4944,7 @@ var require_baseCreate = __commonJS({
         object.prototype = void 0;
         return result;
       };
-    }();
+    })();
     module.exports = baseCreate;
   }
 });
@@ -6352,6 +6352,7 @@ Linear.prototype = {
         break;
       case 1:
         this._point = 2;
+      // falls through
       default:
         this._context.lineTo(x2, y2);
         break;
@@ -6539,6 +6540,7 @@ var Bump = class {
       }
       case 1:
         this._point = 2;
+      // falls through
       default: {
         if (this._x) this._context.bezierCurveTo(this._x0 = (this._x0 + x2) / 2, this._y0, this._x0, y2, x2, y2);
         else this._context.bezierCurveTo(this._x0, this._y0 = (this._y0 + y2) / 2, x2, this._y0, x2, y2);
@@ -6729,6 +6731,7 @@ Basis.prototype = {
     switch (this._point) {
       case 3:
         point(this, this._x1, this._y1);
+      // falls through
       case 2:
         this._context.lineTo(this._x1, this._y1);
         break;
@@ -6749,6 +6752,7 @@ Basis.prototype = {
       case 2:
         this._point = 3;
         this._context.lineTo((5 * this._x0 + this._x1) / 6, (5 * this._y0 + this._y1) / 6);
+      // falls through
       default:
         point(this, x2, y2);
         break;
@@ -6856,6 +6860,7 @@ BasisOpen.prototype = {
         break;
       case 3:
         this._point = 4;
+      // falls through
       default:
         point(this, x2, y2);
         break;
@@ -6899,7 +6904,7 @@ Bundle.prototype = {
     this._y.push(+y2);
   }
 };
-var bundle_default = function custom(beta) {
+var bundle_default = (function custom(beta) {
   function bundle(context) {
     return beta === 1 ? new Basis(context) : new Bundle(context, beta);
   }
@@ -6907,7 +6912,7 @@ var bundle_default = function custom(beta) {
     return custom(+beta2);
   };
   return bundle;
-}(0.85);
+})(0.85);
 
 // node_modules/d3-shape/src/curve/cardinal.js
 function point2(that, x2, y2) {
@@ -6960,6 +6965,7 @@ Cardinal.prototype = {
         break;
       case 2:
         this._point = 3;
+      // falls through
       default:
         point2(this, x2, y2);
         break;
@@ -6968,7 +6974,7 @@ Cardinal.prototype = {
     this._y0 = this._y1, this._y1 = this._y2, this._y2 = y2;
   }
 };
-var cardinal_default = function custom2(tension) {
+var cardinal_default = (function custom2(tension) {
   function cardinal(context) {
     return new Cardinal(context, tension);
   }
@@ -6976,7 +6982,7 @@ var cardinal_default = function custom2(tension) {
     return custom2(+tension2);
   };
   return cardinal;
-}(0);
+})(0);
 
 // node_modules/d3-shape/src/curve/cardinalClosed.js
 function CardinalClosed(context, tension) {
@@ -7033,7 +7039,7 @@ CardinalClosed.prototype = {
     this._y0 = this._y1, this._y1 = this._y2, this._y2 = y2;
   }
 };
-var cardinalClosed_default = function custom3(tension) {
+var cardinalClosed_default = (function custom3(tension) {
   function cardinal(context) {
     return new CardinalClosed(context, tension);
   }
@@ -7041,7 +7047,7 @@ var cardinalClosed_default = function custom3(tension) {
     return custom3(+tension2);
   };
   return cardinal;
-}(0);
+})(0);
 
 // node_modules/d3-shape/src/curve/cardinalOpen.js
 function CardinalOpen(context, tension) {
@@ -7078,6 +7084,7 @@ CardinalOpen.prototype = {
         break;
       case 3:
         this._point = 4;
+      // falls through
       default:
         point2(this, x2, y2);
         break;
@@ -7086,7 +7093,7 @@ CardinalOpen.prototype = {
     this._y0 = this._y1, this._y1 = this._y2, this._y2 = y2;
   }
 };
-var cardinalOpen_default = function custom4(tension) {
+var cardinalOpen_default = (function custom4(tension) {
   function cardinal(context) {
     return new CardinalOpen(context, tension);
   }
@@ -7094,7 +7101,7 @@ var cardinalOpen_default = function custom4(tension) {
     return custom4(+tension2);
   };
   return cardinal;
-}(0);
+})(0);
 
 // node_modules/d3-shape/src/curve/catmullRom.js
 function point3(that, x2, y2) {
@@ -7154,6 +7161,7 @@ CatmullRom.prototype = {
         break;
       case 2:
         this._point = 3;
+      // falls through
       default:
         point3(this, x2, y2);
         break;
@@ -7164,7 +7172,7 @@ CatmullRom.prototype = {
     this._y0 = this._y1, this._y1 = this._y2, this._y2 = y2;
   }
 };
-var catmullRom_default = function custom5(alpha3) {
+var catmullRom_default = (function custom5(alpha3) {
   function catmullRom(context) {
     return alpha3 ? new CatmullRom(context, alpha3) : new Cardinal(context, 0);
   }
@@ -7172,7 +7180,7 @@ var catmullRom_default = function custom5(alpha3) {
     return custom5(+alpha4);
   };
   return catmullRom;
-}(0.5);
+})(0.5);
 
 // node_modules/d3-shape/src/curve/catmullRomClosed.js
 function CatmullRomClosed(context, alpha3) {
@@ -7235,7 +7243,7 @@ CatmullRomClosed.prototype = {
     this._y0 = this._y1, this._y1 = this._y2, this._y2 = y2;
   }
 };
-var catmullRomClosed_default = function custom6(alpha3) {
+var catmullRomClosed_default = (function custom6(alpha3) {
   function catmullRom(context) {
     return alpha3 ? new CatmullRomClosed(context, alpha3) : new CardinalClosed(context, 0);
   }
@@ -7243,7 +7251,7 @@ var catmullRomClosed_default = function custom6(alpha3) {
     return custom6(+alpha4);
   };
   return catmullRom;
-}(0.5);
+})(0.5);
 
 // node_modules/d3-shape/src/curve/catmullRomOpen.js
 function CatmullRomOpen(context, alpha3) {
@@ -7284,6 +7292,7 @@ CatmullRomOpen.prototype = {
         break;
       case 3:
         this._point = 4;
+      // falls through
       default:
         point3(this, x2, y2);
         break;
@@ -7294,7 +7303,7 @@ CatmullRomOpen.prototype = {
     this._y0 = this._y1, this._y1 = this._y2, this._y2 = y2;
   }
 };
-var catmullRomOpen_default = function custom7(alpha3) {
+var catmullRomOpen_default = (function custom7(alpha3) {
   function catmullRom(context) {
     return alpha3 ? new CatmullRomOpen(context, alpha3) : new CardinalOpen(context, 0);
   }
@@ -7302,7 +7311,7 @@ var catmullRomOpen_default = function custom7(alpha3) {
     return custom7(+alpha4);
   };
   return catmullRom;
-}(0.5);
+})(0.5);
 
 // node_modules/d3-shape/src/curve/linearClosed.js
 function LinearClosed(context) {
@@ -7507,6 +7516,7 @@ Step.prototype = {
         break;
       case 1:
         this._point = 2;
+      // falls through
       default: {
         if (this._t <= 0) {
           this._context.lineTo(this._x, y2);
@@ -7923,7 +7933,7 @@ function _toPrimitive2(t, r) {
   return ("string" === r ? String : Number)(t);
 }
 var SIZE = 32;
-var DefaultLegendContent = function(_PureComponent) {
+var DefaultLegendContent = (function(_PureComponent) {
   function DefaultLegendContent2() {
     _classCallCheck(this, DefaultLegendContent2);
     return _callSuper(this, DefaultLegendContent2, arguments);
@@ -8062,7 +8072,7 @@ var DefaultLegendContent = function(_PureComponent) {
       }, this.renderItems());
     }
   }]);
-}(import_react6.PureComponent);
+})(import_react6.PureComponent);
 _defineProperty2(DefaultLegendContent, "displayName", "Legend");
 _defineProperty2(DefaultLegendContent, "defaultProps", {
   iconSize: 14,
@@ -8247,7 +8257,7 @@ function renderContent(content, props) {
   return import_react7.default.createElement(DefaultLegendContent, otherProps);
 }
 var EPS = 1;
-var Legend = function(_PureComponent) {
+var Legend = (function(_PureComponent) {
   function Legend2() {
     var _this;
     _classCallCheck2(this, Legend2);
@@ -8387,7 +8397,7 @@ var Legend = function(_PureComponent) {
       return null;
     }
   }]);
-}(import_react7.PureComponent);
+})(import_react7.PureComponent);
 _defineProperty3(Legend, "displayName", "Legend");
 _defineProperty3(Legend, "defaultProps", {
   iconSize: 14,
@@ -8841,7 +8851,7 @@ function _toPrimitive6(t, r) {
   return ("string" === r ? String : Number)(t);
 }
 var EPSILON = 1;
-var TooltipBoundingBox = function(_PureComponent) {
+var TooltipBoundingBox = (function(_PureComponent) {
   function TooltipBoundingBox2() {
     var _this;
     _classCallCheck3(this, TooltipBoundingBox2);
@@ -8960,7 +8970,7 @@ var TooltipBoundingBox = function(_PureComponent) {
       );
     }
   }]);
-}(import_react9.PureComponent);
+})(import_react9.PureComponent);
 
 // node_modules/recharts/es6/util/Global.js
 var parseIsSsrByDefault = function parseIsSsrByDefault2() {
@@ -9118,7 +9128,7 @@ function renderContent2(content, props) {
   }
   return import_react10.default.createElement(DefaultTooltipContent, props);
 }
-var Tooltip = function(_PureComponent) {
+var Tooltip = (function(_PureComponent) {
   function Tooltip2() {
     _classCallCheck4(this, Tooltip2);
     return _callSuper4(this, Tooltip2, arguments);
@@ -9155,7 +9165,7 @@ var Tooltip = function(_PureComponent) {
       })));
     }
   }]);
-}(import_react10.PureComponent);
+})(import_react10.PureComponent);
 _defineProperty7(Tooltip, "displayName", "Tooltip");
 _defineProperty7(Tooltip, "defaultProps", {
   accessibilityLayer: false,
@@ -9641,7 +9651,7 @@ var STR_NAN = "NaN";
 function convertToPx(value, unit2) {
   return value * CONVERSION_RATES[unit2];
 }
-var DecimalCSS = function() {
+var DecimalCSS = (function() {
   function DecimalCSS2(num, unit2) {
     _classCallCheck5(this, DecimalCSS2);
     this.num = num;
@@ -9710,7 +9720,7 @@ var DecimalCSS = function() {
       return new DecimalCSS2(parseFloat(numStr), unit2 !== null && unit2 !== void 0 ? unit2 : "");
     }
   }]);
-}();
+})();
 function calculateArithmetic(expr) {
   if (expr.includes(STR_NAN)) {
     return STR_NAN;
@@ -11166,7 +11176,7 @@ function nogamma(a2, b) {
 }
 
 // node_modules/d3-interpolate/src/rgb.js
-var rgb_default = function rgbGamma(y2) {
+var rgb_default = (function rgbGamma(y2) {
   var color2 = gamma(y2);
   function rgb2(start, end) {
     var r = color2((start = rgb(start)).r, (end = rgb(end)).r), g = color2(start.g, end.g), b = color2(start.b, end.b), opacity = nogamma(start.opacity, end.opacity);
@@ -11180,7 +11190,7 @@ var rgb_default = function rgbGamma(y2) {
   }
   rgb2.gamma = rgbGamma;
   return rgb2;
-}(1);
+})(1);
 function rgbSpline(spline) {
   return function(colors) {
     var n = colors.length, r = new Array(n), g = new Array(n), b = new Array(n), i, color2;
@@ -11424,7 +11434,7 @@ function sinh(x2) {
 function tanh(x2) {
   return ((x2 = Math.exp(2 * x2)) - 1) / (x2 + 1);
 }
-var zoom_default = function zoomRho(rho, rho2, rho4) {
+var zoom_default = (function zoomRho(rho, rho2, rho4) {
   function zoom(p0, p1) {
     var ux0 = p0[0], uy0 = p0[1], w0 = p0[2], ux1 = p1[0], uy1 = p1[1], w1 = p1[2], dx = ux1 - ux0, dy = uy1 - uy0, d2 = dx * dx + dy * dy, i, S;
     if (d2 < epsilon22) {
@@ -11456,7 +11466,7 @@ var zoom_default = function zoomRho(rho, rho2, rho4) {
     return zoomRho(_1, _2, _4);
   };
   return zoom;
-}(Math.SQRT2, 2, 4);
+})(Math.SQRT2, 2, 4);
 
 // node_modules/d3-interpolate/src/hsl.js
 function hsl2(hue2) {
@@ -11492,7 +11502,7 @@ var hclLong = hcl2(nogamma);
 
 // node_modules/d3-interpolate/src/cubehelix.js
 function cubehelix2(hue2) {
-  return function cubehelixGamma(y2) {
+  return (function cubehelixGamma(y2) {
     y2 = +y2;
     function cubehelix3(start, end) {
       var h = hue2((start = cubehelix(start)).h, (end = cubehelix(end)).h), s2 = nogamma(start.s, end.s), l = nogamma(start.l, end.l), opacity = nogamma(start.opacity, end.opacity);
@@ -11506,7 +11516,7 @@ function cubehelix2(hue2) {
     }
     cubehelix3.gamma = cubehelixGamma;
     return cubehelix3;
-  }(1);
+  })(1);
 }
 var cubehelix_default = cubehelix2(hue);
 var cubehelixLong = cubehelix2(nogamma);
@@ -13861,7 +13871,7 @@ function digitsToString(d) {
   for (; w % 10 === 0; ) w /= 10;
   return str + w;
 }
-var divide = /* @__PURE__ */ function() {
+var divide = /* @__PURE__ */ (function() {
   function multiplyInteger(x2, k2) {
     var temp, carry = 0, i = x2.length;
     for (x2 = x2.slice(); i--; ) {
@@ -13991,7 +14001,7 @@ var divide = /* @__PURE__ */ function() {
     q.e = e;
     return round(q, dp ? pr + getBase10Exponent(q) + 1 : pr);
   };
-}();
+})();
 function exp(x2, sd) {
   var denominator, guard, pow2, sum3, t, wpr, i = 0, k2 = 0, Ctor = x2.constructor, pr = Ctor.precision;
   if (getBase10Exponent(x2) > 16) throw Error(exponentOutOfRange + getBase10Exponent(x2));
@@ -14954,7 +14964,7 @@ function _toPrimitive11(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var ErrorBar = function(_React$Component) {
+var ErrorBar = (function(_React$Component) {
   function ErrorBar2() {
     _classCallCheck6(this, ErrorBar2);
     return _callSuper5(this, ErrorBar2, arguments);
@@ -15047,7 +15057,7 @@ var ErrorBar = function(_React$Component) {
       }, errorBars);
     }
   }]);
-}(import_react13.default.Component);
+})(import_react13.default.Component);
 _defineProperty10(ErrorBar, "defaultProps", {
   stroke: "black",
   strokeWidth: 1.5,
@@ -17995,7 +18005,7 @@ var calStepperVals = function calStepperVals2(easing, preVals, steps) {
   }
   return calStepperVals2(easing, nextStepVals, steps - 1);
 };
-var configUpdate_default = function(from, to, easing, duration, render) {
+var configUpdate_default = (function(from, to, easing, duration, render) {
   var interKeys = getIntersectionKeys(from, to);
   var timingStyle = interKeys.reduce(function(res, key) {
     return _objectSpread17(_objectSpread17({}, res), {}, _defineProperty19({}, key, [from[key], to[key]]));
@@ -18059,7 +18069,7 @@ var configUpdate_default = function(from, to, easing, duration, render) {
       cancelAnimationFrame(cafId);
     };
   };
-};
+});
 
 // node_modules/react-smooth/es6/Animate.js
 function _typeof25(o) {
@@ -18247,7 +18257,7 @@ function _getPrototypeOf6(o) {
   };
   return _getPrototypeOf6(o);
 }
-var Animate = function(_PureComponent) {
+var Animate = (function(_PureComponent) {
   _inherits6(Animate2, _PureComponent);
   var _super = _createSuper(Animate2);
   function Animate2(props, context) {
@@ -18467,7 +18477,7 @@ var Animate = function(_PureComponent) {
     }
   }]);
   return Animate2;
-}(import_react19.PureComponent);
+})(import_react19.PureComponent);
 Animate.displayName = "Animate";
 Animate.defaultProps = {
   begin: 0,
@@ -18514,7 +18524,7 @@ var Animate_default = Animate;
 // node_modules/react-smooth/es6/AnimateGroup.js
 var import_react28 = __toESM(require_react());
 
-// node_modules/react-transition-group/node_modules/@babel/runtime/helpers/esm/extends.js
+// node_modules/@babel/runtime/helpers/esm/extends.js
 function _extends12() {
   return _extends12 = Object.assign ? Object.assign.bind() : function(n) {
     for (var e = 1; e < arguments.length; e++) {
@@ -18525,7 +18535,7 @@ function _extends12() {
   }, _extends12.apply(null, arguments);
 }
 
-// node_modules/react-transition-group/node_modules/@babel/runtime/helpers/esm/objectWithoutPropertiesLoose.js
+// node_modules/@babel/runtime/helpers/esm/objectWithoutPropertiesLoose.js
 function _objectWithoutPropertiesLoose12(r, e) {
   if (null == r) return {};
   var t = {};
@@ -18536,14 +18546,14 @@ function _objectWithoutPropertiesLoose12(r, e) {
   return t;
 }
 
-// node_modules/react-transition-group/node_modules/@babel/runtime/helpers/esm/setPrototypeOf.js
+// node_modules/@babel/runtime/helpers/esm/setPrototypeOf.js
 function _setPrototypeOf7(t, e) {
   return _setPrototypeOf7 = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function(t4, e3) {
     return t4.__proto__ = e3, t4;
   }, _setPrototypeOf7(t, e);
 }
 
-// node_modules/react-transition-group/node_modules/@babel/runtime/helpers/esm/inheritsLoose.js
+// node_modules/@babel/runtime/helpers/esm/inheritsLoose.js
 function _inheritsLoose(t, o) {
   t.prototype = Object.create(o.prototype), t.prototype.constructor = t, _setPrototypeOf7(t, o);
 }
@@ -18626,7 +18636,7 @@ var EXITED = "exited";
 var ENTERING = "entering";
 var ENTERED = "entered";
 var EXITING = "exiting";
-var Transition = function(_React$Component) {
+var Transition = (function(_React$Component) {
   _inheritsLoose(Transition2, _React$Component);
   function Transition2(props, context) {
     var _this;
@@ -18834,7 +18844,7 @@ var Transition = function(_React$Component) {
     );
   };
   return Transition2;
-}(import_react21.default.Component);
+})(import_react21.default.Component);
 Transition.contextType = TransitionGroupContext_default;
 Transition.propTypes = true ? {
   /**
@@ -19040,7 +19050,7 @@ var removeClass2 = function removeClass3(node, classes) {
     return removeClass(node, c2);
   });
 };
-var CSSTransition = function(_React$Component) {
+var CSSTransition = (function(_React$Component) {
   _inheritsLoose(CSSTransition2, _React$Component);
   function CSSTransition2() {
     var _this;
@@ -19160,7 +19170,7 @@ var CSSTransition = function(_React$Component) {
     }));
   };
   return CSSTransition2;
-}(import_react22.default.Component);
+})(import_react22.default.Component);
 CSSTransition.defaultProps = {
   classNames: ""
 };
@@ -19294,7 +19304,7 @@ var import_prop_types6 = __toESM(require_prop_types());
 var import_react25 = __toESM(require_react());
 var import_react_dom2 = __toESM(require_react_dom());
 
-// node_modules/react-transition-group/node_modules/@babel/runtime/helpers/esm/assertThisInitialized.js
+// node_modules/@babel/runtime/helpers/esm/assertThisInitialized.js
 function _assertThisInitialized7(e) {
   if (void 0 === e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
   return e;
@@ -19411,7 +19421,7 @@ var defaultProps2 = {
     return child;
   }
 };
-var TransitionGroup = function(_React$Component) {
+var TransitionGroup = (function(_React$Component) {
   _inheritsLoose(TransitionGroup2, _React$Component);
   function TransitionGroup2(props, context) {
     var _this;
@@ -19478,7 +19488,7 @@ var TransitionGroup = function(_React$Component) {
     }, import_react24.default.createElement(Component7, props, children2));
   };
   return TransitionGroup2;
-}(import_react24.default.Component);
+})(import_react24.default.Component);
 TransitionGroup.propTypes = true ? {
   /**
    * `<TransitionGroup>` renders a `<div>` by default. You can change this
@@ -19536,7 +19546,7 @@ TransitionGroup.defaultProps = defaultProps2;
 var TransitionGroup_default = TransitionGroup;
 
 // node_modules/react-transition-group/esm/ReplaceTransition.js
-var ReplaceTransition = function(_React$Component) {
+var ReplaceTransition = (function(_React$Component) {
   _inheritsLoose(ReplaceTransition2, _React$Component);
   function ReplaceTransition2() {
     var _this;
@@ -19615,7 +19625,7 @@ var ReplaceTransition = function(_React$Component) {
     }));
   };
   return ReplaceTransition2;
-}(import_react25.default.Component);
+})(import_react25.default.Component);
 ReplaceTransition.propTypes = true ? {
   in: import_prop_types6.default.bool.isRequired,
   children: function children(props, propName) {
@@ -19687,7 +19697,7 @@ var enterRenders = (_enterRenders = {}, _enterRenders[modes.out] = function(_ref
     in: true
   })];
 }, _enterRenders);
-var SwitchTransition = function(_React$Component) {
+var SwitchTransition = (function(_React$Component) {
   _inheritsLoose(SwitchTransition2, _React$Component);
   function SwitchTransition2() {
     var _this;
@@ -19763,7 +19773,7 @@ var SwitchTransition = function(_React$Component) {
     }, component);
   };
   return SwitchTransition2;
-}(import_react26.default.Component);
+})(import_react26.default.Component);
 SwitchTransition.propTypes = true ? {
   /**
    * Transition modes.
@@ -19975,7 +19985,7 @@ var parseDurationOfSingleTransition = function parseDurationOfSingleTransition2(
   }
   return 0;
 };
-var AnimateGroupChild = function(_Component) {
+var AnimateGroupChild = (function(_Component) {
   _inherits7(AnimateGroupChild2, _Component);
   var _super = _createSuper2(AnimateGroupChild2);
   function AnimateGroupChild2() {
@@ -20029,7 +20039,7 @@ var AnimateGroupChild = function(_Component) {
     }
   }]);
   return AnimateGroupChild2;
-}(import_react27.Component);
+})(import_react27.Component);
 AnimateGroupChild.propTypes = {
   appearOptions: import_prop_types8.default.object,
   enterOptions: import_prop_types8.default.object,
@@ -20964,7 +20974,7 @@ function _toPrimitive26(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var PolarRadiusAxis = function(_PureComponent) {
+var PolarRadiusAxis = (function(_PureComponent) {
   function PolarRadiusAxis2() {
     _classCallCheck9(this, PolarRadiusAxis2);
     return _callSuper6(this, PolarRadiusAxis2, arguments);
@@ -21099,7 +21109,7 @@ var PolarRadiusAxis = function(_PureComponent) {
       return tickItem;
     }
   }]);
-}(import_react33.PureComponent);
+})(import_react33.PureComponent);
 _defineProperty25(PolarRadiusAxis, "displayName", "PolarRadiusAxis");
 _defineProperty25(PolarRadiusAxis, "axisType", "radiusAxis");
 _defineProperty25(PolarRadiusAxis, "defaultProps", {
@@ -21257,7 +21267,7 @@ function _toPrimitive27(t, r) {
 }
 var RADIAN3 = Math.PI / 180;
 var eps = 1e-5;
-var PolarAngleAxis = function(_PureComponent) {
+var PolarAngleAxis = (function(_PureComponent) {
   function PolarAngleAxis2() {
     _classCallCheck10(this, PolarAngleAxis2);
     return _callSuper7(this, PolarAngleAxis2, arguments);
@@ -21394,7 +21404,7 @@ var PolarAngleAxis = function(_PureComponent) {
       return tickItem;
     }
   }]);
-}(import_react34.PureComponent);
+})(import_react34.PureComponent);
 _defineProperty26(PolarAngleAxis, "displayName", "PolarAngleAxis");
 _defineProperty26(PolarAngleAxis, "axisType", "angleAxis");
 _defineProperty26(PolarAngleAxis, "defaultProps", {
@@ -21975,7 +21985,7 @@ function _toPrimitive30(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var Pie = function(_PureComponent) {
+var Pie = (function(_PureComponent) {
   function Pie2(props) {
     var _this;
     _classCallCheck11(this, Pie2);
@@ -22299,7 +22309,7 @@ var Pie = function(_PureComponent) {
       }), label);
     }
   }]);
-}(import_react37.PureComponent);
+})(import_react37.PureComponent);
 _Pie = Pie;
 _defineProperty29(Pie, "displayName", "Pie");
 _defineProperty29(Pie, "defaultProps", {
@@ -22608,7 +22618,7 @@ function _toPrimitive31(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var Radar = function(_PureComponent) {
+var Radar = (function(_PureComponent) {
   function Radar2() {
     var _this;
     _classCallCheck12(this, Radar2);
@@ -22802,7 +22812,7 @@ var Radar = function(_PureComponent) {
       return dotItem;
     }
   }]);
-}(import_react38.PureComponent);
+})(import_react38.PureComponent);
 _defineProperty30(Radar, "displayName", "Radar");
 _defineProperty30(Radar, "defaultProps", {
   angleAxisId: 0,
@@ -23121,7 +23131,7 @@ function _toPrimitive33(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var RadialBar = function(_PureComponent) {
+var RadialBar = (function(_PureComponent) {
   function RadialBar2() {
     var _this;
     _classCallCheck13(this, RadialBar2);
@@ -23295,7 +23305,7 @@ var RadialBar = function(_PureComponent) {
       return null;
     }
   }]);
-}(import_react40.PureComponent);
+})(import_react40.PureComponent);
 _defineProperty32(RadialBar, "displayName", "RadialBar");
 _defineProperty32(RadialBar, "defaultProps", {
   angleAxisId: 0,
@@ -23633,7 +23643,7 @@ var createScale = function createScale2(_ref) {
 var isTouch = function isTouch2(e) {
   return e.changedTouches && !!e.changedTouches.length;
 };
-var Brush = function(_PureComponent) {
+var Brush = (function(_PureComponent) {
   function Brush2(props) {
     var _this;
     _classCallCheck14(this, Brush2);
@@ -24082,7 +24092,7 @@ var Brush = function(_PureComponent) {
       return x2 >= valueRange[end] ? end : start;
     }
   }]);
-}(import_react41.PureComponent);
+})(import_react41.PureComponent);
 _defineProperty34(Brush, "displayName", "Brush");
 _defineProperty34(Brush, "defaultProps", {
   height: 40,
@@ -24423,7 +24433,7 @@ function _toPrimitive37(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var Bar = function(_PureComponent) {
+var Bar = (function(_PureComponent) {
   function Bar2() {
     var _this;
     _classCallCheck15(this, Bar2);
@@ -24653,7 +24663,7 @@ var Bar = function(_PureComponent) {
       return null;
     }
   }]);
-}(import_react43.PureComponent);
+})(import_react43.PureComponent);
 _Bar = Bar;
 _defineProperty36(Bar, "displayName", "Bar");
 _defineProperty36(Bar, "defaultProps", {
@@ -24945,7 +24955,7 @@ var rectWithCoords = function rectWithCoords2(_ref3) {
     y: y2
   });
 };
-var ScaleHelper = function() {
+var ScaleHelper = (function() {
   function ScaleHelper2(scale) {
     _classCallCheck16(this, ScaleHelper2);
     this.scale = scale;
@@ -25020,7 +25030,7 @@ var ScaleHelper = function() {
       return new ScaleHelper2(obj);
     }
   }]);
-}();
+})();
 _defineProperty37(ScaleHelper, "EPS", 1e-4);
 var createLabeledScales = function createLabeledScales2(options) {
   var scales = Object.keys(options).reduce(function(res, key) {
@@ -25441,7 +25451,7 @@ function ReferenceLineImpl(props) {
     y2
   })));
 }
-var ReferenceLine = function(_React$Component) {
+var ReferenceLine = (function(_React$Component) {
   function ReferenceLine2() {
     _classCallCheck17(this, ReferenceLine2);
     return _callSuper13(this, ReferenceLine2, arguments);
@@ -25453,7 +25463,7 @@ var ReferenceLine = function(_React$Component) {
       return import_react45.default.createElement(ReferenceLineImpl, this.props);
     }
   }]);
-}(import_react45.default.Component);
+})(import_react45.default.Component);
 _defineProperty38(ReferenceLine, "displayName", "ReferenceLine");
 _defineProperty38(ReferenceLine, "defaultProps", {
   isFront: false,
@@ -25621,7 +25631,7 @@ var getCoordinate = function getCoordinate2(props) {
   }
   return result;
 };
-var ReferenceDot = function(_React$Component) {
+var ReferenceDot = (function(_React$Component) {
   function ReferenceDot2() {
     _classCallCheck18(this, ReferenceDot2);
     return _callSuper14(this, ReferenceDot2, arguments);
@@ -25660,7 +25670,7 @@ var ReferenceDot = function(_React$Component) {
       }));
     }
   }]);
-}(import_react46.default.Component);
+})(import_react46.default.Component);
 _defineProperty39(ReferenceDot, "displayName", "ReferenceDot");
 _defineProperty39(ReferenceDot, "defaultProps", {
   isFront: false,
@@ -25854,7 +25864,7 @@ var getRect = function getRect2(hasX1, hasX2, hasY1, hasY2, props) {
   }
   return rectWithPoints(p1, p2);
 };
-var ReferenceArea = function(_React$Component) {
+var ReferenceArea = (function(_React$Component) {
   function ReferenceArea2() {
     _classCallCheck19(this, ReferenceArea2);
     return _callSuper15(this, ReferenceArea2, arguments);
@@ -25885,7 +25895,7 @@ var ReferenceArea = function(_React$Component) {
       }, filterProps(this.props, true)), rect)), Label.renderCallByParent(this.props, rect));
     }
   }]);
-}(import_react47.default.Component);
+})(import_react47.default.Component);
 _defineProperty40(ReferenceArea, "displayName", "ReferenceArea");
 _defineProperty40(ReferenceArea, "defaultProps", {
   isFront: false,
@@ -26363,7 +26373,7 @@ function _toPrimitive43(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var CartesianAxis = function(_Component) {
+var CartesianAxis = (function(_Component) {
   function CartesianAxis2(props) {
     var _this;
     _classCallCheck20(this, CartesianAxis2);
@@ -26610,7 +26620,7 @@ var CartesianAxis = function(_Component) {
       return tickItem;
     }
   }]);
-}(import_react48.Component);
+})(import_react48.Component);
 _defineProperty42(CartesianAxis, "displayName", "CartesianAxis");
 _defineProperty42(CartesianAxis, "defaultProps", {
   x: 0,
@@ -27199,7 +27209,7 @@ function _toPrimitive45(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var Line = function(_PureComponent) {
+var Line = (function(_PureComponent) {
   function Line2() {
     var _this;
     _classCallCheck21(this, Line2);
@@ -27539,7 +27549,7 @@ var Line = function(_PureComponent) {
       return dotItem;
     }
   }]);
-}(import_react50.PureComponent);
+})(import_react50.PureComponent);
 _defineProperty44(Line, "displayName", "Line");
 _defineProperty44(Line, "defaultProps", {
   xAxisId: 0,
@@ -27768,7 +27778,7 @@ function _toPrimitive46(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var Area = function(_PureComponent) {
+var Area = (function(_PureComponent) {
   function Area2() {
     var _this;
     _classCallCheck22(this, Area2);
@@ -28065,7 +28075,7 @@ var Area = function(_PureComponent) {
       return null;
     }
   }]);
-}(import_react51.PureComponent);
+})(import_react51.PureComponent);
 _Area = Area;
 _defineProperty45(Area, "displayName", "Area");
 _defineProperty45(Area, "defaultProps", {
@@ -28310,7 +28320,7 @@ function _toPrimitive47(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var ZAxis = function(_React$Component) {
+var ZAxis = (function(_React$Component) {
   function ZAxis2() {
     _classCallCheck23(this, ZAxis2);
     return _callSuper19(this, ZAxis2, arguments);
@@ -28322,7 +28332,7 @@ var ZAxis = function(_React$Component) {
       return null;
     }
   }]);
-}(React50.Component);
+})(React50.Component);
 _defineProperty46(ZAxis, "displayName", "ZAxis");
 _defineProperty46(ZAxis, "defaultProps", {
   zAxisId: 0,
@@ -28528,7 +28538,7 @@ function _toPrimitive48(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var Scatter = function(_PureComponent) {
+var Scatter = (function(_PureComponent) {
   function Scatter2() {
     var _this;
     _classCallCheck24(this, Scatter2);
@@ -28750,7 +28760,7 @@ var Scatter = function(_PureComponent) {
       return null;
     }
   }]);
-}(import_react52.PureComponent);
+})(import_react52.PureComponent);
 _Scatter = Scatter;
 _defineProperty47(Scatter, "displayName", "Scatter");
 _defineProperty47(Scatter, "defaultProps", {
@@ -28994,7 +29004,7 @@ function XAxisImpl(_ref) {
     }))
   );
 }
-var XAxis = function(_React$Component) {
+var XAxis = (function(_React$Component) {
   function XAxis2() {
     _classCallCheck25(this, XAxis2);
     return _callSuper21(this, XAxis2, arguments);
@@ -29006,7 +29016,7 @@ var XAxis = function(_React$Component) {
       return React53.createElement(XAxisImpl, this.props);
     }
   }]);
-}(React53.Component);
+})(React53.Component);
 _defineProperty48(XAxis, "displayName", "XAxis");
 _defineProperty48(XAxis, "defaultProps", {
   allowDecimals: true,
@@ -29167,7 +29177,7 @@ var YAxisImpl = function YAxisImpl2(_ref) {
     }))
   );
 };
-var YAxis = function(_React$Component) {
+var YAxis = (function(_React$Component) {
   function YAxis2() {
     _classCallCheck26(this, YAxis2);
     return _callSuper22(this, YAxis2, arguments);
@@ -29179,7 +29189,7 @@ var YAxis = function(_React$Component) {
       return React54.createElement(YAxisImpl, this.props);
     }
   }]);
-}(React54.Component);
+})(React54.Component);
 _defineProperty49(YAxis, "displayName", "YAxis");
 _defineProperty49(YAxis, "defaultProps", {
   allowDuplicatedCategory: true,
@@ -29333,7 +29343,7 @@ function _toPrimitive51(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var AccessibilityManager = function() {
+var AccessibilityManager = (function() {
   function AccessibilityManager2() {
     _classCallCheck27(this, AccessibilityManager2);
     _defineProperty50(this, "activeIndex", 0);
@@ -29412,7 +29422,7 @@ var AccessibilityManager = function() {
       });
     }
   }]);
-}();
+})();
 
 // node_modules/recharts/es6/util/isDomainSpecifiedByUser.js
 function isDomainSpecifiedByUser(domain, allowDataOverflow, axisType) {
@@ -30374,7 +30384,7 @@ var generateCategoricalChart = function generateCategoricalChart2(_ref6) {
       stackGroups
     }, ticksObj), axisObj);
   };
-  var CategoricalChartWrapper = function(_Component) {
+  var CategoricalChartWrapper = (function(_Component) {
     function CategoricalChartWrapper2(_props) {
       var _props$id, _props$throttleDelay;
       var _this;
@@ -31306,7 +31316,7 @@ var generateCategoricalChart = function generateCategoricalChart2(_ref6) {
         }), this.renderClipPath(), renderByOrder(children2, this.renderMap)), this.renderLegend(), this.renderTooltip()));
       }
     }]);
-  }(import_react54.Component);
+  })(import_react54.Component);
   _defineProperty52(CategoricalChartWrapper, "displayName", chartName);
   _defineProperty52(CategoricalChartWrapper, "defaultProps", _objectSpread46({
     layout: "horizontal",
@@ -31799,7 +31809,7 @@ var defaultState = {
   currentRoot: null,
   nestIndex: []
 };
-var Treemap = function(_PureComponent) {
+var Treemap = (function(_PureComponent) {
   function Treemap2() {
     var _this;
     _classCallCheck29(this, Treemap2);
@@ -31977,7 +31987,7 @@ var Treemap = function(_PureComponent) {
           easing: animationEasing,
           isActive: isAnimationActive,
           duration: animationDuration
-        }, import_react55.default.createElement(Layer, event, function() {
+        }, import_react55.default.createElement(Layer, event, (function() {
           if (depth > 2 && !isAnimationFinished) {
             return null;
           }
@@ -31989,7 +31999,7 @@ var Treemap = function(_PureComponent) {
             x: currX,
             y: currY
           }), type, colorPanel);
-        }()));
+        })()));
       });
     }
   }, {
@@ -32195,7 +32205,7 @@ var Treemap = function(_PureComponent) {
       })), arrow, text);
     }
   }]);
-}(import_react55.PureComponent);
+})(import_react55.PureComponent);
 _defineProperty53(Treemap, "displayName", "Treemap");
 _defineProperty53(Treemap, "defaultProps", {
   aspectRatio: 0.5 * (1 + Math.sqrt(5)),
@@ -32648,7 +32658,7 @@ var getPayloadOfTooltip = function getPayloadOfTooltip2(el, type, nameKey) {
   }
   return [];
 };
-var Sankey = function(_PureComponent) {
+var Sankey = (function(_PureComponent) {
   function Sankey2() {
     var _this;
     _classCallCheck30(this, Sankey2);
@@ -32933,7 +32943,7 @@ var Sankey = function(_PureComponent) {
       }));
     }
   }]);
-}(import_react56.PureComponent);
+})(import_react56.PureComponent);
 _defineProperty54(Sankey, "displayName", "Sankey");
 _defineProperty54(Sankey, "defaultProps", {
   nameKey: "name",
@@ -33526,7 +33536,7 @@ function _toPrimitive57(t, r) {
   }
   return ("string" === r ? String : Number)(t);
 }
-var Funnel = function(_PureComponent) {
+var Funnel = (function(_PureComponent) {
   function Funnel2() {
     var _this;
     _classCallCheck31(this, Funnel2);
@@ -33683,7 +33693,7 @@ var Funnel = function(_PureComponent) {
       return null;
     }
   }]);
-}(import_react59.PureComponent);
+})(import_react59.PureComponent);
 _Funnel = Funnel;
 _defineProperty56(Funnel, "displayName", "Funnel");
 _defineProperty56(Funnel, "defaultProps", {

@@ -1,0 +1,76 @@
+name: Referrals GitHub verification
+
+on:
+  pull_request:
+    paths:
+      - "src/**/Referral*.tsx"
+      - "src/**/referrals*.ts"
+      - "src/pages/admin/AdminReferrals.tsx"
+      - "src/pages/admin/AdminProductDetailV2.tsx"
+      - "src/pages/settings/Partnership.tsx"
+      - "src/components/admin/product/ProductReferralSettings.tsx"
+      - "src/components/admin/ContactDetailSheet.tsx"
+      - "src/pages/Dashboard.tsx"
+      - "src/App.tsx"
+      - "supabase/migrations/*referrals*.sql"
+      - "supabase/tests/referrals*.sql"
+      - ".github/workflows/referrals-ci.yml"
+  push:
+    paths:
+      - "src/**/Referral*.tsx"
+      - "src/**/referrals*.ts"
+      - "src/pages/admin/AdminReferrals.tsx"
+      - "src/pages/admin/AdminProductDetailV2.tsx"
+      - "src/pages/settings/Partnership.tsx"
+      - "src/components/admin/product/ProductReferralSettings.tsx"
+      - "supabase/migrations/*referrals*.sql"
+      - "supabase/tests/referrals*.sql"
+      - ".github/workflows/referrals-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Parse migration SQL
+        run: |
+          python3 -m pip install --quiet pglast
+          python3 - <<'PY'
+          from pathlib import Path
+          from pglast import parse_sql
+          migration = next(Path("supabase/migrations").glob("*_referrals_v1_core.sql"))
+          parse_sql(migration.read_text())
+          print(f"Parsed {migration}")
+          PY
+
+      - name: Referral unit tests
+        run: npx vitest run src/lib/referrals.test.ts
+
+      - name: Referral lint
+        run: >-
+          npx eslint
+          src/lib/referrals.ts
+          src/lib/referrals.test.ts
+          src/pages/ReferralCapture.tsx
+          src/components/referrals/ReferralDashboardCard.tsx
+          src/components/admin/contact/ContactReferralsTab.tsx
+          src/pages/admin/AdminReferrals.tsx
+          src/pages/settings/Partnership.tsx
+          src/components/admin/product/ProductReferralSettings.tsx
+          src/pages/Dashboard.tsx
+          src/App.tsx
+          src/lib/adminMenuRegistry.ts
+
+      - name: Production build
+        run: npm run build

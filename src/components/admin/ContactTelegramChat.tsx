@@ -2,12 +2,12 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, typ
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadToTelegramMedia } from "@/components/admin/chat/uploadToTelegramMedia";
+import { getClipboardFile } from "@/lib/clipboardImage";
 import { format, isToday, isYesterday, isSameDay } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -85,6 +85,7 @@ import { OutboundMediaPreview } from "./chat/OutboundMediaPreview";
 import { ChatMediaMessage } from "./chat/ChatMediaMessage";
 import { useTelegramReactions, useToggleTelegramReaction } from "@/hooks/useTelegramReactions";
 import { SmilePlus } from "lucide-react";
+import { TELEGRAM_REACTION_EMOJIS } from "@/lib/telegramReactionEmojis";
 // V1.3: memo-bubble refactor
 import { TelegramMessageBubble } from "./chat/TelegramMessageBubble";
 import { TelegramEventBubble } from "./chat/TelegramEventBubble";
@@ -132,6 +133,10 @@ interface TelegramMessage {
   bot_id?: string | null;
   bot_username?: string | null; // for optimistic UI
   bot_name?: string | null; // for optimistic UI
+  transport?: "bot" | "business";
+  business_connection_id?: string | null;
+  business_account_id?: string | null;
+  message_origin?: "client" | "owner_manual" | "crm_operator" | "bot_automation" | null;
   admin_profile?: {
     full_name: string | null;
     avatar_url: string | null;
@@ -168,17 +173,7 @@ interface TelegramEvent {
 
 type ChatItem = TelegramMessage | TelegramEvent;
 
-// Only Telegram-supported reaction emojis (whitelist)
-const EMOJI_LIST = [
-  "👍", "👎", "❤️", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱",
-  "🤬", "😢", "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡",
-  "🥱", "🥴", "😍", "🐳", "❤️‍🔥", "🌚", "🌭", "💯", "🤣", "⚡",
-  "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈",
-  "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨",
-  "🤝", "✍️", "🤗", "🫡", "🎅", "🎄", "☃️", "💅", "🤪", "🗿",
-  "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂️",
-  "🤷", "🤷‍♀️", "😡",
-];
+const EMOJI_LIST = TELEGRAM_REACTION_EMOJIS;
 
 // V1.3: EVENT_ICONS moved to ./chat/telegramBubbleTypes,
 // text formatters moved to ./chat/telegramFormat.
@@ -207,10 +202,14 @@ export function ContactTelegramChat({
   const [editingMessage, setEditingMessage] = useState<TelegramMessage | null>(null);
   const [editText, setEditText] = useState("");
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+  const [selectedBusinessAccountId, setSelectedBusinessAccountId] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<TelegramMessage | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [isNearBottomState, setIsNearBottomState] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [hasOlderMessages, setHasOlderMessages] = useState(true);
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
+  const [isRefreshingMedia, setIsRefreshingMedia] = useState(false);
 
   // Fetch available bots
   const { data: telegramBots = [] } = useQuery({
@@ -233,6 +232,47 @@ export function ContactTelegramChat({
   }, [telegramBots]);
 
   const activeBots = useMemo(() => telegramBots.filter(b => b.status === "active"), [telegramBots]);
+  const { data: businessContext } = useQuery({
+    queryKey: ["telegram-business-dialog-context", userId],
+    queryFn: async () => {
+      // Generated DB types are refreshed only after the migration is deployed.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from("telegram_messages")
+        .select("business_connection_id, business_account_id, bot_id")
+        .eq("user_id", userId)
+        .eq("transport", "business")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data as { business_connection_id: string; business_account_id: string | null; bot_id: string } | null;
+    },
+    enabled: !!userId,
+    staleTime: 30_000,
+  });
+  const { data: businessAccount } = useQuery({
+    queryKey: ["telegram-business-sender", businessContext?.business_account_id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("telegram_business_connections")
+        .select("id, bot_id, first_name, last_name, username, can_reply, is_enabled")
+        .eq("id", businessContext!.business_account_id!)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!businessContext?.business_account_id,
+    staleTime: 30_000,
+  });
+  const businessSenderName = useMemo(() => {
+    if (!businessAccount) return "Telegram Business";
+    const fullName = [businessAccount.first_name, businessAccount.last_name].filter(Boolean).join(" ").trim();
+    return fullName || (businessAccount.username ? `@${businessAccount.username}` : "Telegram Business");
+  }, [businessAccount]);
+  const selectedSender = selectedBusinessAccountId
+    ? `business:${selectedBusinessAccountId}`
+    : selectedBotId ? `bot:${selectedBotId}` : "";
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const didInitialScrollRef = useRef(false);
@@ -382,7 +422,7 @@ export function ContactTelegramChat({
   // Two-step read for chat first paint.
   //   Stage 1 (lean): last 20 messages, message_text ≤ 4KB, no reply_markup/meta.
   //     Drives `isLoading` — the only critical path.
-  //   Stage 2 (full): last 50 messages, full text/meta. Runs after Stage 1
+  //   Stage 2 (full): last 200 messages, full text/meta. Runs after Stage 1
   //     lands, enriches the cache. Never blocks first paint.
   // Both stages fill the same `["telegram-messages", userId]` cache; downstream
   // optimistic writes (send/edit/delete) keep pointing at that single key.
@@ -458,16 +498,20 @@ export function ContactTelegramChat({
     queryFn: async () => {
       const { data, error } = await supabase.rpc("admin_get_telegram_messages_fast_v1", {
         p_user_id: userId,
-        p_limit: 50,
+        p_limit: 200,
       });
       if (error) throw error;
       const nextMessages = mapRowsToMessages((data || []) as any[]);
+      setHasOlderMessages(nextMessages.length === 200);
       const prevMessages =
         (queryClient.getQueryData(["telegram-messages", userId]) as TelegramMessage[] | undefined) || [];
       return mergeByIdPreferEnriched(prevMessages, nextMessages);
     },
     enabled: !!userId && fullEnabled,
-    staleTime: 60_000,
+    // The lean stage seeds this same cache key. It must be stale when Stage 2
+    // becomes enabled, otherwise React Query treats the 20-row lean seed as a
+    // complete fresh result and silently skips the full-history request.
+    staleTime: 0,
     gcTime: 10 * 60_000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
@@ -489,6 +533,69 @@ export function ContactTelegramChat({
   // `messagesLoading` is bound to Stage 1 only — Stage 2 never blocks paint.
   const messages = fullData ?? leanData;
   const messagesLoading = leanLoading && !leanData && !fullData;
+
+  useEffect(() => {
+    setHasOlderMessages(true);
+    setIsLoadingOlderMessages(false);
+  }, [userId]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (isLoadingOlderMessages || !messages?.length) return;
+
+    const persistedMessages = messages.filter(
+      (item) => item.id && !item.id.startsWith("temp-") && item.created_at,
+    );
+    if (persistedMessages.length === 0) {
+      setHasOlderMessages(false);
+      return;
+    }
+
+    const oldest = persistedMessages.reduce((candidate, item) => {
+      const candidateTime = new Date(candidate.created_at).getTime();
+      const itemTime = new Date(item.created_at).getTime();
+      if (itemTime !== candidateTime) return itemTime < candidateTime ? item : candidate;
+      return item.id < candidate.id ? item : candidate;
+    });
+
+    const viewport = scrollRef.current?.querySelector(
+      "[data-radix-scroll-area-viewport]",
+    ) as HTMLElement | null;
+    const previousHeight = viewport?.scrollHeight ?? 0;
+    const previousTop = viewport?.scrollTop ?? 0;
+
+    setIsLoadingOlderMessages(true);
+    try {
+      const { data, error } = await supabase.rpc(
+        "admin_get_telegram_messages_page_v2" as any,
+        {
+          p_user_id: userId,
+          p_before_created_at: oldest.created_at,
+          p_before_id: oldest.id,
+          p_limit: 100,
+        } as any,
+      );
+      if (error) throw error;
+
+      const older = mapRowsToMessages((data || []) as any[]);
+      queryClient.setQueryData(
+        ["telegram-messages", userId],
+        (current: TelegramMessage[] | undefined) =>
+          mergeByIdPreferEnriched(current || messages, older),
+      );
+      setHasOlderMessages(older.length === 100);
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!viewport) return;
+          viewport.scrollTop = previousTop + (viewport.scrollHeight - previousHeight);
+        });
+      });
+    } catch (error) {
+      toast.error("Не удалось загрузить предыдущие сообщения: " + formatChatError(error));
+    } finally {
+      setIsLoadingOlderMessages(false);
+    }
+  }, [isLoadingOlderMessages, messages, queryClient, userId]);
 
   // Fetch events from telegram_logs - optimized
   const { data: events, isLoading: eventsLoading, refetch: refetchEvents } = useQuery({
@@ -546,6 +653,39 @@ export function ContactTelegramChat({
     refetchOnWindowFocus: false,
   });
 
+  // Telegram does not echo a bot's own sendMessage response back through the
+  // webhook. Historical join decisions therefore exist only in the access
+  // audit. Surface those records so old technical replies are not invisible;
+  // new replies are persisted as normal outgoing telegram_messages by webhook.
+  const { data: accessEvents } = useQuery({
+    queryKey: ["telegram-access-events", telegramUserId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("telegram_access_audit")
+        .select("id, event_type, created_at, reason, meta")
+        .eq("telegram_user_id", telegramUserId!)
+        .in("event_type", ["JOIN_APPROVED", "JOIN_DECLINED"])
+        .order("created_at", { ascending: true })
+        .limit(50);
+      if (error) throw error;
+      return (data || []).map((event: any) => ({
+        id: `access-${event.id}`,
+        type: "event" as const,
+        action: event.event_type,
+        status: "success",
+        created_at: event.created_at,
+        message_text:
+          event.event_type === "JOIN_DECLINED"
+            ? "Заявка отклонена. Активный доступ к клубу не был найден."
+            : "Заявка одобрена. Доступ в клуб открыт.",
+        meta: { ...(event.meta || {}), reason: event.reason || null, source: "telegram_access_audit" },
+      })) as TelegramEvent[];
+    },
+    enabled: !!telegramUserId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
   // Combine and sort messages + telegram events + billing events.
   // PATCH: Hide event-pills that mirror a real outgoing telegram_messages bubble.
   // Rules:
@@ -566,6 +706,8 @@ export function ContactTelegramChat({
     // bubble in telegram_messages, so the event-pill is redundant.
     'AUTO_GRANT',
     'MANUAL_GRANT',
+    'JOIN_APPROVED',
+    'JOIN_DECLINED',
     // subscription_reminder_*d are matched via prefix below
   ]);
 
@@ -604,10 +746,11 @@ export function ContactTelegramChat({
     return [
       ...msgs,
       ...((events || []).filter((e) => !isMirrored(e as TelegramEvent))),
+      ...(accessEvents || []),
       ...(billingEvents || []),
     ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, events, billingEvents]);
+  }, [messages, events, accessEvents, billingEvents]);
 
   // V1.3: reactions moved above chatItemsWithMeta so precompute has access.
   const telegramMessageIds = useMemo(
@@ -711,7 +854,8 @@ export function ContactTelegramChat({
 
       const isEdited = !!(metaAny.edited ?? (msg as any).edited);
       const isDeleted = !!(msg.status === "deleted" || metaAny.deleted || (msg as any).deleted);
-      const canEdit = msg.direction === "outgoing" && !!msg.message_id && msg.status === "sent" && !fileType && !isDeleted;
+      const isManualBusinessMessage = (msg.meta as any)?.message_origin === "owner_manual";
+      const canEdit = msg.direction === "outgoing" && !!msg.message_id && msg.status === "sent" && !fileType && !isDeleted && !isManualBusinessMessage;
       const canDelete = msg.direction === "outgoing" && !!msg.message_id && msg.status === "sent" && !isDeleted;
 
       // Quote precompute (H4 fix — no lookup in bubble render).
@@ -742,9 +886,11 @@ export function ContactTelegramChat({
       const botNameRaw = msg.bot_name ?? joined?.bot_name ?? fromMap?.bot_name ?? null;
       const botUsernameRaw = msg.bot_username ?? joined?.bot_username ?? fromMap?.bot_username ?? null;
       const botLabelName = botNameRaw?.trim();
-      const botLabel = botLabelName
-        ? botLabelName
-        : (botUsernameRaw?.trim() ? `@${botUsernameRaw.trim()}` : null);
+      const botLabel = msg.direction === "outgoing" && metaAny.source === "telegram_business"
+        ? (metaAny.message_origin === "owner_manual" ? "Екатерина · вручную" : "Екатерина · CRM")
+        : botLabelName
+          ? botLabelName
+          : (botUsernameRaw?.trim() ? `@${botUsernameRaw.trim()}` : null);
 
       // Automated badge.
       const automated = msg.direction === "outgoing" && !msg.sent_by_admin && !!(msg.meta as any)?.automated;
@@ -841,17 +987,44 @@ export function ContactTelegramChat({
     });
   }, [messages]);
 
-  // V1.2: Reset selectedBotId immediately on dialog switch so the footer
-  // doesn't flash the previous chat's bot before the useEffect below
-  // resolves the correct one from localStorage/messages/active bots.
+  // Reset sender immediately on dialog switch so the footer doesn't flash
+  // the previous chat's sender while the next dialog context is loading.
   useEffect(() => {
     setSelectedBotId(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setSelectedBusinessAccountId(null);
   }, [userId]);
 
-  // === DEFAULT BOT SELECTION ===
+  // === DEFAULT SENDER SELECTION ===
   useEffect(() => {
-    if (!messages || messages.length === 0 || activeBots.length === 0) return;
+    if (!messages || messages.length === 0) return;
+
+    const savedSender = localStorage.getItem(`tg_sender_${userId}`);
+    if (savedSender?.startsWith("business:") && businessAccount?.is_enabled && businessAccount.can_reply) {
+      const accountId = savedSender.slice("business:".length);
+      if (accountId === businessAccount.id) {
+        setSelectedBusinessAccountId(accountId);
+        setSelectedBotId(null);
+        return;
+      }
+    }
+    if (savedSender?.startsWith("bot:")) {
+      const botId = savedSender.slice("bot:".length);
+      if (activeBots.some(b => b.id === botId)) {
+        setSelectedBotId(botId);
+        setSelectedBusinessAccountId(null);
+        return;
+      }
+    }
+
+    // A personal-account dialog defaults to the same personal account, while
+    // still allowing the operator to deliberately switch to an ordinary bot.
+    if (businessAccount?.is_enabled && businessAccount.can_reply) {
+      setSelectedBusinessAccountId(businessAccount.id);
+      setSelectedBotId(null);
+      return;
+    }
+
+    if (activeBots.length === 0) return;
 
     const savedBotId = localStorage.getItem(`tg_bot_${userId}`);
     if (savedBotId && activeBots.some(b => b.id === savedBotId)) {
@@ -869,11 +1042,25 @@ export function ContactTelegramChat({
     const primaryBot = activeBots.find(b => b.is_primary);
     if (primaryBot) { setSelectedBotId(primaryBot.id); return; }
     if (activeBots[0]) { setSelectedBotId(activeBots[0].id); }
-  }, [messages, activeBots, userId]);
+  }, [messages, activeBots, userId, businessAccount]);
 
   const handleBotChange = (botId: string) => {
     setSelectedBotId(botId);
+    setSelectedBusinessAccountId(null);
     localStorage.setItem(`tg_bot_${userId}`, botId);
+    localStorage.setItem(`tg_sender_${userId}`, `bot:${botId}`);
+  };
+
+  const handleSenderChange = (value: string) => {
+    if (value.startsWith("business:")) {
+      const accountId = value.slice("business:".length);
+      setSelectedBusinessAccountId(accountId);
+      setSelectedBotId(null);
+    } else {
+      handleBotChange(value.slice("bot:".length));
+      return;
+    }
+    localStorage.setItem(`tg_sender_${userId}`, value);
   };
 
   const refetch = useCallback(() => {
@@ -898,7 +1085,6 @@ export function ContactTelegramChat({
     const vp = getScrollViewport();
     if (!vp) return;
     vp.scrollTo({ top: vp.scrollHeight, behavior });
-    bottomRef.current?.scrollIntoView({ block: "end", behavior });
   }, [getScrollViewport]);
 
   const startStickyScroll = useCallback((durationMs = 1800) => {
@@ -1213,6 +1399,9 @@ export function ContactTelegramChat({
       "Failed to send message": "Не удалось отправить сообщение",
       "Bad Request: have no rights to send a message": "Нет прав для отправки сообщения",
       "Bad Request: user not found": "Пользователь не найден",
+      "business_reply_unavailable": "Telegram не разрешает отвечать от имени подключённого аккаунта",
+      "BUSINESS_CONNECTION_INVALID": "Подключение личного Telegram изменилось или было отключено",
+      "BUSINESS_PEER_USAGE_MISSING": "Клиент должен снова написать Екатерине, прежде чем можно будет ответить из системы",
     };
     
     // Check for exact match first
@@ -1314,6 +1503,8 @@ export function ContactTelegramChat({
           message: text || "",
           file: fileData,
           bot_id: selectedBotId || undefined,
+          sender_type: selectedBusinessAccountId ? "business" : "bot",
+          business_account_id: selectedBusinessAccountId || undefined,
           reply_to_message_id: replyToMessageId ?? undefined,
         },
       });
@@ -1350,9 +1541,13 @@ export function ContactTelegramChat({
         message_id: null,
         status: "pending",
         created_at: new Date().toISOString(),
-        bot_id: selectedBotId,
+        bot_id: selectedBusinessAccountId ? businessAccount?.bot_id || null : selectedBotId,
         bot_username: selectedBotId ? botsMap.get(selectedBotId)?.bot_username || null : null,
         bot_name: selectedBotId ? botsMap.get(selectedBotId)?.bot_name || null : null,
+        transport: selectedBusinessAccountId ? "business" : "bot",
+        business_connection_id: selectedBusinessAccountId ? businessContext?.business_connection_id || null : null,
+        business_account_id: selectedBusinessAccountId,
+        message_origin: selectedBusinessAccountId ? "crm_operator" : null,
         meta: selectedFile ? {
           file_type: selectedFileType,
           file_name: selectedFile.name,
@@ -1478,7 +1673,11 @@ export function ContactTelegramChat({
       return vp.scrollHeight - vp.scrollTop - vp.clientHeight < 120;
     };
 
-    const shouldScroll = !didInitialScrollRef.current || isNearBottom();
+    // Decide from the position captured BEFORE React prepends/enriches rows.
+    // Stage 2 adds older history above the initial 20 messages; measuring the
+    // DOM after that prepend incorrectly looks like the operator scrolled up.
+    const shouldScroll =
+      !didInitialScrollRef.current || shouldStickToBottomRef.current;
     if (!shouldScroll) return;
 
     // Скрытый pin-to-bottom: моментально, без анимации.
@@ -1486,15 +1685,21 @@ export function ContactTelegramChat({
       const vp = getViewport();
       if (!vp) return;
       vp.scrollTop = vp.scrollHeight;
-      bottomRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
     };
 
-    // 1) Sticky-loop первые 1.5 секунды: на КАЖДЫЙ кадр прижимаем к низу,
-    //    пока контент (картинки, события, медиа) догружается и меняет высоту.
-    //    Это самый надёжный способ — даже если ResizeObserver/onload не сработает,
-    //    rAF-цикл всё равно поймает рост высоты.
+    // 1) Пока первая раскладка и медиа догружаются, держим ленту у конца.
+    // Любой явный жест пользователя немедленно отменяет автопрокрутку:
+    // интерфейс не должен "отбирать" скролл в первые секунды после открытия.
     let stickyActive = !didInitialScrollRef.current;
     const stickyDeadline = performance.now() + 1500;
+    const releaseInitialPin = () => {
+      stickyActive = false;
+      didInitialScrollRef.current = true;
+      shouldStickToBottomRef.current = false;
+    };
+    viewport.addEventListener("wheel", releaseInitialPin, { passive: true });
+    viewport.addEventListener("touchstart", releaseInitialPin, { passive: true });
+    viewport.addEventListener("pointerdown", releaseInitialPin, { passive: true });
     const stickyLoop = () => {
       if (!stickyActive) return;
       pinToBottom();
@@ -1513,7 +1718,7 @@ export function ContactTelegramChat({
         pinToBottom();
         return;
       }
-      if (isNearBottom()) pinToBottom();
+      if (shouldStickToBottomRef.current) pinToBottom();
     });
     const inner = viewport.firstElementChild as HTMLElement | null;
     if (inner) ro.observe(inner);
@@ -1521,7 +1726,7 @@ export function ContactTelegramChat({
 
     // 3) Картинки и видео — каждая догрузка двигает scrollHeight.
     const onMediaLoad = () => {
-      if (isNearBottom()) pinToBottom();
+      if (shouldStickToBottomRef.current) pinToBottom();
     };
     const attachLoadListeners = (root: ParentNode) => {
       const medias = Array.from(
@@ -1558,13 +1763,16 @@ export function ContactTelegramChat({
       }
       if (hasNewMedia) {
         attachLoadListeners(viewport);
-        if (isNearBottom()) pinToBottom();
+        if (shouldStickToBottomRef.current) pinToBottom();
       }
     });
     mo.observe(viewport, { childList: true, subtree: true });
 
     return () => {
       stickyActive = false;
+      viewport.removeEventListener("wheel", releaseInitialPin);
+      viewport.removeEventListener("touchstart", releaseInitialPin);
+      viewport.removeEventListener("pointerdown", releaseInitialPin);
       ro.disconnect();
       mo.disconnect();
     };
@@ -1582,7 +1790,13 @@ export function ContactTelegramChat({
       const near =
         viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 200;
       setIsNearBottomState(near);
-      if (near) setUnreadCount(0);
+      if (near) {
+        setUnreadCount(0);
+      } else {
+        // A manual scroll away from the end always wins over any active
+        // sticky loop started by realtime/media updates.
+        shouldStickToBottomRef.current = false;
+      }
     };
 
     onScroll();
@@ -1598,7 +1812,7 @@ export function ContactTelegramChat({
     if (vp) {
       vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
     }
-    bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    shouldStickToBottomRef.current = true;
     setUnreadCount(0);
   }, []);
 
@@ -1630,23 +1844,41 @@ export function ContactTelegramChat({
     }
   };
 
+  const acceptSelectedFile = (
+    file: File,
+    type?: "photo" | "video" | "audio" | "voice" | "video_note" | "document",
+  ) => {
+    const maxSize = type === "video" || type === "video_note" ? 50 * 1024 * 1024 : 20 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast.error(`Файл слишком большой (макс. ${maxSize / 1024 / 1024} МБ)`);
+      return;
+    }
+    setSelectedFile(file);
+    setSelectedFileType(type || null);
+    setShowMediaMenu(false);
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type?: "photo" | "video" | "audio" | "voice" | "video_note" | "document") => {
     const file = e.target.files?.[0];
-    if (file) {
-      // Validate file size
-      const maxSize = type === "video" || type === "video_note" ? 50 * 1024 * 1024 : 20 * 1024 * 1024;
-      if (file.size > maxSize) {
-        toast.error(`Файл слишком большой (макс. ${maxSize / 1024 / 1024} МБ)`);
-        return;
-      }
-      setSelectedFile(file);
-      setSelectedFileType(type || null);
-      setShowMediaMenu(false);
-    }
+    if (file) acceptSelectedFile(file, type);
     // Reset input
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const file = getClipboardFile(e.clipboardData);
+    if (!file) return;
+    e.preventDefault();
+    const type = file.type.startsWith("image/")
+      ? "photo"
+      : file.type.startsWith("video/")
+        ? "video"
+        : file.type.startsWith("audio/")
+          ? "audio"
+          : "document";
+    acceptSelectedFile(file, type);
   };
 
   const insertEmoji = (emoji: string) => {
@@ -1690,9 +1922,30 @@ export function ContactTelegramChat({
     scrollToMessage(dbId);
   }, [scrollToMessage]);
 
-  const handleMediaRefresh = useCallback(() => {
-    refetchMessages();
-  }, [refetchMessages]);
+  const handleMediaRefresh = useCallback(async (messageDbId: string) => {
+    if (isRefreshingMedia) return;
+    setIsRefreshingMedia(true);
+    try {
+      // Простого refetch недостаточно для старых pending-записей: он лишь
+      // повторно читает тот же статус. Сначала точечно запускаем защищённый
+      // worker для текущего диалога, затем обновляем кэш сообщений.
+      const { error } = await supabase.functions.invoke("telegram-admin-chat", {
+        body: {
+          action: "process_media_jobs",
+          user_id: userId,
+          db_message_id: messageDbId,
+          limit: 20,
+        },
+      });
+      if (error) throw error;
+      await refetchMessages();
+    } catch (error) {
+      console.error("[ContactTelegramChat] media refresh failed", error);
+      toast.error("Не удалось обновить вложение");
+    } finally {
+      setIsRefreshingMedia(false);
+    }
+  }, [isRefreshingMedia, refetchMessages, userId]);
 
   if (!telegramUserId) {
     return (
@@ -1749,6 +2002,23 @@ export function ContactTelegramChat({
               </div>
             ) : (
               <div className="space-y-3 px-3 w-full max-w-full box-border" data-testid="telegram-message-list">
+                {hasOlderMessages && (
+                  <div className="flex justify-center pb-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={loadOlderMessages}
+                      disabled={isLoadingOlderMessages}
+                      data-testid="telegram-load-older-messages"
+                    >
+                      {isLoadingOlderMessages && (
+                        <RefreshCw className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      )}
+                      Показать предыдущие сообщения
+                    </Button>
+                  </div>
+                )}
                 {chatItemsWithMeta.map(({ key, showDateSeparator, dateLabel, bubble }) => (
                   <div key={key}>
                     {showDateSeparator && (
@@ -1819,16 +2089,21 @@ export function ContactTelegramChat({
             родитель уже ограничен по высоте (Telegram-вкладка),
             поэтому композер всегда виден внизу карточки. */}
         <div className="shrink-0 border-t bg-background px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)]">
-          {activeBots.length > 1 && (
+          {(activeBots.length > 0 || (businessAccount?.is_enabled && businessAccount.can_reply)) && (
             <div className="flex items-center gap-1.5 pb-1.5">
-              <Select value={selectedBotId || ""} onValueChange={handleBotChange}>
-                <SelectTrigger className="h-7 w-auto min-w-[100px] text-[11px] rounded-lg border-border/40 bg-muted/30 gap-1 px-2">
+              <Select value={selectedSender} onValueChange={handleSenderChange}>
+                <SelectTrigger className="h-7 w-auto min-w-[140px] text-[11px] rounded-lg border-border/40 bg-muted/30 gap-1 px-2">
                   <Bot className="h-3 w-3 shrink-0" />
-                  <SelectValue placeholder="Бот" />
+                  <SelectValue placeholder="Выберите отправителя" />
                 </SelectTrigger>
                 <SelectContent>
+                  {businessAccount?.is_enabled && businessAccount.can_reply && (
+                    <SelectItem value={`business:${businessAccount.id}`} className="text-xs">
+                      {businessSenderName} · личный Telegram
+                    </SelectItem>
+                  )}
                   {activeBots.map(bot => (
-                    <SelectItem key={bot.id} value={bot.id} className="text-xs">
+                    <SelectItem key={bot.id} value={`bot:${bot.id}`} className="text-xs">
                       {bot.bot_name?.trim() ? bot.bot_name : `@${bot.bot_username}`}
                     </SelectItem>
                   ))}
@@ -2010,6 +2285,7 @@ export function ContactTelegramChat({
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyPress}
+            onPaste={handlePaste}
             placeholder="Введите сообщение..."
             className="min-h-[56px] max-h-[112px] resize-none flex-1 overflow-y-auto leading-snug"
             disabled={sendMutation.isPending || isUploading}
@@ -2017,9 +2293,9 @@ export function ContactTelegramChat({
           <div className="flex shrink-0 flex-col gap-1 items-end">
             <Button
               onClick={handleSend}
-              disabled={(!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || !selectedBotId}
+              disabled={(!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || (!selectedBotId && !selectedBusinessAccountId)}
               className="h-12 w-12 p-0 shrink-0"
-              title={!selectedBotId ? "Выберите бота для отправки" : undefined}
+              title={!selectedBotId && !selectedBusinessAccountId ? "Выберите отправителя" : undefined}
             >
               <Send className="w-4 h-4" />
             </Button>

@@ -25,6 +25,14 @@ export interface AutowebResumeContract {
   last_video_position_seconds: number;
 }
 
+/** Presentation counter for the room header. `real_count` is never sent to a
+ * regular viewer; it is present only for staff diagnostics. */
+export interface AutowebViewerCount {
+  visible: boolean;
+  displayed_count: number | null;
+  real_count?: number;
+}
+
 export interface AutowebRoomStateResponse {
   status: "ok" | "not_found" | "unsupported_event_type" | "error";
   phase: AutowebPhase;
@@ -38,7 +46,16 @@ export interface AutowebRoomStateResponse {
   timeline_enabled: boolean;
   chat_enabled: boolean;
   questions_enabled: boolean;
+  /** Source history is disabled for replay unless replay.show_chat_history is enabled. */
+  history_enabled: boolean;
+  /**
+   * Точка позднего входа, вычисленная сервером для текущей live-фазы.
+   * Для replay/pre_show это 0; сохранённая пользовательская позиция остаётся
+   * отдельным resume-контрактом и при включённом resume имеет приоритет в UI.
+   */
+  session_playback_position_seconds: number;
   resume: AutowebResumeContract;
+  viewer_count: AutowebViewerCount;
   viewer_timezone: string;
   event_timezone: string;
   /** Для UI: видео-источник (ID Kinescope), уже подтверждённый правом на эту session. */

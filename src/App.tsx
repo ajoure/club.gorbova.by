@@ -11,6 +11,7 @@ import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { SectionGuard } from "@/components/layout/SectionGuard";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { GlobalPaymentHandler } from "@/components/payment/GlobalPaymentHandler";
+import { ReferralAttributionSync } from "@/components/referrals/ReferralAttributionSync";
 import { initExternalLinkKillSwitch, BUILD_MARKER } from "@/lib/externalLinkKillSwitch";
 import { LazyErrorBoundary } from "@/components/system/LazyErrorBoundary";
 
@@ -28,6 +29,9 @@ const OAuthConsent = lazy(() => import("./pages/OAuthConsent"));
 const ConnectAgent = lazy(() => import("./pages/ConnectAgent"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
+const ReferralCapture = lazy(() => import("./pages/ReferralCapture"));
+// Native ЦБ landing. /cb-native-preview remains as a noindex acceptance route.
+const CbNativePreview = lazy(() => import("./pages/CbNativePreview"));
 
 // DEV-only fixture stand for the slot bridge regression harness. Guarded by
 // import.meta.env.DEV; production bundles never register the route below.
@@ -66,10 +70,10 @@ const PaymentResultPage = lazy(() => import("./pages/PaymentResultPage"));
 const Documentation = lazy(() => import("./pages/Documentation"));
 const Help = lazy(() => import("./pages/Help"));
 const ProfileSettings = lazy(() => import("./pages/settings/Profile"));
-const PaymentMethodsSettings = lazy(() => import("./pages/settings/PaymentMethods"));
 const ConsentsSettings = lazy(() => import("./pages/settings/Consents"));
 const LegalDetailsSettings = lazy(() => import("./pages/settings/LegalDetails"));
 const UserRequisitesSettings = lazy(() => import("./pages/settings/UserRequisites"));
+const PartnershipSettings = lazy(() => import("./pages/settings/Partnership"));
 const Learning = lazy(() => import("./pages/Learning"));
 const Consultation = lazy(() => import("./pages/Consultation"));
 const CourseAccountant = lazy(() => import("./pages/CourseAccountant"));
@@ -85,6 +89,8 @@ const Money = lazy(() => import("./pages/Money"));
 const AI = lazy(() => import("./pages/AI"));
 const DocumentGeneration = lazy(() => import("./pages/DocumentGeneration"));
 const Knowledge = lazy(() => import("./pages/Knowledge"));
+const LegislationDocument = lazy(() => import("./pages/LegislationDocument"));
+const LegalShare = lazy(() => import("./pages/LegalShare"));
 const LiveEvents = lazy(() => import("./pages/LiveEvents"));
 const BusinessTraining = lazy(() => import("./pages/BusinessTraining"));
 const BusinessTrainingContent = lazy(() => import("./pages/BusinessTrainingContent"));
@@ -142,7 +148,7 @@ const AdminSupport = lazy(() => import("./pages/admin/AdminSupport"));
 const AdminNews = lazy(() => import("./pages/admin/AdminNews"));
 const AdminCommunication = lazy(() => import("./pages/admin/AdminCommunication"));
 const AdminEditorial = lazy(() => import("./pages/admin/AdminEditorial"));
-const AdminIlex = lazy(() => import("./pages/admin/AdminIlex"));
+const AdminLegislation = lazy(() => import("./pages/admin/AdminLegislation"));
 const AdminAI = lazy(() => import("./pages/admin/AdminAI"));
 const AdminDocuments = lazy(() => import("./pages/admin/AdminDocuments"));
 const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingInsights"));
@@ -155,6 +161,7 @@ const AdminKbImport = lazy(() => import("./pages/admin/AdminKbImport"));
 const AdminSiteBuilder = lazy(() => import("./pages/admin/AdminSiteBuilder"));
 const AdminSiteEditor = lazy(() => import("./pages/admin/AdminSiteEditor"));
 const AdminLiveEvents = lazy(() => import("./pages/admin/AdminLiveEvents"));
+const AdminReferrals = lazy(() => import("./pages/admin/AdminReferrals"));
 const LiveEvent = lazy(() => import("./pages/LiveEvent"));
 const LiveAccessEntry = lazy(() => import("./pages/LiveAccessEntry"));
 // AdminBepaidSubscriptions removed - redirects to /admin/payments/bepaid-subscriptions
@@ -199,11 +206,13 @@ const App = () => {
             <HelpModeProvider>
               <ScrollToTop />
               <GlobalPaymentHandler />
+              <ReferralAttributionSync />
               <div className="impersonation-offset">
                 <Routes>
               {/* Public routes */}
               <Route path="/" element={<DomainHomePage />} />
               <Route path="/auth" element={<LazyRoute><Auth /></LazyRoute>} />
+              <Route path="/r/:partnerCode" element={<LazyRoute><ReferralCapture /></LazyRoute>} />
               <Route path="/auth/v1/verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
               <Route path="/auth-verify" element={<LazyRoute><AuthVerifyProxy /></LazyRoute>} />
               <Route path="/.lovable/oauth/consent" element={<LazyRoute><OAuthConsent /></LazyRoute>} />
@@ -226,13 +235,18 @@ const App = () => {
               <Route path="/instruction" element={<LazyRoute><Instruction /></LazyRoute>} />
               <Route path="/contacts" element={<LazyRoute><Contacts /></LazyRoute>} />
               <Route path="/unsubscribe" element={<LazyRoute><Unsubscribe /></LazyRoute>} />
+              <Route path="/cb" element={<LazyRoute><CbNativePreview /></LazyRoute>} />
+              <Route path="/cb-native-preview" element={<LazyRoute><CbNativePreview /></LazyRoute>} />
 
               <Route path="/help" element={<LazyRoute><Help /></LazyRoute>} />
+              <Route path="/cons" element={<Navigate to="/consultation" replace />} />
               <Route path="/consultation" element={<LazyRoute><Consultation /></LazyRoute>} />
               <Route path="/course-accountant" element={<LazyRoute><CourseAccountant /></LazyRoute>} />
               <Route path="/close-year" element={<LazyRoute><CloseYear /></LazyRoute>} />
               <Route path="/business-training" element={<LazyRoute><BusinessTraining /></LazyRoute>} />
               <Route path="/club" element={<Landing />} />
+              <Route path="/knowledge/laws/:slug" element={<LazyRoute><LegislationDocument /></LazyRoute>} />
+              <Route path="/l/:ref/:anchor?" element={<LazyRoute><LegalShare /></LazyRoute>} />
               
               <Route path="/banned" element={<LazyRoute><Banned /></LazyRoute>} />
               <Route path="/live" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="live"><LiveEvents /></SectionGuard></LazyRoute></ProtectedRoute>} />
@@ -272,10 +286,11 @@ const App = () => {
               {/* Settings routes */}
               <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
               <Route path="/settings/profile" element={<ProtectedRoute><LazyRoute><ProfileSettings /></LazyRoute></ProtectedRoute>} />
-              <Route path="/settings/payment-methods" element={<ProtectedRoute><LazyRoute><PaymentMethodsSettings /></LazyRoute></ProtectedRoute>} />
+              <Route path="/settings/payment-methods" element={<Navigate to="/purchases" replace />} />
               <Route path="/settings/legal-details" element={<ProtectedRoute><LazyRoute><LegalDetailsSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/user-requisites" element={<ProtectedRoute><LazyRoute><UserRequisitesSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/consents" element={<ProtectedRoute><LazyRoute><ConsentsSettings /></LazyRoute></ProtectedRoute>} />
+              <Route path="/settings/partnership" element={<ProtectedRoute><LazyRoute><PartnershipSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/subscriptions" element={<Navigate to="/purchases" replace />} />
               
               {/* Admin routes - CRM */}
@@ -346,6 +361,7 @@ const App = () => {
               <Route path="/admin/payments/auto-renewals" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/statement" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/links" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/payments/invoices" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/bepaid-subscriptions" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/payment-issues" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/bepaid-subscriptions" element={<Navigate to="/admin/payments/bepaid-subscriptions" replace />} />
@@ -361,7 +377,7 @@ const App = () => {
               {/* Admin routes - Editorial */}
               <Route path="/admin/editorial" element={<ProtectedRoute><LazyRoute><AdminEditorial /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/editorial/sources" element={<Navigate to="/admin/editorial" replace />} />
-              <Route path="/admin/ilex" element={<ProtectedRoute><LazyRoute><AdminIlex /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/legislation" element={<ProtectedRoute><LazyRoute><AdminLegislation /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/ai" element={<ProtectedRoute><LazyRoute><AdminAI /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/documents" element={<ProtectedRoute><LazyRoute><AdminDocuments /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/marketing" element={<ProtectedRoute><LazyRoute><AdminMarketingInsights /></LazyRoute></ProtectedRoute>} />
@@ -369,6 +385,7 @@ const App = () => {
               <Route path="/admin/sites" element={<ProtectedRoute><LazyRoute><AdminSiteBuilder /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/sites/:id" element={<ProtectedRoute><LazyRoute><AdminSiteEditor /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/live-events" element={<ProtectedRoute><LazyRoute><AdminLiveEvents /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/referrals" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminReferrals /></AdminLayout></LazyRoute></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />

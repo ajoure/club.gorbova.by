@@ -1,174 +1,88 @@
-# План: CRM Companies — Admin fixture для тестовой учётной записи 1@ajoure.by
+План:
 
-Статус: PLAN ONLY. Требуется отдельный approve. Ни файлы, ни БД до approve не изменяются.
+## Цель
+Создать скрытый маршрут `/cb-native-preview` — полностью нативную React/Tailwind-реализацию посадочной страницы «ЦБ 2.0», визуально соответствующую desktop-версии live-страницы `/cb` при 1440px и корректно перекомпоновывающуюся на 768/390px без горизонтальных переполнений. Без iframe, без Tilda runtime, без `dangerouslySetInnerHTML`, без absolute-position Zero Block'ов. Live-страница `/cb` не меняется.
 
-Baseline repository commit: `68c00477bc633b44f651e0b7f77de4b764b2fe20`.
-Production execution: NOT APPROVED. Phase 2 migration/execution: не выполняется.
+## Diagnose (что уже известно)
+- Source of truth: `public.site_pages` row `cbold`, id `e3c79f1c-947a-49ec-88be-6cebdfe19f35`, длина 3 074 877, 73 rec-блока — эталон визуала и текста.
+- Все CTA/тарифы в проекте уже имеют нативные компоненты (`ProductLanding`, `TariffCard`, `UniversalPricingSection`, `PaymentDialog`, `LeadRequestDialog`, `PreregistrationDialog`, `InvoiceCheckoutDialog`) и slot manifest (`SiteSlotManifestContext`, `usePublicProduct`).
+- Все бизнес-хендлеры (карта, 2-платёжная рассрочка, банковское РР, счёт юрлицу) уже подключены через `PaymentDialog`/`LeadRequestDialog` по `offer_id`. Их и переиспользуем.
 
-## 1. Цель
+## Source of truth и permissions
+- Read-only чтение эталонного HTML `cbold` через `supabase--read_query` в discovery-фазе (для извлечения текстов, порядка секций, ссылок на assets, цветов/градиентов).
+- Никаких write-операций в БД, migrations, DDL, RPC, edge functions, публикаций.
+- Никаких hard-coded product/tariff/price/offer id: всё резолвится через существующий slot manifest страницы `cb` (`landing_config`, `product_id`, `tariffs`).
 
-Добавить каноническую роль `admin` тестовой учётной записи `1@ajoure.by` (для последующего admin-runtime-proof Phase 2), не затрагивая пароль, `auth.users`, профиль, tenant/workspace, entitlements и текущие роли. Действие идемпотентное, обратимое, покрыто before/after верификацией.
+## Scope (что делаем)
 
-## 2. Read-only discovery (уже выполнено, зафиксировано)
+### Артефакты discovery (read-only)
+1. Извлечь из `cbold.blocks[0].content.code` инвентарь:
+   - список rec-блоков и семантические роли (hero, USP, программа, тарифы, отзывы, FAQ, футер и т.д.);
+   - тексты, заголовки, порядок;
+   - URL картинок/иконок (Tilda CDN), шрифты, ключевые цвета/градиенты, брейкпоинты.
+2. Файл `.lovable/discovery/cb-native/cb_native_section_inventory.md` — таблица «rec-id → секция → компонент → assets → CTA-binding».
 
-- `auth.users.id` для `1@ajoure.by` = **`37e91f59-e4db-4840-b9c9-e760e634ddd1`** (единственная строка).
-- `public.profiles` по этому id: **0 строк** (профиль отсутствует).
-- Текущие связи в `public.user_roles_v2` для этого `user_id`:
-  - `id=72dbebc0-2bcc-4e7c-ae71-1e043ce973ea`, `role_id=e2ebb443-614b-41eb-85d1-8f088e75535a` (`menedzher`), `created_at=2026-06-26 08:57:45.381458+00`.
-- Каноническая роль `admin` в `public.roles`: **`id=16c9cefc-60a3-4edd-a421-46d556e80257`**, `code='admin'`.
-- Схема `public.user_roles_v2`: `id uuid`, `user_id uuid`, `role_id uuid`, `created_at timestamptz`. UNIQUE-ограничения будут перепроверены на preflight (см. §4).
-- `public.has_role_v2(_user_id uuid, _role_code text)` — SECURITY DEFINER SQL, читает `user_roles_v2 JOIN roles` и нормализует алиасы (`super-admin`/`superadmin` → `super_admin`, `employee` — виртуальный код). Соответствует ожидаемой семантике.
+### Дизайн-система (нативная, tokens only)
+- Токены цвета/градиентов/теней/типографики только через `index.css` (HSL) и `tailwind.config.ts`, без хардкода классов `text-white`/`bg-[...]`.
+- Отдельный скоуп: `src/pages/cb-native/tokens.css` подключается только на этой странице.
+- Кастомные шрифты (если Tilda-специфичные) — либо заменяем близкими из уже подключённых, либо аплоадим через `lovable-assets` и подключаем через `@font-face` в scope странице (только если нужны для парити).
 
-## 3. STOP-условия (перепроверяются на preflight; при срабатывании — остановка без записи)
+### Route
+- Новый файл `src/pages/CbNativePreview.tsx` — страница-контейнер.
+- Регистрация маршрута в существующем роутере (`src/App.tsx` или соответствующий router-файл) как **скрытый** путь `/cb-native-preview`, без ссылок в навигации, без sitemap, `<meta name="robots" content="noindex,nofollow">`.
 
-- по `1@ajoure.by` найдено ≠1 строки в `auth.users`;
-- в `public.profiles` для этого `user_id` найдено >1 строки (0 — допустимо, будет зафиксировано в отчёте как наблюдение);
-- в `public.roles` не найдена ровно одна строка с `code='admin'`;
-- схема `public.user_roles_v2` отличается от `(id, user_id, role_id, created_at)` либо отсутствует UNIQUE, покрывающий `(user_id, role_id)`;
-- сигнатура `public.has_role_v2(uuid, text)` отличается от зафиксированной в §2;
-- запрошено изменение пароля, `auth.users`, профиля, tenant/workspace, entitlements;
-- предложение подменить `admin` на `manager`/`curator`/`client` либо создать новую роль.
+### Секции (нативные компоненты)
+Каждая секция — отдельный компонент под `src/pages/cb-native/sections/`:
+- `HeroSection`
+- `AboutCourseSection`
+- `TargetAudienceSection`
+- `ProgramSection` (модули)
+- `SpeakerSection` (Катерина)
+- `TariffsSection` — **обязательно** через существующий `UniversalPricingSection` + `usePublicProduct` (slot manifest страницы `cb`), никаких hardcoded тарифов.
+- `FaqSection`
+- `TestimonialsSection`
+- `GuaranteeSection`
+- `FooterSection`
+- (и остальные из инвентаря)
 
-## 4. Preflight (read-only, транзакционно, без записи)
+Все — семантический HTML (`<section>`, `<h1>-<h3>`, `<ul>`, `<figure>`), responsive Tailwind без absolute-позиционирования, картинки с `loading="lazy"`, `alt`, `<picture>` при необходимости.
 
-```sql
-BEGIN;
-SET LOCAL statement_timeout = '15s';
+### CTA / payments (dynamic, no hardcode)
+- `TariffsSection` получает `product` + `tariffs` из `usePublicProduct(productId)`, где `productId` берётся из slot manifest эталонной страницы (тот же, что использует `/cb` в его текущей нормальной конфигурации). Никаких зашитых id.
+- Каждая CTA-кнопка проходит через существующие handlers:
+  - карта → `PaymentDialog` (`payment_method='card'`);
+  - 2-платёжная рассрочка → `PaymentDialog` (`payment_method='internal_installment'`, `installment_count=2`);
+  - банковское РР → `LeadRequestDialog` (`offer_type='bank_installment'`) через `readBankInstallmentMeta`;
+  - счёт юрлицу → существующий `InvoiceCheckoutDialog` через соответствующий `offer_type='lead'` c invoice-конфигом.
+- Модульный «cart» (если применимо) — reuse существующего module cart компонента, если он уже используется на других лендингах; иначе оставить TODO-маркер в discovery без mock-логики.
 
--- 4.1 Пользователь единственен
-SELECT COUNT(*) AS n_users FROM auth.users WHERE email='1@ajoure.by'; -- ожидается 1
-SELECT id FROM auth.users WHERE email='1@ajoure.by';                  -- ожидается 37e91f59-...
+### Responsive
+- 1440: точный desktop-парите (grid/flex по инвентарю).
+- 768: 1–2 колонки, читаемый flow.
+- 390: 1 колонка, без горизонтального скролла (`overflow-x-hidden` на корневом контейнере страницы).
+- Проверка через Playwright.
 
--- 4.2 Профиль (наблюдение, не блокер если 0)
-SELECT COUNT(*) FROM public.profiles WHERE id='37e91f59-e4db-4840-b9c9-e760e634ddd1';
+## Verification (Definition of Done)
+1. `tsgo` / build проходит.
+2. Route `/cb-native-preview` открывается локально, `/cb` не изменён (diff `public.site_pages` row = 0).
+3. Playwright скриншоты `1440x900` и `390x844` сохранены в `/tmp/browser/cb-native/`.
+4. Отчёт: список изменённых файлов, счётчик секций (`created / expected`), unresolved assets (список URL, которые не удалось смапить), evidence по CTA-биндингам (для каждой кнопки — какой компонент/offer_type/handler).
+5. Никаких DB writes, migrations, edge functions, публикаций.
 
--- 4.3 Каноническая admin-роль
-SELECT id, code FROM public.roles WHERE code='admin'; -- ожидается 16c9cefc-...
+## Stop-guards
+- Live `/cb` строка `public.site_pages` не читается на запись; любые попытки — STOP.
+- Если slot manifest `cb` не отдаёт tariffs → секцию тарифов отрисовать в «pending»-состоянии и внести в unresolved-report, но НЕ хардкодить.
+- Если требуется новый шрифт/asset и его нет в CDN — фиксируем в unresolved-report, не эмулируем через placeholder.
+- Не публиковать, не менять маршрутизацию для `/cb`, не трогать backend.
 
--- 4.4 Схема user_roles_v2 и UNIQUE(user_id, role_id)
-SELECT column_name, data_type FROM information_schema.columns
- WHERE table_schema='public' AND table_name='user_roles_v2' ORDER BY ordinal_position;
-SELECT conname, pg_get_constraintdef(oid)
-  FROM pg_constraint
- WHERE conrelid='public.user_roles_v2'::regclass AND contype IN ('u','p');
+## Технические детали
+- Файлы:
+  - `src/pages/CbNativePreview.tsx`
+  - `src/pages/cb-native/sections/*.tsx`
+  - `src/pages/cb-native/tokens.css`
+  - обновление роутера (единичный `<Route>` вставкой)
+  - `.lovable/discovery/cb-native/cb_native_section_inventory.md`
+  - `.lovable/reports/cb-native-preview-build-report.md`
+- Никаких изменений в: `src/integrations/supabase/*`, `supabase/**`, `public/**` (кроме assets при необходимости), существующих компонентах платежей, `SitePageBySlug`, `public.site_pages`.
 
--- 4.5 Сигнатура has_role_v2
-SELECT pg_get_functiondef(p.oid) FROM pg_proc p
- JOIN pg_namespace n ON n.oid=p.pronamespace
- WHERE n.nspname='public' AND p.proname='has_role_v2';
-
--- 4.6 Before-снимок ролей пользователя
-SELECT r.code
-  FROM public.user_roles_v2 ur JOIN public.roles r ON r.id=ur.role_id
- WHERE ur.user_id='37e91f59-e4db-4840-b9c9-e760e634ddd1'
- ORDER BY r.code;
-
--- 4.7 Пред-проверки has_role_v2
-SELECT public.has_role_v2('37e91f59-e4db-4840-b9c9-e760e634ddd1','admin')     AS before_admin;      -- ожидается false
-SELECT public.has_role_v2('37e91f59-e4db-4840-b9c9-e760e634ddd1','menedzher') AS before_menedzher;  -- ожидается true
-
-ROLLBACK;
-```
-
-Если любой пункт не совпадает с §2/§3 — STOP, отчёт без изменений БД.
-
-## 5. Точный SQL записи (idempotent)
-
-Один INSERT со стандартным `ON CONFLICT DO NOTHING` по паре `(user_id, role_id)`. Никаких прочих полей, никаких обновлений существующих строк.
-
-```sql
-BEGIN;
-SET LOCAL statement_timeout = '15s';
-
-INSERT INTO public.user_roles_v2 (user_id, role_id)
-VALUES (
-  '37e91f59-e4db-4840-b9c9-e760e634ddd1'::uuid,  -- 1@ajoure.by
-  '16c9cefc-60a3-4edd-a421-46d556e80257'::uuid   -- roles.code='admin'
-)
-ON CONFLICT (user_id, role_id) DO NOTHING
-RETURNING id, user_id, role_id, created_at;
-
-COMMIT;
-```
-
-Идемпотентность:
-- ключ идемпотентности — UNIQUE `(user_id, role_id)` в `public.user_roles_v2` (подтверждается на preflight §4.4);
-- `ON CONFLICT DO NOTHING` → повторный запуск не создаёт дубль и не перезаписывает существующую строку;
-- `RETURNING` пуст ⇔ связь уже была ⇒ этап no-op и rollback (§7) ничего не удаляет;
-- запись содержит только `(user_id, role_id)`; `id`, `created_at` заполняются дефолтами; прочие роли (`menedzher` и любые другие) не читаются и не изменяются;
-- пароль, `auth.users`, `public.profiles`, tenants/workspaces, entitlements — не затрагиваются.
-
-## 6. After-verification (read-only)
-
-```sql
--- 6.1 Набор ролей после
-SELECT r.code
-  FROM public.user_roles_v2 ur JOIN public.roles r ON r.id=ur.role_id
- WHERE ur.user_id='37e91f59-e4db-4840-b9c9-e760e634ddd1'
- ORDER BY r.code;
-
--- 6.2 has_role_v2
-SELECT public.has_role_v2('37e91f59-e4db-4840-b9c9-e760e634ddd1','admin')     AS after_admin;      -- true
-SELECT public.has_role_v2('37e91f59-e4db-4840-b9c9-e760e634ddd1','menedzher') AS after_menedzher;  -- true
-
--- 6.3 Сохранность прежних ролей: множественное сравнение
---   after_codes ⊇ before_codes ∪ {'admin'} и after_codes = before_codes ∪ {'admin'}
---   т.е. добавилась ровно одна роль 'admin', ничего не удалено и не изменено.
-
--- 6.4 Целостность строки menedzher: id/role_id/created_at не изменились
-SELECT id, role_id, created_at
-  FROM public.user_roles_v2
- WHERE user_id='37e91f59-e4db-4840-b9c9-e760e634ddd1'
-   AND role_id='e2ebb443-614b-41eb-85d1-8f088e75535a';
--- ожидается id=72dbebc0-2bcc-4e7c-ae71-1e043ce973ea, created_at=2026-06-26 08:57:45.381458+00
-```
-
-Критерий приёмки: 6.1 = before ∪ {'admin'}; 6.2 обе `true`; 6.4 строка menedzher побайтово идентична before-снимку.
-
-## 7. Rollback (условный, только связь этого этапа)
-
-```sql
-BEGIN;
-SET LOCAL statement_timeout = '15s';
-
--- Удалить только строку admin для этого user_id.
--- Если admin была до этапа (RETURNING §5 был пуст) — rollback не запускается (no-op).
-DELETE FROM public.user_roles_v2
- WHERE user_id='37e91f59-e4db-4840-b9c9-e760e634ddd1'::uuid
-   AND role_id='16c9cefc-60a3-4edd-a421-46d556e80257'::uuid
-RETURNING id;
-
-COMMIT;
-```
-
-Решение о запуске rollback принимается на основании `RETURNING` из §5: непусто ⇒ rollback удаляет ровно одну добавленную связь; пусто ⇒ rollback не запускается. Строка `menedzher` и любые прочие роли не затрагиваются никогда.
-
-## 8. Audit / proof (на русском)
-
-Формируется отчёт `.lovable/discovery/companies-1.0/admin_fixture_1_ajoure_report.md` со следующими секциями:
-
-1. Цель, baseline commit `68c00477…`, статус approve.
-2. Discovery-снимок (§2): UUID пользователя, отсутствие профиля, список ролей before, id канонической `admin`.
-3. Полные результаты preflight (§4) c пометками PASS/STOP.
-4. Точный выполненный SQL (§5) и `RETURNING`-результат (added / already-present).
-5. After-снимок (§6): множество ролей, значения `has_role_v2`, подтверждение сохранности строки `menedzher`.
-6. Diff before/after: `+admin`, `−<пусто>`.
-7. Rollback plan (§7) и решение (executed / no-op) с обоснованием.
-8. Заявление, что пароль/`auth.users`/профиль/tenants/entitlements не изменялись.
-
-Репозиторий: изменяется только новый файл отчёта `.lovable/discovery/companies-1.0/admin_fixture_1_ajoure_report.md`. Никаких изменений в `src/**`, `supabase/migrations/**`, `.lovable/plan.md` и прочих файлах. Миграции не создаются (запись выполняется как data-insert, не как schema-migration; UNIQUE-ключ уже существует).
-
-## 9. Порядок выполнения (после отдельного approve)
-
-1. Preflight §4 → PASS или STOP.
-2. Insert §5 (одна транзакция).
-3. After-verification §6.
-4. Формирование отчёта §8.
-5. При провале §6 — немедленный rollback §7 и фиксация инцидента в отчёте.
-
-## 10. Наблюдения / открытые вопросы
-
-- `public.profiles` для `37e91f59-…` отсутствует. Это не блокер для `user_roles_v2` (FK идёт на `auth.users`), но фиксируется в §8 как наблюдение. Создание профиля выходит за scope этого этапа и не выполняется.
-- Admin-runtime-proof Phase 2 остаётся отдельным follow-up этапом и не входит в этот план.
-
-Запрашиваю отдельный approve на выполнение.
+После аппрува — исполняю в порядке: discovery inventory → tokens/route → секции (партиями) → интеграция pricing со slot manifest → responsive fix → build/typecheck → Playwright скриншоты → финальный отчёт.

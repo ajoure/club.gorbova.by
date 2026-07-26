@@ -14,7 +14,7 @@
  *  - Участники: показываем ТОЛЬКО текущих в autoweb-session (никакого архива online).
  *  - Сценарий/Блоки: подтягиваются из source (это редакторский контент прошедшего эфира).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { useAutowebRoomState } from "@/hooks/useAutowebRoomState";
 import { useAutowebHeartbeat, type AutowebPlayerState } from "@/hooks/useAutowebHeartbeat";
+import { useKinescopePlayer } from "@/hooks/useKinescopePlayer";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { AutowebTimelineOverlay } from "@/components/live/AutowebTimelineOverlay";
@@ -49,7 +50,7 @@ interface Props {
 }
 
 /**
- * Kinescope iframe плеер. Разрешения/запреты берутся из viewerControls (единый SoT).
+ * Kinescope SDK facade. Разрешения/запреты берутся из viewerControls (единый SoT).
  *  - allow_seek=false        → hotkeys=false + overlay-guard на нижнюю панель (timeline)
  *  - allow_pause=false       → controls=false + overlay-guard на центр (клик = pause/play)
  *  - allow_speed_control=false → speed=false + settings=false
@@ -69,93 +70,57 @@ function AutowebKinescopePlayer({
   onPlayerStateChange?: (state: AutowebPlayerState) => void;
   viewerControls: AutowebViewerControls;
 }) {
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const containerId = useId().replace(/:/g, "");
+  const [sourceError, setSourceError] = useState(false);
+  // Резолвер поллится каждые 10 секунд и обновляет resume. Этот стартовый
+  // таймкод применяем только один раз: работающий плеер не должен получать
+  // повторный seek от собственного heartbeat.
+  const initialStartSecondsRef = useRef(startSeconds);
 
   const allowSeek = !!viewerControls.allow_seek;
   const allowPause = viewerControls.allow_pause !== false;
   const allowSpeed = !!viewerControls.allow_speed_control;
 
-  const src = useMemo(() => {
-    const u = new URL(`https://kinescope.io/embed/${videoId}`);
-    if (startSeconds > 0) u.searchParams.set("t", String(Math.floor(startSeconds)));
-    u.searchParams.set("autoplay", "1");
+  const playerQuery = useMemo(() => {
+    const query: Record<string, string> = { autoplay: "1", subtitles: "false", captions: "false", pip: "false", preload: "true" };
     if (!allowPause && !allowSeek) {
-      u.searchParams.set("controls", "false");
+      query.controls = "false";
     }
-    u.searchParams.set("hotkeys", allowPause || allowSeek ? "true" : "false");
+    query.hotkeys = allowPause || allowSeek ? "true" : "false";
     if (!allowSpeed) {
-      u.searchParams.set("speed", "false");
-      u.searchParams.set("settings", "false");
+      query.speed = "false";
+      query.settings = "false";
     }
-    u.searchParams.set("subtitles", "false");
-    u.searchParams.set("captions", "false");
-    u.searchParams.set("pip", "false");
-    u.searchParams.set("preload", "true");
-    return u.toString();
-  }, [videoId, startSeconds, allowPause, allowSeek, allowSpeed]);
+    return query;
+  }, [allowPause, allowSeek, allowSpeed]);
 
-  // Минимальный Kinescope postMessage bridge (Фаза A): читаем только playing/paused/ended
-  // + currentTime. Полный SDK не подключаем.
-  useEffect(() => {
-    const handler = (event: MessageEvent) => {
-      try {
-        if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return;
-        const data: any = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-        if (!data) return;
-
-        const t: number | undefined =
-          data?.data?.currentTime ?? data?.currentTime ?? data?.time ?? undefined;
-        if (typeof t === "number" && isFinite(t)) onTimeUpdate(t);
-
-        // Kinescope шлёт события вида {event: 'play'|'pause'|'ended'|'ready'|'timeupdate'}
-        // либо {type: 'kinescope:...'}. Нормализуем.
-        const raw: string =
-          data?.event ?? data?.type ?? data?.data?.event ?? data?.data?.type ?? "";
-        const evt = String(raw).toLowerCase();
-        if (!onPlayerStateChange) return;
-        if (evt.includes("play") && !evt.includes("playing_stopped") && !evt.includes("pause")) {
-          onPlayerStateChange("playing");
-        } else if (evt.includes("pause")) {
-          onPlayerStateChange("paused");
-        } else if (evt.includes("end")) {
-          onPlayerStateChange("ended");
-        } else if (evt.includes("ready") || evt.includes("canplay")) {
-          onPlayerStateChange("ready");
-        }
-      } catch {
-        // ignore malformed messages
-      }
-    };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, [onTimeUpdate, onPlayerStateChange]);
-
-  // Fallback-таймер прогресса — на случай если Kinescope не шлёт postMessage.
-  // Player-state НЕ угадываем: heartbeat guard требует явного playing от плеера.
-  useEffect(() => {
-    let mounted = true;
-    const startedAt = Date.now();
-    const base = Math.max(0, Math.floor(startSeconds));
-    const id = window.setInterval(() => {
-      if (!mounted) return;
-      onTimeUpdate(base + (Date.now() - startedAt) / 1000);
-    }, 1000);
-    return () => {
-      mounted = false;
-      window.clearInterval(id);
-    };
-  }, [videoId, startSeconds, onTimeUpdate]);
+  const { autoplayBlocked, manualPlay } = useKinescopePlayer({
+    videoId,
+    containerId,
+    autoplay: true,
+    autoplayTimecode: initialStartSecondsRef.current,
+    playerQuery,
+    preventRewind: !viewerControls.allow_rewatch_before_end,
+    onReady: () => onPlayerStateChange?.("ready"),
+    onPlay: () => onPlayerStateChange?.("playing"),
+    onPause: () => onPlayerStateChange?.("paused"),
+    onEnded: () => onPlayerStateChange?.("ended"),
+    onError: () => {
+      setSourceError(true);
+      onPlayerStateChange?.("error");
+    },
+    onTimeUpdate: (seconds) => onTimeUpdate(seconds),
+  });
 
   return (
     <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
-      <iframe
-        ref={iframeRef}
-        src={src}
-        title="Autoweb video"
-        allow="autoplay; fullscreen; picture-in-picture"
-        allowFullScreen
-        className="absolute inset-0 w-full h-full border-0"
-      />
+      <div id={containerId} className="absolute inset-0" />
+      {sourceError && <div className="absolute inset-0 grid place-items-center bg-black/80 text-sm text-white">Источник видео недоступен</div>}
+      {autoplayBlocked && !sourceError && (
+        <button type="button" onClick={() => void manualPlay()} className="absolute inset-x-4 bottom-4 z-20 rounded-md bg-primary px-4 py-3 text-sm font-medium text-primary-foreground">
+          Нажмите, чтобы начать просмотр
+        </button>
+      )}
       {/* Overlay-guard: перехватывает клики по нижней панели (timeline).
           Ставим ТОЛЬКО если перемотка запрещена — иначе не мешаем зрителю. */}
       {!allowSeek && (
@@ -235,19 +200,20 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
   const { role } = useAuth();
   const isStaff = role === "admin" || role === "superadmin" || role === "employee";
 
-  // Playback time для timed-replay ленты. Обновляется постом от Kinescope-плеера
-  // и/или fallback-интервалом (см. AutowebKinescopePlayer).
+  // Playback time для timed-replay ленты. Единственный источник — Kinescope SDK.
   const [playbackSeconds, setPlaybackSeconds] = useState<number>(0);
   const handleTimeUpdate = useCallback((seconds: number) => {
     setPlaybackSeconds((prev) => (Math.abs(prev - seconds) >= 0.5 ? seconds : prev));
   }, []);
 
   // Phase A: минимальный player-state bridge для heartbeat guard'а.
-  // idle → ready → playing → paused/ended. autoplay_blocked ставим отдельно,
+  // idle → ready → playing → paused/ended/error. autoplay_blocked ставим отдельно,
   // если через 6s после mount плеер так и не сообщил playing/ready.
   const [playerState, setPlayerState] = useState<AutowebPlayerState>("idle");
+  const playerStateRef = useRef<AutowebPlayerState>("idle");
   const playbackStartedRef = useRef(false);
   const handlePlayerStateChange = useCallback((next: AutowebPlayerState) => {
+    playerStateRef.current = next;
     setPlayerState((prev) => (prev === next ? prev : next));
     if (next === "playing") playbackStartedRef.current = true;
   }, []);
@@ -256,7 +222,8 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
     if (!(state?.phase === "live" || state?.phase === "replay")) return;
     if (!state?.kinescope_video_id) return;
     const id = window.setTimeout(() => {
-      if (!playbackStartedRef.current && playerState !== "ready" && playerState !== "playing") {
+      if (!playbackStartedRef.current && !["ready", "playing", "error"].includes(playerStateRef.current)) {
+        playerStateRef.current = "autoplay_blocked";
         setPlayerState("autoplay_blocked");
       }
     }, 6000);
@@ -303,7 +270,7 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
 
   // Единый режим для чат/вопросов: если у автовеба привязан source_live_event_id
   // и известен его starts_at — включаем timed-replay слой исторической ленты.
-  const historyEnabled = !!state.source_live_event_id && !!state.source_started_at;
+  const historyEnabled = state.history_enabled && !!state.source_live_event_id && !!state.source_started_at;
   const historyEventId = historyEnabled ? state.source_live_event_id! : undefined;
   const historyStartedAt = historyEnabled ? state.source_started_at! : undefined;
 
@@ -338,6 +305,21 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
             {isPlaying && "В эфире"}
             {isEnded && "Завершён"}
           </Badge>
+          {state.viewer_count.visible && state.viewer_count.displayed_count !== null && (
+            <Badge
+              variant="outline"
+              className="gap-1 tabular-nums"
+              title={isStaff && typeof state.viewer_count.real_count === "number"
+                ? `Фактически активны: ${state.viewer_count.real_count}`
+                : "Зрителей в комнате"}
+            >
+              <Users className="h-3.5 w-3.5" />
+              {state.viewer_count.displayed_count}
+              {isStaff && typeof state.viewer_count.real_count === "number" && (
+                <span className="text-muted-foreground">· факт {state.viewer_count.real_count}</span>
+              )}
+            </Badge>
+          )}
         </div>
         {description && (
           <p className="room-subtitle text-sm line-clamp-1 mb-1">{description}</p>
@@ -362,7 +344,11 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
           ) : isPlaying && state.kinescope_video_id ? (
             <AutowebKinescopePlayer
               videoId={state.kinescope_video_id}
-              startSeconds={state.resume.enabled ? state.resume.last_video_position_seconds : 0}
+              startSeconds={
+                state.resume.enabled && state.resume.last_video_position_seconds > 0
+                  ? state.resume.last_video_position_seconds
+                  : state.session_playback_position_seconds
+              }
               onTimeUpdate={handleTimeUpdate}
               onPlayerStateChange={handlePlayerStateChange}
               viewerControls={state.viewer_controls}
@@ -379,7 +365,12 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
           )}
 
           {state.timeline_enabled && isPlaying && (
-            <AutowebTimelineOverlay sessionId={state.session_id} enabled={true} />
+            <AutowebTimelineOverlay
+              sessionId={state.session_id}
+              liveEventId={state.live_event_id}
+              playbackSeconds={playbackSeconds}
+              enabled={true}
+            />
           )}
 
           {/* Блоки редакторского контента прошедшего эфира (под видео). */}
@@ -419,6 +410,7 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
                   autowebSessionId={state.session_id}
                   historySourceEventId={historyEventId}
                   historySourceStartedAt={historyStartedAt}
+                  autowebSessionStartedAt={state.starts_at}
                   currentPlaybackSeconds={playbackSeconds}
                   staffSourceIndicator={isStaff}
                 />
@@ -434,6 +426,7 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
                   autowebSessionId={state.session_id}
                   historySourceEventId={historyEventId}
                   historySourceStartedAt={historyStartedAt}
+                  autowebSessionStartedAt={state.starts_at}
                   currentPlaybackSeconds={playbackSeconds}
                   staffSourceIndicator={isStaff}
                 />
@@ -447,6 +440,7 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
             <TabsContent value="participants" className="flex-1 mt-2">
               <RoomParticipantsList
                 liveEventId={state.live_event_id}
+                autowebSessionId={state.session_id}
                 isStaff={isStaff}
                 visibleForStudents={true}
               />
