@@ -13,7 +13,9 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { AlertCircle, Camera, CheckCircle2, FileUp, Loader2, Plus, Send, Trash2 } from "lucide-react";
 
 type PublicField = { id: string; public_id: string; label: string; description: string | null; data_type: string; options: any; required: boolean; input_rules: Record<string, unknown> };
-type FormData = { title: string; description: string | null; allow_attachments: boolean; regular_fields: PublicField[]; repeat_groups: Record<string, PublicField[]>; today: string };
+type MnsUnpLookup = { unp_field_id?: string; company_name_field_id?: string; company_address_field_id?: string };
+type PublicRepeatGroup = { label: string; description: string | null; mns_unp_lookup: MnsUnpLookup | null; fields: PublicField[] };
+type FormData = { title: string; description: string | null; allow_attachments: boolean; regular_fields: PublicField[]; repeat_groups: Record<string, PublicRepeatGroup>; today: string };
 
 function choices(field: PublicField): Array<{ value: string; label: string }> {
   const raw = field.options?.choices ?? field.options?.options ?? [];
@@ -26,6 +28,7 @@ export default function ExternalDocumentFormPage() {
   const [groups, setGroups] = useState<Record<string, Array<Record<string, unknown>>>>({});
   const [attachments, setAttachments] = useState<File[]>([]);
   const [completed, setCompleted] = useState(false);
+  const [mnsLookupState, setMnsLookupState] = useState<Record<string, { loading?: boolean; message?: string; error?: boolean }>>({});
   const formQuery = useQuery({
     queryKey: ["external-document-form", token],
     queryFn: async () => {
@@ -59,6 +62,26 @@ export default function ExternalDocumentFormPage() {
   const updateRow = (group: string, rowIndex: number, id: string, value: unknown) => setGroups((prev) => {
     const next = [...(prev[group] ?? [])]; next[rowIndex] = { ...(next[rowIndex] ?? {}), [id]: value }; return { ...prev, [group]: next };
   });
+  const lookupSupplierByUnp = async (group: string, rowIndex: number, rawUnp: unknown, config: MnsUnpLookup | null) => {
+    const unp = String(rawUnp ?? "").replace(/\D/g, "");
+    if (unp.length !== 9 || !config?.unp_field_id) return;
+    const stateKey = `${group}:${rowIndex}`;
+    setMnsLookupState((prev) => ({ ...prev, [stateKey]: { loading: true, message: "Проверяем УНП в реестре МНС…" } }));
+    const { data, error } = await supabase.functions.invoke("external-document-form", { body: { action: "lookup_unp", token, unp } });
+    if (error || data?.error || !data?.found || !data?.data) {
+      setMnsLookupState((prev) => ({ ...prev, [stateKey]: { error: true, message: data?.error || "По этому УНП организация не найдена. Проверьте номер или заполните реквизиты вручную." } }));
+      return;
+    }
+    setGroups((prev) => {
+      const rows = [...(prev[group] ?? [])];
+      const row = { ...(rows[rowIndex] ?? {}) };
+      if (config.company_name_field_id) row[config.company_name_field_id] = data.data.full_name ?? "";
+      if (config.company_address_field_id) row[config.company_address_field_id] = data.data.address ?? "";
+      rows[rowIndex] = row;
+      return { ...prev, [group]: rows };
+    });
+    setMnsLookupState((prev) => ({ ...prev, [stateKey]: { message: "Наименование и адрес поставщика заполнены по данным МНС. При необходимости их можно исправить." } }));
+  };
   const addRow = (group: string) => setGroups((prev) => ({ ...prev, [group]: [...(prev[group] ?? []), {}] }));
   const removeRow = (group: string, index: number) => setGroups((prev) => ({ ...prev, [group]: (prev[group] ?? []).filter((_, i) => i !== index) }));
 
@@ -89,10 +112,9 @@ export default function ExternalDocumentFormPage() {
       <GlassCard className="p-5 sm:p-6 space-y-5">
         {form.regular_fields.map((field) => <PublicFieldControl key={field.id} field={field} value={fields[field.id]} onChange={(v) => updateField(field.id, v)} maxDate={maxDate} />)}
       </GlassCard>
-      {Object.entries(form.repeat_groups).map(([group, groupFields]) => {
+      {Object.entries(form.repeat_groups).map(([group, groupConfig]) => {
         const rows = groups[group] ?? [{}];
-        const visibleName = group.replace(/[_-]+/g, " ");
-        return <GlassCard key={group} className="p-5 sm:p-6 space-y-4"><div><h2 className="font-semibold">{visibleName}</h2><p className="text-xs text-muted-foreground mt-1">Добавьте отдельную строку для каждого значения этого блока.</p></div>{rows.map((row, index) => <div key={index} className="rounded-2xl border border-border/50 bg-background/35 p-4 space-y-4"><div className="flex justify-between items-center"><span className="text-sm font-medium">Строка {index + 1}</span>{rows.length > 1 ? <Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => removeRow(group, index)}><Trash2 className="h-3.5 w-3.5 mr-1" /> Удалить</Button> : null}</div>{groupFields.map((field) => <PublicFieldControl key={field.id} field={field} value={row[field.id]} onChange={(v) => updateRow(group, index, field.id, v)} maxDate={maxDate} />)}</div>)}<Button type="button" variant="outline" onClick={() => addRow(group)}><Plus className="h-4 w-4 mr-1" /> Добавить ещё строку</Button></GlassCard>;
+        return <GlassCard key={group} className="p-5 sm:p-6 space-y-4"><div><h2 className="font-semibold">{groupConfig.label}</h2><p className="text-xs text-muted-foreground mt-1">{groupConfig.description || "Добавьте отдельную строку для каждого расхода."}</p></div>{rows.map((row, index) => <div key={index} className="rounded-2xl border border-border/50 bg-background/35 p-4 space-y-4"><div className="flex justify-between items-center"><span className="text-sm font-medium">Расход {index + 1}</span>{rows.length > 1 ? <Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => removeRow(group, index)}><Trash2 className="h-3.5 w-3.5 mr-1" /> Удалить</Button> : null}</div>{groupConfig.fields.map((field) => <PublicFieldControl key={field.id} field={field} value={row[field.id]} onChange={(v) => updateRow(group, index, field.id, v)} maxDate={maxDate} onBlur={field.id === groupConfig.mns_unp_lookup?.unp_field_id ? () => void lookupSupplierByUnp(group, index, row[field.id], groupConfig.mns_unp_lookup) : undefined} lookupState={field.id === groupConfig.mns_unp_lookup?.unp_field_id ? mnsLookupState[`${group}:${index}`] : undefined} />)}</div>)}<Button type="button" variant="outline" onClick={() => addRow(group)}><Plus className="h-4 w-4 mr-1" /> Добавить ещё расход</Button></GlassCard>;
       })}
       {form.allow_attachments ? <GlassCard className="p-5 sm:p-6 space-y-3"><div><h2 className="font-semibold">Подтверждающие файлы</h2><p className="text-xs text-muted-foreground mt-1">После заполнения приложите фото чека с камеры или из галереи, а также PDF. Файлы уйдут вместе с отчётом владельцу.</p></div><div className="flex flex-wrap gap-2"><label><input className="sr-only" type="file" accept="image/jpeg,image/png,image/heic,image/webp" capture="environment" multiple onChange={(e) => setAttachments((p) => [...p, ...Array.from(e.target.files ?? [])])} /><Button type="button" variant="outline" asChild><span><Camera className="h-4 w-4 mr-1" /> Снять чек</span></Button></label><label><input className="sr-only" type="file" accept="application/pdf,image/jpeg,image/png,image/heic,image/webp" multiple onChange={(e) => setAttachments((p) => [...p, ...Array.from(e.target.files ?? [])])} /><Button type="button" variant="outline" asChild><span><FileUp className="h-4 w-4 mr-1" /> Выбрать файлы</span></Button></label></div>{attachments.length ? <ul className="text-xs text-muted-foreground space-y-1">{attachments.map((file, i) => <li key={`${file.name}-${i}`} className="flex justify-between gap-3"><span className="truncate">{file.name}</span><button className="text-destructive" onClick={() => setAttachments((p) => p.filter((_, j) => j !== i))}>убрать</button></li>)}</ul> : null}</GlassCard> : null}
       {submit.error ? <GlassCard className="p-3 text-sm text-destructive">{submit.error.message}</GlassCard> : null}
@@ -101,8 +123,8 @@ export default function ExternalDocumentFormPage() {
   </PageShell>;
 }
 
-function PublicFieldControl({ field, value, onChange, maxDate }: { field: PublicField; value: unknown; onChange: (value: unknown) => void; maxDate?: string }) {
+function PublicFieldControl({ field, value, onChange, maxDate, onBlur, lookupState }: { field: PublicField; value: unknown; onChange: (value: unknown) => void; maxDate?: string; onBlur?: () => void; lookupState?: { loading?: boolean; message?: string; error?: boolean } }) {
   const required = field.required; const help = field.description;
-  return <div className="space-y-1.5"><Label className="text-sm">{field.label}{required ? <span className="text-destructive"> *</span> : null}</Label>{help ? <p className="text-xs text-muted-foreground">{help}</p> : null}{field.data_type === "date" ? <DatePicker value={typeof value === "string" ? value : ""} onChange={onChange} maxDate={field.input_rules?.no_future ? maxDate : undefined} placeholder="Выберите дату" /> : field.data_type === "select" ? <Select value={String(value ?? "")} onValueChange={onChange}><SelectTrigger><SelectValue placeholder="Выберите вариант" /></SelectTrigger><SelectContent>{choices(field).map((x) => <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}</SelectContent></Select> : field.data_type === "multiselect" ? <div className="rounded-xl border border-input p-2 space-y-2">{choices(field).map((x) => { const selected = Array.isArray(value) ? value.map(String) : []; return <label key={x.value} className="text-sm flex items-center gap-2"><Checkbox checked={selected.includes(x.value)} onCheckedChange={(yes) => onChange(yes ? [...selected, x.value] : selected.filter((v) => v !== x.value))} />{x.label}</label>; })}</div> : field.data_type === "checkbox" ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={value === true} onCheckedChange={onChange} /> Да</label> : field.data_type === "number" || field.data_type === "year" ? <Input type="number" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} /> : <Textarea value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} className="min-h-10" />}</div>;
+  return <div className="space-y-1.5"><Label className="text-sm">{field.label}{required ? <span className="text-destructive"> *</span> : null}</Label>{help ? <p className="text-xs text-muted-foreground">{help}</p> : null}{field.data_type === "date" ? <DatePicker value={typeof value === "string" ? value : ""} onChange={onChange} maxDate={field.input_rules?.no_future ? maxDate : undefined} placeholder="Выберите дату" /> : field.data_type === "select" ? <Select value={String(value ?? "")} onValueChange={onChange}><SelectTrigger><SelectValue placeholder="Выберите вариант" /></SelectTrigger><SelectContent>{choices(field).map((x) => <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}</SelectContent></Select> : field.data_type === "multiselect" ? <div className="rounded-xl border border-input p-2 space-y-2">{choices(field).map((x) => { const selected = Array.isArray(value) ? value.map(String) : []; return <label key={x.value} className="text-sm flex items-center gap-2"><Checkbox checked={selected.includes(x.value)} onCheckedChange={(yes) => onChange(yes ? [...selected, x.value] : selected.filter((v) => v !== x.value))} />{x.label}</label>; })}</div> : field.data_type === "checkbox" ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={value === true} onCheckedChange={onChange} /> Да</label> : field.data_type === "number" || field.data_type === "year" ? <Input type="number" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} onBlur={onBlur} /> : <Input value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} onBlur={onBlur} inputMode={onBlur ? "numeric" : undefined} />}{lookupState ? <p className={`text-xs ${lookupState.error ? "text-destructive" : "text-muted-foreground"}`}>{lookupState.loading ? <Loader2 className="inline h-3 w-3 mr-1 animate-spin" /> : null}{lookupState.message}</p> : null}</div>;
 }
 function PageShell({ children }: { children: React.ReactNode }) { return <main className="min-h-screen bg-[radial-gradient(circle_at_top,hsla(var(--primary)/.14),transparent_38%),linear-gradient(135deg,hsl(var(--background)),hsl(var(--muted)/.55),hsl(var(--background)))] px-3 py-6 sm:px-6 sm:py-10 flex items-center justify-center">{children}</main>; }

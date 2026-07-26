@@ -22,6 +22,15 @@ type FormField = {
   id: string; field_catalog_id: string; repeat_group_key: string | null;
   sort_order: number; required_override: boolean | null; input_rules: Record<string, unknown> | null;
 };
+type RepeatGroupSettings = Record<string, {
+  label?: string;
+  description?: string;
+  mns_unp_lookup?: {
+    unp_field_id?: string;
+    company_name_field_id?: string;
+    company_address_field_id?: string;
+  };
+}>;
 
 function scalar(v: unknown): string {
   return typeof v === "string" || typeof v === "number" ? String(v).trim() : "";
@@ -34,6 +43,35 @@ function dateOnly(v: string): string | null {
 }
 function todayMinsk(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Minsk", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
+function normalizeUnp(raw: string): string | null {
+  const digits = raw.replace(/\D/g, "");
+  return digits.length === 9 ? digits : null;
+}
+
+function safeGroupSettings(raw: unknown): RepeatGroupSettings {
+  return raw && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as RepeatGroupSettings
+    : {};
+}
+
+async function lookupMnsByUnp(url: string, service: string, unp: string) {
+  const response = await fetch(`${url}/functions/v1/grp-lookup`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: service,
+      Authorization: `Bearer ${service}`,
+      "x-internal-call": "external-document-form",
+    },
+    body: JSON.stringify({ unp }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return { error: result?.error || "mns_lookup_unavailable", status: response.status };
+  }
+  return result;
 }
 function valueColumns(field: Field, raw: unknown): Record<string, unknown> {
   const base = { value_text: null, value_number: null, value_date: null, value_datetime: null, value_time: null, value_boolean: null, value_json: null };
@@ -67,7 +105,7 @@ async function loadLink(admin: any, token: string) {
     .eq("public_token", token).maybeSingle();
   if (!link || !link.is_active || link.revoked_at) return { error: "link_not_found" };
   const { data: form } = await admin.from("document_package_external_forms")
-    .select("id, package_template_item_id, title, description, is_active, allow_attachments, delivery")
+    .select("id, package_template_item_id, title, description, is_active, allow_attachments, delivery, repeat_group_settings")
     .eq("id", link.external_form_id).maybeSingle();
   if (!form?.is_active) return { error: "form_not_active" };
   const { data: item } = await admin.from("document_package_template_items")
@@ -131,8 +169,18 @@ Deno.serve(async (req) => {
     if (ctx.error) return json({ error: ctx.error }, ctx.error === "owner_access_expired" ? 403 : 404);
     const fields = await loadFormFields(admin, ctx.form.id);
 
+    const groupSettings = safeGroupSettings(ctx.form.repeat_group_settings);
+
+    if (action === "lookup_unp") {
+      const unp = normalizeUnp(scalar(body?.unp));
+      if (!unp) return json({ error: "invalid_unp" }, 400);
+      const result = await lookupMnsByUnp(url, service, unp);
+      if (result?.error) return json(result, Number(result.status) || 502);
+      return json(result);
+    }
+
     if (action === "read") {
-      const groups: Record<string, unknown[]> = {};
+      const groups: Record<string, { label: string; description: string | null; mns_unp_lookup: RepeatGroupSettings[string]["mns_unp_lookup"] | null; fields: unknown[] }> = {};
       const regular: unknown[] = [];
       for (const binding of fields) {
         const out = {
@@ -140,7 +188,16 @@ Deno.serve(async (req) => {
           description: binding.field.description, data_type: binding.field.data_type, options: binding.field.options ?? {},
           required: binding.required_override ?? binding.field.required, input_rules: binding.input_rules ?? {},
         };
-        if (binding.repeat_group_key) (groups[binding.repeat_group_key] ??= []).push(out); else regular.push(out);
+        if (binding.repeat_group_key) {
+          const key = binding.repeat_group_key;
+          const settings = groupSettings[key] ?? {};
+          (groups[key] ??= {
+            label: scalar(settings.label) || "Повторяемые строки",
+            description: scalar(settings.description) || null,
+            mns_unp_lookup: settings.mns_unp_lookup ?? null,
+            fields: [],
+          }).fields.push(out);
+        } else regular.push(out);
       }
       return json({ title: ctx.form.title, description: ctx.form.description, allow_attachments: ctx.form.allow_attachments,
         regular_fields: regular, repeat_groups: groups, today: todayMinsk() });
@@ -148,12 +205,19 @@ Deno.serve(async (req) => {
 
     if (action === "issue_upload") {
       if (!ctx.form.allow_attachments) return json({ error: "attachments_disabled" }, 400);
-      const fileName = scalar(body.file_name).replace(/[^\p{L}\p{N}._ -]/gu, "_").slice(0, 120);
+      const fileName = scalar(body.file_name).slice(0, 180);
       const mime = scalar(body.mime_type);
       const size = Number(body.byte_size);
       const allowedMimes = new Set(["application/pdf", "image/jpeg", "image/png", "image/heic", "image/webp"]);
       if (!fileName || !allowedMimes.has(mime) || !Number.isFinite(size) || size <= 0 || size > 20 * 1024 * 1024) return json({ error: "invalid_attachment" }, 400);
-      const path = `links/${ctx.link.id}/${crypto.randomUUID()}-${fileName}`;
+      // Storage object keys remain ASCII-only.  The original file name is stored
+      // as metadata with the submission, so Cyrillic and other user-visible
+      // names never become a fragile storage path.
+      const extensionByMime: Record<string, string> = {
+        "application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".png",
+        "image/heic": ".heic", "image/webp": ".webp",
+      };
+      const path = `links/${ctx.link.id}/${crypto.randomUUID()}${extensionByMime[mime]}`;
       const { data, error } = await admin.storage.from("document-external-attachments").createSignedUploadUrl(path);
       if (error) throw error;
       return json({ path, token: data.token, signed_url: data.signedUrl });
