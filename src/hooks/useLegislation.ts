@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type {
   LegalDocument,
   LegalDocumentPreview,
+  LegalDocumentSharePreview,
   LegalSearchResult,
 } from "@/types/legislation";
 
@@ -21,6 +22,22 @@ export function usePublishedLegislation() {
 
       if (error) throw error;
       return (data ?? []) as LegalDocument[];
+    },
+  });
+}
+
+export function useLegalDocumentSharePreview(ref: string | undefined) {
+  return useQuery({
+    queryKey: ["legislation", "share-preview", ref],
+    enabled: Boolean(ref),
+    queryFn: async (): Promise<LegalDocumentSharePreview | null> => {
+      const { data, error } = await supabase.rpc(
+        "get_legal_document_share_preview" as never,
+        { p_ref: ref } as never,
+      );
+
+      if (error) throw error;
+      return (data?.[0] ?? null) as LegalDocumentSharePreview | null;
     },
   });
 }

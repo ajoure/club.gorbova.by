@@ -89,6 +89,7 @@ const AI = lazy(() => import("./pages/AI"));
 const DocumentGeneration = lazy(() => import("./pages/DocumentGeneration"));
 const Knowledge = lazy(() => import("./pages/Knowledge"));
 const LegislationDocument = lazy(() => import("./pages/LegislationDocument"));
+const LegalShare = lazy(() => import("./pages/LegalShare"));
 const LiveEvents = lazy(() => import("./pages/LiveEvents"));
 const BusinessTraining = lazy(() => import("./pages/BusinessTraining"));
 const BusinessTrainingContent = lazy(() => import("./pages/BusinessTrainingContent"));
@@ -243,6 +244,7 @@ const App = () => {
               <Route path="/business-training" element={<LazyRoute><BusinessTraining /></LazyRoute>} />
               <Route path="/club" element={<Landing />} />
               <Route path="/knowledge/laws/:slug" element={<LazyRoute><LegislationDocument /></LazyRoute>} />
+              <Route path="/l/:ref/:anchor?" element={<LazyRoute><LegalShare /></LazyRoute>} />
               
               <Route path="/banned" element={<LazyRoute><Banned /></LazyRoute>} />
               <Route path="/live" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="live"><LiveEvents /></SectionGuard></LazyRoute></ProtectedRoute>} />
