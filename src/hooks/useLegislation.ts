@@ -2,10 +2,25 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type {
   LegalDocument,
+  LegalDocumentCollectionRow,
   LegalDocumentPreview,
+  LegalDocumentSearchResult,
   LegalDocumentSharePreview,
   LegalSearchResult,
 } from "@/types/legislation";
+
+export function useLegalDocumentCollections() {
+  return useQuery({
+    queryKey: ["legislation", "collections"],
+    queryFn: async (): Promise<LegalDocumentCollectionRow[]> => {
+      const { data, error } = await supabase.rpc(
+        "get_legal_document_collections" as never,
+      );
+      if (error) throw error;
+      return (data ?? []) as unknown as LegalDocumentCollectionRow[];
+    },
+  });
+}
 
 export function usePublishedLegislation() {
   return useQuery({
@@ -98,6 +113,42 @@ export function useLegislationSearch(
 
       if (error) throw error;
       return (data ?? []) as unknown as LegalSearchResult[];
+    },
+  });
+}
+
+export function useLegalDocumentSearch(
+  documentId: string | undefined,
+  query: string,
+  limit = 40,
+  enabled = true,
+) {
+  const normalizedQuery = query.trim();
+
+  return useQuery({
+    queryKey: [
+      "legislation",
+      "document-search",
+      documentId,
+      normalizedQuery,
+      limit,
+    ],
+    enabled:
+      enabled &&
+      Boolean(documentId) &&
+      normalizedQuery.length >= 2,
+    staleTime: 60_000,
+    queryFn: async (): Promise<LegalDocumentSearchResult[]> => {
+      const { data, error } = await supabase.rpc(
+        "search_legal_document" as never,
+        {
+          p_document_id: documentId,
+          p_query: normalizedQuery,
+          p_limit: limit,
+        } as never,
+      );
+      if (error) throw error;
+      return (data ?? []) as unknown as LegalDocumentSearchResult[];
     },
   });
 }

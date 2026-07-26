@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Loader2, Plus, RefreshCw, Scale } from "lucide-react";
+import {
+  BookOpen,
+  FolderSync,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Scale,
+} from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -92,6 +99,66 @@ export default function AdminLegislation() {
     onError: (error: Error) =>
       toast({
         title: "Ошибка синхронизации",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+
+  const syncCurated = useMutation({
+    mutationFn: async () => {
+      let cursor: number | null = 0;
+      let processed = 0;
+      let updated = 0;
+      const failures: Array<{ externalId: string; error: string }> = [];
+
+      while (cursor !== null) {
+        const { data, error } = await supabase.functions.invoke(
+          "legislation-sync",
+          {
+            body: {
+              action: "sync_curated",
+              cursor,
+              limit: 3,
+            },
+          },
+        );
+        if (error) throw error;
+        if (!data?.success) throw new Error(data?.error || "Синхронизация не выполнена");
+
+        processed += data.results?.length ?? 0;
+        updated += (data.results ?? []).filter(
+          (result: { status?: string }) =>
+            result.status === "created" || result.status === "updated",
+        ).length;
+        failures.push(
+          ...(data.results ?? [])
+            .filter((result: { error?: string }) => result.error)
+            .map((result: { externalId: string; error: string }) => ({
+              externalId: result.externalId,
+              error: result.error,
+            })),
+        );
+        cursor = data.nextCursor;
+      }
+
+      return { processed, updated, failures };
+    },
+    onSuccess: (data) => {
+      refresh();
+      queryClient.invalidateQueries({ queryKey: ["legislation"] });
+      toast({
+        title: data.failures.length
+          ? "Подборки синхронизированы частично"
+          : "Подборки синхронизированы",
+        description: data.failures.length
+          ? `Загружено или обновлено: ${data.updated}. Без полного текста у источника: ${data.failures.length}.`
+          : `Обработано: ${data.processed}, загружено или обновлено: ${data.updated}`,
+        variant: data.failures.length ? "destructive" : "default",
+      });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Ошибка синхронизации подборок",
         description: error.message,
         variant: "destructive",
       }),
@@ -206,7 +273,7 @@ export default function AdminLegislation() {
             </Button>
             <Button
               onClick={() => syncCodes.mutate()}
-              disabled={syncCodes.isPending}
+              disabled={syncCodes.isPending || syncCurated.isPending}
             >
               {syncCodes.isPending ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -214,6 +281,17 @@ export default function AdminLegislation() {
                 <RefreshCw className="mr-2 h-4 w-4" />
               )}
               Синхронизировать кодексы
+            </Button>
+            <Button
+              onClick={() => syncCurated.mutate()}
+              disabled={syncCodes.isPending || syncCurated.isPending}
+            >
+              {syncCurated.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FolderSync className="mr-2 h-4 w-4" />
+              )}
+              Синхронизировать подборки
             </Button>
           </div>
         </div>

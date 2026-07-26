@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -7,15 +7,20 @@ import {
   Check,
   ChevronDown,
   Copy,
+  FileSearch,
   ListTree,
   Landmark,
+  Loader2,
   Lock,
   Scale,
+  Search,
+  X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Collapsible,
   CollapsibleContent,
@@ -29,10 +34,32 @@ import { getLegalShareUrl } from "@/lib/legalShare";
 import {
   useLegalDocument,
   useLegalDocumentPreview,
+  useLegalDocumentSearch,
 } from "@/hooks/useLegislation";
 import type { LegalStructureNode } from "@/types/legislation";
 
 const LEGISLATION_PATH = getKnowledgeTabPath("knowledge-laws");
+
+function HighlightedSnippet({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/(<mark>.*?<\/mark>)/gi).map((part, index) => {
+        const marked = /^<mark>.*<\/mark>$/i.test(part);
+        const clean = marked ? part.replace(/<\/?mark>/gi, "") : part;
+        return marked ? (
+          <mark
+            key={`${clean}-${index}`}
+            className="rounded bg-amber-200/80 px-0.5 text-foreground dark:bg-amber-400/25"
+          >
+            {clean}
+          </mark>
+        ) : (
+          <Fragment key={`${clean}-${index}`}>{clean}</Fragment>
+        );
+      })}
+    </>
+  );
+}
 
 function makeFallbackStructure(content: string): LegalStructureNode[] {
   return content
@@ -114,6 +141,8 @@ export default function LegislationDocument() {
   } = useLegalDocument(slug, Boolean(user));
   const [copiedAnchor, setCopiedAnchor] = useState<string | null>(null);
   const [contentsOpen, setContentsOpen] = useState(false);
+  const [documentSearchInput, setDocumentSearchInput] = useState("");
+  const [documentSearchQuery, setDocumentSearchQuery] = useState("");
 
   const nodes = useMemo(() => {
     if (document?.structure?.length) return document.structure;
@@ -128,6 +157,12 @@ export default function LegislationDocument() {
           node.kind === "article",
       ),
     [nodes],
+  );
+  const documentSearch = useLegalDocumentSearch(
+    document?.id,
+    documentSearchQuery,
+    50,
+    Boolean(documentSearchQuery),
   );
 
   useEffect(() => {
@@ -365,6 +400,110 @@ export default function LegislationDocument() {
             </div>
           </Collapsible>
         )}
+
+        <section className="overflow-hidden rounded-2xl border bg-card/90 shadow-sm backdrop-blur">
+          <form
+            className="flex flex-col gap-2 p-3 sm:flex-row sm:p-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const query = documentSearchInput.trim();
+              if (query.length >= 2) setDocumentSearchQuery(query);
+            }}
+          >
+            <div className="relative min-w-0 flex-1">
+              <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={documentSearchInput}
+                onChange={(event) => {
+                  setDocumentSearchInput(event.target.value);
+                  if (!event.target.value.trim()) setDocumentSearchQuery("");
+                }}
+                placeholder="Поиск в документе: статья 107, учетная политика, работником…"
+                aria-label="Поиск внутри документа"
+                className="h-11 rounded-xl pl-10 pr-10"
+              />
+              {documentSearchInput && (
+                <button
+                  type="button"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  aria-label="Очистить поиск в документе"
+                  onClick={() => {
+                    setDocumentSearchInput("");
+                    setDocumentSearchQuery("");
+                  }}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <Button
+              type="submit"
+              className="h-11 rounded-xl sm:px-6"
+              disabled={documentSearchInput.trim().length < 2}
+            >
+              Найти в документе
+            </Button>
+          </form>
+
+          {documentSearchQuery && (
+            <div className="border-t">
+              <div className="flex items-center justify-between gap-3 bg-muted/25 px-4 py-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-primary">
+                    Совпадения в документе
+                  </p>
+                  <p className="mt-0.5 text-sm text-muted-foreground">
+                    Учитываются формы слов и точные номера статей
+                  </p>
+                </div>
+                {!documentSearch.isLoading && (
+                  <Badge variant="secondary">
+                    {documentSearch.data?.length ?? 0}
+                  </Badge>
+                )}
+              </div>
+
+              {documentSearch.isLoading ? (
+                <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Ищем в тексте…
+                </div>
+              ) : documentSearch.isError ? (
+                <div className="px-4 py-10 text-center text-sm text-destructive">
+                  Поиск временно недоступен. Попробуйте еще раз.
+                </div>
+              ) : documentSearch.data?.length ? (
+                <div className="max-h-[min(55vh,32rem)] divide-y overflow-y-auto">
+                  {documentSearch.data.map((result) => (
+                    <button
+                      key={result.anchor}
+                      type="button"
+                      className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-primary/[0.05] sm:px-5"
+                      onClick={() => goToAnchor(result.anchor)}
+                    >
+                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                        <FileSearch className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1 text-sm leading-relaxed text-muted-foreground">
+                        <HighlightedSnippet text={result.snippet} />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="px-4 py-10 text-center">
+                  <FileSearch className="mx-auto h-9 w-9 text-muted-foreground/40" />
+                  <p className="mt-2 text-sm font-medium">
+                    Совпадений не найдено
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Попробуйте другое слово или номер статьи.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
 
         <article className="space-y-3 rounded-2xl border bg-card/80 px-3 py-4 shadow-sm backdrop-blur sm:px-5 sm:py-6">
           {nodes.map((node) => (
