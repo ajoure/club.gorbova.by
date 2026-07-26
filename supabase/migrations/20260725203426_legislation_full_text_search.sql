@@ -63,18 +63,19 @@ BEGIN
     node.ordinality::integer,
     COALESCE(NULLIF(node.kind, ''), 'paragraph'),
     btrim(node.text)
-  FROM jsonb_to_recordset(
-    CASE
-      WHEN jsonb_typeof(NEW.structure) = 'array' THEN NEW.structure
-      ELSE '[]'::jsonb
-    END
-  ) WITH ORDINALITY AS node(
-    id text,
-    kind text,
-    text text,
-    level integer,
-    ordinality bigint
-  )
+  FROM ROWS FROM (
+    jsonb_to_recordset(
+      CASE
+        WHEN jsonb_typeof(NEW.structure) = 'array' THEN NEW.structure
+        ELSE '[]'::jsonb
+      END
+    ) AS (
+      id text,
+      kind text,
+      text text,
+      level integer
+    )
+  ) WITH ORDINALITY AS node(id, kind, text, level, ordinality)
   WHERE btrim(COALESCE(node.text, '')) <> ''
   ON CONFLICT (document_id, anchor) DO UPDATE
   SET
@@ -108,18 +109,19 @@ SELECT
   COALESCE(NULLIF(node.kind, ''), 'paragraph'),
   btrim(node.text)
 FROM public.legal_documents document
-CROSS JOIN LATERAL jsonb_to_recordset(
-  CASE
-    WHEN jsonb_typeof(document.structure) = 'array' THEN document.structure
-    ELSE '[]'::jsonb
-  END
-) WITH ORDINALITY AS node(
-  id text,
-  kind text,
-  text text,
-  level integer,
-  ordinality bigint
-)
+CROSS JOIN LATERAL ROWS FROM (
+  jsonb_to_recordset(
+    CASE
+      WHEN jsonb_typeof(document.structure) = 'array' THEN document.structure
+      ELSE '[]'::jsonb
+    END
+  ) AS (
+    id text,
+    kind text,
+    text text,
+    level integer
+  )
+) WITH ORDINALITY AS node(id, kind, text, level, ordinality)
 WHERE btrim(COALESCE(node.text, '')) <> ''
 ON CONFLICT (document_id, anchor) DO UPDATE
 SET
