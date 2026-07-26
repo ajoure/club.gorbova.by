@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { classifyBusinessMessage } from '../_shared/telegram-business.ts';
+import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -333,57 +334,60 @@ async function fetchAndSaveTelegramPhoto(
   }
 }
 
-// Check if user has active access to the club
-async function hasActiveAccess(supabase: any, userId: string, clubId: string): Promise<boolean> {
-  const now = new Date();
-
-  // Check telegram_access
-  const { data: access } = await supabase
-    .from('telegram_access')
-    .select('active_until, state_chat, state_channel')
-    .eq('user_id', userId)
-    .eq('club_id', clubId)
-    .single();
-
-  if (access && access.state_chat !== 'revoked' && access.state_channel !== 'revoked') {
-    const activeUntil = access.active_until ? new Date(access.active_until) : null;
-    if (!activeUntil || activeUntil > now) return true;
-  }
-
-  // Check manual access
-  const { data: manual } = await supabase
-    .from('telegram_manual_access')
-    .select('is_active, valid_until')
-    .eq('user_id', userId)
-    .eq('club_id', clubId)
-    .eq('is_active', true)
-    .single();
-
-  if (manual) {
-    const validUntil = manual.valid_until ? new Date(manual.valid_until) : null;
-    if (!validUntil || validUntil > now) return true;
-  }
-
-  // Check access grants
-  const { data: grant } = await supabase
-    .from('telegram_access_grants')
-    .select('status, end_at')
-    .eq('user_id', userId)
-    .eq('club_id', clubId)
-    .eq('status', 'active')
-    .single();
-
-  if (grant) {
-    const endAt = grant.end_at ? new Date(grant.end_at) : null;
-    if (!endAt || endAt > now) return true;
-  }
-
-  return false;
-}
-
 // Log audit event
 async function logAudit(supabase: any, event: any) {
   await supabase.from('telegram_access_audit').insert(event);
+}
+
+function telegramHtmlToPlainText(text: string): string {
+  return text
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+async function persistAutomatedOutboundMessage(
+  supabase: any,
+  params: {
+    sendResult: any;
+    userId: string | null;
+    telegramUserId: number;
+    botId: string;
+    text: string;
+    source: string;
+    replyMarkup?: object;
+  },
+) {
+  if (!params.userId || !params.sendResult?.ok || !params.sendResult?.result?.message_id) return;
+
+  const { error } = await supabase.from('telegram_messages').insert({
+    user_id: params.userId,
+    telegram_user_id: params.telegramUserId,
+    bot_id: params.botId,
+    direction: 'outgoing',
+    message_text: telegramHtmlToPlainText(params.text),
+    message_id: params.sendResult.result.message_id,
+    status: 'sent',
+    is_read: true,
+    message_origin: 'bot_automation',
+    meta: {
+      automated: true,
+      source: params.source,
+      reply_markup: params.replyMarkup || null,
+    },
+  });
+
+  if (error) {
+    console.error('[WEBHOOK] Automated outbound persistence failed', {
+      source: params.source,
+      telegram_user_id: params.telegramUserId,
+      error,
+    });
+  }
 }
 
 // ==========================================
@@ -982,8 +986,10 @@ Deno.serve(async (req) => {
       let userId: string | null = profile?.user_id || null;
 
       if (profile && userId) {
-        // Check if user has active access
-        approved = await hasActiveAccess(supabase, userId, club.id);
+        // Commercial access is canonical. Telegram projection rows may lag
+        // behind an already-active subscription or entitlement.
+        const access = await hasCommercialAccess(supabase, userId, club.id);
+        approved = access.valid;
       }
 
       if (approved) {
@@ -1023,7 +1029,15 @@ Deno.serve(async (req) => {
         });
 
         // Send welcome DM
-        await sendMessage(botToken, telegramUserId, MESSAGES.joinApproved);
+        const welcomeResult = await sendMessage(botToken, telegramUserId, MESSAGES.joinApproved);
+        await persistAutomatedOutboundMessage(supabase, {
+          sendResult: welcomeResult,
+          userId: profile?.user_id || profile?.id || null,
+          telegramUserId,
+          botId,
+          text: MESSAGES.joinApproved,
+          source: 'join_request_approved',
+        });
       } else {
         // Decline join request
         const declineResult = await telegramRequest(botToken, 'declineChatJoinRequest', {
@@ -1049,7 +1063,16 @@ Deno.serve(async (req) => {
         const keyboard = {
           inline_keyboard: [[{ text: '💳 Оформить подписку', url: `${getSiteUrl()}/#pricing` }]],
         };
-        await sendMessage(botToken, telegramUserId, MESSAGES.joinDeclined, keyboard);
+        const declineMessageResult = await sendMessage(botToken, telegramUserId, MESSAGES.joinDeclined, keyboard);
+        await persistAutomatedOutboundMessage(supabase, {
+          sendResult: declineMessageResult,
+          userId: profile?.user_id || profile?.id || null,
+          telegramUserId,
+          botId,
+          text: MESSAGES.joinDeclined,
+          source: 'join_request_declined',
+          replyMarkup: keyboard,
+        });
       }
 
       return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

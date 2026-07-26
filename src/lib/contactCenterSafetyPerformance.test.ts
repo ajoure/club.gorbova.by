@@ -16,6 +16,8 @@ import incomingAlertSource from "../hooks/useIncomingMessageAlert.ts?raw";
 import pushHookSource from "../hooks/usePushNotifications.ts?raw";
 import manychatInboundSource from "../../supabase/functions/manychat-inbound/index.ts?raw";
 import telegramWebhookSource from "../../supabase/functions/telegram-webhook/index.ts?raw";
+import unifiedChatHeaderSource from "../components/admin/communication/unified/UnifiedChatHeader.tsx?raw";
+import mediaLightboxSource from "../components/admin/chat/MediaLightbox.tsx?raw";
 import { sanitizeExternalDisplayName } from "./sanitizeExternalDisplayName";
 
 describe("Contact-center safety and mobile performance", () => {
@@ -59,11 +61,21 @@ describe("Contact-center safety and mobile performance", () => {
     expect(unifiedInboxSource).toContain("Instagram: ошибка загрузки");
   });
 
-  it("keeps mobile lists inertial and protects controls from iOS safe areas", () => {
-    expect(unifiedInboxSource).toContain("contact-center-safe-top");
+  it("keeps mobile lists inertial and renders one compact clickable contact header", () => {
+    expect(unifiedInboxSource).not.toContain("contact-center-safe-top");
+    expect(unifiedInboxSource).toContain("compactMobile={isMobile}");
+    expect(unifiedChatHeaderSource).toContain('aria-label="Вернуться к списку чатов"');
+    expect(unifiedChatHeaderSource).toContain("linked && setSheetOpen(true)");
     expect(unifiedInboxSource).toContain("touch-scroll flex-1");
     expect(channelPickerSource).toContain("overflow-x-auto");
     expect(ticketChatSource).toContain("contact-center-safe-bottom");
+  });
+
+  it("keeps media controls inside the iPhone safe viewport", () => {
+    expect(mediaLightboxSource).not.toContain("!w-screen !h-[100dvh]");
+    expect(mediaLightboxSource).toContain("env(safe-area-inset-top)");
+    expect(mediaLightboxSource).toContain("env(safe-area-inset-bottom)");
+    expect(mediaLightboxSource).toContain("max-h-[calc(80dvh-4rem)]");
   });
 
   it("does not proxy every Instagram media item while the chat mounts", () => {
@@ -91,14 +103,14 @@ describe("Contact-center safety and mobile performance", () => {
     expect(unifiedInboxSource).toContain("virtualizer.getTotalSize()");
   });
 
-  it("requests narrow realtime payloads for contact-center invalidation", () => {
-    expect(realtimeInvalidationSource).toContain('select: ["id", "direction", "user_id"]');
+  it("keeps realtime invalidation scoped to contact-center tables and typed fields", () => {
+    expect(realtimeInvalidationSource).toContain('table: "telegram_messages"');
     expect(realtimeInvalidationSource).toContain(
-      'select: ["id", "direction", "is_read", "user_id"]',
+      'new: { direction?: string; is_read?: boolean; user_id?: string } | null',
     );
-    expect(realtimeInvalidationSource).toContain(
-      'select: ["id", "instagram_account_id"]',
-    );
+    expect(realtimeInvalidationSource).toContain('table: "instagram_messages"');
+    expect(realtimeInvalidationSource).toContain('table: "support_tickets"');
+    expect(realtimeInvalidationSource).toContain('table: "ticket_messages"');
   });
 
   it("runs the Telegram media worker before refreshing a stuck attachment", () => {
@@ -139,6 +151,20 @@ describe("Contact-center safety and mobile performance", () => {
     expect(telegramWebhookSource).not.toContain(
       "}).catch(err => console.error('[Push] Send error:', err))",
     );
+  });
+
+  it("uses canonical commercial access and stores bot technical replies in chat history", () => {
+    expect(telegramWebhookSource).toContain(
+      "import { hasCommercialAccess } from '../_shared/accessValidation.ts'",
+    );
+    expect(telegramWebhookSource).toContain(
+      "const access = await hasCommercialAccess(supabase, userId, club.id)",
+    );
+    expect(telegramWebhookSource).toContain("persistAutomatedOutboundMessage");
+    expect(telegramWebhookSource).toContain("source: 'join_request_declined'");
+    expect(telegramWebhookSource).toContain("message_origin: 'bot_automation'");
+    expect(telegramChatSource).toContain('.from("telegram_access_audit")');
+    expect(telegramChatSource).toContain('event_type === "JOIN_DECLINED"');
   });
 
   it("removes unresolved ManyChat name tokens without inventing a surname", () => {

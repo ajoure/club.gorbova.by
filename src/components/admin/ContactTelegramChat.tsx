@@ -653,6 +653,39 @@ export function ContactTelegramChat({
     refetchOnWindowFocus: false,
   });
 
+  // Telegram does not echo a bot's own sendMessage response back through the
+  // webhook. Historical join decisions therefore exist only in the access
+  // audit. Surface those records so old technical replies are not invisible;
+  // new replies are persisted as normal outgoing telegram_messages by webhook.
+  const { data: accessEvents } = useQuery({
+    queryKey: ["telegram-access-events", telegramUserId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("telegram_access_audit")
+        .select("id, event_type, created_at, reason, meta")
+        .eq("telegram_user_id", telegramUserId!)
+        .in("event_type", ["JOIN_APPROVED", "JOIN_DECLINED"])
+        .order("created_at", { ascending: true })
+        .limit(50);
+      if (error) throw error;
+      return (data || []).map((event: any) => ({
+        id: `access-${event.id}`,
+        type: "event" as const,
+        action: event.event_type,
+        status: "success",
+        created_at: event.created_at,
+        message_text:
+          event.event_type === "JOIN_DECLINED"
+            ? "Заявка отклонена. Активный доступ к клубу не был найден."
+            : "Заявка одобрена. Доступ в клуб открыт.",
+        meta: { ...(event.meta || {}), reason: event.reason || null, source: "telegram_access_audit" },
+      })) as TelegramEvent[];
+    },
+    enabled: !!telegramUserId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
   // Combine and sort messages + telegram events + billing events.
   // PATCH: Hide event-pills that mirror a real outgoing telegram_messages bubble.
   // Rules:
@@ -673,6 +706,8 @@ export function ContactTelegramChat({
     // bubble in telegram_messages, so the event-pill is redundant.
     'AUTO_GRANT',
     'MANUAL_GRANT',
+    'JOIN_APPROVED',
+    'JOIN_DECLINED',
     // subscription_reminder_*d are matched via prefix below
   ]);
 
@@ -711,10 +746,11 @@ export function ContactTelegramChat({
     return [
       ...msgs,
       ...((events || []).filter((e) => !isMirrored(e as TelegramEvent))),
+      ...(accessEvents || []),
       ...(billingEvents || []),
     ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, events, billingEvents]);
+  }, [messages, events, accessEvents, billingEvents]);
 
   // V1.3: reactions moved above chatItemsWithMeta so precompute has access.
   const telegramMessageIds = useMemo(

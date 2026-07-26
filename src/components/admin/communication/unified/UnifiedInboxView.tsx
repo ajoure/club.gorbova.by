@@ -15,7 +15,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
-import { Search, MessageSquare, RefreshCw, ArrowLeft, Check, Star, Pin } from "lucide-react";
+import { Search, MessageSquare, RefreshCw, Check, Star, Pin } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -675,7 +675,12 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
 
   const rightPanel = selected && activeChannel ? (
     <div className="h-full flex flex-col">
-      <UnifiedChatHeader contact={selected} activeSource={activeSource} />
+      <UnifiedChatHeader
+        contact={selected}
+        activeSource={activeSource}
+        onBack={isMobile ? () => setSelectedKey(null) : undefined}
+        compactMobile={isMobile}
+      />
       <ChannelPicker
         contact={selected}
         activeSource={activeSource}
@@ -717,18 +722,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     return (
       <div className="h-full min-h-0 flex flex-col overflow-hidden">
         {selected ? (
-          <>
-            <div className="contact-center-safe-top p-2 border-b flex items-center gap-2 shrink-0">
-              <Button variant="ghost" size="icon" onClick={() => setSelectedKey(null)}>
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              <span className="text-sm font-semibold truncate">{selected.displayName}</span>
-              {selected.availableSources.map((s) => (
-                <SourceBadge key={s} source={s} label={selected.channels[s]?.sourceRow.sourceLabel ?? null} />
-              ))}
-            </div>
-            <div className="flex-1 min-h-0 h-full max-h-full overflow-hidden touch-pan-y">{rightPanel}</div>
-          </>
+          <div className="flex-1 min-h-0 h-full max-h-full overflow-hidden touch-pan-y">{rightPanel}</div>
         ) : (
           dialogList
         )}
