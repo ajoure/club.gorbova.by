@@ -268,7 +268,12 @@ export default function AdminSections() {
               </TableCell>
               <TableCell className="text-center">
                 <div className="flex justify-center gap-1">
-                  {section.is_public ? (
+                  {section.code === "document_generation" ? (
+                    <Badge variant="outline" className="text-[10px] gap-1">
+                      <Lock className="h-3 w-3" />
+                      по пакетам
+                    </Badge>
+                  ) : section.is_public ? (
                     <Badge variant="outline" className="text-[10px] gap-1">
                       <Globe className="h-3 w-3" />
                       публичный
@@ -288,11 +293,15 @@ export default function AdminSections() {
                 </div>
               </TableCell>
               <TableCell className="text-center">
-                <Switch
-                  checked={section.is_public}
-                  onCheckedChange={(v) => handleToggle(section, "is_public", v)}
-                  disabled={updateSection.isPending}
-                />
+                {section.code === "document_generation" ? (
+                  <Badge variant="outline" className="text-[10px]">по пакетам</Badge>
+                ) : (
+                  <Switch
+                    checked={section.is_public}
+                    onCheckedChange={(v) => handleToggle(section, "is_public", v)}
+                    disabled={updateSection.isPending}
+                  />
+                )}
               </TableCell>
               <TableCell className="text-center">
                 <Switch
