@@ -23181,6 +23181,20 @@ export type Database = {
           title: string
         }[]
       }
+      get_legal_document_share_preview: {
+        Args: { p_ref: string }
+        Returns: {
+          category: string
+          doc_date: string
+          doc_number: string
+          doc_type: string
+          external_id: string
+          revision_label: string
+          slug: string
+          status: string
+          title: string
+        }[]
+      }
       get_live_event_scenario: {
         Args: {
           _entry_type?: string
