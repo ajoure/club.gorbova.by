@@ -9,6 +9,7 @@ const corsHeaders = {
 
 const TRAINING_ASSETS_BUCKET = "training-assets";
 const STUDENT_SUBMISSIONS_BUCKET = "student-submissions";
+const STUDENT_SUBMISSION_SIGNED_URL_TTL_SECONDS = 60;
 // Строгий allowlist префиксов — только наши папки в training-assets
 const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/", "form-uploads/"];
 
@@ -139,6 +140,34 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Безопасное имя для Content-Disposition
+    const safeName = name
+      .replace(/[^\w.\-_а-яёА-ЯЁ\s]/g, "_")
+      .replace(/_{2,}/g, "_")
+      .substring(0, 200);
+
+    // Private student work is handed off only after the owner/admin check
+    // above.  The temporary signed URL keeps the storage object private and
+    // avoids proxying large video or archive files through the Edge Function.
+    if (bucket === STUDENT_SUBMISSIONS_BUCKET) {
+      const { data: signed, error: signedError } = await adminClient.storage
+        .from(bucket)
+        .createSignedUrl(path, STUDENT_SUBMISSION_SIGNED_URL_TTL_SECONDS, {
+          download: safeName,
+        });
+      if (signedError || !signed?.signedUrl) {
+        console.error("Signed URL error:", signedError);
+        return new Response(
+          JSON.stringify({ error: "File not found or download failed" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(null, {
+        status: 302,
+        headers: { ...corsHeaders, Location: signed.signedUrl, "Cache-Control": "no-store" },
+      });
+    }
+
     const { data: fileData, error: downloadError } = await adminClient.storage
       .from(bucket)
       .download(path);
@@ -153,12 +182,6 @@ Deno.serve(async (req: Request) => {
         }
       );
     }
-
-    // Безопасное имя для Content-Disposition
-    const safeName = name
-      .replace(/[^\w.\-_а-яёА-ЯЁ\s]/g, "_")
-      .replace(/_{2,}/g, "_")
-      .substring(0, 200);
 
     // Определяем Content-Type из blob
     const contentType = fileData.type || "application/octet-stream";
