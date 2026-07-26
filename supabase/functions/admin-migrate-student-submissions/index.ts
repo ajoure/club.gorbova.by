@@ -154,8 +154,13 @@ Deno.serve(async (req: Request) => {
     const legacyReferences = new Set<string>();
     progressRows.forEach((row) => collectLegacyPaths(row.response, legacyReferences));
 
-    const legacyObjects = (await listAllObjects(admin, "student-uploads"))
-      .filter((path) => legacyReferences.has(path))
+    // Move every object under the legacy student prefix, including an orphan
+    // that no longer has a progress row.  Keeping an orphan in the public
+    // bucket would preserve the very exposure this migration fixes.
+    const legacyObjects = (await listAllObjects(admin, "student-uploads")).sort();
+    const legacyObjectSet = new Set(legacyObjects);
+    const missingReferencedPaths = [...legacyReferences]
+      .filter((path) => !legacyObjectSet.has(path))
       .sort();
     const pending = legacyObjects.filter((path) => path > cursor);
     const selectedPaths = pending.slice(0, limit);
@@ -166,11 +171,23 @@ Deno.serve(async (req: Request) => {
         mode,
         referenced_legacy_paths: legacyReferences.size,
         legacy_objects_found: legacyObjects.length,
+        referenced_legacy_objects_missing: missingReferencedPaths.length,
+        unreferenced_legacy_objects: legacyObjects.filter((path) => !legacyReferences.has(path)).length,
         selected_count: selectedPaths.length,
         remaining_count: Math.max(0, pending.length - selectedPaths.length),
         next_cursor: nextCursor,
         execute_confirmation: EXECUTE_CONFIRMATION,
       });
+    }
+
+    // A referenced source object is already absent.  Do not make a partial
+    // migration look successful: retain the source objects and let the admin
+    // repair the broken record before executing a batch.
+    if (missingReferencedPaths.length > 0) {
+      return json({
+        error: "referenced_source_objects_missing",
+        missing_count: missingReferencedPaths.length,
+      }, 409);
     }
 
     const copyErrors: string[] = [];
