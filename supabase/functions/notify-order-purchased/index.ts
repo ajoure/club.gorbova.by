@@ -306,6 +306,7 @@ Deno.serve(async (req) => {
       try {
         const paidAmount = Number(order.paid_amount ?? order.final_price ?? 0) || null
         const templateData: Record<string, unknown> = {
+          subjectOverride: overrides.email?.subject_override || null,
           recipientName,
           productName,
           tariffName,

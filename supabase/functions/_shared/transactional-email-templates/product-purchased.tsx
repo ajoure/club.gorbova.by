@@ -14,6 +14,7 @@ import {
 import type { TemplateEntry } from './registry.ts'
 
 interface Props {
+  subjectOverride?: string | null
   recipientName?: string | null
   productName?: string | null
   tariffName?: string | null
@@ -329,6 +330,7 @@ const Email = ({
 export const template = {
   component: Email,
   subject: (data: Props) =>
+    data.subjectOverride?.trim() ||
     `Оплата получена: ${data.productName || 'ваш продукт'}`,
   displayName: 'Уведомление о покупке продукта',
   previewData: {
