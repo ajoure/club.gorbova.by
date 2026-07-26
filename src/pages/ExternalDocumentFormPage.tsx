@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -125,7 +125,20 @@ export default function ExternalDocumentFormPage() {
 
 function PublicFieldControl({ field, value, onChange, maxDate, onBlur, lookupState }: { field: PublicField; value: unknown; onChange: (value: unknown) => void; maxDate?: string; onBlur?: (value: string) => void; lookupState?: { loading?: boolean; message?: string; error?: boolean } }) {
   const required = field.required; const help = field.description;
-  const handleBlur = (event: React.FocusEvent<HTMLInputElement>) => onBlur?.(event.currentTarget.value);
-  return <div className="space-y-1.5"><Label className="text-sm">{field.label}{required ? <span className="text-destructive"> *</span> : null}</Label>{help ? <p className="text-xs text-muted-foreground">{help}</p> : null}{field.data_type === "date" ? <DatePicker value={typeof value === "string" ? value : ""} onChange={onChange} maxDate={field.input_rules?.no_future ? maxDate : undefined} placeholder="Выберите дату" /> : field.data_type === "select" ? <Select value={String(value ?? "")} onValueChange={onChange}><SelectTrigger><SelectValue placeholder="Выберите вариант" /></SelectTrigger><SelectContent>{choices(field).map((x) => <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}</SelectContent></Select> : field.data_type === "multiselect" ? <div className="rounded-xl border border-input p-2 space-y-2">{choices(field).map((x) => { const selected = Array.isArray(value) ? value.map(String) : []; return <label key={x.value} className="text-sm flex items-center gap-2"><Checkbox checked={selected.includes(x.value)} onCheckedChange={(yes) => onChange(yes ? [...selected, x.value] : selected.filter((v) => v !== x.value))} />{x.label}</label>; })}</div> : field.data_type === "checkbox" ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={value === true} onCheckedChange={onChange} /> Да</label> : field.data_type === "number" || field.data_type === "year" ? <Input type="number" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} onBlur={handleBlur} /> : <Input value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} onBlur={handleBlur} inputMode={onBlur ? "numeric" : undefined} />}{lookupState ? <p className={`text-xs ${lookupState.error ? "text-destructive" : "text-muted-foreground"}`}>{lookupState.loading ? <Loader2 className="inline h-3 w-3 mr-1 animate-spin" /> : null}{lookupState.message}</p> : null}</div>;
+  const lastLookup = useRef("");
+  const maybeLookup = (raw: string) => {
+    const normalized = raw.replace(/\D/g, "");
+    if (normalized.length !== 9 || !onBlur || normalized === lastLookup.current) return;
+    lastLookup.current = normalized;
+    onBlur(normalized);
+  };
+  const handleValueChange = (raw: string) => {
+    onChange(raw);
+    // УНП должен подхватываться сразу после девятой цифры (ввод или вставка),
+    // а не только когда сотрудник догадается уйти из поля.
+    maybeLookup(raw);
+  };
+  const handleBlur = (event: React.FocusEvent<HTMLInputElement>) => maybeLookup(event.currentTarget.value);
+  return <div className="space-y-1.5"><Label className="text-sm">{field.label}{required ? <span className="text-destructive"> *</span> : null}</Label>{help ? <p className="text-xs text-muted-foreground">{help}</p> : null}{field.data_type === "date" ? <DatePicker value={typeof value === "string" ? value : ""} onChange={onChange} maxDate={field.input_rules?.no_future ? maxDate : undefined} placeholder="Выберите дату" /> : field.data_type === "select" ? <Select value={String(value ?? "")} onValueChange={onChange}><SelectTrigger><SelectValue placeholder="Выберите вариант" /></SelectTrigger><SelectContent>{choices(field).map((x) => <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}</SelectContent></Select> : field.data_type === "multiselect" ? <div className="rounded-xl border border-input p-2 space-y-2">{choices(field).map((x) => { const selected = Array.isArray(value) ? value.map(String) : []; return <label key={x.value} className="text-sm flex items-center gap-2"><Checkbox checked={selected.includes(x.value)} onCheckedChange={(yes) => onChange(yes ? [...selected, x.value] : selected.filter((v) => v !== x.value))} />{x.label}</label>; })}</div> : field.data_type === "checkbox" ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={value === true} onCheckedChange={onChange} /> Да</label> : field.data_type === "number" || field.data_type === "year" ? <Input type="number" value={String(value ?? "")} onChange={(e) => handleValueChange(e.target.value)} onBlur={handleBlur} /> : <Input value={String(value ?? "")} onChange={(e) => handleValueChange(e.target.value)} onBlur={handleBlur} inputMode={onBlur ? "numeric" : undefined} />}{lookupState ? <p className={`text-xs ${lookupState.error ? "text-destructive" : "text-muted-foreground"}`}>{lookupState.loading ? <Loader2 className="inline h-3 w-3 mr-1 animate-spin" /> : null}{lookupState.message}</p> : null}</div>;
 }
 function PageShell({ children }: { children: React.ReactNode }) { return <main className="min-h-screen bg-[radial-gradient(circle_at_top,hsla(var(--primary)/.14),transparent_38%),linear-gradient(135deg,hsl(var(--background)),hsl(var(--muted)/.55),hsl(var(--background)))] px-3 py-6 sm:px-6 sm:py-10 flex items-center justify-center">{children}</main>; }

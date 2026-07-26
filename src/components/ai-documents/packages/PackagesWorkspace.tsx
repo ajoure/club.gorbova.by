@@ -45,6 +45,7 @@ import { toast } from "sonner";
 import { useRbac } from "@/hooks/useRbac";
 import { HelpTooltip } from "@/components/help/HelpComponents";
 import { DocumentPackageQuestionnairesView } from "./DocumentPackageQuestionnairesView";
+import { ClientPackageUsage } from "./ClientPackageUsage";
 import { PackageRolesManager } from "./PackageRolesManager";
 import { PackageFieldsManager } from "./PackageFieldsManager";
 import { TemplateBindingControl } from "./TemplateBindingControl";
@@ -55,7 +56,7 @@ import { ExternalDocumentFormBuilder } from "./ExternalDocumentFormBuilder";
 import { PackageAccessPanel } from "./PackageAccessPanel";
 
 const ADMIN_TABS = ["templates", "anketa", "roles", "access", "external", "placeholders", "validation", "generation"] as const;
-const USER_TABS = ["anketa", "generation"] as const;
+const USER_TABS = ["usage"] as const;
 
 
 
@@ -86,7 +87,7 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
   const urlPkgTab = searchParams.get("pkgTab");
   const initialTab: string = urlPkgTab && (validTabs as readonly string[]).includes(urlPkgTab)
     ? urlPkgTab
-    : "anketa";
+    : isAdminUI ? "anketa" : "usage";
 
   const packagesQuery = useQuery({
     queryKey: ["workspace-package-templates"],
@@ -122,7 +123,7 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
   // Re-guard tab when admin flag changes (e.g. user-mode opening admin-only tab from URL)
   useEffect(() => {
     if (!(validTabs as readonly string[]).includes(tab)) {
-      setTab("anketa");
+      setTab(isAdminUI ? "anketa" : "usage");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdminUI]);
@@ -291,7 +292,7 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
 
   const subtitle = isAdminUI
     ? "Настройте шаблоны пакета, роли, анкеты документов и запустите генерацию."
-    : "Заполните анкеты документов и сформируйте готовый пакет.";
+    : "Выберите пакет, юрлицо и создайте ссылку для сотрудника.";
 
   return (
     <div className="space-y-3">
@@ -301,7 +302,7 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
           <FileStack className="h-5 w-5 text-emerald-500" />
         </div>
         <div className="flex-1 min-w-0">
-          <h2 className="text-lg font-semibold">Пакеты документов</h2>
+          <h2 className="text-lg font-semibold">{isAdminUI ? "Пакеты документов" : "Документы"}</h2>
           <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
         </div>
         {isAdminUI && (
@@ -311,10 +312,11 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
         )}
       </div>
 
-      {/* Селектор пакетов */}
-      <GlassCard className="p-3 space-y-2">
+      {/* Единственный селектор пакета. В пользовательском режиме он заменяет
+          старую фиксированную под-вкладку «Идеология» и не дублируется ниже. */}
+      <GlassCard className={`p-3 space-y-2 ${isAdminUI ? "" : "border-orange-300/35 bg-orange-500/[0.035]"}`}>
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-muted-foreground mr-1">Пакет:</span>
+          <span className="text-xs text-muted-foreground mr-1">{isAdminUI ? "Пакет:" : "Документы:"}</span>
           {packages.length === 0 ? (
             <span className="text-xs text-muted-foreground">Загрузка…</span>
           ) : (
@@ -330,10 +332,10 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
                 >
                   <Button
                     size="sm"
-                    variant={active ? "default" : "outline"}
+                    variant={active ? (isAdminUI ? "default" : "secondary") : "outline"}
                     disabled={disabled && !isAdminUI}
                     onClick={() => setSelectedId(p.id)}
-                    className="h-8"
+                    className={`h-8 ${!isAdminUI && active ? "border-orange-300 bg-orange-500/15 text-orange-700 hover:bg-orange-500/20 dark:text-orange-300" : ""}`}
                   >
                     {p.name}
                     {disabled && (
@@ -412,8 +414,15 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
         )}
       </GlassCard>
 
-      {/* Подвкладки пакета */}
-      {selectedPackage ? (
+      {/* Администратор видит настройки пакета. Клиент — только рабочую
+          карточку ссылки и историю полученных документов. */}
+      {selectedPackage && !isAdminUI ? (
+        <ClientPackageUsage
+          packageTemplateId={selectedPackage.id}
+          packageName={selectedPackage.name}
+          packageDescription={selectedPackage.description}
+        />
+      ) : selectedPackage ? (
         <Tabs value={tab} onValueChange={setTab} className="space-y-3">
           <TabsList className="flex-wrap h-auto">
             {isAdminUI && (
