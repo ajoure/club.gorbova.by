@@ -2,10 +2,7 @@ export const getLegalSharePath = (ref: string, anchor?: string | null) =>
   `/l/${encodeURIComponent(ref)}${anchor ? `/${encodeURIComponent(anchor)}` : ""}`;
 
 export const getLegalShareUrl = (ref: string, anchor?: string | null) => {
-  const base = import.meta.env.VITE_SUPABASE_URL;
-  return `${base}/functions/v1/l/${encodeURIComponent(ref)}${
-    anchor ? `/${encodeURIComponent(anchor)}` : ""
-  }`;
+  return `https://gorbova.by${getLegalSharePath(ref, anchor)}`;
 };
 
 export const getLegalDocumentPath = (slug: string, anchor?: string | null) =>
@@ -13,7 +10,12 @@ export const getLegalDocumentPath = (slug: string, anchor?: string | null) =>
 
 export const getLegalAnchorLabel = (anchor?: string | null) => {
   if (!anchor?.startsWith("art-")) return null;
-  return `Статья ${anchor.slice(4).split("-").join(".")}`;
+  const match = anchor.match(/^art-([^-]+(?:-[^-]+)*?)(?:-par-(\d+))?$/);
+  if (!match) return null;
+  const article = match[1].split("-").join(".");
+  return match[2]
+    ? `Статья ${article}, абзац ${match[2]}`
+    : `Статья ${article}`;
 };
 
 export const getLegalOgImageUrl = (ref: string, anchor?: string | null) => {

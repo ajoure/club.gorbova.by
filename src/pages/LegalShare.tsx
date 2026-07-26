@@ -8,7 +8,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLegalDocumentSharePreview } from "@/hooks/useLegislation";
 import {
-  buildLegalShareText,
   getLegalAnchorLabel,
   getLegalDocumentPath,
   getLegalOgImageUrl,
@@ -93,9 +92,7 @@ export default function LegalShare() {
   const anchorLabel = getLegalAnchorLabel(decodedAnchor);
   const redirectTo = encodeURIComponent(canonicalPath);
   const copyShare = async () => {
-    await navigator.clipboard.writeText(
-      buildLegalShareText(preview.title, shareUrl, decodedAnchor),
-    );
+    await navigator.clipboard.writeText(shareUrl);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   };
