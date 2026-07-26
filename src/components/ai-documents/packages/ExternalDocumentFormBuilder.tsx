@@ -19,7 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ExternalLink, Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 type Field = {
@@ -40,7 +40,18 @@ type FormRow = {
   is_active: boolean;
   allow_attachments: boolean;
   delivery: Record<string, boolean> | null;
+  repeat_group_settings: RepeatGroupSettings | null;
 };
+
+type RepeatGroupSettings = Record<string, {
+  label?: string;
+  description?: string;
+  mns_unp_lookup?: {
+    unp_field_id?: string;
+    company_name_field_id?: string;
+    company_address_field_id?: string;
+  };
+}>;
 
 type FormField = {
   id: string;
@@ -152,6 +163,7 @@ export function ExternalDocumentFormBuilder({ packageTemplateId }: { packageTemp
           is_active: row.is_active,
           allow_attachments: row.allow_attachments,
           delivery: row.delivery ?? {},
+          repeat_group_settings: row.repeat_group_settings ?? {},
         } as never)
         .eq("id", row.id);
       if (error) throw error;
@@ -212,7 +224,7 @@ export function ExternalDocumentFormBuilder({ packageTemplateId }: { packageTemp
             </p>
           </div>
         </div>
-        <div className="flex flex-col sm:flex-row gap-2">
+        {availableItems.length ? <div className="flex flex-col sm:flex-row gap-2">
           <Select value={selectedItemId} onValueChange={setSelectedItemId}>
             <SelectTrigger className="text-xs"><SelectValue placeholder="Выберите документ пакета…" /></SelectTrigger>
             <SelectContent>
@@ -226,7 +238,7 @@ export function ExternalDocumentFormBuilder({ packageTemplateId }: { packageTemp
           <Button size="sm" onClick={() => createForm.mutate()} disabled={!selectedItemId || createForm.isPending}>
             {createForm.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5 mr-1" /> Включить анкету</>}
           </Button>
-        </div>
+        </div> : <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-xs text-muted-foreground flex gap-2 items-center"><CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />Внешняя анкета уже включена для всех документов этого пакета.</div>}
       </GlassCard>
 
       {loading ? <GlassCard className="p-6 flex justify-center"><Loader2 className="h-5 w-5 animate-spin" /></GlassCard> : null}
@@ -267,6 +279,7 @@ function ExternalFormCard(props: {
   const [fieldToAdd, setFieldToAdd] = useState("");
   const [groupToAdd, setGroupToAdd] = useState<string>("");
   const delivery = draft.delivery ?? {};
+  const groupSettings = draft.repeat_group_settings ?? {};
   const setDelivery = (key: string, value: boolean) => setDraft({ ...draft, delivery: { ...delivery, [key]: value } });
   const permitted = props.fields.filter((f) => !props.used.has(`${f.id}:${groupToAdd || ""}`));
   return <GlassCard className="p-4 space-y-4">
@@ -274,10 +287,32 @@ function ExternalFormCard(props: {
     <div className="grid md:grid-cols-2 gap-3"><div className="space-y-1"><Label className="text-xs">Заголовок публичной формы</Label><Input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></div><div className="space-y-1"><Label className="text-xs">Подсказка вверху</Label><Textarea className="min-h-10" value={draft.description ?? ""} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></div></div>
     <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs"><label className="flex items-center gap-2"><Checkbox checked={draft.allow_attachments} onCheckedChange={(v) => setDraft({ ...draft, allow_attachments: !!v })} /> Принимать фото и PDF</label><label className="flex items-center gap-2"><Checkbox checked={delivery.pdf !== false} onCheckedChange={(v) => setDelivery("pdf", !!v)} /> PDF</label><label className="flex items-center gap-2"><Checkbox checked={delivery.docx !== false} onCheckedChange={(v) => setDelivery("docx", !!v)} /> DOCX</label><label className="flex items-center gap-2"><Checkbox checked={delivery.email !== false} onCheckedChange={(v) => setDelivery("email", !!v)} /> Email</label><label className="flex items-center gap-2"><Checkbox checked={delivery.telegram !== false} onCheckedChange={(v) => setDelivery("telegram", !!v)} /> Telegram</label></div>
     <BindingList title="Обычные поля" rows={props.normal} fieldById={props.fieldById} onUpdate={props.onUpdate} onRemove={props.onRemove} />
-    {props.groups.map((group) => <BindingList key={group} title={`Повторяемая группа: ${group}`} rows={props.bindings.filter((x) => x.repeat_group_key === group)} fieldById={props.fieldById} onUpdate={props.onUpdate} onRemove={props.onRemove} />)}
+    {props.groups.map((group) => <RepeatGroupSettingsCard key={group} group={group} settings={groupSettings[group] ?? {}} fields={props.fields} onChange={(settings) => setDraft({ ...draft, repeat_group_settings: { ...groupSettings, [group]: settings } })}><BindingList title={groupSettings[group]?.label?.trim() || "Повторяемые строки"} rows={props.bindings.filter((x) => x.repeat_group_key === group)} fieldById={props.fieldById} onUpdate={props.onUpdate} onRemove={props.onRemove} /></RepeatGroupSettingsCard>)}
     <div className="rounded-xl border border-dashed border-border/60 p-3 grid md:grid-cols-[1fr_180px_auto] gap-2 items-end"><div className="space-y-1"><Label className="text-xs">Добавить поле из каталога</Label><Select value={fieldToAdd} onValueChange={setFieldToAdd}><SelectTrigger className="text-xs"><SelectValue placeholder="Поле…" /></SelectTrigger><SelectContent>{permitted.map((f) => <SelectItem key={f.id} value={f.id} className="text-xs">{f.label} · {`{{${f.public_id}}}`}</SelectItem>)}</SelectContent></Select></div><div className="space-y-1"><Label className="text-xs">Группа (пусто — обычное)</Label><Input value={groupToAdd} onChange={(e) => setGroupToAdd(e.target.value.replace(/[^a-z0-9_]/g, ""))} placeholder="expenses" /></div><Button size="sm" disabled={!fieldToAdd} onClick={() => { props.onAdd(fieldToAdd, groupToAdd || null); setFieldToAdd(""); }}><Plus className="h-3.5 w-3.5 mr-1" /> Добавить</Button></div>
     <div className="flex justify-end"><Button size="sm" onClick={() => props.onSave(draft)} disabled={!draft.title.trim() || (delivery.pdf === false && delivery.docx === false) || props.saving}>{props.saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Save className="h-3.5 w-3.5 mr-1" /> Сохранить настройки</>}</Button></div>
   </GlassCard>;
+}
+
+function RepeatGroupSettingsCard({ group, settings, fields, onChange, children }: { group: string; settings: RepeatGroupSettings[string]; fields: Field[]; onChange: (settings: RepeatGroupSettings[string]) => void; children: React.ReactNode }) {
+  const mns = settings.mns_unp_lookup ?? {};
+  const selectOptions = fields.map((field) => <SelectItem key={field.id} value={field.id} className="text-xs">{field.label}</SelectItem>);
+  const setMns = (patch: Partial<NonNullable<RepeatGroupSettings[string]["mns_unp_lookup"]>>) => onChange({ ...settings, mns_unp_lookup: { ...mns, ...patch } });
+  return <div className="rounded-xl border border-border/50 p-3 space-y-3">
+    <div className="grid md:grid-cols-2 gap-2">
+      <div className="space-y-1"><Label className="text-xs">Название блока для получателя</Label><Input value={settings.label ?? ""} placeholder="Например: Расходы" onChange={(e) => onChange({ ...settings, label: e.target.value })} /></div>
+      <div className="space-y-1"><Label className="text-xs">Подсказка к блоку</Label><Input value={settings.description ?? ""} placeholder="Например: Добавьте отдельную строку для каждого расхода." onChange={(e) => onChange({ ...settings, description: e.target.value })} /></div>
+    </div>
+    <div className="rounded-lg bg-muted/35 p-3 space-y-2">
+      <div><div className="text-xs font-medium">Автозаполнение поставщика по УНП из МНС</div><p className="text-[11px] text-muted-foreground mt-0.5">Выберите поля из каталога этого пакета. После ввода 9 цифр УНП внешняя анкета заполнит наименование и адрес, но их можно будет изменить вручную.</p></div>
+      <div className="grid md:grid-cols-3 gap-2">
+        <Select value={mns.unp_field_id ?? ""} onValueChange={(value) => setMns({ unp_field_id: value })}><SelectTrigger className="text-xs"><SelectValue placeholder="Поле УНП" /></SelectTrigger><SelectContent>{selectOptions}</SelectContent></Select>
+        <Select value={mns.company_name_field_id ?? ""} onValueChange={(value) => setMns({ company_name_field_id: value })}><SelectTrigger className="text-xs"><SelectValue placeholder="Поле наименования" /></SelectTrigger><SelectContent>{selectOptions}</SelectContent></Select>
+        <Select value={mns.company_address_field_id ?? ""} onValueChange={(value) => setMns({ company_address_field_id: value })}><SelectTrigger className="text-xs"><SelectValue placeholder="Поле адреса" /></SelectTrigger><SelectContent>{selectOptions}</SelectContent></Select>
+      </div>
+    </div>
+    {children}
+    <p className="text-[11px] text-muted-foreground">Служебный ключ блока: <span className="font-mono">{group}</span>. Он нужен только системе и не показывается получателю ссылки.</p>
+  </div>;
 }
 
 function BindingList({ title, rows, fieldById, onUpdate, onRemove }: { title: string; rows: FormBinding[]; fieldById: Map<string, Field>; onUpdate: (id: string, p: Partial<FormField>) => void; onRemove: (id: string) => void }) {
