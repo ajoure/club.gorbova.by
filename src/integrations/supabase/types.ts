@@ -6308,6 +6308,315 @@ export type Database = {
         }
         Relationships: []
       }
+      document_package_external_form_fields: {
+        Row: {
+          created_at: string
+          external_form_id: string
+          field_catalog_id: string
+          id: string
+          input_rules: Json
+          repeat_group_key: string | null
+          required_override: boolean | null
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          external_form_id: string
+          field_catalog_id: string
+          id?: string
+          input_rules?: Json
+          repeat_group_key?: string | null
+          required_override?: boolean | null
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          external_form_id?: string
+          field_catalog_id?: string
+          id?: string
+          input_rules?: Json
+          repeat_group_key?: string | null
+          required_override?: boolean | null
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_external_form_fields_external_form_id_fkey"
+            columns: ["external_form_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_external_forms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_external_form_fields_field_catalog_id_fkey"
+            columns: ["field_catalog_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_field_catalog"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_package_external_forms: {
+        Row: {
+          allow_attachments: boolean
+          created_at: string
+          created_by: string | null
+          delivery: Json
+          description: string | null
+          id: string
+          is_active: boolean
+          package_template_item_id: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          allow_attachments?: boolean
+          created_at?: string
+          created_by?: string | null
+          delivery?: Json
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          package_template_item_id: string
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          allow_attachments?: boolean
+          created_at?: string
+          created_by?: string | null
+          delivery?: Json
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          package_template_item_id?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_external_forms_package_template_item_id_fkey"
+            columns: ["package_template_item_id"]
+            isOneToOne: true
+            referencedRelation: "document_package_template_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_package_external_links: {
+        Row: {
+          created_at: string
+          external_form_id: string
+          id: string
+          is_active: boolean
+          metadata: Json
+          owner_profile_id: string
+          public_token: string
+          revoked_at: string | null
+          revoked_by: string | null
+          selected_legal_entity_id: string
+        }
+        Insert: {
+          created_at?: string
+          external_form_id: string
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          owner_profile_id: string
+          public_token?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          selected_legal_entity_id: string
+        }
+        Update: {
+          created_at?: string
+          external_form_id?: string
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          owner_profile_id?: string
+          public_token?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          selected_legal_entity_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_external_links_external_form_id_fkey"
+            columns: ["external_form_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_external_forms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_external_links_owner_profile_id_fkey"
+            columns: ["owner_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_external_links_selected_legal_entity_id_fkey"
+            columns: ["selected_legal_entity_id"]
+            isOneToOne: false
+            referencedRelation: "client_legal_details"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_package_external_submission_attachments: {
+        Row: {
+          byte_size: number | null
+          created_at: string
+          file_name: string
+          id: string
+          mime_type: string | null
+          storage_bucket: string
+          storage_path: string
+          submission_id: string
+        }
+        Insert: {
+          byte_size?: number | null
+          created_at?: string
+          file_name: string
+          id?: string
+          mime_type?: string | null
+          storage_bucket?: string
+          storage_path: string
+          submission_id: string
+        }
+        Update: {
+          byte_size?: number | null
+          created_at?: string
+          file_name?: string
+          id?: string
+          mime_type?: string | null
+          storage_bucket?: string
+          storage_path?: string
+          submission_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_external_submission_attachm_submission_id_fkey"
+            columns: ["submission_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_external_submissions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_package_external_submission_rows: {
+        Row: {
+          created_at: string
+          id: string
+          repeat_group_key: string
+          row_index: number
+          submission_id: string
+          values: Json
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          repeat_group_key: string
+          row_index: number
+          submission_id: string
+          values?: Json
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          repeat_group_key?: string
+          row_index?: number
+          submission_id?: string
+          values?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_external_submission_rows_submission_id_fkey"
+            columns: ["submission_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_external_submissions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_package_external_submissions: {
+        Row: {
+          error_code: string | null
+          external_form_id: string
+          external_link_id: string
+          generated_at: string | null
+          generated_document_ids: string[]
+          id: string
+          metadata: Json
+          owner_profile_id: string
+          package_session_id: string | null
+          status: string
+          submitted_at: string
+        }
+        Insert: {
+          error_code?: string | null
+          external_form_id: string
+          external_link_id: string
+          generated_at?: string | null
+          generated_document_ids?: string[]
+          id?: string
+          metadata?: Json
+          owner_profile_id: string
+          package_session_id?: string | null
+          status?: string
+          submitted_at?: string
+        }
+        Update: {
+          error_code?: string | null
+          external_form_id?: string
+          external_link_id?: string
+          generated_at?: string | null
+          generated_document_ids?: string[]
+          id?: string
+          metadata?: Json
+          owner_profile_id?: string
+          package_session_id?: string | null
+          status?: string
+          submitted_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_external_submissions_external_form_id_fkey"
+            columns: ["external_form_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_external_forms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_external_submissions_external_link_id_fkey"
+            columns: ["external_link_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_external_links"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_external_submissions_owner_profile_id_fkey"
+            columns: ["owner_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dpes_session_fk"
+            columns: ["package_session_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       document_package_field_catalog: {
         Row: {
           admin_editable: boolean
@@ -6769,6 +7078,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           entitlement_id: string | null
+          external_submission_id: string | null
           first_generated_document_id: string | null
           first_generation_batch_id: string | null
           id: string
@@ -6794,6 +7104,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           entitlement_id?: string | null
+          external_submission_id?: string | null
           first_generated_document_id?: string | null
           first_generation_batch_id?: string | null
           id?: string
@@ -6819,6 +7130,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           entitlement_id?: string | null
+          external_submission_id?: string | null
           first_generated_document_id?: string | null
           first_generation_batch_id?: string | null
           id?: string
@@ -6860,6 +7172,13 @@ export type Database = {
             columns: ["selected_legal_entity_id"]
             isOneToOne: false
             referencedRelation: "client_legal_details"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dpps_external_submission_fk"
+            columns: ["external_submission_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_external_submissions"
             referencedColumns: ["id"]
           },
         ]
@@ -22018,6 +22337,10 @@ export type Database = {
           remaining_unread_count: number
         }[]
       }
+      can_manage_external_document_form: {
+        Args: { p_form_id: string }
+        Returns: boolean
+      }
       can_send_live_comment_reaction: {
         Args: { _user_id: string }
         Returns: boolean
@@ -23638,6 +23961,10 @@ export type Database = {
       products_bulk_delete_execute: {
         Args: { actor_label?: string; product_ids: string[] }
         Returns: Json
+      }
+      profile_can_use_document_package: {
+        Args: { p_package_template_id: string; p_profile_id: string }
+        Returns: boolean
       }
       queue_telegram_notification: {
         Args: {
