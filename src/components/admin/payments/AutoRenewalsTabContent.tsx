@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { NotificationStatusIndicators, NotificationLegend, type NotificationLog } from "./NotificationStatusIndicators";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { resolveRetryObservability, retryAttemptLabel, type RetryObservability } from "@/lib/autoRenewalObservability";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { usePermissions } from "@/hooks/usePermissions";
 import { BackfillSnapshotTool } from "./BackfillSnapshotTool";
@@ -244,6 +245,7 @@ interface AutoRenewal {
   access_end_at: string;
   status: string;
   charge_attempts: number;
+  retry_observability: RetryObservability;
   payment_method_id: string | null;
   has_payment_token: boolean;
   meta: any;
@@ -509,7 +511,7 @@ export function AutoRenewalsTabContent() {
       // PATCH 3.1: Fetch active provider_subscriptions to determine BePaid status (source of truth)
       const { data: providerSubs } = await supabase
         .from('provider_subscriptions')
-        .select('id, subscription_v2_id, provider, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, last_charge_at, card_brand, card_last4, raw_data, state')
+        .select('id, subscription_v2_id, provider, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, last_charge_at, card_brand, card_last4, raw_data, meta, state')
         .eq('state', 'active');
 
       // Build lookup: subscription_v2_id → provider_subscription record
@@ -520,6 +522,21 @@ export function AutoRenewalsTabContent() {
           linkedPsMap.set(ps.subscription_v2_id, ps);
         } else {
           orphanPs.push(ps);
+        }
+      }
+
+      const subscriptionIdList = (data || []).map((sub) => sub.id);
+      const installmentAttemptsBySubscription = new Map<string, number>();
+      if (subscriptionIdList.length > 0) {
+        const { data: installmentPayments } = await supabase
+          .from('installment_payments')
+          .select('subscription_id, charge_attempts, status, due_date')
+          .in('subscription_id', subscriptionIdList)
+          .in('status', ['pending', 'failed', 'overdue'])
+          .order('due_date', { ascending: true });
+        for (const payment of installmentPayments || []) {
+          if (!payment.subscription_id || installmentAttemptsBySubscription.has(payment.subscription_id)) continue;
+          installmentAttemptsBySubscription.set(payment.subscription_id, payment.charge_attempts || 0);
         }
       }
 
@@ -568,6 +585,13 @@ export function AutoRenewalsTabContent() {
         const profile = profileMap.get(sub.user_id);
         const order = sub.orders_v2 as any;
         const linkedPs = linkedPsMap.get(sub.id);
+        const retryObservability = resolveRetryObservability({
+          subscriptionAttempts: sub.charge_attempts,
+          installmentAttempts: installmentAttemptsBySubscription.get(sub.id),
+          subscriptionMeta: sub.meta,
+          providerMeta: linkedPs?.meta,
+          providerRawData: linkedPs?.raw_data,
+        });
 
         // PATCH-2026-04-29: canonical recurring (SOT — UI-чекбокс «Подписка»)
         const isSubscription = productId ? recurringProductIds.has(productId) : false;
@@ -597,6 +621,7 @@ export function AutoRenewalsTabContent() {
           access_end_at: sub.access_end_at,
           status: sub.status,
           charge_attempts: sub.charge_attempts || 0,
+          retry_observability: retryObservability,
           payment_method_id: sub.payment_method_id,
           has_payment_token: (sub as any).has_payment_token ?? false,
           meta: sub.meta,
@@ -694,6 +719,10 @@ export function AutoRenewalsTabContent() {
           access_end_at: ps.next_charge_at || '',
           status: 'active',
           charge_attempts: 0,
+          retry_observability: resolveRetryObservability({
+            providerMeta: ps.meta,
+            providerRawData: ps.raw_data,
+          }),
           payment_method_id: null,
           has_payment_token: false,
           meta: { provider_subscription_id: ps.provider_subscription_id },
@@ -742,75 +771,38 @@ export function AutoRenewalsTabContent() {
     [renewals]
   );
 
-  // Batch query for Telegram notification logs (last 30 days)
-  const { data: tgLogs } = useQuery({
-    queryKey: ['auto-renewals-tg-logs', subscriptionIds],
+  // Canonical reminder outbox is the delivery source of truth for both channels.
+  const { data: notificationLogs } = useQuery({
+    queryKey: ['auto-renewals-notification-outbox', subscriptionIds],
     queryFn: async () => {
       if (subscriptionIds.length === 0) return [];
-      
       const thirtyDaysAgo = subDays(new Date(), 30).toISOString();
-      
-      // Query telegram_logs with relevant event_types only
       const { data, error } = await supabase
-        .from('telegram_logs')
-        .select('user_id, meta, event_type, status, error_message, created_at')
-        .in('action', ['SEND_REMINDER', 'SEND_NO_CARD_WARNING'])
-        .in('event_type', RELEVANT_TG_EVENT_TYPES)
+        .from('notification_outbox')
+        .select('channel, message_type, status, blocked_reason, meta, created_at, sent_at')
+        .in('channel', ['telegram', 'email'])
+        .in('message_type', ['subscription_charge_reminder', 'installment_charge_reminder'])
         .gte('created_at', thirtyDaysAgo)
         .order('created_at', { ascending: false });
-      
       if (error) {
-        console.error('Failed to fetch TG logs:', error);
+        console.error('Failed to fetch reminder outbox:', error);
         return [];
       }
-
-      // Transform to include subscription_id from meta and normalize
-      return (data || []).map(log => ({
-        subscription_id: (log.meta as any)?.subscription_id || '',
-        event_type: log.event_type || '',
-        status: log.status || '',
-        reason: (log.meta as any)?.reason || null,
-        error_message: log.error_message || null,
-        created_at: log.created_at,
-      })).filter(l => subscriptionIds.includes(l.subscription_id));
-    },
-    enabled: subscriptionIds.length > 0,
-    staleTime: 30000,
-  });
-
-  // Batch query for Email notification logs (last 30 days)
-  const { data: emailLogs } = useQuery({
-    queryKey: ['auto-renewals-email-logs', subscriptionIds],
-    queryFn: async () => {
-      if (subscriptionIds.length === 0) return [];
-      
-      const thirtyDaysAgo = subDays(new Date(), 30).toISOString();
-      
-      // Query email_logs for outgoing emails with subscription context
-      const { data, error } = await supabase
-        .from('email_logs')
-        .select('user_id, meta, status, error_message, created_at')
-        .eq('direction', 'outgoing')
-        .gte('created_at', thirtyDaysAgo)
-        .order('created_at', { ascending: false });
-      
-      if (error) {
-        console.error('Failed to fetch email logs:', error);
-        return [];
-      }
-
-      // Transform and filter by subscription_ids
-      return (data || []).map(log => ({
-        subscription_id: (log.meta as any)?.subscription_id || '',
-        event_type: (log.meta as any)?.event_type || '',
-        status: log.status || '',
-        reason: (log.meta as any)?.reason || null,
-        error_message: log.error_message || null,
-        created_at: log.created_at,
-      })).filter(l => 
-        subscriptionIds.includes(l.subscription_id) && 
-        l.event_type?.startsWith('subscription_reminder_')
-      );
+      return (data || []).map((log) => {
+        const meta = (log.meta || {}) as Record<string, unknown>;
+        const daysBefore = Number(meta.days_before);
+        return {
+          channel: log.channel,
+          subscription_id: typeof meta.subscription_v2_id === 'string' ? meta.subscription_v2_id : '',
+          event_type: Number.isFinite(daysBefore) ? `subscription_reminder_${daysBefore}d` : '',
+          days_before: daysBefore,
+          effective_charge_at: typeof meta.effective_charge_at === 'string' ? meta.effective_charge_at : null,
+          status: log.status || '',
+          reason: log.blocked_reason || (typeof meta.reason === 'string' ? meta.reason : null),
+          error_message: typeof meta.error_message === 'string' ? meta.error_message : null,
+          created_at: log.sent_at || log.created_at,
+        };
+      }).filter((log) => subscriptionIds.includes(log.subscription_id));
     },
     enabled: subscriptionIds.length > 0,
     staleTime: 30000,
@@ -855,7 +847,7 @@ export function AutoRenewalsTabContent() {
         result = result.filter(r => r.pm_status && r.pm_status !== 'active');
         break;
       case 'max_attempts':
-        result = result.filter(r => r.charge_attempts >= 3);
+        result = result.filter(r => r.retry_observability.exhausted);
         break;
       case 'in_grace':
         result = result.filter(r => r.grace_period_status === 'in_grace');
@@ -1284,13 +1276,13 @@ export function AutoRenewalsTabContent() {
           (renewal.pm_verification_status !== 'verified' || renewal.pm_recurring_verified !== true);
         const badge = (
           <Badge 
-            variant={renewal.charge_attempts >= 3 ? 'destructive' : 'secondary'}
+            variant={renewal.retry_observability.exhausted ? 'destructive' : 'secondary'}
             className="text-xs"
           >
-            {renewal.charge_attempts}/3
+            {retryAttemptLabel(renewal.retry_observability)}
           </Badge>
         );
-        if (renewal.charge_attempts === 0 && isBadCard) {
+        if (renewal.retry_observability.attempts === 0 && isBadCard) {
           return (
             <Tooltip>
               <TooltipTrigger asChild>{badge}</TooltipTrigger>
@@ -1301,7 +1293,17 @@ export function AutoRenewalsTabContent() {
             </Tooltip>
           );
         }
-        return badge;
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>{badge}</TooltipTrigger>
+            <TooltipContent className="max-w-xs text-xs">
+              <div>Текущая серия: {retryAttemptLabel(renewal.retry_observability)}</div>
+              <div>Всего: {renewal.retry_observability.totalAttempts}</div>
+              <div>Успешных: {renewal.retry_observability.successfulAttempts}</div>
+              <div>Неуспешных: {renewal.retry_observability.failedAttempts}</div>
+            </TooltipContent>
+          </Tooltip>
+        );
       }
       case 'card':
         // AR-P0.9.6: provider_managed doesn't need a local card
@@ -1424,7 +1426,8 @@ export function AutoRenewalsTabContent() {
           <NotificationStatusIndicators
             subscriptionId={renewal.id}
             channel="telegram"
-            logs={tgLogs || []}
+            logs={(notificationLogs || []).filter((log) => log.channel === 'telegram')}
+            nextChargeAt={renewal.next_charge_at}
             onOpenContact={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
           />
         );
@@ -1437,7 +1440,8 @@ export function AutoRenewalsTabContent() {
           <NotificationStatusIndicators
             subscriptionId={renewal.id}
             channel="email"
-            logs={emailLogs || []}
+            logs={(notificationLogs || []).filter((log) => log.channel === 'email')}
+            nextChargeAt={renewal.next_charge_at}
             onOpenContact={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
           />
         );
