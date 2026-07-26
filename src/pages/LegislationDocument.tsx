@@ -227,7 +227,7 @@ export default function LegislationDocument() {
         <div className="pointer-events-none absolute -left-24 -top-16 -z-10 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
         <nav
           aria-label="Навигация по нормативному акту"
-          className="sticky top-2 z-30 flex items-center justify-between gap-2 rounded-2xl border border-border/70 bg-background/90 p-2 shadow-lg shadow-background/40 backdrop-blur-xl supports-[backdrop-filter]:bg-background/75"
+          className="fixed right-3 top-16 z-40 flex items-center justify-between gap-1 rounded-2xl border border-border/70 bg-background/90 p-1.5 shadow-xl shadow-background/40 backdrop-blur-xl supports-[backdrop-filter]:bg-background/75 sm:right-6 sm:gap-2 sm:p-2"
         >
           <Button asChild variant="ghost" size="sm" className="min-w-0">
             <Link to="/knowledge">
