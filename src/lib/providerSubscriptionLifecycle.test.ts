@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isFiniteInstallmentProviderSubscription } from "./providerSubscriptionLifecycle";
+import {
+  isFiniteInstallmentProviderSubscription,
+  removeProviderSubscriptionById,
+} from "./providerSubscriptionLifecycle";
 
 describe("isFiniteInstallmentProviderSubscription", () => {
   it("recognizes canonical finite installment metadata on provider row", () => {
@@ -36,5 +39,14 @@ describe("isFiniteInstallmentProviderSubscription", () => {
         },
       },
     })).toBe(false);
+  });
+
+  it("removes a provider-confirmed cancellation from the cached live list", () => {
+    expect(removeProviderSubscriptionById([
+      { provider_subscription_id: "sbs_cancelled" },
+      { provider_subscription_id: "sbs_still_active" },
+    ], "sbs_cancelled")).toEqual([
+      { provider_subscription_id: "sbs_still_active" },
+    ]);
   });
 });

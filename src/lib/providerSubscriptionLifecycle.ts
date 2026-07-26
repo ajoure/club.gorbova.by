@@ -31,3 +31,20 @@ export function isFiniteInstallmentProviderSubscription(row: unknown): boolean {
     hasFiniteInstallmentMarker(localSubscription.meta)
   );
 }
+
+/**
+ * Removes a provider subscription from cached live lists after the backend has
+ * confirmed cancellation. React Query invalidation still follows to reconcile
+ * with the server, but the contact card must not keep showing a canceled row
+ * while that refetch is in flight.
+ */
+export function removeProviderSubscriptionById<T>(
+  rows: readonly T[] | undefined,
+  providerSubscriptionId: string,
+): T[] {
+  if (!rows) return [];
+  return rows.filter((row) => {
+    const subscription = asMap(row);
+    return subscription.provider_subscription_id !== providerSubscriptionId;
+  });
+}
