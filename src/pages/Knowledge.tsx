@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import { goToVideoAnswer } from "@/lib/goToVideoAnswer";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -38,6 +38,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { format } from "date-fns";
+import {
+  getKnowledgeScroll,
+  getStoredKnowledgeTab,
+  KNOWLEDGE_TAB_PARAM,
+  rememberKnowledgeScroll,
+  rememberKnowledgeTab,
+} from "@/lib/knowledgeNavigation";
 
 type SortOrder = "newest" | "oldest";
 
@@ -284,6 +291,7 @@ function SortToggle({
 }
 
 const Knowledge = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState("");
   const [questionSortOrder, setQuestionSortOrder] = useState<SortOrder>("newest");
   const [videoSortOrder, setVideoSortOrder] = useState<SortOrder>("newest");
@@ -298,7 +306,9 @@ const Knowledge = () => {
   const { lessonsBySection, restrictedTariffs: containerRestrictedTariffs, isLoading: lessonsLoading } = useContainerLessons();
   
   // Set active tab to first tab from DB or fallback
-  const [activeTab, setActiveTab] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<string>(
+    () => searchParams.get(KNOWLEDGE_TAB_PARAM) || getStoredKnowledgeTab() || "",
+  );
   
   // Update active tab when tabs load
   const effectiveActiveTab = useMemo(() => {
@@ -307,6 +317,38 @@ const Knowledge = () => {
     }
     return tabs[0]?.key || "knowledge-questions";
   }, [activeTab, tabs]);
+
+  useEffect(() => {
+    const requestedTab = searchParams.get(KNOWLEDGE_TAB_PARAM);
+    if (requestedTab && requestedTab !== activeTab) {
+      setActiveTab(requestedTab);
+    }
+  }, [activeTab, searchParams]);
+
+  useEffect(() => {
+    if (!tabs.some((tab) => tab.key === effectiveActiveTab)) return;
+    rememberKnowledgeTab(effectiveActiveTab);
+
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: getKnowledgeScroll(effectiveActiveTab) });
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      rememberKnowledgeScroll(effectiveActiveTab, window.scrollY);
+    };
+  }, [effectiveActiveTab, tabs]);
+
+  const handleTabChange = (nextTab: string) => {
+    rememberKnowledgeScroll(effectiveActiveTab, window.scrollY);
+    rememberKnowledgeTab(nextTab);
+    setActiveTab(nextTab);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set(KNOWLEDGE_TAB_PARAM, nextTab);
+    setSearchParams(nextParams, { replace: true });
+  };
 
   const isLoading = tabsLoading || modulesLoading || lessonsLoading;
 
@@ -341,7 +383,7 @@ const Knowledge = () => {
         </div>
 
         {/* Tabs - Dynamic from DB */}
-        <Tabs value={effectiveActiveTab} onValueChange={setActiveTab} className="w-full">
+        <Tabs value={effectiveActiveTab} onValueChange={handleTabChange} className="w-full">
           <TabsList className="w-full justify-start bg-muted/30 backdrop-blur-xl rounded-2xl p-1.5 h-auto border border-border/30 flex-wrap">
             {tabs.map((tab) => {
               const Icon = getIcon(tab.icon);
