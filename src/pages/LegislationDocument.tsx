@@ -5,7 +5,9 @@ import {
   ArrowUp,
   BookOpen,
   Check,
+  ChevronDown,
   Copy,
+  ListTree,
   Landmark,
   Lock,
   Scale,
@@ -14,6 +16,11 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -102,11 +109,22 @@ export default function LegislationDocument() {
     isError,
   } = useLegalDocument(slug, Boolean(user));
   const [copiedAnchor, setCopiedAnchor] = useState<string | null>(null);
+  const [contentsOpen, setContentsOpen] = useState(false);
 
   const nodes = useMemo(() => {
     if (document?.structure?.length) return document.structure;
     return makeFallbackStructure(document?.content_text ?? "");
   }, [document]);
+  const contents = useMemo(
+    () =>
+      nodes.filter(
+        (node) =>
+          node.kind === "section" ||
+          node.kind === "chapter" ||
+          node.kind === "article",
+      ),
+    [nodes],
+  );
 
   useEffect(() => {
     if (!document || !location.hash) return;
@@ -145,6 +163,19 @@ export default function LegislationDocument() {
     await navigator.clipboard.writeText(url);
     setCopiedAnchor(anchor);
     window.setTimeout(() => setCopiedAnchor(null), 1800);
+  };
+
+  const goToAnchor = (anchor: string) => {
+    const element = window.document.getElementById(anchor);
+    if (!element) return;
+    window.history.replaceState(
+      null,
+      "",
+      `${location.pathname}${location.search}#${encodeURIComponent(anchor)}`,
+    );
+    element.scrollIntoView({ behavior: "smooth", block: "start" });
+    element.classList.add("ring-2", "ring-primary/40", "bg-primary/5");
+    setContentsOpen(false);
   };
 
   if (authLoading || previewLoading) {
@@ -217,13 +248,13 @@ export default function LegislationDocument() {
           </Button>
         </nav>
 
-        <GlassCard className="relative overflow-hidden border-primary/15 bg-gradient-to-br from-primary/[0.12] via-background to-violet-500/[0.06] p-6 sm:p-8">
-          <Landmark className="pointer-events-none absolute -bottom-10 -right-5 h-44 w-44 text-primary/[0.045]" />
-          <div className="relative flex items-start gap-4">
-            <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary sm:flex">
-              <BookOpen className="h-6 w-6" />
+        <GlassCard className="relative overflow-hidden border-primary/15 bg-gradient-to-br from-primary/[0.12] via-background to-violet-500/[0.06] p-4 sm:p-5">
+          <Landmark className="pointer-events-none absolute -bottom-12 -right-5 h-36 w-36 text-primary/[0.04]" />
+          <div className="relative flex items-start gap-3">
+            <div className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary sm:flex">
+              <BookOpen className="h-5 w-5" />
             </div>
-            <div className="min-w-0 flex-1 space-y-4">
+            <div className="min-w-0 flex-1 space-y-2.5">
               <div className="flex flex-wrap gap-2">
                 <Badge>
                   {document.status === "active" ? "Действует" : document.status}
@@ -234,7 +265,7 @@ export default function LegislationDocument() {
                     : "Загружено вручную"}
                 </Badge>
               </div>
-              <h1 className="text-2xl font-bold leading-tight sm:text-3xl">
+              <h1 className="text-xl font-semibold leading-snug sm:text-2xl">
                 {document.title}
               </h1>
               <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
@@ -249,6 +280,60 @@ export default function LegislationDocument() {
             </div>
           </div>
         </GlassCard>
+
+        {contents.length > 0 && (
+          <Collapsible open={contentsOpen} onOpenChange={setContentsOpen}>
+            <div className="overflow-hidden rounded-2xl border bg-card/90 shadow-sm backdrop-blur">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 sm:px-5"
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <ListTree className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">Содержание документа</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Быстрый переход к разделу, главе или статье
+                    </span>
+                  </span>
+                  <Badge variant="secondary" className="hidden shrink-0 sm:inline-flex">
+                    {contents.length}
+                  </Badge>
+                  <ChevronDown
+                    className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                      contentsOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="max-h-[min(55vh,32rem)] overflow-y-auto border-t p-2 sm:p-3">
+                  {contents.map((node) => (
+                    <button
+                      key={node.id}
+                      type="button"
+                      onClick={() => goToAnchor(node.id)}
+                      className={`flex w-full items-start gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-primary/[0.07] hover:text-primary ${
+                        node.kind === "article" ? "pl-7" : ""
+                      }`}
+                    >
+                      <span className="mt-0.5 w-14 shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        {node.kind === "section"
+                          ? "Раздел"
+                          : node.kind === "chapter"
+                            ? "Глава"
+                            : "Статья"}
+                      </span>
+                      <span className="line-clamp-2 leading-snug">{node.text}</span>
+                    </button>
+                  ))}
+                </div>
+              </CollapsibleContent>
+            </div>
+          </Collapsible>
+        )}
 
         <article className="space-y-3 rounded-2xl border bg-card/80 px-3 py-4 shadow-sm backdrop-blur sm:px-5 sm:py-6">
           {nodes.map((node) => (
