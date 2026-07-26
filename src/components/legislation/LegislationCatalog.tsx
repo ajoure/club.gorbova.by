@@ -220,26 +220,26 @@ export function LegislationCatalog() {
 
   return (
     <div className="relative space-y-6 pb-4">
-      <section className="relative overflow-visible rounded-3xl border border-primary/15 bg-gradient-to-br from-primary/[0.14] via-background to-violet-500/[0.08] px-5 py-8 shadow-sm sm:px-8 sm:py-10">
+      <section className="relative overflow-visible rounded-3xl border border-primary/15 bg-gradient-to-br from-primary/[0.14] via-background to-violet-500/[0.08] px-5 py-6 shadow-sm sm:px-8 sm:py-7">
         <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-3xl">
           <div className="absolute -right-12 -top-20 h-64 w-64 rounded-full bg-primary/10 blur-3xl" />
           <Scale className="absolute -bottom-12 right-8 h-48 w-48 rotate-[-8deg] text-primary/[0.045]" />
         </div>
 
         <div className="relative mx-auto max-w-3xl text-center">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/15 bg-background/70 px-3 py-1 text-xs font-medium text-primary backdrop-blur">
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/15 bg-background/70 px-3 py-1 text-xs font-medium text-primary backdrop-blur">
             <Sparkles className="h-3.5 w-3.5" />
             Актуальное законодательство Республики Беларусь
           </div>
           <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
             Найдите нужную норму права
           </h2>
-          <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
+          <p className="mx-auto mt-1.5 max-w-2xl text-sm text-muted-foreground sm:text-base">
             Поиск по названиям, статьям и тексту нормативных правовых актов
           </p>
 
           <form
-            className="relative mx-auto mt-6 max-w-2xl"
+            className="relative mx-auto mt-4 max-w-2xl"
             onSubmit={(event) => {
               event.preventDefault();
               submitSearch();
