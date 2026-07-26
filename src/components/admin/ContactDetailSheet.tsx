@@ -123,6 +123,7 @@ import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallmentsTabContent } from "@/components/installments/ContactInstallmentsTabContent";
+import { isFiniteInstallmentProviderSubscription } from "@/lib/providerSubscriptionLifecycle";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
@@ -2477,6 +2478,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                   if (!LIVE_PROVIDER_STATES.has(sub?.state)) return false;
                   if (isProviderDead(sub)) return false;
                   if (!isRealProviderSubscription(sub)) return false;
+                  // A bounded bePaid sbs_* is the transport for an internal
+                  // installment. It belongs in «Рассрочки», not «Подписки».
+                  if (isFiniteInstallmentProviderSubscription(sub)) return false;
                   return true;
                 };
                 const healthyProviderSubs = allProviderSubs.filter(isHealthyProviderSub);

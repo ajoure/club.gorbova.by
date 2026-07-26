@@ -1,17 +1,20 @@
 /**
- * Shared resolver: determines whether a product is "renewable" based on its
- * active tariff_offers — NOT the user's current subscription state.
+ * Shared resolver: determines whether a product can be renewed after its paid
+ * access period based on active tariff_offers — NOT the user's current
+ * subscription state.
  *
  * === PRODUCT-TYPE SOURCE OF TRUTH (canonical, 2026-04-28) ===
  * Тип продукта (продлеваемый vs разовый) определяется ТОЛЬКО через активные
  * tariff_offers по следующим полям:
  *   1. tariff_offers.meta.recurring.is_recurring === true
  *      ↳ управляется UI-чекбоксом «Подписка (автопродление)» в карточке тарифа.
- *   2. tariff_offers.payment_method === 'internal_installment'   (рассрочка)
- *   3. tariff_offers.is_installment === true
- *   4. tariff_offers.offer_type === 'subscription'
+ *   2. tariff_offers.offer_type === 'subscription'
  *
- * Если ANY активный оффер продукта матчится → продукт renewable.
+ * Finite installments are deliberately NOT renewable. They are implemented by
+ * bePaid as a bounded provider subscription, but their business lifecycle ends
+ * after installment_count payments and must never produce a renewal CTA.
+ *
+ * If ANY active recurring/subscription offer matches → product is renewable.
  * Если у продукта нет активных офферов → conservative `renewable=false`.
  *
  * ЗАПРЕЩЕНО как классификатор продукта:
@@ -132,18 +135,19 @@ export async function resolveProductRenewability(
     return { ...empty, reason: 'no_visible_offers' };
   }
 
-  const renewableOffers = offers.filter((o) => o.kind !== 'one_time');
-  const hasRecurring = renewableOffers.some((o) => o.kind === 'recurring');
-  const hasInstallment = renewableOffers.some((o) => o.kind === 'installment');
-  const hasSubscriptionOffer = renewableOffers.some((o) => o.kind === 'subscription_offer');
+  const renewableOffers = offers.filter(
+    (o) => o.kind === 'recurring' || o.kind === 'subscription_offer',
+  );
+  const hasRecurring = offers.some((o) => o.kind === 'recurring');
+  const hasInstallment = offers.some((o) => o.kind === 'installment');
+  const hasSubscriptionOffer = offers.some((o) => o.kind === 'subscription_offer');
   const renewable = renewableOffers.length > 0;
 
   // Pick preferred offer:
   //   1) match preferredTariffId if it has any renewable offer
   //   2) else: primary recurring offer
   //   3) else: any recurring
-  //   4) else: installment
-  //   5) else: subscription_offer
+  //   4) else: subscription_offer
   let preferredOffer: RenewableOffer | null = null;
   if (preferredTariffId) {
     preferredOffer =
@@ -155,7 +159,6 @@ export async function resolveProductRenewability(
     preferredOffer =
       renewableOffers.find((o) => o.kind === 'recurring' && o.is_primary) ??
       renewableOffers.find((o) => o.kind === 'recurring') ??
-      renewableOffers.find((o) => o.kind === 'installment') ??
       renewableOffers.find((o) => o.kind === 'subscription_offer') ??
       null;
   }
@@ -169,7 +172,9 @@ export async function resolveProductRenewability(
     preferredTariffId: preferredOffer?.tariff_id ?? null,
     preferredOffer,
     offers,
-    reason: renewable ? 'ok' : 'only_one_time_offers',
+    reason: renewable
+      ? 'ok'
+      : (hasInstallment ? 'finite_installment_or_one_time_only' : 'only_one_time_offers'),
   };
 }
 
