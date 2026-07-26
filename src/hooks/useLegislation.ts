@@ -37,7 +37,8 @@ export function useLegalDocumentSharePreview(ref: string | undefined) {
       );
 
       if (error) throw error;
-      return (data?.[0] ?? null) as LegalDocumentSharePreview | null;
+      const rows = (data ?? []) as LegalDocumentSharePreview[];
+      return rows[0] ?? null;
     },
   });
 }

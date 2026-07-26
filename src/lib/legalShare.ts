@@ -6,7 +6,7 @@ export const getLegalDocumentPath = (slug: string, anchor?: string | null) =>
 
 export const getLegalAnchorLabel = (anchor?: string | null) => {
   if (!anchor?.startsWith("art-")) return null;
-  return `Статья ${anchor.slice(4).replaceAll("-", ".")}`;
+  return `Статья ${anchor.slice(4).split("-").join(".")}`;
 };
 
 export const getLegalOgImageUrl = (ref: string, anchor?: string | null) => {
