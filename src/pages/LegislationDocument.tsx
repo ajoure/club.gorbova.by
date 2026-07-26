@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  ArrowUp,
   BookOpen,
   Check,
   Copy,
@@ -193,12 +194,28 @@ export default function LegislationDocument() {
     <DashboardLayout>
       <div className="relative mx-auto max-w-5xl space-y-6 pb-8">
         <div className="pointer-events-none absolute -left-24 -top-16 -z-10 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/knowledge">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Законодательство
-          </Link>
-        </Button>
+        <nav
+          aria-label="Навигация по нормативному акту"
+          className="sticky top-2 z-30 flex items-center justify-between gap-2 rounded-2xl border border-border/70 bg-background/90 p-2 shadow-lg shadow-background/40 backdrop-blur-xl supports-[backdrop-filter]:bg-background/75"
+        >
+          <Button asChild variant="ghost" size="sm" className="min-w-0">
+            <Link to="/knowledge">
+              <ArrowLeft className="mr-2 h-4 w-4 shrink-0" />
+              <span className="truncate">Законодательство</span>
+            </Link>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0"
+            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          >
+            <ArrowUp className="mr-2 h-4 w-4" />
+            <span className="hidden sm:inline">К началу документа</span>
+            <span className="sm:hidden">Наверх</span>
+          </Button>
+        </nav>
 
         <GlassCard className="relative overflow-hidden border-primary/15 bg-gradient-to-br from-primary/[0.12] via-background to-violet-500/[0.06] p-6 sm:p-8">
           <Landmark className="pointer-events-none absolute -bottom-10 -right-5 h-44 w-44 text-primary/[0.045]" />
