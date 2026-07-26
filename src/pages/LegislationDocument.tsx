@@ -24,11 +24,14 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { getKnowledgeTabPath } from "@/lib/knowledgeNavigation";
 import {
   useLegalDocument,
   useLegalDocumentPreview,
 } from "@/hooks/useLegislation";
 import type { LegalStructureNode } from "@/types/legislation";
+
+const LEGISLATION_PATH = getKnowledgeTabPath("knowledge-laws");
 
 function makeFallbackStructure(content: string): LegalStructureNode[] {
   return content
@@ -214,7 +217,7 @@ export default function LegislationDocument() {
           <Scale className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
           <h1 className="text-xl font-semibold">Документ не найден</h1>
           <Button asChild variant="outline" className="mt-6">
-            <Link to="/knowledge">Вернуться в базу знаний</Link>
+            <Link to={LEGISLATION_PATH}>Вернуться в законодательство</Link>
           </Button>
         </GlassCard>
       </DashboardLayout>
@@ -223,28 +226,36 @@ export default function LegislationDocument() {
 
   return (
     <DashboardLayout>
-      <div className="relative mx-auto max-w-5xl space-y-6 pb-8">
+      <div className="relative mx-auto max-w-5xl space-y-6 pb-24">
         <div className="pointer-events-none absolute -left-24 -top-16 -z-10 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
         <nav
           aria-label="Навигация по нормативному акту"
-          className="fixed right-3 top-16 z-40 flex items-center justify-between gap-1 rounded-2xl border border-border/70 bg-background/90 p-1.5 shadow-xl shadow-background/40 backdrop-blur-xl supports-[backdrop-filter]:bg-background/75 sm:right-6 sm:gap-2 sm:p-2"
+          className="fixed bottom-4 right-3 z-40 flex flex-col gap-2 sm:bottom-6 sm:right-6"
         >
-          <Button asChild variant="ghost" size="sm" className="min-w-0">
-            <Link to="/knowledge">
-              <ArrowLeft className="mr-2 h-4 w-4 shrink-0" />
-              <span className="truncate">Законодательство</span>
+          <Button
+            asChild
+            variant="outline"
+            size="icon"
+            className="h-11 w-11 rounded-full border-border/60 bg-background/85 shadow-lg backdrop-blur-xl"
+          >
+            <Link
+              to={LEGISLATION_PATH}
+              aria-label="Вернуться в законодательство"
+              title="Законодательство"
+            >
+              <ArrowLeft className="h-4 w-4" />
             </Link>
           </Button>
           <Button
             type="button"
-            variant="ghost"
-            size="sm"
-            className="shrink-0"
+            variant="outline"
+            size="icon"
+            className="h-11 w-11 rounded-full border-border/60 bg-background/85 shadow-lg backdrop-blur-xl"
+            aria-label="К началу документа"
+            title="К началу документа"
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
           >
-            <ArrowUp className="mr-2 h-4 w-4" />
-            <span className="hidden sm:inline">К началу документа</span>
-            <span className="sm:hidden">Наверх</span>
+            <ArrowUp className="h-4 w-4" />
           </Button>
         </nav>
 
