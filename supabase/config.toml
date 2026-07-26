@@ -149,3 +149,7 @@ verify_jwt = true
 [functions.legal-og-image]
 # Public social-preview image. It exposes only metadata from published documents.
 verify_jwt = false
+
+[functions.l]
+# Public short-link landing page with document-specific social metadata.
+verify_jwt = false

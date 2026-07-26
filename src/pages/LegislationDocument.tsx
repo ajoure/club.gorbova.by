@@ -25,7 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { getKnowledgeTabPath } from "@/lib/knowledgeNavigation";
-import { buildLegalShareText, getLegalSharePath } from "@/lib/legalShare";
+import { buildLegalShareText, getLegalShareUrl } from "@/lib/legalShare";
 import {
   useLegalDocument,
   useLegalDocumentPreview,
@@ -164,8 +164,7 @@ export default function LegislationDocument() {
 
   const shareAnchor = async (anchor?: string) => {
     if (!document) return;
-    const path = getLegalSharePath(document.external_id, anchor);
-    const url = `${window.location.origin}${path}`;
+    const url = getLegalShareUrl(document.external_id, anchor);
     const text = buildLegalShareText(document.title, url, anchor);
 
     try {
@@ -291,9 +290,9 @@ export default function LegislationDocument() {
                   {document.status === "active" ? "Действует" : document.status}
                 </Badge>
                 <Badge variant="outline" className="bg-background/60">
-                  {document.source === "etalon"
-                    ? "ЭТАЛОН-ONLINE"
-                    : "Загружено вручную"}
+                  {document.source === "manual"
+                    ? "Загружено вручную"
+                    : "Официальный текст"}
                 </Badge>
                 <Button
                   type="button"
