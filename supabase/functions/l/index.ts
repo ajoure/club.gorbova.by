@@ -18,8 +18,9 @@ const escapeHtml = (value: string) =>
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
-  const marker = "/functions/v1/l/";
-  const tail = url.pathname.includes(marker)
+  const markers = ["/functions/v1/l/", "/l/"];
+  const marker = markers.find((candidate) => url.pathname.includes(candidate));
+  const tail = marker
     ? url.pathname.slice(url.pathname.indexOf(marker) + marker.length)
     : "";
   const [rawRef, rawAnchor] = tail.split("/");
