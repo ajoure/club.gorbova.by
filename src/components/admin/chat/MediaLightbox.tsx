@@ -40,31 +40,39 @@ export function MediaLightbox({
     }
   };
 
+  const safeViewportStyle: React.CSSProperties = {
+    width: "min(1100px, calc(100vw - max(1rem, env(safe-area-inset-left)) - max(1rem, env(safe-area-inset-right))))",
+    height: isPdf
+      ? "min(88dvh, calc(100dvh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom))))"
+      : "auto",
+    maxHeight: "calc(100dvh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom)))",
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          "p-0 border-none overflow-visible shadow-none bg-transparent",
-          "!max-w-none !w-screen !h-[100dvh] !top-0 !left-0 !translate-x-0 !translate-y-0 !rounded-none",
+          "p-0 border-none overflow-hidden shadow-2xl bg-background/98 rounded-xl",
+          "!max-w-none",
           isPdf ? "flex flex-col" : "flex items-center justify-center"
         )}
+        style={safeViewportStyle}
         showCloseButton={false}
         onEscapeKeyDown={() => onOpenChange(false)}
         onClick={handleBackdropClick}
       >
         <div
           className={cn(
-            "flex flex-col gap-2",
+            "flex min-h-0 flex-col gap-2",
             isPdf
-              ? "w-screen h-[100dvh] items-stretch"
-              : "inline-flex w-fit max-w-[92vw] items-end"
+              ? "h-full w-full items-stretch"
+              : "inline-flex w-full items-stretch p-2"
           )}
           onClick={(e) => e.stopPropagation()}
         >
         {/* Controls */}
         <div
-          className="z-50 flex items-center gap-1 rounded-full border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80 self-end"
-          style={isPdf ? { marginTop: "max(env(safe-area-inset-top), 12px)", marginRight: "max(env(safe-area-inset-right), 12px)" } : undefined}
+          className="z-50 m-2 mb-0 flex shrink-0 items-center gap-1 self-end rounded-full border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80"
         >
           <Button
             variant="ghost"
@@ -98,10 +106,10 @@ export function MediaLightbox({
         <div className={cn(
           "flex items-center justify-center overflow-hidden",
           isPdf
-            ? "w-screen flex-1 min-h-0 bg-background"
+            ? "w-full flex-1 min-h-0 bg-background"
             : isDocument
-              ? "w-fit max-w-[92vw] min-h-[300px] max-h-[calc(90vh-3rem)] rounded-lg bg-background p-4"
-              : "w-fit max-w-[92vw] max-h-[calc(92vh-3rem)] p-0"
+              ? "w-full min-h-[240px] max-h-[calc(80dvh-4rem)] rounded-lg bg-background p-4"
+              : "w-full max-h-[calc(80dvh-4rem)] p-0"
         )}>
           {isPdf ? (
             <PdfViewer url={url} fileName={fileName} />
@@ -132,7 +140,7 @@ export function MediaLightbox({
               controlsList="nodownload noplaybackrate"
               disablePictureInPicture
               className={cn(
-                "max-w-full max-h-[calc(92vh-3rem)]",
+                "max-w-full max-h-[calc(80dvh-4rem)]",
                 isVideoNote ? "rounded-full aspect-square object-cover" : "rounded-lg"
               )}
               style={isVideoNote ? { maxWidth: "min(80vw, 400px)", maxHeight: "min(80vh, 400px)" } : undefined}
@@ -141,7 +149,7 @@ export function MediaLightbox({
             <img
               src={url}
               alt={fileName || "Image"}
-              className="block max-w-[92vw] max-h-[calc(92vh-3rem)] object-contain rounded-lg bg-transparent"
+              className="mx-auto block max-w-full max-h-[calc(80dvh-4rem)] object-contain rounded-lg bg-transparent"
             />
           )}
         </div>
