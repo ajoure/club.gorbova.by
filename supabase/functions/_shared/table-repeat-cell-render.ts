@@ -105,6 +105,8 @@ export interface RowRenderContext {
   pfCache: Map<string, { value: string; code?: string }>;
   knownCustomKeysForRole?: ReadonlySet<string>;
   isSuperAdmin?: boolean;
+  /** Values from one row of a generic public-form repeat group, keyed by pf-id. */
+  submissionValues?: Record<string, unknown>;
 }
 
 export function renderTableRepeatCell(
@@ -134,6 +136,12 @@ export function renderTableRepeatCell(
       if (!ctx.isSuperAdmin) return { value: '', code: 'tr_metadata_source_super_admin_only' };
       if (!col.source_key) return { value: '', code: 'missing_source_key' };
       return readAssignmentMetadataPath(ctx.assignment, col.source_key);
+    }
+    case 'submission_field': {
+      if (!col.source_key) return { value: '', code: 'missing_source_key' };
+      const raw = ctx.submissionValues?.[col.source_key];
+      if (raw == null || raw === '') return { value: '', code: 'submission_field_empty' };
+      return { value: typeof raw === 'string' ? raw : String(raw) };
     }
     default:
       return { value: '', code: 'tr_column_resolve_failed' };

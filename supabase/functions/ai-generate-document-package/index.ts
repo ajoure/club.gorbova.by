@@ -103,29 +103,44 @@ Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
     // ── auth ─────────────────────────────────────────────────────────────
-    const auth = req.headers.get('Authorization');
-    if (!auth?.startsWith('Bearer ')) return j({ error: 'unauthorized' }, 401);
-    const { data: ud } = await supabase.auth.getUser(auth.slice(7));
-    if (!ud?.user) return j({ error: 'unauthorized' }, 401);
-    const userId = ud.user.id;
-
-    const { data: prof } = await supabase
-      .from('profiles').select('id').eq('user_id', userId).maybeSingle();
-    if (!prof) return j({ error: 'profile_not_found' }, 400);
-
     const body = await req.json().catch(() => ({}));
     const packageSessionId: string | undefined = body?.package_session_id;
-    const runMode: 'user_generate' | 'admin_test' =
-      body?.run_mode === 'admin_test' ? 'admin_test' : 'user_generate';
+    const trustedExternalCall =
+      req.headers.get('x-internal-call') === 'external-document-form' &&
+      req.headers.get('Authorization') === `Bearer ${SERVICE_KEY}`;
+    const runMode: 'user_generate' | 'admin_test' | 'external_submit' =
+      body?.run_mode === 'admin_test'
+        ? 'admin_test'
+        : (trustedExternalCall && body?.run_mode === 'external_submit' ? 'external_submit' : 'user_generate');
     if (!packageSessionId) return j({ error: 'package_session_id_required' }, 400);
 
     // ── load session + ownership ─────────────────────────────────────────
     const { data: session } = await supabase
       .from('document_package_sessions')
-      .select('id, profile_id, package_template_id, selected_legal_entity_id, status, created_at')
+      .select('id, profile_id, package_template_id, selected_legal_entity_id, status, created_at, metadata')
       .eq('id', packageSessionId)
       .maybeSingle();
     if (!session) return j({ error: 'package_session_not_found' }, 404);
+
+    let userId: string;
+    let prof: { id: string } | null = null;
+    if (trustedExternalCall) {
+      const { data: owner } = await supabase
+        .from('profiles').select('id, user_id').eq('id', session.profile_id).maybeSingle();
+      if (!owner?.user_id) return j({ error: 'profile_not_found' }, 400);
+      userId = owner.user_id;
+      prof = { id: owner.id };
+    } else {
+      const auth = req.headers.get('Authorization');
+      if (!auth?.startsWith('Bearer ')) return j({ error: 'unauthorized' }, 401);
+      const { data: ud } = await supabase.auth.getUser(auth.slice(7));
+      if (!ud?.user) return j({ error: 'unauthorized' }, 401);
+      userId = ud.user.id;
+      const { data: ownProfile } = await supabase
+        .from('profiles').select('id').eq('user_id', userId).maybeSingle();
+      if (!ownProfile) return j({ error: 'profile_not_found' }, 400);
+      prof = ownProfile;
+    }
 
     if (runMode === 'admin_test') {
       const { data: roleRows } = await supabase
@@ -133,16 +148,20 @@ Deno.serve(async (req) => {
       const codes = (roleRows || []).map((r: any) => r.roles?.code);
       const isSuperAdmin = codes.includes('super_admin') || codes.includes('owner') || codes.includes('admin');
       if (!isSuperAdmin) return j({ error: 'forbidden_admin_test' }, 403);
-    } else if (session.profile_id !== prof.id) {
+    } else if (!trustedExternalCall && session.profile_id !== prof!.id) {
       return j({ error: 'forbidden' }, 403);
     }
 
     // ── load items + templates ───────────────────────────────────────────
-    const { data: items } = await supabase
+    const requestedItemId = typeof body?.package_template_item_id === 'string'
+      ? body.package_template_item_id : null;
+    const { data: allItems } = await supabase
       .from('document_package_template_items')
       .select('id, package_template_id, template_id, title_override, sort_order, generation_mode, repeat_role_catalog_id')
       .eq('package_template_id', session.package_template_id)
       .order('sort_order', { ascending: true });
+    const items = requestedItemId ? (allItems ?? []).filter((i: any) => i.id === requestedItemId) : allItems;
+    if (requestedItemId && (!items || items.length !== 1)) return j({ error: 'package_item_not_found' }, 404);
     if (!items || items.length === 0) return j({ error: 'package_has_no_items' }, 400);
 
     const templateIds = Array.from(new Set(items.map((i: any) => i.template_id).filter(Boolean)));
@@ -819,6 +838,7 @@ Deno.serve(async (req) => {
               preresolved_ln_tokens: plan.lnTokens,
               preresolved_ln_subfield_tokens: plan.lnSubFieldTokens,
               preresolved_pf_fields,
+              external_submission_id: (session.metadata as any)?.external_submission_id ?? null,
               ...plan.packageContextExtras,
             },
           }),

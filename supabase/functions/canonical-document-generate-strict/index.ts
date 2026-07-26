@@ -436,6 +436,7 @@ Deno.serve(async (req) => {
         address: string | null;
         position: string | null;
       } | null;
+      external_submission_id?: string | null;
     };
     let packageContext: PackageCtx | null = null;
 
@@ -477,6 +478,7 @@ Deno.serve(async (req) => {
           : null,
         recipient_display_name: (rawPackageCtx as any).recipient_display_name ?? null,
         recipient: (rawPackageCtx as any).recipient ?? null,
+        external_submission_id: (rawPackageCtx as any).external_submission_id ?? null,
       } as PackageCtx;
       // Package-mode: orchestrator is the trust anchor for profile_id /
       // ownership. Strict acts as system actor — no user JWT.
@@ -1958,6 +1960,7 @@ Deno.serve(async (req) => {
           packageSessionId: packageContext!.package_session_id,
           packageTemplateItemId: packageContext!.package_template_item_id,
           packageTemplateId: packageContext!.package_template_id,
+          externalSubmissionId: packageContext!.external_submission_id ?? null,
           itemMetadata,
           isSuperAdmin,
           preresolvedPfFields: (packageContext!.preresolved_pf_fields || {}) as Record<

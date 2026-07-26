@@ -173,7 +173,7 @@ export function TableRepeatsEditor({
   const issuesByCfg = useMemo(() => {
     const m = new Map<string, TableRepeatIssue[]>();
     for (const cfg of draft ?? []) {
-      const role = roleById.get(cfg.role_catalog_id);
+      const role = roleById.get(cfg.role_catalog_id ?? "");
       const knownKeys = new Set(ensureRoleCustomDefs(role).map((d) => d.key));
       m.set(cfg.id, validateTableRepeatConfig(cfg, { knownCustomKeysForRole: knownKeys }));
     }
@@ -201,6 +201,7 @@ export function TableRepeatsEditor({
       const id = nextTableRepeatId(cur.map((c) => c.id));
       const next: TableRepeatConfig = {
         id,
+        source_kind: "role_assignments",
         role_catalog_id: "",
         label: "",
         columns: [],
@@ -327,7 +328,7 @@ export function TableRepeatsEditor({
               ) : (
                 <div className="space-y-3">
                   {draft.map((cfg) => {
-                    const role = roleById.get(cfg.role_catalog_id);
+                    const role = roleById.get(cfg.role_catalog_id ?? "");
                     const customDefs = ensureRoleCustomDefs(role);
                     const knownCustomKeys = new Set(customDefs.map((d) => d.key));
                     const issues = issuesByCfg.get(cfg.id) ?? [];
@@ -335,6 +336,7 @@ export function TableRepeatsEditor({
                     for (const col of cfg.columns) {
                       cellCount.set(col.cell_index, (cellCount.get(col.cell_index) ?? 0) + 1);
                     }
+                    const isExternal = cfg.source_kind === "external_submission";
                     const previewN = role
                       ? assignmentsCountByRole.get(role.id) ?? 0
                       : null;
@@ -402,33 +404,50 @@ export function TableRepeatsEditor({
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                           <div className="space-y-1">
                             <div className="text-[10px] text-muted-foreground font-medium">
-                              Роль-источник
+                              Источник строк
                             </div>
                             <Select
-                              value={cfg.role_catalog_id}
-                              onValueChange={(v) => updateRepeat(cfg.id, { role_catalog_id: v })}
+                              value={cfg.source_kind ?? "role_assignments"}
+                              onValueChange={(v) => updateRepeat(cfg.id, v === "external_submission"
+                                ? {
+                                  source_kind: "external_submission",
+                                  role_catalog_id: undefined,
+                                  columns: cfg.columns.map((column) =>
+                                    ["role_person", "assignment_custom_field", "assignment_metadata"].includes(column.source_type)
+                                      ? { ...column, source_type: "submission_field", source_key: undefined, case: undefined, format: undefined }
+                                      : column,
+                                  ),
+                                }
+                                : { source_kind: "role_assignments", repeat_group_key: undefined, role_catalog_id: "" })}
                             >
                               <SelectTrigger className="h-7 text-[11px]">
-                                <SelectValue placeholder="Выберите роль…" />
+                                <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                {activeRoles.map((r) => (
-                                  <SelectItem key={r.id} value={r.id} className="text-[11px]">
-                                    {r.label}{" "}
-                                    <span className="text-muted-foreground font-mono">
-                                      {r.public_id}
-                                    </span>
-                                  </SelectItem>
-                                ))}
+                                <SelectItem value="role_assignments" className="text-[11px]">Назначения ролей в анкете</SelectItem>
+                                <SelectItem value="external_submission" className="text-[11px]">Повторяемая группа внешней анкеты</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
                           <div className="space-y-1">
                             <div className="text-[10px] text-muted-foreground font-medium">
-                              Предпросмотр количества строк
+                              {isExternal ? "Ключ повторяемой группы" : "Роль-источник"}
                             </div>
+                            {isExternal ? (
+                              <Input className="h-7 text-[11px]" value={cfg.repeat_group_key ?? ""}
+                                placeholder="Напр.: expenses"
+                                onChange={(e) => updateRepeat(cfg.id, { repeat_group_key: e.target.value.replace(/[^a-z0-9_]/g, "") })} />
+                            ) : (
+                              <Select value={cfg.role_catalog_id ?? ""} onValueChange={(v) => updateRepeat(cfg.id, { role_catalog_id: v })}>
+                                <SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="Выберите роль…" /></SelectTrigger>
+                                <SelectContent>{activeRoles.map((r) => <SelectItem key={r.id} value={r.id} className="text-[11px]">{r.label} <span className="text-muted-foreground font-mono">{r.public_id}</span></SelectItem>)}</SelectContent>
+                              </Select>
+                            )}
+                          </div>
+                          <div className="space-y-1 md:col-span-2">
+                            <div className="text-[10px] text-muted-foreground font-medium">Предпросмотр количества строк</div>
                             <div className="text-[11px] text-foreground border border-border/40 rounded h-7 px-2 flex items-center bg-muted/40">
-                              {previewN === null ? (
+                              {isExternal ? <span className="text-muted-foreground">Число строк появится после заполнения внешней анкеты.</span> : previewN === null ? (
                                 <span className="text-muted-foreground">
                                   Сначала выберите роль
                                 </span>
@@ -471,6 +490,7 @@ export function TableRepeatsEditor({
                                   isSuperAdmin={isSuperAdmin}
                                   roleCustomDefs={customDefs}
                                   packageFields={packageFields}
+                                  isExternalSource={isExternal}
                                   duplicateCellIndex={(cellCount.get(col.cell_index) ?? 0) > 1}
                                   onChange={(patch) => updateColumn(cfg.id, i, patch)}
                                   onRemove={() => removeColumn(cfg.id, i)}

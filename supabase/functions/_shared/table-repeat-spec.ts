@@ -12,7 +12,8 @@ export type TableRepeatColumnSourceType =
   | "static_text"
   | "row_number"
   | "empty"
-  | "assignment_metadata";
+  | "assignment_metadata"
+  | "submission_field";
 
 export interface TableRepeatColumn {
   cell_index: number;
@@ -24,7 +25,9 @@ export interface TableRepeatColumn {
 
 export interface TableRepeatConfig {
   id: string;
-  role_catalog_id: string;
+  source_kind?: "role_assignments" | "external_submission";
+  role_catalog_id?: string;
+  repeat_group_key?: string;
   label?: string;
   columns: TableRepeatColumn[];
 }
@@ -57,7 +60,9 @@ export function readTableRepeats(
     const id = typeof obj.id === "string" ? obj.id : "";
     const role_catalog_id =
       typeof obj.role_catalog_id === "string" ? obj.role_catalog_id : "";
-    if (!TABLE_REPEAT_ID_REGEX.test(id) || !role_catalog_id) continue;
+    const source_kind = obj.source_kind === 'external_submission' ? 'external_submission' : 'role_assignments';
+    const repeat_group_key = typeof obj.repeat_group_key === 'string' ? obj.repeat_group_key : '';
+    if (!TABLE_REPEAT_ID_REGEX.test(id) || (source_kind === 'role_assignments' && !role_catalog_id) || (source_kind === 'external_submission' && !repeat_group_key)) continue;
     const columnsRaw = Array.isArray(obj.columns) ? obj.columns : [];
     const columns: TableRepeatColumn[] = [];
     for (const c of columnsRaw) {
@@ -73,7 +78,8 @@ export function readTableRepeats(
         source_type !== "static_text" &&
         source_type !== "row_number" &&
         source_type !== "empty" &&
-        source_type !== "assignment_metadata"
+        source_type !== "assignment_metadata" &&
+        source_type !== "submission_field"
       ) {
         continue;
       }
@@ -83,7 +89,9 @@ export function readTableRepeats(
       if (typeof co.format === "string") col.format = co.format;
       columns.push(col);
     }
-    const cfg: TableRepeatConfig = { id, role_catalog_id, columns };
+    const cfg: TableRepeatConfig = { id, source_kind, columns };
+    if (role_catalog_id) cfg.role_catalog_id = role_catalog_id;
+    if (repeat_group_key) cfg.repeat_group_key = repeat_group_key;
     if (typeof obj.label === "string") cfg.label = obj.label;
     out.push(cfg);
   }
@@ -93,6 +101,7 @@ export function readTableRepeats(
 // Stage E.2 — validateTableRepeatConfig (edge mirror).
 export type TableRepeatIssueCode =
   | "missing_role"
+  | "invalid_source_for_external_submission"
   | "duplicate_cell_index"
   | "negative_cell_index"
   | "non_integer_cell_index"
@@ -115,12 +124,23 @@ export function validateTableRepeatConfig(
 ): TableRepeatIssue[] {
   const issues: TableRepeatIssue[] = [];
 
-  if (!cfg.role_catalog_id) {
+  if ((cfg.source_kind ?? 'role_assignments') === 'role_assignments' && !cfg.role_catalog_id) {
     issues.push({
       code: "missing_role",
       severity: "error",
       message: "Не выбрана роль-источник для повторяемой строки.",
     });
+  }
+  if ((cfg.source_kind ?? 'role_assignments') === 'external_submission' && !cfg.repeat_group_key) {
+    issues.push({ code: 'missing_role', severity: 'error', message: 'Не указана повторяемая группа внешней анкеты.' });
+  }
+  if ((cfg.source_kind ?? 'role_assignments') === 'external_submission') {
+    for (const col of cfg.columns) {
+      if (['role_person', 'assignment_custom_field', 'assignment_metadata'].includes(col.source_type)) {
+        issues.push({ code: 'invalid_source_for_external_submission', severity: 'error', cell_index: col.cell_index,
+          message: `Колонка ${col.cell_index + 1}: источник роли нельзя использовать в строке внешней анкеты.` });
+      }
+    }
   }
 
   const seenCells = new Map<number, number>();
@@ -168,7 +188,8 @@ export function validateTableRepeatConfig(
       col.source_type === "role_person" ||
       col.source_type === "assignment_custom_field" ||
       col.source_type === "package_field" ||
-      col.source_type === "static_text"
+      col.source_type === "static_text" ||
+      col.source_type === "submission_field"
     ) {
       if (!col.source_key || col.source_key === "") {
         issues.push({
@@ -261,7 +282,7 @@ export function validateTableRepeatMarkersInTemplate(
           `— в Stage E.4 каждое вхождение раскроется одинаково.`,
       });
     }
-    const knownKeys = ctx?.knownCustomKeysByRoleId?.get(cfg.role_catalog_id);
+    const knownKeys = cfg.role_catalog_id ? ctx?.knownCustomKeysByRoleId?.get(cfg.role_catalog_id) : undefined;
     const cfgIssues = validateTableRepeatConfig(cfg, {
       knownCustomKeysForRole: knownKeys,
     });
@@ -282,4 +303,3 @@ export function validateTableRepeatMarkersInTemplate(
 
   return issues;
 }
-

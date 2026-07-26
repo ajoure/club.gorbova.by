@@ -4,10 +4,13 @@
 // Канонический отправитель уже сгенерированных документов (ai_generated_documents).
 //
 // КОНТРАКТ:
-//   - Вход: { document_id, send_email?: boolean, send_telegram?: boolean }
+//   - Вход: { document_id, send_email?: boolean, send_telegram?: boolean,
+//             send_docx?: boolean }
 //   - Никаких bucket/file_path от клиента — только document_id из БД.
-//   - JWT-only: пользователь может работать только со своими документами.
+//   - JWT: пользователь может работать только со своими документами.
 //     super_admin / admin / accountant — со всеми (через has_role_v2).
+//     Исключение — service-role вызов external-document-form после его
+//     собственных проверок токена, доступа и принадлежности submission.
 //   - НЕ создаёт новые документы и НЕ расходует номер. Если документа нет —
 //     возвращает 404 (клиент должен сначала вызвать canonical-document-generate-strict).
 //   - Email: через send-email с PDF attachment (multipart/mixed).
@@ -30,6 +33,12 @@ interface SendRequest {
   document_id: string;
   send_email?: boolean;
   send_telegram?: boolean;
+  /** PDF можно отключить, когда владельцу нужен только DOCX. */
+  send_pdf?: boolean;
+  /** Добавить исходный DOCX, если он сохранён каноническим генератором. */
+  send_docx?: boolean;
+  /** Только для доверенного вызова external-document-form. */
+  external_submission_id?: string;
   /** Опциональный override email-получателя — иначе берём из profile.email */
   to_email?: string;
 }
@@ -101,9 +110,10 @@ async function tgGetBotToken(supabase: any): Promise<string | null> {
 async function tgSendDocument(
   botToken: string,
   chatId: string | number,
-  pdfBytes: Uint8Array,
+  fileBytes: Uint8Array,
   filename: string,
   caption: string,
+  mime = "application/pdf",
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const form = new FormData();
@@ -112,7 +122,7 @@ async function tgSendDocument(
     form.append("parse_mode", "HTML");
     form.append(
       "document",
-      new Blob([pdfBytes], { type: "application/pdf" }),
+      new Blob([fileBytes], { type: mime }),
       filename,
     );
     const url = `https://api.telegram.org/bot${botToken}/sendDocument`;
@@ -158,9 +168,6 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
 
   try {
-    const userId = await getCallerUserId(req);
-    if (!userId) return json(401, { error: "unauthorized" });
-
     const body = (await req.json().catch(() => null)) as SendRequest | null;
     if (!body?.document_id || typeof body.document_id !== "string") {
       return json(400, { error: "invalid_document_id" });
@@ -168,6 +175,12 @@ Deno.serve(async (req) => {
     if (!body.send_email && !body.send_telegram) {
       return json(400, { error: "no_action_requested" });
     }
+
+    const trustedExternal =
+      req.headers.get("x-internal-call") === "external-document-form" &&
+      req.headers.get("Authorization") === `Bearer ${SERVICE_ROLE_KEY}`;
+    const userId = trustedExternal ? null : await getCallerUserId(req);
+    if (!userId && !trustedExternal) return json(401, { error: "unauthorized" });
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
@@ -190,8 +203,8 @@ Deno.serve(async (req) => {
     }
 
     // Owner check (or elevated role)
-    const elevated = await isElevated(admin, userId);
-    if (!elevated) {
+    const elevated = userId ? await isElevated(admin, userId) : false;
+    if (!trustedExternal && !elevated) {
       const { data: profile } = await admin
         .from("profiles")
         .select("id, user_id, email, telegram_user_id, full_name")
@@ -303,6 +316,53 @@ Deno.serve(async (req) => {
     // RFC 2047 в send-email; Telegram sendDocument multipart принимает UTF-8.
     const baseName = (doc.file_name || `${doc.document_number || "document"}.pdf`).replace(/\.docx$/i, "");
     const filename = baseName.toLowerCase().endsWith(".pdf") ? baseName : `${baseName}.pdf`;
+    type DeliveryFile = { bytes: Uint8Array; filename: string; mime: string };
+    const extraFiles: DeliveryFile[] = [];
+
+    // DOCX — вторичный артефакт штатного генератора, а не путь из браузера.
+    const docxPath = (doc.meta as any)?.docx_storage_path as string | undefined;
+    if (body.send_docx && docxPath) {
+      const { data: docxBlob, error: docxErr } = await admin.storage.from(bucket).download(docxPath);
+      if (!docxErr && docxBlob) {
+        extraFiles.push({
+          bytes: new Uint8Array(await docxBlob.arrayBuffer()),
+          filename: String((doc.meta as any)?.docx_file_name || filename.replace(/\.pdf$/i, ".docx")),
+          mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        });
+      }
+    }
+
+    // Файлы подтверждения доступны только по доверенному пути публичной
+    // анкеты. Перед скачиванием сверяем владельца и связь с этим документом.
+    if (trustedExternal && body.external_submission_id) {
+      const { data: submission } = await admin
+        .from("document_package_external_submissions")
+        .select("owner_profile_id, generated_document_ids")
+        .eq("id", body.external_submission_id)
+        .maybeSingle();
+      const generatedIds = Array.isArray(submission?.generated_document_ids)
+        ? submission.generated_document_ids
+        : [];
+      if (submission?.owner_profile_id === doc.profile_id && generatedIds.includes(doc.id)) {
+        const { data: uploaded } = await admin
+          .from("document_package_external_submission_attachments")
+          .select("storage_path, file_name, mime_type")
+          .eq("submission_id", body.external_submission_id)
+          .order("created_at");
+        for (const upload of uploaded ?? []) {
+          const { data: attachmentBlob, error: attachmentErr } = await admin.storage
+            .from("document-external-attachments")
+            .download(upload.storage_path);
+          if (!attachmentErr && attachmentBlob) {
+            extraFiles.push({
+              bytes: new Uint8Array(await attachmentBlob.arrayBuffer()),
+              filename: upload.file_name,
+              mime: upload.mime_type || "application/octet-stream",
+            });
+          }
+        }
+      }
+    }
 
     // ---- Send Email ---------------------------------------------------------
     const results: {
@@ -400,20 +460,23 @@ Deno.serve(async (req) => {
           }
           const text = textParts.join("\n");
 
-          const base64Pdf = uint8ToBase64(pdfBytes);
+          const emailAttachments = [
+            ...(body.send_pdf !== false
+              ? [{ filename, content_base64: uint8ToBase64(pdfBytes), mime: "application/pdf" }]
+              : []),
+            ...extraFiles.map((file) => ({
+              filename: file.filename,
+              content_base64: uint8ToBase64(file.bytes),
+              mime: file.mime,
+            })),
+          ];
           const { error: emailErr } = await admin.functions.invoke("send-email", {
             body: {
               to: recipientEmail,
               subject: subj,
               html,
               text,
-              attachments: [
-                {
-                  filename,
-                  content_base64: base64Pdf,
-                  mime: "application/pdf",
-                },
-              ],
+              attachments: emailAttachments,
               context: {
                 profile_id: doc.profile_id,
                 event_type: "document_sent",
@@ -480,10 +543,16 @@ Deno.serve(async (req) => {
             }
             const caption = captionLines.join("\n");
 
-            const r = await tgSendDocument(botToken, chatId, pdfBytes, filename, caption);
-            if (!r.ok) {
-              results.telegram_error = r.error || "telegram_send_failed";
+            const primary = body.send_pdf !== false
+              ? await tgSendDocument(botToken, chatId, pdfBytes, filename, caption)
+              : { ok: true };
+            if (!primary.ok) {
+              results.telegram_error = primary.error || "telegram_send_failed";
             } else {
+              for (const file of extraFiles) {
+                const extra = await tgSendDocument(botToken, chatId, file.bytes, file.filename, "", file.mime);
+                if (!extra.ok) throw new Error(extra.error || "telegram_attachment_send_failed");
+              }
               results.telegram_sent = true;
               await admin
                 .from("ai_generated_documents")
@@ -548,4 +617,3 @@ function uint8ToBase64(bytes: Uint8Array): string {
   }
   return btoa(binary);
 }
-
