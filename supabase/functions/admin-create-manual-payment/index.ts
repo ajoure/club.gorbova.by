@@ -7,6 +7,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
+import { finalizeComposablePurchase } from "../_shared/finalize-composable-purchase.ts";
 
 interface Body {
   provider: "bepaid" | "stripe" | "rr" | "bank";
@@ -182,6 +183,64 @@ Deno.serve(async (req) => {
     console.error("[admin-create-manual-payment] audit insert failed", auditErr);
   }
 
+  // A manual payment linked to an order must enter the exact same fulfilment
+  // boundary as provider webhooks. The RPC above is the payment writer only;
+  // it intentionally does not grant product access or send notifications.
+  // Re-read the recalculated order state and finalize only when it is fully paid.
+  // finalizeComposablePurchase and grant-access-for-order are idempotent, so an
+  // idempotency replay safely repairs a previously interrupted downstream chain.
+  let fulfillment: Record<string, unknown> = { state: "not_applicable" };
+  const resolvedOrderId = (rpcResult.order_id ?? orderId) as string | null;
+  if (resolvedOrderId) {
+    const { data: orderAfterPayment, error: orderLookupErr } = await admin
+      .from("orders_v2")
+      .select("id,status")
+      .eq("id", resolvedOrderId)
+      .maybeSingle();
+    if (orderLookupErr) {
+      return bad(500, "manual_payment_order_reload_failed", {
+        detail: orderLookupErr.message,
+        request_id: requestId,
+        payment_id: rpcResult.payment_id,
+        order_id: resolvedOrderId,
+      });
+    }
+
+    if (orderAfterPayment?.status === "paid") {
+      try {
+        fulfillment = await finalizeComposablePurchase(admin, {
+          primaryOrderId: resolvedOrderId,
+          paymentId: String(rpcResult.payment_id),
+          source: "admin-create-manual-payment",
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        await admin.from("audit_logs").insert({
+          actor_user_id: actorUserId,
+          action: "admin_manual_payment_fulfillment_failed",
+          entity_type: "orders_v2",
+          entity_id: resolvedOrderId,
+          meta: {
+            request_id: requestId,
+            payment_id: rpcResult.payment_id,
+            detail,
+          },
+        });
+        return bad(500, "manual_payment_fulfillment_failed", {
+          detail,
+          request_id: requestId,
+          payment_id: rpcResult.payment_id,
+          order_id: resolvedOrderId,
+        });
+      }
+    } else {
+      fulfillment = {
+        state: "awaiting_full_payment",
+        order_status: orderAfterPayment?.status ?? null,
+      };
+    }
+  }
+
   return new Response(
     JSON.stringify({
       ok: true,
@@ -195,6 +254,7 @@ Deno.serve(async (req) => {
       order_id: rpcResult.order_id ?? orderId,
       profile_id: rpcResult.profile_id ?? profileId,
       origin: "manual_admin",
+      fulfillment,
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );

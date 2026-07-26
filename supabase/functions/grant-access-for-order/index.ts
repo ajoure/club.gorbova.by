@@ -754,6 +754,12 @@ Deno.serve(async (req) => {
         },
       });
 
+      // A previous attempt may have committed access and then failed while
+      // delivering Telegram/email. Do not let the access idempotency guard
+      // suppress repair of that independent, idempotent downstream stage.
+      // notify-order-purchased retries failed delivery rows and skips sent ones.
+      await triggerOrderPurchasedNotification(orderId);
+
       return new Response(
         JSON.stringify({
           success: true,
@@ -2472,41 +2478,7 @@ Deno.serve(async (req) => {
     // Idempotency гарантируется downstream через уникальные индексы
     // order_notification_deliveries (buyer / telegram_admin).
     // ──────────────────────────────────────────────────────────────────────
-    if (orderId) {
-      const notifyUrl = Deno.env.get('SUPABASE_URL');
-      const notifyKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-      if (notifyUrl && notifyKey) {
-        const NOTIFY_TIMEOUT_MS = 20000;
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), NOTIFY_TIMEOUT_MS);
-        const startedAt = Date.now();
-        try {
-          const r = await fetch(`${notifyUrl}/functions/v1/notify-order-purchased`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${notifyKey}`,
-            },
-            body: JSON.stringify({ order_id: orderId }),
-            signal: ctrl.signal,
-          });
-          const text = await r.text().catch(() => '');
-          const elapsed = Date.now() - startedAt;
-          if (r.ok) {
-            console.log('[grant-access-for-order] notify-order-purchased status=' + r.status + ' elapsed_ms=' + elapsed + ' body_short=' + text.slice(0, 300));
-          } else {
-            console.warn('[grant-access-for-order] notify-order-purchased non-2xx status=' + r.status + ' elapsed_ms=' + elapsed + ' body_short=' + text.slice(0, 300));
-          }
-        } catch (notifyErr) {
-          const elapsed = Date.now() - startedAt;
-          console.warn('[grant-access-for-order] notify-order-purchased await error (ignored, grant OK) elapsed_ms=' + elapsed + ' msg=' + ((notifyErr as Error)?.message || String(notifyErr)));
-        } finally {
-          clearTimeout(timer);
-        }
-      } else {
-        console.warn('[grant-access-for-order] notify-order-purchased skipped: SUPABASE_URL/SERVICE_ROLE_KEY missing');
-      }
-    }
+    if (orderId) await triggerOrderPurchasedNotification(orderId);
 
 
 
@@ -2528,6 +2500,41 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+async function triggerOrderPurchasedNotification(orderId: string): Promise<void> {
+  const notifyUrl = Deno.env.get('SUPABASE_URL');
+  const notifyKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!notifyUrl || !notifyKey) {
+    console.warn('[grant-access-for-order] notify-order-purchased skipped: SUPABASE_URL/SERVICE_ROLE_KEY missing');
+    return;
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(`${notifyUrl}/functions/v1/notify-order-purchased`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${notifyKey}`,
+      },
+      body: JSON.stringify({ order_id: orderId }),
+      signal: ctrl.signal,
+    });
+    const text = await response.text().catch(() => '');
+    const elapsed = Date.now() - startedAt;
+    if (response.ok) {
+      console.log('[grant-access-for-order] notify-order-purchased status=' + response.status + ' elapsed_ms=' + elapsed + ' body_short=' + text.slice(0, 300));
+    } else {
+      console.warn('[grant-access-for-order] notify-order-purchased non-2xx status=' + response.status + ' elapsed_ms=' + elapsed + ' body_short=' + text.slice(0, 300));
+    }
+  } catch (error) {
+    console.warn('[grant-access-for-order] notify-order-purchased await error (ignored, grant OK) elapsed_ms=' + (Date.now() - startedAt) + ' msg=' + ((error as Error)?.message || String(error)));
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 
 // ── PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / ELIG-C1R ──────────────────────

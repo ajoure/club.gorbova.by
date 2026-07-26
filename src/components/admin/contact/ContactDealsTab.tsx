@@ -16,7 +16,6 @@ import {
   Pencil,
   Eye,
   Undo2,
-  Download,
 } from "lucide-react";
 import { format, parse } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -333,11 +332,6 @@ function DealRow({
   const isPaid = deal.status === "paid";
   const isSplitParent = meta.split_status === "children_created";
 
-  const payments = deal.payments_v2 as any[] | undefined;
-  const successfulPayment = payments?.find(p => p.status === "succeeded");
-  const receiptUrl = successfulPayment?.receipt_url
-    || successfulPayment?.provider_response?.transaction?.receipt_url;
-
   const tariffName = (deal.tariffs as any)?.name;
   const fullName = getDealDisplayName({
     productsV2: deal.products_v2,
@@ -387,7 +381,7 @@ function DealRow({
       </div>
 
       {/* Bottom row on mobile (offset under title); inline on desktop */}
-      <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap sm:flex-shrink-0 pl-9 sm:pl-0">
+      <div className="flex items-center gap-1 sm:gap-1.5 flex-nowrap min-w-0 sm:flex-shrink-0 pl-9 sm:pl-0 overflow-hidden">
         {dealMonth && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -418,21 +412,6 @@ function DealRow({
           }).format(Number(deal.final_price))}
         </span>
 
-        {receiptUrl && (
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-6 w-6"
-            title="Чек"
-            onClick={(e) => {
-              e.stopPropagation();
-              window.open(receiptUrl, "_blank");
-            }}
-          >
-            <Download className="w-3 h-3" />
-          </Button>
-        )}
-
         <Button
           size="icon"
           variant="ghost"
@@ -461,8 +440,8 @@ function DealRow({
           </Button>
         )}
 
-        <Eye className="w-3.5 h-3.5 text-muted-foreground" />
-        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+        <Eye className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+        <ChevronRight className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
       </div>
     </div>
   );
