@@ -301,6 +301,9 @@ const LEGACY_PKG_ROLE_RE = /^package\.(role\.PKR-|roles\.)/i;
 // {{tableRepeat:TR-XXXXXX}} — БЕЗ модификаторов, package_session only.
 const TABLE_REPEAT_TOKEN_RE = /^tableRepeat:(TR-\d{6,})$/;
 const TABLE_REPEAT_PREFIX_RE = /^tableRepeat:/;
+// {{tableTotal:TT-XXXXXX[|format=words]}} — итог editable table-repeat config.
+const TABLE_TOTAL_TOKEN_RE = /^tableTotal:(TT-\d{6,})(?:\|format=words)?$/;
+const TABLE_TOTAL_PREFIX_RE = /^tableTotal:/;
 // {{ln-XXXXXX.custom.<key>}} — БЕЗ модификаторов в v1, package_session only.
 const LN_CUSTOM_TOKEN_RE = /^(ln-\d+)\.custom\.([A-Za-z0-9_]+)$/;
 const LN_CUSTOM_PREFIX_RE = /^ln-\d+\.custom\./;
@@ -882,6 +885,7 @@ Deno.serve(async (req) => {
     // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4 + E.4a
     const parsedTableRepeatTokens: Array<{ raw_inside: string; tr_id: string }> = [];
     const tableRepeatTokensOutsideContext: string[] = [];
+    const tableTotalTokensOutsideContext: string[] = [];
     const parsedLnCustomTokens: LnCustomTokenRequest[] = [];
     const lnCustomTokensOutsideContext: string[] = [];
     const lnCustomTokensInvalidModifier: string[] = [];
@@ -901,6 +905,19 @@ Deno.serve(async (req) => {
           continue;
         }
         parsedTableRepeatTokens.push({ raw_inside: inside, tr_id: trMatch[1] });
+        continue;
+      }
+
+      if (TABLE_TOTAL_PREFIX_RE.test(inside)) {
+        if (!TABLE_TOTAL_TOKEN_RE.test(inside)) {
+          unknownModifierTokens.push(`{{${inside}}}`);
+          continue;
+        }
+        if (generationContext !== 'package_session') {
+          tableTotalTokensOutsideContext.push(`{{${inside}}}`);
+        }
+        // The actual value is injected into DOCX by applyTableRepeatExpansion
+        // after it reads the user-configured table aggregate metadata.
         continue;
       }
 
@@ -1192,6 +1209,13 @@ Deno.serve(async (req) => {
         error: 'package_token_outside_package_context',
         code: 'table_repeat_outside_package_context',
         tokens: Array.from(new Set(tableRepeatTokensOutsideContext)),
+      }, 400);
+    }
+    if (tableTotalTokensOutsideContext.length > 0) {
+      return json({
+        error: 'package_token_outside_package_context',
+        code: 'table_total_outside_package_context',
+        tokens: Array.from(new Set(tableTotalTokensOutsideContext)),
       }, 400);
     }
     if (lnCustomTokensOutsideContext.length > 0) {
