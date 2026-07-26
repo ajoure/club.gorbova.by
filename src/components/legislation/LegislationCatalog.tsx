@@ -3,9 +3,12 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowRight,
   BookOpen,
+  BriefcaseBusiness,
+  Calculator,
   ChevronRight,
   FileSearch,
   FileText,
+  FolderArchive,
   Loader2,
   Scale,
   Search,
@@ -24,12 +27,14 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  useLegalDocumentCollections,
   useLegislationSearch,
   usePublishedLegislation,
 } from "@/hooks/useLegislation";
 import type {
   LegalCategory,
   LegalDocument,
+  LegalDocumentCollectionRow,
   LegalSearchResult,
 } from "@/types/legislation";
 
@@ -80,7 +85,18 @@ function HighlightedSnippet({ text }: { text: string }) {
   );
 }
 
-function DocumentRow({ document }: { document: LegalDocument }) {
+type LegalDocumentListItem = Pick<
+  LegalDocument,
+  | "id"
+  | "slug"
+  | "title"
+  | "status"
+  | "doc_date"
+  | "doc_number"
+  | "last_synced_at"
+>;
+
+function DocumentRow({ document }: { document: LegalDocumentListItem }) {
   return (
     <Link
       to={`/knowledge/laws/${document.slug}`}
@@ -155,6 +171,7 @@ function SearchResultRow({ result }: { result: LegalSearchResult }) {
 export function LegislationCatalog() {
   const navigate = useNavigate();
   const { data = [], isLoading, isError } = usePublishedLegislation();
+  const collections = useLegalDocumentCollections();
   const [input, setInput] = useState("");
   const [debouncedInput, setDebouncedInput] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
@@ -172,16 +189,62 @@ export function LegislationCatalog() {
   );
   const results = useLegislationSearch(submittedQuery, 60, Boolean(submittedQuery));
 
-  const categories = useMemo(
-    () =>
-      (Object.keys(CATEGORY_LABELS) as LegalCategory[])
-        .map((category) => ({
-          category,
-          documents: data.filter((document) => document.category === category),
-        }))
-        .filter(({ documents }) => documents.length > 0),
-    [data],
-  );
+  const groups = useMemo(() => {
+    const collectionRows = collections.data ?? [];
+    const groupedCollections = new Map<
+      string,
+      {
+        key: string;
+        title: string;
+        description: string;
+        sortOrder: number;
+        icon: typeof Scale;
+        documents: LegalDocumentCollectionRow[];
+      }
+    >();
+    const collectionIcons: Record<string, typeof Scale> = {
+      accountant: Calculator,
+      director: BriefcaseBusiness,
+      document_workflow: FolderArchive,
+    };
+
+    for (const row of collectionRows) {
+      const group = groupedCollections.get(row.collection_code) ?? {
+        key: `collection-${row.collection_code}`,
+        title: row.collection_title,
+        description: row.collection_description,
+        sortOrder: row.collection_sort_order,
+        icon: collectionIcons[row.collection_code] ?? Scale,
+        documents: [],
+      };
+      group.documents.push(row);
+      groupedCollections.set(row.collection_code, group);
+    }
+
+    const assignedIds = new Set(
+      collectionRows.map((row) => row.document_id),
+    );
+    const categoryGroups = (Object.keys(CATEGORY_LABELS) as LegalCategory[])
+      .map((category, index) => ({
+        key: `category-${category}`,
+        title: CATEGORY_LABELS[category],
+        description: CATEGORY_DESCRIPTIONS[category],
+        sortOrder: category === "codes" ? 10 : 100 + index,
+        icon: CATEGORY_ICONS[category],
+        documents: data.filter(
+          (document) =>
+            document.category === category &&
+            (category === "codes" || !assignedIds.has(document.id)),
+        ),
+      }))
+      .filter(({ documents }) => documents.length > 0);
+
+    return [...categoryGroups, ...groupedCollections.values()].sort(
+      (left, right) =>
+        left.sortOrder - right.sortOrder ||
+        left.title.localeCompare(right.title, "ru"),
+    );
+  }, [collections.data, data]);
 
   const submitSearch = () => {
     const query = input.trim();
@@ -196,7 +259,7 @@ export function LegislationCatalog() {
     setSubmittedQuery("");
   };
 
-  if (isLoading) {
+  if (isLoading || collections.isLoading) {
     return (
       <div className="space-y-5">
         <Skeleton className="h-52 rounded-3xl" />
@@ -206,7 +269,7 @@ export function LegislationCatalog() {
     );
   }
 
-  if (isError) {
+  if (isError || collections.isError) {
     return (
       <GlassCard className="py-12 text-center">
         <Scale className="mx-auto mb-4 h-12 w-12 text-destructive/60" />
@@ -389,15 +452,14 @@ export function LegislationCatalog() {
       ) : (
         <Accordion
           type="multiple"
-          defaultValue={categories.map(({ category }) => category)}
+          defaultValue={groups.map(({ key }) => key)}
           className="space-y-3"
         >
-          {categories.map(({ category, documents }) => {
-            const Icon = CATEGORY_ICONS[category];
+          {groups.map(({ key, title, description, icon: Icon, documents }) => {
             return (
               <AccordionItem
-                key={category}
-                value={category}
+                key={key}
+                value={key}
                 className="overflow-hidden rounded-2xl border bg-card/80 shadow-sm backdrop-blur"
               >
                 <AccordionTrigger className="px-4 py-4 hover:no-underline sm:px-5">
@@ -408,12 +470,12 @@ export function LegislationCatalog() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <h2 className="font-semibold sm:text-lg">
-                          {CATEGORY_LABELS[category]}
+                          {title}
                         </h2>
                         <Badge variant="secondary">{documents.length}</Badge>
                       </div>
                       <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground sm:block">
-                        {CATEGORY_DESCRIPTIONS[category]}
+                        {description}
                       </p>
                     </div>
                   </div>
@@ -421,7 +483,22 @@ export function LegislationCatalog() {
                 <AccordionContent className="pb-0">
                   <div className="border-t">
                     {documents.map((document) => (
-                      <DocumentRow key={document.id} document={document} />
+                      <DocumentRow
+                        key={"document_id" in document ? document.document_id : document.id}
+                        document={
+                          "document_id" in document
+                            ? {
+                                id: document.document_id,
+                                slug: document.slug,
+                                title: document.title,
+                                status: document.status,
+                                doc_date: document.doc_date,
+                                doc_number: document.doc_number,
+                                last_synced_at: document.last_synced_at,
+                              }
+                            : document
+                        }
+                      />
                     ))}
                   </div>
                 </AccordionContent>

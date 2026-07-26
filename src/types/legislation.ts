@@ -74,3 +74,30 @@ export interface LegalSearchResult {
   snippet: string;
   rank: number;
 }
+
+export interface LegalDocumentCollectionRow {
+  collection_code: string;
+  collection_title: string;
+  collection_description: string;
+  collection_sort_order: number;
+  document_sort_order: number;
+  document_id: string;
+  external_id: string;
+  slug: string;
+  title: string;
+  doc_type: string | null;
+  doc_date: string | null;
+  doc_number: string | null;
+  category: LegalCategory;
+  status: string;
+  last_synced_at: string | null;
+}
+
+export interface LegalDocumentSearchResult {
+  document_id: string;
+  anchor: string;
+  kind: LegalStructureNode["kind"];
+  snippet: string;
+  full_text: string;
+  rank: number;
+}
