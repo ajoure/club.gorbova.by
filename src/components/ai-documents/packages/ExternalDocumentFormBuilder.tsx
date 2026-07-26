@@ -51,6 +51,9 @@ type FormField = {
   input_rules: Record<string, unknown> | null;
 };
 
+/** A form-field binding always belongs to one concrete external form. */
+type FormBinding = FormField & { external_form_id: string };
+
 const QK = (packageId: string) => ["external-document-forms", packageId] as const;
 
 export function ExternalDocumentFormBuilder({ packageTemplateId }: { packageTemplateId: string }) {
@@ -100,14 +103,14 @@ export function ExternalDocumentFormBuilder({ packageTemplateId }: { packageTemp
     queryKey: ["external-document-form-bindings", formsQuery.data?.map((f) => f.id).join(",")],
     queryFn: async () => {
       const formIds = (formsQuery.data ?? []).map((x) => x.id);
-      if (formIds.length === 0) return [] as FormField[] & { external_form_id?: string }[];
+      if (formIds.length === 0) return [] as FormBinding[];
       const { data, error } = await supabase
         .from("document_package_external_form_fields" as never)
         .select("*")
         .in("external_form_id", formIds)
         .order("sort_order");
       if (error) throw error;
-      return (data ?? []) as unknown as (FormField & { external_form_id: string })[];
+      return (data ?? []) as unknown as FormBinding[];
     },
     enabled: formsQuery.isSuccess,
   });
@@ -255,8 +258,8 @@ export function ExternalDocumentFormBuilder({ packageTemplateId }: { packageTemp
 }
 
 function ExternalFormCard(props: {
-  initial: FormRow; documentName: string; fields: Field[]; normal: (FormField & { external_form_id: string })[];
-  groups: string[]; bindings: (FormField & { external_form_id: string })[]; used: Set<string>; fieldById: Map<string, Field>;
+  initial: FormRow; documentName: string; fields: Field[]; normal: FormBinding[];
+  groups: string[]; bindings: FormBinding[]; used: Set<string>; fieldById: Map<string, Field>;
   onSave: (v: FormRow) => void; saving: boolean;
   onAdd: (fieldId: string, group: string | null) => void; onUpdate: (id: string, p: Partial<FormField>) => void; onRemove: (id: string) => void;
 }) {
@@ -277,6 +280,6 @@ function ExternalFormCard(props: {
   </GlassCard>;
 }
 
-function BindingList({ title, rows, fieldById, onUpdate, onRemove }: { title: string; rows: (FormField & { external_form_id: string })[]; fieldById: Map<string, Field>; onUpdate: (id: string, p: Partial<FormField>) => void; onRemove: (id: string) => void }) {
+function BindingList({ title, rows, fieldById, onUpdate, onRemove }: { title: string; rows: FormBinding[]; fieldById: Map<string, Field>; onUpdate: (id: string, p: Partial<FormField>) => void; onRemove: (id: string) => void }) {
   return <div className="space-y-1.5"><div className="text-xs font-medium">{title}</div>{rows.length === 0 ? <div className="text-xs text-muted-foreground">Пока нет полей.</div> : rows.map((row) => { const f = fieldById.get(row.field_catalog_id); const rules = row.input_rules ?? {}; return <div key={row.id} className="rounded-lg border border-border/50 p-2 flex flex-wrap items-center gap-3 text-xs"><div className="min-w-[220px] flex-1"><span className="font-medium">{f?.label ?? "Удалённое поле"}</span><span className="ml-2 font-mono text-muted-foreground">{f ? `{{${f.public_id}}}` : ""}</span></div><label className="flex items-center gap-1.5"><Checkbox checked={row.required_override ?? f?.required ?? false} onCheckedChange={(v) => onUpdate(row.id, { required_override: !!v })} /> обязательное</label>{f?.data_type === "date" ? <><label className="flex items-center gap-1.5"><Checkbox checked={rules.default_today === true} onCheckedChange={(v) => onUpdate(row.id, { input_rules: { ...rules, default_today: !!v } })} /> сегодня по умолчанию</label><label className="flex items-center gap-1.5"><Checkbox checked={rules.no_future === true} onCheckedChange={(v) => onUpdate(row.id, { input_rules: { ...rules, no_future: !!v } })} /> не позже сегодня</label></> : null}<Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => onRemove(row.id)}><Trash2 className="h-3.5 w-3.5" /></Button></div>; })}</div>;
 }
