@@ -39,6 +39,7 @@ import {
   Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getKnowledgeReturnPath } from "@/lib/knowledgeNavigation";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
@@ -63,8 +64,10 @@ const menuSectionMap: Record<string, { path: string; label: string }> = {
   'courses': { path: '/knowledge', label: 'Курсы' },
 };
 
-const getMenuSectionPath = (key: string | null): string => 
-  menuSectionMap[key || 'products-library']?.path || '/knowledge';
+const getMenuSectionPath = (key: string | null): string => {
+  if (key?.startsWith("knowledge")) return getKnowledgeReturnPath(key);
+  return menuSectionMap[key || "products-library"]?.path || getKnowledgeReturnPath();
+};
 
 const getMenuSectionLabel = (key: string | null): string => 
   menuSectionMap[key || 'products-library']?.label || 'База знаний';
