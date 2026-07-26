@@ -10,6 +10,32 @@ verify_jwt = true
 [functions.auth-email-hook]
 verify_jwt = false
 
+# Public provider callbacks.  Each handler validates its provider signature
+# itself; this only removes the platform JWT wall required for a callback.
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.bepaid-webhook]
+verify_jwt = false
+
+[functions.telegram-webhook]
+verify_jwt = false
+
+[functions.instagram-webhook]
+verify_jwt = false
+
+[functions.getcourse-webhook]
+verify_jwt = false
+
+[functions.amocrm-webhook]
+verify_jwt = false
+
+[functions.payment-methods-webhook]
+verify_jwt = false
+
+[functions.public-webhook-deploy-probe]
+verify_jwt = false
+
 [functions.request-inline-otp]
 verify_jwt = false
 
@@ -53,6 +79,5 @@ verify_jwt = true
 # In-code auth guard (SEC-A) remains as defense-in-depth.
 [functions.grant-access-for-order]
 verify_jwt = true
-
 
 
