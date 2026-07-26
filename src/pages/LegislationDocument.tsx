@@ -6,11 +6,11 @@ import {
   BookOpen,
   Check,
   ChevronDown,
-  Copy,
   ListTree,
   Landmark,
   Lock,
   Scale,
+  Share2,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { getKnowledgeTabPath } from "@/lib/knowledgeNavigation";
+import { buildLegalShareText, getLegalSharePath } from "@/lib/legalShare";
 import {
   useLegalDocument,
   useLegalDocumentPreview,
@@ -161,11 +162,30 @@ export default function LegislationDocument() {
     })();
   }, [document, location.hash, location.pathname, location.search]);
 
-  const copyAnchor = async (anchor: string) => {
-    const url = `${window.location.origin}${location.pathname}${location.search}#${anchor}`;
-    await navigator.clipboard.writeText(url);
-    setCopiedAnchor(anchor);
-    window.setTimeout(() => setCopiedAnchor(null), 1800);
+  const shareAnchor = async (anchor?: string) => {
+    if (!document) return;
+    const path = getLegalSharePath(document.external_id, anchor);
+    const url = `${window.location.origin}${path}`;
+    const text = buildLegalShareText(document.title, url, anchor);
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: document.title,
+          text: text.split("\n")[0],
+          url,
+        });
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
+      setCopiedAnchor(anchor ?? "document");
+      window.setTimeout(() => setCopiedAnchor(null), 1800);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      await navigator.clipboard.writeText(text);
+      setCopiedAnchor(anchor ?? "document");
+      window.setTimeout(() => setCopiedAnchor(null), 1800);
+    }
   };
 
   const goToAnchor = (anchor: string) => {
@@ -266,7 +286,7 @@ export default function LegislationDocument() {
               <BookOpen className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1 space-y-2.5">
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Badge>
                   {document.status === "active" ? "Действует" : document.status}
                 </Badge>
@@ -275,6 +295,20 @@ export default function LegislationDocument() {
                     ? "ЭТАЛОН-ONLINE"
                     : "Загружено вручную"}
                 </Badge>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 rounded-full bg-background/60 px-3"
+                  onClick={() => shareAnchor()}
+                >
+                  {copiedAnchor === "document" ? (
+                    <Check className="mr-1.5 h-3.5 w-3.5 text-green-600" />
+                  ) : (
+                    <Share2 className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  {copiedAnchor === "document" ? "Готово" : "Поделиться"}
+                </Button>
               </div>
               <h1 className="text-xl font-semibold leading-snug sm:text-2xl">
                 {document.title}
@@ -366,13 +400,14 @@ export default function LegislationDocument() {
                   size="icon"
                   variant="ghost"
                   className="h-8 w-8 shrink-0 opacity-60 group-hover:opacity-100"
-                  aria-label="Скопировать ссылку на этот фрагмент"
-                  onClick={() => copyAnchor(node.id)}
+                  aria-label="Поделиться ссылкой на этот фрагмент"
+                  title="Поделиться"
+                  onClick={() => shareAnchor(node.id)}
                 >
                   {copiedAnchor === node.id ? (
                     <Check className="h-4 w-4 text-green-600" />
                   ) : (
-                    <Copy className="h-4 w-4" />
+                    <Share2 className="h-4 w-4" />
                   )}
                 </Button>
               </div>

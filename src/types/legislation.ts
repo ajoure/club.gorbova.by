@@ -49,6 +49,18 @@ export type LegalDocumentPreview = Pick<
   | "last_synced_at"
 >;
 
+export interface LegalDocumentSharePreview {
+  external_id: string;
+  slug: string;
+  title: string;
+  doc_type: string | null;
+  doc_date: string | null;
+  doc_number: string | null;
+  category: LegalCategory;
+  status: string;
+  revision_label: string | null;
+}
+
 export interface LegalSearchResult {
   document_id: string;
   slug: string;
