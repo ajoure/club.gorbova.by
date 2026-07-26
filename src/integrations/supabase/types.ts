@@ -6369,6 +6369,7 @@ export type Database = {
           id: string
           is_active: boolean
           package_template_item_id: string
+          repeat_group_settings: Json
           title: string
           updated_at: string
           updated_by: string | null
@@ -6382,6 +6383,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           package_template_item_id: string
+          repeat_group_settings?: Json
           title: string
           updated_at?: string
           updated_by?: string | null
@@ -6395,6 +6397,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           package_template_item_id?: string
+          repeat_group_settings?: Json
           title?: string
           updated_at?: string
           updated_by?: string | null
