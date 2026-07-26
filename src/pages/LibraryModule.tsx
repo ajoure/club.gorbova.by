@@ -28,6 +28,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import { formatLockedMonth } from "@/hooks/useMonthGate";
+import { getKnowledgeReturnPath } from "@/lib/knowledgeNavigation";
 
 const contentTypeConfig = {
   video: { icon: Video, label: "Видео", color: "text-blue-500" },
@@ -50,8 +51,10 @@ const menuSectionMap: Record<string, { path: string; label: string }> = {
   'courses': { path: '/knowledge', label: 'Курсы' },
 };
 
-const getMenuSectionPath = (key: string | null): string => 
-  menuSectionMap[key || 'products-library']?.path || '/knowledge';
+const getMenuSectionPath = (key: string | null): string => {
+  if (key?.startsWith("knowledge")) return getKnowledgeReturnPath(key);
+  return menuSectionMap[key || "products-library"]?.path || getKnowledgeReturnPath();
+};
 
 const getMenuSectionLabel = (key: string | null): string => 
   menuSectionMap[key || 'products-library']?.label || 'База знаний';
@@ -176,7 +179,7 @@ export default function LibraryModule() {
       <DashboardLayout>
         <div className="container mx-auto px-4 py-6 max-w-4xl text-center">
           <h1 className="text-2xl font-bold mb-4">Модуль не найден</h1>
-          <Button onClick={() => navigate("/knowledge")}>
+          <Button onClick={() => navigate(getKnowledgeReturnPath())}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             Вернуться в библиотеку
           </Button>
@@ -215,7 +218,7 @@ export default function LibraryModule() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => navigate("/knowledge")}
+                onClick={() => navigate(getMenuSectionPath(module.menu_section_key))}
                 className="shrink-0"
               >
                 <ArrowLeft className="mr-2 h-4 w-4" />
