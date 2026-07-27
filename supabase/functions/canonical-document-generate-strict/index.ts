@@ -1998,7 +1998,7 @@ Deno.serve(async (req) => {
           packageTemplateId: packageContext!.package_template_id,
           externalSubmissionId: packageContext!.external_submission_id ?? null,
           itemMetadata,
-          isSuperAdmin,
+          isSuperAdmin: isAdmin,
           preresolvedPfFields: (packageContext!.preresolved_pf_fields || {}) as Record<
             string,
             { rendered_value?: string; raw_value?: unknown }
@@ -2009,7 +2009,7 @@ Deno.serve(async (req) => {
         console.warn('[strict] applyTableRepeatExpansion failed:', e?.message || e);
         generationReport.table_repeat_expansion = {
           applied: false,
-          super_admin: !!isSuperAdmin,
+          super_admin: !!isAdmin,
           markers: [{
             tr_id: '*',
             rows_count: 0,
