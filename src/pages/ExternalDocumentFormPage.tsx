@@ -31,6 +31,13 @@ function isVisible(field: PublicField, values: Record<string, unknown>): boolean
   return allowed.includes(String(values[rule.field_id] ?? ""));
 }
 
+function defaultDateValues(fields: PublicField[], today: string): Record<string, string> {
+  return fields.reduce<Record<string, string>>((values, field) => {
+    if (field.data_type === "date" && field.input_rules?.default_today === true) values[field.id] = today;
+    return values;
+  }, {});
+}
+
 function supplierShortName(data: { short_name?: unknown; full_name?: unknown }): string {
   // МНС уже отдаёт vnaimk — краткое зарегистрированное наименование. Для ИП
   // реестр отдаёт только ФИО, поэтому добавляем нормативное обозначение «ИП».
@@ -73,7 +80,7 @@ export default function ExternalDocumentFormPage() {
     setGroups((previous) => {
       const next = { ...previous };
       for (const key of Object.keys(form.repeat_groups)) {
-        if (!next[key]?.length) next[key] = [{}];
+        if (!next[key]?.length) next[key] = [defaultDateValues(form.repeat_groups[key].fields, form.today)];
       }
       return next;
     });
@@ -109,7 +116,10 @@ export default function ExternalDocumentFormPage() {
     });
     setMnsLookupState((prev) => ({ ...prev, [stateKey]: { message: "Наименование и адрес поставщика заполнены по данным МНС. При необходимости их можно исправить." } }));
   };
-  const addRow = (group: string) => setGroups((prev) => ({ ...prev, [group]: [...(prev[group] ?? []), {}] }));
+  const addRow = (group: string) => setGroups((prev) => ({
+    ...prev,
+    [group]: [...(prev[group] ?? []), defaultDateValues(form?.repeat_groups[group]?.fields ?? [], form?.today ?? "")],
+  }));
   const removeRow = (group: string, index: number) => setGroups((prev) => ({ ...prev, [group]: (prev[group] ?? []).filter((_, i) => i !== index) }));
 
   const submit = useMutation({
