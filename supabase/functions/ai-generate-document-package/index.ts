@@ -124,8 +124,22 @@ Deno.serve(async (req) => {
       } catch { return null; }
     }
     const jwtRole = decodeJwtRole(authHeaderRaw);
+    // Fallback: some newer key formats (sb_secret_*) are opaque, not JWTs.
+    // In that case we accept an exact match against our own SUPABASE_SERVICE_ROLE_KEY.
+    const tokenMatchesLocalServiceKey =
+      authHeaderRaw.startsWith('Bearer ') && authHeaderRaw.slice(7) === SERVICE_KEY && !!SERVICE_KEY;
     const trustedExternalCall =
-      internalMarker === 'external-document-form' && jwtRole === 'service_role';
+      internalMarker === 'external-document-form' &&
+      (jwtRole === 'service_role' || tokenMatchesLocalServiceKey);
+    if (internalMarker === 'external-document-form') {
+      console.log('[ai-generate-document-package] internal-call diag', JSON.stringify({
+        has_auth: !!authHeaderRaw, auth_len: authHeaderRaw.length,
+        jwt_role: jwtRole, token_matches_service_key: tokenMatchesLocalServiceKey,
+        service_key_len: (SERVICE_KEY || '').length,
+        service_key_prefix: (SERVICE_KEY || '').slice(0, 8),
+        auth_prefix: authHeaderRaw.slice(7, 15),
+      }));
+    }
     const runMode: 'user_generate' | 'admin_test' | 'external_submit' =
       body?.run_mode === 'admin_test'
         ? 'admin_test'
