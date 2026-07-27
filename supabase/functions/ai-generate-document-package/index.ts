@@ -105,9 +105,32 @@ Deno.serve(async (req) => {
     // ── auth ─────────────────────────────────────────────────────────────
     const body = await req.json().catch(() => ({}));
     const packageSessionId: string | undefined = body?.package_session_id;
+    // HOTFIX 2026-07-27: after signing-key rotation the raw-string Bearer
+    // comparison against SERVICE_KEY became fragile across isolates. We now
+    // require the x-internal-call marker AND a JWT whose `role` claim equals
+    // `service_role`. Signature is not re-verified here — the gateway already
+    // validated it upstream; we only decode the payload to read the claim.
+    const authHeaderRaw = req.headers.get('Authorization') || '';
+    const internalMarker = req.headers.get('x-internal-call');
+    function decodeJwtRole(h: string): string | null {
+      if (!h.startsWith('Bearer ')) return null;
+      const parts = h.slice(7).split('.');
+      if (parts.length < 2) return null;
+      try {
+        const pad = parts[1] + '==='.slice((parts[1].length + 3) % 4);
+        const json = atob(pad.replace(/-/g, '+').replace(/_/g, '/'));
+        const claims = JSON.parse(json);
+        return typeof claims?.role === 'string' ? claims.role : null;
+      } catch { return null; }
+    }
+    const jwtRole = decodeJwtRole(authHeaderRaw);
+    // Fallback: sb_secret_* API keys are opaque, not JWTs. In that case we
+    // accept an exact match against our own SUPABASE_SERVICE_ROLE_KEY.
+    const tokenMatchesLocalServiceKey =
+      authHeaderRaw.startsWith('Bearer ') && !!SERVICE_KEY && authHeaderRaw.slice(7) === SERVICE_KEY;
     const trustedExternalCall =
-      req.headers.get('x-internal-call') === 'external-document-form' &&
-      req.headers.get('Authorization') === `Bearer ${SERVICE_KEY}`;
+      internalMarker === 'external-document-form' &&
+      (jwtRole === 'service_role' || tokenMatchesLocalServiceKey);
     const runMode: 'user_generate' | 'admin_test' | 'external_submit' =
       body?.run_mode === 'admin_test'
         ? 'admin_test'
@@ -916,7 +939,7 @@ Deno.serve(async (req) => {
       },
     });
 
-    return j({
+    const responsePayload = {
       success: finalStatus === 'generated' || finalStatus === 'partial',
       batch_id: batch.id,
       status: finalStatus,
@@ -926,7 +949,13 @@ Deno.serve(async (req) => {
       errors,
       blocked,
       results,
-    });
+    };
+    console.log('[ai-generate-document-package] final-response', JSON.stringify({
+      session: packageSessionId, status: finalStatus, total_documents: totalDocuments,
+      generated, errors_count: errors?.length ?? 0, blocked_count: blocked?.length ?? 0,
+      results_summary: (results || []).map((r: any) => ({ item_id: r.item_id, status: r.status, errors: r.errors, document_id: r.document_id })),
+    }));
+    return j(responsePayload);
   } catch (e: any) {
     console.error('ai-generate-document-package error:', e);
     return j({ error: e?.message || 'internal_error' }, 500);
