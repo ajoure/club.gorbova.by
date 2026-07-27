@@ -32,12 +32,21 @@ function isVisible(field: PublicField, values: Record<string, unknown>): boolean
 }
 
 function supplierShortName(data: { short_name?: unknown; full_name?: unknown }): string {
-  // МНС уже отдаёт vnaimk — краткое зарегистрированное наименование. Не
-  // пытаемся сами сократить юридическую форму и тем самым не искажаем данные.
+  // МНС уже отдаёт vnaimk — краткое зарегистрированное наименование. Для ИП
+  // реестр отдаёт только ФИО, поэтому добавляем нормативное обозначение «ИП».
   const shortName = String(data.short_name ?? "").trim();
-  if (shortName) return shortName;
   const fullName = String(data.full_name ?? "").trim();
-  return fullName.replace(/^индивидуальный\s+предприниматель\s+/iu, "ИП ");
+  const name = shortName || fullName;
+  if (!name) return "";
+  if (/^ИП\b/iu.test(name)) return name;
+  if (/^индивидуальный\s+предприниматель\s+/iu.test(name)) {
+    return name.replace(/^индивидуальный\s+предприниматель\s+/iu, "ИП ");
+  }
+  // В публичной выдаче МНС для ИП используется ФИО без организационно-
+  // правовой формы. Не меняем наименования ЮЛ — в них остаётся сокращение
+  // из реестра, например «ЗАО «АЖУР инкам»».
+  const looksLikeFullName = /^[А-ЯЁ][а-яё-]+\s+[А-ЯЁ][а-яё-]+\s+[А-ЯЁ][а-яё-]+$/u.test(name);
+  return looksLikeFullName ? `ИП ${name}` : name;
 }
 
 export default function ExternalDocumentFormPage() {
