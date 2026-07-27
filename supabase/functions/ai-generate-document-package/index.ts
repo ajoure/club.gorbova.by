@@ -700,6 +700,10 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // Structural table tokens handled downstream by strict generator; skip preflight.
+        if (/^tableRepeat:TR-\d{6,}$/.test(inside)) continue;
+        if (/^tableTotal:TT-\d{6,}(?:\|format=words)?$/.test(inside)) continue;
+
         itemErrors.push(`invalid_token_in_package_template:${inside}`);
       }
 
