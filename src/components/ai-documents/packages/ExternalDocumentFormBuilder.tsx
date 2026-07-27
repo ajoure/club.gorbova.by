@@ -19,7 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CheckCircle2, ExternalLink, Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, CheckCircle2, ExternalLink, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 type Field = {
@@ -30,6 +30,7 @@ type Field = {
   data_type: string;
   required: boolean;
   sort_order: number;
+  options?: Record<string, unknown> | null;
 };
 
 type FormRow = {
@@ -88,7 +89,7 @@ export function ExternalDocumentFormBuilder({ packageTemplateId }: { packageTemp
     queryFn: async () => {
       const { data, error } = await supabase
         .from("document_package_field_catalog" as never)
-        .select("id, public_id, label, description, data_type, required, sort_order")
+        .select("id, public_id, label, description, data_type, required, sort_order, options")
         .eq("package_template_id", packageTemplateId)
         .eq("is_active", true)
         .order("sort_order");
@@ -207,6 +208,25 @@ export function ExternalDocumentFormBuilder({ packageTemplateId }: { packageTemp
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["external-document-form-bindings"] }),
     onError: (e: Error) => toast.error(e.message),
   });
+  const moveBinding = useMutation({
+    mutationFn: async ({ bindings, id, direction }: { bindings: FormBinding[]; id: string; direction: -1 | 1 }) => {
+      const ordered = [...bindings].sort((a, b) => a.sort_order - b.sort_order);
+      const index = ordered.findIndex((row) => row.id === id);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= ordered.length) return;
+      const moved = ordered[index];
+      ordered[index] = ordered[nextIndex];
+      ordered[nextIndex] = moved;
+      // No unique constraint exists for sort_order. Re-number the small local
+      // list in one deterministic step so the public form and admin UI agree.
+      await Promise.all(ordered.map((row, position) => supabase
+        .from("document_package_external_form_fields" as never)
+        .update({ sort_order: (position + 1) * 10 } as never)
+        .eq("id", row.id)));
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["external-document-form-bindings"] }),
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const availableItems = (itemsQuery.data ?? []).filter((x) => !formByItem.has(x.id));
   const loading = itemsQuery.isLoading || fieldsQuery.isLoading || formsQuery.isLoading;
@@ -263,6 +283,7 @@ export function ExternalDocumentFormBuilder({ packageTemplateId }: { packageTemp
           onAdd={(fieldId, group) => addField.mutate({ formId: form.id, fieldId, group })}
           onUpdate={(id, patch) => updateBinding.mutate({ id, patch })}
           onRemove={(id) => removeBinding.mutate(id)}
+          onMove={(bindings, id, direction) => moveBinding.mutate({ bindings, id, direction })}
         />;
       })}
     </div>
@@ -274,6 +295,7 @@ function ExternalFormCard(props: {
   groups: string[]; bindings: FormBinding[]; used: Set<string>; fieldById: Map<string, Field>;
   onSave: (v: FormRow) => void; saving: boolean;
   onAdd: (fieldId: string, group: string | null) => void; onUpdate: (id: string, p: Partial<FormField>) => void; onRemove: (id: string) => void;
+  onMove: (bindings: FormBinding[], id: string, direction: -1 | 1) => void;
 }) {
   const [draft, setDraft] = useState<FormRow>(props.initial);
   const [fieldToAdd, setFieldToAdd] = useState("");
@@ -286,8 +308,8 @@ function ExternalFormCard(props: {
     <div className="flex justify-between gap-3 items-start"><div><Badge variant="outline" className="mb-1">{props.documentName}</Badge><div className="text-xs text-muted-foreground">Настройте состав полей без кодирования: все подписи и варианты берутся из каталога полей пакета.</div></div><Switch checked={draft.is_active} onCheckedChange={(is_active) => setDraft({ ...draft, is_active })} /></div>
     <div className="grid md:grid-cols-2 gap-3"><div className="space-y-1"><Label className="text-xs">Заголовок публичной формы</Label><Input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></div><div className="space-y-1"><Label className="text-xs">Подсказка вверху</Label><Textarea className="min-h-10" value={draft.description ?? ""} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></div></div>
     <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs"><label className="flex items-center gap-2"><Checkbox checked={draft.allow_attachments} onCheckedChange={(v) => setDraft({ ...draft, allow_attachments: !!v })} /> Принимать фото и PDF</label><label className="flex items-center gap-2"><Checkbox checked={delivery.pdf !== false} onCheckedChange={(v) => setDelivery("pdf", !!v)} /> PDF</label><label className="flex items-center gap-2"><Checkbox checked={delivery.docx !== false} onCheckedChange={(v) => setDelivery("docx", !!v)} /> DOCX</label><label className="flex items-center gap-2"><Checkbox checked={delivery.email !== false} onCheckedChange={(v) => setDelivery("email", !!v)} /> Email</label><label className="flex items-center gap-2"><Checkbox checked={delivery.telegram !== false} onCheckedChange={(v) => setDelivery("telegram", !!v)} /> Telegram</label></div>
-    <BindingList title="Обычные поля" rows={props.normal} fieldById={props.fieldById} onUpdate={props.onUpdate} onRemove={props.onRemove} />
-    {props.groups.map((group) => <RepeatGroupSettingsCard key={group} group={group} settings={groupSettings[group] ?? {}} fields={props.fields} onChange={(settings) => setDraft({ ...draft, repeat_group_settings: { ...groupSettings, [group]: settings } })}><BindingList title={groupSettings[group]?.label?.trim() || "Повторяемые строки"} rows={props.bindings.filter((x) => x.repeat_group_key === group)} fieldById={props.fieldById} onUpdate={props.onUpdate} onRemove={props.onRemove} /></RepeatGroupSettingsCard>)}
+    <BindingList title="Обычные поля" rows={props.normal} fieldById={props.fieldById} onUpdate={props.onUpdate} onRemove={props.onRemove} onMove={props.onMove} />
+    {props.groups.map((group) => <RepeatGroupSettingsCard key={group} group={group} settings={groupSettings[group] ?? {}} fields={props.fields} onChange={(settings) => setDraft({ ...draft, repeat_group_settings: { ...groupSettings, [group]: settings } })}><BindingList title={groupSettings[group]?.label?.trim() || "Повторяемые строки"} rows={props.bindings.filter((x) => x.repeat_group_key === group)} fieldById={props.fieldById} onUpdate={props.onUpdate} onRemove={props.onRemove} onMove={props.onMove} /></RepeatGroupSettingsCard>)}
     <div className="rounded-xl border border-dashed border-border/60 p-3 grid md:grid-cols-[1fr_180px_auto] gap-2 items-end"><div className="space-y-1"><Label className="text-xs">Добавить поле из каталога</Label><Select value={fieldToAdd} onValueChange={setFieldToAdd}><SelectTrigger className="text-xs"><SelectValue placeholder="Поле…" /></SelectTrigger><SelectContent>{permitted.map((f) => <SelectItem key={f.id} value={f.id} className="text-xs">{f.label} · {`{{${f.public_id}}}`}</SelectItem>)}</SelectContent></Select></div><div className="space-y-1"><Label className="text-xs">Группа (пусто — обычное)</Label><Input value={groupToAdd} onChange={(e) => setGroupToAdd(e.target.value.replace(/[^a-z0-9_]/g, ""))} placeholder="expenses" /></div><Button size="sm" disabled={!fieldToAdd} onClick={() => { props.onAdd(fieldToAdd, groupToAdd || null); setFieldToAdd(""); }}><Plus className="h-3.5 w-3.5 mr-1" /> Добавить</Button></div>
     <div className="flex justify-end"><Button size="sm" onClick={() => props.onSave(draft)} disabled={!draft.title.trim() || (delivery.pdf === false && delivery.docx === false) || props.saving}>{props.saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Save className="h-3.5 w-3.5 mr-1" /> Сохранить настройки</>}</Button></div>
   </GlassCard>;
@@ -315,6 +337,7 @@ function RepeatGroupSettingsCard({ group, settings, fields, onChange, children }
   </div>;
 }
 
-function BindingList({ title, rows, fieldById, onUpdate, onRemove }: { title: string; rows: FormBinding[]; fieldById: Map<string, Field>; onUpdate: (id: string, p: Partial<FormField>) => void; onRemove: (id: string) => void }) {
-  return <div className="space-y-1.5"><div className="text-xs font-medium">{title}</div>{rows.length === 0 ? <div className="text-xs text-muted-foreground">Пока нет полей.</div> : rows.map((row) => { const f = fieldById.get(row.field_catalog_id); const rules = row.input_rules ?? {}; return <div key={row.id} className="rounded-lg border border-border/50 p-2 flex flex-wrap items-center gap-3 text-xs"><div className="min-w-[220px] flex-1"><span className="font-medium">{f?.label ?? "Удалённое поле"}</span><span className="ml-2 font-mono text-muted-foreground">{f ? `{{${f.public_id}}}` : ""}</span></div><label className="flex items-center gap-1.5"><Checkbox checked={row.required_override ?? f?.required ?? false} onCheckedChange={(v) => onUpdate(row.id, { required_override: !!v })} /> обязательное</label>{f?.data_type === "date" ? <><label className="flex items-center gap-1.5"><Checkbox checked={rules.default_today === true} onCheckedChange={(v) => onUpdate(row.id, { input_rules: { ...rules, default_today: !!v } })} /> сегодня по умолчанию</label><label className="flex items-center gap-1.5"><Checkbox checked={rules.no_future === true} onCheckedChange={(v) => onUpdate(row.id, { input_rules: { ...rules, no_future: !!v } })} /> не позже сегодня</label></> : null}<Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => onRemove(row.id)}><Trash2 className="h-3.5 w-3.5" /></Button></div>; })}</div>;
+function BindingList({ title, rows, fieldById, onUpdate, onRemove, onMove }: { title: string; rows: FormBinding[]; fieldById: Map<string, Field>; onUpdate: (id: string, p: Partial<FormField>) => void; onRemove: (id: string) => void; onMove: (bindings: FormBinding[], id: string, direction: -1 | 1) => void }) {
+  const ordered = [...rows].sort((a, b) => a.sort_order - b.sort_order);
+  return <div className="space-y-1.5"><div className="text-xs font-medium">{title}</div>{ordered.length === 0 ? <div className="text-xs text-muted-foreground">Пока нет полей.</div> : ordered.map((row, index) => { const f = fieldById.get(row.field_catalog_id); const rules = row.input_rules ?? {}; const suggestions = Array.isArray(rules.suggestions) ? rules.suggestions.map(String).join("\n") : ""; const condition = rules.visible_when as { field_id?: string; equals?: string | string[] } | undefined; const source = condition?.field_id ? fieldById.get(condition.field_id) : undefined; const sourceChoices = Array.isArray(source?.options?.choices) ? source.options.choices : []; const conditionValue = Array.isArray(condition?.equals) ? condition?.equals[0] : condition?.equals; const setRules = (patch: Record<string, unknown>) => onUpdate(row.id, { input_rules: { ...rules, ...patch } }); return <div key={row.id} className="rounded-lg border border-border/50 p-2 space-y-2 text-xs"><div className="flex flex-wrap items-center gap-3"><div className="min-w-[220px] flex-1"><span className="font-medium">{f?.label ?? "Удалённое поле"}</span><span className="ml-2 font-mono text-muted-foreground">{f ? `{{${f.public_id}}}` : ""}</span></div><label className="flex items-center gap-1.5"><Checkbox checked={row.required_override ?? f?.required ?? false} onCheckedChange={(v) => onUpdate(row.id, { required_override: !!v })} /> обязательное</label>{f?.data_type === "date" ? <><label className="flex items-center gap-1.5"><Checkbox checked={rules.default_today === true} onCheckedChange={(v) => setRules({ default_today: !!v })} /> сегодня по умолчанию</label><label className="flex items-center gap-1.5"><Checkbox checked={rules.no_future === true} onCheckedChange={(v) => setRules({ no_future: !!v })} /> не позже сегодня</label></> : null}{f?.data_type === "select" ? <label className="flex items-center gap-1.5"><Checkbox checked={rules.allow_custom === true} onCheckedChange={(v) => setRules({ allow_custom: !!v })} /> разрешить свой вариант</label> : null}<Button size="icon" variant="ghost" className="h-7 w-7" title="Выше" disabled={index === 0} onClick={() => onMove(ordered, row.id, -1)}><ArrowUp className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" className="h-7 w-7" title="Ниже" disabled={index === ordered.length - 1} onClick={() => onMove(ordered, row.id, 1)}><ArrowDown className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => onRemove(row.id)}><Trash2 className="h-3.5 w-3.5" /></Button></div>{f?.data_type === "text" ? <div className="grid gap-1"><Label className="text-[11px]">Подсказки для поиска и выбора (каждая с новой строки)</Label><Textarea className="min-h-12 text-xs" value={suggestions} placeholder="Например: Канцелярские товары" onChange={(event) => setRules({ suggestions: event.target.value.split("\n").map((v) => v.trim()).filter(Boolean) })} /></div> : null}<div className="grid md:grid-cols-2 gap-2"><div className="space-y-1"><Label className="text-[11px]">Показывать только при выборе</Label><Select value={condition?.field_id ?? "__always__"} onValueChange={(fieldId) => setRules({ visible_when: fieldId === "__always__" ? undefined : { field_id: fieldId, equals: "" } })}><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__always__" className="text-xs">Всегда</SelectItem>{ordered.filter((candidate) => candidate.id !== row.id && fieldById.get(candidate.field_catalog_id)?.data_type === "select").map((candidate) => { const candidateField = fieldById.get(candidate.field_catalog_id)!; return <SelectItem key={candidate.id} value={candidate.field_catalog_id} className="text-xs">{candidateField.label}</SelectItem>; })}</SelectContent></Select></div>{condition?.field_id ? <div className="space-y-1"><Label className="text-[11px]">Значение, при котором показывать</Label>{sourceChoices.length ? <Select value={String(conditionValue ?? "")} onValueChange={(equals) => setRules({ visible_when: { field_id: condition.field_id, equals } })}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Выберите значение" /></SelectTrigger><SelectContent>{sourceChoices.map((choice: any) => { const value = typeof choice === "string" ? choice : String(choice.value); const label = typeof choice === "string" ? choice : String(choice.label ?? choice.value); return <SelectItem key={value} value={value} className="text-xs">{label}</SelectItem>; })}</SelectContent></Select> : <Input className="h-8 text-xs" value={String(conditionValue ?? "")} onChange={(event) => setRules({ visible_when: { field_id: condition.field_id, equals: event.target.value } })} placeholder="Например: Иной документ" />}</div> : null}</div></div>; })}</div>;
 }

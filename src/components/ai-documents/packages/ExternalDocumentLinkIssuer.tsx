@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -51,6 +51,9 @@ export function ExternalDocumentLinkIssuer({
     },
   });
   const forms = formsQuery.data ?? [];
+  useEffect(() => {
+    if (forms.length === 1 && !formId) setFormId(forms[0].id);
+  }, [forms, formId]);
   const currentTitle = useMemo(() => forms.find((form) => form.id === formId)?.title, [formId, forms]);
   if (!formsQuery.isLoading && forms.length === 0) return null;
 
@@ -80,18 +83,15 @@ export function ExternalDocumentLinkIssuer({
         <ExternalLink className="h-4 w-4 text-primary mt-0.5" />
         <div>
           <h3 className="text-sm font-semibold">Ссылка для заполнения документа</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Выберите включённую администратором внешнюю анкету и отправьте ссылку сотруднику.
-            Она остаётся рабочей только пока действует ваш доступ к генерации документов.
-          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">Ссылка остаётся рабочей только пока действует ваш доступ к этому пакету.</p>
         </div>
       </div>
       {formsQuery.isLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : (
         <div className="flex flex-col sm:flex-row gap-2">
-          <Select value={formId} onValueChange={(value) => { setFormId(value); setUrl(null); }}>
+          {forms.length > 1 ? <Select value={formId} onValueChange={(value) => { setFormId(value); setUrl(null); }}>
             <SelectTrigger className="text-xs flex-1"><SelectValue placeholder="Выберите документ…" /></SelectTrigger>
             <SelectContent>{forms.map((form) => <SelectItem key={form.id} value={form.id} className="text-xs">{form.title}</SelectItem>)}</SelectContent>
-          </Select>
+          </Select> : <div className="flex-1 rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">{forms[0]?.title}</div>}
           <Button size="sm" onClick={create} disabled={!formId || creating}>
             {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Copy className="h-3.5 w-3.5 mr-1" /> Создать и скопировать</>}
           </Button>

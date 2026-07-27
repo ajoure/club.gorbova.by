@@ -22,6 +22,24 @@ function choices(field: PublicField): Array<{ value: string; label: string }> {
   return Array.isArray(raw) ? raw.map((x: any) => typeof x === "string" ? { value: x, label: x } : { value: String(x.value), label: String(x.label ?? x.value) }) : [];
 }
 
+type VisibilityRule = { field_id?: string; equals?: string | string[] };
+
+function isVisible(field: PublicField, values: Record<string, unknown>): boolean {
+  const rule = field.input_rules?.visible_when as VisibilityRule | undefined;
+  if (!rule?.field_id || rule.equals == null) return true;
+  const allowed = Array.isArray(rule.equals) ? rule.equals : [rule.equals];
+  return allowed.includes(String(values[rule.field_id] ?? ""));
+}
+
+function supplierShortName(data: { short_name?: unknown; full_name?: unknown }): string {
+  // МНС уже отдаёт vnaimk — краткое зарегистрированное наименование. Не
+  // пытаемся сами сократить юридическую форму и тем самым не искажаем данные.
+  const shortName = String(data.short_name ?? "").trim();
+  if (shortName) return shortName;
+  const fullName = String(data.full_name ?? "").trim();
+  return fullName.replace(/^индивидуальный\s+предприниматель\s+/iu, "ИП ");
+}
+
 export default function ExternalDocumentFormPage() {
   const { token = "" } = useParams();
   const [fields, setFields] = useState<Record<string, unknown>>({});
@@ -75,7 +93,7 @@ export default function ExternalDocumentFormPage() {
     setGroups((prev) => {
       const rows = [...(prev[group] ?? [])];
       const row = { ...(rows[rowIndex] ?? {}) };
-      if (config.company_name_field_id) row[config.company_name_field_id] = data.data.full_name ?? "";
+      if (config.company_name_field_id) row[config.company_name_field_id] = supplierShortName(data.data);
       if (config.company_address_field_id) row[config.company_address_field_id] = data.data.address ?? "";
       rows[rowIndex] = row;
       return { ...prev, [group]: rows };
@@ -114,7 +132,7 @@ export default function ExternalDocumentFormPage() {
       </GlassCard>
       {Object.entries(form.repeat_groups).map(([group, groupConfig]) => {
         const rows = groups[group] ?? [{}];
-        return <GlassCard key={group} className="p-5 sm:p-6 space-y-4"><div><h2 className="font-semibold">{groupConfig.label}</h2><p className="text-xs text-muted-foreground mt-1">{groupConfig.description || "Добавьте отдельную строку для каждого расхода."}</p></div>{rows.map((row, index) => <div key={index} className="rounded-2xl border border-border/50 bg-background/35 p-4 space-y-4"><div className="flex justify-between items-center"><span className="text-sm font-medium">Расход {index + 1}</span>{rows.length > 1 ? <Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => removeRow(group, index)}><Trash2 className="h-3.5 w-3.5 mr-1" /> Удалить</Button> : null}</div>{groupConfig.fields.map((field) => <PublicFieldControl key={field.id} field={field} value={row[field.id]} onChange={(v) => updateRow(group, index, field.id, v)} maxDate={maxDate} onBlur={field.id === groupConfig.mns_unp_lookup?.unp_field_id ? (value) => void lookupSupplierByUnp(group, index, value, groupConfig.mns_unp_lookup) : undefined} lookupState={field.id === groupConfig.mns_unp_lookup?.unp_field_id ? mnsLookupState[`${group}:${index}`] : undefined} />)}</div>)}<Button type="button" variant="outline" onClick={() => addRow(group)}><Plus className="h-4 w-4 mr-1" /> Добавить ещё расход</Button></GlassCard>;
+        return <GlassCard key={group} className="p-5 sm:p-6 space-y-4"><div><h2 className="font-semibold">{groupConfig.label}</h2><p className="text-xs text-muted-foreground mt-1">{groupConfig.description || "Добавьте отдельную строку для каждого расхода."}</p></div>{rows.map((row, index) => <div key={index} className="rounded-2xl border border-border/50 bg-background/35 p-4 space-y-4"><div className="flex justify-between items-center"><span className="text-sm font-medium">Расход {index + 1}</span>{rows.length > 1 ? <Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => removeRow(group, index)}><Trash2 className="h-3.5 w-3.5 mr-1" /> Удалить</Button> : null}</div>{groupConfig.fields.filter((field) => isVisible(field, row)).map((field) => <PublicFieldControl key={field.id} field={field} value={row[field.id]} onChange={(v) => updateRow(group, index, field.id, v)} maxDate={maxDate} onBlur={field.id === groupConfig.mns_unp_lookup?.unp_field_id ? (value) => void lookupSupplierByUnp(group, index, value, groupConfig.mns_unp_lookup) : undefined} lookupState={field.id === groupConfig.mns_unp_lookup?.unp_field_id ? mnsLookupState[`${group}:${index}`] : undefined} />)}</div>)}<Button type="button" variant="outline" onClick={() => addRow(group)}><Plus className="h-4 w-4 mr-1" /> Добавить ещё расход</Button></GlassCard>;
       })}
       {form.allow_attachments ? <GlassCard className="p-5 sm:p-6 space-y-3"><div><h2 className="font-semibold">Подтверждающие файлы</h2><p className="text-xs text-muted-foreground mt-1">После заполнения приложите фото чека с камеры или из галереи, а также PDF. Файлы уйдут вместе с отчётом владельцу.</p></div><div className="flex flex-wrap gap-2"><label><input className="sr-only" type="file" accept="image/jpeg,image/png,image/heic,image/webp" capture="environment" multiple onChange={(e) => setAttachments((p) => [...p, ...Array.from(e.target.files ?? [])])} /><Button type="button" variant="outline" asChild><span><Camera className="h-4 w-4 mr-1" /> Снять чек</span></Button></label><label><input className="sr-only" type="file" accept="application/pdf,image/jpeg,image/png,image/heic,image/webp" multiple onChange={(e) => setAttachments((p) => [...p, ...Array.from(e.target.files ?? [])])} /><Button type="button" variant="outline" asChild><span><FileUp className="h-4 w-4 mr-1" /> Выбрать файлы</span></Button></label></div>{attachments.length ? <ul className="text-xs text-muted-foreground space-y-1">{attachments.map((file, i) => <li key={`${file.name}-${i}`} className="flex justify-between gap-3"><span className="truncate">{file.name}</span><button className="text-destructive" onClick={() => setAttachments((p) => p.filter((_, j) => j !== i))}>убрать</button></li>)}</ul> : null}</GlassCard> : null}
       {submit.error ? <GlassCard className="p-3 text-sm text-destructive">{submit.error.message}</GlassCard> : null}
@@ -132,13 +150,18 @@ function PublicFieldControl({ field, value, onChange, maxDate, onBlur, lookupSta
     lastLookup.current = normalized;
     onBlur(normalized);
   };
-  const handleValueChange = (raw: string) => {
-    onChange(raw);
-    // УНП должен подхватываться сразу после девятой цифры (ввод или вставка),
-    // а не только когда сотрудник догадается уйти из поля.
-    maybeLookup(raw);
-  };
+  const handleValueChange = (raw: string) => { onChange(raw); maybeLookup(raw); };
   const handleBlur = (event: React.FocusEvent<HTMLInputElement>) => maybeLookup(event.currentTarget.value);
-  return <div className="space-y-1.5"><Label className="text-sm">{field.label}{required ? <span className="text-destructive"> *</span> : null}</Label>{help ? <p className="text-xs text-muted-foreground">{help}</p> : null}{field.data_type === "date" ? <DatePicker value={typeof value === "string" ? value : ""} onChange={onChange} maxDate={field.input_rules?.no_future ? maxDate : undefined} placeholder="Выберите дату" /> : field.data_type === "select" ? <Select value={String(value ?? "")} onValueChange={onChange}><SelectTrigger><SelectValue placeholder="Выберите вариант" /></SelectTrigger><SelectContent>{choices(field).map((x) => <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}</SelectContent></Select> : field.data_type === "multiselect" ? <div className="rounded-xl border border-input p-2 space-y-2">{choices(field).map((x) => { const selected = Array.isArray(value) ? value.map(String) : []; return <label key={x.value} className="text-sm flex items-center gap-2"><Checkbox checked={selected.includes(x.value)} onCheckedChange={(yes) => onChange(yes ? [...selected, x.value] : selected.filter((v) => v !== x.value))} />{x.label}</label>; })}</div> : field.data_type === "checkbox" ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={value === true} onCheckedChange={onChange} /> Да</label> : field.data_type === "number" || field.data_type === "year" ? <Input type="number" value={String(value ?? "")} onChange={(e) => handleValueChange(e.target.value)} onBlur={handleBlur} /> : <Input value={String(value ?? "")} onChange={(e) => handleValueChange(e.target.value)} onBlur={handleBlur} inputMode={onBlur ? "numeric" : undefined} />}{lookupState ? <p className={`text-xs ${lookupState.error ? "text-destructive" : "text-muted-foreground"}`}>{lookupState.loading ? <Loader2 className="inline h-3 w-3 mr-1 animate-spin" /> : null}{lookupState.message}</p> : null}</div>;
+  const suggestions = Array.isArray(field.input_rules?.suggestions) ? field.input_rules.suggestions.map(String).filter(Boolean) : [];
+  const listId = suggestions.length ? `field-suggestions-${field.id}` : undefined;
+  const allowsCustom = field.input_rules?.allow_custom === true;
+  const fieldInput = field.data_type === "date" ? <DatePicker value={typeof value === "string" ? value : ""} onChange={onChange} maxDate={field.input_rules?.no_future ? maxDate : undefined} placeholder="Выберите дату" />
+    : field.data_type === "select" && !allowsCustom ? <Select value={String(value ?? "")} onValueChange={onChange}><SelectTrigger><SelectValue placeholder="Выберите вариант" /></SelectTrigger><SelectContent>{choices(field).map((x) => <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}</SelectContent></Select>
+    : field.data_type === "select" && allowsCustom ? <><Input list={`field-choices-${field.id}`} value={String(value ?? "")} onChange={(e) => handleValueChange(e.target.value)} onBlur={handleBlur} placeholder="Выберите из списка или введите свой вариант" /><datalist id={`field-choices-${field.id}`}>{choices(field).map((x) => <option key={x.value} value={x.label} />)}</datalist></>
+    : field.data_type === "multiselect" ? <div className="rounded-xl border border-input p-2 space-y-2">{choices(field).map((x) => { const selected = Array.isArray(value) ? value.map(String) : []; return <label key={x.value} className="text-sm flex items-center gap-2"><Checkbox checked={selected.includes(x.value)} onCheckedChange={(yes) => onChange(yes ? [...selected, x.value] : selected.filter((v) => v !== x.value))} />{x.label}</label>; })}</div>
+    : field.data_type === "checkbox" ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={value === true} onCheckedChange={onChange} /> Да</label>
+    : field.data_type === "number" || field.data_type === "year" ? <Input type="number" value={String(value ?? "")} onChange={(e) => handleValueChange(e.target.value)} onBlur={handleBlur} />
+    : <><Input list={listId} value={String(value ?? "")} onChange={(e) => handleValueChange(e.target.value)} onBlur={handleBlur} inputMode={onBlur ? "numeric" : undefined} />{listId ? <datalist id={listId}>{suggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}</datalist> : null}</>;
+  return <div className="space-y-1.5"><Label className="text-sm">{field.label}{required ? <span className="text-destructive"> *</span> : null}</Label>{help ? <p className="text-xs text-muted-foreground">{help}</p> : null}{fieldInput}{lookupState ? <p className={`text-xs ${lookupState.error ? "text-destructive" : "text-muted-foreground"}`}>{lookupState.loading ? <Loader2 className="inline h-3 w-3 mr-1 animate-spin" /> : null}{lookupState.message}</p> : null}</div>;
 }
 function PageShell({ children }: { children: React.ReactNode }) { return <main className="min-h-screen bg-[radial-gradient(circle_at_top,hsla(var(--primary)/.14),transparent_38%),linear-gradient(135deg,hsl(var(--background)),hsl(var(--muted)/.55),hsl(var(--background)))] px-3 py-6 sm:px-6 sm:py-10 flex items-center justify-center">{children}</main>; }
