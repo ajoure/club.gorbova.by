@@ -128,6 +128,35 @@ export function readTableRepeats(
   return out;
 }
 
+/**
+ * Public IDs whose values are supplied by rows of an external form rather
+ * than document_package_session_field_values.  These are determined entirely
+ * from administrator-managed table-repeat metadata.
+ */
+export function collectExternalSubmissionRepeatFieldIds(
+  itemMetadata: unknown,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const config of readTableRepeats(itemMetadata)) {
+    if (config.source_kind !== 'external_submission') continue;
+    for (const column of config.columns) {
+      if (
+        column.source_type === 'submission_field' &&
+        column.source_key &&
+        /^pf-\d{6}$/.test(column.source_key)
+      ) {
+        ids.add(column.source_key);
+        continue;
+      }
+      if (column.source_type !== 'submission_template' || !column.source_key) continue;
+      for (const match of column.source_key.matchAll(/\{\{(pf-\d{6})(?:\|[a-z_]+=[A-Za-z0-9_.]+)*\}\}/g)) {
+        ids.add(match[1]);
+      }
+    }
+  }
+  return ids;
+}
+
 // Stage E.2 — validateTableRepeatConfig (edge mirror).
 export type TableRepeatIssueCode =
   | "missing_role"

@@ -41,6 +41,7 @@ import {
   extractLnSubFieldRaw,
   type LnSubFieldSpec,
 } from '../_shared/ln-subfield-spec.ts';
+import { collectExternalSubmissionRepeatFieldIds } from '../_shared/table-repeat-spec.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -180,7 +181,7 @@ Deno.serve(async (req) => {
       ? body.package_template_item_id : null;
     const { data: allItems } = await supabase
       .from('document_package_template_items')
-      .select('id, package_template_id, template_id, title_override, sort_order, generation_mode, repeat_role_catalog_id')
+      .select('id, package_template_id, template_id, title_override, sort_order, generation_mode, repeat_role_catalog_id, metadata')
       .eq('package_template_id', session.package_template_id)
       .order('sort_order', { ascending: true });
     const items = requestedItemId ? (allItems ?? []).filter((i: any) => i.id === requestedItemId) : allItems;
@@ -390,6 +391,10 @@ Deno.serve(async (req) => {
       }> = {};
       const itemErrors: string[] = [];
       const seen = new Set<string>();
+      // External form repeat rows are expanded later from their dedicated
+      // submission store; they are not ordinary session field values.
+      const externalSubmissionRepeatFieldIds =
+        collectExternalSubmissionRepeatFieldIds((item as any).metadata);
 
       // collect all FLD-XXX in template for fields_registry lookup
       const fldIds = new Set<string>();
@@ -649,9 +654,12 @@ Deno.serve(async (req) => {
             continue;
           }
           const asg = pfAssignByItemField.get(`${item.id}::${field.id}`);
-          const effective_required: boolean = typeof asg?.is_required_override === 'boolean'
+          const configuredRequired: boolean = typeof asg?.is_required_override === 'boolean'
             ? asg.is_required_override
             : !!field.required;
+          const effective_required = externalSubmissionRepeatFieldIds.has(pfPublicId)
+            ? false
+            : configuredRequired;
           const label: string = asg?.label_override || field.label || pfPublicId;
           let raw = extractPfRawValue(field, pfValueFor(item.id, field.id));
           // Stage 0.3 (smart-date readiness alignment): если БД-значения нет,
