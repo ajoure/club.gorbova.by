@@ -2009,7 +2009,7 @@ Deno.serve(async (req) => {
         console.warn('[strict] applyTableRepeatExpansion failed:', e?.message || e);
         generationReport.table_repeat_expansion = {
           applied: false,
-          super_admin: !!isSuperAdmin,
+          super_admin: !!isAdmin,
           markers: [{
             tr_id: '*',
             rows_count: 0,
