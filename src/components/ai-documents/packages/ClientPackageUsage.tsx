@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
+import { useRequisitesV2, type LegalEntityRequisitesRow } from "@/hooks/useRequisitesV2";
+import { normalizeLegacyData } from "@/lib/requisites-v2/fieldMap";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +37,13 @@ type HistoryRow = {
   documents: HistoryDocument[];
 };
 
+type LegalEntityChoice = {
+  id: string;
+  title: string;
+  unp: string;
+  source: "requisites_v2" | "legacy";
+};
+
 function entityTitle(entity: ClientLegalDetails) {
   if (entity.client_type === "entrepreneur") {
     const name = entity.ent_name?.trim();
@@ -52,6 +61,21 @@ function entityUnp(entity: ClientLegalDetails) {
   return entity.client_type === "entrepreneur"
     ? (entity.ent_unp?.trim() || "")
     : (entity.leg_unp?.trim() || "");
+}
+
+function v2EntityChoice(row: LegalEntityRequisitesRow): LegalEntityChoice {
+  const data = normalizeLegacyData(row.subject_type, row.data);
+  const name = String(data.name ?? "").trim();
+  const shortName = String(data.short_name ?? data.grp_short_name ?? "").trim();
+  const form = String(data.org_form ?? "").trim();
+  const title = row.subject_type === "entrepreneur"
+    ? (name ? (/^ИП\b/iu.test(name) ? name : `ИП ${name}`) : "ИП без наименования")
+    : (shortName || (form && name ? `${form} «${name}»` : name) || "Юрлицо без наименования");
+  return { id: row.id, title, unp: String(data.unp ?? "").trim(), source: "requisites_v2" };
+}
+
+function legacyEntityChoice(entity: ClientLegalDetails): LegalEntityChoice {
+  return { id: entity.id, title: entityTitle(entity), unp: entityUnp(entity), source: "legacy" };
 }
 
 function historyLabel(status: string) {
@@ -77,7 +101,17 @@ export function ClientPackageUsage({
 }) {
   const queryClient = useQueryClient();
   const entities = useAiEntities();
-  const legalEntities = entities.allEntities.filter((entity) => entity.status !== "archived");
+  const requisitesV2 = useRequisitesV2({ scope: "user_requisites" });
+  // В личном кабинете источник — актуальные реквизиты v2. Старая таблица
+  // остаётся резервом только для записей, созданных до перехода.
+  const legalEntities = useMemo<LegalEntityChoice[]>(() => {
+    if (requisitesV2.legalEntities.length > 0) {
+      return requisitesV2.legalEntities.map(v2EntityChoice);
+    }
+    return entities.allEntities
+      .filter((entity) => entity.status !== "archived")
+      .map(legacyEntityChoice);
+  }, [entities.allEntities, requisitesV2.legalEntities]);
   const [legalEntityId, setLegalEntityId] = useState("");
   const [emailEnabled, setEmailEnabled] = useState(true);
   const [telegramEnabled, setTelegramEnabled] = useState(true);
@@ -151,6 +185,7 @@ export function ClientPackageUsage({
           action: "create_link",
           form_id: form.id,
           legal_entity_id: legalEntityId,
+          legal_entity_source: legalEntities.find((entity) => entity.id === legalEntityId)?.source ?? "legacy",
           delivery: {
             email: emailEnabled,
             telegram: telegramEnabled,
@@ -197,15 +232,14 @@ export function ClientPackageUsage({
           <>
             <div className="space-y-2">
               <Label className="text-sm">ЮЛ / ИП, для которого составляется отчёт</Label>
-              {entities.isLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : legalEntities.length === 0 ? (
+              {entities.isLoading || requisitesV2.isLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : legalEntities.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Сначала добавьте реквизиты ЮЛ / ИП во вкладке «Реквизиты».</p>
               ) : (
                 <Select value={legalEntityId} onValueChange={setLegalEntityId}>
                   <SelectTrigger className="max-w-xl"><SelectValue placeholder="Выберите ЮЛ / ИП" /></SelectTrigger>
                   <SelectContent>
                     {legalEntities.map((entity) => {
-                      const unp = entityUnp(entity);
-                      return <SelectItem key={entity.id} value={entity.id}>{entityTitle(entity)}{unp ? ` · УНП ${unp}` : ""}</SelectItem>;
+                      return <SelectItem key={entity.id} value={entity.id}>{entity.title}{entity.unp ? ` · УНП ${entity.unp}` : ""}</SelectItem>;
                     })}
                   </SelectContent>
                 </Select>

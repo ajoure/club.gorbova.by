@@ -70,6 +70,81 @@ function safeOwnerDelivery(raw: unknown): OwnerDelivery {
   };
 }
 
+/**
+ * External links store the legacy legal-details ID because the document token
+ * resolver uses that canonical compatibility relation. The cabinet, however,
+ * now owns requisites in legal_entities_requisites. Resolve a v2 record here
+ * and create a single linked compatibility row only when it has no legacy
+ * counterpart yet. This keeps the owner-facing selection on the editable v2
+ * record while preserving existing document placeholders.
+ */
+async function resolveOwnerLegalEntity(
+  admin: any,
+  profileId: string,
+  rawId: string,
+  source: string,
+): Promise<string | null> {
+  const { data: legacy } = await admin.from("client_legal_details")
+    .select("id").eq("id", rawId).eq("profile_id", profileId).maybeSingle();
+  if (legacy?.id) return legacy.id;
+  if (source !== "requisites_v2") return null;
+
+  const { data: v2 } = await admin.from("legal_entities_requisites")
+    .select("id, owner_profile_id, scope, subject_type, data, source_legacy_id, is_default")
+    .eq("id", rawId).eq("owner_profile_id", profileId).eq("scope", "user_requisites")
+    .maybeSingle();
+  if (!v2 || !["legal_entity", "entrepreneur"].includes(v2.subject_type)) return null;
+
+  if (v2.source_legacy_id) {
+    const { data: linked } = await admin.from("client_legal_details")
+      .select("id").eq("id", v2.source_legacy_id).eq("profile_id", profileId).maybeSingle();
+    if (linked?.id) return linked.id;
+  }
+
+  const data = v2.data && typeof v2.data === "object" && !Array.isArray(v2.data)
+    ? v2.data as Record<string, unknown>
+    : {};
+  const isLegal = v2.subject_type === "legal_entity";
+  const { data: created, error } = await admin.from("client_legal_details").insert({
+    profile_id: profileId,
+    client_type: v2.subject_type,
+    purpose: "document",
+    status: "active",
+    is_default: Boolean(v2.is_default),
+    ...(isLegal ? {
+      leg_org_form: scalar(data.org_form),
+      leg_name: scalar(data.name),
+      grp_short_name: scalar(data.short_name) || scalar(data.grp_short_name),
+      leg_unp: scalar(data.unp),
+      leg_address: scalar(data.address),
+      leg_address_structured: data.address_structured ?? null,
+      leg_director_position: scalar(data.director_position),
+      leg_director_name: scalar(data.director_full_name),
+      leg_acts_on_basis: scalar(data.acts_on_basis),
+    } : {
+      ent_name: scalar(data.name),
+      ent_unp: scalar(data.unp),
+      ent_address: scalar(data.address),
+      ent_address_structured: data.address_structured ?? null,
+      ent_acts_on_basis: scalar(data.acts_on_basis),
+    }),
+    bank_account: scalar(data.bank_account),
+    bank_name: scalar(data.bank_name),
+    bank_code: scalar(data.bank_code),
+    phone: scalar(data.phone),
+    email: scalar(data.email),
+  }).select("id").single();
+  if (error || !created?.id) throw error || new Error("legacy_legal_entity_create_failed");
+
+  // The only existing relation was checked above. If it was stale, repair it
+  // so the next link reuses this compatibility record rather than creating
+  // another duplicate row.
+  await admin.from("legal_entities_requisites")
+    .update({ source_legacy_id: created.id })
+    .eq("id", v2.id).eq("owner_profile_id", profileId);
+  return created.id;
+}
+
 function isVisible(binding: FormField, values: Record<string, unknown>): boolean {
   const raw = binding.input_rules?.visible_when;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return true;
@@ -244,12 +319,17 @@ Deno.serve(async (req) => {
       const { data: form } = await admin.from("document_package_external_forms").select("id, package_template_item_id, is_active").eq("id", formId).maybeSingle();
       if (!profile || !form?.is_active) return json({ error: "form_not_found" }, 404);
       const { data: item } = await admin.from("document_package_template_items").select("package_template_id").eq("id", form.package_template_item_id).maybeSingle();
-      const { data: legal } = await admin.from("client_legal_details").select("id").eq("id", legalEntityId).eq("profile_id", profile.id).maybeSingle();
+      const resolvedLegalId = await resolveOwnerLegalEntity(
+        admin,
+        profile.id,
+        legalEntityId,
+        scalar(body.legal_entity_source),
+      );
       const { data: allowed } = await admin.rpc("profile_can_use_document_package", { p_profile_id: profile.id, p_package_template_id: item?.package_template_id });
-      if (!item || !legal || allowed !== true) return json({ error: "forbidden" }, 403);
+      if (!item || !resolvedLegalId || allowed !== true) return json({ error: "forbidden" }, 403);
       const delivery = safeOwnerDelivery(body.delivery);
       const { data: link, error } = await admin.from("document_package_external_links").insert({
-        external_form_id: formId, owner_profile_id: profile.id, selected_legal_entity_id: legalEntityId,
+        external_form_id: formId, owner_profile_id: profile.id, selected_legal_entity_id: resolvedLegalId,
         metadata: Object.keys(delivery).length ? { delivery } : {},
       }).select("public_token").single();
       if (error) throw error;
