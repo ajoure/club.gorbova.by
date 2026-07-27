@@ -70,6 +70,16 @@ function safeOwnerDelivery(raw: unknown): OwnerDelivery {
   };
 }
 
+function isVisible(binding: FormField, values: Record<string, unknown>): boolean {
+  const raw = binding.input_rules?.visible_when;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return true;
+  const rule = raw as { field_id?: unknown; equals?: unknown };
+  const fieldId = scalar(rule.field_id);
+  if (!fieldId || rule.equals == null) return true;
+  const allowed = (Array.isArray(rule.equals) ? rule.equals : [rule.equals]).map(scalar);
+  return allowed.includes(scalar(values[fieldId]));
+}
+
 async function lookupMnsByUnp(url: string, service: string, unp: string) {
   const response = await fetch(`${url}/functions/v1/grp-lookup`, {
     method: "POST",
@@ -317,6 +327,7 @@ Deno.serve(async (req) => {
     }
     for (const binding of ordinary) {
       const value = scalarValues[binding.field.id];
+      if (!isVisible(binding, scalarValues)) continue;
       const required = binding.required_override ?? binding.field.required;
       if (required && isBlank(value)) return json({ error: "required_field_missing", field_id: binding.field.id }, 400);
       if (binding.field.data_type === "date" && binding.input_rules?.no_future && scalar(value) > todayMinsk()) return json({ error: "future_date", field_id: binding.field.id }, 400);
@@ -329,6 +340,7 @@ Deno.serve(async (req) => {
         const obj = row && typeof row === "object" ? row as Record<string, unknown> : {};
         for (const binding of bindings) {
           const value = obj[binding.field.id]; const required = binding.required_override ?? binding.field.required;
+          if (!isVisible(binding, obj)) continue;
           if (required && isBlank(value)) return json({ error: "required_field_missing", field_id: binding.field.id, repeat_group_key: group }, 400);
           if (binding.field.data_type === "date" && binding.input_rules?.no_future && scalar(value) > todayMinsk()) return json({ error: "future_date", field_id: binding.field.id }, 400);
           valueColumns(binding.field, value);

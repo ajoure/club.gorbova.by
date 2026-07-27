@@ -61,8 +61,15 @@ interface ItemRow {
 }
 
 function entityDisplay(e: ClientLegalDetails): string {
-  if (e.client_type === "legal_entity") return e.leg_name ?? "Юрлицо без названия";
-  if (e.client_type === "entrepreneur") return e.ent_name ?? "ИП без названия";
+  if (e.client_type === "legal_entity") {
+    if (e.grp_short_name?.trim()) return e.grp_short_name.trim();
+    if (e.leg_org_form && e.leg_name) return `${e.leg_org_form} «${e.leg_name}»`;
+    return e.leg_name ?? "Юрлицо без названия";
+  }
+  if (e.client_type === "entrepreneur") {
+    const name = e.ent_name?.trim();
+    return name ? (/^ИП\b/iu.test(name) ? name : `ИП ${name}`) : "ИП без названия";
+  }
   return e.ind_full_name ?? "Физлицо без имени";
 }
 function entityUnp(e: ClientLegalDetails): string | null {
