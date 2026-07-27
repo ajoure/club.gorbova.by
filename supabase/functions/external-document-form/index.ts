@@ -450,6 +450,73 @@ Deno.serve(async (req) => {
         values: Object.fromEntries(bindings.map((b) => [b.field.public_id, row[b.field.id] ?? null])) }));
     }
     if (rowsToInsert.length) { const { error } = await admin.from("document_package_external_submission_rows").insert(rowsToInsert); if (error) throw error; }
+
+    // --- Session-scoped person/role auto-binding for external forms. --------
+    // Package roles opt in by writing
+    //   role.metadata.external_form_person_binding = {
+    //     full_name_public_id, position_public_id?, department_custom_key?
+    //   }
+    // to their document_package_role_catalog row. No hardcoded UUIDs / package
+    // IDs / field IDs live in this function. Idempotent per session: fresh
+    // sessions get one active assignment; existing admin-assigned rows for the
+    // same (session,item,role) are left untouched.
+    try {
+      const { data: pkgRoles } = await admin.from("document_package_role_catalog")
+        .select("id, role_key, metadata")
+        .eq("package_template_id", ctx.item.package_template_id)
+        .eq("is_active", true);
+      const bindingByPublicId = new Map<string, typeof ordinary[number]>();
+      for (const b of ordinary) bindingByPublicId.set(b.field.public_id, b);
+      for (const role of pkgRoles ?? []) {
+        const meta = role.metadata && typeof role.metadata === "object" && !Array.isArray(role.metadata)
+          ? role.metadata as Record<string, any> : {};
+        const bind = meta.external_form_person_binding;
+        if (!bind || typeof bind !== "object") continue;
+        const fullNameBinding = bindingByPublicId.get(scalar(bind.full_name_public_id));
+        if (!fullNameBinding) continue;
+        const fullName = scalar(scalarValues[fullNameBinding.field.id]);
+        if (!fullName) continue;
+        const positionBinding = bind.position_public_id
+          ? bindingByPublicId.get(scalar(bind.position_public_id)) : null;
+        const position = positionBinding ? scalar(scalarValues[positionBinding.field.id]) : "";
+        const departmentKey = scalar(bind.department_custom_key);
+        const departmentBinding = bind.department_public_id
+          ? bindingByPublicId.get(scalar(bind.department_public_id)) : null;
+        const department = departmentBinding ? scalar(scalarValues[departmentBinding.field.id]) : "";
+        // Idempotency: skip if this session/item/role already has an active row.
+        const { data: existing } = await admin
+          .from("document_package_item_role_assignments")
+          .select("id")
+          .eq("package_session_id", session.id)
+          .eq("package_template_item_id", ctx.item.id)
+          .eq("role_catalog_id", role.id)
+          .eq("is_active", true)
+          .maybeSingle();
+        if (existing?.id) continue;
+        const { data: person, error: pErr } = await admin.from("legal_details_persons").insert({
+          profile_id: ctx.link.owner_profile_id,
+          full_name: fullName,
+          is_active: false,
+          notes: `external_submission:${submission.id}`,
+        }).select("id").single();
+        if (pErr) throw pErr;
+        const assignmentMeta: Record<string, unknown> = {};
+        if (position) assignmentMeta.position = position;
+        if (department && departmentKey) assignmentMeta.custom = { [departmentKey]: department };
+        await admin.from("document_package_item_role_assignments").insert({
+          package_session_id: session.id,
+          package_template_item_id: ctx.item.id,
+          role_catalog_id: role.id,
+          person_id: person.id,
+          metadata: assignmentMeta,
+          sort_order: 10,
+          is_active: true,
+        });
+      }
+    } catch (bindErr) {
+      console.error("[external-document-form] role auto-bind failed", bindErr);
+    }
+    // -----------------------------------------------------------------------
     if (attachments.length) {
       const paths = attachments.map((a: any) => scalar(a.path)).filter((p: string) => p.startsWith(`links/${ctx.link.id}/`));
       if (paths.length !== attachments.length) return json({ error: "attachment_path_forbidden" }, 400);
