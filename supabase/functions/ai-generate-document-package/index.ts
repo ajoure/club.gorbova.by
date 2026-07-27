@@ -948,7 +948,7 @@ Deno.serve(async (req) => {
       },
     });
 
-    return j({
+    const responsePayload = {
       success: finalStatus === 'generated' || finalStatus === 'partial',
       batch_id: batch.id,
       status: finalStatus,
@@ -958,7 +958,13 @@ Deno.serve(async (req) => {
       errors,
       blocked,
       results,
-    });
+    };
+    console.log('[ai-generate-document-package] final-response', JSON.stringify({
+      session: packageSessionId, status: finalStatus, total_documents: totalDocuments,
+      generated, errors_count: errors?.length ?? 0, blocked_count: blocked?.length ?? 0,
+      results_summary: (results || []).map((r: any) => ({ item_id: r.item_id, status: r.status, errors: r.errors, document_id: r.document_id })),
+    }));
+    return j(responsePayload);
   } catch (e: any) {
     console.error('ai-generate-document-package error:', e);
     return j({ error: e?.message || 'internal_error' }, 500);
