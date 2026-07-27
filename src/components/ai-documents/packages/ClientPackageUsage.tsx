@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAiEntities } from "@/hooks/useAiEntities";
+import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,13 +35,23 @@ type HistoryRow = {
   documents: HistoryDocument[];
 };
 
-function entityTitle(entity: Record<string, unknown>) {
-  return String(entity.company_name || entity.full_name || entity.name || "ЮЛ / ИП");
+function entityTitle(entity: ClientLegalDetails) {
+  if (entity.client_type === "entrepreneur") {
+    const name = entity.ent_name?.trim();
+    if (!name) return "ИП без наименования";
+    return /^ИП\b/i.test(name) ? name : `ИП ${name}`;
+  }
+
+  return entity.grp_short_name?.trim()
+    || (entity.leg_org_form && entity.leg_name ? `${entity.leg_org_form} «${entity.leg_name}»` : null)
+    || entity.leg_name?.trim()
+    || "Юрлицо без наименования";
 }
 
-function entityUnp(entity: Record<string, unknown>) {
-  const raw = entity.unp || entity.tax_id || entity.inn;
-  return raw ? String(raw) : "";
+function entityUnp(entity: ClientLegalDetails) {
+  return entity.client_type === "entrepreneur"
+    ? (entity.ent_unp?.trim() || "")
+    : (entity.leg_unp?.trim() || "");
 }
 
 function historyLabel(status: string) {
@@ -66,7 +77,7 @@ export function ClientPackageUsage({
 }) {
   const queryClient = useQueryClient();
   const entities = useAiEntities();
-  const legalEntities = entities.allEntities.filter((entity: any) => entity.entity_type !== "person");
+  const legalEntities = entities.allEntities.filter((entity) => entity.status !== "archived");
   const [legalEntityId, setLegalEntityId] = useState("");
   const [emailEnabled, setEmailEnabled] = useState(true);
   const [telegramEnabled, setTelegramEnabled] = useState(true);
@@ -192,7 +203,7 @@ export function ClientPackageUsage({
                 <Select value={legalEntityId} onValueChange={setLegalEntityId}>
                   <SelectTrigger className="max-w-xl"><SelectValue placeholder="Выберите ЮЛ / ИП" /></SelectTrigger>
                   <SelectContent>
-                    {legalEntities.map((entity: any) => {
+                    {legalEntities.map((entity) => {
                       const unp = entityUnp(entity);
                       return <SelectItem key={entity.id} value={entity.id}>{entityTitle(entity)}{unp ? ` · УНП ${unp}` : ""}</SelectItem>;
                     })}
