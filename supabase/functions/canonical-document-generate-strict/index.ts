@@ -1469,9 +1469,33 @@ Deno.serve(async (req) => {
       }
 
       // Inject in docFields ONCE — все вхождения плейсхолдеров возьмут это значение.
-      if (allocatedNumber && foundIds.has(FLD_DOC_NUMBER)) {
+      // Template-scoped number display format (PATCH-DOCNUM-DISPLAY-FORMAT-V1):
+      //   Читаем document_package_template_items.metadata.number_display_format
+      //   для tpl.id. Поддерживаем ровно один режим: 'ddmm_slash_seq' — превращает
+      //   каноническое 'DD.MM/N' (из allocate_document_number) в 'DDMM/N' в момент
+      //   отображения в шаблоне. Никаких новых счётчиков и полей: allocatedNumber
+      //   остаётся исходным (для filename, audit, ai_generated_documents.document_number).
+      let displayedDocNumber: string | null = allocatedNumber;
+      if (allocatedNumber) {
+        try {
+          const { data: _pkgItemMetaRow } = await supabase
+            .from('document_package_template_items')
+            .select('metadata')
+            .eq('template_id', tpl.id)
+            .limit(1)
+            .maybeSingle();
+          const _fmt = (_pkgItemMetaRow?.metadata as any)?.number_display_format;
+          if (_fmt === 'ddmm_slash_seq') {
+            const _m = allocatedNumber.match(/^(\d{2})\.(\d{2})\/(.+)$/);
+            if (_m) displayedDocNumber = `${_m[1]}${_m[2]}/${_m[3]}`;
+          }
+        } catch (_e) {
+          // Never block generation on display-format lookup — fall back to raw allocatedNumber.
+        }
+      }
+      if (displayedDocNumber && foundIds.has(FLD_DOC_NUMBER)) {
         docFields[FLD_DOC_NUMBER] = {
-          value: allocatedNumber,
+          value: displayedDocNumber,
           source: 'system_generated',
           updated_at: new Date().toISOString(),
         };
