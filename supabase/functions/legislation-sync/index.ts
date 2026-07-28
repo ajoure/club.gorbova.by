@@ -20,12 +20,23 @@ type StructureNode = {
   level: number;
 };
 
+type ParsedElement = {
+  textContent: string | null;
+  getAttribute: (name: string) => string | null;
+  classList: { contains: (name: string) => boolean };
+};
+
 type CuratedDocument = {
   externalId: string;
   title: string;
   collections: Array<"accountant" | "director" | "document_workflow">;
   docType?: string;
   reuseExisting?: boolean;
+};
+
+type AuthenticatedSnapshot = {
+  externalId: string;
+  contentText: string;
 };
 
 const CURATED_DOCUMENTS: CuratedDocument[] = [
@@ -149,7 +160,7 @@ function parseCodes(html: string) {
     document.querySelectorAll(
       'a[href*="/document/"][href*="regnum="][href*="q_id=6265913"]',
     ),
-  );
+  ) as ParsedElement[];
 
   for (const link of links) {
     const title = normalizeSpace(link.textContent ?? "");
@@ -200,7 +211,7 @@ function parseDocument(html: string, fallbackTitle: string, sourceUrl: string) {
     ? `${dateMatch[3]}-${months[dateMatch[2].toLowerCase()]}-${dateMatch[1].padStart(2, "0")}`
     : null;
 
-  const paragraphs = Array.from(content.querySelectorAll("p"));
+  const paragraphs = Array.from(content.querySelectorAll("p")) as ParsedElement[];
   if (!paragraphs.length) {
     throw new Error("Legal document parsing guard failed: no paragraphs found");
   }
@@ -282,6 +293,90 @@ function parseDocument(html: string, fallbackTitle: string, sourceUrl: string) {
     docNumber: numberMatch?.[1] ?? null,
     docDate,
     contentText,
+    structure,
+    sourceUrl,
+  };
+}
+
+// Full text copied by an editor from their authorised legal-system session.
+// This deliberately does not accept arbitrary document identifiers: the
+// identifier must be in the curated list, so the source, type and collection
+// mapping remain canonical and a pasted page cannot create an unrelated act.
+function parseAuthenticatedSnapshot(contentText: string, item: CuratedDocument, sourceUrl: string) {
+  const lines = contentText
+    .split(/\r?\n/)
+    .map(normalizeSpace)
+    .filter(Boolean);
+  const normalizedContent = lines.join("\n\n");
+  if (normalizedContent.length < 1000 || lines.length < 10) {
+    throw new Error("Legal document completeness guard failed");
+  }
+
+  const structure: StructureNode[] = [];
+  const usedAnchors = new Set<string>();
+  let currentArticle = "";
+  let paragraphCounter = 0;
+  const uniqueAnchor = (candidate: string) => {
+    let anchor = candidate || `par-${structure.length + 1}`;
+    let suffix = 2;
+    while (usedAnchors.has(anchor)) anchor = `${candidate}-${suffix++}`;
+    usedAnchors.add(anchor);
+    return anchor;
+  };
+
+  for (const text of lines) {
+    const articleMatch = text.match(/^Статья\s+([\dА-Яа-яІі./-]+)/i);
+    const chapterMatch = text.match(/^ГЛАВА\s+([\dА-Яа-яІі./-]+)/i);
+    const sectionMatch = text.match(/^РАЗДЕЛ\s+([\dА-Яа-яІі./-]+)/i);
+    const pointMatch = text.match(/^(\d+(?:\.\d+)*)[.)]\s*/);
+    let kind: StructureNode["kind"] = "paragraph";
+    let id = "";
+    let level = 3;
+
+    if (articleMatch) {
+      currentArticle = normalizeAnchorPart(articleMatch[1]);
+      paragraphCounter = 0;
+      kind = "article";
+      id = `art-${currentArticle}`;
+      level = 1;
+    } else if (chapterMatch) {
+      kind = "chapter";
+      id = `chapter-${normalizeAnchorPart(chapterMatch[1])}`;
+      level = 1;
+    } else if (sectionMatch) {
+      kind = "section";
+      id = `section-${normalizeAnchorPart(sectionMatch[1])}`;
+      level = 1;
+    } else {
+      paragraphCounter += 1;
+      id = pointMatch && currentArticle
+        ? `art-${currentArticle}-p-${normalizeAnchorPart(pointMatch[1])}`
+        : pointMatch
+          ? `point-${normalizeAnchorPart(pointMatch[1])}`
+          : currentArticle
+            ? `art-${currentArticle}-par-${paragraphCounter}`
+            : `par-${structure.length + 1}`;
+    }
+    structure.push({ id: uniqueAnchor(id), kind, text, level });
+  }
+
+  const header = lines.slice(0, 8).join(" ");
+  const numberMatch = header.match(/№\s*([А-ЯA-Z0-9./-]+)/i);
+  const dateMatch = header.match(
+    /(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})/i,
+  );
+  const months: Record<string, string> = {
+    января: "01", февраля: "02", марта: "03", апреля: "04", мая: "05", июня: "06",
+    июля: "07", августа: "08", сентября: "09", октября: "10", ноября: "11", декабря: "12",
+  };
+
+  return {
+    title: item.title,
+    docNumber: numberMatch?.[1] ?? null,
+    docDate: dateMatch
+      ? `${dateMatch[3]}-${months[dateMatch[2].toLowerCase()]}-${dateMatch[1].padStart(2, "0")}`
+      : null,
+    contentText: normalizedContent,
     structure,
     sourceUrl,
   };
@@ -445,6 +540,101 @@ async function syncCuratedDocument(
   };
 }
 
+async function importAuthenticatedCuratedSnapshot(
+  admin: SupabaseClient,
+  editorId: string,
+  snapshot: AuthenticatedSnapshot,
+) {
+  const item = CURATED_DOCUMENTS.find(
+    (candidate) => candidate.externalId.toLowerCase() === snapshot.externalId.trim().toLowerCase(),
+  );
+  if (!item || item.reuseExisting) {
+    throw new Error("Документ не входит в список импортируемых нормативных актов");
+  }
+  const sourceUrl = `${ETALON_ORIGIN}/document/?regnum=${encodeURIComponent(item.externalId)}`;
+  const parsed = parseAuthenticatedSnapshot(snapshot.contentText, item, sourceUrl);
+  const checksum = await sha256(parsed.contentText);
+  const { data: existing, error: existingError } = await admin
+    .from("legal_documents")
+    .select("id,slug,checksum,structure")
+    .eq("source", "etalon")
+    .ilike("external_id", item.externalId)
+    .maybeSingle();
+  if (existingError) throw existingError;
+
+  const revisionKey = checksum.slice(0, 24);
+  const documentPayload: Record<string, unknown> = {
+    external_id: item.externalId,
+    slug: existing?.slug || slugify(parsed.title),
+    source: "etalon",
+    source_url: sourceUrl,
+    title: parsed.title,
+    doc_type: item.docType ?? "legal_act",
+    doc_date: parsed.docDate,
+    doc_number: parsed.docNumber,
+    category: "acts",
+    status: "active",
+    content_text: parsed.contentText,
+    structure: parsed.structure,
+    checksum,
+    is_published: true,
+    last_synced_at: new Date().toISOString(),
+  };
+  if (!existing) documentPayload.created_by = editorId;
+
+  const { data: saved, error: saveError } = await admin
+    .from("legal_documents")
+    .upsert(documentPayload, { onConflict: "source,external_id" })
+    .select("id")
+    .single();
+  if (saveError) throw saveError;
+
+  if (existing?.structure && Array.isArray(existing.structure)) {
+    const newAnchorByText = new Map(
+      parsed.structure.map((node) => [normalizeSpace(node.text), node.id]),
+    );
+    const aliases = existing.structure
+      .map((node: StructureNode) => ({
+        document_id: saved.id,
+        old_anchor: node.id,
+        current_anchor: newAnchorByText.get(normalizeSpace(node.text)) ?? null,
+        status: newAnchorByText.has(normalizeSpace(node.text)) ? "redirect" : "removed",
+      }))
+      .filter((alias: { old_anchor: string; current_anchor: string | null }) =>
+        alias.old_anchor !== alias.current_anchor,
+      );
+    if (aliases.length) {
+      const { error: aliasError } = await admin
+        .from("legal_anchor_aliases")
+        .upsert(aliases, { onConflict: "document_id,old_anchor" });
+      if (aliasError) throw aliasError;
+    }
+  }
+
+  const { error: oldVersionError } = await admin
+    .from("legal_document_versions")
+    .update({ is_current: false })
+    .eq("document_id", saved.id)
+    .eq("is_current", true);
+  if (oldVersionError) throw oldVersionError;
+  const { error: versionError } = await admin
+    .from("legal_document_versions")
+    .upsert({
+      document_id: saved.id,
+      revision_key: revisionKey,
+      revision_label: `Актуально на ${new Date().toLocaleDateString("ru-RU")}`,
+      content_text: parsed.contentText,
+      structure: parsed.structure,
+      checksum,
+      source_url: sourceUrl,
+      is_current: true,
+    }, { onConflict: "document_id,revision_key" });
+  if (versionError) throw versionError;
+
+  await assignCollections(admin, saved.id, item.collections);
+  return { status: existing ? "updated" : "created", documentId: saved.id };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json(405, { success: false, error: "Method not allowed" });
@@ -457,13 +647,37 @@ Deno.serve(async (req) => {
     if (!editor) return json(403, { success: false, error: "Недостаточно прав" });
 
     const body = await req.json().catch(() => ({}));
-    if (body.action !== "sync_codes" && body.action !== "sync_curated") {
+    if (
+      body.action !== "sync_codes" &&
+      body.action !== "sync_curated" &&
+      body.action !== "import_curated_snapshot"
+    ) {
       return json(400, { success: false, error: "Unknown action" });
     }
 
     const admin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });
+
+    if (body.action === "import_curated_snapshot") {
+      const externalId = typeof body.externalId === "string" ? body.externalId : "";
+      const contentText = typeof body.contentText === "string" ? body.contentText : "";
+      const result = await importAuthenticatedCuratedSnapshot(admin, editor.id, {
+        externalId,
+        contentText,
+      });
+      await admin
+        .from("legislation_settings")
+        .update({
+          last_sync_at: new Date().toISOString(),
+          last_sync_status: "success",
+          last_sync_message: `Загружен документ ${externalId}`,
+          connection_status: "online",
+          last_connection_check: new Date().toISOString(),
+        })
+        .eq("id", "00000000-0000-0000-0000-000000000001");
+      return json(200, { success: true, externalId, ...result });
+    }
 
     if (body.action === "sync_curated") {
       const requestedCursor = Number(body.cursor ?? 0);

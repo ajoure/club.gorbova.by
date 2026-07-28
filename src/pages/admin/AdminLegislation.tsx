@@ -7,6 +7,7 @@ import {
   Plus,
   RefreshCw,
   Scale,
+  Upload,
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Badge } from "@/components/ui/badge";
@@ -54,6 +55,8 @@ export default function AdminLegislation() {
   const [docNumber, setDocNumber] = useState("");
   const [docDate, setDocDate] = useState("");
   const [content, setContent] = useState("");
+  const [snapshotRef, setSnapshotRef] = useState("");
+  const [snapshotContent, setSnapshotContent] = useState("");
 
   const documentsQuery = useQuery({
     queryKey: ["admin", "legislation"],
@@ -159,6 +162,40 @@ export default function AdminLegislation() {
     onError: (error: Error) =>
       toast({
         title: "Ошибка синхронизации подборок",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+
+  const importAuthenticatedSnapshot = useMutation({
+    mutationFn: async () => {
+      if (!snapshotRef.trim() || !snapshotContent.trim()) {
+        throw new Error("Укажите идентификатор документа и его полный текст");
+      }
+      const { data, error } = await supabase.functions.invoke("legislation-sync", {
+        body: {
+          action: "import_curated_snapshot",
+          externalId: snapshotRef.trim(),
+          contentText: snapshotContent,
+        },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Загрузка не выполнена");
+      return data;
+    },
+    onSuccess: (data) => {
+      setSnapshotRef("");
+      setSnapshotContent("");
+      refresh();
+      queryClient.invalidateQueries({ queryKey: ["legislation"] });
+      toast({
+        title: "Нормативный акт загружен",
+        description: `${data.externalId} добавлен в нужные подборки и опубликован.`,
+      });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Не удалось загрузить документ",
         description: error.message,
         variant: "destructive",
       }),
@@ -405,6 +442,53 @@ export default function AdminLegislation() {
             </CardContent>
           </Card>
         )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Загрузка полного текста из авторизованного источника</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <p className="text-sm text-muted-foreground">
+              Вставьте полный текст открытого в вашей сессии документа. Система принимает
+              только акты из утверждённого перечня, проверяет полноту, сохраняет источник
+              и автоматически добавляет акт в тематические подборки.
+            </p>
+            <div className="grid gap-2">
+              <Label htmlFor="legal-snapshot-ref">Идентификатор документа</Label>
+              <Input
+                id="legal-snapshot-ref"
+                placeholder="Например, w21124548"
+                value={snapshotRef}
+                onChange={(event) => setSnapshotRef(event.target.value)}
+                disabled={importAuthenticatedSnapshot.isPending}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="legal-snapshot-content">Полный текст</Label>
+              <Textarea
+                id="legal-snapshot-content"
+                rows={14}
+                placeholder="Вставьте текст целиком, начиная с реквизитов нормативного акта"
+                value={snapshotContent}
+                onChange={(event) => setSnapshotContent(event.target.value)}
+                disabled={importAuthenticatedSnapshot.isPending}
+              />
+            </div>
+            <div>
+              <Button
+                onClick={() => importAuthenticatedSnapshot.mutate()}
+                disabled={importAuthenticatedSnapshot.isPending || !snapshotRef.trim() || !snapshotContent.trim()}
+              >
+                {importAuthenticatedSnapshot.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="mr-2 h-4 w-4" />
+                )}
+                Загрузить и опубликовать
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
