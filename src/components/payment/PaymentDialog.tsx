@@ -40,6 +40,7 @@ import {
 import { USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
 import { OrderSummary } from "@/components/checkout/OrderSummary";
 import { useComposableQuoteSummary } from "@/hooks/useComposableQuoteSummary";
+import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
 
 interface SubscriptionMessage {
   title?: string;           // "Ежемесячная подписка" / "Подписка на Клуб"
@@ -948,9 +949,6 @@ export function PaymentDialog({
           customerPhone: formData.phone,
           customerFirstName: formData.firstName,
           customerLastName: formData.lastName,
-          // Never retransmit an existing user's login password to a payment
-          // function. This field is only for creating a brand-new Auth user.
-          customerPassword: existingUserId ? undefined : formData.password,
           existingUserId,
           description: paymentDescription,
           tariffCode,
@@ -974,6 +972,19 @@ export function PaymentDialog({
           setShowTrialUsedModal(true);
           setStep("ready");
           setIsLoading(false);
+          return;
+        }
+        if (
+          data?.error === "email_verification_required"
+          || data?.error === "authenticated_email_mismatch"
+        ) {
+          const verificationMessage =
+            data?.message
+            || "Подтвердите email кодом или войдите в аккаунт, чтобы продолжить.";
+          setPaymentError(verificationMessage);
+          toast.error(verificationMessage);
+          setExistingUserId(null);
+          setStep("email");
           return;
         }
 
@@ -1002,24 +1013,6 @@ export function PaymentDialog({
         }
 
         throw new Error(data.error || "Ошибка создания платежа");
-      }
-
-      // The free no-card trial creates the Auth user server-side together with
-      // the paid order. Sign the new user in with the password chosen above so
-      // the success redirect opens the purchased content, not another signup.
-      if (isTrial && data.newUserCreated && formData.password) {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: formData.email.toLowerCase().trim(),
-          password: formData.password,
-        });
-        if (signInError) {
-          console.error("[PaymentDialog] trial account sign-in failed:", signInError);
-          const authUrl = new URL("/auth", window.location.origin);
-          authUrl.searchParams.set("redirectTo", data.redirectUrl || "/purchases");
-          authUrl.searchParams.set("email", formData.email.toLowerCase().trim());
-          window.location.href = authUrl.toString();
-          return;
-        }
       }
 
       // Redirect to bePaid checkout page
@@ -1065,7 +1058,85 @@ export function PaymentDialog({
     setStep("email");
   };
 
+  const handleCheckoutAuthenticated = async (verifiedEmail: string, verifiedUserId?: string) => {
+    setIsLoading(true);
+    authInProgressRef.current = true;
+    try {
+      let userId = verifiedUserId;
+      if (!userId) {
+        const { data, error } = await supabase.auth.getUser();
+        if (error || !data.user) {
+          throw new Error("Не удалось подтвердить сессию пользователя");
+        }
+        userId = data.user.id;
+      }
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name, first_name, last_name, phone")
+        .eq("user_id", userId)
+        .maybeSingle();
+      const fullName = profile?.full_name?.trim() || "";
+      const nameParts = fullName.split(/\s+/).filter(Boolean);
+
+      setFormData({
+        email: verifiedEmail.toLowerCase().trim(),
+        firstName: profile?.first_name || nameParts[0] || "",
+        lastName: profile?.last_name || nameParts.slice(1).join(" ") || "",
+        phone: profile?.phone || "",
+        password: "",
+      });
+      setExistingUserId(userId);
+      setErrors({});
+      setLoginError(null);
+      setPaymentError(null);
+
+      await Promise.all([
+        loadSavedCards(userId),
+        loadCustomerCredit(),
+        loadPartnerBonus(),
+        refetchTelegramStatus(),
+      ]);
+
+      if (isClubProduct && !isTelegramLinked) {
+        setStep("telegram_prompt");
+      } else {
+        setStep("ready");
+      }
+    } catch (error) {
+      console.error("[PaymentDialog] verified auth handoff failed:", error);
+      setPaymentError(
+        "Email подтверждён, но не удалось продолжить. Закройте окно и попробуйте ещё раз.",
+      );
+      setStep("ready");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const renderStep = () => {
+    if (
+      !user
+      && !existingUserId
+      && (step === "email" || step === "login" || step === "additional_info")
+    ) {
+      return (
+        <InlineAuthForm
+          initialEmail={formData.email}
+          onAuthenticated={handleCheckoutAuthenticated}
+          contextNote={
+            isTrial
+              ? "Для бесплатного доступа подтвердите реальный email или войдите в существующий аккаунт."
+              : "Для оформления покупки подтвердите email или войдите в существующий аккаунт."
+          }
+          loginCtaLabel={isTrial ? "Войти и активировать доступ" : "Войти и продолжить"}
+          signupCtaLabel="Получить код"
+          externalLoading={isLoading}
+          defaultTab={isTrial ? "signup" : "login"}
+        />
+      );
+    }
+
     switch (step) {
       case "email":
         return (

@@ -36,7 +36,12 @@ vi.mock("@/integrations/supabase/client", () => ({
         }),
       }),
     }),
-    functions: { invoke: vi.fn() },
+    functions: {
+      invoke: vi.fn().mockResolvedValue({
+        data: { items: [], currency: "BYN", total: null },
+        error: null,
+      }),
+    },
   },
 }));
 

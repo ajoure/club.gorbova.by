@@ -7,11 +7,14 @@ const source = fs.readFileSync(
   "utf8",
 );
 
-describe("bepaid-create-token trial password contract", () => {
-  it("uses the password chosen in checkout and never persists or returns it", () => {
-    expect(source).toContain("newUserPassword = customerPassword || generatePassword()");
-    expect(source).toContain("customerPassword.length < 6");
+describe("bepaid-create-token verified identity contract", () => {
+  it("requires a verified JWT and never creates or confirms an arbitrary email", () => {
+    expect(source).toContain("error: 'email_verification_required'");
+    expect(source).toContain("emailLower !== authUserEmail");
+    expect(source).toContain("const userId = authUserId");
+    expect(source).not.toContain("email_confirm: true");
+    expect(source).not.toContain("customerPassword");
+    expect(source).not.toContain("auth.admin.createUser");
     expect(source).not.toContain("new_user_password");
-    expect(source).not.toContain("newUserPassword: newUserCreated");
   });
 });

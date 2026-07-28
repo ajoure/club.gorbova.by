@@ -14,10 +14,13 @@
 import { FormEvent, useEffect, useState } from "react";
 import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AlertCircle, Check, Eye, EyeOff, Loader2, Mail, X } from "lucide-react";
 import { useInlineEmailOtp } from "@/hooks/useInlineEmailOtp";
+import { supabase } from "@/integrations/supabase/client";
+import { CONSENT_POLICY_VERSION } from "@/lib/legalVersions";
 import {
   REGISTRATION_PASSWORD_MIN_LENGTH,
   checkRegistrationPassword,
@@ -29,6 +32,8 @@ export interface InlineEmailOtpFormProps {
   contextNote?: string;
   emailCtaLabel?: string;
   externalLoading?: boolean;
+  /** Require and persist privacy consent for newly created accounts. */
+  requirePrivacyConsent?: boolean;
   /** Kept for API compatibility; ignored — details step is decided by identify. */
   collectSignupMeta?: boolean;
 }
@@ -39,6 +44,7 @@ export function InlineEmailOtpForm({
   contextNote,
   emailCtaLabel = "Продолжить",
   externalLoading = false,
+  requirePrivacyConsent = false,
 }: InlineEmailOtpFormProps) {
   const auth = useInlineEmailOtp();
   const [email, setEmail] = useState(initialEmail);
@@ -49,6 +55,7 @@ export function InlineEmailOtpForm({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [privacyConsent, setPrivacyConsent] = useState(false);
   const [code, setCode] = useState("");
   const passwordChecks = checkRegistrationPassword(password);
   const passwordValid =
@@ -70,7 +77,12 @@ export function InlineEmailOtpForm({
 
   const handleSubmitDetails = async (e: FormEvent) => {
     e.preventDefault();
-    if (!firstName.trim() || !passwordValid || !passwordsMatch) return;
+    if (
+      !firstName.trim()
+      || !passwordValid
+      || !passwordsMatch
+      || (requirePrivacyConsent && !privacyConsent)
+    ) return;
     await auth.submitDetails({ firstName, lastName, phone, password });
   };
 
@@ -78,6 +90,27 @@ export function InlineEmailOtpForm({
     if (e) e.preventDefault();
     const result = await auth.verifyCode(code);
     if (result) {
+      if (requirePrivacyConsent && privacyConsent) {
+        try {
+          await supabase.from("consent_logs").insert({
+            user_id: result.userId,
+            email: auth.email,
+            consent_type: "privacy_policy",
+            policy_version: CONSENT_POLICY_VERSION,
+            granted: true,
+            source: "registration_otp",
+          });
+          await supabase
+            .from("profiles")
+            .update({
+              consent_version: CONSENT_POLICY_VERSION,
+              consent_given_at: new Date().toISOString(),
+            })
+            .eq("user_id", result.userId);
+        } catch (consentError) {
+          console.error("[InlineEmailOtpForm] consent logging failed:", consentError);
+        }
+      }
       // HARD GUARD: onAuthenticated ONLY after verifyOtp success.
       await onAuthenticated(auth.email, result.userId);
     } else {
@@ -103,6 +136,7 @@ export function InlineEmailOtpForm({
     setConfirmPassword("");
     setShowPassword(false);
     setShowConfirmPassword(false);
+    setPrivacyConsent(false);
   };
 
   return (
@@ -263,11 +297,51 @@ export function InlineEmailOtpForm({
               </p>
             )}
           </div>
+          {requirePrivacyConsent && (
+            <div className="flex items-start gap-3 rounded-xl border border-border/50 bg-muted/50 p-3">
+              <Checkbox
+                id="iaf-otp-privacy-consent"
+                checked={privacyConsent}
+                onCheckedChange={(checked) => setPrivacyConsent(checked === true)}
+                className="mt-0.5"
+              />
+              <Label
+                htmlFor="iaf-otp-privacy-consent"
+                className="cursor-pointer text-xs leading-relaxed"
+              >
+                Я согласен(на) с{" "}
+                <a
+                  href="/privacy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  Политикой конфиденциальности
+                </a>{" "}
+                и даю{" "}
+                <a
+                  href="/consent"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  согласие
+                </a>{" "}
+                на обработку персональных данных.
+              </Label>
+            </div>
+          )}
           <Button
             type="submit"
             size="lg"
             className="w-full"
-            disabled={isBusy || !firstName.trim() || !passwordValid || !passwordsMatch}
+            disabled={
+              isBusy
+              || !firstName.trim()
+              || !passwordValid
+              || !passwordsMatch
+              || (requirePrivacyConsent && !privacyConsent)
+            }
           >
             {isBusy ? (
               <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Отправка…</>

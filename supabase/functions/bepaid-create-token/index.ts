@@ -1,5 +1,4 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { resolveUserIds, getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { referralDiscountMeta, resolveReferralCheckoutDiscount } from '../_shared/referral-checkout-discount.ts';
@@ -19,7 +18,6 @@ interface CreateTokenRequest {
   customerPhone?: string;
   customerFirstName?: string;
   customerLastName?: string;
-  customerPassword?: string;
   existingUserId?: string | null;
   description?: string;
   tariffCode?: string; // For tariff identification: 'chat', 'full', 'business'
@@ -44,15 +42,6 @@ interface ProductInfo {
   price: number;
   currency: string;
   isV2: boolean;
-}
-
-function generatePassword(length = 12): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
-  let password = '';
-  for (let i = 0; i < length; i++) {
-    password += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return password;
 }
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -85,10 +74,12 @@ Deno.serve(async (req) => {
     // Get user from auth header (if logged in)
     const authHeader = req.headers.get('Authorization');
     let authUserId: string | null = null;
+    let authUserEmail: string | null = null;
     
     if (authHeader) {
       const { data: { user } } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''));
       authUserId = user?.id || null;
+      authUserEmail = user?.email?.toLowerCase().trim() || null;
     }
 
     const { 
@@ -97,7 +88,6 @@ Deno.serve(async (req) => {
       customerPhone,
       customerFirstName,
       customerLastName,
-      customerPassword,
       existingUserId,
       description,
       tariffCode,
@@ -147,6 +137,20 @@ Deno.serve(async (req) => {
     }
 
     const emailLower = customerEmail.toLowerCase().trim();
+    if (!authUserId || !authUserEmail) {
+      return jsonResponse({
+        success: false,
+        error: 'email_verification_required',
+        message: 'Подтвердите email кодом или войдите в аккаунт, чтобы продолжить.',
+      }, 401);
+    }
+    if (emailLower !== authUserEmail) {
+      return jsonResponse({
+        success: false,
+        error: 'authenticated_email_mismatch',
+        message: 'Email покупки должен совпадать с подтверждённым email аккаунта.',
+      }, 403);
+    }
 
     // Try to get product from products_v2 first (new system), then fallback to products (legacy)
     let productInfo: ProductInfo | null = null;
@@ -273,24 +277,14 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Determine user ID for the order
-    // Normalize existingUserId if provided (could be profile.id instead of user_id)
-    let userId = authUserId || null;
-    let profileId: string | null = null;
-    let newUserCreated = false;
-    let newUserPassword: string | null = null;
-    let userIdWasNormalized = false;
-
-    // If existingUserId provided, normalize it (handle profile.id vs user_id confusion)
-    if (!userId && existingUserId) {
-      const resolved = await getOrderUserId(supabase, existingUserId);
-      userId = resolved.userId;
-      profileId = resolved.profileId;
-      userIdWasNormalized = resolved.wasNormalized;
-      
-      if (resolved.wasNormalized) {
-        console.log(`[bepaid-create-token] Normalized user ID: ${existingUserId} -> ${userId} (was profile.id)`);
-      }
+    // Public checkout is always bound to the verified JWT identity. Never trust
+    // a client-provided user id and never create/confirm an Auth user here.
+    const userId = authUserId;
+    const newUserCreated = false;
+    if (existingUserId && existingUserId !== authUserId) {
+      console.warn('[bepaid-create-token] ignored mismatched existingUserId', {
+        authenticated_user_id: authUserId,
+      });
     }
 
     // Resolve tariff_id for per-tariff trial scoping
@@ -340,72 +334,17 @@ Deno.serve(async (req) => {
       }
     }
 
-    // If no user ID, check if user exists by email or create new one
-    if (!userId) {
-      // Check if profile exists with this email
-      const { data: existingProfile } = await supabase
+    if (customerPhone || customerFirstName) {
+      const fullName = customerFirstName && customerLastName
+        ? `${customerFirstName} ${customerLastName}`.trim()
+        : customerFirstName || null;
+      await supabase
         .from('profiles')
-        .select('id, user_id')
-        .eq('email', emailLower)
-        .maybeSingle();
-
-      if (existingProfile) {
-        userId = existingProfile.user_id;
-        profileId = existingProfile.id;
-        console.log('Found existing user by email:', userId, 'profile_id:', profileId);
-
-        // Update profile with additional info if provided
-        if (customerPhone || customerFirstName) {
-          const fullName = customerFirstName && customerLastName 
-            ? `${customerFirstName} ${customerLastName}`.trim()
-            : null;
-          
-          await supabase
-            .from('profiles')
-            .update({
-              ...(customerPhone && { phone: customerPhone }),
-              ...(fullName && { full_name: fullName }),
-            })
-            .eq('user_id', userId);
-        }
-      } else {
-        // Create new user
-        console.log('Creating new user for email:', emailLower);
-        newUserPassword = customerPassword || generatePassword();
-
-        if (customerPassword && customerPassword.length < 6) {
-          return new Response(
-            JSON.stringify({ success: false, error: 'Пароль должен содержать минимум 6 символов' }),
-            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-        
-        const fullName = customerFirstName && customerLastName 
-          ? `${customerFirstName} ${customerLastName}`.trim()
-          : customerFirstName || 'Пользователь';
-
-        const { data: newUser, error: createUserError } = await supabase.auth.admin.createUser({
-          email: emailLower,
-          password: newUserPassword,
-          email_confirm: true, // Auto-confirm email
-          user_metadata: {
-            full_name: fullName,
-            phone: customerPhone,
-          },
-        });
-
-        if (createUserError) {
-          console.error('Error creating user:', createUserError);
-          return new Response(
-            JSON.stringify({ success: false, error: 'Failed to create user account' }),
-            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-
-        userId = newUser.user.id;
-        newUserCreated = true;
-        console.log('Created new user:', userId);
-      }
+        .update({
+          ...(customerPhone && { phone: customerPhone }),
+          ...(fullName && { full_name: fullName }),
+        })
+        .eq('user_id', userId);
     }
 
     // ────────────────────────────────────────────────────────────────────────
