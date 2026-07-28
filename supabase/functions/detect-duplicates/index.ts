@@ -60,16 +60,20 @@ serve(async (req) => {
     }
     const callerId = claimsData.claims.sub as string;
 
-    // 3) Staff-role guard (admin or super_admin only) — PII must not leak to regular users
+    // 3) Staff-role guard (admin or superadmin only) — PII must not leak to regular users.
+    // The managed DB exposes has_role(uuid,text), not has_role_v2.
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
-    const { data: isAdmin } = await supabase.rpc("has_role_v2", {
-      _user_id: callerId,
-      _role_code: "admin",
-    });
-    const { data: isSuper } = await supabase.rpc("has_role_v2", {
-      _user_id: callerId,
-      _role_code: "super_admin",
-    });
+    const [{ data: isAdmin, error: adminRoleError }, { data: isSuper, error: superRoleError }] = await Promise.all([
+      supabase.rpc("has_role", { _user_id: callerId, _role: "admin" }),
+      supabase.rpc("has_role", { _user_id: callerId, _role: "super_admin" }),
+    ]);
+    if (adminRoleError || superRoleError) {
+      console.error("[detect-duplicates] RBAC lookup failed", { adminRoleError, superRoleError });
+      return new Response(JSON.stringify({ error: "Authorization check failed" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     if (!isAdmin && !isSuper) {
       return new Response(JSON.stringify({ error: "Forbidden: staff role required" }), {
         status: 403,

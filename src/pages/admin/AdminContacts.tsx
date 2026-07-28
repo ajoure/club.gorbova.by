@@ -125,7 +125,7 @@ interface CommunicationStyle {
 
 interface Contact {
   id: string;
-  user_id: string;
+  user_id: string | null;
   email: string | null;
   full_name: string | null;
   first_name: string | null;
@@ -149,6 +149,43 @@ interface Contact {
   loyalty_updated_at?: string | null;
   communication_style?: CommunicationStyle | null;
 }
+
+type ContactListProfile = Omit<Contact, "deals_count" | "last_deal_at" | "role"> & {
+  is_archived: boolean | null;
+};
+
+interface ContactRoleRow {
+  user_id: string;
+  created_at: string;
+  roles: { code: string; name: string } | null;
+}
+
+// The list and its direct-by-id fallback need the same compact profile shape.
+// Relationship data stays in the dedicated queries below.
+const CONTACT_LIST_SELECT = [
+  "id",
+  "user_id",
+  "email",
+  "full_name",
+  "first_name",
+  "last_name",
+  "phone",
+  "telegram_username",
+  "telegram_user_id",
+  "avatar_url",
+  "status",
+  "created_at",
+  "last_seen_at",
+  "duplicate_flag",
+  "is_archived",
+  "loyalty_score",
+  "loyalty_ai_summary",
+  "loyalty_status_reason",
+  "loyalty_proofs",
+  "loyalty_analyzed_messages_count",
+  "loyalty_updated_at",
+  "communication_style",
+].join(",");
 
 // formatContactName imported from @/lib/nameUtils
 
@@ -439,7 +476,7 @@ export default function AdminContacts() {
 
       let query = supabase
         .from("profiles")
-        .select("*");
+        .select(CONTACT_LIST_SELECT);
 
       // Server-side preset filters
       if (activePreset === "active") {
@@ -552,20 +589,28 @@ export default function AdminContacts() {
   }, [tabCounts, activePreset]);
 
   // Enrich loaded profiles with orders (by profile_id, chunked)
-  const profileIds = useMemo(() => allProfiles.map((p) => p.id), [allProfiles]);
+  const profileIds = useMemo(
+    () => Array.from(new Set(allProfiles.map((p) => p.id))),
+    [allProfiles],
+  );
+  const profileUserIds = useMemo(
+    () => Array.from(new Set(allProfiles.map((p) => p.user_id).filter(Boolean))) as string[],
+    [allProfiles],
+  );
 
   const { data: ordersData } = useQuery({
-    queryKey: ["admin-contacts-orders", activePreset, debouncedSearch, profileIds.length],
+    queryKey: ["admin-contacts-orders", activePreset, debouncedSearch, profileIds],
     queryFn: async () => {
       if (profileIds.length === 0) return [];
       let all: any[] = [];
       for (let i = 0; i < profileIds.length; i += 500) {
         const chunk = profileIds.slice(i, i + 500);
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from("orders_v2")
           .select("user_id, profile_id, created_at, status")
           .eq("status", "paid")
           .in("profile_id", chunk);
+        if (error) throw error;
         if (data) all = all.concat(data);
       }
       return all;
@@ -589,20 +634,30 @@ export default function AdminContacts() {
     return map;
   }, [ordersData]);
 
-  // Get user roles
+  // Fetch roles only for loaded contacts. The old query loaded the whole
+  // role directory on every Contacts mount, even though the table shows one
+  // cursor page at a time.
   const { data: userRolesData } = useQuery({
-    queryKey: ["admin-contacts-roles"],
+    queryKey: ["admin-contacts-roles", profileUserIds],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("user_roles_v2")
-        .select(`user_id, created_at, roles(code, name)`);
-      return data || [];
+      if (profileUserIds.length === 0) return [];
+      const rows: ContactRoleRow[] = [];
+      for (let i = 0; i < profileUserIds.length; i += 500) {
+        const { data, error } = await supabase
+          .from("user_roles_v2")
+          .select(`user_id, created_at, roles(code, name)`)
+          .in("user_id", profileUserIds.slice(i, i + 500));
+        if (error) throw error;
+        if (data) rows.push(...(data as ContactRoleRow[]));
+      }
+      return rows;
     },
+    enabled: profileUserIds.length > 0,
   });
 
   const rolesByUserId = useMemo(() => {
     const map = new Map<string, { code: string; name: string; assigned_at: string }>();
-    userRolesData?.forEach((ur: any) => {
+    userRolesData?.forEach((ur: ContactRoleRow) => {
       if (ur.user_id && ur.roles) {
         map.set(ur.user_id, {
           code: ur.roles.code,
@@ -975,7 +1030,63 @@ export default function AdminContacts() {
     }
   };
 
-  const selectedContact = contacts?.find(c => c.id === selectedContactId);
+  const selectedContactFromList = contacts?.find(c => c.id === selectedContactId);
+
+  // A selection can originate from global search or a just-created contact,
+  // neither of which is guaranteed to be part of the currently loaded cursor
+  // page. Read that one existing profile directly instead of opening an empty
+  // sheet and waiting for the list query to catch up.
+  const {
+    data: selectedContactById,
+    error: selectedContactByIdError,
+  } = useQuery({
+    queryKey: ["admin-contact-by-id", selectedContactId],
+    queryFn: async (): Promise<Contact> => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select(CONTACT_LIST_SELECT)
+        .eq("id", selectedContactId!)
+        .single();
+      if (error) throw error;
+
+      const profile = data as ContactListProfile;
+      return {
+        id: profile.id,
+        user_id: profile.user_id,
+        email: profile.email,
+        full_name: profile.full_name,
+        first_name: profile.first_name,
+        last_name: profile.last_name,
+        phone: profile.phone,
+        telegram_username: profile.telegram_username,
+        telegram_user_id: profile.telegram_user_id,
+        avatar_url: profile.avatar_url,
+        status: profile.is_archived ? "archived" : profile.status,
+        created_at: profile.created_at,
+        last_seen_at: profile.last_seen_at,
+        duplicate_flag: profile.duplicate_flag,
+        deals_count: 0,
+        last_deal_at: null,
+        loyalty_score: profile.loyalty_score,
+        loyalty_ai_summary: profile.loyalty_ai_summary,
+        loyalty_status_reason: profile.loyalty_status_reason,
+        loyalty_proofs: profile.loyalty_proofs,
+        loyalty_analyzed_messages_count: profile.loyalty_analyzed_messages_count,
+        loyalty_updated_at: profile.loyalty_updated_at,
+        communication_style: profile.communication_style,
+      };
+    },
+    enabled: !!selectedContactId && !selectedContactFromList,
+    staleTime: 0,
+  });
+
+  useEffect(() => {
+    if (selectedContactByIdError) {
+      toast.error("Не удалось открыть контакт: " + (selectedContactByIdError as Error).message);
+    }
+  }, [selectedContactByIdError]);
+
+  const selectedContact = selectedContactFromList || selectedContactById;
 
   // Drag select hook
   const {
@@ -1873,7 +1984,7 @@ export default function AdminContacts() {
       {/* Contact Detail Sheet */}
       <ContactDetailSheet
         contact={selectedContact || null}
-        open={!!selectedContactId}
+        open={!!selectedContact}
         onOpenChange={(open) => {
           if (!open) {
             setSelectedContactId(null);
@@ -1931,7 +2042,6 @@ export default function AdminContacts() {
         contacts={sortedContacts.filter(c => selectedContactIds.has(c.id))}
         open={showMergeDialog}
         onOpenChange={setShowMergeDialog}
-        onSuccess={clearSelection}
       />
 
       {/* Delete Confirmation Dialog */}

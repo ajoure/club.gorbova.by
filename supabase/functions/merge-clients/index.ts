@@ -51,10 +51,20 @@ serve(async (req) => {
     // Use service role for actual operations
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Admin/super_admin role guard — fail-closed before any profile read or mutation
+    // Live DB currently exposes has_role(uuid,text), not has_role_v2.
+    // Fail closed before any profile read or mutation.
     const callerId = claimsData.claims.sub as string;
-    const { data: isAdmin } = await supabase.rpc("has_role_v2", { _user_id: callerId, _role_code: "admin" });
-    const { data: isSuper } = await supabase.rpc("has_role_v2", { _user_id: callerId, _role_code: "super_admin" });
+    const [{ data: isAdmin, error: adminRoleError }, { data: isSuper, error: superRoleError }] = await Promise.all([
+      supabase.rpc("has_role", { _user_id: callerId, _role: "admin" }),
+      supabase.rpc("has_role", { _user_id: callerId, _role: "super_admin" }),
+    ]);
+    if (adminRoleError || superRoleError) {
+      console.error("[merge-clients] RBAC lookup failed", { adminRoleError, superRoleError });
+      return new Response(JSON.stringify({ error: "Authorization check failed" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     if (!isAdmin && !isSuper) {
       return new Response(JSON.stringify({ error: "Forbidden: admin role required" }), {
         status: 403,
@@ -62,6 +72,17 @@ serve(async (req) => {
       });
     }
 
+    // The current workflow performs many service-role mutations without a
+    // transaction and can partially move payments, entitlements and access.
+    // Keep this destructive operation closed until its replacement has an
+    // approved, transactionally safe merge contract.
+    return new Response(JSON.stringify({
+      error: "contact_merge_temporarily_disabled",
+      message: "Объединение контактов временно остановлено для безопасной переработки.",
+    }), {
+      status: 423,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
 
     const { caseId, masterId, mergedIds: rawMergedIds } = await req.json();
 

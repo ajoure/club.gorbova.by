@@ -3,8 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Loader2, UserPlus, Mail, Phone, Send, MapPin, Briefcase, User, AlertCircle, ExternalLink } from "lucide-react";
+import { Loader2, UserPlus, Mail, Phone, Send, Briefcase, User, AlertCircle, ExternalLink } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
@@ -22,9 +21,6 @@ const initialForm = {
   phone: "",
   telegram_username: "",
   position: "",
-  city: "",
-  country: "",
-  notes: "",
 };
 
 interface DuplicateInfo {
@@ -110,10 +106,7 @@ export function CreateContactDialog({ open, onOpenChange, onCreated }: CreateCon
         p_email: form.email || null,
         p_phone: form.phone || null,
         p_telegram_username: form.telegram_username || null,
-        p_city: form.city || null,
-        p_country: form.country || null,
         p_position: form.position || null,
-        p_notes: form.notes || null,
       });
       if (error) {
         const msg = error.message || "";
@@ -138,8 +131,8 @@ export function CreateContactDialog({ open, onOpenChange, onCreated }: CreateCon
       reset();
       onOpenChange(false);
       if (data) onCreated?.(data as string);
-    } catch (e: any) {
-      toast.error("Ошибка: " + (e?.message ?? "unknown"));
+    } catch (error: unknown) {
+      toast.error("Ошибка: " + (error instanceof Error ? error.message : "unknown"));
     } finally {
       setSaving(false);
     }
@@ -219,22 +212,6 @@ export function CreateContactDialog({ open, onOpenChange, onCreated }: CreateCon
               <Field label="Должность" icon={<Briefcase className="h-3.5 w-3.5" />} span={2}>
                 <Input value={form.position} onChange={upd("position")} placeholder="Руководитель отдела" />
               </Field>
-              <Field label="Город" icon={<MapPin className="h-3.5 w-3.5" />}>
-                <Input value={form.city} onChange={upd("city")} placeholder="Минск" />
-              </Field>
-              <Field label="Страна">
-                <Input value={form.country} onChange={upd("country")} placeholder="Беларусь" />
-              </Field>
-              <div className="col-span-2 space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Заметка</Label>
-                <Textarea
-                  value={form.notes}
-                  onChange={upd("notes") as any}
-                  rows={3}
-                  placeholder="Контекст, откуда пришёл контакт, договорённости…"
-                  className="resize-none"
-                />
-              </div>
             </div>
 
             <DialogFooter className="mt-6 gap-2">
