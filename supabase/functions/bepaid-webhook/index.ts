@@ -1037,8 +1037,16 @@ Deno.serve(async (req) => {
       );
     }
 
-    // body already parsed above
-    console.log('[WEBHOOK-BODY] bePaid webhook received:', JSON.stringify(body, null, 2));
+    // Provider webhooks can contain card tokens and PII; log only routing metadata.
+    const receivedTransaction = body?.transaction || body?.last_transaction || {};
+    console.log('[WEBHOOK-BODY] bePaid webhook received', {
+      topLevelKeys: Object.keys(body || {}).slice(0, 20),
+      transactionType: receivedTransaction?.type ?? body?.type ?? null,
+      transactionStatus: receivedTransaction?.status ?? body?.status ?? null,
+      trackingId: receivedTransaction?.tracking_id ?? body?.tracking_id ?? null,
+      transactionUid: receivedTransaction?.uid ?? null,
+      hasCardToken: Boolean(receivedTransaction?.credit_card?.token),
+    });
 
     // =========================================================================
     // CRITICAL: Save ALL incoming transactions to queue IMMEDIATELY for audit

@@ -1242,7 +1242,13 @@ async function chargeSubscription(
     });
 
     const chargeResult = await chargeResponse.json();
-    console.log('bePaid charge result:', chargeResult);
+    console.log('bePaid charge response received', {
+      status: chargeResponse.status,
+      transactionStatus: chargeResult?.transaction?.status ?? null,
+      transactionCode: chargeResult?.transaction?.code ?? null,
+      transactionUid: chargeResult?.transaction?.uid ?? null,
+      topLevelKeys: Object.keys(chargeResult || {}).slice(0, 20),
+    });
 
     const chargeAttemptAt = new Date().toISOString();
 
