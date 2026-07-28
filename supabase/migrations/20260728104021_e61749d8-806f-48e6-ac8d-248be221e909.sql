@@ -1,0 +1,1 @@
+GRANT EXECUTE ON FUNCTION public.search_legal_documents(text, integer) TO service_role;
