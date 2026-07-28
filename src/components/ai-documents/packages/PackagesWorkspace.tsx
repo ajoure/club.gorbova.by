@@ -90,11 +90,43 @@ export function PackagesWorkspace({ mode = "admin" }: PackagesWorkspaceProps) {
     : isAdminUI ? "anketa" : "usage";
 
   const packagesQuery = useQuery({
-    queryKey: ["workspace-package-templates"],
+    queryKey: ["workspace-package-templates", isAdminUI ? "admin" : "user"],
     queryFn: async () => {
+      if (isAdminUI) {
+        const { data, error } = await supabase
+          .from("document_package_templates")
+          .select("id, code, name, description, is_active, is_available_to_all, profile_id")
+          .order("name", { ascending: true });
+        if (error) throw error;
+        return (data ?? []) as PackageOption[];
+      }
+
+      // User path: resolve accessible package ids via canonical RPC to avoid
+      // full-table RLS scan (which times out on document_package_templates).
+      const { data: accessRows, error: accessError } = await supabase
+        .rpc("get_user_document_package_ids");
+      if (accessError) throw accessError;
+      const access = Array.isArray(accessRows) ? accessRows[0] : accessRows;
+      const fullAccess = access?.full_access === true;
+      const packageIds = Array.isArray(access?.package_ids) ? access!.package_ids : [];
+
+      if (fullAccess) {
+        const { data, error } = await supabase
+          .from("document_package_templates")
+          .select("id, code, name, description, is_active, is_available_to_all, profile_id")
+          .eq("is_active", true)
+          .order("name", { ascending: true });
+        if (error) throw error;
+        return (data ?? []) as PackageOption[];
+      }
+
+      if (packageIds.length === 0) return [] as PackageOption[];
+
       const { data, error } = await supabase
         .from("document_package_templates")
         .select("id, code, name, description, is_active, is_available_to_all, profile_id")
+        .in("id", packageIds)
+        .eq("is_active", true)
         .order("name", { ascending: true });
       if (error) throw error;
       return (data ?? []) as PackageOption[];
