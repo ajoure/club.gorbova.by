@@ -8,7 +8,7 @@
  * - Handoff: escalating to human when confidence is low
  */
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 
 // =============================================
@@ -24,7 +24,7 @@ interface AISupportRequest {
 }
 
 interface AISupportResponse {
-  reply: string;
+  reply: string | null;
   intent: 'support' | 'sales' | 'billing' | 'smalltalk' | 'handoff' | 'unknown';
   confidence: number;
   used_tools: string[];
@@ -77,6 +77,16 @@ interface ConversationContext {
   user_tone_preference: { formality: string; style: string } | null;
 }
 
+interface LegalSearchResult {
+  document_id: string;
+  slug: string;
+  title: string;
+  anchor: string;
+  kind: string;
+  snippet: string;
+  rank: number;
+}
+
 // =============================================
 // CONSTANTS
 // =============================================
@@ -121,6 +131,115 @@ const INTENT_KEYWORDS: Record<string, string[]> = {
   smalltalk: ['привет', 'как дела', 'здравствуй', 'доброе утро', 'добрый день', 'добрый вечер'],
   handoff: ['оператор', 'человек', 'руководител', 'не помогает', 'администратор', 'менеджер'],
 };
+
+const LEGAL_REQUEST_PATTERN = /(?:\bст\.?\s*\d|\bстатья\s+\d|\bнк\b|\bтк\b|\bгк\b|\bбк\b|\bкоап\b|кодекс|законодательств|норматив(?:ный|но-правов)|\bнпа\b|постановлени|\bуказ\b|\bдекрет\b|налогов|трудов|бухгалтерск(?:ий|ого)\s+уч[её]т)/iu;
+const LEGAL_ARTICLE_PATTERN = /(?:статья|ст\.?)[\s№]*([0-9]+(?:[.-][0-9]+)*)/iu;
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function truncateTelegramText(value: string, maxLength = 3300): string {
+  if (value.length <= maxLength) return value;
+  const boundary = value.lastIndexOf(' ', maxLength - 1);
+  return `${value.slice(0, boundary > 500 ? boundary : maxLength - 1).trim()}…`;
+}
+
+function isLegalRequest(messageText: string): boolean {
+  return LEGAL_REQUEST_PATTERN.test(messageText);
+}
+
+function articleAnchorFromMessage(messageText: string): string | null {
+  const article = messageText.match(LEGAL_ARTICLE_PATTERN)?.[1];
+  return article ? `art-${article.replaceAll('.', '-')}` : null;
+}
+
+function legalSearchQueries(messageText: string, articleAnchor: string | null): string[] {
+  const normalized = messageText.trim().replace(/\s+/g, ' ');
+  const queries = [normalized];
+  const lower = normalized.toLowerCase();
+
+  if (/\bнк\b|налог/iu.test(lower)) queries.push(articleAnchor ? `${articleAnchor.replace('art-', '')} налогов` : 'налогов');
+  if (/\bтк\b|трудов/iu.test(lower)) queries.push(articleAnchor ? `${articleAnchor.replace('art-', '')} трудов` : 'трудов');
+  if (/\bгк\b|гражданск/iu.test(lower)) queries.push(articleAnchor ? `${articleAnchor.replace('art-', '')} гражданск` : 'гражданск');
+  if (articleAnchor) queries.push(articleAnchor.replace('art-', ''));
+
+  return [...new Set(queries.filter((query) => query.length >= 2))];
+}
+
+function formatLegalLink(slug: string, anchor: string): string {
+  const siteUrl = (Deno.env.get('SITE_URL') || 'https://gorbova.by').replace(/\/$/, '');
+  return `${siteUrl}/knowledge/laws/${encodeURIComponent(slug)}#${encodeURIComponent(anchor)}`;
+}
+
+async function findLegalAnswer(
+  supabase: SupabaseClient,
+  messageText: string,
+): Promise<{ reply: string; usedTools: string[] }> {
+  const articleAnchor = articleAnchorFromMessage(messageText);
+  let results: LegalSearchResult[] = [];
+
+  for (const query of legalSearchQueries(messageText, articleAnchor)) {
+    const { data, error } = await supabase.rpc('search_legal_documents', {
+      p_query: query,
+      p_limit: 8,
+    });
+
+    if (error) {
+      console.error('[Legal search] RPC error:', error.message);
+      continue;
+    }
+
+    if (Array.isArray(data) && data.length > 0) {
+      results = data as LegalSearchResult[];
+      break;
+    }
+  }
+
+  if (results.length === 0) {
+    return {
+      reply: 'В базе законодательства пока не нашёл подходящий фрагмент. Попробуйте указать номер статьи и название кодекса, например: <i>статья 107 Налогового кодекса</i>.',
+      usedTools: ['search_legal_documents'],
+    };
+  }
+
+  const exactArticle = articleAnchor
+    ? results.find((result) => result.anchor === articleAnchor || result.anchor.startsWith(`${articleAnchor}-`))
+    : null;
+  const selected = exactArticle || results[0];
+  const link = formatLegalLink(selected.slug, exactArticle?.anchor || selected.anchor);
+
+  if (exactArticle && articleAnchor) {
+    const { data: chunks, error } = await supabase
+      .from('legal_document_search_chunks')
+      .select('anchor, text, ordinal')
+      .eq('document_id', selected.document_id)
+      .or(`anchor.eq.${articleAnchor},anchor.like.${articleAnchor}-%`)
+      .order('ordinal', { ascending: true })
+      .limit(24);
+
+    if (!error && Array.isArray(chunks) && chunks.length > 0) {
+      const articleText = truncateTelegramText(
+        chunks.map((chunk: { text: string }) => chunk.text.trim()).filter(Boolean).join('\n\n'),
+      );
+      return {
+        reply: `<b>${escapeHtml(selected.title)}</b>\n\n${escapeHtml(articleText)}\n\n<a href="${escapeHtml(link)}">Открыть в базе законодательства</a>`,
+        usedTools: ['search_legal_documents', 'get_legal_article'],
+      };
+    }
+  }
+
+  const safeSnippet = escapeHtml(truncateTelegramText(selected.snippet || '')).replaceAll('&lt;mark&gt;', '<b>').replaceAll('&lt;/mark&gt;', '</b>');
+  return {
+    reply: `<b>${escapeHtml(selected.title)}</b>\n\n${safeSnippet || 'Подходящий фрагмент найден.'}\n\n<a href="${escapeHtml(link)}">Открыть в базе законодательства</a>`,
+    usedTools: ['search_legal_documents'],
+  };
+}
 
 // =============================================
 // HELPER FUNCTIONS
@@ -499,12 +618,7 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
-    
-    if (!lovableApiKey) {
-      console.error('LOVABLE_API_KEY not configured');
-      return errorResponse('AI service not configured', 500);
-    }
-    
+
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
     const body: AISupportRequest = await req.json();
@@ -705,12 +819,64 @@ Deno.serve(async (req) => {
     // ==========================================
     const { data: profile } = await supabase
       .from('profiles')
-      .select('id, user_id, first_name')
+      .select('id, user_id, first_name, telegram_user_id, telegram_link_status')
       .eq('telegram_user_id', telegramUserId)
       .maybeSingle();
     
     const userId = profile?.user_id || null;
     const firstName = profile?.first_name || 'Пользователь';
+
+    // Legal requests never go to the generative model. The answer is retrieved
+    // from the published, indexed legislation base and is available only in a
+    // private dialog to a linked club account.
+    if (isLegalRequest(messageText)) {
+      const isLinkedClubAccount = Boolean(
+        userId
+        && profile?.telegram_user_id === telegramUserId
+        && profile?.telegram_link_status === 'active',
+      );
+
+      let legalReply: string;
+      let usedTools: string[] = [];
+
+      if (!isLinkedClubAccount) {
+        legalReply = 'Для поиска по законодательству войдите в аккаунт клуба и привяжите к нему этот Telegram. После привязки задайте вопрос боту ещё раз.';
+      } else if (chatId !== telegramUserId) {
+        legalReply = 'Поиск по законодательству доступен в личном чате с ботом. Напишите мне туда — так ответ и ссылка останутся только у вас.';
+      } else {
+        const legalAnswer = await findLegalAnswer(supabase, messageText);
+        legalReply = legalAnswer.reply;
+        usedTools = legalAnswer.usedTools;
+      }
+
+      await supabase
+        .from('telegram_ai_processed_messages')
+        .update({ response_sent: true })
+        .eq('telegram_message_id', messageId)
+        .eq('bot_id', botId);
+
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'telegram-ai-support',
+        action: 'telegram.legislation.reply',
+        target_user_id: userId,
+        meta: {
+          telegram_user_id: telegramUserId,
+          linked_account: isLinkedClubAccount,
+          private_chat: chatId === telegramUserId,
+          used_tools: usedTools,
+        },
+      });
+
+      return jsonResponse({
+        reply: legalReply,
+        intent: 'support',
+        confidence: 1,
+        used_tools: usedTools,
+        safety_flags: isLinkedClubAccount ? [] : ['telegram_not_linked'],
+      } as AISupportResponse);
+    }
     
     // Load or create conversation
     const { data: conversation } = await supabase
@@ -921,7 +1087,7 @@ ${sp.vocabulary_level ? `Уровень лексики: ${sp.vocabulary_level}` 
     // ==========================================
     // 11. BUILD MESSAGES
     // ==========================================
-    const aiMessages: Array<{ role: string; content: string }> = [
+    const aiMessages: Array<{ role: string; content: string; tool_call_id?: string }> = [
       { role: 'system', content: systemPrompt },
     ];
     
@@ -937,6 +1103,11 @@ ${sp.vocabulary_level ? `Уровень лексики: ${sp.vocabulary_level}` 
     // ==========================================
     // 12. CALL LOVABLE AI
     // ==========================================
+    if (!lovableApiKey) {
+      console.error('LOVABLE_API_KEY not configured');
+      return errorResponse('AI service not configured', 500);
+    }
+
     console.log(`[AI Support] Calling Lovable AI with ${aiMessages.length} messages`);
     
     const aiResponse = await fetch(LOVABLE_API_URL, {
