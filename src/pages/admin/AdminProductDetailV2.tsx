@@ -606,7 +606,18 @@ export default function AdminProductDetailV2() {
       "button_1", "button_2", "button_3", "button_4", "button_5",
       "button_6", "button_7", "button_8", "button_9", "button_10",
     ]);
-    const rawSlotRole = (offerForm.meta?.slot_role ?? "").toString().trim();
+    const rawSlotRoleInput = (offerForm.meta?.slot_role ?? "").toString().trim();
+    // Older offers may still carry pre-Phase-B slot names if they were saved
+    // before the canonical migration reached this environment. Normalize them
+    // on the next save instead of blocking an otherwise valid edit.
+    const legacySlotRoleMap: Record<string, string> = {
+      payment_card: "button_1",
+      payment_invoice: "button_2",
+      installment_2: "button_3",
+      installment_3: "button_4",
+      installment_bank: "button_5",
+    };
+    const rawSlotRole = legacySlotRoleMap[rawSlotRoleInput] ?? rawSlotRoleInput;
     const rawVariant = (offerForm.meta?.site_button_variant ?? "").toString().trim();
     if (rawSlotRole && !ALLOWED_SLOT_ROLES.has(rawSlotRole)) {
       toast.error("Слот на странице: разрешены только «Кнопка 1»…«Кнопка 10» либо «Не размещается на сайте».");
