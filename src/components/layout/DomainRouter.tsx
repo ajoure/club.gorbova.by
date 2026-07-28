@@ -1,17 +1,16 @@
 import { useEffect, useState } from "react";
 import { usePublicProduct, getCurrentDomain } from "@/hooks/usePublicProduct";
-import { useSitePricingData } from "@/hooks/useSitePricingData";
 import { ProductLanding } from "@/components/landing/ProductLanding";
 import { ProductLandingHeader } from "@/components/landing/ProductLandingHeader";
 import { ProductLandingFooter } from "@/components/landing/ProductLandingFooter";
 import Landing from "@/pages/Landing";
 import CourseAccountant from "@/pages/CourseAccountant";
 import Consultation from "@/pages/Consultation";
-import { SitePageRenderer } from "@/components/site-renderer/SitePageRenderer";
 import { SiteRenderService } from "@/services/sitePages/SiteRenderService";
 import { PublicPageFetchError } from "@/components/site-renderer/PublicPageFetchError";
 import type { SitePage } from "@/services/sitePages/types";
 import { Loader2 } from "lucide-react";
+import SitePageBySlug from "@/pages/SitePageBySlug";
 
 export function DomainHomePage() {
   const hostname = window.location.hostname;
@@ -115,8 +114,11 @@ export function DomainHomePage() {
 
   // Site builder page found → render it with pricing data
   if (siteBuilderPage) {
-    const siteBlocks = (siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || [];
-    return <SiteBuilderPageWithPricing blocks={siteBlocks} themeSettings={siteBuilderPage.theme_settings || {}} pageId={siteBuilderPage.id} />;
+    // Reuse the full public page controller so custom-domain pages get the
+    // same slot manifest, lead CTA bridge, and payment/lead dialogs as slug
+    // routes. The previous renderer-only path displayed HTML but could not
+    // handle lead buttons because it never mounted that controller.
+    return <SitePageBySlug resolvedPage={siteBuilderPage} />;
   }
   // ─── Legacy: Product domain resolution ───
   // Fetch product data for the current domain (only after Site Builder misses)
@@ -161,15 +163,5 @@ export function DomainHomePage() {
         />
       }
     />
-  );
-}
-
-/** Wrapper that fetches pricing data for site builder pages */
-function SiteBuilderPageWithPricing({ blocks, themeSettings, pageId }: { blocks: import("@/services/sitePages/types").SiteBlock[]; themeSettings: Record<string, unknown>; pageId: string }) {
-  const { pricingData } = useSitePricingData(blocks);
-  return (
-    <div className="site-public-layout">
-      <SitePageRenderer blocks={blocks} themeSettings={themeSettings} pricingData={pricingData} pageId={pageId} />
-    </div>
   );
 }
