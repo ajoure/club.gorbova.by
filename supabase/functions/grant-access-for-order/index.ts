@@ -338,6 +338,19 @@ Deno.serve(async (req) => {
         } catch (_) { /* non-fatal */ }
       };
       const outcome = await handleThreeDsFinalize(orderId, { supabase, audit });
+      // The 3DS writer returns before the standard post-payment notification
+      // stage below. Reuse the canonical, idempotent helper for successful
+      // outcomes so 3DS purchases receive the same delivery processing.
+      const notifyEligible = ![
+        'error',
+        'manual_review_multi_candidate',
+        'manual_review_multi_candidate_sbs',
+        'manual_review_existing_subscription_incomplete',
+        'skip_no_order',
+        'skip_inactive_offer',
+        'skip_tariff_mismatch',
+      ].includes(outcome.kind);
+      if (notifyEligible) await triggerOrderPurchasedNotification(orderId);
       return new Response(
         JSON.stringify({ context: '3ds_finalize', outcome, request_id: requestId }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
