@@ -10318,6 +10318,72 @@ export type Database = {
         }
         Relationships: []
       }
+      legal_document_collection_items: {
+        Row: {
+          collection_code: string
+          created_at: string
+          document_id: string
+          sort_order: number
+        }
+        Insert: {
+          collection_code: string
+          created_at?: string
+          document_id: string
+          sort_order?: number
+        }
+        Update: {
+          collection_code?: string
+          created_at?: string
+          document_id?: string
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_document_collection_items_collection_code_fkey"
+            columns: ["collection_code"]
+            isOneToOne: false
+            referencedRelation: "legal_document_collections"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "legal_document_collection_items_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "legal_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_document_collections: {
+        Row: {
+          code: string
+          created_at: string
+          description: string
+          is_active: boolean
+          sort_order: number
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string
+          is_active?: boolean
+          sort_order?: number
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string
+          is_active?: boolean
+          sort_order?: number
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       legal_document_search_chunks: {
         Row: {
           anchor: string
@@ -23493,6 +23559,26 @@ export type Database = {
           sent: number
         }[]
       }
+      get_legal_document_collections: {
+        Args: never
+        Returns: {
+          category: string
+          collection_code: string
+          collection_description: string
+          collection_sort_order: number
+          collection_title: string
+          doc_date: string
+          doc_number: string
+          doc_type: string
+          document_id: string
+          document_sort_order: number
+          external_id: string
+          last_synced_at: string
+          slug: string
+          status: string
+          title: string
+        }[]
+      }
       get_legal_document_preview: {
         Args: { p_slug: string }
         Returns: {
@@ -24545,6 +24631,17 @@ export type Database = {
       search_global: {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: Json
+      }
+      search_legal_document: {
+        Args: { p_document_id: string; p_limit?: number; p_query: string }
+        Returns: {
+          anchor: string
+          document_id: string
+          full_text: string
+          kind: string
+          rank: number
+          snippet: string
+        }[]
       }
       search_legal_documents: {
         Args: { p_limit?: number; p_query: string }
