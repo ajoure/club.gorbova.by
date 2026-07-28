@@ -2,11 +2,11 @@
  * InlineAuthForm — canonical inline auth UI used by every public/identity flow.
  *
  * PATCH-INLINE-AUTH-PASSWORD-TABS (2026-07-24):
- *   Business rule (owner-approved) — a returning user MUST log in with
- *   email + password. NO OTP is sent during a normal sign-in. The UI now
- *   exposes two explicit tabs: «Войти» and «Зарегистрироваться».
+ *   Business rule (owner-approved) — a returning user logs in with
+ *   email + password. A new user registers through a six-digit email OTP.
+ *   The UI exposes two explicit tabs: «Войти» and «Зарегистрироваться».
  *     - Войти  → supabase.auth.signInWithPassword (no shouldCreateUser, no OTP).
- *     - Регистрация → supabase.auth.signUp with email-confirmation policy.
+ *     - Регистрация → InlineEmailOtpForm; no email-link redirect.
  *     - «Забыли пароль?» → auth-actions recovery email.
  *   Callers still own "is a session already active?" — if it is, the gate
  *   should be bypassed BEFORE rendering this component.
@@ -59,7 +59,21 @@ export function InlineAuthForm({
   externalLoading = false,
   defaultTab = "login",
 }: InlineAuthFormProps) {
-  // Legacy OTP escape hatch — opt-in via VITE_INLINE_AUTH_MODE=otp.
+  const auth = useInlineAuth();
+
+  const [tab, setTab] = useState<"login" | "signup">(defaultTab);
+  const [loginEmail, setLoginEmail] = useState(initialEmail);
+  const [loginPassword, setLoginPassword] = useState("");
+  const [showLoginPw, setShowLoginPw] = useState(false);
+
+  // Keep both email fields in sync if parent hydrates initialEmail later.
+  useEffect(() => {
+    if (!initialEmail) return;
+    if (!loginEmail) setLoginEmail(initialEmail);
+  }, [initialEmail]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Full OTP escape hatch. Keep it after all hooks so changing the build-time
+  // flag can never alter hook order during preview/HMR.
   if (INLINE_AUTH_MODE === "otp") {
     return (
       <InlineEmailOtpForm
@@ -69,30 +83,10 @@ export function InlineAuthForm({
         emailCtaLabel={emailCtaLabel}
         externalLoading={externalLoading}
         collectSignupMeta
+        requirePrivacyConsent
       />
     );
   }
-
-  const auth = useInlineAuth();
-
-  const [tab, setTab] = useState<"login" | "signup">(defaultTab);
-  const [loginEmail, setLoginEmail] = useState(initialEmail);
-  const [loginPassword, setLoginPassword] = useState("");
-  const [showLoginPw, setShowLoginPw] = useState(false);
-
-  const [signupEmail, setSignupEmail] = useState(initialEmail);
-  const [signupPassword, setSignupPassword] = useState("");
-  const [showSignupPw, setShowSignupPw] = useState(false);
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [phone, setPhone] = useState("");
-
-  // Keep both email fields in sync if parent hydrates initialEmail later.
-  useEffect(() => {
-    if (!initialEmail) return;
-    if (!loginEmail) setLoginEmail(initialEmail);
-    if (!signupEmail) setSignupEmail(initialEmail);
-  }, [initialEmail]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isBusy = auth.isLoading || externalLoading;
   const isSuccessScreen =
@@ -104,20 +98,6 @@ export function InlineAuthForm({
     if (!trimmed || !loginPassword) return;
     const result = await auth.login(trimmed, loginPassword);
     if (result) await onAuthenticated(trimmed, result.userId);
-  };
-
-  const handleSignup = async (e: FormEvent) => {
-    e.preventDefault();
-    const trimmed = signupEmail.trim().toLowerCase();
-    if (!trimmed || !signupPassword) return;
-    const result = await auth.signup(trimmed, signupPassword, {
-      firstName,
-      lastName,
-      phone,
-    });
-    if (result && !result.needsConfirmation) {
-      await onAuthenticated(trimmed, result.userId);
-    }
   };
 
   const handleForgot = async () => {
@@ -144,7 +124,7 @@ export function InlineAuthForm({
             <Mail className="h-6 w-6 mx-auto text-primary" />
             <p>
               Подтвердите email по ссылке из письма, отправленного на{" "}
-              <strong>{signupEmail}</strong>, затем вернитесь на эту страницу —
+              <strong>указанный адрес</strong>, затем вернитесь на эту страницу —
               она остаётся активной.
             </p>
           </div>
@@ -278,105 +258,14 @@ export function InlineAuthForm({
         </TabsContent>
 
         <TabsContent value="signup" className="mt-3">
-          <form onSubmit={handleSignup} method="post" action="#" className="space-y-3">
-            <div>
-              <Label htmlFor="iaf-signup-email">Email</Label>
-              <Input
-                id="iaf-signup-email"
-                name="email"
-                type="email"
-                required
-                value={signupEmail}
-                onChange={(e) => setSignupEmail(e.target.value)}
-                placeholder="you@example.com"
-                autoComplete="username"
-                inputMode="email"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label htmlFor="iaf-first">Имя</Label>
-                <Input
-                  id="iaf-first"
-                  name="given-name"
-                  autoComplete="given-name"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="iaf-last">Фамилия</Label>
-                <Input
-                  id="iaf-last"
-                  name="family-name"
-                  autoComplete="family-name"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                />
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="iaf-phone">Телефон</Label>
-              <Input
-                id="iaf-phone"
-                name="tel"
-                type="tel"
-                autoComplete="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="iaf-pw-new">Пароль</Label>
-              <div className="relative">
-                <Input
-                  id="iaf-pw-new"
-                  name="new-password"
-                  type={showSignupPw ? "text" : "password"}
-                  required
-                  minLength={USER_PASSWORD_MIN_LENGTH}
-                  value={signupPassword}
-                  onChange={(e) => setSignupPassword(e.target.value)}
-                  autoComplete="new-password"
-                  className="pr-11"
-                  placeholder={getUserPasswordRequirementText()}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowSignupPw((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label={showSignupPw ? "Скрыть пароль" : "Показать пароль"}
-                  aria-pressed={showSignupPw}
-                >
-                  {showSignupPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-            <Button type="submit" size="lg" className="w-full" disabled={isBusy}>
-              {isBusy ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Создание…
-                </>
-              ) : (
-                signupCtaLabel
-              )}
-            </Button>
-            <button
-              type="button"
-              className="text-xs text-muted-foreground underline w-full text-center"
-              onClick={() => {
-                setTab("login");
-                auth.clearError();
-              }}
-              disabled={isBusy}
-            >
-              Уже есть аккаунт? Войти
-            </button>
-          </form>
+          <InlineEmailOtpForm
+            initialEmail={initialEmail}
+            onAuthenticated={onAuthenticated}
+            contextNote="Подтвердите реальный email шестизначным кодом. Ссылку открывать не нужно."
+            emailCtaLabel={signupCtaLabel}
+            externalLoading={externalLoading}
+            requirePrivacyConsent
+          />
         </TabsContent>
       </Tabs>
     </div>

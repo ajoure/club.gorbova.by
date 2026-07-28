@@ -18,6 +18,7 @@ import {
   USER_PASSWORD_MIN_LENGTH,
   validateUserPassword,
 } from "@/lib/passwordPolicy";
+import { InlineEmailOtpForm } from "@/components/auth/InlineEmailOtpForm";
 
 const loginSchema = z.object({
   email: z.string().email("Введите корректный email"),
@@ -856,85 +857,42 @@ export default function Auth() {
                 Вернуться к входу
               </button>
             </form>
+          ) : mode === "signup" ? (
+            <>
+              <InlineEmailOtpForm
+                initialEmail={email}
+                onAuthenticated={async (verifiedEmail) => {
+                  try {
+                    localStorage.setItem("last_login_email", verifiedEmail);
+                  } catch { /* ignore */ }
+                  toast({
+                    title: "Email подтверждён",
+                    description: "Аккаунт создан. Открываем личный кабинет.",
+                  });
+                  navigate(redirectTo);
+                }}
+                contextNote="Создайте пароль и подтвердите реальный email шестизначным кодом. Ссылку из письма открывать не нужно."
+                emailCtaLabel="Продолжить"
+                requirePrivacyConsent
+              />
+              <div className="mt-6 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("login");
+                    setFieldErrors([]);
+                    setTouched({});
+                  }}
+                  className="text-sm text-muted-foreground hover:text-primary transition-colors"
+                >
+                  Уже есть аккаунт? <span className="text-primary font-medium">Войдите</span>
+                </button>
+              </div>
+            </>
           ) : (
             <>
-              {/* Login/Signup Form */}
+              {/* Login form. New registrations use the OTP form above. */}
               <form onSubmit={handleSubmit} className="space-y-4">
-                {mode === "signup" && (
-                  <>
-                    {/* First Name & Last Name */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label htmlFor="firstName" className="text-foreground">
-                          Имя
-                        </Label>
-                        <div className="relative">
-                          <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                          <Input
-                            id="firstName"
-                            name="given-name"
-                            type="text"
-                            value={firstName}
-                            onChange={(e) => setFirstName(e.target.value)}
-                            onBlur={() => handleBlur('firstName')}
-                            className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('firstName') ? 'border-destructive' : ''}`}
-                            placeholder="Иван"
-                            required
-                            allowAutofill
-                            autoComplete="given-name"
-                          />
-                        </div>
-                        {getFieldError('firstName') && (
-                          <p className="text-sm text-destructive">{getFieldError('firstName')}</p>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="lastName" className="text-foreground">
-                          Фамилия
-                        </Label>
-                        <div className="relative">
-                          <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                          <Input
-                            id="lastName"
-                            name="family-name"
-                            type="text"
-                            value={lastName}
-                            onChange={(e) => setLastName(e.target.value)}
-                            onBlur={() => handleBlur('lastName')}
-                            className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('lastName') ? 'border-destructive' : ''}`}
-                            placeholder="Иванов"
-                            required
-                            allowAutofill
-                            autoComplete="family-name"
-                          />
-                        </div>
-                        {getFieldError('lastName') && (
-                          <p className="text-sm text-destructive">{getFieldError('lastName')}</p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Phone with country selector */}
-                    <div className="space-y-2">
-                      <Label htmlFor="phone" className="text-foreground">
-                        Телефон
-                      </Label>
-                      <PhoneInput
-                        id="phone"
-                        value={phone}
-                        onChange={handlePhoneChange}
-                        onBlur={() => handleBlur('phone')}
-                        placeholder="Номер телефона"
-                        error={!!getFieldError('phone')}
-                        required
-                      />
-                      {getFieldError('phone') && (
-                        <p className="text-sm text-destructive">{getFieldError('phone')}</p>
-                      )}
-                    </div>
-                  </>
-                )}
-
                 <div className="space-y-2">
                   <Label htmlFor="email" className="text-foreground">
                     Email
@@ -952,7 +910,7 @@ export default function Auth() {
                       placeholder="your@email.com"
                       required
                       allowAutofill
-                      autoComplete={mode === "signup" ? "email" : "username"}
+                      autoComplete="username"
                     />
                   </div>
                   {getFieldError('email') && (
@@ -1002,7 +960,7 @@ export default function Auth() {
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                     <Input
                       id="password"
-                      name={mode === "signup" ? "new-password" : "password"}
+                      name="password"
                       type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={(e) => {
@@ -1013,9 +971,8 @@ export default function Auth() {
                       className={`pl-10 pr-11 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('password') ? 'border-destructive' : ''}`}
                       placeholder="••••••••"
                       required
-                      minLength={mode === "signup" ? USER_PASSWORD_MIN_LENGTH : undefined}
                       allowAutofill
-                      autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                      autoComplete="current-password"
                     />
                     <button
                       type="button"
@@ -1030,52 +987,18 @@ export default function Auth() {
                   {getFieldError('password') && (
                     <p className="text-sm text-destructive">{getFieldError('password')}</p>
                   )}
-                  {mode === "signup" && <PasswordRequirements />}
                 </div>
-
-                {/* Privacy consent checkbox for signup */}
-                {mode === "signup" && (
-                  <div className="flex items-start gap-3 p-4 rounded-xl bg-muted/50 border border-border/50">
-                    <Checkbox
-                      id="privacy-consent"
-                      checked={privacyConsent}
-                      onCheckedChange={(checked) => setPrivacyConsent(!!checked)}
-                      className="mt-0.5"
-                    />
-                    <Label htmlFor="privacy-consent" className="text-sm leading-snug cursor-pointer">
-                      Я согласен(на) с{" "}
-                      <a 
-                        href="/privacy" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="text-primary hover:underline"
-                      >
-                        Политикой конфиденциальности
-                      </a>{" "}
-                      и даю{" "}
-                      <a 
-                        href="/consent" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="text-primary hover:underline"
-                      >
-                        согласие
-                      </a>{" "}
-                      на обработку персональных данных
-                    </Label>
-                  </div>
-                )}
 
                 <Button
                   type="submit"
-                  disabled={isSubmitting || (mode === "signup" && !privacyConsent)}
+                  disabled={isSubmitting}
                   className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
                 >
                   {isSubmitting ? (
                     <Loader2 className="h-5 w-5 animate-spin" />
                   ) : (
                     <>
-                      {mode === "login" ? "Войти" : "Зарегистрироваться"}
+                      Войти
                       <ArrowRight className="ml-2 h-5 w-5" />
                     </>
                   )}
@@ -1093,11 +1016,7 @@ export default function Auth() {
                   }}
                   className="text-sm text-muted-foreground hover:text-primary transition-colors"
                 >
-                  {mode === "login" ? (
-                    <>Нет аккаунта? <span className="text-primary font-medium">Зарегистрируйтесь</span></>
-                  ) : (
-                    <>Уже есть аккаунт? <span className="text-primary font-medium">Войдите</span></>
-                  )}
+                  Нет аккаунта? <span className="text-primary font-medium">Зарегистрируйтесь</span>
                 </button>
               </div>
             </>

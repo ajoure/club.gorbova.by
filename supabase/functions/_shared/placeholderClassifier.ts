@@ -88,6 +88,8 @@ export type PlaceholderClassification =
       public_id: string;  // TR-XXXXXX
     }
   | {
+      // Итог конфигурации повторяемых строк. Значение вычисляется генератором
+      // до Docxtemplater из внешней анкеты, в шаблоне не хранится формула.
       kind: 'package_table_total';
       public_id: string;  // TT-XXXXXX
       format: PlaceholderFormat | null;

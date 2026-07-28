@@ -5,7 +5,7 @@
  *   - Default mode = "link" (password).
  *   - Login tab uses supabase.auth.signInWithPassword, NEVER OTP.
  *   - Wrong password surfaces controlled error, no account existence leak.
- *   - Signup tab uses supabase.auth.signUp; email-confirmation flow shown.
+ *   - Signup tab delegates to the six-digit email OTP registration form.
  *   - Password reset invokes auth-actions Edge Function with action=reset_password.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -15,6 +15,21 @@ import { InlineAuthForm } from "./InlineAuthForm";
 const signInWithPassword = vi.fn();
 const signUp = vi.fn();
 const functionsInvoke = vi.fn();
+const otpAuthenticated = vi.fn();
+
+vi.mock("./InlineEmailOtpForm", () => ({
+  InlineEmailOtpForm: ({ onAuthenticated }: { onAuthenticated: (email: string, userId: string) => void }) => (
+    <button
+      type="button"
+      onClick={() => {
+        otpAuthenticated();
+        onAuthenticated("verified@example.com", "u2");
+      }}
+    >
+      Подтвердить регистрацию кодом
+    </button>
+  ),
+}));
 
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
@@ -36,6 +51,7 @@ beforeEach(() => {
   signInWithPassword.mockReset();
   signUp.mockReset();
   functionsInvoke.mockReset();
+  otpAuthenticated.mockReset();
 });
 
 describe("InlineAuthForm (password tabs)", () => {
@@ -84,28 +100,17 @@ describe("InlineAuthForm (password tabs)", () => {
     expect(alert.textContent).not.toMatch(/аккаунт|существует|найден/i);
   });
 
-  it("signup calls supabase.auth.signUp and shows email-confirm screen when session is null", async () => {
-    signUp.mockResolvedValue({
-      data: { user: { id: "u2" }, session: null },
-      error: null,
-    });
-    functionsInvoke.mockResolvedValue({ data: {}, error: null });
-    render(<InlineAuthForm onAuthenticated={() => {}} defaultTab="signup" />);
+  it("signup uses six-digit OTP and never calls link-based signUp", async () => {
+    const onAuthenticated = vi.fn();
+    render(<InlineAuthForm onAuthenticated={onAuthenticated} defaultTab="signup" />);
 
-    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "new@user.com" } });
-    fireEvent.change(screen.getByLabelText("Имя"), { target: { value: "Ivan" } });
-    fireEvent.change(screen.getByLabelText("Пароль"), { target: { value: "LongEnough123" } });
-    fireEvent.click(screen.getByRole("button", { name: /Зарегистрироваться/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Подтвердить регистрацию кодом/i }));
 
-    await waitFor(() => expect(signUp).toHaveBeenCalledTimes(1));
-    expect(signUp.mock.calls[0][0].email).toBe("new@user.com");
-    // Verification-follow-up email dispatched via auth-actions.
+    expect(signUp).not.toHaveBeenCalled();
+    expect(otpAuthenticated).toHaveBeenCalledTimes(1);
     await waitFor(() =>
-      expect(functionsInvoke).toHaveBeenCalledWith("auth-actions", expect.objectContaining({
-        body: expect.objectContaining({ action: "confirm_signup", email: "new@user.com" }),
-      })),
+      expect(onAuthenticated).toHaveBeenCalledWith("verified@example.com", "u2"),
     );
-    expect(await screen.findByText(/Подтвердите email/)).toBeTruthy();
   });
 
   it("«Забыли пароль?» triggers auth-actions reset_password recovery", async () => {
