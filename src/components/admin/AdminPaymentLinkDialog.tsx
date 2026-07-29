@@ -35,7 +35,8 @@ import {
 } from "@/components/ui/select";
 import {
   Link2, Copy, ExternalLink, Loader2, Layers, Tag, CheckCircle, Send,
-  AlertTriangle, MousePointerClick, CreditCard, RefreshCw, Info, Users
+  AlertTriangle, MousePointerClick, CreditCard, RefreshCw, Info, Users,
+  Check, ChevronsUpDown
 } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 import { AddonPicker } from "@/components/checkout/AddonPicker";
@@ -48,6 +49,11 @@ import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { cn } from "@/lib/utils";
 import { resolveAvailableProviders } from "@/utils/currencyProviderResolver";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 /**
  * mode:
@@ -187,6 +193,8 @@ export function AdminPaymentLinkDialog({
     setSelectPortalContainer(node);
   }, []);
   const [selectedProductId, setSelectedProductId] = useState<string>("");
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [productSearch, setProductSearch] = useState("");
   const [selectedTariffId, setSelectedTariffId] = useState<string>("");
   // selectedOfferId — пользовательский override; если пуст, используется resolver.offer.id
   const [selectedOfferId, setSelectedOfferId] = useState<string>("");
@@ -1311,7 +1319,26 @@ ${amountLine}
     if (conflictData) replaceSubscriptionMutation.mutate(conflictData);
   };
 
-  const activeProducts = products?.filter((p) => p.is_active) || [];
+  const paymentLinkProducts = useMemo(() => {
+    const searchTerms = productSearch
+      .trim()
+      .toLocaleLowerCase("ru")
+      .split(/\s+/)
+      .filter(Boolean);
+
+    return [...(products ?? [])]
+      .filter((product) => {
+        if (searchTerms.length === 0) return true;
+        const normalizedName = product.name.toLocaleLowerCase("ru");
+        return searchTerms.every((term) => normalizedName.includes(term));
+      })
+      .sort((left, right) =>
+        left.name.localeCompare(right.name, "ru", {
+          numeric: true,
+          sensitivity: "base",
+        }),
+      );
+  }, [products, productSearch]);
 
   // Индивидуальная ссылка: N обязателен, диапазон 2..12 (не ограничивается настройкой кнопки).
   const installmentInvalid =
@@ -1439,18 +1466,92 @@ ${amountLine}
                 {productsLoading ? (
                   <Skeleton className="h-10 w-full" />
                 ) : (
-                  <Select value={selectedProductId} onValueChange={handleProductChange}>
-                    <SelectTrigger aria-label="Продукт">
-                      <SelectValue placeholder="Выберите продукт" />
-                    </SelectTrigger>
-                    <SelectContent container={selectPortalContainer}>
-                      {activeProducts.map((product) => (
-                        <SelectItem key={product.id} value={product.id}>
-                          {product.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover
+                    open={productPickerOpen}
+                    onOpenChange={(nextOpen) => {
+                      setProductPickerOpen(nextOpen);
+                      if (!nextOpen) setProductSearch("");
+                    }}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-label="Продукт"
+                        aria-expanded={productPickerOpen}
+                        className="h-10 w-full justify-between gap-2 px-3 text-left font-normal"
+                      >
+                        <span className="min-w-0 flex-1 truncate">
+                          {selectedProduct?.name || "Выберите продукт"}
+                        </span>
+                        <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      sideOffset={6}
+                      className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-0"
+                    >
+                      <div className="border-b p-2">
+                        <Input
+                          autoFocus
+                          value={productSearch}
+                          onChange={(event) => setProductSearch(event.target.value)}
+                          placeholder="Найти продукт, например «20 поток»"
+                          aria-label="Поиск продукта"
+                          className="h-9"
+                        />
+                      </div>
+                      <div
+                        className="max-h-[min(18rem,calc(100dvh-14rem))] overflow-y-auto overscroll-contain p-1"
+                        role="listbox"
+                        aria-label="Список продуктов"
+                      >
+                        {paymentLinkProducts.length > 0 ? (
+                          paymentLinkProducts.map((product) => {
+                            const isSelected = product.id === selectedProductId;
+                            return (
+                              <button
+                                key={product.id}
+                                type="button"
+                                role="option"
+                                aria-selected={isSelected}
+                                className={cn(
+                                  "flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none",
+                                  isSelected && "bg-accent",
+                                )}
+                                onClick={() => {
+                                  handleProductChange(product.id);
+                                  setProductPickerOpen(false);
+                                  setProductSearch("");
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mt-0.5 h-4 w-4 shrink-0",
+                                    isSelected ? "opacity-100" : "opacity-0",
+                                  )}
+                                />
+                                <span className="min-w-0 flex-1 break-words leading-5">
+                                  {product.name}
+                                </span>
+                                {!product.is_active && (
+                                  <Badge variant="secondary" className="shrink-0 text-[10px]">
+                                    Неактивен
+                                  </Badge>
+                                )}
+                              </button>
+                            );
+                          })
+                        ) : (
+                          <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                            Продукты не найдены
+                          </p>
+                        )}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                 )}
               </div>
 
