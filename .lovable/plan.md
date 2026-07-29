@@ -1,42 +1,53 @@
-# PLAN-ONLY ревизия — Payment regressions release, PR #213 (HEAD `9a81668bc645723046e1c7a008a385f490133078`)
 
-## Managed baseline
-- `origin/main` HEAD = `9a81668b…` — MATCH exact merged SHA.
-- Последний production Publish фронтенда — `609a4b64…` (PR #211).
-- Последний production deploy backend — PR #212 (`0558c6f8…`, `admin-create-manual-payment`).
+# EXECUTE — SHA 427c3c5b66402b660f87ebb2b9e036498ced68c4 (PR #215)
 
-## Diff scope PR #213 (10 файлов, 0 миграций)
-- `supabase/config.toml` — `grant-access-for-order.verify_jwt = false` с комментарием, что auth owned by function (`caller_auth.ts`: точный service key ИЛИ user JWT + branch-policy matrix до чтений/записей).
-- `supabase/functions.registry.txt` — добавлен `invoice-pdf-retry`.
-- `supabase/functions/_shared/finalize-composable-purchase.ts` — вводит `GrantAccessInvokeError` c `status` (HTTP из `error.context`) и sanitized `code` (regex `^[a-zA-Z0-9_.:-]+$`, ≤160 симв). Хелпер `grantAccessForOrder()` выбрасывает эту ошибку. PII в error не попадают — читается только `error/warning/reason/code` из ответа, отброшены `message`/`detail`.
-- `supabase/functions/admin-create-manual-payment/index.ts` — при `GrantAccessInvokeError` дописывает `downstream_step`, `grant_status`, `grant_code` в `audit_logs.metadata` и в `fulfillment` respond-объект. `detail` (raw message) остаётся только в audit_logs, не в ответе.
-- `src/components/ui/popover.tsx` — `PopoverContent` принимает `container` prop и пробрасывает в `Portal`.
-- `src/components/admin/AdminPaymentLinkDialog.tsx` — `container={selectPortalContainer}` для списка продуктов → wheel/touch scroll работает под Dialog scroll-lock.
-- Тесты: `finalize-composable-purchase_test.ts`, `fulfillment_wiring_test.ts`, `caller_auth_config_test.ts`, `AdminPaymentLinkDialog.select-flow.test.tsx` — дополнены.
-- Ранее merged frontend JWT-патч для `invoice-delivery-status/retry/pdf-retry` присутствует в SHA: `InvoiceDeliverySuccess.tsx` вызывает `invokeAuthenticatedFunction` (Bearer из `supabase.auth.getSession()`).
+## Preflight (уже подтверждено read-only)
+- `git rev-parse HEAD` = `427c3c5b66402b660f87ebb2b9e036498ced68c4`.
+- `git rev-parse origin/main` = `427c3c5b66402b660f87ebb2b9e036498ced68c4`.
+- Application tree матчит SHA (worktree чистый на этом коммите).
+- Файл миграции `supabase/migrations/20260729180632_manual_payment_fully_paid_guard.sql` присутствует.
+- Файл `supabase/functions/_shared/caller-user.ts` присутствует.
+- Mismatch отсутствует → продолжаем.
 
-## Findings
-- Blockers: **нет**.
-- Critical: **нет**.
-- Info: `verify_jwt=false` для `grant-access-for-order` намеренно; matrix authorization в `caller_auth.ts` подтверждён отдельным `caller_auth_config_test.ts` и existing `grantAccessForOrder.handlerOrder.test.ts`.
-- Info: `safeGrantCode` жёстко ограничивает передаваемый downstream code — email/имя/токен не могут утечь через `grant_code`.
+## Шаги (строго read-back-guarded, без создания данных)
 
-## Ожидаемый Execute-план (после EXECUTE-approval)
-1. **Sync** `origin/main` → зафиксировать `9a81668b…`.
-2. **Migrations**: нет.
-3. **Config change**: `supabase/config.toml` (grant-access verify_jwt) применяется автоматически при следующем деплое соответствующей функции.
-4. **Deploy set (минимальный, необходимый)**:
-   - `grant-access-for-order` — обязательно, чтобы `verify_jwt=false` вступил в силу на платформе (иначе шлюз продолжит 401-ить сервисные ключи).
-   - `admin-create-manual-payment` — обязательно, downstream-код и типизированный error path.
-   - `_shared/finalize-composable-purchase.ts` — общий модуль, необходимо переразвернуть **все функции, которые его импортируют** (как минимум `admin-create-manual-payment`; `finalize-composable-purchase` компилируется в bundle каждой вызывающей функции). Рекомендую подтвердить полный список импортёров через `rg` и перезалить их одним batch.
-   - `invoice-delivery-status`, `invoice-delivery-retry`, `invoice-pdf-retry` — **не нужно** передеплоивать (исходники функций в PR #213 не менялись); регистрация `invoice-pdf-retry` в registry затрагивает только CI-пайплайн следующих релизов.
-5. **Frontend Publish**: обязателен — фронт-часть (`popover.tsx`, `AdminPaymentLinkDialog.tsx`) + впервые попадает в прод frontend JWT-патч для invoice-delivery poll/retry.
-6. **Read-back / safe smoke** (без реальных платежей, счетов, писем, Telegram, контактов):
-   - `supabase.config` эффективный `verify_jwt` для `grant-access-for-order` = false (через анонимный `POST` без Auth: должен вернуть 401 от **функции** с телом `{"error":"unauthorized"}`, не платформенный 401 без CORS).
-   - Анонимный `POST` `admin-create-manual-payment` → 401.
-   - `public.audit_logs` за окно после deploy: `action='admin_manual_payment_fulfillment_failed'` — новые записи должны содержать `metadata.downstream_step='grant-access-for-order'` и `grant_code` из белого списка (`already_used`, `unauthorized`, `unknown` и т.п.). Baseline может быть 0 — отметить null-baseline PASS.
-   - Frontend Publish smoke: открыть `/admin` под dev-паролем `123456`, в `AdminPaymentLinkDialog` открыть popover списка продуктов на 375px viewport, подтвердить wheel/touch scroll (screenshot desktop+mobile — обязателен по проектному UI-правилу).
-   - Managed status: `ACTIVE_HEALTHY`.
+1. **Apply migration** `20260729180632_manual_payment_fully_paid_guard.sql` через `supabase--migration`. Read-back: SELECT из `pg_trigger`/`pg_proc` для подтверждения, что guard-триггер существует и `tgenabled != 'D'`.
 
-## PLAN-ONLY COMPLETE
-Блокеров и critical findings нет. Можно приступать к **EXECUTE для exact merged SHA `9a81668bc645723046e1c7a008a385f490133078`** по вышеописанному плану.
+2. **Deploy exactly 8 Edge Functions** одной операцией `supabase--deploy_edge_functions`:
+   - `admin-create-manual-payment`
+   - `admin-retry-manual-payment-downstream`
+   - `invoice-delivery-status`
+   - `invoice-delivery-retry`
+   - `invoice-pdf-retry`
+   - `canonical-document-send`
+   - `canonical-document-generate-strict`
+   - `external-document-form`
+   
+   Read-back: `rg -l "_shared/caller-user" supabase/functions/{list}/index.ts` — все 8 должны импортировать shared helper.
+
+3. **Cloud status**: `supabase--cloud_status` = `ACTIVE_HEALTHY`.
+
+4. **Anonymous 401 probes** (без Authorization) на:
+   - `POST /invoice-delivery-status` → ожидание function-level 401 JSON.
+   - `POST /invoice-delivery-retry` → 401 JSON.
+   - `POST /admin-create-manual-payment` → 401 JSON.
+
+5. **Authenticated read-only status probe** через `supabase--curl_edge_functions` (auto-inject preview session):
+   - `POST /invoice-delivery-status` с `{"document_id":"2fc9da4a-00e4-49cf-a326-e2d8f8cca091"}` — тот же документ, что использовался в предыдущем PLAN-ONLY.
+   - Ожидание: HTTP 200 JSON с полями `document_id`, `pdf_ready`, `delivery`. НЕ 401 / non-2xx.
+   - `retry`/`send`/новые платежи не запускаются.
+
+6. **Log inspection**: `supabase--edge_function_logs` для `invoice-delivery-status` — искать `auth_rejected` для authenticated запроса (не должно быть) и любые HTTP 500 (не должно быть).
+
+7. **Frontend Publish** через `preview_ui--publish` (без slug). SHA публикации ожидается `427c3c5b`.
+
+## Финальный отчёт пользователю
+- Опубликованный URL + SHA/deployment id из ответа Publish.
+- PASS/FAIL по каждому read-back (1–6).
+- Точный список 8 задеплоенных функций и подтверждение импорта shared helper.
+- Статус миграции и триггера.
+- Cloud status.
+
+## Стоп-правила
+- SHA mismatch, migration failure, missing shared helper import, 500 из читающего probe, новый critical finding — STOP, без Publish, без изменений, отчёт о блокере.
+- Ни при каких обстоятельствах не создаём платежи/счета, не запускаем retry/send, не трогаем контакты/сделки/подписки/access.
