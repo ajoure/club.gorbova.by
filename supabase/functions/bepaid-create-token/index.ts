@@ -431,6 +431,43 @@ Deno.serve(async (req) => {
           }
           const { data: priorTrial } = await priorQuery.maybeSingle();
           if (priorTrial?.id) {
+            // A historical no-card trial can have a paid order but no entitlement
+            // if the first fulfillment call failed after the order was written.
+            // Repair that exact order idempotently before telling the client that
+            // the trial was already used.  This avoids a permanent "paid, but no
+            // access" state and never creates a second trial order.
+            const repairGrant = await supabase.functions.invoke('grant-access-for-order', {
+              body: { orderId: priorTrial.id },
+            });
+            const repairSucceeded = !repairGrant.error && repairGrant.data?.success === true;
+
+            if (repairSucceeded) {
+              const origin = req.headers.get('origin') || 'https://lovable.app';
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'bepaid-create-token',
+                action: 'trial.no_card.repaired_existing_access',
+                target_user_id: userId,
+                meta: {
+                  order_id: priorTrial.id,
+                  product_id: productId,
+                  tariff_id: trialOfferRow.tariff_id,
+                  offer_id: trialOfferRow.id,
+                },
+              });
+              return new Response(JSON.stringify({
+                success: true,
+                orderId: priorTrial.id,
+                redirectUrl: `${origin}/purchases?payment=success&order=${priorTrial.id}&trial=activated`,
+                isTrialNoCard: true,
+                repairedExistingTrial: true,
+              }), {
+                status: 200,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
             console.log('[bepaid-create-token] DEMO-TRIAL-NO-CARD: alreadyUsedTrial', {
               product_id: productId,
               tariff_id: trialOfferRow.tariff_id,
@@ -448,6 +485,7 @@ Deno.serve(async (req) => {
                 offer_id: trialOfferRow.id,
                 prior_order_id: priorTrial.id,
                 customer_email: emailLower,
+                repair_error: String(repairGrant.error?.message || repairGrant.error || repairGrant.data?.error || 'grant_returned_unsuccessful'),
               },
             });
             return new Response(JSON.stringify({
@@ -561,11 +599,14 @@ Deno.serve(async (req) => {
           },
         });
 
-        // Grant access (best-effort with error surfacing)
+        // A paid demo order is valid only after the entitlement exists. Do not
+        // redirect the visitor to a successful purchase page when fulfillment
+        // failed; the retry path above repairs this same order idempotently.
         const grantRes = await supabase.functions.invoke('grant-access-for-order', {
-          body: { order_id: ncOrder.id },
+          body: { orderId: ncOrder.id },
         });
-        if (grantRes.error) {
+        const grantSucceeded = !grantRes.error && grantRes.data?.success === true;
+        if (!grantSucceeded) {
           console.error('[bepaid-create-token] DEMO-TRIAL-NO-CARD: grant-access failed', grantRes.error);
           await supabase.from('audit_logs').insert({
             actor_type: 'system',
@@ -575,10 +616,14 @@ Deno.serve(async (req) => {
             target_user_id: userId,
             meta: {
               order_id: ncOrder.id,
-              error: String(grantRes.error?.message || grantRes.error),
+              error: String(grantRes.error?.message || grantRes.error || grantRes.data?.error || 'grant_returned_unsuccessful'),
             },
           });
-          // Do not fail the activation hard — order is paid, grant can be re-run by support.
+          return paymentFallbackResponse('Не удалось выдать доступ к базе вопросов. Попробуйте ещё раз.', {
+            flow: 'demo_trial_no_card_activation',
+            stage: 'grant_access_for_order',
+            order_id: ncOrder.id,
+          });
         }
 
         const redirectUrl = `${origin}/purchases?payment=success&order=${ncOrder.id}&trial=activated`;
