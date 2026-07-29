@@ -265,7 +265,7 @@ export function useAiChat() {
       timestamp: new Date(),
       metadata: {
         scenario_code: "asset_classifier",
-        scenario_type: "deterministic_lookup",
+        scenario_type: "asset_classifier_hybrid",
       },
     };
 
@@ -306,7 +306,7 @@ export function useAiChat() {
         metadata,
       }]);
       setActiveScenarioContext({
-        scenario_type: "deterministic_lookup",
+        scenario_type: "asset_classifier_hybrid",
         launcher_title_snapshot: "Определение шифра ОС",
       });
     } catch (error) {

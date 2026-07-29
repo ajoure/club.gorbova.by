@@ -89,14 +89,14 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
           <div className="flex items-start gap-2 rounded-lg bg-primary/5 border border-primary/10 px-3 py-2">
             <SearchCheck className="h-4 w-4 text-primary mt-0.5 shrink-0" />
             <p className="text-[11px] text-muted-foreground">
-              Ответ формируется по фиксированному справочнику постановления № 161.
-              Нейросеть и свободная генерация текста не используются.
+              ИИ распознаёт тип и назначение объекта. Шифр, нормативное наименование
+              и срок службы выбираются только из справочника постановления № 161.
             </p>
           </div>
           <Textarea
             value={text}
             onChange={(event) => setText(event.target.value.slice(0, 4_000))}
-            placeholder="Например: ноутбук Lenovo для работы бухгалтера, портативный персональный компьютер"
+            placeholder="Например: iPhone 16, мобильный телефон для звонков и доступа в интернет"
             className="min-h-[96px] resize-y text-base sm:text-sm"
             autoFocus
           />
