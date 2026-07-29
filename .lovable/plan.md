@@ -1,86 +1,42 @@
-# PLAN-ONLY ревизия — «Определение шифра ОС», merged SHA `609a4b64229d1b1a5fce420afc7e6815a54b663a`
+# PLAN-ONLY ревизия — Payment regressions release, PR #213 (HEAD `9a81668bc645723046e1c7a008a385f490133078`)
 
-## Owner / environment
-- Lovable Cloud владеет production Supabase (`hdjgkjceownmmnrqqtuz`). Собственного BYO Supabase у проекта нет. Все migration/deploy — только через managed Lovable-инструменты.
-- Managed git origin sync выполнен. `origin/main` HEAD теперь `609a4b642`, PR #211 присутствует в истории (`a2bf4d9c4..609a4b642`).
+## Managed baseline
+- `origin/main` HEAD = `9a81668b…` — MATCH exact merged SHA.
+- Последний production Publish фронтенда — `609a4b64…` (PR #211).
+- Последний production deploy backend — PR #212 (`0558c6f8…`, `admin-create-manual-payment`).
 
-## Current state — GitHub / managed / DB
-- **Merged diff PR #211** (13 файлов, +15 620/-15) содержит только заявленный scope: миграция, `asset-classifier` (новая), shared `_shared/asset-classifier/{engine,catalog-161}.ts`, shared `_shared/ai-access.ts` (расширен), `gorbova-ai-chat` (guard), UI (`AiPageContent.tsx`, `PromptRunFlow.tsx`, `useAiChat.ts`), `supabase/config.toml` (verify_jwt), тест `assetClassifier.test.ts`, docs/scripts.
-- **DB текущее состояние (read-back)**:
-  - `app_sections WHERE code='ai_asset_classifier'` → 0 rows.
-  - `ai_user_prompts WHERE code='asset_classifier'` → 0 rows.
-  - `access_rules` для секции → 0 rows.
-  - Оба целевых продукта существуют: `11c9f1b8… Gorbova Club`, `85046734… Бухгалтерия как бизнес`.
-  - RPC `public.user_has_access_to_rule` присутствует.
-- **Currently-unpublished / auto-copy миграций**:
-  - `20260729141809_77871e3e-...sql` (auto-снимок ранее применённого reset-trial за пределами старого SHA `6f4c17de`) присутствует в `main` и не даёт мусора: содержимое уже применено ранее (см. отчёт по SHA `6f4c17de`). Дубликата новой миграции нет; sequential order (`…142000`, `…160000`) корректен.
-- **Server-side каталог**:
-  - `_shared/asset-classifier/catalog-161.ts` — 626 450 байт (~612 KB, в пределах заявленных ~625 KB).
-  - `grep -c normativeLifeYears` = 1901 конечных позиции (≈ заявленным 1900).
-  - `engine.ts` не содержит `fetch`/HTTP/OpenAI/Gemini/gateway — единственное упоминание URL — комментарий-ссылка на etalonline.by. LLM-вызовов нет.
-- **verify_jwt в `supabase/config.toml`**: секция `[functions.asset-classifier] verify_jwt = true`. Для `ai-access-status` и `gorbova-ai-chat` секции в diff PR #211 не менялись (унаследованный режим сохраняется).
-- **`gorbova-ai-chat` guard**: добавлен ранний 409 (`deterministic_scenario_requires_dedicated_endpoint`) для `promptData.code === 'asset_classifier'` — фолбэк на генеративный шлюз исключён даже при прямом вызове.
-- **`ai-access-status`**: файл функции самой функции не менялся, обновлён shared-хелпер `_shared/ai-access.ts` — добавлены `ASSET_CLASSIFIER_SCENARIO_CODE/SECTION_CODE`, `resolveAssetClassifierAccess`, интеграция в `resolveAiAccessStatus` (только чтение `app_sections` + `access_rules` + RPC `user_has_access_to_rule`). Admin-bypass через `hasAdminRole` работает и здесь.
-- **`asset-classifier` (новая)**: POST-only, требует `Authorization`, `auth.getUser()` на userClient, затем `resolveAssetClassifierAccess` через service-role; при `false` — HTTP 403 + `asset_classifier_not_in_products`; при `true` — детерминированный `classifyAsset(query)` без сети, запись двух сообщений в `ai_chat_messages`. Валидация длины (3..4000).
+## Diff scope PR #213 (10 файлов, 0 миграций)
+- `supabase/config.toml` — `grant-access-for-order.verify_jwt = false` с комментарием, что auth owned by function (`caller_auth.ts`: точный service key ИЛИ user JWT + branch-policy matrix до чтений/записей).
+- `supabase/functions.registry.txt` — добавлен `invoice-pdf-retry`.
+- `supabase/functions/_shared/finalize-composable-purchase.ts` — вводит `GrantAccessInvokeError` c `status` (HTTP из `error.context`) и sanitized `code` (regex `^[a-zA-Z0-9_.:-]+$`, ≤160 симв). Хелпер `grantAccessForOrder()` выбрасывает эту ошибку. PII в error не попадают — читается только `error/warning/reason/code` из ответа, отброшены `message`/`detail`.
+- `supabase/functions/admin-create-manual-payment/index.ts` — при `GrantAccessInvokeError` дописывает `downstream_step`, `grant_status`, `grant_code` в `audit_logs.metadata` и в `fulfillment` respond-объект. `detail` (raw message) остаётся только в audit_logs, не в ответе.
+- `src/components/ui/popover.tsx` — `PopoverContent` принимает `container` prop и пробрасывает в `Portal`.
+- `src/components/admin/AdminPaymentLinkDialog.tsx` — `container={selectPortalContainer}` для списка продуктов → wheel/touch scroll работает под Dialog scroll-lock.
+- Тесты: `finalize-composable-purchase_test.ts`, `fulfillment_wiring_test.ts`, `caller_auth_config_test.ts`, `AdminPaymentLinkDialog.select-flow.test.tsx` — дополнены.
+- Ранее merged frontend JWT-патч для `invoice-delivery-status/retry/pdf-retry` присутствует в SHA: `InvoiceDeliverySuccess.tsx` вызывает `invokeAuthenticatedFunction` (Bearer из `supabase.auth.getSession()`).
 
 ## Findings
+- Blockers: **нет**.
+- Critical: **нет**.
+- Info: `verify_jwt=false` для `grant-access-for-order` намеренно; matrix authorization в `caller_auth.ts` подтверждён отдельным `caller_auth_config_test.ts` и existing `grantAccessForOrder.handlerOrder.test.ts`.
+- Info: `safeGrantCode` жёстко ограничивает передаваемый downstream code — email/имя/токен не могут утечь через `grant_code`.
 
-### Critical
-- Нет.
+## Ожидаемый Execute-план (после EXECUTE-approval)
+1. **Sync** `origin/main` → зафиксировать `9a81668b…`.
+2. **Migrations**: нет.
+3. **Config change**: `supabase/config.toml` (grant-access verify_jwt) применяется автоматически при следующем деплое соответствующей функции.
+4. **Deploy set (минимальный, необходимый)**:
+   - `grant-access-for-order` — обязательно, чтобы `verify_jwt=false` вступил в силу на платформе (иначе шлюз продолжит 401-ить сервисные ключи).
+   - `admin-create-manual-payment` — обязательно, downstream-код и типизированный error path.
+   - `_shared/finalize-composable-purchase.ts` — общий модуль, необходимо переразвернуть **все функции, которые его импортируют** (как минимум `admin-create-manual-payment`; `finalize-composable-purchase` компилируется в bundle каждой вызывающей функции). Рекомендую подтвердить полный список импортёров через `rg` и перезалить их одним batch.
+   - `invoice-delivery-status`, `invoice-delivery-retry`, `invoice-pdf-retry` — **не нужно** передеплоивать (исходники функций в PR #213 не менялись); регистрация `invoice-pdf-retry` в registry затрагивает только CI-пайплайн следующих релизов.
+5. **Frontend Publish**: обязателен — фронт-часть (`popover.tsx`, `AdminPaymentLinkDialog.tsx`) + впервые попадает в прод frontend JWT-патч для invoice-delivery poll/retry.
+6. **Read-back / safe smoke** (без реальных платежей, счетов, писем, Telegram, контактов):
+   - `supabase.config` эффективный `verify_jwt` для `grant-access-for-order` = false (через анонимный `POST` без Auth: должен вернуть 401 от **функции** с телом `{"error":"unauthorized"}`, не платформенный 401 без CORS).
+   - Анонимный `POST` `admin-create-manual-payment` → 401.
+   - `public.audit_logs` за окно после deploy: `action='admin_manual_payment_fulfillment_failed'` — новые записи должны содержать `metadata.downstream_step='grant-access-for-order'` и `grant_code` из белого списка (`already_used`, `unauthorized`, `unknown` и т.п.). Baseline может быть 0 — отметить null-baseline PASS.
+   - Frontend Publish smoke: открыть `/admin` под dev-паролем `123456`, в `AdminPaymentLinkDialog` открыть popover списка продуктов на 375px viewport, подтвердить wheel/touch scroll (screenshot desktop+mobile — обязателен по проектному UI-правилу).
+   - Managed status: `ACTIVE_HEALTHY`.
 
-### High
-- Нет.
-
-### Medium / Info
-1. Миграция вставляет только `INSERT … ON CONFLICT`; никаких новых FK/CHECK/RLS не создаёт. Использует существующие таблицы `app_sections`, `ai_user_prompts`, `access_rules` и их текущие RLS-политики. Совместимо с `user_has_access_to_rule` (проверено: RPC существует).
-2. Guard в `resolveAssetClassifierAccess` требует, чтобы `access_rules.target_ref` был **строковым UUID секции**. Миграция кладёт `section.id::text` — согласовано. Регрессии для существующих `section_access`-правил не вносит: фильтр ограничен `target_ref = <section.id>`.
-3. `supabase/config.toml` уже задаёт `verify_jwt = true` для `asset-classifier`; функция дополнительно проверяет пользователя сама — двойная защита корректна.
-4. Каталог 612 KB + engine ≈ 15 KB импортируется только `asset-classifier`. В bundle-лимит edge function (~5 MB) вписывается со значительным запасом. Не влияет на bundle других функций (shared-код используется только этой одной).
-5. Access-rules приоритет `30` совпадает с текущими соглашениями в БД (нужно оставить как есть, чтобы не переиграть уже настроенные вручную приоритеты — INSERT идёт только при `NOT EXISTS`, идемпотентно).
-
-## Exact managed actions (только после одобрения EXECUTE)
-1. Sync managed репозитория на точный `SHA 609a4b64229d1b1a5fce420afc7e6815a54b663a`. Никакой правки кода в managed сессии, никаких новых коммитов сверх merged SHA.
-2. Применить ровно одну миграцию: `supabase/migrations/20260729160000_asset_classifier_scenario.sql`. Ничего больше.
-3. Задеплоить ровно три Edge Functions:
-   - `asset-classifier` (новая, будет впервые развернута с `verify_jwt=true`);
-   - `gorbova-ai-chat` (обновление — добавлен deterministic guard);
-   - `ai-access-status` (обновление — подтягивает новую версию shared `_shared/ai-access.ts`).
-4. Никаких fixture-платежей, писем, сообщений в мессенджеры, создания пользователей/контактов; репаиров данных нет.
-
-## Exact read-back / runtime checks (после EXECUTE)
-- **SHA**: `git rev-parse origin/main` → `609a4b64229d1b1a5fce420afc7e6815a54b663a`.
-- **Migration rows**:
-  - `SELECT id, code, is_active FROM public.app_sections WHERE code='ai_asset_classifier';` → 1 row, `is_active=true`.
-  - `SELECT code, is_active, is_visible_in_chat, launcher_order FROM public.ai_user_prompts WHERE code='asset_classifier';` → 1 row, `is_active=true`, `is_visible_in_chat=true`.
-  - `SELECT product_id, priority, is_active FROM public.access_rules WHERE grant_target_type='section_access' AND target_ref = (SELECT id::text FROM public.app_sections WHERE code='ai_asset_classifier') ORDER BY product_id;` → 2 rows: `11c9f1b8…` и `85046734…`, `priority=30`, `is_active=true`.
-  - Идемпотентность: повторный dry-run миграции не добавляет строк (проверить через сравнение count до/после — должен совпасть).
-- **Grants/RLS**: проверить, что RLS на `app_sections`, `ai_user_prompts`, `access_rules` не поменялся (миграция их не трогает). Через `supabase--linter` убедиться, что новых RLS-финдингов нет.
-- **Function version / logs**:
-  - `supabase--edge_function_logs` для `asset-classifier` — свежий boot без crash, cold start ok.
-  - Для `gorbova-ai-chat` — cold start ok, отсутствие ошибок парсинга нового guard'а.
-  - Для `ai-access-status` — cold start ok, нет `column does not exist`/RPC ошибок.
-- **Safe runtime smoke** (без реальных пользовательских данных):
-  - Анонимный `curl` `asset-classifier` без Authorization → 401 `Необходима авторизация` (identity guard).
-  - Анонимный `curl` `asset-classifier` с невалидным JWT → 401 `Неавторизованный доступ`.
-  - Аутентифицированный препятствия/probe **не** запускаем от реального клиента; если владелец захочет, отдельный test-identity probe c enrollment в `access_rules` для этой identity — по запросу.
-  - `ai-access-status` от анонима → 401 (unchanged).
-  - Убедиться, что `gorbova-ai-chat` при `prompt.code='asset_classifier'` в теле реквеста вернёт 409 `deterministic_scenario_requires_dedicated_endpoint` (probe с service-role headers в dev-runtime; никаких пользовательских данных).
-
-## Publish gate
-Publish frontend (`main` HEAD → prod) допустим только при одновременном PASS:
-- SHA read-back = `609a4b64…`.
-- Все три функции задеплоены; logs без критических ошибок за первые 5 минут.
-- Миграция read-back показывает ровно 1/1/2 строк выше.
-- `supabase--linter` не даёт новых critical/high по scope миграции.
-- Runtime smoke анонимных 401 и `gorbova-ai-chat` 409-guard PASS.
-- Нет открытых critical/high в `project_monitoring` в scope.
-
-Если любой пункт не PASS — STOP, репорт, без Publish.
-
-## STOP-условия
-- Не выполнять никаких дополнительных миграций/коммитов/деплоев поверх `609a4b64…`.
-- При обнаружении несоответствия SHA после sync — STOP.
-- При non-empty pre-existing row в `app_sections/ai_user_prompts` с тем же `code` до миграции (сейчас 0/0) — сравнить содержимое, не Publish без явной команды.
-- Реальные платежи, письма, telegram-сообщения, изменение реальных контактов — запрещены как smoke.
-
-Готов к EXECUTE по вашему одобрению.
+## PLAN-ONLY COMPLETE
+Блокеров и critical findings нет. Можно приступать к **EXECUTE для exact merged SHA `9a81668bc645723046e1c7a008a385f490133078`** по вышеописанному плану.
