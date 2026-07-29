@@ -59,7 +59,7 @@ async function isElevated(supabase: any, userId: string): Promise<boolean> {
   for (const role of elevatedRoles) {
     const { data } = await supabase.rpc("has_role_v2", {
       _user_id: userId,
-      _role: role,
+      _role_code: role,
     });
     if (data === true) return true;
   }

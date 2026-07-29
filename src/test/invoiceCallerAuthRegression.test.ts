@@ -10,6 +10,14 @@ const invoiceFunctions = [
   "supabase/functions/canonical-document-generate-strict/index.ts",
 ];
 
+const elevatedRoleFunctions = [
+  "supabase/functions/invoice-delivery-status/index.ts",
+  "supabase/functions/invoice-delivery-retry/index.ts",
+  "supabase/functions/invoice-pdf-retry/index.ts",
+  "supabase/functions/canonical-document-send/index.ts",
+  "supabase/functions/activate-scheduled-product-access/index.ts",
+];
+
 describe("invoice caller authentication", () => {
   it.each(invoiceFunctions)("%s uses the signing-key-safe shared helper", (file) => {
     const source = readFileSync(resolve(process.cwd(), file), "utf8");
@@ -39,4 +47,14 @@ describe("invoice caller authentication", () => {
     expect(source).toContain('email.error = "delivery_not_started"');
     expect(source).toContain('telegram.error = "delivery_not_started"');
   });
+
+  it.each(elevatedRoleFunctions)(
+    "%s calls has_role_v2 with its deployed _role_code argument",
+    (file) => {
+      const source = readFileSync(resolve(process.cwd(), file), "utf8");
+      expect(source).toContain('"has_role_v2"');
+      expect(source).toContain("_role_code:");
+      expect(source).not.toMatch(/\b_role\s*:/);
+    },
+  );
 });
