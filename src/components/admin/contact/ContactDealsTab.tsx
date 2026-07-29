@@ -21,6 +21,7 @@ import { format, parse } from "date-fns";
 import { ru } from "date-fns/locale";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
+import { getDealCommercialAmount } from "@/lib/payments/composableDealAmount";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ function groupDealsByProduct(deals: AnyDeal[], moduleMetaMap?: Map<string, any>)
     const paidCount = items.filter(i => i.status === "paid").length;
     const totalSum = items
       .filter(i => i.status === "paid")
-      .reduce((sum, i) => sum + Number(i.final_price || 0), 0);
+      .reduce((sum, i) => sum + getDealCommercialAmount(i), 0);
     const currency = items[0]?.currency || "BYN";
 
     // Sort group by latest paid deal date; fallback to latest deal date overall.
@@ -409,7 +410,7 @@ function DealRow({
             style: "currency",
             currency: deal.currency,
             maximumFractionDigits: 0,
-          }).format(Number(deal.final_price))}
+          }).format(getDealCommercialAmount(deal))}
         </span>
 
         <Button

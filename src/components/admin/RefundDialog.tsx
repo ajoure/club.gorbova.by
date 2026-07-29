@@ -60,6 +60,7 @@ export function RefundDialog({
   const [accessAction, setAccessAction] = useState<AccessAction>("revoke");
   const [reduceDays, setReduceDays] = useState(30);
   const [groupItems, setGroupItems] = useState<GroupRefundItem[]>([]);
+  const [groupPrimaryOrderId, setGroupPrimaryOrderId] = useState<string | null>(null);
   const [selectedGroupItemId, setSelectedGroupItemId] = useState<string>("");
   const [refundRequestKey, setRefundRequestKey] = useState(() => crypto.randomUUID());
   const selectedGroupItem = groupItems.find((item) => item.id === selectedGroupItemId);
@@ -74,22 +75,57 @@ export function RefundDialog({
     if (open) {
       setRefundAmount(amount);
       setReason("");
-      setAccessAction(refundAmount >= amount ? "revoke" : "reduce");
+      setAccessAction("revoke");
       setReduceDays(30);
       setRefundRequestKey(crypto.randomUUID());
       setGroupItems([]);
       setSelectedGroupItemId("");
-      void (supabase as any)
-        .from("order_group_items")
-        .select("id,role,order_id,final_amount,item_snapshot,payment_allocations(amount,refunded_amount),order_group:order_groups!inner(primary_order_id)")
-        .eq("order_group.primary_order_id", orderId)
-        .order("sort_order")
-        .then(({ data }) => {
-          const items = (data ?? []) as unknown as GroupRefundItem[];
-          setGroupItems(items);
-        });
+      setGroupPrimaryOrderId(null);
+      void (async () => {
+        const { data: selectedItem } = await (supabase as any)
+          .from("order_group_items")
+          .select("id,order_group_id")
+          .eq("order_id", orderId)
+          .maybeSingle();
+
+        let groupId = selectedItem?.order_group_id ?? null;
+        if (!groupId) {
+          const { data: primaryGroup } = await (supabase as any)
+            .from("order_groups")
+            .select("id,primary_order_id")
+            .eq("primary_order_id", orderId)
+            .maybeSingle();
+          groupId = primaryGroup?.id ?? null;
+        }
+        if (!groupId) return;
+
+        const { data: group } = await (supabase as any)
+          .from("order_groups")
+          .select("primary_order_id")
+          .eq("id", groupId)
+          .single();
+        setGroupPrimaryOrderId(group?.primary_order_id ?? null);
+
+        const { data } = await (supabase as any)
+          .from("order_group_items")
+          .select("id,role,order_id,final_amount,item_snapshot,payment_allocations(amount,refunded_amount)")
+          .eq("order_group_id", groupId)
+          .order("sort_order");
+        const items = (data ?? []) as unknown as GroupRefundItem[];
+        setGroupItems(items);
+
+        const matchingItem = items.find((item) => item.order_id === orderId);
+        if (matchingItem) {
+          const allocation = matchingItem.payment_allocations?.[0];
+          const available = allocation
+            ? Number(allocation.amount) - Number(allocation.refunded_amount || 0)
+            : Number(matchingItem.final_amount);
+          setSelectedGroupItemId(matchingItem.id);
+          setRefundAmount(Math.max(available, 0));
+        }
+      })();
     }
-  }, [open, amount]);
+  }, [open, amount, orderId]);
 
   // Auto-set access action based on refund amount
   useEffect(() => {
@@ -123,7 +159,7 @@ export function RefundDialog({
       const { data, error } = await supabase.functions.invoke("subscription-admin-actions", {
         body: {
           action: "refund",
-          order_id: orderId,
+          order_id: groupPrimaryOrderId ?? orderId,
           refund_amount: refundAmount,
           refund_reason: reason.trim(),
           access_action: accessAction,

@@ -146,6 +146,7 @@ import { LoyaltyPulse } from "./LoyaltyPulse";
 import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
 import { ContactArtifactsTab } from "./contact/ContactArtifactsTab";
 import { ContactDealsTab } from "./contact/ContactDealsTab";
+import { getDealCommercialAmount } from "@/lib/payments/composableDealAmount";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { useCrmTasks } from "@/hooks/useCrmTasks";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
@@ -494,7 +495,37 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         .in("status", ['paid', 'partial', 'pending', 'canceled', 'refunded'] as const)
         .order("deal_date", { ascending: false });
       if (error) throw error;
-      return data;
+      const rows = data ?? [];
+      const orderIds = rows.map((deal) => deal.id);
+      if (orderIds.length === 0) return rows;
+
+      const { data: groupItems, error: groupItemsError } = await (supabase as any)
+        .from("order_group_items")
+        .select(`
+          order_id, role, final_amount,
+          order_group:order_groups!inner(id,total_amount,primary_order_id)
+        `)
+        .in("order_id", orderIds);
+      if (groupItemsError) throw groupItemsError;
+
+      const lineByOrder = new Map(
+        (groupItems ?? []).map((item: any) => [item.order_id, item]),
+      );
+      return rows.map((deal) => {
+        const item = lineByOrder.get(deal.id) as any;
+        if (!item) return deal;
+        const group = Array.isArray(item.order_group)
+          ? item.order_group[0]
+          : item.order_group;
+        return {
+          ...deal,
+          composable_line_amount: Number(item.final_amount),
+          composable_group_role: item.role,
+          composable_group_id: group?.id ?? null,
+          composable_group_total: Number(group?.total_amount ?? deal.final_price),
+          composable_primary_order_id: group?.primary_order_id ?? null,
+        };
+      });
     },
     enabled: !!contact?.id,
   });
@@ -3978,7 +4009,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
             onOpenChange={(v) => { if (!v) setRefundDealId(null); }}
             orderId={refundDeal.id}
             orderNumber={refundDeal.order_number}
-            amount={Number(refundDeal.final_price)}
+            amount={getDealCommercialAmount(refundDeal)}
             currency={refundDeal.currency}
             paymentProvider={(() => {
               const payments = (refundDeal as any).payments_v2 as any[] | undefined;

@@ -20,6 +20,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 import { renderBrandedEmail, type BrandedEmailSection } from "../_shared/branded-email-shell.ts";
+import { getCallerUserId } from "../_shared/caller-user.ts";
 
 
 const corsHeaders = {
@@ -45,32 +46,12 @@ interface SendRequest {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-async function getCallerUserId(req: Request): Promise<string | null> {
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.slice("Bearer ".length).trim();
-  if (!token) return null;
-  const client = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: authHeader } },
-  });
-  try {
-    const { data, error } = await (client.auth as any).getClaims(token);
-    if (!error && data?.claims?.sub) return data.claims.sub as string;
-  } catch (_) {
-    // fall through to getUser
-  }
-  const { data, error } = await client.auth.getUser(token);
-  if (error || !data?.user) return null;
-  return data.user.id;
 }
 
 async function isElevated(supabase: any, userId: string): Promise<boolean> {
@@ -236,7 +217,9 @@ Deno.serve(async (req) => {
     const trustedExternal =
       req.headers.get("x-internal-call") === "external-document-form" &&
       req.headers.get("Authorization") === `Bearer ${SERVICE_ROLE_KEY}`;
-    const userId = trustedExternal ? null : await getCallerUserId(req);
+    const userId = trustedExternal
+      ? null
+      : await getCallerUserId(req, "canonical-document-send");
     if (!userId && !trustedExternal) return json(401, { error: "unauthorized" });
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {

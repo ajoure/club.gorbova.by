@@ -135,6 +135,7 @@ export function ManualPaymentDialog({
 }: ManualPaymentDialogProps) {
   const [saving, setSaving] = useState(false);
   const [retryPending, setRetryPending] = useState(false);
+  const [retryPaymentId, setRetryPaymentId] = useState<string | null>(null);
   const [provider, setProvider] = useState<Provider>("bank");
   const [amount, setAmount] = useState<string>("");
   const [currency, setCurrency] = useState<string>("BYN");
@@ -159,6 +160,7 @@ export function ManualPaymentDialog({
     if (open) {
       idempotencyKeyRef.current = newIdempotencyKey();
       setRetryPending(false);
+      setRetryPaymentId(null);
     }
   }, [open]);
 
@@ -195,6 +197,7 @@ export function ManualPaymentDialog({
     setContact(null);
     setDeal(null);
     setRetryPending(false);
+    setRetryPaymentId(null);
     idempotencyKeyRef.current = newIdempotencyKey();
   };
 
@@ -277,6 +280,8 @@ export function ManualPaymentDialog({
             "Название банка слишком длинное (максимум 120 символов).",
           idempotency_conflict:
             "Платёж с таким ключом уже создан с другими данными.",
+          order_already_fully_paid:
+            "Эта сделка уже полностью оплачена. Новый платёж не создан.",
         };
         const msg =
           localized[code] ??
@@ -293,13 +298,27 @@ export function ManualPaymentDialog({
           ? "Платёж создан, но последующая обработка не завершена."
           : "Платёж создан, но сделка не перешла в настроенную успешную стадию.";
         if (data.downstream_retryable) {
-          toast.warning(`${message} Нажмите «Повторить обработку»: повторный платёж не создастся.`);
+          const createdPaymentId = data.payment_id ? String(data.payment_id) : null;
+          if (!createdPaymentId) {
+            toast.error(
+              "Платёж создан, но сервер не вернул его ID. Повторная обработка заблокирована, чтобы не создать дубль.",
+            );
+            setRetryPending(false);
+            setRetryPaymentId(null);
+            onSuccess();
+            return;
+          }
+          toast.warning(
+            `${message} Нажмите «Повторить обработку»: будет продолжена только обработка уже созданного платежа.`,
+          );
           setRetryPending(true);
+          setRetryPaymentId(createdPaymentId);
           onSuccess();
           return;
         }
         toast.warning(`${message} Проверьте настройки кнопки оплаты.`);
         setRetryPending(false);
+        setRetryPaymentId(null);
       }
 
       if (!hasDownstreamWarning && data.idempotent_replay) {
@@ -333,6 +352,46 @@ export function ManualPaymentDialog({
     } catch (e: unknown) {
       console.error("Manual payment error:", e);
       toast.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRetryDownstream = async () => {
+    if (!retryPaymentId || saving) return;
+    setSaving(true);
+    try {
+      const { data, error } = await invokeAuthenticatedFunction<ManualPaymentResponse>(
+        "admin-retry-manual-payment-downstream",
+        { paymentId: retryPaymentId },
+      );
+      if (error || !data?.ok) {
+        toast.error(
+          normalizeEdgeFunctionError(
+            error ?? data,
+            "Не удалось завершить обработку уже созданного платежа",
+          ),
+        );
+        return;
+      }
+      if (data.downstream_complete === false) {
+        toast.warning(
+          "Платёж не дублировался, но последующая обработка всё ещё не завершена. Ошибка сохранена для диагностики.",
+        );
+        return;
+      }
+
+      toast.success("Обработка платежа завершена: сделка и доступы обновлены");
+      setRetryPending(false);
+      setRetryPaymentId(null);
+      onOpenChange(false);
+      onSuccess();
+      setSnapshot(null);
+      resetForm();
+    } catch (e: unknown) {
+      toast.error(
+        `Ошибка: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setSaving(false);
     }
@@ -594,7 +653,11 @@ export function ManualPaymentDialog({
             >
               Отмена
             </Button>
-            <Button className="w-full sm:w-auto" onClick={handleSubmit} disabled={saving || amountInvalid}>
+            <Button
+              className="w-full sm:w-auto"
+              onClick={retryPending ? handleRetryDownstream : handleSubmit}
+              disabled={saving || (retryPending ? !retryPaymentId : amountInvalid)}
+            >
               {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               {retryPending ? "Повторить обработку" : "Создать платёж"}
             </Button>

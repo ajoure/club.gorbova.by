@@ -12,6 +12,7 @@ import {
   GrantAccessInvokeError,
 } from "../_shared/finalize-composable-purchase.ts";
 import { applyCrmStageOnTerminal } from "../_shared/crm-routing.ts";
+import { getCallerUserId } from "../_shared/caller-user.ts";
 
 interface Body {
   provider: "bepaid" | "stripe" | "rr" | "bank";
@@ -59,18 +60,12 @@ Deno.serve(async (req) => {
   if (!authHeader.startsWith("Bearer ")) return bad(401, "unauthorized");
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-  const authed = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: authHeader } },
-  });
   const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
-  const token = authHeader.replace("Bearer ", "");
-  const { data: claims, error: claimsErr } = await authed.auth.getClaims(token);
-  if (claimsErr || !claims?.claims?.sub) return bad(401, "invalid_jwt");
-  const actorUserId = claims.claims.sub as string;
+  const actorUserId = await getCallerUserId(req, "admin-create-manual-payment");
+  if (!actorUserId) return bad(401, "invalid_jwt");
 
   const { data: hasAccess, error: rbacErr } = await admin.rpc(
     "has_admin_section_access",
@@ -158,6 +153,11 @@ Deno.serve(async (req) => {
   );
 
   if (rpcErr) {
+    if (String(rpcErr.message).includes("order_already_fully_paid")) {
+      return bad(409, "order_already_fully_paid", {
+        request_id: requestId,
+      });
+    }
     return bad(500, "rpc_failed", {
       detail: rpcErr.message,
       request_id: requestId,
@@ -168,6 +168,7 @@ Deno.serve(async (req) => {
     const status = err === "idempotency_conflict"
       ? 409
       : err === "order_profile_conflict" || err === "order_currency_conflict"
+        || err === "order_already_fully_paid"
       ? 409
       : err === "profile_not_found" || err === "order_not_found"
       ? 404

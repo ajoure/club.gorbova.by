@@ -63,6 +63,7 @@ import {
 // PATCH-DOCX-TABLE-REPEAT-BY-ROLE-V1 / Stage E.4 + E.4a
 import { applyTableRepeatExpansion, type TableRepeatExpansionReport } from '../_shared/docx-table-repeat-expand.ts';
 import { prepareLnCustomScalarBag, type LnCustomTokenRequest, type LnCustomPrepareReport } from '../_shared/ln-custom-scalar-prepare.ts';
+import { getCallerUserId } from '../_shared/caller-user.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -489,11 +490,8 @@ Deno.serve(async (req) => {
       templateId = packageContext.template_id;
       orderId = null;
     } else {
-      const auth = req.headers.get('Authorization');
-      if (!auth?.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
-      const { data: ud } = await supabase.auth.getUser(auth.slice(7));
-      if (!ud?.user) return json({ error: 'unauthorized' }, 401);
-      userId = ud.user.id;
+      userId = await getCallerUserId(req, 'canonical-document-generate-strict');
+      if (!userId) return json({ error: 'unauthorized' }, 401);
 
       const { data: roleRows } = await supabase
         .from('user_roles_v2')

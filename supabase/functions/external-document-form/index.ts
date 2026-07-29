@@ -4,6 +4,7 @@
 // and delegates rendering to ai-generate-document-package.
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getCallerUserId } from "../_shared/caller-user.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -190,14 +191,6 @@ function valueColumns(field: Field, raw: unknown): Record<string, unknown> {
   }
 }
 
-async function getCallerUserId(req: Request, url: string, anon: string): Promise<string | null> {
-  const header = req.headers.get("authorization");
-  if (!header?.startsWith("Bearer ")) return null;
-  const client = createClient(url, anon, { global: { headers: { Authorization: header } } });
-  const { data } = await client.auth.getUser(header.slice(7));
-  return data.user?.id ?? null;
-}
-
 async function loadLink(admin: any, token: string) {
   const { data: link } = await admin.from("document_package_external_links")
     .select("id, public_token, external_form_id, owner_profile_id, selected_legal_entity_id, is_active, revoked_at, metadata")
@@ -237,14 +230,13 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
   const url = Deno.env.get("SUPABASE_URL")!;
   const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const anon = Deno.env.get("SUPABASE_ANON_KEY")!;
   const admin = createClient(url, service, { auth: { persistSession: false } });
   try {
     const body = await req.json().catch(() => ({}));
     const action = String(body?.action || "read");
 
     if (action === "owner_forms" || action === "owner_history") {
-      const userId = await getCallerUserId(req, url, anon);
+      const userId = await getCallerUserId(req, "external-document-form");
       if (!userId) return json({ error: "unauthorized" }, 401);
       const packageTemplateId = scalar(body.package_template_id);
       if (!packageTemplateId) return json({ error: "package_template_required" }, 400);
@@ -311,7 +303,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === "create_link") {
-      const userId = await getCallerUserId(req, url, anon);
+      const userId = await getCallerUserId(req, "external-document-form");
       if (!userId) return json({ error: "unauthorized" }, 401);
       const formId = scalar(body.form_id); const legalEntityId = scalar(body.legal_entity_id);
       if (!formId || !legalEntityId) return json({ error: "form_and_legal_entity_required" }, 400);

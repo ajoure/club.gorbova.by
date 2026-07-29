@@ -19,6 +19,7 @@
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { getCallerUserId } from "../_shared/caller-user.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,30 +30,12 @@ const corsHeaders = {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-async function getCallerUserId(req: Request): Promise<string | null> {
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.slice(7).trim();
-  if (!token) return null;
-  const client = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: authHeader } },
-  });
-  try {
-    const { data, error } = await (client.auth as any).getClaims(token);
-    if (!error && data?.claims?.sub) return data.claims.sub as string;
-  } catch (_) {/* fall through */}
-  const { data, error } = await client.auth.getUser(token);
-  if (error || !data?.user) return null;
-  return data.user.id;
 }
 
 async function isElevated(admin: any, userId: string): Promise<boolean> {
@@ -75,6 +58,16 @@ interface ChannelState {
   at: string | null;
   error: string | null;
   recipient: string | null;
+}
+
+function deliveryFallbackStatus(
+  rawDelivery: unknown,
+  documentCreatedAt: string | null,
+): ChannelStatus {
+  if (rawDelivery && typeof rawDelivery === "object") return "queued";
+  const createdAtMs = documentCreatedAt ? Date.parse(documentCreatedAt) : Number.NaN;
+  const ageMs = Number.isFinite(createdAtMs) ? Date.now() - createdAtMs : 0;
+  return ageMs >= 60_000 ? "error" : "queued";
 }
 
 function normalizeChannel(
@@ -105,7 +98,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
 
   try {
-    const userId = await getCallerUserId(req);
+    const userId = await getCallerUserId(req, "invoice-delivery-status");
     if (!userId) return json(401, { error: "unauthorized" });
 
     const body = await req.json().catch(() => null) as { document_id?: string } | null;
@@ -120,7 +113,7 @@ Deno.serve(async (req) => {
 
     const { data: doc, error: docErr } = await admin
       .from("ai_generated_documents")
-      .select("id, profile_id, status, file_path, deleted_at, document_number, meta")
+      .select("id, profile_id, status, file_path, deleted_at, document_number, created_at, meta")
       .eq("id", documentId)
       .maybeSingle();
     if (docErr) return json(500, { error: "db_error", detail: docErr.message });
@@ -141,9 +134,15 @@ Deno.serve(async (req) => {
     const pdfReady =
       (doc.status === "generated" || doc.status === "success") && !!doc.file_path;
 
-    const deliveryMeta = ((doc.meta as any)?.delivery ?? {}) as any;
-    const email = normalizeChannel(deliveryMeta.email, "queued");
-    const telegram = normalizeChannel(deliveryMeta.telegram, "queued");
+    const rawDelivery = (doc.meta as any)?.delivery;
+    const deliveryMeta = (rawDelivery ?? {}) as any;
+    const fallbackStatus = deliveryFallbackStatus(rawDelivery, doc.created_at);
+    const email = normalizeChannel(deliveryMeta.email, fallbackStatus);
+    const telegram = normalizeChannel(deliveryMeta.telegram, fallbackStatus);
+    if (fallbackStatus === "error") {
+      if (!deliveryMeta.email) email.error = "delivery_not_started";
+      if (!deliveryMeta.telegram) telegram.error = "delivery_not_started";
+    }
 
     return json(200, {
       document_id: doc.id,

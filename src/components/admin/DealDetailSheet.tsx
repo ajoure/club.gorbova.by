@@ -12,6 +12,7 @@ import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
+import { getDealCommercialAmount } from "@/lib/payments/composableDealAmount";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { ContactFeedTab } from "@/components/admin/contact/ContactFeedTab";
@@ -255,7 +256,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       const { data, error } = await (supabase as any)
         .from("order_group_items")
         .select(`
-          id, role, sort_order, item_snapshot,
+          id, role, sort_order, final_amount, item_snapshot,
           products_v2:product_id(name, code), tariffs:tariff_id(name, code)
         `)
         .eq("order_group_id", group.id)
@@ -1006,7 +1007,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                   <span className="text-sm text-muted-foreground">Итого</span>
                   <span className="font-bold text-lg">
                     {(() => {
-                      const n = Number(deal.final_price);
+                      const n = getDealCommercialAmount(deal);
                       const cur = deal.currency || "BYN";
                       if (!Number.isFinite(n)) return "—";
                       try {
@@ -1046,7 +1047,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 <CardContent className="space-y-2">
                   {dealCompositionLoading ? <Skeleton className="h-16 w-full" /> : dealComposition?.map((item: any) => {
                     const snapshot = (item.item_snapshot && typeof item.item_snapshot === "object") ? item.item_snapshot : {};
-                    const price = Number(snapshot.final_price ?? snapshot.price ?? 0);
+                    const price = Number(item.final_amount);
                     const label = item.products_v2?.name || snapshot.product_name || "Продукт";
                     return (
                       <div key={item.id} className="flex items-start justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2">

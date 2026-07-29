@@ -10,6 +10,7 @@
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { getCallerUserId } from "../_shared/caller-user.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,23 +30,6 @@ function json(status: number, body: unknown) {
   });
 }
 
-async function getCallerUserId(req: Request): Promise<string | null> {
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.slice(7).trim();
-  if (!token) return null;
-  const client = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: authHeader } },
-  });
-  try {
-    const { data, error } = await (client.auth as any).getClaims(token);
-    if (!error && data?.claims?.sub) return data.claims.sub as string;
-  } catch (_) {/* fall through */}
-  const { data, error } = await client.auth.getUser(token);
-  if (error || !data?.user) return null;
-  return data.user.id;
-}
-
 async function isElevated(admin: any, userId: string): Promise<boolean> {
   for (const role of ["super_admin", "admin", "accountant"]) {
     const { data } = await admin.rpc("has_role_v2", { _user_id: userId, _role: role });
@@ -60,7 +44,7 @@ Deno.serve(async (req) => {
 
   try {
     const authHeader = req.headers.get("Authorization") || "";
-    const userId = await getCallerUserId(req);
+    const userId = await getCallerUserId(req, "invoice-delivery-retry");
     if (!userId) return json(401, { error: "unauthorized" });
 
     const body = await req.json().catch(() => null) as
