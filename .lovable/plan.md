@@ -1,57 +1,66 @@
-## Scope
-Read-only проверка миграции `supabase/migrations/20260726190000_package_level_document_access.sql` на SHA `de638582`. Ничего не применяется.
+## Текущее состояние
 
-## Verification результаты (read-only)
+- Локально сохранённый Lovable HEAD: `f4057a477` (`fix: notify purchases after 3DS finalization`).
+- `origin/main` (GitHub) HEAD: **`632038d41b7c34d48dd73891d7906c40d083b6e5`** — `fix: unblock admin deletion with referral audit history` (PR-мерж c миграцией referral FK).
+- Разница `f4057a477 → 632038d41` = один коммит, в котором добавлены ровно:
+  - `supabase/migrations/20260728181500_referral_partners_created_by_set_null.sql` (54 строки);
+  - `src/services/referrals/__tests__/referralPartnerDeleteForeignKey.contract.test.ts` (контрактный тест).
+- Requested target SHA для этого релиза — `632038d41b7c34d48dd73891d7906c40d083b6e5`. Именно его надо синхронизировать в Lovable-side, чтобы миграция `20260728181500` физически появилась в файловой системе проекта (на `f4057a477` файла нет).
+- Целевые UI-фиксы уже в цепочке до `632038d4`:
+  - `17f46bc6d` — restore custom-domain lead CTA handling;
+  - `00b059274` — normalize legacy offer slot roles on save.
 
-### 1. Порядок миграций
-Файл `20260726190000_...` идёт строго после `20260726173000_document_generation_public_package_access.sql` (последнего применённого) — timestamp-порядок корректен, промежуточных файлов нет.
+Scope релиза строго: 1) миграция referral FK; 2) деплой двух Edge Functions; 3) Publish фронтенда. Никакие другие миграции/функции/данные/RLS/UI не трогаются.
 
-### 2. SQL-структура (261 строка)
-Миграция выполняет 4 операции:
-- `ALTER TABLE public.document_package_templates ADD COLUMN IF NOT EXISTS is_available_to_all boolean NOT NULL DEFAULT false` + `COMMENT`.
-- Partial index `document_package_templates_default_access_idx` на `(id) WHERE profile_id IS NULL AND is_active AND is_available_to_all`.
-- `CREATE OR REPLACE FUNCTION public.set_global_document_package_default_access(uuid, boolean)` — новая admin-only RPC для тумблера доступности глобального пакета, пишет `audit_logs` при смене состояния.
-- `CREATE OR REPLACE FUNCTION public.get_user_document_package_ids()` — переписан: теперь возвращает `full_access + package_ids`, отдаёт `full_access=true` только для админов и `access_mode='full'` правил; глобальные пакеты с `is_available_to_all=true` включаются в список `package_ids` для authenticated (без `full_access`).
-- `CREATE OR REPLACE FUNCTION public.get_user_section_access(uuid)` — переписан: секция `document_generation` открывается либо через access_rule продукта/тарифа, либо при наличии хотя бы одного глобального пакета с `is_available_to_all=true`; общий `is_public` больше не открывает эту секцию.
+## Release plan (PLAN-ONLY, execution только после явного EXECUTE)
 
-### 3. Права и security posture
-Все три функции — `SECURITY DEFINER`, `SET search_path = public`. Явно:
-- `REVOKE ALL ... FROM PUBLIC, anon` и `GRANT EXECUTE ... TO authenticated` для всех трёх функций.
-- Внутри `set_global_document_package_default_access` — двойная проверка: `auth.uid() NOT NULL` и `has_role_v2('admin' or 'super_admin')`, иначе `RAISE EXCEPTION`. Плюс защита `profile_id IS NOT NULL → not a global package`.
-- RLS не изменяется; таблицы не переоткрываются для anon. Новая колонка — обычный boolean с безопасным default `false`.
+### Шаг 0. Синхронизация SHA
+- Managed action: sync Lovable-side working tree к точному SHA `632038d41b7c34d48dd73891d7906c40d083b6e5`.
+- Read-back: `git rev-parse HEAD == 632038d41...`; `ls supabase/migrations/20260728181500_referral_partners_created_by_set_null.sql` возвращает файл; `git log -1 --format=%H -- supabase/migrations/20260728181500_referral_partners_created_by_set_null.sql` = `632038d41...`.
+- Rollback: снять sync (вернуться к `f4057a477`); никаких изменений в БД/функциях на этом шаге ещё не сделано.
 
-### 4. Совместимость с 20260726173000
-Предыдущая миграция уже переопределяла `get_user_document_package_ids()` с сигнатурой `RETURNS TABLE(full_access boolean, package_ids uuid[])`. Новая миграция сохраняет ту же сигнатуру → `CREATE OR REPLACE` пройдёт без drop. Логика 173000 (открытие всех пакетов при `app_sections.document_generation.is_public=true`) заменяется на package-level флаг — это осознанная семантика из документа.
+### Шаг 1. Managed migration `20260728181500_referral_partners_created_by_set_null.sql`
+- Что делает (уже проверено чтением файла на `origin/main`):
+  - Идемпотентно перекладывает FK `public.referral_partners.created_by → auth.users(id)` на `ON DELETE SET NULL`; сохраняет всю историю партнёров.
+  - Есть жёсткий guard `RAISE EXCEPTION`, если `created_by` окажется `NOT NULL` — миграция откажется выполняться (без модификации данных).
+  - НЕ удаляет и не переносит ни одной строки в `referral_partners`, `referral_orders`, `referral_wallet_*`, `referral_admin_corrections` и т. п.
+- Managed action: apply ровно этот файл через managed migration tool. Никаких других SQL в той же транзакции.
+- Read-back proof (только `read_query`, без mutation):
+  1. `SELECT conname, confdeltype FROM pg_constraint WHERE conrelid='public.referral_partners'::regclass AND contype='f' AND confrelid='auth.users'::regclass;` — ожидается `confdeltype = 'n'` (SET NULL).
+  2. `SELECT attnotnull FROM pg_attribute WHERE attrelid='public.referral_partners'::regclass AND attname='created_by';` — ожидается `false`.
+  3. `SELECT count(*) FROM public.referral_partners;` до и после — идентично; `count(*) FILTER (WHERE created_by IS NULL)` тоже идентично (миграция не обнуляет данные).
+- Rollback: обратная managed migration, восстанавливающая исходное `ON DELETE`-поведение (`NO ACTION` / прежний вариант) на том же FK — без затрагивания данных. Триггер миграции создаётся только по явному запросу; данные не мутируются.
+- Тест-безопасность: удаления пользователей и создания новых партнёров для проверки не выполняются. Работоспособность admin-delete подтверждается на реальных пользовательских действиях, инициированных владельцем, не автоматическими probe.
 
-### 5. Baseline (зафиксировано сейчас на проде, до применения)
-- `document_package_templates`: total=2, global=2, global_active=2. Колонки `is_available_to_all` **ещё нет** (ожидаемо).
-- `app_sections.document_generation`: `is_public=false, is_active=true`.
-- `access_rules` активные: `club=5, document_generation=4, product_access=11, section_access=13, training_content=36` (итого 69).
-- Функции `get_user_document_package_ids()` и `get_user_section_access(uuid)` существуют в версии 173000.
+### Шаг 2. Deploy Edge Functions
+Файлы берутся с уже синхронизированного SHA `632038d41...`. Обе функции — существующие, не новые.
 
-## Риски
-- `access_rules.grant_target_type='document_generation'` = 4 записи. Новая ветка `access_mode='full' vs 'partial'` берётся из `conditions->>'access_mode'` с fallback `'full'`. Если в этих 4 записях `conditions` не заданы или access_mode отсутствует, все они трактуются как `full` → пользователь получит `full_access=true`. Это соответствует прежнему поведению 173000 (там `document_generation` тоже давал полный доступ). Нужно подтвердить count после apply.
-- Partial index создаётся до заполнения колонки — index будет пустой, это OK.
+2a. `grant-access-for-order`
+- Managed action: `deploy_edge_functions(['grant-access-for-order'])`.
+- Read-back: запись о деплое `log-deployment`/deployment log показывает функцию с новым revision; `edge_function_logs('grant-access-for-order')` — успешный boot без ошибок импорта. Никаких синтетических orders не создаётся; ожидается пассивное логирование от реального продового трафика.
+- Rollback: redeploy предыдущего revision функции (записан до деплоя).
 
-## План EXECUTE (когда одобрено)
-1. Verify HEAD SHA = `de638582687fbf5fe9aafc6922de9f2e44c0a126`; frontend typecheck+build PASS.
-2. `list_pending_findings` — стоп только при critical в scope document generation / packages access.
-3. Apply единственной миграции `20260726190000_package_level_document_access.sql`.
-4. Read-back (см. ниже). Ошибка read-back = стоп без Publish.
-5. Publish frontend (если пользователь явно санкционирует; иначе стоп после read-back).
+2b. `notify-order-purchased`
+- Managed action: `deploy_edge_functions(['notify-order-purchased'])`.
+- Read-back: successful deploy + boot; `SELECT count(*) FROM public.order_notification_deliveries WHERE created_at > now() - interval '5 min';` не должен внезапно вырасти сам по себе (функция вызывается только из `grant-access-for-order` fire-and-forget по реальным `paid` заказам).
+- Rollback: redeploy предыдущего revision.
+- Тест-безопасность: НЕ вызывать функцию вручную с реальным `order_id`, НЕ отправлять тестовые email/Telegram. Никаких платежей, отмен, писем клиентам, deletion пользователей и мутаций referral-данных как smoke test.
 
-## Read-back checklist
-- `information_schema.columns`: колонка `document_package_templates.is_available_to_all` существует, `boolean NOT NULL DEFAULT false`.
-- `pg_indexes`: `document_package_templates_default_access_idx` присутствует, partial predicate совпадает.
-- `pg_proc` + `pg_get_functiondef`: обе функции `get_user_document_package_ids()` и `get_user_section_access(uuid)` содержат ссылки на `is_available_to_all`; новая функция `set_global_document_package_default_access(uuid, boolean)` создана.
-- `has_function_privilege`: `authenticated=true`, `anon=false` для всех трёх функций.
-- Baseline не изменён: `document_package_templates` count=2, все `is_available_to_all=false`; `access_rules` counts по типам без изменений; `app_sections.document_generation` без изменений.
-- Никаких новых пользователей/писем/платежей/ссылок/файлов не создано.
+### Шаг 3. Publish frontend
+- Managed action: `preview_ui--publish` на том же SHA `632038d41...`. Включает уже слитые правки:
+  - `00b059274` — normalize legacy offer slot roles on save (UI-only, admin editor);
+  - `17f46bc6d` — restore custom-domain lead CTA handling (public site renderer).
+- Pre-Publish gate: `security--get_scan_results` — критических находок в scope не должно быть; иначе Publish блокируется и мы сообщаем.
+- Read-back: Publish tool вернёт URL `https://gorbova.lovable.app` + assigned SHA — сверить, что assigned SHA = `632038d41...`. Далее ручная визуальная сверка владельцем:
+  - custom-domain лендинг (например `https://cb.gorbova.by`): клик по lead-кнопке открывает диалог заявки (регрессия закрыта);
+  - в админ-редакторе offer-слот: сохранение legacy-роли не ломает форму.
+- Скриншотные пруфы (desktop + mobile 375px) — только по прямому подтверждению владельца, чтобы не гонять авторизованные сессии без нужды.
+- Rollback: повторный Publish предыдущего SHA `f4057a477` (без миграции — обратной миграции для Шага 1 требуется отдельно).
 
-## Stop-conditions
-- Ошибка `ALTER TABLE` (например, из-за FK/lock) — стоп.
-- `CREATE OR REPLACE FUNCTION` падает из-за изменения сигнатуры — стоп.
-- Read-back показывает недостающий объект или неверные grants — стоп.
-- Появление critical finding в scope document packages — стоп.
+## Инварианты и запреты на весь релиз
+- Никаких real-money charges, реальных customer email/Telegram сообщений, deletion пользователей или мутаций referral-данных (partners/orders/wallet/corrections) как способа проверки. Все read-back — только `read_query` и системные логи.
+- Никаких изменений в других Edge Functions, RLS, RPC, product/tariff/button settings, Storage, Auth settings, documents, telegram broadcast, CRM.
+- Одна миграция, две функции, один Publish. Никаких сопутствующих правок из истории/чужих веток.
+- Стоп-условия: несовпадение SHA после sync; guard в миграции срабатывает; deploy падает; появляется critical security finding в scope Publish; расхождение между assigned Publish SHA и `632038d41...` — в любом из случаев Execute прекращается, изменения не продолжаются, статус докладывается владельцу.
 
 Готов к EXECUTE по вашему подтверждению.
