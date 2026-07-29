@@ -146,6 +146,9 @@ verify_jwt = false
 # in-function content.edit/super-admin authorization check.
 verify_jwt = true
 
+[functions.asset-classifier]
+verify_jwt = true
+
 [functions.legal-og-image]
 # Public social-preview image. It exposes only metadata from published documents.
 verify_jwt = false

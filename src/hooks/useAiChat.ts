@@ -29,6 +29,11 @@ export interface AiChatMetadata {
   blocked?: boolean;
   analysis_blocked_reason?: string;
   images_present?: boolean;
+  scenario_code?: string;
+  decision?: "recommended" | "clarification" | "not_found";
+  legal_source_regnum?: string;
+  legal_source_revision?: string;
+  catalog_positions?: number;
 }
 
 export interface ChatScenario {
@@ -249,6 +254,77 @@ export function useAiChat() {
     }
   }, [messages, conversationId, toast, user?.id]);
 
+  const runAssetClassifier = useCallback(async (content: string) => {
+    const query = content.trim();
+    if (!query) return;
+
+    const userMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: query,
+      timestamp: new Date(),
+      metadata: {
+        scenario_code: "asset_classifier",
+        scenario_type: "deterministic_lookup",
+      },
+    };
+
+    setMessages((previous) => [...previous, userMsg]);
+    setIsLoading(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("asset-classifier", {
+        body: {
+          query,
+          conversation_id: conversationId,
+        },
+      });
+
+      if (error) {
+        const message = await normalizeEdgeFunctionErrorAsync(error, data);
+        toast({
+          title: "Не удалось определить шифр ОС",
+          description: message,
+          variant: "destructive",
+        });
+        throw new Error(message);
+      }
+
+      if (data?.conversation_id) {
+        setConversationId(data.conversation_id);
+        if (user?.id) {
+          localStorage.setItem(getStorageKey(user.id), data.conversation_id);
+        }
+      }
+
+      const metadata = data?.metadata as AiChatMetadata | undefined;
+      setMessages((previous) => [...previous, {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: data?.content || "Не удалось подобрать позицию.",
+        timestamp: new Date(),
+        metadata,
+      }]);
+      setActiveScenarioContext({
+        scenario_type: "deterministic_lookup",
+        launcher_title_snapshot: "Определение шифра ОС",
+      });
+    } catch (error) {
+      console.error("Asset classifier error:", error);
+      const message = error instanceof Error
+        ? error.message
+        : "Произошла ошибка при подборе шифра. Попробуйте ещё раз.";
+      setMessages((previous) => [...previous, {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: message,
+        timestamp: new Date(),
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [conversationId, toast, user?.id]);
+
   const clearChat = useCallback(() => {
     setMessages([INITIAL_MESSAGE]);
     setConversationId(null);
@@ -266,6 +342,7 @@ export function useAiChat() {
     scenariosLoading,
     activeScenarioContext,
     sendMessage,
+    runAssetClassifier,
     clearChat,
     fetchScenarios,
     loadConversation,

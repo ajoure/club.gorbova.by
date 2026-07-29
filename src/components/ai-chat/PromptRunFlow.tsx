@@ -1,12 +1,13 @@
 import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { Upload, X, FileText } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Upload, X, FileText, SearchCheck } from "lucide-react";
 import type { ChatScenario } from "@/hooks/useAiChat";
 
 interface PromptRunFlowProps {
   scenario: ChatScenario;
-  onSubmit: (files: File[]) => void;
+  onSubmit: (files: File[], text?: string) => void;
   onCancel: () => void;
   isLoading: boolean;
 }
@@ -16,6 +17,7 @@ const MAX_FILES = 5;
 
 export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: PromptRunFlowProps) {
   const [files, setFiles] = useState<File[]>([]);
+  const [text, setText] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = (fileList: FileList | null) => {
@@ -30,6 +32,7 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
   const removeFile = (idx: number) => setFiles(prev => prev.filter((_, i) => i !== idx));
 
   const isFileType = scenario.type === "file_analysis" || scenario.type === "document_review";
+  const isAssetClassifier = scenario.code === "asset_classifier";
 
   return (
     <GlassCard className="mx-4 mb-4">
@@ -81,12 +84,40 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
         </>
       )}
 
+      {isAssetClassifier && (
+        <div className="space-y-2">
+          <div className="flex items-start gap-2 rounded-lg bg-primary/5 border border-primary/10 px-3 py-2">
+            <SearchCheck className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+            <p className="text-[11px] text-muted-foreground">
+              Ответ формируется по фиксированному справочнику постановления № 161.
+              Нейросеть и свободная генерация текста не используются.
+            </p>
+          </div>
+          <Textarea
+            value={text}
+            onChange={(event) => setText(event.target.value.slice(0, 4_000))}
+            placeholder="Например: ноутбук Lenovo для работы бухгалтера, портативный персональный компьютер"
+            className="min-h-[96px] resize-y text-base sm:text-sm"
+            autoFocus
+          />
+          <div className="text-right text-[10px] text-muted-foreground">
+            {text.length} / 4000
+          </div>
+        </div>
+      )}
+
       <Button
         className="w-full mt-3"
-        disabled={isLoading || (isFileType && files.length === 0)}
-        onClick={() => onSubmit(files)}
+        disabled={
+          isLoading ||
+          (isFileType && files.length === 0) ||
+          (isAssetClassifier && text.trim().length < 3)
+        }
+        onClick={() => onSubmit(files, text)}
       >
-        {isLoading ? "Анализирую..." : "Анализировать"}
+        {isLoading
+          ? (isAssetClassifier ? "Подбираю..." : "Анализирую...")
+          : (isAssetClassifier ? "ОК" : "Анализировать")}
       </Button>
     </GlassCard>
   );

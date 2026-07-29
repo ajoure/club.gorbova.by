@@ -28,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useRbac } from "@/hooks/useRbac";
 import { useAiChat, type ChatScenario } from "@/hooks/useAiChat";
-import { useAiAccess } from "@/hooks/useAiAccess";
+import { isScenarioAllowed, useAiAccess } from "@/hooks/useAiAccess";
 import { toast } from "sonner";
 import { useAiUserPrompts, type AiUserPrompt } from "@/hooks/useAiUserPrompts";
 import { ChatMessageBubble } from "@/components/ai-chat/ChatMessage";
@@ -289,6 +289,11 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
   const { data: aiAccess } = useAiAccess();
   const chatAllowed = aiAccess ? aiAccess.allowed_modes.chat : true;
   const chatQuota = aiAccess?.quota_by_mode.chat.daily;
+  const assetClassifierAllowed = isScenarioAllowed(aiAccess, "asset_classifier");
+  const assetClassifierActive =
+    aiChat.activeScenarioContext?.scenario_type === "deterministic_lookup";
+  const messageInputAllowed =
+    chatAllowed || (assetClassifierActive && assetClassifierAllowed);
 
   // Scroll listener — track if user is near bottom
   useEffect(() => {
@@ -444,8 +449,12 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
     userSentMessageRef.current = true;
-    const promptId = aiChat.activeScenarioContext?.prompt_id;
-    await aiChat.sendMessage(inputValue, { promptId });
+    if (assetClassifierActive) {
+      await aiChat.runAssetClassifier(inputValue);
+    } else {
+      const promptId = aiChat.activeScenarioContext?.prompt_id;
+      await aiChat.sendMessage(inputValue, { promptId });
+    }
     setInputValue("");
   };
 
@@ -457,16 +466,26 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
   };
 
   const handleScenarioSelect = (scenario: ChatScenario) => {
-    if (scenario.type === "file_analysis" || scenario.type === "document_review") {
+    if (
+      scenario.type === "file_analysis" ||
+      scenario.type === "document_review" ||
+      scenario.code === "asset_classifier"
+    ) {
       setActiveScenario(scenario);
     } else {
       aiChat.sendMessage(`Используй сценарий: ${scenario.launcher_title}`, { promptId: scenario.id });
     }
   };
 
-  const handleScenarioSubmit = async (files: File[]) => {
+  const handleScenarioSubmit = async (files: File[], text?: string) => {
     if (!activeScenario) return;
     userSentMessageRef.current = true;
+
+    if (activeScenario.code === "asset_classifier") {
+      await aiChat.runAssetClassifier(text || "");
+      setActiveScenario(null);
+      return;
+    }
 
     // Adapt File[] to UploadedFile[] for shared pipeline
     const uploadedFiles: UploadedFile[] = await Promise.all(
@@ -748,7 +767,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
 
           <div className="border-t border-border/50 p-2 sm:p-4 bg-background/50 shrink-0 min-w-0">
             {/* Access banner (приоритет — chat запрещён) */}
-            {aiAccess && !chatAllowed && (
+            {aiAccess && !chatAllowed && !assetClassifierActive && (
               <div className="mb-3 rounded-lg border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs flex items-center justify-between gap-2">
                 <span className="text-amber-800 dark:text-amber-200">
                   {aiAccess.denial_reasons.chat_not_in_tier}
@@ -782,13 +801,19 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyPress}
-                placeholder={chatAllowed ? "Напиши свой вопрос..." : "Свободный чат недоступен на вашем тарифе. Используйте доступные сценарии."}
+                placeholder={
+                  assetClassifierActive
+                    ? "Опиши следующий объект для подбора шифра ОС..."
+                    : chatAllowed
+                      ? "Напиши свой вопрос..."
+                      : "Свободный чат недоступен на вашем тарифе. Используйте доступные сценарии."
+                }
                 className="flex-1 min-w-0 min-h-[44px] max-h-[120px] resize-none text-base sm:text-sm"
-                disabled={aiChat.isLoading || !chatAllowed}
+                disabled={aiChat.isLoading || !messageInputAllowed}
               />
               <Button
                 onClick={handleSendMessage}
-                disabled={!inputValue.trim() || aiChat.isLoading || !chatAllowed}
+                disabled={!inputValue.trim() || aiChat.isLoading || !messageInputAllowed}
                 size="icon"
                 className="h-11 w-11 shrink-0 self-end"
               >
@@ -797,7 +822,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
             </div>
             <div className="hidden sm:flex text-xs text-muted-foreground mt-2 items-center justify-center gap-3">
               <span>Нажми Enter для отправки, Shift+Enter для новой строки</span>
-              {chatAllowed && chatQuota && (
+              {chatAllowed && !assetClassifierActive && chatQuota && (
                 <span className="text-muted-foreground/80">
                   · Остаток чата сегодня: <b className="text-foreground">{chatQuota.remaining}</b> / {chatQuota.limit}
                 </span>
