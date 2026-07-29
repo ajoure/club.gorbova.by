@@ -55,7 +55,28 @@ interface Props {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ORDER_NUM_RE = /^(ord|rebill|inv|sub|pre)-/i;
 
-function pickContactName(p: any): string | null {
+interface DealContactRow {
+  full_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+}
+
+interface DealQueryRow {
+  id: string;
+  order_number: string | null;
+  status: string | null;
+  final_price: number | string;
+  currency: string;
+  created_at: string;
+  profile_id: string | null;
+  user_id: string | null;
+  purchase_snapshot: unknown;
+  tariff?: { name?: string | null } | null;
+  product?: { name?: string | null; category?: string | null } | null;
+  profile?: DealContactRow | null;
+}
+
+function pickContactName(p: DealContactRow | null | undefined): string | null {
   if (!p) return null;
   return p.full_name || p.email || p.phone || null;
 }
@@ -76,7 +97,7 @@ export function DealPickerDialog({
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<PickedDeal | null>(null);
 
-  const mapRow = useCallback((o: any): PickedDeal => {
+  const mapRow = useCallback((o: DealQueryRow): PickedDeal => {
     const snapshot = o.purchase_snapshot;
     const fkName = o.product?.name || o.tariff?.name || null;
     const category = o.product?.category || null;
@@ -170,10 +191,10 @@ export function DealPickerDialog({
       if (ordersRes.error) throw ordersRes.error;
       if (profilesRes.error) throw profilesRes.error;
 
-      let profileIds = (profilesRes.data ?? []).map((p: any) => p.id);
+      let profileIds = (profilesRes.data ?? []).map((p: { id: string }) => p.id);
       if (profileId) profileIds = profileIds.filter((id: string) => id === profileId);
 
-      let contactOrders: any[] = [];
+      let contactOrders: DealQueryRow[] = [];
       if (profileIds.length > 0) {
         let cq = supabase
           .from("orders_v2")
@@ -188,14 +209,16 @@ export function DealPickerDialog({
         contactOrders = data ?? [];
       }
 
-      const merged = new Map<string, any>();
-      for (const r of [...(ordersRes.data ?? []), ...contactOrders]) merged.set(r.id, r);
+      const merged = new Map<string, DealQueryRow>();
+      for (const r of [...(ordersRes.data ?? []), ...contactOrders]) {
+        merged.set(r.id, r as DealQueryRow);
+      }
       const list = Array.from(merged.values())
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .slice(0, 50);
       setResults(list.map(mapRow));
-    } catch (e: any) {
-      toast.error(`Ошибка поиска: ${e.message}`);
+    } catch (e: unknown) {
+      toast.error(`Ошибка поиска: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setLoading(false);
     }
@@ -225,20 +248,20 @@ export function DealPickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-[580px] overflow-hidden">
+      <DialogContent className="flex max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-[580px] flex-col overflow-hidden p-4 sm:p-6">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Layers className="h-5 w-5 text-indigo-500" />
-            {title ?? "Выбрать сделку"}
+          <DialogTitle className="flex min-w-0 items-center gap-2 pr-8">
+            <Layers className="h-5 w-5 shrink-0 text-indigo-500" />
+            <span className="min-w-0 break-words">{title ?? "Выбрать сделку"}</span>
           </DialogTitle>
           {helperText ? (
             <p className="text-sm text-muted-foreground mt-1">{helperText}</p>
           ) : null}
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
-          <div className="flex gap-2">
-            <div className="flex-1">
+        <div className="min-h-0 flex-1 space-y-4 py-3 sm:py-4">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+            <div className="min-w-0">
               <Label htmlFor="deal-picker-search" className="sr-only">Поиск</Label>
               <Input
                 id="deal-picker-search"
@@ -265,7 +288,7 @@ export function DealPickerDialog({
             </p>
           ) : null}
 
-          <ScrollArea className="h-[360px] w-full max-w-full border rounded-md overflow-hidden">
+          <ScrollArea className="h-[min(360px,calc(100dvh-15rem))] min-h-[180px] w-full max-w-full overflow-hidden rounded-md border">
             {results.length === 0 ? (
               <div className="p-4 text-center text-muted-foreground text-sm">
                 {loading ? "Поиск..." : emptyStateExtras ?? <p>Нет сделок</p>}
@@ -301,7 +324,7 @@ export function DealPickerDialog({
                           {/* Row 2: product, small non-bold */}
                           {order.product_name && (
                             <div className="min-w-0 max-w-full overflow-hidden text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                              <ProductCategoryBadge category={order.product_category as any} />
+                              <ProductCategoryBadge category={order.product_category} />
                               <span className="min-w-0 truncate">{order.product_name}</span>
                             </div>
                           )}
@@ -327,10 +350,11 @@ export function DealPickerDialog({
           </ScrollArea>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
-          {footerExtras}
+        <DialogFooter className="grid grid-cols-1 gap-2 sm:flex sm:space-x-0">
+          <Button className="w-full sm:w-auto" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
+          <div className="contents [&>*]:w-full sm:[&>*]:w-auto">{footerExtras}</div>
           <Button
+            className="w-full sm:w-auto"
             onClick={() => {
               if (selected) onPick(selected);
             }}

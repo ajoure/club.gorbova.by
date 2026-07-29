@@ -34,7 +34,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
   Landmark,
@@ -45,9 +44,11 @@ import {
   X,
   CreditCard,
   Building2,
+  Pencil,
 } from "lucide-react";
 import { CreateDealFromPaymentDialog } from "./CreateDealFromPaymentDialog";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { invokeAuthenticatedFunction } from "@/utils/invokeAuthenticatedFunction";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
 import {
   ContactPickerDialog,
@@ -100,6 +101,29 @@ interface CreatedPaymentSnapshot {
   hadOrder: boolean;
 }
 
+interface ManualPaymentResponse {
+  ok: boolean;
+  error?: string;
+  detail?: { order_currency?: string } | null;
+  payment_written?: boolean;
+  downstream_complete?: boolean;
+  downstream_retryable?: boolean;
+  idempotent_replay?: boolean;
+  payment_id?: string;
+  amount?: number;
+  currency?: string;
+  paid_at?: string;
+  profile_id?: string | null;
+  fulfillment?: {
+    state?: string;
+    error_code?: string;
+  };
+  crm_stage?: {
+    applied?: boolean;
+    reason?: string;
+  };
+}
+
 function newIdempotencyKey() {
   return `manual-payment:v3:${crypto.randomUUID()}`;
 }
@@ -110,6 +134,7 @@ export function ManualPaymentDialog({
   onSuccess,
 }: ManualPaymentDialogProps) {
   const [saving, setSaving] = useState(false);
+  const [retryPending, setRetryPending] = useState(false);
   const [provider, setProvider] = useState<Provider>("bank");
   const [amount, setAmount] = useState<string>("");
   const [currency, setCurrency] = useState<string>("BYN");
@@ -133,6 +158,7 @@ export function ManualPaymentDialog({
   useEffect(() => {
     if (open) {
       idempotencyKeyRef.current = newIdempotencyKey();
+      setRetryPending(false);
     }
   }, [open]);
 
@@ -168,6 +194,7 @@ export function ManualPaymentDialog({
     setComment("");
     setContact(null);
     setDeal(null);
+    setRetryPending(false);
     idempotencyKeyRef.current = newIdempotencyKey();
   };
 
@@ -216,33 +243,31 @@ export function ManualPaymentDialog({
     try {
       const paidAtIso = paidAt.toISOString();
 
-      const { data, error } = await supabase.functions.invoke(
+      const { data, error } = await invokeAuthenticatedFunction<ManualPaymentResponse>(
         "admin-create-manual-payment",
         {
-          body: {
-            provider,
-            amount: numericAmount,
-            currency,
-            paidAt: paidAtIso,
-            profileId: contact?.id ?? null,
-            orderId: deal?.id ?? null,
-            receivingBankName: provider === "bank" ? receivingBank.trim() : null,
-            comment: comment.trim() || null,
-            contactNameSnapshot: contact?.full_name || contact?.email || null,
-            orderNumberSnapshot: deal?.order_number || null,
-            idempotencyKey: idempotencyKeyRef.current,
-          },
+          provider,
+          amount: numericAmount,
+          currency,
+          paidAt: paidAtIso,
+          profileId: contact?.id ?? null,
+          orderId: deal?.id ?? null,
+          receivingBankName: provider === "bank" ? receivingBank.trim() : null,
+          comment: comment.trim() || null,
+          contactNameSnapshot: contact?.full_name || contact?.email || null,
+          orderNumberSnapshot: deal?.order_number || null,
+          idempotencyKey: idempotencyKeyRef.current,
         },
       );
 
       if (error || !data?.ok) {
         // Stage 3R.2: явные тексты для новых серверных кодов.
-        const code = String((data as any)?.error ?? "");
+        const code = String(data?.error ?? "");
         const localized: Record<string, string> = {
           order_currency_conflict:
             `Валюта платежа (${currency}) не совпадает с валютой сделки${
-              (data as any)?.detail?.order_currency
-                ? ` (${(data as any).detail.order_currency})`
+              data?.detail?.order_currency
+                ? ` (${data.detail.order_currency})`
                 : ""
             }.`,
           order_profile_conflict:
@@ -260,9 +285,26 @@ export function ManualPaymentDialog({
         return;
       }
 
-      if (data.idempotent_replay) {
+      const hasDownstreamWarning =
+        data.payment_written === true && data.downstream_complete === false;
+      if (hasDownstreamWarning) {
+        const code = data.fulfillment?.error_code;
+        const message = code
+          ? "Платёж создан, но последующая обработка не завершена."
+          : "Платёж создан, но сделка не перешла в настроенную успешную стадию.";
+        if (data.downstream_retryable) {
+          toast.warning(`${message} Нажмите «Повторить обработку»: повторный платёж не создастся.`);
+          setRetryPending(true);
+          onSuccess();
+          return;
+        }
+        toast.warning(`${message} Проверьте настройки кнопки оплаты.`);
+        setRetryPending(false);
+      }
+
+      if (!hasDownstreamWarning && data.idempotent_replay) {
         toast.info("Платёж уже был зарегистрирован ранее");
-      } else {
+      } else if (!hasDownstreamWarning) {
         toast.success("Ручной платёж создан");
       }
 
@@ -288,9 +330,9 @@ export function ManualPaymentDialog({
         setSnapshot(null);
         resetForm();
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Manual payment error:", e);
-      toast.error(`Ошибка: ${e.message}`);
+      toast.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
@@ -310,11 +352,11 @@ export function ManualPaymentDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[560px]">
+        <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-[560px] overflow-x-hidden overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Wallet className="h-5 w-5 text-primary" />
-              Добавить ручной платёж
+            <DialogTitle className="flex min-w-0 items-center gap-2 pr-8">
+              <Wallet className="h-5 w-5 shrink-0 text-primary" />
+              <span className="min-w-0 break-words">Добавить ручной платёж</span>
             </DialogTitle>
             <DialogDescription>
               Платёж будет создан напрямую в реестре платежей. Контакт и сделку
@@ -324,7 +366,7 @@ export function ManualPaymentDialog({
 
           <div className="space-y-4 py-2">
             {/* Provider + Date */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Провайдер</Label>
                 <Select
@@ -358,7 +400,7 @@ export function ManualPaymentDialog({
             </div>
 
             {/* Amount + Currency */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Сумма</Label>
                 <Input
@@ -415,9 +457,9 @@ export function ManualPaymentDialog({
                 </span>
               </Label>
               {contact ? (
-                <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-2">
-                  <UserIcon className="h-4 w-4 text-green-500" />
-                  <div className="flex-1 min-w-0">
+                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border bg-muted/30 p-2">
+                  <UserIcon className="h-4 w-4 shrink-0 text-green-500" />
+                  <div className="min-w-0">
                     <div className="truncate text-sm font-medium">
                       {contactDisplayName || "Контакт выбран"}
                     </div>
@@ -427,41 +469,47 @@ export function ManualPaymentDialog({
                       </div>
                     ) : null}
                   </div>
-                  {contact.user_id ? null : (
-                    <Badge variant="outline" className="text-[10px]">Ghost</Badge>
-                  )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setContactPickerOpen(true)}
-                  >
-                    Изменить
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      setContact(null);
-                      // Stage 3R.2: если контакт снимают, но сделка привязана к нему —
-                      // также снимаем сделку, чтобы не оставлять некорректное состояние.
-                      if (deal) setDeal(null);
-                    }}
-                    aria-label="Убрать контакт"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {contact.user_id ? null : (
+                      <Badge variant="outline" className="hidden text-[10px] sm:inline-flex">Ghost</Badge>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 w-9 px-0 sm:w-auto sm:px-3"
+                      onClick={() => setContactPickerOpen(true)}
+                      aria-label="Изменить контакт"
+                    >
+                      <Pencil className="h-4 w-4 sm:hidden" />
+                      <span className="hidden sm:inline">Изменить</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 w-9 px-0 sm:w-auto sm:px-3"
+                      onClick={() => {
+                        setContact(null);
+                        // Stage 3R.2: если контакт снимают, но сделка привязана к нему —
+                        // также снимаем сделку, чтобы не оставлять некорректное состояние.
+                        if (deal) setDeal(null);
+                      }}
+                      aria-label="Убрать контакт"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <Button
                   type="button"
                   variant="outline"
-                  className="w-full justify-start"
+                  className="w-full min-w-0 justify-start overflow-hidden"
                   onClick={() => setContactPickerOpen(true)}
                 >
                   <UserIcon className="mr-2 h-4 w-4" />
-                  Найти контакт по имени
+                  <span className="truncate">Найти контакт по имени</span>
                 </Button>
               )}
             </div>
@@ -476,9 +524,9 @@ export function ManualPaymentDialog({
                 </span>
               </Label>
               {deal ? (
-                <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-2">
-                  <Layers className="h-4 w-4 text-indigo-500" />
-                  <div className="flex-1 min-w-0">
+                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border bg-muted/30 p-2">
+                  <Layers className="h-4 w-4 shrink-0 text-indigo-500" />
+                  <div className="min-w-0">
                     <div className="truncate text-sm font-medium">
                       {deal.contact_name || "Без контакта"}
                     </div>
@@ -488,33 +536,39 @@ export function ManualPaymentDialog({
                       {deal.final_price} {deal.currency}
                     </div>
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDealPickerOpen(true)}
-                  >
-                    Изменить
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeal(null)}
-                    aria-label="Убрать сделку"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 w-9 px-0 sm:w-auto sm:px-3"
+                      onClick={() => setDealPickerOpen(true)}
+                      aria-label="Изменить сделку"
+                    >
+                      <Pencil className="h-4 w-4 sm:hidden" />
+                      <span className="hidden sm:inline">Изменить</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 w-9 px-0"
+                      onClick={() => setDeal(null)}
+                      aria-label="Убрать сделку"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <Button
                   type="button"
                   variant="outline"
-                  className="w-full justify-start"
+                  className="w-full min-w-0 justify-start overflow-hidden"
                   onClick={() => setDealPickerOpen(true)}
                 >
                   <Layers className="mr-2 h-4 w-4" />
-                  Найти существующую сделку
+                  <span className="truncate">Найти существующую сделку</span>
                 </Button>
               )}
             </div>
@@ -531,17 +585,18 @@ export function ManualPaymentDialog({
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:space-x-0">
             <Button
+              className="w-full sm:w-auto"
               variant="ghost"
               onClick={() => onOpenChange(false)}
               disabled={saving}
             >
               Отмена
             </Button>
-            <Button onClick={handleSubmit} disabled={saving || amountInvalid}>
+            <Button className="w-full sm:w-auto" onClick={handleSubmit} disabled={saving || amountInvalid}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Создать платёж
+              {retryPending ? "Повторить обработку" : "Создать платёж"}
             </Button>
           </DialogFooter>
         </DialogContent>
