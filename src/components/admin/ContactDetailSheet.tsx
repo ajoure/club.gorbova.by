@@ -1847,7 +1847,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
           </div>
         </SheetHeader>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex min-h-0 w-full min-w-0 flex-col overflow-hidden">
           {/* Scrollable tabs for mobile */}
           <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
             <TabsList className="mx-4 sm:mx-6 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
@@ -1925,7 +1925,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
           <TabsContent
             value="telegram"
             forceMount
-            className="m-0 flex-1 min-h-0 flex flex-col gap-2 px-4 sm:px-6 pb-0 pt-1 overflow-hidden data-[state=inactive]:hidden"
+            className="m-0 flex-1 min-h-0 min-w-0 flex flex-col gap-2 px-4 sm:px-6 pb-0 pt-1 overflow-hidden data-[state=inactive]:hidden"
           >
             {/* Telegram Profile Info Card */}
             {resolvedTelegramUserId ? (
@@ -2107,7 +2107,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
           <TabsContent
             value="feed"
             forceMount
-            className="m-0 px-3 sm:px-4 pb-3 sm:pb-4 flex-1 min-h-0 flex flex-col overflow-hidden data-[state=inactive]:hidden"
+            className="m-0 px-3 sm:px-4 pb-3 sm:pb-4 flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden data-[state=inactive]:hidden"
           >
             <ContactFeedTab contactId={contact.id} embedded />
           </TabsContent>
@@ -2117,10 +2117,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
               чтобы не было двойного скролла и pb-24 не съедал высоту. */}
           <div
             ref={scrollContainerRef}
-            className={cn("flex-1 overflow-y-auto", (activeTab === "telegram" || activeTab === "feed") && "hidden")}
+            className={cn("flex-1 min-w-0 overflow-x-hidden overflow-y-auto", (activeTab === "telegram" || activeTab === "feed") && "hidden")}
           >
-            <div className="px-4 sm:px-6 py-4 pb-24">
-            <TabsContent value="profile" className="m-0 space-y-4">
+            <div className="min-w-0 px-4 py-4 pb-24 sm:px-6">
+            <TabsContent value="profile" className="m-0 min-w-0 space-y-4">
               {contact.id && (
                 <ContactChannelsSection
                   profileId={contact.id}
@@ -2133,13 +2133,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                   <CardTitle className="text-sm text-muted-foreground">Контактные данные</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
                       <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
                       <span className="truncate">{contact.email || "—"}</span>
                     </div>
                     {contact.email && (
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
                         <Button
                           variant="outline"
                           size="sm"
@@ -2156,13 +2156,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                     )}
                   </div>
                   <Separator />
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
                       <Phone className="w-4 h-4 text-muted-foreground" />
                       <span>{contact.phone || "—"}</span>
                     </div>
                     {contact.phone && (
-                      <div className="flex items-center gap-1">
+                      <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
                         <CallButton phone={contact.phone} contactId={contact.id} />
                         <SmsButton phone={contact.phone} contactId={contact.id} />
                         <Button variant="ghost" size="sm" onClick={() => copyToClipboard(contact.phone!, "Телефон")}>
