@@ -28,6 +28,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
+import { invokeAuthenticatedFunction } from "@/utils/invokeAuthenticatedFunction";
 import {
   isDeliveryFinal,
   type ChannelState,
@@ -96,9 +97,9 @@ export function InvoiceDeliverySuccess({
   const pollTick = async (): Promise<DeliveryStatusResponse | null> => {
     if (!documentId) return null;
     try {
-      const { data, error } = await supabase.functions.invoke(
+      const { data, error } = await invokeAuthenticatedFunction(
         "invoice-delivery-status",
-        { body: { document_id: documentId } },
+        { document_id: documentId },
       );
       if (error) {
         setStatusError(error.message || "status_error");
@@ -152,9 +153,9 @@ export function InvoiceDeliverySuccess({
     if (!documentId) return;
     setRetrying(channel);
     try {
-      const { data, error } = await supabase.functions.invoke(
+      const { data, error } = await invokeAuthenticatedFunction(
         "invoice-delivery-retry",
-        { body: { document_id: documentId, channel } },
+        { document_id: documentId, channel },
       );
       if (error) {
         toast.error(error.message || "Не удалось повторить отправку");
@@ -178,9 +179,9 @@ export function InvoiceDeliverySuccess({
     setRetryingPdf(true);
     setPdfRetryError(null);
     try {
-      const { data, error } = await supabase.functions.invoke(
+      const { data, error } = await invokeAuthenticatedFunction(
         "invoice-pdf-retry",
-        { body: { order_id: orderId } },
+        { order_id: orderId },
       );
       if (error) {
         setPdfRetryError(error.message || "Не удалось сформировать PDF");
