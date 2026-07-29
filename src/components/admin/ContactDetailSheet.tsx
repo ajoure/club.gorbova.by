@@ -1086,10 +1086,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         p_tariff_id: tariffId,
       } as any);
       if (error) throw error;
+      if ((data as any)?.unblocked !== true) {
+        throw new Error("Сброс не подтвердил разблокировку повторной активации");
+      }
       return data;
     },
     onSuccess: () => {
-      toast.success("Пробный период сброшен — клиент может пройти триал снова");
+      toast.success("Пробный период сброшен — повторная активация разблокирована");
       queryClient.invalidateQueries({ queryKey: ["contact-trial-history", contact?.user_id] });
       refetchTrials();
     },

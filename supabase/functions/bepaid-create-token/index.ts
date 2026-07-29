@@ -60,6 +60,41 @@ function paymentFallbackResponse(error: string, details?: Record<string, unknown
   });
 }
 
+/**
+ * `grant-access-for-order` deliberately accepts only an admin or the exact
+ * service-role secret.  Calling it through `functions.invoke()` from this
+ * function can forward the visitor JWT instead, which is rejected with 401
+ * and leaves a paid 0-BYN trial without an entitlement.  Keep this internal
+ * call explicit so the canonical fulfiller always receives the service role.
+ */
+async function grantTrialAccessAsService(
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  orderId: string,
+): Promise<{ data: any; error: { message: string } | null }> {
+  try {
+    const response = await fetch(`${supabaseUrl}/functions/v1/grant-access-for-order`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${supabaseServiceKey}`,
+        apikey: supabaseServiceKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ orderId }),
+    });
+    const data = await response.json().catch(() => null);
+    return {
+      data,
+      error: response.ok ? null : { message: data?.error || `grant_http_${response.status}` },
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: { message: error instanceof Error ? error.message : String(error) },
+    };
+  }
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -440,9 +475,11 @@ Deno.serve(async (req) => {
             // Repair that exact order idempotently before telling the client that
             // the trial was already used.  This avoids a permanent "paid, but no
             // access" state and never creates a second trial order.
-            const repairGrant = await supabase.functions.invoke('grant-access-for-order', {
-              body: { orderId: priorTrial.id },
-            });
+            const repairGrant = await grantTrialAccessAsService(
+              supabaseUrl,
+              supabaseServiceKey,
+              priorTrial.id,
+            );
             const repairSucceeded = !repairGrant.error && repairGrant.data?.success === true;
 
             if (repairSucceeded) {
@@ -606,9 +643,11 @@ Deno.serve(async (req) => {
         // A paid demo order is valid only after the entitlement exists. Do not
         // redirect the visitor to a successful purchase page when fulfillment
         // failed; the retry path above repairs this same order idempotently.
-        const grantRes = await supabase.functions.invoke('grant-access-for-order', {
-          body: { orderId: ncOrder.id },
-        });
+        const grantRes = await grantTrialAccessAsService(
+          supabaseUrl,
+          supabaseServiceKey,
+          ncOrder.id,
+        );
         const grantSucceeded = !grantRes.error && grantRes.data?.success === true;
         if (!grantSucceeded) {
           console.error('[bepaid-create-token] DEMO-TRIAL-NO-CARD: grant-access failed', grantRes.error);
@@ -899,7 +938,7 @@ Deno.serve(async (req) => {
     if (productInfo.isV2 && userId) {
       const quote = await resolveReferralCheckoutDiscount({
         supabase, userId, productId, amountMinor: Math.round(paymentAmount * 100),
-        allowImmediateDiscount: isOneTime === true,
+        allowImmediateDiscount: Boolean(isOneTime),
       });
       paymentAmount = quote.finalAmountMinor / 100;
       legacyReferralMeta = referralDiscountMeta(quote);
