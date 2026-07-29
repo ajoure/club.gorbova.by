@@ -21,7 +21,13 @@ Deno.test("grant-access gateway permits secret-key calls only through custom aut
   assert(
     /\[functions\.grant-access-for-order\]\s+verify_jwt = false/m.test(config),
   );
-  assert(authSource.includes('token === serviceRoleKey'));
+  assert(authSource.includes("requestHasServiceRoleKey(req, serviceRoleKey)"));
   assert(authSource.includes('supabase.auth.getUser(token)'));
   assert(authSource.includes('enforceBranchPolicy'));
+});
+
+Deno.test("composable fulfillment gateway delegates exact service key auth to handler", () => {
+  assert(
+    /\[functions\.finalize-composable-purchase\]\s+verify_jwt = false/m.test(config),
+  );
 });
