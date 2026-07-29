@@ -1491,7 +1491,7 @@ ${amountLine}
                     <PopoverContent
                       align="start"
                       sideOffset={6}
-                      className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-0"
+                      className="flex w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
                     >
                       <div className="border-b p-2">
                         <Input
@@ -1504,7 +1504,8 @@ ${amountLine}
                         />
                       </div>
                       <div
-                        className="max-h-[min(18rem,calc(100dvh-14rem))] overflow-y-auto overscroll-contain p-1"
+                        className="min-h-0 max-h-[min(18rem,calc(100dvh-14rem))] touch-pan-y overflow-y-auto overscroll-contain p-1 [-webkit-overflow-scrolling:touch]"
+                        style={{ WebkitOverflowScrolling: "touch" }}
                         role="listbox"
                         aria-label="Список продуктов"
                       >
