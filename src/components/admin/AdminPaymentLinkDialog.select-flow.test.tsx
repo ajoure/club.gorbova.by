@@ -9,6 +9,7 @@ const fixture = vi.hoisted(() => {
   const products = [
     { id: "product-cb", name: "Ценный бухгалтер", is_active: true },
     { id: "product-club", name: "Gorbova Club", is_active: true },
+    { id: "product-cb-20", name: "Ценный бухгалтер | 1 ступень 2.0 | 20 поток", is_active: false },
   ];
   const tariffsByProduct: Record<string, Array<Record<string, unknown>>> = {
     "product-cb": [{ id: "tariff-cb", name: "BASE", product_id: "product-cb", is_active: true }],
@@ -122,6 +123,11 @@ function selectNativeByValue(accessibleName: string, value: string) {
   fireEvent.change(field as HTMLSelectElement, { target: { value } });
 }
 
+function selectProductByName(name: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: "Продукт" }));
+  fireEvent.click(screen.getByRole("option", { name }));
+}
+
 describe("AdminPaymentLinkDialog product selection", () => {
   beforeEach(() => {
     invoke.mockClear();
@@ -132,7 +138,7 @@ describe("AdminPaymentLinkDialog product selection", () => {
 
     expect(screen.getByText("Выберите продукт")).toBeInTheDocument();
 
-    selectNativeByValue("Продукт", "product-club");
+    selectProductByName("Gorbova Club");
 
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Продукт" })).toHaveTextContent("Gorbova Club"));
     expect(screen.getByText("Тариф")).toBeInTheDocument();
@@ -142,15 +148,33 @@ describe("AdminPaymentLinkDialog product selection", () => {
   it("switches product by clearing dependent tariff state without clearing the new product", async () => {
     renderDialog();
 
-    selectNativeByValue("Продукт", "product-cb");
+    selectProductByName("Ценный бухгалтер");
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Продукт" })).toHaveTextContent("Ценный бухгалтер"));
     selectNativeByValue("Тариф", "tariff-cb");
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Тариф" })).toHaveTextContent("BASE"));
 
-    selectNativeByValue("Продукт", "product-club");
+    selectProductByName("Gorbova Club");
 
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Продукт" })).toHaveTextContent("Gorbova Club"));
     expect(screen.getByText("Выберите тариф")).toBeInTheDocument();
     expect(screen.queryByText("BASE")).not.toBeInTheDocument();
+  });
+
+  it("finds inactive products by any words in the name", () => {
+    renderDialog();
+    fireEvent.click(screen.getByRole("combobox", { name: "Продукт" }));
+
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Ценный бухгалтер",
+      "Ценный бухгалтер | 1 ступень 2.0 | 20 потокНеактивен",
+      "Gorbova Club",
+    ]);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Поиск продукта" }), {
+      target: { value: "20 поток" },
+    });
+
+    expect(screen.getByRole("option", { name: "Ценный бухгалтер | 1 ступень 2.0 | 20 поток Неактивен" })).toBeInTheDocument();
+    expect(screen.getByText("Неактивен")).toBeInTheDocument();
   });
 });
