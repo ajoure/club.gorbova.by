@@ -17,8 +17,79 @@ const asObject = (value: unknown): Record<string, unknown> =>
     ? value as Record<string, unknown>
     : {};
 
-const grantFailed = (data: any, error: any) =>
-  !!error || data?.success === false || !!data?.error || data?.warning === "no_user_id";
+const grantFailed = (data: unknown, error: unknown) => {
+  const payload = asObject(data);
+  return !!error || payload.success === false || !!payload.error ||
+    payload.warning === "no_user_id";
+};
+
+export class GrantAccessInvokeError extends Error {
+  readonly status: number | null;
+  readonly code: string;
+
+  constructor(status: number | null, code: string) {
+    super(
+      `grant_access_invoke_failed:status=${status ?? "unknown"}:code=${code}`,
+    );
+    this.name = "GrantAccessInvokeError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+const safeGrantCode = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().slice(0, 160);
+  return /^[a-zA-Z0-9_.:-]+$/.test(normalized) ? normalized : null;
+};
+
+export async function readGrantInvokeFailure(
+  data: unknown,
+  error: unknown,
+): Promise<{ status: number | null; code: string }> {
+  const invokeError = asObject(error);
+  const response = invokeError.context instanceof Response
+    ? invokeError.context
+    : null;
+  let payload = asObject(data);
+  if (response) {
+    try {
+      payload = asObject(await response.clone().json());
+    } catch {
+      payload = asObject(data);
+    }
+  }
+  const code = safeGrantCode(payload.error) ??
+    safeGrantCode(payload.warning) ??
+    safeGrantCode(payload.reason) ??
+    safeGrantCode(payload.code) ??
+    safeGrantCode(invokeError.name) ??
+    "unknown";
+  return { status: response?.status ?? null, code };
+}
+
+interface FunctionInvoker {
+  functions: {
+    invoke(
+      name: string,
+      options: { body: Record<string, unknown> },
+    ): Promise<{ data: unknown; error: unknown }>;
+  };
+}
+
+async function grantAccessForOrder(
+  admin: FunctionInvoker,
+  orderId: string,
+): Promise<void> {
+  const { data, error } = await admin.functions.invoke(
+    "grant-access-for-order",
+    { body: { orderId } },
+  );
+  if (grantFailed(data, error)) {
+    const failure = await readGrantInvokeFailure(data, error);
+    throw new GrantAccessInvokeError(failure.status, failure.code);
+  }
+}
 
 /**
  * One fulfilment boundary for composable purchases.
@@ -45,14 +116,7 @@ export async function finalizeComposablePurchase(
   if (groupError) throw new Error(`order_group_lookup_failed:${groupError.message}`);
 
   if (!group) {
-    const { data, error } = await admin.functions.invoke("grant-access-for-order", {
-      body: { orderId: input.primaryOrderId },
-    });
-    if (grantFailed(data, error)) {
-      throw new Error(
-        `primary_access_grant_failed:${error?.message ?? data?.error ?? data?.warning ?? "unknown"}`,
-      );
-    }
+    await grantAccessForOrder(admin, input.primaryOrderId);
     return {
       ok: true,
       state: "not_grouped",
@@ -126,16 +190,7 @@ export async function finalizeComposablePurchase(
       fixedDateAlreadyReached;
 
     if (shouldGrantNow) {
-      const { data, error } = await admin.functions.invoke("grant-access-for-order", {
-        body: { orderId: item.order_id },
-      });
-      if (grantFailed(data, error)) {
-        throw new Error(
-          `access_grant_failed:${item.order_id}:${
-            error?.message ?? data?.error ?? data?.warning ?? "unknown"
-          }`,
-        );
-      }
+      await grantAccessForOrder(admin, item.order_id);
       results.push({
         order_id: item.order_id,
         role: item.role,

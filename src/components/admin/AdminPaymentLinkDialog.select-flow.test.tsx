@@ -177,4 +177,19 @@ describe("AdminPaymentLinkDialog product selection", () => {
     expect(screen.getByRole("option", { name: "Ценный бухгалтер | 1 ступень 2.0 | 20 поток Неактивен" })).toBeInTheDocument();
     expect(screen.getByText("Неактивен")).toBeInTheDocument();
   });
+
+  it("keeps the product list inside the modal scroll-lock branch", () => {
+    renderDialog();
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Продукт" }));
+
+    const dialog = screen
+      .getByRole("combobox", { name: "Продукт" })
+      .closest('[role="dialog"]');
+    const productList = screen.getByRole("listbox", { name: "Список продуктов" });
+    expect(dialog).toBeTruthy();
+    expect(dialog).toContainElement(productList);
+    expect(productList).toHaveClass("overflow-y-auto");
+    expect(productList).toHaveClass("touch-pan-y");
+  });
 });

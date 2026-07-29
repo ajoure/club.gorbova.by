@@ -1491,6 +1491,7 @@ ${amountLine}
                     <PopoverContent
                       align="start"
                       sideOffset={6}
+                      container={selectPortalContainer}
                       className="flex w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
                     >
                       <div className="border-b p-2">

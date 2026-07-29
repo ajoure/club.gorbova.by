@@ -64,11 +64,14 @@ verify_jwt = true
 [functions.rr-admin-deliver-test-webhook]
 verify_jwt = true
 
-# PATCH-GRANT-ACCESS-AUTHZ-V1 / SEC-B
-# Platform JWT wall in front of grant-access-for-order.
-# In-code auth guard (SEC-A) remains as defense-in-depth.
+# grant-access-for-order accepts both signed-in admin JWTs and service-to-service
+# secret keys. Supabase's gateway verify_jwt only accepts JWT-shaped keys and
+# rejects the newer sb_secret_* keys before the function can authenticate them.
+# The function therefore owns authentication: caller_auth.ts verifies a user JWT
+# through Auth or compares the exact managed service key, then applies a strict
+# per-branch authorization matrix before any order read/write.
 [functions.grant-access-for-order]
-verify_jwt = true
+verify_jwt = false
 
 # Historical acquiring recovery is an admin-only mutation. The platform JWT
 # wall is backed by an in-function has_role_v2(admin|super_admin) check.
