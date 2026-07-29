@@ -14,6 +14,7 @@
  * или { error }.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { getCallerUserId } from "../_shared/caller-user.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -33,19 +34,6 @@ function json(body: unknown, status = 200) {
   });
 }
 
-async function getCallerUserId(req: Request): Promise<string | null> {
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.slice(7).trim();
-  if (!token) return null;
-  const client = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: authHeader } },
-  });
-  const { data, error } = await client.auth.getUser(token);
-  if (error || !data?.user) return null;
-  return data.user.id;
-}
-
 async function isElevated(admin: any, userId: string): Promise<boolean> {
   for (const role of ["super_admin", "admin", "accountant"]) {
     const { data } = await admin.rpc("has_role_v2", {
@@ -62,7 +50,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   const authHeader = req.headers.get("Authorization") || "";
-  const userId = await getCallerUserId(req);
+  const userId = await getCallerUserId(req, "invoice-pdf-retry");
   if (!userId) return json({ error: "unauthorized" }, 401);
 
   const body = await req.json().catch(() => null) as
