@@ -1,31 +1,52 @@
-Отчет о выполнении: PLAN-ONLY / READ-ONLY финальная верификация спринта «Определение шифра ОС» (классификатор ОС). Мутаций не выполнялось: код, коммиты, миграции, deploy, Publish и данные не изменялись.
+План: безопасный UI-релиз exact SHA 70501358a11cfce3c1c521db34959e4efd98268d
 
-## 1) Managed HEAD/tree — PASS
-- `git rev-parse HEAD` = `b628306a34fd4191ef453e36a57f020b28966a37`, working tree чистое.
-- `609a4b64229d1b1a5fce420afc7e6815a54b663a` («feat: deterministic fixed-asset classifier (#211)») подтверждён как предок текущего HEAD.
-- Присутствуют: UI `src/components/ai-chat/PromptRunFlow.tsx` (ветка `asset_classifier`), `AiPageContent.tsx`, `src/hooks/useAiChat.ts`; движок `supabase/functions/_shared/asset-classifier/engine.ts` (315 строк) и справочник `catalog-161.ts` (14 535 строк); функция `supabase/functions/asset-classifier/index.ts` (116 строк).
-- Поиск по `fetch(`, `LOVABLE_API_KEY`, `openai`, `gateway` в движке и функции — 0 совпадений: LLM/сетевых вызовов нет, ответ детерминированный по справочнику № 161.
+Режим: PLAN-ONLY. Ничего не изменяю, не синхронизирую и не публикую.
 
-## 2) Production DB — PASS
-- `app_sections` активных с `code='ai_asset_classifier'` — ровно 1.
-- `ai_user_prompts` `code='asset_classifier'`, активный, не архивный, `is_visible_in_chat=true`, `launcher_order=30` — ровно 1.
-- `access_rules` активных `priority=30`, `grant_target_type='section_access'`, `target_ref=9d049abf-…` («AI: Определение шифра ОС») — ровно 2, на два разных продукта (`11c9f1b8-…`, `85046734-…`). Других активных правил с priority=30 нет.
+## 1. Подтверждение состояния
 
-## 3) Edge Functions — PASS
-- `asset-classifier`, `gorbova-ai-chat`, `ai-access-status` развёрнуты и отвечают (OPTIONS → 200).
-- `supabase/config.toml`: `[functions.asset-classifier] verify_jwt = true`.
-- Логи `asset-classifier`: только `booted`, ошибок/крашей нет. Логи `gorbova-ai-chat` по фильтру `error` — пусто.
+- Целевой exact SHA: `70501358a11cfce3c1c521db34959e4efd98268d`.
+- История: `70501358a` («Верификация прошла успешно») → `e7d4c5572` → `12d6f57ff` («fix: use dedicated product picker scroll area», PR #207).
+- Прочитанное состояние: managed HEAD уже `70501358a`, working tree clean.
+- UI-изменение PR #207 присутствует и не менялось после `12d6f57ff`: в `src/components/admin/AdminPaymentLinkDialog.tsx` импорт `ScrollArea` из `@/components/ui/scroll-area` (строка 29) и обёртка списка продуктов в `ScrollArea` (строки ~1501–1553); тест `AdminPaymentLinkDialog.select-flow.test.tsx` обновлён.
+- Разница `12d6f57ff → 70501358a` относится к `.lovable/plan.md` (артефакт read-only планирования) и не затрагивает продуктовый код.
 
-## 4) Anonymous / invalid JWT / CORS — PASS (реальная клиентская identity не использовалась)
-- `asset-classifier`: без заголовка → 401 `UNAUTHORIZED_NO_AUTH_HEADER`; с битым JWT → 401 `UNAUTHORIZED_INVALID_JWT_FORMAT`.
-- `gorbova-ai-chat` и `ai-access-status`: без auth → 401 «Необходима авторизация»; битый JWT → 401 «Неавторизованный доступ».
-- CORS: `Allow-Origin: *`, `Allow-Headers` включает `authorization, x-client-info, apikey, content-type` и полный набор `x-supabase-client-*` для первых двух функций; `ai-access-status` отдаёт базовый набор (достаточно для её вызовов, `GET, POST, OPTIONS`).
+## 2. Единственный scope релиза
 
-## 5) Опубликованный фронтенд — PASS (с оговоркой)
-- `https://gorbova.by` отдаёт `assets/index-CIJ-xqJT.js`; при обходе всех связанных чанков найден `assets/AiPageContent-DP1WH63d.js`, содержащий и `asset_classifier`, и текст «шифра ОС».
-- Оговорка: точный published SHA/version через доступные read-only каналы не экспонируется; подтверждение сделано по содержимому опубликованного бандла, а не по номеру сборки.
+В админском диалоге платёжной ссылки список продуктов прокручивается вертикально через `ScrollArea`. Ничего больше.
 
-## Вывод
-Все пять пунктов — PASS. Для этого спринта **не требуется** ни новый Publish, ни deploy функций, ни миграции: код в managed HEAD, конфигурация БД каноническая (1/1/2), функции развёрнуты с `verify_jwt=true`, авторизация и CORS ведут себя штатно, опубликованный бандл уже содержит сценарий «Определение шифра ОС».
+## 3. Действие синхронизации (точное)
 
-Ограничения: точная версия опубликованной сборки недоступна; runtime-проверка успешного ответа классификатора под реальной авторизованной клиентской учётной записью не выполнялась (по требованию), проверялись только негативные auth-сценарии.
+- Проверить, что managed HEAD ровно `70501358a11cfce3c1c521db34959e4efd98268d` и working tree clean.
+- Если совпадает — синхронизация не требуется, перейти к security gate.
+- Если managed отстаёт — выполнить только fast-forward sync ровно на `70501358a`. Без новых коммитов, cherry-pick, merge, правок файлов.
+- Любое расхождение (dirty tree, другой SHA у origin/main, force-push) → STOP до Publish.
+
+## 4. Security gate
+
+- `security--get_scan_results`; при отсутствии свежего результата — `security--run_security_scan`.
+- Publish только при отсутствии нерешённых critical findings. Новый critical → STOP.
+
+## 5. Publish
+
+- Ровно один frontend Publish SHA `70501358a`. Только UI-бандл, без прочих действий.
+
+## 6. Проверка уже опубликованного интерфейса
+
+На опубликованном URL (не Preview, не локальная сборка), после Publish:
+- Открыть админский диалог платёжной ссылки и раскрыть список продуктов.
+- Desktop (1440×900): список прокручивается вертикально внутри `ScrollArea`, диалог не растягивается, элементы читаемы и не обрезаны, выбор продукта работает.
+- Mobile (390×844): та же проверка; содержимое не выходит за края, не перекрывается, скролл внутри списка работает.
+- Два скриншота опубликованного результата — отдельно ПК и отдельно мобильный, с привязкой к URL, опубликованному SHA и viewport. Без персональных, платёжных данных и ключей в кадре; реальная платёжная ссылка не создаётся и не отправляется.
+- Если хотя бы одна проверка не проходит — не отчитываться об успехе; зафиксировать факт и остановиться.
+
+## 7. Явные исключения (выполнять запрещено)
+
+Миграции и любой SQL/DML, RLS, Auth, Storage, Edge Functions (deploy/config/удаление), платежи и платёжные ссылки в production, уведомления (email/Telegram), создание или изменение любых пользовательских/клиентских/заказных/контактных данных, изменение `config.toml`, ротация ключей и секретов, новые коммиты и правки кода.
+
+## 8. Definition of Done
+
+- Managed SHA подтверждён как `70501358a`.
+- Security gate пройден: нет нерешённых critical.
+- Выполнен ровно один frontend Publish; опубликованный SHA зафиксирован.
+- Два скриншота (ПК + мобильный) опубликованного интерфейса подтверждают вертикальный скролл списка продуктов.
+- Ни одной мутации вне frontend Publish.
