@@ -26,6 +26,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -1497,13 +1498,16 @@ ${amountLine}
                           className="h-9"
                         />
                       </div>
-                      <div
-                        id="admin-payment-product-listbox"
-                        className="min-h-0 max-h-72 touch-pan-y overflow-y-auto overscroll-contain p-1 [-webkit-overflow-scrolling:touch]"
-                        style={{ WebkitOverflowScrolling: "touch" }}
-                        role="listbox"
-                        aria-label="Список продуктов"
+                      <ScrollArea
+                        data-testid="admin-payment-product-scroll-area"
+                        className="h-[min(18rem,calc(100dvh-14rem))] max-h-[18rem]"
                       >
+                        <div
+                          id="admin-payment-product-listbox"
+                          className="min-h-full p-1"
+                          role="listbox"
+                          aria-label="Список продуктов"
+                        >
                         {paymentLinkProducts.length > 0 ? (
                           paymentLinkProducts.map((product) => {
                             const isSelected = product.id === selectedProductId;
@@ -1545,7 +1549,8 @@ ${amountLine}
                             Продукты не найдены
                           </p>
                         )}
-                      </div>
+                        </div>
+                      </ScrollArea>
                       </div>
                     )}
                   </div>
