@@ -178,7 +178,7 @@ describe("AdminPaymentLinkDialog product selection", () => {
     expect(screen.getByText("Неактивен")).toBeInTheDocument();
   });
 
-  it("keeps the product list inside the modal scroll-lock branch", () => {
+  it("renders the scrollable product list inline instead of in a clipped portal", () => {
     renderDialog();
 
     fireEvent.click(screen.getByRole("combobox", { name: "Продукт" }));
@@ -186,10 +186,16 @@ describe("AdminPaymentLinkDialog product selection", () => {
     const dialog = screen
       .getByRole("combobox", { name: "Продукт" })
       .closest('[role="dialog"]');
+    const picker = screen.getByTestId("admin-payment-product-picker");
     const productList = screen.getByRole("listbox", { name: "Список продуктов" });
     expect(dialog).toBeTruthy();
+    expect(dialog).toContainElement(picker);
     expect(dialog).toContainElement(productList);
+    expect(picker).toContainElement(productList);
     expect(productList).toHaveClass("overflow-y-auto");
     expect(productList).toHaveClass("touch-pan-y");
+    expect(
+      document.body.querySelector("[data-radix-popper-content-wrapper]"),
+    ).toBeNull();
   });
 });
