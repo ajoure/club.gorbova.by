@@ -12,6 +12,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { SiteRenderService } from "@/services/sitePages/SiteRenderService";
+import type { PublicPageResolution } from "@/services/sitePages/SiteRenderService";
 import { SitePageRenderer } from "@/components/site-renderer/SitePageRenderer";
 import { PublicPageFetchError } from "@/components/site-renderer/PublicPageFetchError";
 import { useSitePricingData } from "@/hooks/useSitePricingData";
@@ -26,7 +27,7 @@ import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
 import { buildSlotManifest, pageHasDynamicSlots } from "@/lib/siteSlotManifest";
 import { SiteSlotManifestContext } from "@/contexts/SiteSlotManifestContext";
-import type { SiteBlock } from "@/services/sitePages/types";
+import type { SiteBlock, SitePage } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
 
 
@@ -153,19 +154,41 @@ function collectLeadOptions(
 }
 
 
-export default function SitePageBySlug() {
+interface SitePageBySlugProps {
+  /** DomainRouter already resolved a page for a custom-domain home route. */
+  resolvedPage?: SitePage | null;
+}
+
+export default function SitePageBySlug({ resolvedPage = null }: SitePageBySlugProps) {
   const { slug } = useParams<{ slug: string }>();
   const location = useLocation();
   const navigate = useNavigate();
   const hashScrolled = useRef(false);
 
-  const { data: resolution, isLoading, refetch } = useQuery({
-    queryKey: ["site-page-public", slug],
-    queryFn: () => SiteRenderService.resolveBySlugSafe(slug!),
-    enabled: !!slug,
+  const { data: queriedResolution, isLoading: queryLoading, refetch } = useQuery<PublicPageResolution>({
+    queryKey: ["site-page-public", window.location.hostname, window.location.pathname, slug],
+    queryFn: async () => {
+      const hostname = window.location.hostname;
+      const isAppHost = hostname === "localhost" || hostname === "127.0.0.1" ||
+        hostname === "club.gorbova.by" || hostname === "gorbova.by" ||
+        hostname.includes(".lovable.app") || hostname.includes(".lovableproject.com");
+      if (!isAppHost) {
+        const domainResolution = await SiteRenderService.resolveByDomainAndPathSafe(
+          hostname,
+          window.location.pathname,
+        );
+        if (domainResolution.status !== "not-found") return domainResolution;
+      }
+      return SiteRenderService.resolveBySlugSafe(slug!);
+    },
+    enabled: !resolvedPage && !!slug,
     retry: (failureCount, _err) => failureCount < 2,
   });
 
+  const resolution: PublicPageResolution | undefined = resolvedPage
+    ? { status: "ok", page: resolvedPage }
+    : queriedResolution;
+  const isLoading = !resolvedPage && queryLoading;
   const page = resolution?.status === "ok" ? resolution.page : null;
   const blocks = (page?.blocks as unknown as SiteBlock[]) || [];
   const { pricingData } = useSitePricingData(blocks);
