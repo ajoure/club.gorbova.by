@@ -187,13 +187,16 @@ describe("AdminPaymentLinkDialog product selection", () => {
       .getByRole("combobox", { name: "Продукт" })
       .closest('[role="dialog"]');
     const picker = screen.getByTestId("admin-payment-product-picker");
+    const scrollArea = screen.getByTestId("admin-payment-product-scroll-area");
     const productList = screen.getByRole("listbox", { name: "Список продуктов" });
     expect(dialog).toBeTruthy();
     expect(dialog).toContainElement(picker);
     expect(dialog).toContainElement(productList);
     expect(picker).toContainElement(productList);
-    expect(productList).toHaveClass("overflow-y-auto");
-    expect(productList).toHaveClass("touch-pan-y");
+    expect(picker).toContainElement(scrollArea);
+    expect(scrollArea).toContainElement(productList);
+    expect(scrollArea).toHaveClass("relative", "overflow-hidden");
+    expect(scrollArea).toHaveClass("h-[min(18rem,calc(100dvh-14rem))]");
     expect(
       document.body.querySelector("[data-radix-popper-content-wrapper]"),
     ).toBeNull();
