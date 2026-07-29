@@ -8,7 +8,8 @@
  *    (не JWT-пользователю);
  *  • addon_offer_ids идут в canonical resolveComposableCheckout;
  *  • PDF-счёт формируется через canonical-document-generate-strict;
- *  • автоматическая рассылка отключена — админ решает, отправлять ли.
+ *  • после успешной генерации запускается каноническая доставка на email и
+ *    Telegram; итог каналов читается через invoice-delivery-status.
  *
  * Никаких новых таблиц: пишем в orders_v2 + order_groups + order_group_items
  * через shared materializeComposableOrderGroup.
@@ -344,6 +345,84 @@ Deno.serve(async (req) => {
     }
   } catch (e) {
     console.error("[admin-invoice-checkout-issue] strict exception", e);
+  }
+
+  // Запускаем ту же каноническую доставку, что и в пользовательском
+  // invoice-checkout-issue. Раньше административный сценарий возвращал
+  // document_id сразу после генерации PDF, но canonical-document-send вообще
+  // не вызывал — UI закономерно завершал polling статусом
+  // delivery_not_started для обоих каналов.
+  if (documentId) {
+    const sendPromise = (async () => {
+      try {
+        const sendResp = await fetch(
+          `${url}/functions/v1/canonical-document-send`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: authHeader,
+              apikey: anon,
+            },
+            body: JSON.stringify({
+              document_id: documentId,
+              send_email: true,
+              send_telegram: true,
+            }),
+          },
+        );
+        const sendJson = await sendResp.json().catch(() => ({}));
+        await admin.from("audit_logs").insert({
+          actor_user_id: actor.id,
+          actor_type: "user",
+          action: sendResp.ok
+            ? "admin_invoice_checkout.document_send_completed"
+            : "admin_invoice_checkout.document_send_failed",
+          entity_type: "ai_generated_document",
+          entity_id: documentId,
+          meta: {
+            order_id: newOrder.id,
+            document_id: documentId,
+            status: sendResp.status,
+            ...(sendResp.ok
+              ? { results: sendJson?.results ?? null }
+              : { response: sendJson }),
+          },
+        });
+        if (!sendResp.ok) {
+          console.error(
+            "[admin-invoice-checkout-issue] send failed",
+            sendResp.status,
+            sendJson,
+          );
+        }
+      } catch (e) {
+        console.error("[admin-invoice-checkout-issue] send exception", e);
+        await admin.from("audit_logs").insert({
+          actor_user_id: actor.id,
+          actor_type: "user",
+          action: "admin_invoice_checkout.document_send_failed",
+          entity_type: "ai_generated_document",
+          entity_id: documentId,
+          meta: {
+            order_id: newOrder.id,
+            document_id: documentId,
+            error: e instanceof Error ? e.message : String(e),
+          },
+        });
+      }
+    })();
+
+    // Не держим UI открытым во время SMTP/Telegram I/O, но гарантируем, что
+    // Edge Runtime не завершит обработчик до окончания фоновой доставки.
+    // Локальный fallback ждёт promise и делает поведение тестируемым.
+    // @ts-ignore — EdgeRuntime предоставляется Supabase Edge Runtime.
+    if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any)?.waitUntil) {
+      // @ts-ignore
+      (EdgeRuntime as any).waitUntil(sendPromise);
+    } else {
+      await sendPromise;
+    }
   }
 
   return json({
