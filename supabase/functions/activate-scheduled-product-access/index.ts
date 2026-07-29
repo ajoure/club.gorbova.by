@@ -36,8 +36,8 @@ Deno.serve(async (req) => {
     if (authError || !authData.user) return respond(401, { error: "unauthorized" });
     actorUserId = authData.user.id;
     const [{ data: isAdmin }, { data: isSuperAdmin }] = await Promise.all([
-      admin.rpc("has_role_v2", { _user_id: actorUserId, _role: "admin" }),
-      admin.rpc("has_role_v2", { _user_id: actorUserId, _role: "super_admin" }),
+      admin.rpc("has_role_v2", { _user_id: actorUserId, _role_code: "admin" }),
+      admin.rpc("has_role_v2", { _user_id: actorUserId, _role_code: "super_admin" }),
     ]);
     if (!isAdmin && !isSuperAdmin) return respond(403, { error: "forbidden" });
   }

@@ -38,7 +38,7 @@ async function isElevated(admin: any, userId: string): Promise<boolean> {
   for (const role of ["super_admin", "admin", "accountant"]) {
     const { data } = await admin.rpc("has_role_v2", {
       _user_id: userId,
-      _role: role,
+      _role_code: role,
     });
     if (data === true) return true;
   }
