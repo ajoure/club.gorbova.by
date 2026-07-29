@@ -35,6 +35,9 @@ Deno.test("fulfillment result is returned to admin UI", () => {
 
 Deno.test("downstream failure never hides an already written payment behind HTTP 500", () => {
   assert(source.includes('error_code: "manual_payment_fulfillment_failed"'));
+  assert(source.includes('downstream_step: "grant-access-for-order"'));
+  assert(source.includes("grant_status: error.status"));
+  assert(source.includes("grant_code: error.code"));
   assert(source.includes("downstreamRetryable = true"));
   assert(
     !source.includes('return bad(500, "manual_payment_fulfillment_failed"'),

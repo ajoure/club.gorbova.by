@@ -7,7 +7,10 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
-import { finalizeComposablePurchase } from "../_shared/finalize-composable-purchase.ts";
+import {
+  finalizeComposablePurchase,
+  GrantAccessInvokeError,
+} from "../_shared/finalize-composable-purchase.ts";
 import { applyCrmStageOnTerminal } from "../_shared/crm-routing.ts";
 
 interface Body {
@@ -252,6 +255,13 @@ Deno.serve(async (req) => {
         });
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
+        const grantFailure = error instanceof GrantAccessInvokeError
+          ? {
+            downstream_step: "grant-access-for-order",
+            grant_status: error.status,
+            grant_code: error.code,
+          }
+          : {};
         await admin.from("audit_logs").insert({
           actor_user_id: actorUserId,
           action: "admin_manual_payment_fulfillment_failed",
@@ -261,11 +271,13 @@ Deno.serve(async (req) => {
             request_id: requestId,
             payment_id: rpcResult.payment_id,
             detail,
+            ...grantFailure,
           },
         });
         fulfillment = {
           state: "failed",
           error_code: "manual_payment_fulfillment_failed",
+          ...grantFailure,
         };
         downstreamComplete = false;
         downstreamRetryable = true;
