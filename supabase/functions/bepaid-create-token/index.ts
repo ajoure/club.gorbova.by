@@ -410,7 +410,11 @@ Deno.serve(async (req) => {
           user_id: userId,
         });
 
-        // Repeat-guard: prior trial order for the same product+tariff by this user/email
+        // Repeat-guard: prior trial order for the same product+tariff by the
+        // same authenticated identity.  Email is deliberately only a fallback
+        // for legacy calls without userId: an archived/deleted contact can be
+        // recreated with the same email but a different auth user, and granting
+        // the old order in that case can never give access to the new account.
         // (subscriptions_v2-based guard above does NOT fire for no-card trials,
         // since the no-card path never creates a subscriptions_v2 row.)
         {
@@ -425,7 +429,7 @@ Deno.serve(async (req) => {
             priorQuery = priorQuery.eq('tariff_id', trialOfferRow.tariff_id);
           }
           if (userId) {
-            priorQuery = priorQuery.or(`user_id.eq.${userId},customer_email.eq.${emailLower}`);
+            priorQuery = priorQuery.eq('user_id', userId);
           } else {
             priorQuery = priorQuery.eq('customer_email', emailLower);
           }
@@ -468,7 +472,7 @@ Deno.serve(async (req) => {
               });
             }
 
-            console.log('[bepaid-create-token] DEMO-TRIAL-NO-CARD: alreadyUsedTrial', {
+            console.error('[bepaid-create-token] DEMO-TRIAL-NO-CARD: prior trial repair failed', {
               product_id: productId,
               tariff_id: trialOfferRow.tariff_id,
               prior_order_id: priorTrial.id,
@@ -477,7 +481,7 @@ Deno.serve(async (req) => {
               actor_type: 'system',
               actor_user_id: null,
               actor_label: 'bepaid-create-token',
-              action: 'trial.no_card.already_used',
+              action: 'trial.no_card.repair_failed',
               target_user_id: userId,
               meta: {
                 product_id: productId,
@@ -490,8 +494,8 @@ Deno.serve(async (req) => {
             });
             return new Response(JSON.stringify({
               success: false,
-              error: 'Пробный период для этого тарифа уже использован',
-              alreadyUsedTrial: true,
+              error: 'Не удалось восстановить ранее активированный демо-доступ. Обратитесь в поддержку: доступ будет проверен без повторной оплаты.',
+              repairFailedTrial: true,
             }), {
               status: 200,
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
