@@ -291,6 +291,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
   const chatQuota = aiAccess?.quota_by_mode.chat.daily;
   const assetClassifierAllowed = isScenarioAllowed(aiAccess, "asset_classifier");
   const assetClassifierActive =
+    aiChat.activeScenarioContext?.scenario_type === "asset_classifier_hybrid" ||
     aiChat.activeScenarioContext?.scenario_type === "deterministic_lookup";
   const messageInputAllowed =
     chatAllowed || (assetClassifierActive && assetClassifierAllowed);

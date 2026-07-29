@@ -1,9 +1,17 @@
 import { ASSET_CLASSIFIER_CATALOG } from "./catalog-161.ts";
+import {
+  identifyObjectLocally,
+  type IdentifiedAssetObject,
+  type IdentificationConfidence,
+} from "./object-identifier.ts";
 
 export const ASSET_CLASSIFIER_SCENARIO_CODE = "asset_classifier";
 export const ASSET_CLASSIFIER_SECTION_CODE = "ai_asset_classifier";
+export const ASSET_CLASSIFIER_SCENARIO_TYPE = "asset_classifier_hybrid";
+export const ASSET_CLASSIFIER_SOURCE_SLUG =
+  "postanovlenie-minekonomiki-161-2011";
 export const ASSET_CLASSIFIER_SOURCE_URL =
-  "https://etalonline.by/document/?regnum=w21124359";
+  `https://club.gorbova.by/knowledge/laws/${ASSET_CLASSIFIER_SOURCE_SLUG}`;
 
 const STOP_WORDS = new Set([
   "для", "или", "как", "это", "эта", "этот", "его", "ее", "при", "под", "над",
@@ -12,33 +20,19 @@ const STOP_WORDS = new Set([
   "используется", "используем", "применяется", "предприятие", "организация",
 ]);
 
+const GENERIC_WORDS = new Set([
+  "оборудование", "устройство", "система", "аппарат", "машина", "комплекс",
+  "средство", "техника", "прочее", "общий", "применение",
+]);
+
 const SUFFIXES = [
   "иями", "ями", "ами", "ого", "ему", "ому", "ыми", "ими", "ая", "яя", "ое",
   "ее", "ые", "ие", "ый", "ий", "ой", "ую", "юю", "ам", "ям", "ах", "ях",
-  "ов", "ев", "ом", "ем", "ам", "ям", "ы", "и", "а", "я", "у", "ю", "е", "о",
+  "ов", "ев", "ом", "ем", "ы", "и", "а", "я", "у", "ю", "е", "о",
 ];
 
-const SYNONYMS: Record<string, string[]> = {
-  ноутбук: ["компьютер", "портативный", "персональный"],
-  laptop: ["ноутбук", "компьютер", "портативный"],
-  компьютер: ["вычислительный", "персональный", "системный"],
-  пк: ["компьютер", "персональный"],
-  сервер: ["вычислительный", "сервер"],
-  принтер: ["печатающий", "печати", "принтер"],
-  мфу: ["многофункциональный", "копировальный", "печатающий"],
-  сканер: ["сканирующий", "сканер"],
-  телефон: ["телефонный", "телефон", "связи"],
-  смартфон: ["телефон", "мобильный", "сотовый"],
-  кондиционер: ["кондиционирования", "кондиционер", "климатический"],
-  автомобиль: ["автомобиль", "легковой", "грузовой", "транспортный"],
-  авто: ["автомобиль", "транспортный"],
-  камера: ["видеокамера", "камера", "видеонаблюдения"],
-  видеорегистратор: ["видеорегистратор", "видеозаписи"],
-  мебель: ["мебель", "стол", "шкаф", "кресло"],
-  стол: ["стол", "мебель"],
-  кресло: ["кресло", "мебель"],
-  шкаф: ["шкаф", "мебель"],
-};
+export type CandidateDecision = "recommended" | "possible" | "weak";
+export type CandidateMatchType = "explicit_code" | "verified_object_rule" | "catalog_text";
 
 export interface AssetClassifierCandidate {
   code: string;
@@ -49,22 +43,144 @@ export interface AssetClassifierCandidate {
   score: number;
   matchedTerms: string[];
   sourceRow: number;
+  decision: CandidateDecision;
+  matchType: CandidateMatchType;
+  argumentsFor: string[];
+  argumentsAgainst: string[];
 }
 
 export interface AssetClassifierResult {
   decision: "recommended" | "clarification" | "not_found";
+  confidence: IdentificationConfidence;
   query: string;
+  identifiedObject: IdentifiedAssetObject;
   candidates: AssetClassifierCandidate[];
+  clarifyingQuestions: string[];
   content: string;
   metadata: {
     scenario_code: typeof ASSET_CLASSIFIER_SCENARIO_CODE;
-    scenario_type: "deterministic_lookup";
+    scenario_type: typeof ASSET_CLASSIFIER_SCENARIO_TYPE;
     legal_source_regnum: string;
     legal_source_revision: string;
+    legal_source_slug: string;
+    legal_source_url: string;
     catalog_positions: number;
     decision: AssetClassifierResult["decision"];
+    confidence: IdentificationConfidence;
   };
 }
+
+interface VerifiedObjectRule {
+  id: string;
+  matcher: RegExp;
+  preferredCodes: string[];
+  reason: string;
+  clarifyingQuestions?: string[];
+  forceClarification?: boolean;
+}
+
+const VERIFIED_OBJECT_RULES: VerifiedObjectRule[] = [
+  {
+    id: "mobile_phone",
+    matcher: /(телефон сотов|сотовый телефон|мобильный телефон|смартфон|iphone|айфон)/i,
+    preferredCodes: ["70034"],
+    reason: "Объект распознан как конечное сотовое телефонное устройство.",
+  },
+  {
+    id: "landline_phone",
+    matcher: /(аппарат телефонный общего применения|телефонный аппарат|стационарный телефон|проводной телефон|радиотелефон)/i,
+    preferredCodes: ["70040"],
+    reason: "Объект распознан как телефонный аппарат общего применения, а не сотовый телефон.",
+  },
+  {
+    id: "laptop",
+    matcher: /(ноутбук|лэптоп|laptop|macbook|портативный персональный компьютер)/i,
+    preferredCodes: ["48009"],
+    reason: "Объект распознан как портативный персональный компьютер.",
+  },
+  {
+    id: "tablet",
+    matcher: /(планшетный компьютер|планшет|ipad)/i,
+    preferredCodes: ["48016"],
+    reason: "Объект распознан как самостоятельный планшетный компьютер.",
+  },
+  {
+    id: "server",
+    matcher: /(сервер центра обработки данных|серверный программно технический комплекс|комплексы серверов|серверный кластер|дисковый массив)/i,
+    preferredCodes: ["48012"],
+    reason: "Объект распознан как серверный или программно-технический комплекс.",
+  },
+  {
+    id: "computer_peripheral",
+    matcher: /(периферийное устройство|принтер|мфу|многофункциональное устройство|сканер|плоттер|монитор|источник бесперебойного питания|ибп)/i,
+    preferredCodes: ["48003"],
+    reason: "Объект распознан как периферийное устройство вычислительного комплекса.",
+  },
+  {
+    id: "fax",
+    matcher: /(аппарат факсимильный|факсимильный аппарат|факс)/i,
+    preferredCodes: ["70033"],
+    reason: "Объект распознан как факсимильный аппарат.",
+  },
+  {
+    id: "household_air_conditioner",
+    matcher: /(кондиционер бытовой|бытовой кондиционер|офисный кондиционер|домашний кондиционер|сплит система)/i,
+    preferredCodes: ["70041"],
+    reason: "Объект распознан как бытовой кондиционер помещения.",
+  },
+  {
+    id: "refrigeration",
+    matcher: /(холодильное оборудование|холодильник|морозильник|морозильная камера)/i,
+    preferredCodes: ["70102", "45800"],
+    reason: "В классификаторе отдельно предусмотрены бытовое и промышленное холодильное оборудование.",
+    clarifyingQuestions: ["Это бытовой холодильник/морозильник или промышленное холодильное оборудование?"],
+    forceClarification: true,
+  },
+  {
+    id: "laptop_battery",
+    matcher: /(аккумулятор|батарея).*(ноутбук|лэптоп|планшет|портативн)|(ноутбук|лэптоп|планшет|портативн).*(аккумулятор|батарея)/i,
+    preferredCodes: ["70043"],
+    reason: "Объект распознан как аккумулятор для портативной вычислительной техники.",
+  },
+  {
+    id: "ups_battery",
+    matcher: /(аккумулятор|батарея).*(ибп|источник бесперебойного питания)|(ибп|источник бесперебойного питания).*(аккумулятор|батарея)/i,
+    preferredCodes: ["70042"],
+    reason: "Объект распознан как аккумулятор для источника бесперебойного питания.",
+  },
+  {
+    id: "microwave_vacuum",
+    matcher: /(микроволновая печь|микроволновка|пылесос)/i,
+    preferredCodes: ["70100"],
+    reason: "Для объекта есть прямая бытовая позиция классификатора.",
+  },
+  {
+    id: "dishwasher_washer",
+    matcher: /(посудомоечная машина|стиральная машина)/i,
+    preferredCodes: ["70101"],
+    reason: "Для объекта есть прямая бытовая позиция классификатора.",
+  },
+  {
+    id: "video_equipment",
+    matcher: /(видеокамера|видеомагнитофон|dvd плеер|dvd рекордер|телевизор|видеорегистратор)/i,
+    preferredCodes: ["70105"],
+    reason: "Для объекта есть прямая позиция видеооборудования классификатора.",
+  },
+  {
+    id: "photo_camera",
+    matcher: /(фотоаппарат|фотокамера)/i,
+    preferredCodes: ["70106"],
+    reason: "Объект распознан как фотоаппарат.",
+  },
+  {
+    id: "network_equipment",
+    matcher: /(маршрутизатор|роутер|сетевой коммутатор|коммутатор сети передачи данных)/i,
+    preferredCodes: ["48015", "48013"],
+    reason: "Для сетевого оборудования код зависит от производственного или малого офисного исполнения.",
+    clarifyingQuestions: ["Оборудование предназначено для малого офиса или производственной сети передачи данных?"],
+    forceClarification: true,
+  },
+];
 
 function normalize(value: string): string {
   return value
@@ -83,12 +199,29 @@ function stem(value: string): string {
   return suffix ? value.slice(0, -suffix.length) : value;
 }
 
-function queryTokens(query: string): string[] {
+function tokenize(value: string): string[] {
   return Array.from(new Set(
-    normalize(query)
+    normalize(value)
       .split(" ")
-      .filter((token) => token.length >= 2 && !STOP_WORDS.has(token) && !/^\d{1,4}$/.test(token)),
+      .filter((token) =>
+        token.length >= 3 &&
+        !STOP_WORDS.has(token) &&
+        !GENERIC_WORDS.has(token) &&
+        !/^\d{1,4}$/.test(token)
+      ),
   ));
+}
+
+function semanticText(query: string, object: IdentifiedAssetObject): string {
+  return normalize([
+    query,
+    object.normalizedName,
+    object.objectType,
+    ...object.possibleSubtypes,
+    object.primaryFunction,
+    ...object.searchPhrases,
+    ...object.positiveMarkers,
+  ].join(" "));
 }
 
 const footnoteByMarker = new Map(
@@ -97,67 +230,37 @@ const footnoteByMarker = new Map(
 
 const searchableItems = ASSET_CLASSIFIER_CATALOG.items.map((item) => {
   const hierarchy = ASSET_CLASSIFIER_CATALOG.hierarchy
-    .filter((node) =>
-      node.sourceRow < item.sourceRow &&
-      item.code.startsWith(node.code)
-    )
+    .filter((node) => node.sourceRow < item.sourceRow && item.code.startsWith(node.code))
     .sort((a, b) => a.code.length - b.code.length || b.sourceRow - a.sourceRow)
     .filter((node, index, all) =>
       all.findIndex((candidate) => candidate.code.length === node.code.length) === index
     )
     .map((node) => node.name);
 
-  const nameNormalized = normalize(item.name);
-  const hierarchyNormalized = normalize(hierarchy.join(" "));
   return {
     item,
     hierarchy,
-    nameNormalized,
-    nameWords: nameNormalized.split(" "),
-    hierarchyNormalized,
-    hierarchyWords: hierarchyNormalized.split(" "),
+    nameNormalized: normalize(item.name),
+    nameTokens: tokenize(item.name),
+    hierarchyNormalized: normalize(hierarchy.join(" ")),
   };
 });
 
-function scoreItem(
-  item: (typeof searchableItems)[number],
-  originalTokens: string[],
-): { score: number; matchedTerms: string[] } {
-  let score = 0;
-  const matchedTerms = new Set<string>();
-
-  for (const original of originalTokens) {
-    const expanded = Array.from(new Set([original, ...(SYNONYMS[original] ?? [])]));
-    let bestForToken = 0;
-
-    for (const term of expanded) {
-      const termStem = stem(term);
-      let termScore = 0;
-
-      if (item.nameWords.includes(term)) termScore = Math.max(termScore, 14);
-      if (item.nameWords.some((word) => stem(word) === termStem)) termScore = Math.max(termScore, 11);
-      if (term.length >= 4 && item.nameNormalized.includes(term)) termScore = Math.max(termScore, 8);
-      if (item.hierarchyWords.includes(term)) termScore = Math.max(termScore, 5);
-      if (item.hierarchyWords.some((word) => stem(word) === termStem)) termScore = Math.max(termScore, 4);
-      if (term.length >= 4 && item.hierarchyNormalized.includes(term)) termScore = Math.max(termScore, 3);
-
-      bestForToken = Math.max(bestForToken, termScore);
-    }
-
-    if (bestForToken > 0) {
-      score += bestForToken;
-      matchedTerms.add(original);
-    }
-  }
-
-  return { score, matchedTerms: [...matchedTerms] };
-}
+const searchableByCode = new Map(searchableItems.map((source) => [source.item.code, source]));
 
 function toCandidate(
-  source: (typeof searchableItems)[number],
-  score: number,
-  matchedTerms: string[],
-): AssetClassifierCandidate {
+  code: string,
+  options: {
+    score: number;
+    matchedTerms: string[];
+    decision: CandidateDecision;
+    matchType: CandidateMatchType;
+    argumentsFor: string[];
+    argumentsAgainst?: string[];
+  },
+): AssetClassifierCandidate | null {
+  const source = searchableByCode.get(code);
+  if (!source) return null;
   return {
     code: source.item.code,
     name: source.item.name,
@@ -167,149 +270,321 @@ function toCandidate(
       const text = footnoteByMarker.get(marker);
       return text ? [{ marker, text }] : [];
     }),
-    score,
-    matchedTerms,
+    score: options.score,
+    matchedTerms: options.matchedTerms,
     sourceRow: source.item.sourceRow,
+    decision: options.decision,
+    matchType: options.matchType,
+    argumentsFor: options.argumentsFor,
+    argumentsAgainst: options.argumentsAgainst ?? [],
   };
 }
 
-function renderCandidate(candidate: AssetClassifierCandidate, position: number): string {
-  const context = candidate.hierarchy.length > 0
-    ? `\n   Раздел: ${candidate.hierarchy.join(" → ")}.`
-    : "";
-  return `${position}. **${candidate.code} — ${candidate.name}**\n` +
-    `   Нормативный срок службы: **${candidate.normativeLifeYears} лет**.${context}`;
-}
+function findCatalogCandidates(
+  object: IdentifiedAssetObject,
+  semantic: string,
+): AssetClassifierCandidate[] {
+  const phrases = Array.from(new Set([
+    object.normalizedName,
+    object.objectType,
+    ...object.searchPhrases,
+  ].map(normalize).filter((value) => value.length >= 4)));
+  const tokens = tokenize(semantic);
+  const negativeMarkers = object.negativeMarkers.map(normalize).filter(Boolean);
 
-function renderResult(
-  query: string,
-  decision: AssetClassifierResult["decision"],
-  candidates: AssetClassifierCandidate[],
-): string {
-  const sourceLine =
-    `Источник: [постановление Министерства экономики Республики Беларусь от 30.09.2011 № 161](${ASSET_CLASSIFIER_SOURCE_URL}), ` +
-    "консолидированная редакция с изменениями по 10.04.2017.";
-
-  if (decision === "not_found") {
-    return [
-      "### Нужно уточнить описание объекта",
-      "",
-      "В справочнике не найдено достаточно близкой позиции. Укажите:",
-      "",
-      "- точное наименование и модель;",
-      "- основное назначение;",
-      "- ключевые технические характеристики;",
-      "- сферу и условия эксплуатации.",
-      "",
-      sourceLine,
-      "",
-      "_Результат сервиса носит справочный характер. Перед принятием к учёту сопоставьте объект с технической документацией и действующей редакцией законодательства._",
-    ].join("\n");
-  }
-
-  const primary = candidates[0];
-  const heading = decision === "recommended"
-    ? "### Предварительно рекомендуемый шифр"
-    : "### Возможные позиции — требуется уточнение";
-  const primaryBlock = decision === "recommended"
-    ? [
-        `**${primary.code} — ${primary.name}**`,
-        "",
-        `Нормативный срок службы: **${primary.normativeLifeYears} лет**.`,
-        primary.hierarchy.length > 0 ? `Раздел: ${primary.hierarchy.join(" → ")}.` : "",
-      ].filter(Boolean)
-    : [
-        "По введённому описанию нельзя безопасно выбрать единственный шифр.",
-        "",
-        ...candidates.map(renderCandidate),
-      ];
-
-  const footnotes = primary?.footnotes.length
-    ? [
-        "",
-        "**Примечания к позиции:**",
-        ...primary.footnotes.map((footnote) => `- Сноска ${footnote.marker}: ${footnote.text}`),
-      ]
-    : [];
-
-  const alternatives = decision === "recommended" && candidates.length > 1
-    ? [
-        "",
-        "**Ближайшие альтернативы:**",
-        ...candidates.slice(1).map(renderCandidate),
-      ]
-    : [];
-
-  return [
-    heading,
-    "",
-    ...primaryBlock,
-    ...footnotes,
-    ...alternatives,
-    "",
-    `Запрос: “${query.trim()}”.`,
-    "",
-    decision === "recommended"
-      ? "Проверьте, совпадают ли назначение и характеристики объекта с формулировкой позиции. Если нет — дополните описание и выполните подбор повторно."
-      : "Добавьте модель, назначение и ключевые характеристики объекта — сервис повторит подбор.",
-    "",
-    sourceLine,
-    "",
-    "_Результат сервиса носит справочный характер. Перед принятием к учёту сопоставьте объект с технической документацией и действующей редакцией законодательства._",
-  ].join("\n");
-}
-
-export function classifyAsset(query: string): AssetClassifierResult {
-  const normalizedQuery = normalize(query);
-  const explicitCode = normalizedQuery.match(/(?:^|\s)(\d{5})(?:\s|$)/)?.[1];
-  const originalTokens = queryTokens(query);
-
-  const ranked = searchableItems
+  return searchableItems
     .map((source) => {
-      if (explicitCode && source.item.code === explicitCode) {
-        return toCandidate(source, 1000, [explicitCode]);
+      let score = 0;
+      const matchedTerms = new Set<string>();
+      const argumentsFor: string[] = [];
+      const argumentsAgainst: string[] = [];
+
+      for (const phrase of phrases) {
+        if (source.nameNormalized === phrase) {
+          score += 80;
+          matchedTerms.add(phrase);
+          argumentsFor.push(`точное совпадение с формулировкой «${phrase}»`);
+        } else if (phrase.length >= 6 && source.nameNormalized.includes(phrase)) {
+          score += 35;
+          matchedTerms.add(phrase);
+          argumentsFor.push(`прямая фраза в наименовании позиции: «${phrase}»`);
+        }
       }
-      const score = scoreItem(source, originalTokens);
-      return toCandidate(source, score.score, score.matchedTerms);
+
+      for (const token of tokens) {
+        const tokenStem = stem(token);
+        const inName = source.nameTokens.some((word) => stem(word) === tokenStem);
+        if (inName) {
+          score += 6;
+          matchedTerms.add(token);
+        } else if (source.hierarchyNormalized.includes(token)) {
+          score += 1;
+        }
+      }
+
+      for (const marker of negativeMarkers) {
+        if (marker.length >= 5 && source.nameNormalized.includes(marker)) {
+          score -= 100;
+          argumentsAgainst.push(`позиция содержит несовместимый признак «${marker}»`);
+        }
+      }
+
+      if (matchedTerms.size > 0 && argumentsFor.length === 0) {
+        argumentsFor.push(`совпали признаки: ${[...matchedTerms].slice(0, 5).join(", ")}`);
+      }
+
+      const candidate = toCandidate(source.item.code, {
+        score,
+        matchedTerms: [...matchedTerms],
+        decision: score >= 40 ? "possible" : "weak",
+        matchType: "catalog_text",
+        argumentsFor,
+        argumentsAgainst,
+      });
+      return candidate;
     })
-    .filter((candidate) => candidate.score > 0)
+    .filter((candidate): candidate is AssetClassifierCandidate =>
+      Boolean(candidate && candidate.score >= 18 && candidate.matchedTerms.length > 0)
+    )
     .sort((a, b) =>
       b.score - a.score ||
       b.matchedTerms.length - a.matchedTerms.length ||
       a.code.localeCompare(b.code)
     )
-    .slice(0, 3);
+    .slice(0, 5);
+}
 
-  const top = ranked[0];
-  const second = ranked[1];
-  const coverage = top && originalTokens.length > 0
-    ? top.matchedTerms.length / originalTokens.length
-    : 0;
-  const margin = top ? top.score - (second?.score ?? 0) : 0;
+function yearWord(years: number): string {
+  const mod100 = years % 100;
+  const mod10 = years % 10;
+  if (mod100 >= 11 && mod100 <= 14) return "лет";
+  if (mod10 === 1) return "год";
+  if (mod10 >= 2 && mod10 <= 4) return "года";
+  return "лет";
+}
 
-  let decision: AssetClassifierResult["decision"] = "not_found";
-  if (top) {
-    if (explicitCode && top.code === explicitCode) {
-      decision = "recommended";
-    } else if (top.score >= 18 && coverage >= 0.5 && margin >= 3) {
-      decision = "recommended";
+function escapeMarkdown(value: string): string {
+  return value.replace(/[\\`*_[\]<>]/g, "\\$&");
+}
+
+function renderCandidate(candidate: AssetClassifierCandidate, position?: number): string {
+  const prefix = position ? `${position}. ` : "";
+  const provisionUrl = `${ASSET_CLASSIFIER_SOURCE_URL}#code-${candidate.code}`;
+  const pros = candidate.argumentsFor.length
+    ? `\n   Подходит: ${candidate.argumentsFor.join("; ")}.`
+    : "";
+  const cons = candidate.argumentsAgainst.length
+    ? `\n   Ограничение: ${candidate.argumentsAgainst.join("; ")}.`
+    : "";
+  return `${prefix}**[${candidate.code} — ${candidate.name}](${provisionUrl})**\n` +
+    `   Нормативный срок службы: **${candidate.normativeLifeYears} ${yearWord(candidate.normativeLifeYears)}**.` +
+    pros + cons;
+}
+
+function buildClarifyingQuestions(
+  object: IdentifiedAssetObject,
+  rule?: VerifiedObjectRule,
+): string[] {
+  const questions = [...(rule?.clarifyingQuestions ?? [])];
+  for (const characteristic of object.missingCharacteristics) {
+    questions.push(`Уточните: ${escapeMarkdown(characteristic)}?`);
+  }
+  return Array.from(new Set(questions)).slice(0, 5);
+}
+
+function renderResult(
+  result: Omit<AssetClassifierResult, "content" | "metadata">,
+): string {
+  const { identifiedObject: object, decision, confidence, candidates, clarifyingQuestions } = result;
+  const sourceLinks = candidates.map((candidate) =>
+    `[позиция ${candidate.code}](${ASSET_CLASSIFIER_SOURCE_URL}#code-${candidate.code})`
+  );
+  const sourceLine = sourceLinks.length
+    ? `Источник: ${sourceLinks.join(", ")} внутренней базы законодательства — ` +
+      "постановление Министерства экономики Республики Беларусь от 30.09.2011 № 161, " +
+      "консолидированная редакция с изменениями по 10.04.2017."
+    : `Источник: [постановление Министерства экономики Республики Беларусь от 30.09.2011 № 161](${ASSET_CLASSIFIER_SOURCE_URL}) ` +
+      "во внутренней базе законодательства, консолидированная редакция с изменениями по 10.04.2017.";
+  const confidenceLabel = confidence === "high"
+    ? "высокая"
+    : confidence === "medium"
+    ? "средняя"
+    : "низкая";
+
+  const lines = [
+    "### Что определено",
+    "",
+    `**Тип объекта:** ${escapeMarkdown(object.objectType)}.`,
+    object.primaryFunction
+      ? `**Основная функция:** ${escapeMarkdown(object.primaryFunction)}.`
+      : "",
+    `**Уверенность распознавания:** ${confidenceLabel}.`,
+  ].filter(Boolean);
+
+  if (object.isProbableComponent) {
+    lines.push(
+      "",
+      "**Проверка самостоятельности:** описание похоже на комплектующую или запасную часть. " +
+        "Наличие отдельного шифра не означает автоматического признания самостоятельным основным средством.",
+    );
+  }
+
+  if (decision === "recommended" && candidates[0]) {
+    lines.push(
+      "",
+      "### Предварительно рекомендуемый шифр",
+      "",
+      renderCandidate(candidates[0]),
+    );
+    if (candidates[0].hierarchy.length) {
+      lines.push(`Раздел: ${candidates[0].hierarchy.join(" → ")}.`);
+    }
+    if (candidates[0].footnotes.length) {
+      lines.push(
+        "",
+        "**Примечания к позиции:**",
+        ...candidates[0].footnotes.map((footnote) => `- Сноска ${footnote.marker}: ${footnote.text}`),
+      );
+    }
+    if (candidates.length > 1) {
+      lines.push(
+        "",
+        "**Обоснованные альтернативы:**",
+        ...candidates.slice(1).map((candidate, index) => renderCandidate(candidate, index + 1)),
+      );
+    }
+  } else if (candidates.length) {
+    lines.push(
+      "",
+      "### Возможные позиции — требуется уточнение",
+      "",
+      "По описанию нельзя безопасно выбрать единственный шифр:",
+      "",
+      ...candidates.map((candidate, index) => renderCandidate(candidate, index + 1)),
+    );
+  } else {
+    lines.push(
+      "",
+      "### Недостаточно данных для подбора",
+      "",
+      "Сервис не нашёл обоснованной позиции и не будет подставлять случайный шифр.",
+    );
+  }
+
+  if (clarifyingQuestions.length) {
+    lines.push(
+      "",
+      "**Что нужно уточнить:**",
+      ...clarifyingQuestions.map((question) => `- ${question}`),
+    );
+  }
+
+  lines.push(
+    "",
+    sourceLine,
+    "",
+    "_ИИ используется только для распознавания типа и признаков объекта. " +
+      "Шифр, нормативное наименование и срок берутся из фиксированного каталога постановления № 161._",
+    "",
+    "_Результат носит справочный характер. Перед принятием к учёту сопоставьте объект с технической документацией и действующей редакцией законодательства._",
+  );
+  return lines.join("\n");
+}
+
+export function classifyAsset(
+  query: string,
+  identifiedObject: IdentifiedAssetObject = identifyObjectLocally(query),
+): AssetClassifierResult {
+  const normalizedQuery = normalize(query);
+  const explicitCode = normalizedQuery.match(/(?:^|\s)(\d{5})(?:\s|$)/)?.[1];
+  const semantic = semanticText(query, identifiedObject);
+
+  let rule: VerifiedObjectRule | undefined;
+  let candidates: AssetClassifierCandidate[] = [];
+
+  if (explicitCode) {
+    const exact = toCandidate(explicitCode, {
+      score: 1_000,
+      matchedTerms: [explicitCode],
+      decision: "recommended",
+      matchType: "explicit_code",
+      argumentsFor: ["пользователь указал точный пятизначный шифр"],
+    });
+    if (exact) candidates = [exact];
+  }
+
+  if (!candidates.length) {
+    const matchingRules = VERIFIED_OBJECT_RULES.filter((candidate) =>
+      candidate.matcher.test(semantic)
+    );
+    rule = /(аккумулятор|батарея)/i.test(semantic)
+      ? matchingRules.find((candidate) => candidate.id.endsWith("_battery")) ?? matchingRules[0]
+      : matchingRules[0];
+    if (rule) {
+      candidates = rule.preferredCodes.flatMap((code, index) => {
+        const candidate = toCandidate(code, {
+          score: 900 - index * 10,
+          matchedTerms: [rule!.id],
+          decision: index === 0 && !rule!.forceClarification ? "recommended" : "possible",
+          matchType: "verified_object_rule",
+          argumentsFor: [rule!.reason],
+          argumentsAgainst: rule!.forceClarification
+            ? ["для выбора между позициями не хватает характеристики исполнения или назначения"]
+            : [],
+        });
+        return candidate ? [candidate] : [];
+      });
     } else {
-      decision = "clarification";
+      candidates = findCatalogCandidates(identifiedObject, semantic);
     }
   }
 
-  return {
+  const clarifyingQuestions = buildClarifyingQuestions(identifiedObject, rule);
+  let decision: AssetClassifierResult["decision"] = "not_found";
+  let confidence: IdentificationConfidence = identifiedObject.confidence;
+
+  if (explicitCode && candidates[0]?.code === explicitCode) {
+    decision = "recommended";
+    confidence = "high";
+  } else if (
+    rule &&
+    !rule.forceClarification &&
+    candidates.length === 1 &&
+    identifiedObject.confidence !== "low" &&
+    !identifiedObject.isProbableComponent
+  ) {
+    decision = "recommended";
+  } else if (candidates.length > 0) {
+    decision = "clarification";
+    if (confidence === "high") confidence = "medium";
+  }
+
+  if (decision === "recommended") {
+    candidates[0].decision = "recommended";
+  }
+
+  const baseResult = {
     decision,
+    confidence,
     query,
-    candidates: ranked,
-    content: renderResult(query, decision, ranked),
+    identifiedObject,
+    candidates,
+    clarifyingQuestions: decision === "recommended" ? [] : clarifyingQuestions,
+  };
+
+  return {
+    ...baseResult,
+    content: renderResult(baseResult),
     metadata: {
       scenario_code: ASSET_CLASSIFIER_SCENARIO_CODE,
-      scenario_type: "deterministic_lookup",
+      scenario_type: ASSET_CLASSIFIER_SCENARIO_TYPE,
       legal_source_regnum: ASSET_CLASSIFIER_CATALOG.source.regnum,
       legal_source_revision: ASSET_CLASSIFIER_CATALOG.source.consolidated_revision,
+      legal_source_slug: ASSET_CLASSIFIER_SOURCE_SLUG,
+      legal_source_url: ASSET_CLASSIFIER_SOURCE_URL,
       catalog_positions: ASSET_CLASSIFIER_CATALOG.stats.finalPositions,
       decision,
+      confidence,
     },
   };
 }

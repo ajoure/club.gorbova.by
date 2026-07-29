@@ -2,8 +2,13 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { resolveAssetClassifierAccess } from "../_shared/ai-access.ts";
 import {
   ASSET_CLASSIFIER_SCENARIO_CODE,
+  ASSET_CLASSIFIER_SCENARIO_TYPE,
   classifyAsset,
 } from "../_shared/asset-classifier/engine.ts";
+import {
+  GEMINI_OBJECT_IDENTIFIER_MODEL,
+  identifyObjectWithGemini,
+} from "../_shared/asset-classifier/object-identifier.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -62,7 +67,11 @@ Deno.serve(async (req) => {
     }
 
     const startedAt = Date.now();
-    const result = classifyAsset(query);
+    const identification = await identifyObjectWithGemini(
+      query,
+      Deno.env.get("LOVABLE_API_KEY"),
+    );
+    const result = classifyAsset(query, identification.object);
     const conversationId =
       typeof body?.conversation_id === "string" && UUID_RE.test(body.conversation_id)
         ? body.conversation_id
@@ -70,6 +79,10 @@ Deno.serve(async (req) => {
     const metadata = {
       ...result.metadata,
       launcher_title_snapshot: "Определение шифра ОС",
+      object_identification_source: identification.source,
+      object_identification_model:
+        identification.source === "gemini" ? GEMINI_OBJECT_IDENTIFIER_MODEL : null,
+      object_identification_fallback_reason: identification.fallbackReason ?? null,
       processing_time_ms: Date.now() - startedAt,
     };
 
@@ -82,7 +95,7 @@ Deno.serve(async (req) => {
         metadata: {
           ai_mode: "prompt",
           scenario_code: ASSET_CLASSIFIER_SCENARIO_CODE,
-          scenario_type: "deterministic_lookup",
+          scenario_type: ASSET_CLASSIFIER_SCENARIO_TYPE,
         },
       },
       {
@@ -107,7 +120,13 @@ Deno.serve(async (req) => {
         code: candidate.code,
         name: candidate.name,
         normative_life_years: candidate.normativeLifeYears,
+        decision: candidate.decision,
+        match_type: candidate.matchType,
+        arguments_for: candidate.argumentsFor,
+        arguments_against: candidate.argumentsAgainst,
       })),
+      identified_object: result.identifiedObject,
+      clarifying_questions: result.clarifyingQuestions,
     });
   } catch (error) {
     console.error("asset-classifier error", error);
