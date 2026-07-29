@@ -49,12 +49,6 @@ import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { cn } from "@/lib/utils";
 import { resolveAvailableProviders } from "@/utils/currencyProviderResolver";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-
 /**
  * mode:
  *   - "contact" (default) — текущее поведение: ссылка привязывается к контакту,
@@ -1466,34 +1460,33 @@ ${amountLine}
                 {productsLoading ? (
                   <Skeleton className="h-10 w-full" />
                 ) : (
-                  <Popover
-                    open={productPickerOpen}
-                    onOpenChange={(nextOpen) => {
-                      setProductPickerOpen(nextOpen);
-                      if (!nextOpen) setProductSearch("");
-                    }}
-                  >
-                    <PopoverTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        role="combobox"
-                        aria-label="Продукт"
-                        aria-expanded={productPickerOpen}
-                        className="h-10 w-full justify-between gap-2 px-3 text-left font-normal"
-                      >
-                        <span className="min-w-0 flex-1 truncate">
-                          {selectedProduct?.name || "Выберите продукт"}
-                        </span>
-                        <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      align="start"
-                      sideOffset={6}
-                      container={selectPortalContainer}
-                      className="flex w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
+                  <div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-label="Продукт"
+                      aria-expanded={productPickerOpen}
+                      aria-haspopup="listbox"
+                      aria-controls="admin-payment-product-listbox"
+                      className="h-10 w-full justify-between gap-2 px-3 text-left font-normal"
+                      onClick={() => {
+                        setProductPickerOpen((current) => {
+                          if (current) setProductSearch("");
+                          return !current;
+                        });
+                      }}
                     >
+                      <span className="min-w-0 flex-1 truncate">
+                        {selectedProduct?.name || "Выберите продукт"}
+                      </span>
+                      <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    </Button>
+                    {productPickerOpen && (
+                      <div
+                        data-testid="admin-payment-product-picker"
+                        className="mt-2 overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md"
+                      >
                       <div className="border-b p-2">
                         <Input
                           autoFocus
@@ -1505,7 +1498,8 @@ ${amountLine}
                         />
                       </div>
                       <div
-                        className="min-h-0 max-h-[min(18rem,calc(100dvh-14rem))] touch-pan-y overflow-y-auto overscroll-contain p-1 [-webkit-overflow-scrolling:touch]"
+                        id="admin-payment-product-listbox"
+                        className="min-h-0 max-h-72 touch-pan-y overflow-y-auto overscroll-contain p-1 [-webkit-overflow-scrolling:touch]"
                         style={{ WebkitOverflowScrolling: "touch" }}
                         role="listbox"
                         aria-label="Список продуктов"
@@ -1552,8 +1546,9 @@ ${amountLine}
                           </p>
                         )}
                       </div>
-                    </PopoverContent>
-                  </Popover>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
