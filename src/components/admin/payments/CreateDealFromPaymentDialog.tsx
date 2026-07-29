@@ -18,6 +18,14 @@ import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 import { formatContactName } from "@/lib/nameUtils";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { invokeAuthenticatedFunction } from "@/utils/invokeAuthenticatedFunction";
+
+interface CreateDealResponse {
+  ok: boolean;
+  idempotent_replay?: boolean;
+  grant_success?: boolean;
+  grant_error_code?: string;
+}
 
 interface Contact {
   id: string;
@@ -27,6 +35,29 @@ interface Contact {
   first_name: string | null;
   last_name: string | null;
   phone: string | null;
+}
+
+interface ProductOption {
+  id: string;
+  name: string;
+  code: string | null;
+}
+
+interface TariffOption {
+  id: string;
+  name: string;
+  code: string | null;
+  access_days: number | null;
+}
+
+interface OfferOption {
+  id: string;
+  button_label: string;
+  amount: number;
+  offer_type: string;
+  payment_method: string | null;
+  is_primary: boolean | null;
+  sort_order: number | null;
 }
 
 interface CreateDealFromPaymentDialogProps {
@@ -78,9 +109,9 @@ export function CreateDealFromPaymentDialog({
   });
 
   // Products and tariffs
-  const [products, setProducts] = useState<any[]>([]);
-  const [tariffs, setTariffs] = useState<any[]>([]);
-  const [offers, setOffers] = useState<any[]>([]);
+  const [products, setProducts] = useState<ProductOption[]>([]);
+  const [tariffs, setTariffs] = useState<TariffOption[]>([]);
+  const [offers, setOffers] = useState<OfferOption[]>([]);
 
   // Load initial contact if profileId provided
   useEffect(() => {
@@ -205,8 +236,8 @@ export function CreateDealFromPaymentDialog({
         .limit(20);
       if (error) throw error;
       setContactResults(data || []);
-    } catch (e: any) {
-      toast.error(`Ошибка поиска: ${e.message}`);
+    } catch (e: unknown) {
+      toast.error(`Ошибка поиска: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSearchingContacts(false);
     }
@@ -311,8 +342,9 @@ export function CreateDealFromPaymentDialog({
         `:${productId}:${tariffId}:${offerId || "no-offer"}:${finalAmount}:${finalCurrency}` +
         `:${accessStart.toISOString()}:${accessEnd.toISOString()}:${grantAccess ? 1 : 0}`;
 
-      const { data, error } = await supabase.functions.invoke("admin-create-deal-from-payment", {
-        body: {
+      const { data, error } = await invokeAuthenticatedFunction<CreateDealResponse>(
+        "admin-create-deal-from-payment",
+        {
           paymentId,
           rawSource,
           profileId: selectedContact.id,
@@ -327,7 +359,7 @@ export function CreateDealFromPaymentDialog({
           grantAccess,
           idempotencyKey,
         },
-      });
+      );
 
       if (error || !data?.ok) {
         const msg = normalizeEdgeFunctionError(error ?? data, "Не удалось создать сделку");
@@ -347,9 +379,9 @@ export function CreateDealFromPaymentDialog({
           : `Сделка создана (${dateStr})`);
       }
       onSuccess();
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Create deal error:", e);
-      toast.error(`Ошибка: ${e.message}`);
+      toast.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
@@ -357,11 +389,11 @@ export function CreateDealFromPaymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-[600px] overflow-x-hidden overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Package className="h-5 w-5" />
-            Создать сделку из платежа
+          <DialogTitle className="flex min-w-0 items-center gap-2 pr-8">
+            <Package className="h-5 w-5 shrink-0" />
+            <span className="min-w-0 break-words">Создать сделку из платежа</span>
           </DialogTitle>
         </DialogHeader>
         
@@ -370,16 +402,16 @@ export function CreateDealFromPaymentDialog({
           <div className="space-y-3">
             <Label className="text-sm font-medium">Контакт</Label>
             {selectedContact ? (
-              <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/30">
-                <div className="flex items-center gap-3">
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-lg border bg-muted/30 p-3">
+                <div className="flex min-w-0 items-center gap-3">
                   {selectedContact.user_id ? (
                     <User className="h-5 w-5 text-muted-foreground" />
                   ) : (
                     <Ghost className="h-5 w-5 text-amber-500" />
                   )}
-                  <div>
-                    <p className="font-medium">{formatContactDisplay(selectedContact)}</p>
-                    <p className="text-sm text-muted-foreground">{selectedContact.email}</p>
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{formatContactDisplay(selectedContact)}</p>
+                    <p className="truncate text-sm text-muted-foreground">{selectedContact.email}</p>
                   </div>
                   {!selectedContact.user_id && (
                     <Badge variant="outline" className="text-xs">Ghost</Badge>
@@ -395,7 +427,7 @@ export function CreateDealFromPaymentDialog({
               </div>
             ) : (
               <div className="space-y-2">
-                <div className="flex gap-2">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                   <Input
                     placeholder="Поиск по email, телефону, имени..."
                     value={contactSearch}
@@ -440,7 +472,7 @@ export function CreateDealFromPaymentDialog({
           </div>
 
           {/* Amount */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Сумма</Label>
               <Input
@@ -466,7 +498,7 @@ export function CreateDealFromPaymentDialog({
           </div>
 
           {/* Product & Tariff */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Продукт</Label>
               <Select value={productId} onValueChange={setProductId}>
@@ -518,7 +550,7 @@ export function CreateDealFromPaymentDialog({
 
           {/* Date Range */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <Label>Период сделки / доступа</Label>
               <div className="flex items-center gap-2">
                 <Input
@@ -548,14 +580,14 @@ export function CreateDealFromPaymentDialog({
                   )}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
+              <PopoverContent className="max-w-[calc(100vw-1rem)] overflow-x-auto p-0" align="start">
                 <Calendar
                   initialFocus
                   mode="range"
                   defaultMonth={dateRange?.from}
                   selected={dateRange}
                   onSelect={handleDateRangeChange}
-                  numberOfMonths={2}
+                  numberOfMonths={1}
                   locale={ru}
                 />
               </PopoverContent>
@@ -591,11 +623,11 @@ export function CreateDealFromPaymentDialog({
           )}
         </div>
         
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+        <DialogFooter className="gap-2 sm:space-x-0">
+          <Button className="w-full sm:w-auto" variant="outline" onClick={() => onOpenChange(false)}>
             Отмена
           </Button>
-          <Button onClick={handleCreate} disabled={saving || !selectedContact || !productId || !tariffId}>
+          <Button className="w-full sm:w-auto" onClick={handleCreate} disabled={saving || !selectedContact || !productId || !tariffId}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
             Создать сделку
           </Button>
