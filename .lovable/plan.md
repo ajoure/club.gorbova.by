@@ -1,61 +1,31 @@
+Отчет о выполнении: PLAN-ONLY / READ-ONLY финальная верификация спринта «Определение шифра ОС» (классификатор ОС). Мутаций не выполнялось: код, коммиты, миграции, deploy, Publish и данные не изменялись.
 
-# Отчёт о выполнении: READ-ONLY диагностика composable manual_admin 3300 BYN
+## 1) Managed HEAD/tree — PASS
+- `git rev-parse HEAD` = `b628306a34fd4191ef453e36a57f020b28966a37`, working tree чистое.
+- `609a4b64229d1b1a5fce420afc7e6815a54b663a` («feat: deterministic fixed-asset classifier (#211)») подтверждён как предок текущего HEAD.
+- Присутствуют: UI `src/components/ai-chat/PromptRunFlow.tsx` (ветка `asset_classifier`), `AiPageContent.tsx`, `src/hooks/useAiChat.ts`; движок `supabase/functions/_shared/asset-classifier/engine.ts` (315 строк) и справочник `catalog-161.ts` (14 535 строк); функция `supabase/functions/asset-classifier/index.ts` (116 строк).
+- Поиск по `fetch(`, `LOVABLE_API_KEY`, `openai`, `gateway` в движке и функции — 0 совпадений: LLM/сетевых вызовов нет, ответ детерминированный по справочнику № 161.
 
-Ничего не изменено: без кода, миграций, deploy, Publish, INSERT/UPDATE/DELETE/RPC-записи, выдачи доступов и сообщений.
+## 2) Production DB — PASS
+- `app_sections` активных с `code='ai_asset_classifier'` — ровно 1.
+- `ai_user_prompts` `code='asset_classifier'`, активный, не архивный, `is_visible_in_chat=true`, `launcher_order=30` — ровно 1.
+- `access_rules` активных `priority=30`, `grant_target_type='section_access'`, `target_ref=9d049abf-…` («AI: Определение шифра ОС») — ровно 2, на два разных продукта (`11c9f1b8-…`, `85046734-…`). Других активных правил с priority=30 нет.
 
-## Найденный кейс (жив, is_deleted=false)
+## 3) Edge Functions — PASS
+- `asset-classifier`, `gorbova-ai-chat`, `ai-access-status` развёрнуты и отвечают (OPTIONS → 200).
+- `supabase/config.toml`: `[functions.asset-classifier] verify_jwt = true`.
+- Логи `asset-classifier`: только `booted`, ошибок/крашей нет. Логи `gorbova-ai-chat` по фильтру `error` — пусто.
 
-- Payment `pay_e16c…c85a7d`, provider=`bank`, origin=`manual_admin`, amount=3300 BYN, status=`succeeded`, paid_at=2026-07-27, created 2026-07-29 15:46:36 UTC.
-- Order group `grp_bbca…8789d1` (`GRP-ORD-26-02836`, primary_order=`ord_4ffa…67916`, profile=`prof_c8bd…09d275`).
-- Три `order_group_items` / три `orders_v2` (все status=`paid`, is_deleted=false):
-  - primary `ord_4ffa…67916` — «Ценный бухгалтер | 1 ступень 2.0 | 20 поток», тариф «Бизнес-леди» — 2650.
-  - addon `ord_c7e7…600415` — «Модуль: Учёт у ИП» (percent_discount 50 %) — 400.
-  - addon `ord_603b…1888f` — «Модуль: Грузо- и пассажироперевозки» (percent_discount 50 %) — 250.
-- Дубли платежа (`pay_8035…0e025` от 14:08 и `pay_2059…51702` от 17:29) уже удалены с `deleted_reason=admin_manual_delete`.
+## 4) Anonymous / invalid JWT / CORS — PASS (реальная клиентская identity не использовалась)
+- `asset-classifier`: без заголовка → 401 `UNAUTHORIZED_NO_AUTH_HEADER`; с битым JWT → 401 `UNAUTHORIZED_INVALID_JWT_FORMAT`.
+- `gorbova-ai-chat` и `ai-access-status`: без auth → 401 «Необходима авторизация»; битый JWT → 401 «Неавторизованный доступ».
+- CORS: `Allow-Origin: *`, `Allow-Headers` включает `authorization, x-client-info, apikey, content-type` и полный набор `x-supabase-client-*` для первых двух функций; `ai-access-status` отдаёт базовый набор (достаточно для её вызовов, `GET, POST, OPTIONS`).
 
-## Ответы на вопросы
+## 5) Опубликованный фронтенд — PASS (с оговоркой)
+- `https://gorbova.by` отдаёт `assets/index-CIJ-xqJT.js`; при обходе всех связанных чанков найден `assets/AiPageContent-DP1WH63d.js`, содержащий и `asset_classifier`, и текст «шифра ОС».
+- Оговорка: точный published SHA/version через доступные read-only каналы не экспонируется; подтверждение сделано по содержимому опубликованного бандла, а не по номеру сборки.
 
-**1) Дошёл ли `finalizeComposablePurchase` до каждого из 3 order_id?** Нет. `access_grant_ledger` пуст по всем трём `order_id`. `entitlements` пусто (5 живых записей у профиля — это другой продукт `prd_11c9…3616`, не Ценный бухгалтер). `subscriptions_v2` для этих order_id нет. Финализатор ни на один из трёх заказов реально не отработал.
+## Вывод
+Все пять пунктов — PASS. Для этого спринта **не требуется** ни новый Publish, ни deploy функций, ни миграции: код в managed HEAD, конфигурация БД каноническая (1/1/2), функции развёрнуты с `verify_jwt=true`, авторизация и CORS ведут себя штатно, опубликованный бандл уже содержит сценарий «Определение шифра ОС».
 
-**2) Что вернул `grant-access-for-order` по каждому?** Все инвокации падали одинаковой ошибкой ещё до входа в бизнес-логику. `audit_logs.admin_manual_payment_fulfillment_failed` три раза подряд для платежа `pay_e16c…`:
-- 15:46:38 — `access_grant_failed … Edge Function returned a non-2xx status code` (`grant_code` не выставлен, потому что тело не парсилось).
-- 15:46:54 — то же.
-- 15:47:18 — то же.
-
-Позже для дубль-платежа `pay_2059…` (17:29) сохранился уже структурированный `detail`: `grant_access_invoke_failed:status=401:code=unauthorized_no_bearer`, `downstream_step:grant-access-for-order`, `grant_status:401`, `grant_code:unauthorized_no_bearer` — та же причина. Тела попадания в handler `grant-access-for-order` нет ни в Deno-логах, ни в `access_grant_ledger` (проверено; аналитический запрос по `4ffa5e3d`/`bbcac816` пуст).
-
-**3) Почему основного доступа нет в карточке?** Для этой сделки его буквально нет: `access_grant_ledger`, `entitlements`, `subscriptions_v2`, `scheduled_product_access` — пусто по всем трём `order_id`. То, что владелец видит частичный «основной» доступ (кабинет ЦБ), даёт совсем другой order `ord_9071…36ba` (audit `admin.grant_access` в 17:25:27 UTC того же дня): это `bepaid_webhook` subscription_renewal / `provider_linked_extend` по тому же продукту `prd_3e43…d630` + тарифу `tar_767b…020a`, к текущему bank-платежу отношения не имеет. Оба модуля (Учёт у ИП, Грузо- и пассажироперевозки) не имеют ни одной записи ни в одной из access-таблиц — по ним доступа нет.
-
-**4) Active или scheduled? Есть ли scheduled строки?** Ни у одного из трёх `order_group_items.item_snapshot` нет ключей `access_delivery_mode` / `access_opens_at` / `access_duration_days` — snapshot содержит только `product_id/tariff_id/offer_id/list_amount/final_amount/discount/role/sort_order/product_name/tariff_name`. По access-контракту (`access_rules` для `prd_3e43…d630`+`tar_767b…020a` = `grant_target_type=training_content`, `access_mode=full`; для `prd_ea98…` addon = full; для `prd_64d9…` addon = full) все три позиции должны быть выданы **сразу (active)**, а не отложены. `scheduled_product_access` по группе пуст — то есть не отложено и не активировано, финализация просто не запускалась.
-
-**5) Точная граница сбоя.** Сбой строго на HTTP-границе между `admin-create-manual-payment` (после успешной записи `payments_v2` и recalc) и `grant-access-for-order`:
-
-```text
-admin.createManualPayment
-  → payments_v2 insert OK (payment_id pay_e16c…)
-  → orders_v2 recalc OK (before 3300 → after 6600, дубль-платёж, потом удалён)
-  → invoke grant-access-for-order
-       ← HTTP 401  code=unauthorized_no_bearer
-  → audit_logs.admin_manual_payment_fulfillment_failed
-```
-
-`finalizeComposablePurchase` в handler-е `grant-access-for-order` вообще не стартует: 401-гейт (`resolveGrantAccessCaller` → `!authResult.ok`) отсекает вызов до `detectBranch` / order lookup / записи в `access_grant_ledger`. Auth-регрессия та же семья, что PR #215 (`_shared/caller-user.ts`), но на пути `admin-create-manual-payment → grant-access-for-order` bearer не пробрасывается для composable-веток (одиночные заказы, судя по остальным audit, проходят). Смены Publish-SHA между 15:46 и 17:29 не было — символа новой регрессии deploy-а нет; это устойчивая брешь для composable manual-admin вызовов.
-
-**6) Безопасный минимальный план (ничего не выполнять сейчас).**
-
-Discovery-only next steps:
-1. Прочитать текущий `supabase/functions/admin-create-manual-payment/index.ts` и подтвердить, как формируется `Authorization` при `functions.invoke("grant-access-for-order", …)` — ожидается `Authorization: Bearer <SERVICE_ROLE_KEY>` + `x-internal-call`, но по факту вызов уходит без bearer (см. `unauthorized_no_bearer`).
-2. Прочитать `grant-access-for-order/caller_auth.ts` (`resolveGrantAccessCaller`) и подтвердить, какой code возвращает ветка «нет Authorization header» → это и есть срабатывающий 401-гейт.
-3. Проверить, есть ли отдельный composable-путь (`finalizeComposablePurchase` per-order loop) — вероятно, он использует общую invoke-обёртку, поэтому падение синхронно для всех трёх `order_id` (в аудите видно только primary, потому что вызов бросается ещё до итерации по группе).
-
-Фиксирующий PR (готовить, не применять):
-- В `admin-create-manual-payment` явно передавать `Authorization: Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}` и `x-internal-call: 1` во всех invoke к `grant-access-for-order` (и симметрично в `admin-retry-manual-payment-downstream`).
-- В `grant-access-for-order` подтвердить, что service_role + `x-internal-call` маршрутизируется в ветку, разрешающую composable grant (не `adminManualAccessEdit`).
-- Юнит: source-level тест, проверяющий, что `admin-create-manual-payment` формирует Authorization для invoke (аналогично `grantAccessForOrder.handlerOrder.test.ts`).
-- Read-back после фикса (в отдельном EXECUTE-раунде, не сейчас): по этому кейсу вручную retry через админку, ожидаемо появляются 3 строки в `access_grant_ledger` (по одной на order), entitlements/subscriptions по бизнес-контракту, и `admin_manual_payment_fulfillment_ok` в `audit_logs`.
-
-Ничего из перечисленного не выполнено — только диагностика.
-
-## Что НЕ трогалось
-
-Ни deploy, ни миграций, ни Publish, ни retry, ни ручной grant, ни отправки email/Telegram, ни правок карточки контакта, ни удалений. Идентификаторы в отчёте маскированы (префикс/суффикс), email/имя/телефон/карты не выводились.
+Ограничения: точная версия опубликованной сборки недоступна; runtime-проверка успешного ответа классификатора под реальной авторизованной клиентской учётной записью не выполнялась (по требованию), проверялись только негативные auth-сценарии.
