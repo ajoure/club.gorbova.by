@@ -278,6 +278,17 @@ Deno.serve(async (req) => {
       metadata.scenario_code = prompt.code || null;
     }
 
+    // The fixed-asset classifier is intentionally deterministic and must never
+    // fall through to the generative gateway, even when called directly.
+    if (promptData?.code === 'asset_classifier') {
+      return new Response(JSON.stringify({
+        error: 'Для определения шифра ОС используйте детерминированный сервис asset-classifier.',
+        code: 'deterministic_scenario_requires_dedicated_endpoint',
+      }), {
+        status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // 6.0 PATCH v2.2 — second-stage upload guard для prompt-режима:
     // Загрузка файлов в prompt разрешена ТОЛЬКО для сценариев из whitelist
     // (balance_analysis, 107NK). Любой другой сценарий с attachment → 403.
