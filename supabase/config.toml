@@ -73,6 +73,12 @@ verify_jwt = true
 [functions.grant-access-for-order]
 verify_jwt = false
 
+# Service-to-service composable fulfillment uses the same exact managed
+# `apikey` authentication as grant-access-for-order. New sb_secret_* keys are
+# not JWTs, so the handler owns the exact-key check.
+[functions.finalize-composable-purchase]
+verify_jwt = false
+
 # Historical acquiring recovery is an admin-only mutation. The platform JWT
 # wall is backed by an in-function has_role_v2(admin|super_admin) check.
 [functions.admin-backfill-2026-orders]

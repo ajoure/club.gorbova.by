@@ -21,6 +21,8 @@
  *   legacy_body_alias            ✓         ✓         ✗
  */
 
+import { requestHasServiceRoleKey } from "../_shared/service-request-auth.ts";
+
 export type CallerType = "service_role" | "admin" | "ordinary_user";
 
 export interface ResolvedCaller {
@@ -52,11 +54,11 @@ export type Branch =
 /**
  * Resolve caller identity.
  *
- * - Missing Authorization header → 401 anonymous.
- * - Bearer token literally equals SUPABASE_SERVICE_ROLE_KEY → service_role.
- *   (We compare against the env value; we NEVER decode the JWT's `role`
- *   claim to grant service_role privileges — a self-signed token with
- *   `"role":"service_role"` would fail this identity check.)
+ * - Exact SUPABASE_SERVICE_ROLE_KEY in `apikey` (current `sb_secret_*` flow)
+ *   or as a legacy Bearer credential → service_role.
+ *   (We compare against the env value; we NEVER decode a JWT's `role` claim
+ *   to grant service_role privileges.)
+ * - Missing service key and missing Authorization header → 401 anonymous.
  * - Otherwise verify via supabase.auth.getUser(token). If invalid → 401.
  *   If valid, check has_role_v2 for admin / super_admin → admin, else
  *   ordinary_user (which callers can then reject per branch).
@@ -65,23 +67,12 @@ export async function resolveGrantAccessCaller(
   req: Request,
   supabase: any,
 ): Promise<AuthSuccess | AuthFailure> {
-  const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
-
-  if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
-    return { ok: false, status: 401, body: { success: false, error: "unauthorized_no_bearer" } };
-  }
-
-  const token = authHeader.slice(7).trim();
-  if (!token) {
-    return { ok: false, status: 401, body: { success: false, error: "unauthorized_no_bearer" } };
-  }
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const denoGlobal: any = (globalThis as any).Deno;
   const serviceRoleKey = (denoGlobal && typeof denoGlobal.env?.get === "function"
     ? denoGlobal.env.get("SUPABASE_SERVICE_ROLE_KEY")
     : undefined) || "";
-  if (serviceRoleKey && token === serviceRoleKey) {
+  if (requestHasServiceRoleKey(req, serviceRoleKey)) {
     return {
       ok: true,
       caller: {
@@ -92,6 +83,16 @@ export async function resolveGrantAccessCaller(
         actor: null,
       },
     };
+  }
+
+  const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
+  if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
+    return { ok: false, status: 401, body: { success: false, error: "unauthorized_no_bearer" } };
+  }
+
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    return { ok: false, status: 401, body: { success: false, error: "unauthorized_no_bearer" } };
   }
 
   // User JWT path.

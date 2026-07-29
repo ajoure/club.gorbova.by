@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { finalizeComposablePurchase } from "../_shared/finalize-composable-purchase.ts";
+import { requestHasServiceRoleKey } from "../_shared/service-request-auth.ts";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -16,8 +17,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return respond(405, { error: "method_not_allowed" });
 
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  const authorization = req.headers.get("Authorization") ?? "";
-  if (!serviceRoleKey || authorization !== `Bearer ${serviceRoleKey}`) {
+  if (!requestHasServiceRoleKey(req, serviceRoleKey)) {
     return respond(403, { error: "service_role_required" });
   }
 
