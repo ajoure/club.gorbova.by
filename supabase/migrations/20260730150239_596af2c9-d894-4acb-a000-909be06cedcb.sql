@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_label_created_at ON public.audit_logs (actor_label, created_at DESC);
