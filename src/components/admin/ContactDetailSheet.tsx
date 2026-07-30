@@ -17,6 +17,10 @@ import { cn } from "@/lib/utils";
 import { getEventLabel } from "@/lib/eventLabels";
 import { formatContactName } from "@/lib/nameUtils";
 import { normalizeCompanyName } from "@/lib/companies/normalizeCompanyName";
+import {
+  isMissingCompanyRequisitesRelation,
+  mergeLinkedCompanyIds,
+} from "@/lib/companies/linkedCompanyIds";
 import { useActiveAccessRuleProducts, isCurrentValidAccess, isHistoricalAccess } from "@/hooks/useAccessValidation";
 import {
   Sheet,
@@ -392,20 +396,43 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
   const resolvedTelegramUserId = profileData?.telegram_user_id ?? contact?.telegram_user_id ?? null;
   const resolvedTelegramUsername = profileData?.telegram_username ?? contact?.telegram_username ?? null;
 
-  const linkedProfileIds = useMemo(
-    () => Array.from(new Set([contact?.id, resolvedUserId].filter(Boolean) as string[])),
-    [contact?.id, resolvedUserId],
-  );
   const linkedCompaniesQuery = useQuery({
-    queryKey: ["contact-linked-companies", linkedProfileIds],
-    enabled: linkedProfileIds.length > 0,
+    queryKey: ["contact-linked-companies", contact?.id],
+    enabled: !!contact?.id,
     queryFn: async () => {
-      const { data: links, error: linksError } = await supabase
+      if (!contact?.id) return [];
+
+      // `company_contacts.profile_id` is the direct CRM relation.  A profile
+      // can also be connected through billing requisites before its async
+      // company sync creates that direct row, so read both canonical paths.
+      const [{ data: links, error: linksError }, { data: legalDetails, error: legalDetailsError }] = await Promise.all([
+        supabase
         .from("company_contacts")
         .select("company_id, relationship_type, is_primary, is_billing_contact")
-        .in("profile_id", linkedProfileIds);
+          .eq("profile_id", contact.id),
+        supabase
+          .from("client_legal_details")
+          .select("id")
+          .eq("profile_id", contact.id),
+      ]);
       if (linksError) throw linksError;
-      const companyIds = Array.from(new Set((links ?? []).map((link) => link.company_id).filter(Boolean)));
+      if (legalDetailsError) throw legalDetailsError;
+
+      const legalDetailsIds = (legalDetails ?? []).map((details) => details.id);
+      let requisitesMaps: { company_id: string | null }[] = [];
+      if (legalDetailsIds.length > 0) {
+        const { data: maps, error: mapsError } = await supabase
+          .from("client_legal_details_company_map")
+          .select("company_id")
+          .in("client_legal_details_id", legalDetailsIds);
+        if (mapsError && !isMissingCompanyRequisitesRelation(mapsError)) throw mapsError;
+        requisitesMaps = maps ?? [];
+      }
+
+      const companyIds = mergeLinkedCompanyIds(
+        (links ?? []).map((link) => link.company_id),
+        requisitesMaps.map((map) => map.company_id),
+      );
       if (companyIds.length === 0) return [];
       const { data: companies, error: companiesError } = await supabase
         .from("companies")
@@ -413,8 +440,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         .in("id", companyIds);
       if (companiesError) throw companiesError;
       const byId = new Map((companies ?? []).map((company) => [company.id, company]));
-      return (links ?? [])
-        .map((link) => ({ ...link, company: byId.get(link.company_id) }))
+      const directLinkByCompanyId = new Map((links ?? []).map((link) => [link.company_id, link]));
+      return companyIds
+        .map((companyId) => {
+          const directLink = directLinkByCompanyId.get(companyId);
+          return {
+            company_id: companyId,
+            relationship_type: directLink?.relationship_type ?? "billing_contact",
+            is_primary: directLink?.is_primary ?? false,
+            is_billing_contact: directLink?.is_billing_contact ?? true,
+            company: byId.get(companyId),
+          };
+        })
         .filter((link) => link.company);
     },
   });
