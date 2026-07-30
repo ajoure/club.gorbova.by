@@ -22,9 +22,17 @@ import {
 } from './charge-reminder-scheduling.ts';
 import { toTzDateKey } from './timezone.ts';
 import { logAutomatedTelegramMessage } from './log-automated-telegram.ts';
-import { buildVirtualInstallmentPayment } from './finite-installment-progress.ts';
+import {
+  buildLocalFiniteCandidateRows,
+  buildVirtualInstallmentPayment,
+  isFiniteInstallmentModel,
+} from './finite-installment-progress.ts';
 
-export { buildVirtualInstallmentPayment } from './finite-installment-progress.ts';
+export {
+  buildLocalFiniteCandidateRows,
+  buildVirtualInstallmentPayment,
+  isFiniteInstallmentModel,
+} from './finite-installment-progress.ts';
 
 export type ChargeReminderPreview = {
   provider_subscription_id: string;
@@ -180,32 +188,6 @@ async function sendEmail(supabase: any, to: string, subject: string, html: strin
   }
 }
 
-function numberFromMeta(...values: unknown[]): number {
-  for (const value of values) {
-    const n = Number(value);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-  return 0;
-}
-
-function isFiniteInstallmentModel(ps: any, subV2: any): boolean {
-  const psMeta = ps?.meta ?? {};
-  const subMeta = subV2?.meta ?? {};
-  const installmentMeta = subMeta?.installment ?? psMeta?.installment ?? {};
-  const count = numberFromMeta(
-    subMeta?.installment_count,
-    subMeta?.billing_cycles,
-    psMeta?.installment_count,
-    psMeta?.billing_cycles,
-    installmentMeta?.selected_installment_months,
-    installmentMeta?.billing_cycles,
-  );
-  return subMeta?.model === 'bepaid_finite_subscription'
-    || psMeta?.model === 'bepaid_finite_subscription'
-    || installmentMeta?.as_finite_subscription === true
-    || count >= 2;
-}
-
 export type RunChargeRemindersArgs = {
   supabase: any;
   botToken: string | null;
@@ -254,11 +236,32 @@ export async function runChargeReminders(
     return { scanned: 0, eligible: 0, claimed, sent, dry_run: dryRun, previews };
   }
 
+  let localFiniteRows: any[] = [];
+  if (!args.onlyProviderSubscriptionId) {
+    const { data: localSubscriptions, error: localSubscriptionsError } = await supabase
+      .from('subscriptions_v2')
+      .select(`
+        id, user_id, tariff_id, order_id, next_charge_at, meta, status,
+        orders_v2 ( final_price, currency, meta ),
+        tariffs (
+          id, name, product_id,
+          products_v2 ( id, name )
+        )
+      `)
+      .in('status', ['active', 'trial', 'past_due']);
+    if (localSubscriptionsError) {
+      console.error('[charge-reminders] local finite subscriptions load error:', localSubscriptionsError);
+    } else {
+      localFiniteRows = buildLocalFiniteCandidateRows(rows ?? [], localSubscriptions ?? []);
+    }
+  }
+  const candidateRows = [...(rows ?? []), ...localFiniteRows];
+
   // Legacy subscriptions may predate the per-subscription policy snapshot.
   // In that case use only the exact source offer recorded on the subscription
   // or order; never guess from another button on the same tariff.
   const sourceOfferIds = Array.from(new Set(
-    (rows ?? [])
+    candidateRows
       .map((ps: any) => {
         const sub = ps?.subscriptions_v2;
         const order = Array.isArray(sub?.orders_v2) ? sub.orders_v2[0] : sub?.orders_v2;
@@ -281,7 +284,7 @@ export async function runChargeReminders(
     }
   }
 
-  for (const ps of rows ?? []) {
+  for (const ps of candidateRows) {
     scanned++;
     const subV2: any = ps.subscriptions_v2;
     if (!subV2) continue;

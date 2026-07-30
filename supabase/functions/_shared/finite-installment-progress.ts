@@ -23,6 +23,76 @@ function validIso(...values: unknown[]): string | null {
   return null;
 }
 
+export function isFiniteInstallmentModel(ps: any, subV2: any): boolean {
+  const providerMeta = ps?.meta ?? {};
+  const subMeta = subV2?.meta ?? {};
+  const installmentMeta = subMeta?.installment ?? providerMeta?.installment ?? {};
+  const count = positiveNumber(
+    subMeta?.installment_count,
+    subMeta?.billing_cycles,
+    providerMeta?.installment_count,
+    providerMeta?.billing_cycles,
+    installmentMeta?.selected_installment_months,
+    installmentMeta?.billing_cycles,
+    installmentMeta?.installment_count,
+  );
+
+  return subMeta?.model === "bepaid_finite_subscription"
+    || providerMeta?.model === "bepaid_finite_subscription"
+    || installmentMeta?.as_finite_subscription === true
+    || count >= 2;
+}
+
+/**
+ * Some historical internal installments are canonical in subscriptions_v2 but
+ * have no active provider_subscriptions row. Keep them in the reminder runner
+ * without duplicating provider-managed installments.
+ */
+export function buildLocalFiniteCandidateRows(
+  providerRows: any[],
+  subscriptionRows: any[],
+): any[] {
+  const providerManagedSubscriptionIds = new Set(
+    (providerRows ?? [])
+      .map((row) => row?.subscription_v2_id)
+      .filter((value): value is string => typeof value === "string" && value.length > 0),
+  );
+
+  return (subscriptionRows ?? [])
+    .filter((sub) => (
+      typeof sub?.id === "string"
+      && typeof sub?.user_id === "string"
+      && !providerManagedSubscriptionIds.has(sub.id)
+      && isFiniteInstallmentModel(null, sub)
+    ))
+    .map((sub) => {
+      const order = Array.isArray(sub?.orders_v2) ? sub.orders_v2[0] : sub?.orders_v2;
+      const subMeta = sub?.meta ?? {};
+      const progress = order?.meta?.installment_progress ?? subMeta?.installment_progress ?? {};
+      const perPaymentAmount = positiveNumber(
+        progress?.per_payment_byn,
+        progress?.per_payment_amount,
+        subMeta?.installment_per_payment_amount_byn,
+        subMeta?.recurring_amount,
+      );
+
+      return {
+        id: `local:${sub.id}`,
+        user_id: sub.user_id,
+        subscription_v2_id: sub.id,
+        state: sub.status ?? "active",
+        next_charge_at: sub.next_charge_at ?? progress?.next_charge_at ?? null,
+        amount_cents: perPaymentAmount > 0 ? Math.round(perPaymentAmount * 100) : 0,
+        currency: String(order?.currency ?? subMeta?.recurring_currency ?? "BYN"),
+        meta: {
+          ...subMeta,
+          reminder_candidate_source: "subscriptions_v2",
+        },
+        subscriptions_v2: sub,
+      };
+    });
+}
+
 /**
  * Provider-managed finite installments intentionally do not materialize rows in
  * installment_payments. Reconstruct the next scheduled payment from the

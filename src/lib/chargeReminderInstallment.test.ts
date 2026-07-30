@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildVirtualInstallmentPayment } from "../../supabase/functions/_shared/finite-installment-progress.ts";
+import {
+  buildLocalFiniteCandidateRows,
+  buildVirtualInstallmentPayment,
+  isFiniteInstallmentModel,
+} from "../../supabase/functions/_shared/finite-installment-progress.ts";
 
 describe("buildVirtualInstallmentPayment", () => {
   it("reconstructs the next finite payment from order progress", () => {
@@ -105,5 +109,69 @@ describe("buildVirtualInstallmentPayment", () => {
     );
 
     expect(payment?.payment_number).toBe(2);
+  });
+});
+
+describe("local finite reminder candidates", () => {
+  const localFiniteSubscription = {
+    id: "sub-local-1",
+    user_id: "user-1",
+    status: "active",
+    next_charge_at: "2026-09-30T09:00:00.000Z",
+    meta: {
+      model: "bepaid_finite_subscription",
+      billing_cycles: 3,
+      recurring_amount: 175,
+    },
+    orders_v2: {
+      currency: "BYN",
+      meta: {
+        installment_progress: {
+          billing_cycles: 3,
+          paid_billing_cycles: 1,
+          per_payment_byn: 175,
+          next_charge_at: "2026-09-30T09:00:00.000Z",
+        },
+      },
+    },
+  };
+
+  it("recognizes a finite subscription without provider metadata", () => {
+    expect(isFiniteInstallmentModel(null, localFiniteSubscription)).toBe(true);
+  });
+
+  it("adds an unlinked finite subscription to the reminder candidates", () => {
+    const rows = buildLocalFiniteCandidateRows([], [localFiniteSubscription]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: "local:sub-local-1",
+      subscription_v2_id: "sub-local-1",
+      user_id: "user-1",
+      amount_cents: 17500,
+      currency: "BYN",
+      next_charge_at: "2026-09-30T09:00:00.000Z",
+    });
+  });
+
+  it("does not duplicate a provider-managed finite subscription", () => {
+    const rows = buildLocalFiniteCandidateRows(
+      [{ id: "provider-1", subscription_v2_id: "sub-local-1" }],
+      [localFiniteSubscription],
+    );
+
+    expect(rows).toEqual([]);
+  });
+
+  it("does not add ordinary recurring subscriptions", () => {
+    const rows = buildLocalFiniteCandidateRows([], [{
+      id: "sub-recurring",
+      user_id: "user-2",
+      status: "active",
+      next_charge_at: "2026-09-30T09:00:00.000Z",
+      meta: { recurring_amount: 250 },
+    }]);
+
+    expect(rows).toEqual([]);
   });
 });
