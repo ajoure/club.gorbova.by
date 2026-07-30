@@ -238,6 +238,17 @@ const LOCAL_RULES: LocalRule[] = [
     componentOf: "транспортное средство",
   },
   {
+    pattern: /(\bhdmi\b|\busb\b|\bdisplayport\b|\bvga\b|\bdvi\b).*(кабел|шнур|переходник|адаптер)|(кабел|шнур|переходник|адаптер).*(\bhdmi\b|\busb\b|\bdisplayport\b|\bvga\b|\bdvi\b)/i,
+    normalizedName: "соединительный кабель или переходник",
+    objectType: "комплектующая для подключения оборудования",
+    catalogScope: "component_or_spare_part",
+    primaryFunction: "соединение и передача сигнала между самостоятельными устройствами",
+    searchPhrases: [],
+    confidence: "high",
+    isProbableComponent: true,
+    componentOf: "вычислительная или организационная техника",
+  },
+  {
     pattern: /(iphone|айфон|смартфон|мобильн.*телефон|телефон.*мобильн|сотов.*телефон|телефон.*сотов)/i,
     normalizedName: "телефон сотовый",
     objectType: "сотовый телефон",
@@ -336,7 +347,7 @@ export function identifyObjectLocally(query: string): IdentifiedAssetObject {
   const matchingRules = LOCAL_RULES.filter((candidate) =>
     candidate.pattern.test(normalizedQuery)
   );
-  const rule = /(аккумулятор|батаре|картридж|запасн.*част|комплектующ|детал)/i
+  const rule = /(аккумулятор|батаре|картридж|запасн.*част|комплектующ|детал|кабел|шнур|переходник|адаптер)/i
     .test(normalizedQuery)
     ? matchingRules.find((candidate) => candidate.isProbableComponent) ?? matchingRules[0]
     : matchingRules[0];

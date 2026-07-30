@@ -205,6 +205,19 @@ describe("asset classifier golden set", () => {
     ).toBe(false);
   });
 
+  it("does not classify an HDMI cable as a monitor or computer peripheral", () => {
+    const result = classifyAsset("кабель HDMI для монитора");
+
+    expect(result.decision).toBe("not_found");
+    expect(result.identifiedObject).toMatchObject({
+      catalogScope: "component_or_spare_part",
+      isProbableComponent: true,
+    });
+    expect(result.candidates).toEqual([]);
+    expect(result.clarifyingQuestions).toEqual([]);
+    expect(result.content).not.toContain("48003");
+  });
+
   it("asks only the catalog-relevant distinction for a card reader", () => {
     const result = classifyAsset("считыватель идентификационных карт");
 

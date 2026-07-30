@@ -600,9 +600,20 @@ export function classifyAsset(
     const matchingRules = VERIFIED_OBJECT_RULES.filter((candidate) =>
       candidate.matcher.test(semantic)
     );
-    rule = /(аккумулятор|батарея)/i.test(semantic)
+    const matchedRule = /(аккумулятор|батарея)/i.test(semantic)
       ? matchingRules.find((candidate) => candidate.id.endsWith("_battery")) ?? matchingRules[0]
       : matchingRules[0];
+    const componentCompatibleRuleIds = new Set([
+      "laptop_battery",
+      "ups_battery",
+      "card_reader",
+      "automotive_tire",
+    ]);
+    rule =
+      identifiedObject.catalogScope !== "component_or_spare_part" ||
+        (matchedRule && componentCompatibleRuleIds.has(matchedRule.id))
+        ? matchedRule
+        : undefined;
     if (rule) {
       candidates = rule.preferredCodes.flatMap((code, index) => {
         const candidate = toCandidate(code, {
@@ -617,7 +628,7 @@ export function classifyAsset(
         });
         return candidate ? [candidate] : [];
       });
-    } else {
+    } else if (identifiedObject.catalogScope !== "component_or_spare_part") {
       candidates = findCatalogCandidates(identifiedObject, semantic);
     }
   }
