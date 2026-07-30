@@ -15,7 +15,7 @@ import { useLegalDetailsFields } from "@/hooks/useLegalDetailsFields";
 import { FieldLabelWithId } from "./FieldLabelWithId";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   Form,
   FormControl,
@@ -30,7 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DEMO_LEGAL_ENTITY } from "@/constants/demoLegalDetails";
-import { Loader2, Save, Info } from "lucide-react";
+import { Loader2, RefreshCw, Save, Info } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -40,7 +40,7 @@ import { LegalEntityAddressAdapter } from "@/lib/address/adapters/LegalEntityAdd
 import { EntrepreneurAddressAdapter } from "@/lib/address/adapters/EntrepreneurAddressAdapter";
 import { emptyAddress, formatFullAddress } from "@/lib/address/utils";
 import { useGrpLookup } from "@/hooks/useGrpLookup";
-import { isValidUnp } from "@/lib/legal-entities/normalizeUnp";
+import { isValidUnp, normalizeUnpInput } from "@/lib/legal-entities/normalizeUnp";
 import {
   grpDataToAutofillFields,
   buildGrpDiff,
@@ -152,6 +152,7 @@ export function OrganizationDetailsForm({
   const [grpResult, setGrpResult] = useState<GrpAutofillFields | null>(null);
   const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
   const [grpMeta, setGrpMeta] = useState<Record<string, string | null>>({});
+  const lastAutomaticLookupUnp = useRef<string | null>(null);
 
   // Build default values from initialData, reading from correct namespace
   const getDefaultValues = (): FormData => {
@@ -232,30 +233,49 @@ export function OrganizationDetailsForm({
   const unpValue = form.watch("unp");
   const initialUnp = isEditingEntrepreneur ? initialData?.ent_unp : initialData?.leg_unp;
 
-  useEffect(() => {
-    if (isValidUnp(unpValue) && unpValue !== initialUnp) {
-      grpLookup.mutate(unpValue, {
-        onSuccess: (result) => {
-          if (result.found && result.data) {
-            const autofill = grpDataToAutofillFields(result.data);
-            const currentValues: Partial<Record<keyof GrpAutofillFields, string>> = {
-              clean_name: form.getValues("name"),
-              org_form_full: form.getValues("org_form"),
-              short_name: "",
-              address: formatFullAddress(address),
-            };
-            const diff = buildGrpDiff(currentValues, autofill);
-            if (diff.length > 0) {
-              setGrpResult(autofill);
-              setGrpDiff(diff);
-              setGrpDialogOpen(true);
-            }
-          }
-        },
-      });
+  const requestGrpLookup = useCallback((rawUnp: string, force = false) => {
+    if (!isValidUnp(rawUnp)) {
+      toast.error("УНП должен содержать 9 цифр");
+      return;
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [unpValue]);
+
+    if (!force && lastAutomaticLookupUnp.current === rawUnp) return;
+    lastAutomaticLookupUnp.current = rawUnp;
+
+    grpLookup.mutate(rawUnp, {
+      onSuccess: (result) => {
+        if (!result.found || !result.data) {
+          toast.error(result.message || "В реестре МНС не найдена организация с этим УНП");
+          return;
+        }
+
+        const autofill = grpDataToAutofillFields(result.data);
+        const currentValues: Partial<Record<keyof GrpAutofillFields, string>> = {
+          clean_name: form.getValues("name"),
+          org_form_full: form.getValues("org_form"),
+          short_name: "",
+          address: formatFullAddress(address),
+        };
+        const diff = buildGrpDiff(currentValues, autofill);
+        if (diff.length === 0) {
+          toast.success("Реквизиты уже совпадают с данными реестра МНС");
+          return;
+        }
+        setGrpResult(autofill);
+        setGrpDiff(diff);
+        setGrpDialogOpen(true);
+      },
+    });
+  }, [address, form, grpLookup]);
+
+  useEffect(() => {
+    // A changed UNP is looked up automatically. For an already saved UNP the
+    // explicit button below provides a deliberate refresh without opening a
+    // confirmation dialog on every edit screen mount.
+    if (isValidUnp(unpValue) && unpValue !== initialUnp) {
+      requestGrpLookup(unpValue);
+    }
+  }, [initialUnp, requestGrpLookup, unpValue]);
 
   const handleGrpConfirm = useCallback(async () => {
     if (!grpResult) return;
@@ -450,13 +470,25 @@ export function OrganizationDetailsForm({
                 <FormControl>
                   <Input 
                     placeholder={getPlaceholder("leg_unp", "193405000")} 
-                    maxLength={9} 
+                    inputMode="numeric"
                     {...field} 
+                    onChange={(event) => field.onChange(normalizeUnpInput(event.target.value))}
                   />
                 </FormControl>
                 <FormDescription>
-                  Введите УНП — остальные данные заполнятся автоматически{allowMissingUnp ? ". Если УНП ещё нет, оставьте поле пустым и заполните данные вручную." : "."}
+                  Введите УНП — данные будут получены из реестра МНС{allowMissingUnp ? ". Если УНП ещё нет, оставьте поле пустым и заполните данные вручную." : "."}
                 </FormDescription>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-fit"
+                  disabled={!isValidUnp(unpValue) || isLookingUp}
+                  onClick={() => requestGrpLookup(unpValue, true)}
+                >
+                  {isLookingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  Обновить по УНП
+                </Button>
                 <FormMessage />
               </FormItem>
             )}

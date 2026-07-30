@@ -16,6 +16,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Form,
   FormControl,
@@ -28,7 +29,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Save, ShieldCheck } from "lucide-react";
+import { Loader2, RefreshCw, Save, ShieldCheck } from "lucide-react";
 import type {
   LegalEntityRequisitesRow,
   RequisitesScope,
@@ -39,6 +40,10 @@ import {
   pickGrpSummary,
   GRP_LABELS,
 } from "@/lib/requisites-v2/fieldMap";
+import { useGrpLookup } from "@/hooks/useGrpLookup";
+import { grpDataToAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
+import { isValidUnp, normalizeUnpInput } from "@/lib/legal-entities/normalizeUnp";
+import { toast } from "sonner";
 
 const schema = z.object({
   org_form: z.string().optional().or(z.literal("")),
@@ -115,6 +120,9 @@ export function LegalEntityRequisitesForm({
     string | undefined
   >;
   const grpRows = pickGrpSummary(rawData);
+  const grpLookup = useGrpLookup();
+  const lastAutomaticLookupUnp = useRef<string | null>(null);
+  const [grpSnapshot, setGrpSnapshot] = useState<Record<string, unknown>>({});
 
   const subjectLabel = subjectType === "legal_entity" ? "ЮЛ" : "ИП";
   const prefix = `[${SCOPE_LABEL[scope]}] [${subjectLabel}]`;
@@ -147,9 +155,58 @@ export function LegalEntityRequisitesForm({
   const submit = async (v: FormValues) => {
     const { is_default, ...rest } = v;
     // Sanitize: keep only canonical + GRP + unknown keys; drop legacy/service.
-    const cleaned = sanitizeForWrite(subjectType, rest as Record<string, unknown>, rawData);
+    const cleaned = sanitizeForWrite(subjectType, rest as Record<string, unknown>, {
+      ...rawData,
+      ...grpSnapshot,
+    });
     await onSubmit({ data: cleaned, is_default: !!is_default });
   };
+
+  const applyGrpLookup = useCallback((rawUnp: string, force = false) => {
+    if (!isValidUnp(rawUnp)) {
+      toast.error("УНП должен содержать 9 цифр");
+      return;
+    }
+    if (!force && lastAutomaticLookupUnp.current === rawUnp) return;
+    lastAutomaticLookupUnp.current = rawUnp;
+
+    grpLookup.mutate(rawUnp, {
+      onSuccess: (result) => {
+        if (!result.found || !result.data) {
+          toast.error(result.message || "В реестре МНС не найдена организация с этим УНП");
+          return;
+        }
+
+        const fields = grpDataToAutofillFields(result.data);
+        form.setValue("unp", result.data.unp, { shouldDirty: true, shouldValidate: true });
+        form.setValue("name", fields.clean_name || result.data.full_name, { shouldDirty: true, shouldValidate: true });
+        form.setValue("short_name", fields.short_name || "", { shouldDirty: true });
+        form.setValue("address", fields.address || "", { shouldDirty: true });
+        if (subjectType === "legal_entity" && fields.org_form_full) {
+          form.setValue("org_form", fields.org_form_full, { shouldDirty: true });
+        }
+        if (!form.getValues("acts_on_basis")) {
+          form.setValue(
+            "acts_on_basis",
+            subjectType === "entrepreneur" ? "Свидетельства о государственной регистрации" : "Устава",
+            { shouldDirty: true },
+          );
+        }
+        setGrpSnapshot({
+          grp_registration_date: result.data.registration_date,
+          grp_tax_office_code: result.data.tax_office_code,
+          grp_tax_office_name: result.data.tax_office_name,
+          grp_status_code: result.data.status_code,
+          grp_status_name: result.data.status_name,
+          grp_short_name: result.data.short_name,
+          grp_liquidation_date: result.data.liquidation_date,
+          grp_liquidation_reason: result.data.liquidation_reason ?? null,
+          grp_last_fetched_at: new Date().toISOString(),
+        });
+        toast.success("Данные из реестра МНС подставлены. Сохраните реквизиты.");
+      },
+    });
+  }, [form, grpLookup, subjectType]);
 
   const showDirectorBlock = subjectType === "legal_entity";
   const showIpSignerBlock = subjectType === "entrepreneur";
@@ -157,9 +214,18 @@ export function LegalEntityRequisitesForm({
   // Live-вычисление дефолтов для подсказок placeholder в блоке ИП-руководителя.
   const watchedName = form.watch("name") ?? "";
   const watchedActsOnBasis = form.watch("acts_on_basis") ?? "";
+  const watchedUnp = form.watch("unp") ?? "";
   const ipDefaultFullName = stripIpPrefix(watchedName);
   const ipDefaultShortName = toInitials(ipDefaultFullName);
   const ipDefaultActs = watchedActsOnBasis || "Свидетельства о государственной регистрации";
+
+  useEffect(() => {
+    // Do not overwrite a saved record simply by opening it. A changed UNP is
+    // automatic; the explicit button covers deliberate refresh of the same UNP.
+    if (isValidUnp(watchedUnp) && watchedUnp !== (data.unp ?? "")) {
+      applyGrpLookup(watchedUnp);
+    }
+  }, [applyGrpLookup, data.unp, watchedUnp]);
 
   return (
     <Form {...form}>
@@ -220,10 +286,32 @@ export function LegalEntityRequisitesForm({
           name="unp"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{prefix} УНП *</FormLabel>
+              <FormLabel className="flex items-center gap-2">
+                {prefix} УНП *
+                {grpLookup.isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              </FormLabel>
               <FormControl>
-                <Input maxLength={9} placeholder="9 цифр" {...field} />
+                <Input
+                  inputMode="numeric"
+                  placeholder="9 цифр"
+                  {...field}
+                  onChange={(event) => field.onChange(normalizeUnpInput(event.target.value))}
+                />
               </FormControl>
+              <FormDescription>
+                Введите УНП — данные будут получены из реестра МНС.
+              </FormDescription>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-fit"
+                disabled={!isValidUnp(watchedUnp) || grpLookup.isPending}
+                onClick={() => applyGrpLookup(watchedUnp, true)}
+              >
+                {grpLookup.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Обновить по УНП
+              </Button>
               <FormMessage />
             </FormItem>
           )}

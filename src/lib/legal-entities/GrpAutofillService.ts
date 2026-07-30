@@ -41,6 +41,19 @@ for (const [full, short] of Object.entries(ORG_FORM_FULL_TO_SHORT)) {
   ORG_FORM_SHORT_TO_FULL[short] = full;
 }
 
+/**
+ * GRP sometimes prefixes the legal form with a business descriptor. The
+ * descriptor is not part of our organization-form field, but it used to make
+ * the whole registry name fall through as a company name.
+ */
+const ORG_FORM_PREFIX_ALIASES: Record<string, string> = {
+  'Производственно-торговое унитарное предприятие': 'Унитарное предприятие',
+  'Производственное унитарное предприятие': 'Унитарное предприятие',
+  'Торговое унитарное предприятие': 'Унитарное предприятие',
+  'Научно-производственное унитарное предприятие': 'Унитарное предприятие',
+  'Транспортное унитарное предприятие': 'Унитарное предприятие',
+};
+
 // ---------------------------------------------------------------------------
 // Parse org form + clean name from GRP full_name
 // ---------------------------------------------------------------------------
@@ -66,6 +79,23 @@ export function parseOrgFormAndName(fullName: string): ParsedOrgName {
   }
 
   const trimmed = fullName.trim();
+
+  // GRP can return a qualified name such as
+  // "Производственно-торговое унитарное предприятие \"АзотХимФортис\"".
+  // Keep only the canonical legal form in its dedicated field.
+  const sortedAliases = Object.keys(ORG_FORM_PREFIX_ALIASES)
+    .sort((a, b) => b.length - a.length);
+  for (const alias of sortedAliases) {
+    if (trimmed.toLowerCase().startsWith(alias.toLowerCase())) {
+      const rest = trimmed.slice(alias.length).trim();
+      const orgFormFull = ORG_FORM_PREFIX_ALIASES[alias];
+      return {
+        orgFormFull,
+        orgFormShort: ORG_FORM_FULL_TO_SHORT[orgFormFull],
+        cleanName: stripQuotes(rest) || rest,
+      };
+    }
+  }
 
   // Try matching full org form prefix (longest match first)
   const sortedForms = Object.keys(ORG_FORM_FULL_TO_SHORT)
