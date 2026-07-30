@@ -1075,6 +1075,14 @@ ${amountLine}
       toast.error("Выберите реквизиты плательщика");
       return;
     }
+    if (amount <= 0) {
+      toast.error("Введите корректную сумму");
+      return;
+    }
+    if (composableAdjustment !== 0 && !adjustmentReason.trim()) {
+      toast.error("Укажите причину скидки или наценки");
+      return;
+    }
     setInvoicePending(true);
     try {
       const { data, error } = await supabase.functions.invoke("admin-invoice-checkout-issue", {
@@ -1085,6 +1093,9 @@ ${amountLine}
           addon_offer_ids: selectedAddonOfferIds,
           payer_type: invoicePayerType,
           legal_details_id: invoicePayerType === "individual" ? null : invoiceLegalDetailsId,
+          // Сервер вычисляет исходную цену только из offer'ов, а эта разница —
+          // контролируемая администратором корректировка итоговой суммы.
+          adjustment_amount: composableAdjustment,
           adjustment_reason: adjustmentReason.trim() || null,
         },
       });

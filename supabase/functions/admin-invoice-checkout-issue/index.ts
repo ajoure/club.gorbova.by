@@ -23,6 +23,7 @@ import {
   ComposableCheckoutError,
   resolveComposableCheckout,
 } from "../_shared/resolve-composable-checkout.ts";
+import { allocateComposablePayableTotal } from "../_shared/composable-checkout.ts";
 import { materializeComposableOrderGroup } from "../_shared/materialize-composable-order-group.ts";
 import { buildPurchaseCompositionTitle } from "../_shared/purchase-composition-title.ts";
 
@@ -47,6 +48,7 @@ interface IssueBody {
   addon_offer_ids?: string[];
   legal_details_id?: string | null;
   payer_type?: "legal_entity" | "entrepreneur" | "individual";
+  adjustment_amount?: number;
   adjustment_reason?: string | null;
 }
 
@@ -133,13 +135,34 @@ Deno.serve(async (req) => {
     ld = data;
   }
 
-  // Composable quote
+  // Composable quote. The offer configuration remains the source of list
+  // prices; an administrator can only pass a documented adjustment to the
+  // resulting total. Allocate it over items so orders, the group snapshot and
+  // the invoice line all carry one identical payable total.
+  const requestedAdjustment = Number(body.adjustment_amount ?? 0);
+  const requestedReason = String(body.adjustment_reason ?? "").trim();
+  if (!Number.isFinite(requestedAdjustment) || Math.round(requestedAdjustment * 100) !== requestedAdjustment * 100) {
+    return json({ error: "invalid_adjustment_amount" }, 400);
+  }
+  if (requestedAdjustment !== 0 && !requestedReason) {
+    return json({ error: "adjustment_reason_required" }, 400);
+  }
+
   let composableQuote;
   try {
-    composableQuote = await resolveComposableCheckout(admin, {
+    const baseQuote = await resolveComposableCheckout(admin, {
       parentOfferId: body.offer_id,
       addonOfferIds: body.addon_offer_ids ?? [],
     });
+    const requestedTotal = Math.round((baseQuote.subtotal + requestedAdjustment) * 100) / 100;
+    if (requestedTotal <= 0) return json({ error: "invalid_adjustment_amount" }, 400);
+    composableQuote = requestedAdjustment === 0
+      ? baseQuote
+      : allocateComposablePayableTotal(
+          baseQuote,
+          requestedTotal,
+          requestedReason,
+        );
   } catch (error) {
     if (error instanceof ComposableCheckoutError) return json({ error: error.code }, error.status);
     return json({ error: "quote_failed" }, 500);
@@ -300,6 +323,8 @@ Deno.serve(async (req) => {
       payer_type: payerType,
       order_group_id: orderGroupId,
       quote_total: composableQuote.total,
+      adjustment_amount: composableQuote.adjustment_amount,
+      adjustment_reason: composableQuote.adjustment_reason,
       quote_items_count: composableQuote.items.length,
       routing_ok: routing.ok,
     },
