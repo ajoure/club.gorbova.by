@@ -122,12 +122,16 @@ export function parseIdentifiedAssetObject(
 
   const normalizedName = boundedString(source.normalized_name);
   const objectType = boundedString(source.object_type);
-  if (!normalizedName || !objectType) return null;
+  const declaredUnknown =
+    confidence === "low" && !normalizedName && !objectType;
+  if (!declaredUnknown && (!normalizedName || !objectType)) return null;
+  const normalizedQuery = normalize(originalQuery).slice(0, 300);
+  const missingCharacteristics = boundedStrings(source.missing_characteristics);
 
   return {
     originalName: boundedString(source.original_name) || originalQuery.trim().slice(0, 300),
-    normalizedName,
-    objectType,
+    normalizedName: normalizedName || normalizedQuery,
+    objectType: objectType || "неопределенный объект",
     possibleSubtypes: boundedStrings(source.possible_subtypes),
     primaryFunction: boundedString(source.primary_function),
     secondaryFunctions: boundedStrings(source.secondary_functions),
@@ -136,7 +140,9 @@ export function parseIdentifiedAssetObject(
     material: boundedString(source.material),
     isProbableComponent: source.is_probable_component === true,
     componentOf: boundedString(source.component_of),
-    missingCharacteristics: boundedStrings(source.missing_characteristics),
+    missingCharacteristics: missingCharacteristics.length > 0
+      ? missingCharacteristics
+      : ["точное наименование объекта", "основное назначение", "ключевые характеристики"],
     searchPhrases: boundedStrings(source.search_phrases),
     positiveMarkers: boundedStrings(source.positive_markers),
     negativeMarkers: boundedStrings(source.negative_markers),

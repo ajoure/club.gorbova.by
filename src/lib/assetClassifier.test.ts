@@ -220,6 +220,53 @@ describe("Gemini object identification boundary", () => {
     }, "объект")).toBeNull();
   });
 
+  it("keeps a valid low-confidence Gemini unknown instead of misreporting a fallback", async () => {
+    const unknownPayload = {
+      original_name: "абракадабра xyz",
+      normalized_name: "",
+      object_type: "",
+      possible_subtypes: [],
+      primary_function: "",
+      secondary_functions: [],
+      installation_context: "",
+      connection_type: "",
+      material: "",
+      is_probable_component: false,
+      component_of: "",
+      missing_characteristics: [
+        "точное наименование объекта",
+        "основное назначение",
+        "ключевые характеристики",
+      ],
+      search_phrases: [],
+      positive_markers: [],
+      negative_markers: [],
+      confidence: "low",
+    };
+    const mockFetch = (async () =>
+      new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify(unknownPayload) } }],
+      }), { status: 200 })) as typeof fetch;
+
+    const result = await identifyObjectWithGemini(
+      "абракадабра xyz",
+      "test-key-not-a-real-secret",
+      mockFetch,
+    );
+
+    expect(result.source).toBe("gemini");
+    expect(result.fallbackReason).toBeUndefined();
+    expect(result.object).toMatchObject({
+      normalizedName: "абракадабра xyz",
+      objectType: "неопределенный объект",
+      confidence: "low",
+    });
+    expect(classifyAsset("абракадабра xyz", result.object)).toMatchObject({
+      decision: "not_found",
+      candidates: [],
+    });
+  });
+
   it("falls back safely on a provider rate limit", async () => {
     const mockFetch = (async () =>
       new Response(JSON.stringify({ error: "quota" }), { status: 429 })) as typeof fetch;
