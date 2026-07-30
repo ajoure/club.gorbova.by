@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
   const [permission, adminRole, superRole] = await Promise.all([
     admin.rpc("has_permission", {
       _user_id: actor.id,
-      _permission: "subscriptions.edit",
+      _permission_code: "subscriptions.edit",
     }),
     admin.rpc("has_role_v2", { _user_id: actor.id, _role_code: "admin" }),
     admin.rpc("has_role_v2", { _user_id: actor.id, _role_code: "super_admin" }),
