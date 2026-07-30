@@ -4,6 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import type { UnsupportedFileInfo } from "@/types/files";
 import { normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
+import { shouldRestoreScenarioContext } from "@/lib/aiScenarioRouting";
 
 export interface ChatMessage {
   id: string;
@@ -118,15 +119,18 @@ export function useAiChat() {
 
       // Extract scenario context from last assistant message
       let freshContext: ScenarioContext | null = null;
-      const lastAssistant = [...loaded].reverse().find(m => m.role === "assistant" && m.metadata?.scenario_type);
+      const lastAssistant = [...loaded].reverse().find((message) =>
+        message.role === "assistant" &&
+        shouldRestoreScenarioContext(message.metadata?.scenario_type)
+      );
       if (lastAssistant?.metadata) {
         freshContext = {
           prompt_id: lastAssistant.metadata.prompt_id,
           scenario_type: lastAssistant.metadata.scenario_type,
           launcher_title_snapshot: lastAssistant.metadata.launcher_title_snapshot,
         };
-        setActiveScenarioContext(freshContext);
       }
+      setActiveScenarioContext(freshContext);
 
       return { loaded: true, scenarioContext: freshContext };
     } catch {
@@ -231,12 +235,14 @@ export function useAiChat() {
       };
 
       // Update scenario context if present
-      if (data?.metadata?.scenario_type) {
+      if (shouldRestoreScenarioContext(data?.metadata?.scenario_type)) {
         setActiveScenarioContext({
           prompt_id: data.metadata.prompt_id,
           scenario_type: data.metadata.scenario_type,
           launcher_title_snapshot: data.metadata.launcher_title_snapshot,
         });
+      } else {
+        setActiveScenarioContext(null);
       }
 
       setMessages(prev => [...prev, assistantMsg]);
@@ -305,10 +311,10 @@ export function useAiChat() {
         timestamp: new Date(),
         metadata,
       }]);
-      setActiveScenarioContext({
-        scenario_type: "asset_classifier_hybrid",
-        launcher_title_snapshot: "Определение шифра ОС",
-      });
+      // «Определение шифра ОС» — разовый инструмент. Следующее сообщение
+      // снова относится к обычному чату, пока пользователь явно не выберет
+      // инструмент в меню возможностей помощника.
+      setActiveScenarioContext(null);
     } catch (error) {
       console.error("Asset classifier error:", error);
       const message = error instanceof Error

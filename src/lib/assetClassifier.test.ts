@@ -153,6 +153,80 @@ describe("asset classifier golden set", () => {
     expect(result.identifiedObject.isProbableComponent).toBe(true);
     expect(result.content).toContain("комплектующую или запасную часть");
   });
+
+  it("rejects fresh parsley as a consumable instead of searching random equipment", () => {
+    const result = classifyAsset("пучок петрушки свежей");
+
+    expect(result.decision).toBe("not_found");
+    expect(result.identifiedObject.catalogScope).toBe("consumable_or_inventory");
+    expect(result.candidates).toEqual([]);
+    expect(result.clarifyingQuestions).toEqual([]);
+    expect(result.content).toContain("потребляемый товар");
+  });
+
+  it("keeps a general chat question outside the classifier", () => {
+    const result = classifyAsset("что можно сделать с тобой?");
+
+    expect(result.decision).toBe("not_found");
+    expect(result.identifiedObject.catalogScope).toBe("not_an_object");
+    expect(result.candidates).toEqual([]);
+    expect(result.clarifyingQuestions).toEqual([]);
+    expect(result.content).toContain("Сначала выберите задачу помощника");
+  });
+
+  it("does not ask irrelevant product specifications for an automotive tire", () => {
+    const identified = {
+      ...identifyObjectLocally("шина автомобильная R17"),
+      missingCharacteristics: [
+        "Сезонность (летняя/зимняя/всесезонная)",
+        "Индекс нагрузки",
+        "Индекс скорости",
+        "Ширина профиля и высота профиля",
+      ],
+    };
+    const result = classifyAsset("шина автомобильная R17", identified);
+
+    expect(result.decision).toBe("not_found");
+    expect(result.identifiedObject).toMatchObject({
+      catalogScope: "component_or_spare_part",
+      isProbableComponent: true,
+      componentOf: "транспортное средство",
+    });
+    expect(result.candidates).toEqual([]);
+    expect(result.clarifyingQuestions.join(" ")).not.toMatch(
+      /сезон|индекс нагрузки|индекс скорости|профил/i,
+    );
+    expect(result.clarifyingQuestions.join(" ")).toMatch(/вид транспортного средства/i);
+    expect(result.content).toContain("не меняют подбор шифра");
+    expect(
+      ASSET_CLASSIFIER_CATALOG.items.some((item) =>
+        /(?:^|[;,])\s*(?:автомобильные шины|шины автомобильные)(?:[;,]|$)/i.test(item.name)
+      ),
+    ).toBe(false);
+  });
+
+  it("does not classify an HDMI cable as a monitor or computer peripheral", () => {
+    const result = classifyAsset("кабель HDMI для монитора");
+
+    expect(result.decision).toBe("not_found");
+    expect(result.identifiedObject).toMatchObject({
+      catalogScope: "component_or_spare_part",
+      isProbableComponent: true,
+    });
+    expect(result.candidates).toEqual([]);
+    expect(result.clarifyingQuestions).toEqual([]);
+    expect(result.content).not.toContain("48003");
+  });
+
+  it("asks only the catalog-relevant distinction for a card reader", () => {
+    const result = classifyAsset("считыватель идентификационных карт");
+
+    expect(result.decision).toBe("clarification");
+    expect(result.candidates.map((candidate) => candidate.code)).toEqual(["48003", "45626"]);
+    expect(result.clarifyingQuestions).toEqual([
+      "Это самостоятельный USB-считыватель/периферия компьютера или элемент системы контроля и управления доступом?",
+    ]);
+  });
 });
 
 describe("Gemini object identification boundary", () => {
@@ -169,6 +243,7 @@ describe("Gemini object identification boundary", () => {
       original_name: "iPhone 16 Pro",
       normalized_name: "телефон сотовый",
       object_type: "сотовый телефон",
+      catalog_scope: "potential_fixed_asset",
       possible_subtypes: ["смартфон"],
       primary_function: "мобильная связь и передача данных",
       secondary_functions: ["фотосъемка"],
@@ -210,6 +285,7 @@ describe("Gemini object identification boundary", () => {
     expect(requestedBody.max_tokens).toBe(4_096);
     expect(requestedBody).not.toHaveProperty("temperature");
     expect(requestedBody.response_format).toEqual({ type: "json_object" });
+    expect(JSON.stringify(requestedBody.messages)).toContain("catalog_scope");
   });
 
   it("rejects invalid structured data before classification", () => {
@@ -225,6 +301,7 @@ describe("Gemini object identification boundary", () => {
       original_name: "абракадабра xyz",
       normalized_name: "",
       object_type: "",
+      catalog_scope: "unknown",
       possible_subtypes: [],
       primary_function: "",
       secondary_functions: [],
