@@ -83,6 +83,7 @@ describe("asset classifier golden set", () => {
     ["МФУ Canon", "48003"],
     ["многофункциональное устройство печать сканирование копирование", "48003"],
     ["сканер документов", "48003"],
+    ["планшетный сканер документов", "48003"],
     ["плоттер широкоформатный", "48003"],
     ["монитор для персонального компьютера", "48003"],
     ["источник бесперебойного питания для компьютера", "48003"],
@@ -124,6 +125,37 @@ describe("asset classifier golden set", () => {
       "https://club.gorbova.by/knowledge/laws/postanovlenie-minekonomiki-161-2011#code-70034",
     );
     expect(result.content).not.toContain("etalonline.by");
+  });
+
+  it("uses the scanner head noun instead of an AI-added tablet subtype", () => {
+    const identified = {
+      ...identifyObjectLocally("сканер"),
+      normalizedName: "планшетный сканер",
+      objectType: "сканер",
+      possibleSubtypes: ["планшетный сканер", "протяжный сканер"],
+      searchPhrases: ["планшетный сканер", "сканер документов"],
+      confidence: "medium" as const,
+    };
+    const result = classifyAsset("сканер", identified);
+
+    expect(result.decision).toBe("recommended");
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]).toMatchObject({
+      code: "48003",
+      normativeLifeYears: 5,
+    });
+    expect(result.candidates[0].name).toMatch(/сканеры/i);
+    expect(result.content).not.toContain("#code-48016");
+  });
+
+  it("returns up to five real catalog occurrences for a short ambiguous term", () => {
+    const result = classifyAsset("насос");
+
+    expect(result.decision).toBe("clarification");
+    expect(result.candidates).toHaveLength(5);
+    expect(result.candidates.every((candidate) => /насос/i.test(candidate.name))).toBe(true);
+    expect(result.candidates.every((candidate) => candidate.matchType === "catalog_text")).toBe(true);
+    expect(result.clarifyingQuestions.join(" ")).toMatch(/назначени|наименован/i);
   });
 
   it("asks for the execution type instead of guessing a refrigerator code", () => {

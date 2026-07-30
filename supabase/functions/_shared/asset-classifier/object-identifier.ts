@@ -125,6 +125,12 @@ const SYSTEM_INSTRUCTION = `
     «электрический» или «офисный». Кофемашину называй «кофемашина» или
     «кофе-аппарат»; способ подключения к воде не является обязательным уточнением
     для распознавания такого объекта.
+12. Разбери все значимые слова исходного описания: отдели предметное ядро от
+    признаков исполнения и назначения. В сочетаниях вроде «планшетный сканер»
+    предметом остаётся сканер, а «планшетный» — его разновидность; не превращай
+    такой объект в планшетный компьютер. В search_phrases дай 3–6 коротких
+    вариантов поиска: исходное предметное название, нормативно близкие синонимы
+    и допустимые разновидности, но не добавляй несовместимые типы объектов.
 `.trim();
 
 function normalize(value: string): string {
@@ -202,6 +208,7 @@ interface LocalRule {
   pattern: RegExp;
   normalizedName: string;
   objectType: string;
+  priority?: number;
   catalogScope?: AssetCatalogScope;
   primaryFunction: string;
   searchPhrases: string[];
@@ -300,6 +307,7 @@ const LOCAL_RULES: LocalRule[] = [
     pattern: /(мфу|многофункциональн.*устройств|принтер|сканер|плоттер|монитор|ибп|источник.*бесперебойн.*питан)/i,
     normalizedName: "периферийное устройство персонального компьютера",
     objectType: "периферийное устройство вычислительного комплекса",
+    priority: 100,
     primaryFunction: "ввод вывод или обеспечение работы вычислительной техники",
     searchPhrases: ["устройства периферийные вычислительных комплексов", "сканеры принтеры многофункциональные устройства"],
     negativeMarkers: ["копировально множительная техника промышленная"],
@@ -384,7 +392,9 @@ export function identifyObjectLocally(query: string): IdentifiedAssetObject {
   const rule = /(аккумулятор|батаре|картридж|запасн.*част|комплектующ|детал|кабел|шнур|переходник|адаптер)/i
     .test(normalizedQuery)
     ? matchingRules.find((candidate) => candidate.isProbableComponent) ?? matchingRules[0]
-    : matchingRules[0];
+    : [...matchingRules].sort((a, b) =>
+      (b.priority ?? 0) - (a.priority ?? 0)
+    )[0];
   if (!rule) {
     return {
       originalName: query.trim().slice(0, 300),

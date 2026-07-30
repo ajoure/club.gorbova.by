@@ -22,7 +22,8 @@ const STOP_WORDS = new Set([
 
 const GENERIC_WORDS = new Set([
   "оборудование", "устройство", "система", "аппарат", "машина", "комплекс",
-  "средство", "техника", "прибор", "прочее", "общий", "применение",
+  "средство", "техника", "прибор", "объект", "прочее", "общий", "применение",
+  "приготовление", "приготовления", "напиток", "напитков",
 ]);
 
 const NON_DISCRIMINATING_STEMS = new Set([
@@ -34,6 +35,8 @@ const NON_DISCRIMINATING_STEMS = new Set([
   "электрическ",
   "электронн",
   "офисн",
+  "неизвестн",
+  "экспериментальн",
 ]);
 
 const SUFFIXES = [
@@ -87,6 +90,7 @@ interface VerifiedObjectRule {
   matcher: RegExp;
   preferredCodes: string[];
   reason: string;
+  priority?: number;
   clarifyingQuestions?: string[];
   forceClarification?: boolean;
   guidance?: string;
@@ -128,6 +132,7 @@ const VERIFIED_OBJECT_RULES: VerifiedObjectRule[] = [
     matcher: /(периферийное устройство|принтер|мфу|многофункциональное устройство|сканер|плоттер|монитор|источник бесперебойного питания|ибп)/i,
     preferredCodes: ["48003"],
     reason: "Объект распознан как периферийное устройство вычислительного комплекса.",
+    priority: 100,
   },
   {
     id: "card_reader",
@@ -335,19 +340,23 @@ function findCatalogCandidates(
     object.objectType,
     ...object.searchPhrases,
   ].map(normalize).filter((value) => value.length >= 4)));
-  const tokens = tokenize(semantic);
-  const coreTokens = new Set(tokenize([
-    query,
+  const queryTokens = new Set(tokenize(query));
+  const objectTokens = new Set(tokenize([
     object.normalizedName,
     object.objectType,
     ...object.possibleSubtypes,
+    ...object.searchPhrases,
   ].join(" ")));
+  const tokens = tokenize(semantic);
+  const coreTokens = new Set([...queryTokens, ...objectTokens]);
+  const queryTokenWeight = queryTokens.size <= 2 ? 24 : 10;
   const negativeMarkers = object.negativeMarkers.map(normalize).filter(Boolean);
 
   return searchableItems
     .map((source) => {
       let score = 0;
       const matchedTerms = new Set<string>();
+      const matchedQueryTokens = new Set<string>();
       const argumentsFor: string[] = [];
       const argumentsAgainst: string[] = [];
 
@@ -367,11 +376,20 @@ function findCatalogCandidates(
         const tokenStem = stem(token);
         const inName = source.nameTokens.some((word) => stem(word) === tokenStem);
         if (inName) {
-          score += 6;
+          score += queryTokens.has(token) ? queryTokenWeight : objectTokens.has(token) ? 12 : 6;
           matchedTerms.add(token);
+          if (queryTokens.has(token)) matchedQueryTokens.add(token);
         } else if (source.hierarchyNormalized.includes(token)) {
           score += 1;
         }
+      }
+
+      if (
+        queryTokens.size > 1 &&
+        [...queryTokens].every((token) => matchedQueryTokens.has(token))
+      ) {
+        score += 30;
+        argumentsFor.push("совпали все значимые слова исходного запроса");
       }
 
       for (const marker of negativeMarkers) {
@@ -469,7 +487,43 @@ function buildClarifyingQuestions(
     ) continue;
     questions.push(`Уточните: ${escapeMarkdown(characteristic)}?`);
   }
+  if (candidateCount > 1 && questions.length === 0) {
+    questions.push(
+      "Уточните основное назначение объекта и является ли он самостоятельным устройством или частью другого оборудования?",
+    );
+  }
   return Array.from(new Set(questions)).slice(0, 5);
+}
+
+function selectVerifiedObjectRule(
+  query: string,
+  semantic: string,
+  object: IdentifiedAssetObject,
+): VerifiedObjectRule | undefined {
+  const normalizedName = normalize(object.normalizedName);
+  const objectType = normalize(object.objectType);
+  const possibleSubtypes = normalize(object.possibleSubtypes.join(" "));
+  const searchPhrases = normalize(object.searchPhrases.join(" "));
+  const matchingRules = VERIFIED_OBJECT_RULES
+    .filter((candidate) => candidate.matcher.test(semantic))
+    .map((candidate) => ({
+      rule: candidate,
+      score:
+        (candidate.matcher.test(query) ? 120 : 0) +
+        (candidate.matcher.test(normalizedName) ? 100 : 0) +
+        (candidate.matcher.test(objectType) ? 90 : 0) +
+        (candidate.matcher.test(possibleSubtypes) ? 20 : 0) +
+        (candidate.matcher.test(searchPhrases) ? 15 : 0) +
+        (candidate.priority ?? 0),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  if (/(аккумулятор|батарея)/i.test(query)) {
+    const batteryRule = matchingRules.find(({ rule }) => rule.id.endsWith("_battery"));
+    if (batteryRule) return batteryRule.rule;
+  }
+
+  return matchingRules[0]?.rule;
 }
 
 function renderResult(
@@ -637,12 +691,7 @@ export function classifyAsset(
   }
 
   if (!candidates.length && !outsideCatalogScope) {
-    const matchingRules = VERIFIED_OBJECT_RULES.filter((candidate) =>
-      candidate.matcher.test(semantic)
-    );
-    const matchedRule = /(аккумулятор|батарея)/i.test(semantic)
-      ? matchingRules.find((candidate) => candidate.id.endsWith("_battery")) ?? matchingRules[0]
-      : matchingRules[0];
+    const matchedRule = selectVerifiedObjectRule(query, semantic, identifiedObject);
     const componentCompatibleRuleIds = new Set([
       "laptop_battery",
       "ups_battery",
