@@ -1,5 +1,6 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +50,14 @@ const REASON_LABELS: Record<string, string> = {
   one_time_product_no_renewal: 'Разовый продукт — без продления',
 };
 
+const MINSK_TZ = "Europe/Minsk";
+
+function minskDateKey(value: string): string | null {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return format(toZonedTime(date, MINSK_TZ), "yyyy-MM-dd");
+}
+
 function normalizeStatus(raw: string | null | undefined): 'success' | 'skipped' | 'failed' | 'pending' {
   if (!raw) return 'pending';
   const lower = raw.toLowerCase();
@@ -74,7 +83,7 @@ export function NotificationStatusIndicators({
     if (
       nextChargeAt &&
       log.effective_charge_at &&
-      new Date(log.effective_charge_at).getTime() !== new Date(nextChargeAt).getTime()
+      minskDateKey(log.effective_charge_at) !== minskDateKey(nextChargeAt)
     ) continue;
     const eventType = log.event_type || `subscription_reminder_${log.days_before}d`;
     const existing = latestLogsMap.get(eventType);

@@ -22,6 +22,9 @@ import {
 } from './charge-reminder-scheduling.ts';
 import { toTzDateKey } from './timezone.ts';
 import { logAutomatedTelegramMessage } from './log-automated-telegram.ts';
+import { buildVirtualInstallmentPayment } from './finite-installment-progress.ts';
+
+export { buildVirtualInstallmentPayment } from './finite-installment-progress.ts';
 
 export type ChargeReminderPreview = {
   provider_subscription_id: string;
@@ -233,7 +236,8 @@ export async function runChargeReminders(
     .select(`
       id, user_id, subscription_v2_id, state, next_charge_at, amount_cents, currency, meta,
       subscriptions_v2 (
-        id, user_id, tariff_id, meta, payment_type,
+        id, user_id, tariff_id, order_id, next_charge_at, meta,
+        orders_v2 ( final_price, currency, meta ),
         tariffs (
           id, name, product_id,
           products_v2 ( id, name )
@@ -250,13 +254,48 @@ export async function runChargeReminders(
     return { scanned: 0, eligible: 0, claimed, sent, dry_run: dryRun, previews };
   }
 
+  // Legacy subscriptions may predate the per-subscription policy snapshot.
+  // In that case use only the exact source offer recorded on the subscription
+  // or order; never guess from another button on the same tariff.
+  const sourceOfferIds = Array.from(new Set(
+    (rows ?? [])
+      .map((ps: any) => {
+        const sub = ps?.subscriptions_v2;
+        const order = Array.isArray(sub?.orders_v2) ? sub.orders_v2[0] : sub?.orders_v2;
+        return sub?.meta?.offer_id ?? order?.meta?.offer_id ?? null;
+      })
+      .filter((value: unknown): value is string => typeof value === 'string' && value.length > 0),
+  ));
+  const offerMetaById = new Map<string, unknown>();
+  if (sourceOfferIds.length > 0) {
+    const { data: offers, error: offerError } = await supabase
+      .from('tariff_offers')
+      .select('id, meta')
+      .in('id', sourceOfferIds);
+    if (offerError) {
+      console.error('[charge-reminders] source offer policy load error:', offerError);
+    } else {
+      for (const offer of offers ?? []) {
+        offerMetaById.set(String(offer.id), offer.meta ?? {});
+      }
+    }
+  }
+
   for (const ps of rows ?? []) {
     scanned++;
     const subV2: any = ps.subscriptions_v2;
     if (!subV2) continue;
 
     const meta = subV2.meta ?? {};
-    const policy = resolveChargeNotificationPolicy(meta);
+    const order = Array.isArray(subV2?.orders_v2) ? subV2.orders_v2[0] : subV2?.orders_v2;
+    const sourceOfferId = meta?.offer_id ?? order?.meta?.offer_id ?? null;
+    let policy = resolveChargeNotificationPolicy(meta);
+    if (policy.source === 'defaults' && typeof sourceOfferId === 'string') {
+      const sourceOfferMeta = offerMetaById.get(sourceOfferId);
+      if (sourceOfferMeta) {
+        policy = resolveChargeNotificationPolicy(sourceOfferMeta);
+      }
+    }
     const finiteInstallment = isFiniteInstallmentModel(ps, subV2);
 
     // Pre-charge reminders are gated by enabled + reminder_days membership.
@@ -275,34 +314,41 @@ export async function runChargeReminders(
       .from('installment_payments')
       .select('id, payment_number, total_payments, amount, currency, due_date')
       .eq('subscription_id', subV2.id)
-      .eq('status', 'pending')
+      .in('status', ['pending', 'failed', 'overdue'])
       .order('payment_number', { ascending: true })
       .limit(1)
       .maybeSingle();
 
-    if (pendingRow) {
+    const virtualPending = finiteInstallment && !pendingRow
+      ? buildVirtualInstallmentPayment(ps, subV2)
+      : null;
+    const effectivePending = pendingRow ?? virtualPending;
+
+    if (effectivePending) {
       kind = 'installment';
-      pending = pendingRow;
-      // Prefer provider next_charge_at when available; fallback to due_date.
+      pending = effectivePending;
+      // The finite-plan snapshot is canonical for the next installment date.
+      effectiveChargeIso = pending.due_date;
+      effectiveSource = 'installment_due_date';
       if (!ps.next_charge_at) {
-        effectiveChargeIso = pending.due_date;
-        effectiveSource = 'installment_due_date';
-        await supabase.from('audit_logs').insert({
-          action: 'installment.provider_next_charge_missing',
-          actor_type: 'system',
-          actor_label: 'subscription-renewal-reminders',
-          meta: {
-            provider_subscription_id: ps.id,
-            subscription_v2_id: subV2.id,
-            installment_payment_id: pending.id,
-            due_date: pending.due_date,
-          },
-        });
+        if (!dryRun) {
+          await supabase.from('audit_logs').insert({
+            action: 'installment.provider_next_charge_missing',
+            actor_type: 'system',
+            actor_label: 'subscription-renewal-reminders',
+            meta: {
+              provider_subscription_id: ps.id,
+              subscription_v2_id: subV2.id,
+              installment_payment_id: pending.id,
+              due_date: pending.due_date,
+            },
+          });
+        }
       } else {
         // Detect > 6h drift for observability.
         const drift = Math.abs(new Date(ps.next_charge_at).getTime() - new Date(pending.due_date).getTime());
         providerDriftHours = drift / 3600000;
-        if (providerDriftHours > 6) {
+        if (providerDriftHours > 6 && !dryRun) {
           await supabase.from('audit_logs').insert({
             action: 'installment.schedule_provider_drift',
             actor_type: 'system',
@@ -358,7 +404,7 @@ export async function runChargeReminders(
         policy_enabled: policy.enabled,
         reminder_days: policy.reminder_days,
         idempotency_keys: { telegram: `installment_completed:${ps.id}:telegram`, email: `installment_completed:${ps.id}:email` },
-        skipped: 'installment_completed_or_no_pending_payment',
+        skipped: 'installment_completed_or_no_scheduled_payment',
       });
       continue;
     }
