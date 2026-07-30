@@ -118,7 +118,10 @@ const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "email_status", label: "Почта 7/3/1", visible: true, width: 90, order: 17 },
 ];
 
-const STORAGE_KEY = 'admin_auto_renewals_columns_v3';
+// v4 invalidates the pre-Russian persisted labels (Grace / PM / Last Attempt).
+// Column widths/order are user preferences, but labels are product copy and
+// must be refreshed when the canonical column configuration changes.
+const STORAGE_KEY = 'admin_auto_renewals_columns_v4';
 
 // Columns that should NOT be sortable
 const NON_SORTABLE_COLUMNS = new Set(['checkbox', 'card', 'tg_status', 'email_status']);
