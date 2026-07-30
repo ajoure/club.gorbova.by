@@ -812,7 +812,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
             </div>
             <div className="hidden sm:flex text-xs text-muted-foreground mt-2 items-center justify-center gap-3">
               <span>Нажми Enter для отправки, Shift+Enter для новой строки</span>
-              {chatAllowed && !assetClassifierActive && chatQuota && (
+              {chatAllowed && chatQuota && (
                 <span className="text-muted-foreground/80">
                   · Остаток чата сегодня: <b className="text-foreground">{chatQuota.remaining}</b> / {chatQuota.limit}
                 </span>
