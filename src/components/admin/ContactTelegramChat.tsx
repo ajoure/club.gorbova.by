@@ -100,6 +100,7 @@ import {
 import {
   buildQuotePreview,
 } from "./chat/telegramFormat";
+import { selectDefaultTelegramSender } from "@/lib/telegramSenderSelection";
 
 interface ContactTelegramChatProps {
   userId: string;
@@ -203,6 +204,7 @@ export function ContactTelegramChat({
   const [editText, setEditText] = useState("");
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [selectedBusinessAccountId, setSelectedBusinessAccountId] = useState<string | null>(null);
+  const senderWasChosenManuallyRef = useRef(false);
   const [replyingTo, setReplyingTo] = useState<TelegramMessage | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [isNearBottomState, setIsNearBottomState] = useState(true);
@@ -233,20 +235,26 @@ export function ContactTelegramChat({
 
   const activeBots = useMemo(() => telegramBots.filter(b => b.status === "active"), [telegramBots]);
   const { data: businessContext } = useQuery({
-    queryKey: ["telegram-business-dialog-context", userId],
+    queryKey: ["telegram-latest-incoming-sender-context", userId],
     queryFn: async () => {
       // Generated DB types are refreshed only after the migration is deployed.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error } = await (supabase as any)
         .from("telegram_messages")
-        .select("business_connection_id, business_account_id, bot_id")
+        .select("business_connection_id, business_account_id, bot_id, transport, created_at")
         .eq("user_id", userId)
-        .eq("transport", "business")
+        .eq("direction", "incoming")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
       if (error) throw error;
-      return data as { business_connection_id: string; business_account_id: string | null; bot_id: string } | null;
+      return data as {
+        business_connection_id: string | null;
+        business_account_id: string | null;
+        bot_id: string | null;
+        transport: "bot" | "business" | null;
+        created_at: string;
+      } | null;
     },
     enabled: !!userId,
     staleTime: 30_000,
@@ -262,7 +270,7 @@ export function ContactTelegramChat({
       if (error) throw error;
       return data;
     },
-    enabled: !!businessContext?.business_account_id,
+    enabled: businessContext?.transport === "business" && !!businessContext.business_account_id,
     staleTime: 30_000,
   });
   const businessSenderName = useMemo(() => {
@@ -390,6 +398,10 @@ export function ContactTelegramChat({
       bot_id: r.bot_id ?? null,
       bot_username: r.bot_username ?? null,
       bot_name: r.bot_name ?? null,
+      transport: r.transport ?? null,
+      business_connection_id: r.business_connection_id ?? null,
+      business_account_id: r.business_account_id ?? null,
+      message_origin: r.message_origin ?? null,
       admin_profile: r.sent_by_admin
         ? { full_name: r.admin_full_name, avatar_url: r.admin_avatar_url }
         : null,
@@ -990,68 +1002,40 @@ export function ContactTelegramChat({
   // Reset sender immediately on dialog switch so the footer doesn't flash
   // the previous chat's sender while the next dialog context is loading.
   useEffect(() => {
+    senderWasChosenManuallyRef.current = false;
     setSelectedBotId(null);
     setSelectedBusinessAccountId(null);
   }, [userId]);
 
   // === DEFAULT SENDER SELECTION ===
   useEffect(() => {
-    if (!messages || messages.length === 0) return;
+    if (senderWasChosenManuallyRef.current) return;
 
-    const savedSender = localStorage.getItem(`tg_sender_${userId}`);
-    if (savedSender?.startsWith("business:") && businessAccount?.is_enabled && businessAccount.can_reply) {
-      const accountId = savedSender.slice("business:".length);
-      if (accountId === businessAccount.id) {
-        setSelectedBusinessAccountId(accountId);
-        setSelectedBotId(null);
-        return;
-      }
-    }
-    if (savedSender?.startsWith("bot:")) {
-      const botId = savedSender.slice("bot:".length);
-      if (activeBots.some(b => b.id === botId)) {
-        setSelectedBotId(botId);
-        setSelectedBusinessAccountId(null);
-        return;
-      }
-    }
-
-    // A personal-account dialog defaults to the same personal account, while
-    // still allowing the operator to deliberately switch to an ordinary bot.
-    if (businessAccount?.is_enabled && businessAccount.can_reply) {
-      setSelectedBusinessAccountId(businessAccount.id);
-      setSelectedBotId(null);
-      return;
-    }
-
-    if (activeBots.length === 0) return;
-
-    const savedBotId = localStorage.getItem(`tg_bot_${userId}`);
-    if (savedBotId && activeBots.some(b => b.id === savedBotId)) {
-      if (selectedBotId !== savedBotId) setSelectedBotId(savedBotId);
-      return;
-    }
-    if (savedBotId) localStorage.removeItem(`tg_bot_${userId}`);
-
-    const lastInbound = [...messages].reverse().find(m => m.direction === "incoming" && m.bot_id);
-    if (lastInbound?.bot_id && activeBots.some(b => b.id === lastInbound.bot_id)) {
-      setSelectedBotId(lastInbound.bot_id);
-      return;
-    }
-
-    const primaryBot = activeBots.find(b => b.is_primary);
-    if (primaryBot) { setSelectedBotId(primaryBot.id); return; }
-    if (activeBots[0]) { setSelectedBotId(activeBots[0].id); }
-  }, [messages, activeBots, userId, businessAccount]);
+    const selection = selectDefaultTelegramSender({
+      messages: businessContext
+        ? [{
+            direction: "incoming",
+            created_at: businessContext.created_at,
+            transport: businessContext.transport,
+            bot_id: businessContext.bot_id,
+            business_account_id: businessContext.business_account_id,
+          }]
+        : [],
+      activeBots,
+      businessAccount,
+    });
+    setSelectedBotId(selection?.botId ?? null);
+    setSelectedBusinessAccountId(selection?.businessAccountId ?? null);
+  }, [businessContext, activeBots, userId, businessAccount]);
 
   const handleBotChange = (botId: string) => {
+    senderWasChosenManuallyRef.current = true;
     setSelectedBotId(botId);
     setSelectedBusinessAccountId(null);
-    localStorage.setItem(`tg_bot_${userId}`, botId);
-    localStorage.setItem(`tg_sender_${userId}`, `bot:${botId}`);
   };
 
   const handleSenderChange = (value: string) => {
+    senderWasChosenManuallyRef.current = true;
     if (value.startsWith("business:")) {
       const accountId = value.slice("business:".length);
       setSelectedBusinessAccountId(accountId);
@@ -1060,7 +1044,6 @@ export function ContactTelegramChat({
       handleBotChange(value.slice("bot:".length));
       return;
     }
-    localStorage.setItem(`tg_sender_${userId}`, value);
   };
 
   const refetch = useCallback(() => {
@@ -1164,6 +1147,18 @@ export function ContactTelegramChat({
           console.log("[ContactTelegramChat][realtime] INSERT", { id: newMsg?.id, user_id: newMsg?.user_id, direction: newMsg?.direction });
           const msgText = (newMsg?.message_text || "").trim();
           const msgTime = new Date(newMsg?.created_at || Date.now()).getTime();
+          if (newMsg?.direction === "incoming") {
+            queryClient.setQueryData(
+              ["telegram-latest-incoming-sender-context", userId],
+              {
+                business_connection_id: newMsg.business_connection_id ?? null,
+                business_account_id: newMsg.business_account_id ?? null,
+                bot_id: newMsg.bot_id ?? null,
+                transport: newMsg.transport ?? "bot",
+                created_at: newMsg.created_at,
+              },
+            );
+          }
 
           // Patch cache: merge incoming row directly, drop matching temp row.
           // Dedup by telegram_messages.id — guard against double-insert from realtime + fallback refetch.

@@ -69,23 +69,61 @@ async function isElevated(supabase: any, userId: string): Promise<boolean> {
 // ============================================================================
 // Telegram sendDocument (multipart/form-data)
 // ============================================================================
-async function tgGetBotToken(supabase: any): Promise<string | null> {
-  const { data: club } = await supabase
-    .from("telegram_clubs")
-    .select("bot_id, telegram_bots(bot_token_encrypted)")
-    .eq("is_active", true)
-    .limit(1)
-    .maybeSingle();
-  if (club?.telegram_bots?.bot_token_encrypted) {
-    return club.telegram_bots.bot_token_encrypted;
+type TelegramBotResolution = {
+  id: string;
+  token: string;
+  username: string | null;
+  name: string | null;
+  source: "profile_link" | "primary";
+};
+
+type TelegramSendResult = {
+  ok: boolean;
+  httpStatus: number | null;
+  error?: string;
+  messageId?: number;
+  chatId?: string;
+  chatType?: string | null;
+};
+
+async function tgResolveBot(
+  supabase: any,
+  linkedBotId?: string | null,
+): Promise<TelegramBotResolution | null> {
+  if (linkedBotId) {
+    const { data: linkedBot } = await supabase
+      .from("telegram_bots")
+      .select("id, bot_token_encrypted, bot_username, bot_name")
+      .eq("id", linkedBotId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (linkedBot?.bot_token_encrypted) {
+      return {
+        id: linkedBot.id,
+        token: linkedBot.bot_token_encrypted,
+        username: linkedBot.bot_username ?? null,
+        name: linkedBot.bot_name ?? null,
+        source: "profile_link",
+      };
+    }
   }
-  const { data: bot } = await supabase
+
+  const { data: primaryBot } = await supabase
     .from("telegram_bots")
-    .select("bot_token_encrypted")
-    .eq("is_active", true)
+    .select("id, bot_token_encrypted, bot_username, bot_name")
+    .eq("is_primary", true)
+    .eq("status", "active")
+    .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
-  return bot?.bot_token_encrypted || null;
+  if (!primaryBot?.bot_token_encrypted) return null;
+  return {
+    id: primaryBot.id,
+    token: primaryBot.bot_token_encrypted,
+    username: primaryBot.bot_username ?? null,
+    name: primaryBot.bot_name ?? null,
+    source: "primary",
+  };
 }
 
 async function tgSendDocument(
@@ -95,27 +133,109 @@ async function tgSendDocument(
   filename: string,
   caption: string,
   mime = "application/pdf",
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<TelegramSendResult> {
   try {
     const form = new FormData();
     form.append("chat_id", String(chatId));
     form.append("caption", caption);
     form.append("parse_mode", "HTML");
+    const documentBuffer = new Uint8Array(fileBytes).buffer;
     form.append(
       "document",
-      new Blob([fileBytes], { type: mime }),
+      new Blob([documentBuffer], { type: mime }),
       filename,
     );
     const url = `https://api.telegram.org/bot${botToken}/sendDocument`;
     const resp = await fetch(url, { method: "POST", body: form });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data?.ok) {
-      return { ok: false, error: data?.description || `HTTP ${resp.status}` };
+      return {
+        ok: false,
+        httpStatus: resp.status,
+        error: data?.description || `HTTP ${resp.status}`,
+      };
     }
-    return { ok: true };
+    const messageId = Number(data?.result?.message_id);
+    const providerChatId = data?.result?.chat?.id;
+    if (!Number.isFinite(messageId) || providerChatId == null) {
+      return {
+        ok: false,
+        httpStatus: resp.status,
+        error: "telegram_response_missing_delivery_evidence",
+      };
+    }
+    return {
+      ok: true,
+      httpStatus: resp.status,
+      messageId,
+      chatId: String(providerChatId),
+      chatType: typeof data?.result?.chat?.type === "string" ? data.result.chat.type : null,
+    };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return {
+      ok: false,
+      httpStatus: null,
+      error: e instanceof Error ? e.message : String(e),
+    };
   }
+}
+
+async function mirrorTelegramDocument(
+  admin: any,
+  args: {
+    userId: string;
+    telegramUserId: string | number;
+    bot: TelegramBotResolution;
+    sendResult: TelegramSendResult;
+    caption: string;
+    documentId: string;
+    documentNumber: string | null;
+    contextType: string | null;
+    contextId: string | null;
+    filename: string;
+  },
+): Promise<{ ok: boolean; error?: string }> {
+  if (!args.sendResult.messageId) {
+    return { ok: false, error: "telegram_message_id_missing" };
+  }
+
+  const { data: existing, error: existingError } = await admin
+    .from("telegram_messages")
+    .select("id")
+    .eq("user_id", args.userId)
+    .eq("bot_id", args.bot.id)
+    .eq("telegram_user_id", args.telegramUserId)
+    .eq("message_id", args.sendResult.messageId)
+    .eq("transport", "bot")
+    .limit(1)
+    .maybeSingle();
+  if (existingError) return { ok: false, error: existingError.message };
+  if (existing?.id) return { ok: true };
+
+  const { error: insertError } = await admin.from("telegram_messages").insert({
+    user_id: args.userId,
+    telegram_user_id: args.telegramUserId,
+    bot_id: args.bot.id,
+    direction: "outgoing",
+    message_text: args.caption || null,
+    message_id: args.sendResult.messageId,
+    status: "sent",
+    transport: "bot",
+    message_origin: "bot_automation",
+    meta: {
+      source: "canonical_document_send",
+      automated: true,
+      file_type: "document",
+      file_name: args.filename,
+      document_id: args.documentId,
+      document_number: args.documentNumber,
+      context_type: args.contextType,
+      context_id: args.contextId,
+      provider_chat_type: args.sendResult.chatType ?? null,
+      bot_resolution: args.bot.source,
+    },
+  });
+  return insertError ? { ok: false, error: insertError.message } : { ok: true };
 }
 
 // ============================================================================
@@ -156,7 +276,12 @@ async function persistDelivery(
   docId: string,
   currentMeta: Record<string, unknown> | null,
   channel: "email" | "telegram",
-  patch: { status: DeliveryStatus; error?: string | null; recipient?: string | null },
+  patch: {
+    status: DeliveryStatus;
+    error?: string | null;
+    recipient?: string | null;
+    provider?: Record<string, unknown>;
+  },
 ) {
   const nowIso = new Date().toISOString();
   const prev = (currentMeta || {}) as Record<string, unknown>;
@@ -170,6 +295,7 @@ async function persistDelivery(
         at: nowIso,
         error: patch.error ?? null,
         recipient: patch.recipient ?? null,
+        ...(patch.provider ?? {}),
       },
     },
   };
@@ -194,7 +320,9 @@ async function persistDelivery(
   }
   // Мутируем локальный currentMeta так, чтобы последующие вызовы в том же
   // handler видели свежее состояние (email → telegram).
-  (currentMeta as any).delivery = (nextMeta as any).delivery;
+  if (currentMeta) {
+    (currentMeta as any).delivery = (nextMeta as any).delivery;
+  }
   return nextMeta;
 }
 
@@ -258,9 +386,13 @@ Deno.serve(async (req) => {
     // Reload profile data (always — нужен email и tg_id, кем бы ни был caller)
     const { data: docProfile } = await admin
       .from("profiles")
-      .select("id, email, telegram_user_id, full_name")
+      .select("id, user_id, email, telegram_user_id, telegram_link_bot_id, telegram_link_status, full_name")
       .eq("id", doc.profile_id)
       .maybeSingle();
+    const deliveryMeta =
+      doc.meta && typeof doc.meta === "object"
+        ? (doc.meta as Record<string, unknown>)
+        : {};
 
     // ---- Payment guard ------------------------------------------------------
     // По умолчанию: документы доступны только по оплаченным order'ам.
@@ -410,11 +542,15 @@ Deno.serve(async (req) => {
       email_error: string | null;
       telegram_sent: boolean;
       telegram_error: string | null;
+      telegram_provider_message_id: number | null;
+      telegram_mirror_error: string | null;
     } = {
       email_sent: false,
       email_error: null,
       telegram_sent: false,
       telegram_error: null,
+      telegram_provider_message_id: null,
+      telegram_mirror_error: null,
     };
 
     if (body.send_email) {
@@ -539,16 +675,16 @@ Deno.serve(async (req) => {
       //  - send-email вернул ошибку / бросил исключение   → error
       //  - успех                                          → sent
       if (results.email_sent) {
-        await persistDelivery(admin, doc.id, doc.meta as any, "email", {
+        await persistDelivery(admin, doc.id, deliveryMeta, "email", {
           status: "sent",
           recipient: body.to_email?.trim() || docProfile?.email?.trim() || null,
         });
       } else if (results.email_error === "no_recipient_email") {
-        await persistDelivery(admin, doc.id, doc.meta as any, "email", {
+        await persistDelivery(admin, doc.id, deliveryMeta, "email", {
           status: "no_recipient",
         });
       } else {
-        await persistDelivery(admin, doc.id, doc.meta as any, "email", {
+        await persistDelivery(admin, doc.id, deliveryMeta, "email", {
           status: "error",
           error: results.email_error,
         });
@@ -566,12 +702,57 @@ Deno.serve(async (req) => {
     // ---- Send Telegram ------------------------------------------------------
     if (body.send_telegram) {
       const chatId = docProfile?.telegram_user_id;
-      if (!chatId) {
+      let resolvedBot: TelegramBotResolution | null = null;
+      let providerProof: TelegramSendResult | null = null;
+      let telegramCaption = "";
+      const existingTelegramDelivery =
+        ((deliveryMeta.delivery as Record<string, unknown> | undefined)?.telegram as
+          | Record<string, unknown>
+          | undefined) ?? null;
+      const existingMessageId = Number(existingTelegramDelivery?.provider_message_id);
+      const hasExistingProviderProof =
+        existingTelegramDelivery?.status === "sent" &&
+        Number.isFinite(existingMessageId) &&
+        existingMessageId > 0 &&
+        typeof existingTelegramDelivery?.provider_chat_id === "string" &&
+        typeof existingTelegramDelivery?.bot_id === "string";
+
+      if (hasExistingProviderProof) {
+        providerProof = {
+          ok: true,
+          httpStatus: Number(existingTelegramDelivery?.provider_http_status) || 200,
+          messageId: existingMessageId,
+          chatId: String(existingTelegramDelivery?.provider_chat_id),
+          chatType:
+            typeof existingTelegramDelivery?.provider_chat_type === "string"
+              ? existingTelegramDelivery.provider_chat_type
+              : null,
+        };
+        resolvedBot = {
+          id: String(existingTelegramDelivery?.bot_id),
+          token: "",
+          username:
+            typeof existingTelegramDelivery?.bot_username === "string"
+              ? existingTelegramDelivery.bot_username
+              : null,
+          name: null,
+          source:
+            existingTelegramDelivery?.bot_resolution === "profile_link"
+              ? "profile_link"
+              : "primary",
+        };
+        results.telegram_sent = true;
+        results.telegram_provider_message_id = existingMessageId;
+        results.telegram_mirror_error =
+          existingTelegramDelivery?.mirror_status === "error"
+            ? String(existingTelegramDelivery?.mirror_error || "telegram_mirror_failed")
+            : null;
+      } else if (!chatId) {
         results.telegram_error = "telegram_not_linked";
       } else {
         try {
-          const botToken = await tgGetBotToken(admin);
-          if (!botToken) {
+          resolvedBot = await tgResolveBot(admin, docProfile?.telegram_link_bot_id);
+          if (!resolvedBot) {
             results.telegram_error = "bot_not_configured";
           } else {
             const captionTitle = escapeHtml(filename.replace(/\.pdf$/i, ""));
@@ -591,19 +772,80 @@ Deno.serve(async (req) => {
               captionLines.push("<b>При оплате укажите назначение платежа:</b>");
               captionLines.push(`<code>${escapeHtml(paymentPurposeText)}</code>`);
             }
-            const caption = captionLines.join("\n");
+            telegramCaption = captionLines.join("\n");
 
-            const primary = body.send_pdf !== false
-              ? await tgSendDocument(botToken, chatId, pdfBytes, filename, caption)
-              : { ok: true };
-            if (!primary.ok) {
-              results.telegram_error = primary.error || "telegram_send_failed";
-            } else {
-              for (const file of extraFiles) {
-                const extra = await tgSendDocument(botToken, chatId, file.bytes, file.filename, "", file.mime);
-                if (!extra.ok) throw new Error(extra.error || "telegram_attachment_send_failed");
+            const sentDocuments: Array<{
+              result: TelegramSendResult;
+              caption: string;
+              filename: string;
+            }> = [];
+            if (body.send_pdf !== false) {
+              const primary = await tgSendDocument(
+                resolvedBot.token,
+                chatId,
+                pdfBytes,
+                filename,
+                telegramCaption,
+              );
+              if (!primary.ok) {
+                results.telegram_error = primary.error || "telegram_send_failed";
+              } else {
+                providerProof = primary;
+                sentDocuments.push({
+                  result: primary,
+                  caption: telegramCaptionForCrm(telegramCaption),
+                  filename,
+                });
               }
-              results.telegram_sent = true;
+            }
+
+            if (!results.telegram_error) {
+              for (const file of extraFiles) {
+                const extra = await tgSendDocument(
+                  resolvedBot.token,
+                  chatId,
+                  file.bytes,
+                  file.filename,
+                  "",
+                  file.mime,
+                );
+                if (!extra.ok) {
+                  throw new Error(extra.error || "telegram_attachment_send_failed");
+                }
+                providerProof ??= extra;
+                sentDocuments.push({ result: extra, caption: "", filename: file.filename });
+              }
+
+              if (sentDocuments.length === 0 || !providerProof?.messageId) {
+                results.telegram_error = "no_telegram_document_requested";
+              } else {
+                results.telegram_provider_message_id = providerProof.messageId;
+                const mirrorUserId = docProfile?.user_id || docProfile?.id;
+                if (!mirrorUserId) {
+                  results.telegram_mirror_error = "telegram_mirror_user_missing";
+                } else {
+                  for (const sentDocument of sentDocuments) {
+                    const mirror = await mirrorTelegramDocument(admin, {
+                      userId: mirrorUserId,
+                      telegramUserId: sentDocument.result.chatId || chatId,
+                      bot: resolvedBot,
+                      sendResult: sentDocument.result,
+                      caption: sentDocument.caption,
+                      documentId: doc.id,
+                      documentNumber: doc.document_number ?? null,
+                      contextType: doc.context_type ?? null,
+                      contextId: doc.context_id ?? null,
+                      filename: sentDocument.filename,
+                    });
+                    if (!mirror.ok) {
+                      results.telegram_mirror_error =
+                        mirror.error || "telegram_mirror_failed";
+                      break;
+                    }
+                  }
+                }
+                results.telegram_sent = true;
+              }
             }
           }
         } catch (e) {
@@ -616,18 +858,35 @@ Deno.serve(async (req) => {
       //  - успех                                         → sent
       const tgChatId = docProfile?.telegram_user_id;
       if (results.telegram_sent) {
-        await persistDelivery(admin, doc.id, doc.meta as any, "telegram", {
+        await persistDelivery(admin, doc.id, deliveryMeta, "telegram", {
           status: "sent",
           recipient: tgChatId ? String(tgChatId) : null,
+          provider: {
+            provider_message_id: providerProof?.messageId ?? null,
+            provider_chat_id: providerProof?.chatId ?? null,
+            provider_chat_type: providerProof?.chatType ?? null,
+            provider_http_status: providerProof?.httpStatus ?? null,
+            bot_id: resolvedBot?.id ?? null,
+            bot_username: resolvedBot?.username ?? null,
+            bot_resolution: resolvedBot?.source ?? null,
+            mirror_status: results.telegram_mirror_error ? "error" : "stored",
+            mirror_error: results.telegram_mirror_error,
+          },
         });
       } else if (results.telegram_error === "telegram_not_linked") {
-        await persistDelivery(admin, doc.id, doc.meta as any, "telegram", {
+        await persistDelivery(admin, doc.id, deliveryMeta, "telegram", {
           status: "not_linked",
         });
       } else {
-        await persistDelivery(admin, doc.id, doc.meta as any, "telegram", {
+        await persistDelivery(admin, doc.id, deliveryMeta, "telegram", {
           status: "error",
           error: results.telegram_error,
+          provider: {
+            provider_http_status: providerProof?.httpStatus ?? null,
+            bot_id: resolvedBot?.id ?? null,
+            bot_username: resolvedBot?.username ?? null,
+            bot_resolution: resolvedBot?.source ?? null,
+          },
         });
       }
       await writeAudit(
@@ -635,7 +894,15 @@ Deno.serve(async (req) => {
         results.telegram_sent ? "document.sent.telegram" : "document.send_failed",
         doc.id,
         userId,
-        { channel: "telegram", error: results.telegram_error },
+        {
+          channel: "telegram",
+          error: results.telegram_error,
+          provider_message_id: results.telegram_provider_message_id,
+          provider_http_status: providerProof?.httpStatus ?? null,
+          bot_id: resolvedBot?.id ?? null,
+          bot_resolution: resolvedBot?.source ?? null,
+          mirror_error: results.telegram_mirror_error,
+        },
       );
     }
 
@@ -666,6 +933,16 @@ function formatAmount(v: number | string): string {
   const n = typeof v === "number" ? v : Number(v);
   if (!isFinite(n)) return String(v);
   return n.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function telegramCaptionForCrm(caption: string): string {
+  return caption
+    .replace(/<\/?(?:b|code)>/gi, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }
 
 function uint8ToBase64(bytes: Uint8Array): string {
