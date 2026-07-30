@@ -83,6 +83,7 @@ describe("asset classifier golden set", () => {
     ["МФУ Canon", "48003"],
     ["многофункциональное устройство печать сканирование копирование", "48003"],
     ["сканер документов", "48003"],
+    ["планшетный сканер документов", "48003"],
     ["плоттер широкоформатный", "48003"],
     ["монитор для персонального компьютера", "48003"],
     ["источник бесперебойного питания для компьютера", "48003"],
@@ -124,6 +125,37 @@ describe("asset classifier golden set", () => {
       "https://club.gorbova.by/knowledge/laws/postanovlenie-minekonomiki-161-2011#code-70034",
     );
     expect(result.content).not.toContain("etalonline.by");
+  });
+
+  it("uses the scanner head noun instead of an AI-added tablet subtype", () => {
+    const identified = {
+      ...identifyObjectLocally("сканер"),
+      normalizedName: "планшетный сканер",
+      objectType: "сканер",
+      possibleSubtypes: ["планшетный сканер", "протяжный сканер"],
+      searchPhrases: ["планшетный сканер", "сканер документов"],
+      confidence: "medium" as const,
+    };
+    const result = classifyAsset("сканер", identified);
+
+    expect(result.decision).toBe("recommended");
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]).toMatchObject({
+      code: "48003",
+      normativeLifeYears: 5,
+    });
+    expect(result.candidates[0].name).toMatch(/сканеры/i);
+    expect(result.content).not.toContain("#code-48016");
+  });
+
+  it("returns up to five real catalog occurrences for a short ambiguous term", () => {
+    const result = classifyAsset("насос");
+
+    expect(result.decision).toBe("clarification");
+    expect(result.candidates).toHaveLength(5);
+    expect(result.candidates.every((candidate) => /насос/i.test(candidate.name))).toBe(true);
+    expect(result.candidates.every((candidate) => candidate.matchType === "catalog_text")).toBe(true);
+    expect(result.clarifyingQuestions.join(" ")).toMatch(/назначени|наименован/i);
   });
 
   it("asks for the execution type instead of guessing a refrigerator code", () => {
@@ -227,6 +259,86 @@ describe("asset classifier golden set", () => {
       "Это самостоятельный USB-считыватель/периферия компьютера или элемент системы контроля и управления доступом?",
     ]);
   });
+
+  it("maps an office coffee machine to the direct coffee-apparatus position", () => {
+    const result = classifyAsset("кофемашина офисная");
+
+    expect(result.decision).toBe("recommended");
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]).toMatchObject({
+      code: "45804",
+      normativeLifeYears: 5,
+      matchType: "verified_object_rule",
+    });
+    expect(result.candidates[0].name).toMatch(/кофе-аппараты/i);
+    expect(result.clarifyingQuestions).toEqual([]);
+    expect(result.content).toContain("#code-45804");
+    expect(result.content).not.toMatch(/41101|41201|43101|43107|44503/);
+  });
+
+  it("recognizes a spaced coffee-machine synonym", () => {
+    const result = classifyAsset("кофейная машина для офиса");
+
+    expect(result.decision).toBe("recommended");
+    expect(result.candidates.map((candidate) => candidate.code)).toEqual(["45804"]);
+  });
+
+  it("ignores generic technical adjectives when Gemini describes a coffee machine", () => {
+    const identified = {
+      ...identifyObjectLocally("кофемашина стационарная офисная для сотрудников"),
+      normalizedName: "прибор бытовой электрический для приготовления напитков",
+      objectType: "прибор бытовой электрический",
+      primaryFunction: "автоматическое или полуавтоматическое приготовление кофе",
+      searchPhrases: ["прибор электрический", "оборудование автоматическое"],
+      positiveMarkers: [
+        "автоматическая",
+        "полуавтоматическая",
+        "стационарная",
+        "электрическая",
+      ],
+      missingCharacteristics: ["способ подключения к водоснабжению"],
+      confidence: "medium" as const,
+    };
+    const result = classifyAsset(
+      "кофемашина стационарная офисная для сотрудников",
+      identified,
+    );
+
+    expect(result.decision).toBe("recommended");
+    expect(result.candidates.map((candidate) => candidate.code)).toEqual(["45804"]);
+    expect(result.clarifyingQuestions).toEqual([]);
+    expect(result.content).not.toMatch(/41101|41201|43101|43107|44503/);
+  });
+
+  it("does not rank industrial equipment from adjectives without an object match", () => {
+    const identified = {
+      ...identifyObjectLocally("неизвестный автоматический стационарный электрический прибор"),
+      normalizedName: "прибор электрический",
+      objectType: "неопределенный электрический прибор",
+      primaryFunction: "автоматическая работа",
+      searchPhrases: ["оборудование автоматическое", "прибор электрический"],
+      positiveMarkers: ["автоматический", "стационарный", "электрический"],
+      confidence: "medium" as const,
+    };
+    const result = classifyAsset(
+      "неизвестный автоматический стационарный электрический прибор",
+      identified,
+    );
+
+    expect(result.decision).toBe("not_found");
+    expect(result.candidates).toEqual([]);
+  });
+
+  it("asks a useful question for an unspecified beverage appliance without random codes", () => {
+    const result = classifyAsset(
+      "электрический аппарат для автоматического приготовления напитков",
+    );
+
+    expect(result.decision).toBe("not_found");
+    expect(result.candidates).toEqual([]);
+    expect(result.clarifyingQuestions.join(" ")).toMatch(/какой.*напиток|продукт/i);
+    expect(result.content).not.toMatch(/41101|41201|43101|43107|44503/);
+  });
 });
 
 describe("Gemini object identification boundary", () => {
@@ -328,6 +440,55 @@ describe("Gemini object identification boundary", () => {
     expect(classifyAsset("кабель HDMI для монитора", result.object)).toMatchObject({
       decision: "not_found",
       candidates: [],
+    });
+  });
+
+  it("enriches a weak Gemini coffee-machine description with verified object semantics", async () => {
+    const geminiPayload = {
+      original_name: "кофемашина офисная",
+      normalized_name: "прибор бытовой электрический",
+      object_type: "прибор для приготовления напитков",
+      catalog_scope: "potential_fixed_asset",
+      possible_subtypes: [],
+      primary_function: "автоматическое приготовление напитков",
+      secondary_functions: [],
+      installation_context: "офис",
+      connection_type: "",
+      material: "",
+      is_probable_component: false,
+      component_of: "",
+      missing_characteristics: ["способ подключения к водоснабжению"],
+      search_phrases: ["прибор электрический", "оборудование автоматическое"],
+      positive_markers: ["автоматический", "стационарный", "электрический"],
+      negative_markers: [],
+      confidence: "medium",
+    };
+    const mockFetch = (async () =>
+      new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify(geminiPayload) } }],
+      }), { status: 200 })) as typeof fetch;
+
+    const identification = await identifyObjectWithGemini(
+      "кофемашина офисная",
+      "test-key-not-a-real-secret",
+      mockFetch,
+    );
+    const result = classifyAsset("кофемашина офисная", identification.object);
+
+    expect(identification.source).toBe("gemini");
+    expect(identification.object).toMatchObject({
+      normalizedName: "кофе-аппарат",
+      objectType: "кофемашина или кофе-аппарат",
+      primaryFunction: "приготовление кофе и кофейных напитков",
+      missingCharacteristics: [],
+    });
+    expect(identification.object.searchPhrases).toEqual(
+      expect.arrayContaining(["кофе-аппараты", "кофемашины"]),
+    );
+    expect(result).toMatchObject({
+      decision: "recommended",
+      candidates: [expect.objectContaining({ code: "45804" })],
+      clarifyingQuestions: [],
     });
   });
 

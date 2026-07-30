@@ -120,6 +120,17 @@ const SYSTEM_INSTRUCTION = `
     эксплуатационные параметры, если они не разделяют виды объектов. Для
     автомобильной шины сезонность, индекс нагрузки, индекс скорости, диаметр,
     ширина и профиль не являются основаниями для выбора другой позиции каталога.
+11. Сохраняй предметное ядро объекта в normalized_name, object_type и search_phrases.
+    Не подменяй название общими признаками вроде «автоматический», «стационарный»,
+    «электрический» или «офисный». Кофемашину называй «кофемашина» или
+    «кофе-аппарат»; способ подключения к воде не является обязательным уточнением
+    для распознавания такого объекта.
+12. Разбери все значимые слова исходного описания: отдели предметное ядро от
+    признаков исполнения и назначения. В сочетаниях вроде «планшетный сканер»
+    предметом остаётся сканер, а «планшетный» — его разновидность; не превращай
+    такой объект в планшетный компьютер. В search_phrases дай 3–6 коротких
+    вариантов поиска: исходное предметное название, нормативно близкие синонимы
+    и допустимые разновидности, но не добавляй несовместимые типы объектов.
 `.trim();
 
 function normalize(value: string): string {
@@ -197,6 +208,7 @@ interface LocalRule {
   pattern: RegExp;
   normalizedName: string;
   objectType: string;
+  priority?: number;
   catalogScope?: AssetCatalogScope;
   primaryFunction: string;
   searchPhrases: string[];
@@ -206,6 +218,9 @@ interface LocalRule {
   isProbableComponent?: boolean;
   componentOf?: string;
 }
+
+const COFFEE_MACHINE_PATTERN =
+  /(кофе[\s-]*машин|кофемашин|кофейн[а-яё]*\s+машин|кофевар|кофе[\s-]*аппарат|кофейн.*автомат|вендинг.*коф|коф.*вендинг|эспрессо[\s-]*машин|espresso)/i;
 
 const LOCAL_RULES: LocalRule[] = [
   {
@@ -292,6 +307,7 @@ const LOCAL_RULES: LocalRule[] = [
     pattern: /(мфу|многофункциональн.*устройств|принтер|сканер|плоттер|монитор|ибп|источник.*бесперебойн.*питан)/i,
     normalizedName: "периферийное устройство персонального компьютера",
     objectType: "периферийное устройство вычислительного комплекса",
+    priority: 100,
     primaryFunction: "ввод вывод или обеспечение работы вычислительной техники",
     searchPhrases: ["устройства периферийные вычислительных комплексов", "сканеры принтеры многофункциональные устройства"],
     negativeMarkers: ["копировально множительная техника промышленная"],
@@ -319,6 +335,32 @@ const LOCAL_RULES: LocalRule[] = [
     searchPhrases: ["холодильники камеры бытовые морозильные", "оборудование холодильное"],
     confidence: "medium",
     missingCharacteristics: ["бытовое или промышленное исполнение"],
+  },
+  {
+    pattern: COFFEE_MACHINE_PATTERN,
+    normalizedName: "кофе-аппарат",
+    objectType: "кофемашина или кофе-аппарат",
+    primaryFunction: "приготовление кофе и кофейных напитков",
+    searchPhrases: ["кофе-аппараты", "кофемашины"],
+    negativeMarkers: [
+      "кузнечно-прессовое оборудование",
+      "литейное оборудование",
+      "печи промышленные",
+      "деревообрабатывающие линии",
+    ],
+    confidence: "high",
+  },
+  {
+    pattern: /(аппарат|машин|оборудован).*(приготовлен.*напитк|напитк.*приготовлен)/i,
+    normalizedName: "аппарат для приготовления напитков",
+    objectType: "неопределенный аппарат для приготовления напитков",
+    primaryFunction: "приготовление напитков",
+    searchPhrases: [],
+    confidence: "low",
+    missingCharacteristics: [
+      "какой именно напиток или продукт готовит аппарат",
+      "точное наименование или модель объекта",
+    ],
   },
   {
     pattern: /(аккумулятор|батаре)/i,
@@ -350,7 +392,9 @@ export function identifyObjectLocally(query: string): IdentifiedAssetObject {
   const rule = /(аккумулятор|батаре|картридж|запасн.*част|комплектующ|детал|кабел|шнур|переходник|адаптер)/i
     .test(normalizedQuery)
     ? matchingRules.find((candidate) => candidate.isProbableComponent) ?? matchingRules[0]
-    : matchingRules[0];
+    : [...matchingRules].sort((a, b) =>
+      (b.priority ?? 0) - (a.priority ?? 0)
+    )[0];
   if (!rule) {
     return {
       originalName: query.trim().slice(0, 300),
@@ -404,7 +448,7 @@ function fallbackReason(status?: number): IdentificationOutcome["fallbackReason"
   return "provider_error";
 }
 
-function applyVerifiedScopeGuard(
+function applyVerifiedObjectGuard(
   query: string,
   object: IdentifiedAssetObject,
 ): IdentifiedAssetObject {
@@ -415,12 +459,40 @@ function applyVerifiedScopeGuard(
     "not_an_object",
   ]);
 
-  if (
-    localObject.confidence !== "high" ||
-    !guardedScopes.has(localObject.catalogScope)
-  ) {
+  if (localObject.confidence !== "high") {
     return object;
   }
+
+  if (
+    localObject.catalogScope === "potential_fixed_asset" &&
+    COFFEE_MACHINE_PATTERN.test(normalize(query))
+  ) {
+    return {
+      ...object,
+      normalizedName: localObject.normalizedName,
+      objectType: localObject.objectType,
+      catalogScope: localObject.catalogScope,
+      primaryFunction: localObject.primaryFunction,
+      isProbableComponent: false,
+      componentOf: "",
+      missingCharacteristics: localObject.missingCharacteristics,
+      searchPhrases: Array.from(new Set([
+        ...localObject.searchPhrases,
+        ...object.searchPhrases,
+      ])).slice(0, 12),
+      positiveMarkers: Array.from(new Set([
+        ...localObject.positiveMarkers,
+        ...object.positiveMarkers,
+      ])).slice(0, 12),
+      negativeMarkers: Array.from(new Set([
+        ...localObject.negativeMarkers,
+        ...object.negativeMarkers,
+      ])).slice(0, 12),
+      confidence: object.confidence === "low" ? "high" : object.confidence,
+    };
+  }
+
+  if (!guardedScopes.has(localObject.catalogScope)) return object;
 
   return {
     ...object,
@@ -511,7 +583,7 @@ export async function identifyObjectWithGemini(
     }
 
     return {
-      object: applyVerifiedScopeGuard(query, object),
+      object: applyVerifiedObjectGuard(query, object),
       source: "gemini",
     };
   } catch (error) {
