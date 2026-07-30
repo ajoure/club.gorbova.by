@@ -222,7 +222,7 @@ function generateDocumentHtml(data: {
   
   <div class="terms-payment">
     Срок оплаты: ${data.paymentTerm} (${numberToWordsRu(data.paymentTerm)}) рабочих дня.<br><br>
-    Срок оказания услуг: ${data.executionTerm} (${numberToWordsRu(data.executionTerm)}) рабочих дней с даты перечисления предоплаты Заказчиком.
+    Срок оказания услуг: ${data.executionTerm} (${numberToWordsRu(data.executionTerm)}) дней с даты перечисления предоплаты Заказчиком.
   </div>
   
   <div class="details">
