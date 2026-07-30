@@ -56,6 +56,7 @@ export interface AssetClassifierResult {
   identifiedObject: IdentifiedAssetObject;
   candidates: AssetClassifierCandidate[];
   clarifyingQuestions: string[];
+  guidance: string | null;
   content: string;
   metadata: {
     scenario_code: typeof ASSET_CLASSIFIER_SCENARIO_CODE;
@@ -77,6 +78,7 @@ interface VerifiedObjectRule {
   reason: string;
   clarifyingQuestions?: string[];
   forceClarification?: boolean;
+  guidance?: string;
 }
 
 const VERIFIED_OBJECT_RULES: VerifiedObjectRule[] = [
@@ -115,6 +117,16 @@ const VERIFIED_OBJECT_RULES: VerifiedObjectRule[] = [
     matcher: /(периферийное устройство|принтер|мфу|многофункциональное устройство|сканер|плоттер|монитор|источник бесперебойного питания|ибп)/i,
     preferredCodes: ["48003"],
     reason: "Объект распознан как периферийное устройство вычислительного комплекса.",
+  },
+  {
+    id: "card_reader",
+    matcher: /(считыватель.*(идентификацион|смарт|rfid|карт)|ридер.*(смарт|rfid|карт))/i,
+    preferredCodes: ["48003", "45626"],
+    reason: "Считыватель может быть компьютерной периферией или элементом системы контроля доступа.",
+    clarifyingQuestions: [
+      "Это самостоятельный USB-считыватель/периферия компьютера или элемент системы контроля и управления доступом?",
+    ],
+    forceClarification: true,
   },
   {
     id: "fax",
@@ -179,6 +191,19 @@ const VERIFIED_OBJECT_RULES: VerifiedObjectRule[] = [
     reason: "Для сетевого оборудования код зависит от производственного или малого офисного исполнения.",
     clarifyingQuestions: ["Оборудование предназначено для малого офиса или производственной сети передачи данных?"],
     forceClarification: true,
+  },
+  {
+    id: "automotive_tire",
+    matcher: /(автомобильная шина|сменная автомобильная шина|шина автомобильная|автомобильная покрышка)/i,
+    preferredCodes: [],
+    reason: "Объект распознан как сменная часть транспортного средства.",
+    clarifyingQuestions: [
+      "Если требуется классификация в составе основного объекта, укажите вид транспортного средства.",
+    ],
+    guidance:
+      "В перечне постановления № 161 отдельная позиция «автомобильные шины» не обнаружена. " +
+      "Сезонность, индекс нагрузки, индекс скорости, диаметр и профиль шины не меняют подбор шифра, " +
+      "поскольку эти параметры не разграничивают позиции нормативного каталога.",
   },
 ];
 
@@ -384,9 +409,24 @@ function renderCandidate(candidate: AssetClassifierCandidate, position?: number)
 function buildClarifyingQuestions(
   object: IdentifiedAssetObject,
   rule?: VerifiedObjectRule,
+  candidateCount = 0,
 ): string[] {
-  const questions = [...(rule?.clarifyingQuestions ?? [])];
+  if (rule?.clarifyingQuestions?.length) {
+    return Array.from(new Set(rule.clarifyingQuestions)).slice(0, 5);
+  }
+  if (candidateCount === 0) return [];
+
+  const irrelevantProductSpecification =
+    /(сезон|индекс.*(нагруз|скорост)|скорост.*индекс|ширин.*профил|высот.*профил|диаметр|размер|мощност|цвет)/i;
+  const classificationRelevantCharacteristic =
+    /(назначени|самостоятель|состав|комплектующ|родительск|исполнени|подключен|система.*использован|место.*использован|контекст|материал|вид.*оборудован|тип.*объект)/i;
+
+  const questions: string[] = [];
   for (const characteristic of object.missingCharacteristics) {
+    if (
+      irrelevantProductSpecification.test(characteristic) ||
+      !classificationRelevantCharacteristic.test(characteristic)
+    ) continue;
     questions.push(`Уточните: ${escapeMarkdown(characteristic)}?`);
   }
   return Array.from(new Set(questions)).slice(0, 5);
@@ -395,7 +435,14 @@ function buildClarifyingQuestions(
 function renderResult(
   result: Omit<AssetClassifierResult, "content" | "metadata">,
 ): string {
-  const { identifiedObject: object, decision, confidence, candidates, clarifyingQuestions } = result;
+  const {
+    identifiedObject: object,
+    decision,
+    confidence,
+    candidates,
+    clarifyingQuestions,
+    guidance,
+  } = result;
   const sourceLinks = candidates.map((candidate) =>
     `[позиция ${candidate.code}](${ASSET_CLASSIFIER_SOURCE_URL}#code-${candidate.code})`
   );
@@ -462,12 +509,44 @@ function renderResult(
       "",
       ...candidates.map((candidate, index) => renderCandidate(candidate, index + 1)),
     );
+  } else if (object.catalogScope === "consumable_or_inventory") {
+    lines.push(
+      "",
+      "### По описанию это не самостоятельный долговечный объект",
+      "",
+      "Запрос похож на потребляемый товар, сырьё, материал или запас. " +
+        "Сервис не нашёл оснований подбирать для него случайную позицию из перечня основных средств.",
+    );
+  } else if (object.catalogScope === "service_or_intangible") {
+    lines.push(
+      "",
+      "### Запрос не относится к материальному объекту каталога",
+      "",
+      "Описание похоже на услугу, работу или нематериальный объект. " +
+        "Шифр из перечня основных средств по такому описанию не подбирается.",
+    );
+  } else if (object.catalogScope === "not_an_object") {
+    lines.push(
+      "",
+      "### Сначала выберите задачу помощника",
+      "",
+      "Запрос не содержит описания объекта. Для обычного вопроса используйте свободный чат, " +
+        "а «Определение шифра ОС» запускайте отдельно через меню возможностей помощника.",
+    );
   } else {
     lines.push(
       "",
       "### Недостаточно данных для подбора",
       "",
       "Сервис не нашёл обоснованной позиции и не будет подставлять случайный шифр.",
+    );
+  }
+
+  if (guidance) {
+    lines.push(
+      "",
+      "**Что действительно влияет на классификацию:**",
+      guidance,
     );
   }
 
@@ -498,6 +577,10 @@ export function classifyAsset(
   const normalizedQuery = normalize(query);
   const explicitCode = normalizedQuery.match(/(?:^|\s)(\d{5})(?:\s|$)/)?.[1];
   const semantic = semanticText(query, identifiedObject);
+  const outsideCatalogScope =
+    identifiedObject.catalogScope === "consumable_or_inventory" ||
+    identifiedObject.catalogScope === "service_or_intangible" ||
+    identifiedObject.catalogScope === "not_an_object";
 
   let rule: VerifiedObjectRule | undefined;
   let candidates: AssetClassifierCandidate[] = [];
@@ -513,7 +596,7 @@ export function classifyAsset(
     if (exact) candidates = [exact];
   }
 
-  if (!candidates.length) {
+  if (!candidates.length && !outsideCatalogScope) {
     const matchingRules = VERIFIED_OBJECT_RULES.filter((candidate) =>
       candidate.matcher.test(semantic)
     );
@@ -539,7 +622,11 @@ export function classifyAsset(
     }
   }
 
-  const clarifyingQuestions = buildClarifyingQuestions(identifiedObject, rule);
+  const clarifyingQuestions = buildClarifyingQuestions(
+    identifiedObject,
+    rule,
+    candidates.length,
+  );
   let decision: AssetClassifierResult["decision"] = "not_found";
   let confidence: IdentificationConfidence = identifiedObject.confidence;
 
@@ -570,6 +657,7 @@ export function classifyAsset(
     identifiedObject,
     candidates,
     clarifyingQuestions: decision === "recommended" ? [] : clarifyingQuestions,
+    guidance: rule?.guidance ?? null,
   };
 
   return {

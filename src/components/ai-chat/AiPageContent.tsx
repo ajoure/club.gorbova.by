@@ -28,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useRbac } from "@/hooks/useRbac";
 import { useAiChat, type ChatScenario } from "@/hooks/useAiChat";
-import { isScenarioAllowed, useAiAccess } from "@/hooks/useAiAccess";
+import { useAiAccess } from "@/hooks/useAiAccess";
 import { toast } from "sonner";
 import { useAiUserPrompts, type AiUserPrompt } from "@/hooks/useAiUserPrompts";
 import { ChatMessageBubble } from "@/components/ai-chat/ChatMessage";
@@ -289,12 +289,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
   const { data: aiAccess } = useAiAccess();
   const chatAllowed = aiAccess ? aiAccess.allowed_modes.chat : true;
   const chatQuota = aiAccess?.quota_by_mode.chat.daily;
-  const assetClassifierAllowed = isScenarioAllowed(aiAccess, "asset_classifier");
-  const assetClassifierActive =
-    aiChat.activeScenarioContext?.scenario_type === "asset_classifier_hybrid" ||
-    aiChat.activeScenarioContext?.scenario_type === "deterministic_lookup";
-  const messageInputAllowed =
-    chatAllowed || (assetClassifierActive && assetClassifierAllowed);
+  const messageInputAllowed = chatAllowed;
 
   // Scroll listener — track if user is near bottom
   useEffect(() => {
@@ -450,12 +445,8 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
     userSentMessageRef.current = true;
-    if (assetClassifierActive) {
-      await aiChat.runAssetClassifier(inputValue);
-    } else {
-      const promptId = aiChat.activeScenarioContext?.prompt_id;
-      await aiChat.sendMessage(inputValue, { promptId });
-    }
+    const promptId = aiChat.activeScenarioContext?.prompt_id;
+    await aiChat.sendMessage(inputValue, { promptId });
     setInputValue("");
   };
 
@@ -768,7 +759,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
 
           <div className="border-t border-border/50 p-2 sm:p-4 bg-background/50 shrink-0 min-w-0">
             {/* Access banner (приоритет — chat запрещён) */}
-            {aiAccess && !chatAllowed && !assetClassifierActive && (
+            {aiAccess && !chatAllowed && (
               <div className="mb-3 rounded-lg border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs flex items-center justify-between gap-2">
                 <span className="text-amber-800 dark:text-amber-200">
                   {aiAccess.denial_reasons.chat_not_in_tier}
@@ -803,11 +794,9 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyPress}
                 placeholder={
-                  assetClassifierActive
-                    ? "Опиши следующий объект для подбора шифра ОС..."
-                    : chatAllowed
-                      ? "Напиши свой вопрос..."
-                      : "Свободный чат недоступен на вашем тарифе. Используйте доступные сценарии."
+                  chatAllowed
+                    ? "Напиши свой вопрос..."
+                    : "Свободный чат недоступен на вашем тарифе. Используйте доступные сценарии."
                 }
                 className="flex-1 min-w-0 min-h-[44px] max-h-[120px] resize-none text-base sm:text-sm"
                 disabled={aiChat.isLoading || !messageInputAllowed}

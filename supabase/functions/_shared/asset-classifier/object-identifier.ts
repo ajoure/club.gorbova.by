@@ -1,9 +1,17 @@
 export type IdentificationConfidence = "high" | "medium" | "low";
+export type AssetCatalogScope =
+  | "potential_fixed_asset"
+  | "component_or_spare_part"
+  | "consumable_or_inventory"
+  | "service_or_intangible"
+  | "not_an_object"
+  | "unknown";
 
 export interface IdentifiedAssetObject {
   originalName: string;
   normalizedName: string;
   objectType: string;
+  catalogScope: AssetCatalogScope;
   possibleSubtypes: string[];
   primaryFunction: string;
   secondaryFunctions: string[];
@@ -37,6 +45,17 @@ const RESPONSE_SCHEMA = {
     original_name: { type: "string" },
     normalized_name: { type: "string" },
     object_type: { type: "string" },
+    catalog_scope: {
+      type: "string",
+      enum: [
+        "potential_fixed_asset",
+        "component_or_spare_part",
+        "consumable_or_inventory",
+        "service_or_intangible",
+        "not_an_object",
+        "unknown",
+      ],
+    },
     possible_subtypes: { type: "array", items: { type: "string" } },
     primary_function: { type: "string" },
     secondary_functions: { type: "array", items: { type: "string" } },
@@ -55,6 +74,7 @@ const RESPONSE_SCHEMA = {
     "original_name",
     "normalized_name",
     "object_type",
+    "catalog_scope",
     "possible_subtypes",
     "primary_function",
     "secondary_functions",
@@ -87,6 +107,19 @@ const SYSTEM_INSTRUCTION = `
 7. negative_markers перечисляют формулировки, явно несовместимые с объектом.
 8. Если описания недостаточно для выбора разновидности, понизь confidence и задай
    конкретные missing_characteristics.
+9. catalog_scope определяет только пригодность описания для поиска по каталогу:
+   potential_fixed_asset — потенциально самостоятельный долговечный объект;
+   component_or_spare_part — комплектующая или запасная часть;
+   consumable_or_inventory — продукты, сырьё, расходные материалы или запасы;
+   service_or_intangible — услуга, работа или нематериальный объект;
+   not_an_object — вопрос, приветствие или иной текст без описания предмета;
+   unknown — данных недостаточно.
+10. missing_characteristics содержит только признаки, которые способны изменить
+    выбор нормативной позиции: назначение, самостоятельность, вид исполнения,
+    контекст использования или подключение. Не спрашивай потребительские и
+    эксплуатационные параметры, если они не разделяют виды объектов. Для
+    автомобильной шины сезонность, индекс нагрузки, индекс скорости, диаметр,
+    ширина и профиль не являются основаниями для выбора другой позиции каталога.
 `.trim();
 
 function normalize(value: string): string {
@@ -119,6 +152,15 @@ export function parseIdentifiedAssetObject(
   const source = value as Record<string, unknown>;
   const confidence = source.confidence;
   if (confidence !== "high" && confidence !== "medium" && confidence !== "low") return null;
+  const catalogScope = source.catalog_scope;
+  if (
+    catalogScope !== "potential_fixed_asset" &&
+    catalogScope !== "component_or_spare_part" &&
+    catalogScope !== "consumable_or_inventory" &&
+    catalogScope !== "service_or_intangible" &&
+    catalogScope !== "not_an_object" &&
+    catalogScope !== "unknown"
+  ) return null;
 
   const normalizedName = boundedString(source.normalized_name);
   const objectType = boundedString(source.object_type);
@@ -132,6 +174,7 @@ export function parseIdentifiedAssetObject(
     originalName: boundedString(source.original_name) || originalQuery.trim().slice(0, 300),
     normalizedName: normalizedName || normalizedQuery,
     objectType: objectType || "неопределенный объект",
+    catalogScope,
     possibleSubtypes: boundedStrings(source.possible_subtypes),
     primaryFunction: boundedString(source.primary_function),
     secondaryFunctions: boundedStrings(source.secondary_functions),
@@ -154,6 +197,7 @@ interface LocalRule {
   pattern: RegExp;
   normalizedName: string;
   objectType: string;
+  catalogScope?: AssetCatalogScope;
   primaryFunction: string;
   searchPhrases: string[];
   negativeMarkers?: string[];
@@ -164,6 +208,35 @@ interface LocalRule {
 }
 
 const LOCAL_RULES: LocalRule[] = [
+  {
+    pattern: /(петрушк|укроп|свежая зелень|пищев.*продукт|продукт.*питан|сырье.*приготовлен)/i,
+    normalizedName: "потребляемый пищевой продукт",
+    objectType: "потребляемый товар или запас",
+    catalogScope: "consumable_or_inventory",
+    primaryFunction: "использование или потребление в хозяйственной деятельности",
+    searchPhrases: [],
+    confidence: "high",
+  },
+  {
+    pattern: /(что .*умеешь|что можно сделать с тобой|кто ты|как дела|^привет[!. ]*$)/i,
+    normalizedName: "текст без описания объекта",
+    objectType: "запрос к помощнику, а не описание объекта",
+    catalogScope: "not_an_object",
+    primaryFunction: "",
+    searchPhrases: [],
+    confidence: "high",
+  },
+  {
+    pattern: /(автомоб.*шин|шин.*автомоб|шин[аы].*\br\s*1?\d|покрышк.*автомоб)/i,
+    normalizedName: "шина автомобильная",
+    objectType: "сменная автомобильная шина",
+    catalogScope: "component_or_spare_part",
+    primaryFunction: "использование в составе колеса транспортного средства",
+    searchPhrases: ["шина автомобильная", "покрышка автомобильная"],
+    confidence: "high",
+    isProbableComponent: true,
+    componentOf: "транспортное средство",
+  },
   {
     pattern: /(iphone|айфон|смартфон|мобильн.*телефон|телефон.*мобильн|сотов.*телефон|телефон.*сотов)/i,
     normalizedName: "телефон сотовый",
@@ -264,7 +337,7 @@ export function identifyObjectLocally(query: string): IdentifiedAssetObject {
     candidate.pattern.test(normalizedQuery)
   );
   const rule = /(аккумулятор|батаре|картридж|запасн.*част|комплектующ|детал)/i
-      .test(normalizedQuery)
+    .test(normalizedQuery)
     ? matchingRules.find((candidate) => candidate.isProbableComponent) ?? matchingRules[0]
     : matchingRules[0];
   if (!rule) {
@@ -272,6 +345,7 @@ export function identifyObjectLocally(query: string): IdentifiedAssetObject {
       originalName: query.trim().slice(0, 300),
       normalizedName: normalizedQuery.slice(0, 300),
       objectType: normalizedQuery.slice(0, 160) || "неопределенный объект",
+      catalogScope: "unknown",
       possibleSubtypes: [],
       primaryFunction: "",
       secondaryFunctions: [],
@@ -296,6 +370,8 @@ export function identifyObjectLocally(query: string): IdentifiedAssetObject {
     originalName: query.trim().slice(0, 300),
     normalizedName: rule.normalizedName,
     objectType: rule.objectType,
+    catalogScope: rule.catalogScope ??
+      (rule.isProbableComponent ? "component_or_spare_part" : "potential_fixed_asset"),
     possibleSubtypes: [],
     primaryFunction: rule.primaryFunction,
     secondaryFunctions: [],
