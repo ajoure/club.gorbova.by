@@ -29,6 +29,7 @@ type FetchLike = typeof fetch;
 
 const GEMINI_MODEL = "google/gemini-3.6-flash";
 const LOVABLE_AI_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const GEMINI_MAX_OUTPUT_TOKENS = 4_096;
 
 const RESPONSE_SCHEMA = {
   type: "object",
@@ -343,8 +344,8 @@ export async function identifyObjectWithGemini(
           },
           { role: "user", content: query },
         ],
-        temperature: 0,
-        max_tokens: 1_200,
+        reasoning_effort: "minimal",
+        max_tokens: GEMINI_MAX_OUTPUT_TOKENS,
         response_format: { type: "json_object" },
         stream: false,
       }),

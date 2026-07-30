@@ -49,6 +49,11 @@ Lovable AI Gateway. В модель
 Шифр, срок, нормативное наименование и юридический вывод в схеме отсутствуют.
 После ответа выполняется собственная валидация типов, обязательных полей,
 длины строк, количества элементов и допустимого значения confidence.
+Для этой короткой классификационной задачи OpenAI-совместимый запрос задаёт
+`reasoning_effort: minimal` и резервирует до 4 096 выходных токенов. Это
+оставляет место и для обязательного thinking Gemini 3.x, и для полного JSON,
+не увеличивая reasoning до уровня сложной аналитической задачи. Устаревший
+для Gemini 3.6 параметр `temperature` не передаётся.
 
 ### Нормативный подбор
 
@@ -84,7 +89,7 @@ Lovable AI Gateway. В модель
 
 Lovable AI Gateway не требует отдельного ключа Google, но его использование
 не является безусловно бесплатным: запросы расходуют AI-кредиты Lovable.
-Lovable указывает временный ежемесячный грант 4 USD AI-кредитов для workspace,
+Lovable указывает временный ежемесячный грант 4 AI-кредита для workspace,
 после которого используются общие Cloud + AI credits. При исчерпании кредитов
 gateway может вернуть `402`, при ограничении частоты — `429`.
 
@@ -97,6 +102,8 @@ smoke считается успешным только при фактическ
 Официальные источники:
 
 - модель: <https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash>;
+- thinking в OpenAI-совместимом API:
+  <https://ai.google.dev/gemini-api/docs/openai#thinking>;
 - structured output: <https://ai.google.dev/gemini-api/docs/structured-output>;
 - Lovable AI и кредиты: <https://docs.lovable.dev/features/ai>.
 

@@ -206,6 +206,9 @@ describe("Gemini object identification boundary", () => {
     expect(requestedUrl).toBe("https://ai.gateway.lovable.dev/v1/chat/completions");
     expect(authorization).toBe("Bearer test-key-not-a-real-secret");
     expect(requestedBody.model).toBe("google/gemini-3.6-flash");
+    expect(requestedBody.reasoning_effort).toBe("minimal");
+    expect(requestedBody.max_tokens).toBe(4_096);
+    expect(requestedBody).not.toHaveProperty("temperature");
     expect(requestedBody.response_format).toEqual({ type: "json_object" });
   });
 
