@@ -275,10 +275,12 @@ Deno.serve(async (req) => {
 
   for (const row of legacyEmailOutcomeRows) {
     const meta = row.meta ?? {};
+    if (meta.channel !== "email") continue;
     const subscriptionId = typeof meta.subscription_id === "string"
       ? meta.subscription_id
       : "";
     const eventType = typeof meta.event_type === "string" ? meta.event_type : "";
+    if (!LEGACY_REMINDER_EVENT_TYPES.includes(eventType as never)) continue;
     if (!requestedIds.has(subscriptionId) || !eventType) continue;
     const daysBefore = Number(meta.days_left ?? eventType.match(/_(\d+)d$/)?.[1]);
     logs.push({
