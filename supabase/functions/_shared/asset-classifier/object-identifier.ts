@@ -404,6 +404,32 @@ function fallbackReason(status?: number): IdentificationOutcome["fallbackReason"
   return "provider_error";
 }
 
+function applyVerifiedScopeGuard(
+  query: string,
+  object: IdentifiedAssetObject,
+): IdentifiedAssetObject {
+  const localObject = identifyObjectLocally(query);
+  const guardedScopes = new Set<AssetCatalogScope>([
+    "component_or_spare_part",
+    "consumable_or_inventory",
+    "not_an_object",
+  ]);
+
+  if (
+    localObject.confidence !== "high" ||
+    !guardedScopes.has(localObject.catalogScope)
+  ) {
+    return object;
+  }
+
+  return {
+    ...object,
+    catalogScope: localObject.catalogScope,
+    isProbableComponent: localObject.isProbableComponent,
+    componentOf: localObject.componentOf,
+  };
+}
+
 export async function identifyObjectWithGemini(
   query: string,
   lovableApiKey: string | undefined,
@@ -484,7 +510,10 @@ export async function identifyObjectWithGemini(
       };
     }
 
-    return { object, source: "gemini" };
+    return {
+      object: applyVerifiedScopeGuard(query, object),
+      source: "gemini",
+    };
   } catch (error) {
     const isTimeout = error instanceof DOMException && error.name === "AbortError";
     return {

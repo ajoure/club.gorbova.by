@@ -288,6 +288,49 @@ describe("Gemini object identification boundary", () => {
     expect(JSON.stringify(requestedBody.messages)).toContain("catalog_scope");
   });
 
+  it("keeps a verified component scope when Gemini calls an HDMI cable inventory", async () => {
+    const geminiPayload = {
+      original_name: "кабель HDMI",
+      normalized_name: "кабель HDMI",
+      object_type: "соединительный кабель",
+      catalog_scope: "consumable_or_inventory",
+      possible_subtypes: [],
+      primary_function: "передача видеосигнала",
+      secondary_functions: [],
+      installation_context: "подключение монитора",
+      connection_type: "HDMI",
+      material: "",
+      is_probable_component: false,
+      component_of: "",
+      missing_characteristics: [],
+      search_phrases: ["кабель HDMI"],
+      positive_markers: ["HDMI"],
+      negative_markers: [],
+      confidence: "high",
+    };
+    const mockFetch = (async () =>
+      new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify(geminiPayload) } }],
+      }), { status: 200 })) as typeof fetch;
+
+    const result = await identifyObjectWithGemini(
+      "кабель HDMI для монитора",
+      "test-key-not-a-real-secret",
+      mockFetch,
+    );
+
+    expect(result.source).toBe("gemini");
+    expect(result.object).toMatchObject({
+      catalogScope: "component_or_spare_part",
+      isProbableComponent: true,
+      componentOf: "вычислительная или организационная техника",
+    });
+    expect(classifyAsset("кабель HDMI для монитора", result.object)).toMatchObject({
+      decision: "not_found",
+      candidates: [],
+    });
+  });
+
   it("rejects invalid structured data before classification", () => {
     expect(parseIdentifiedAssetObject({
       normalized_name: "",
