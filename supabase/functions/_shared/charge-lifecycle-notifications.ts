@@ -205,13 +205,28 @@ export async function sendChargeLifecycleNotification(
   };
 
   try {
-    // Load canonical policy from subscription meta.
+    // Load the immutable subscription snapshot. Legacy rows may predate this
+    // snapshot, so fall back only to the exact source offer recorded on the
+    // subscription/order (never another button on the same tariff).
     const { data: subV2 } = await supabase
       .from("subscriptions_v2")
-      .select("meta")
+      .select("meta, orders_v2(meta)")
       .eq("id", args.subscriptionV2Id)
       .maybeSingle();
-    const policy = resolveChargeNotificationPolicy(subV2?.meta ?? {});
+    const subMeta = subV2?.meta ?? {};
+    const order = Array.isArray(subV2?.orders_v2) ? subV2.orders_v2[0] : subV2?.orders_v2;
+    const sourceOfferId = subMeta?.offer_id ?? order?.meta?.offer_id ?? null;
+    let policy = resolveChargeNotificationPolicy(subMeta);
+    if (policy.source === "defaults" && typeof sourceOfferId === "string") {
+      const { data: sourceOffer } = await supabase
+        .from("tariff_offers")
+        .select("meta")
+        .eq("id", sourceOfferId)
+        .maybeSingle();
+      if (sourceOffer?.meta) {
+        policy = resolveChargeNotificationPolicy(sourceOffer.meta);
+      }
+    }
     const gate = isGated(args.event, policy);
     if (gate.gated) {
       result.gated = true;

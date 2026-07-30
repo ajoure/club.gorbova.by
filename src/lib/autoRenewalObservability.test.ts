@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resolveRetryObservability,
   retryAttemptLabel,
+  retryAttemptSummaryLabel,
 } from "./autoRenewalObservability";
 
 describe("resolveRetryObservability", () => {
@@ -39,5 +40,21 @@ describe("resolveRetryObservability", () => {
     const result = resolveRetryObservability({ subscriptionAttempts: 3 });
     expect(retryAttemptLabel(result)).toBe("3/3");
     expect(result.exhausted).toBe(true);
+  });
+
+  it("shows lifetime attempts when the current retry series was reset", () => {
+    const result = resolveRetryObservability({
+      subscriptionAttempts: 0,
+      subscriptionMeta: {
+        retry_observability: {
+          current_attempts: 0,
+          total_attempts: 7,
+          successful_attempts: 5,
+          failed_attempts: 2,
+        },
+      },
+    });
+
+    expect(retryAttemptSummaryLabel(result)).toBe("0/3 · Σ7");
   });
 });

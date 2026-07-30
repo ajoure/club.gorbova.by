@@ -16,6 +16,7 @@ function record(value: unknown): JsonRecord {
 }
 
 function nonNegativeInt(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
 }
@@ -98,3 +99,9 @@ export function retryAttemptLabel(value: RetryObservability): string {
   return `${value.attempts}/${value.maxAttempts === null ? "∞" : value.maxAttempts}`;
 }
 
+export function retryAttemptSummaryLabel(value: RetryObservability): string {
+  const current = retryAttemptLabel(value);
+  return value.totalAttempts > value.attempts
+    ? `${current} · Σ${value.totalAttempts}`
+    : current;
+}
