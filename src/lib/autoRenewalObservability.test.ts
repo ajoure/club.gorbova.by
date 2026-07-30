@@ -55,6 +55,6 @@ describe("resolveRetryObservability", () => {
       },
     });
 
-    expect(retryAttemptSummaryLabel(result)).toBe("0/3 · Σ7");
+    expect(retryAttemptSummaryLabel(result)).toBe("0/3 · всего 7");
   });
 });

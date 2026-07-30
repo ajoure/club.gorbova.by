@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  hasRealInstallmentEvidence,
   isFiniteInstallment,
   resolveInstallmentProgress,
+  summarizeInstallmentPayments,
 } from "./autoRenewalInstallments";
 
 describe("isFiniteInstallment", () => {
@@ -120,5 +122,67 @@ describe("resolveInstallmentProgress", () => {
     expect(progress.remainingPayments).toBe(0);
     expect(progress.remainingAmount).toBe(0);
     expect(progress.nextChargeAt).toBeNull();
+  });
+});
+
+describe("summarizeInstallmentPayments", () => {
+  it("does not treat a generated unpaid schedule as a real installment", () => {
+    const evidence = summarizeInstallmentPayments([
+      {
+        status: "pending",
+        payment_number: 1,
+        charge_attempts: 0,
+        due_date: "2026-07-30T08:00:00.000Z",
+      },
+      {
+        status: "pending",
+        payment_number: 2,
+        charge_attempts: 0,
+        due_date: "2026-08-30T08:00:00.000Z",
+      },
+    ]);
+
+    expect(evidence.firstPaymentSucceeded).toBe(false);
+    expect(evidence.successfulPayments).toBe(0);
+    expect(hasRealInstallmentEvidence({ evidence })).toBe(false);
+  });
+
+  it("counts successful payments and failed retries separately", () => {
+    const evidence = summarizeInstallmentPayments([
+      {
+        status: "succeeded",
+        payment_number: 1,
+        charge_attempts: 0,
+        paid_at: "2026-06-30T08:00:00.000Z",
+        payment_id: "payment-1",
+      },
+      {
+        status: "pending",
+        payment_number: 2,
+        charge_attempts: 2,
+        last_attempt_at: "2026-07-30T08:00:00.000Z",
+        error_message: "insufficient_funds",
+        due_date: "2026-07-30T08:00:00.000Z",
+      },
+    ]);
+
+    expect(evidence.firstPaymentSucceeded).toBe(true);
+    expect(evidence.successfulPayments).toBe(1);
+    expect(evidence.failedAttempts).toBe(2);
+    expect(evidence.totalAttempts).toBe(3);
+    expect(evidence.currentAttempts).toBe(2);
+    expect(evidence.latestAttemptSucceeded).toBe(false);
+    expect(evidence.latestAttemptError).toBe("insufficient_funds");
+    expect(hasRealInstallmentEvidence({ evidence })).toBe(true);
+  });
+
+  it("accepts canonical paid progress when legacy schedule rows are incomplete", () => {
+    expect(hasRealInstallmentEvidence({ paidPayments: 1 })).toBe(true);
+    expect(hasRealInstallmentEvidence({ paidAmount: 250 })).toBe(true);
+    expect(
+      hasRealInstallmentEvidence({
+        providerLastChargeAt: "2026-07-01T08:00:00.000Z",
+      }),
+    ).toBe(true);
   });
 });

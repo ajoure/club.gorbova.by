@@ -91,6 +91,102 @@ export type InstallmentProgress = {
   completed: boolean;
 };
 
+export type InstallmentPaymentEvidenceRow = {
+  status?: unknown;
+  payment_number?: unknown;
+  charge_attempts?: unknown;
+  paid_at?: unknown;
+  last_attempt_at?: unknown;
+  error_message?: unknown;
+  due_date?: unknown;
+  payment_id?: unknown;
+};
+
+export type InstallmentPaymentEvidence = {
+  firstPaymentSucceeded: boolean;
+  successfulPayments: number;
+  failedAttempts: number;
+  totalAttempts: number;
+  currentAttempts: number;
+  latestAttemptAt: string | null;
+  latestAttemptSucceeded: boolean | null;
+  latestAttemptError: string | null;
+};
+
+/**
+ * Фактическое состояние рассрочки строится только по строкам графика платежей.
+ * Созданная ссылка или provider subscription без успешного первого взноса не
+ * является живой рассрочкой и не должна попадать в рабочий реестр.
+ */
+export function summarizeInstallmentPayments(
+  rows: InstallmentPaymentEvidenceRow[],
+): InstallmentPaymentEvidence {
+  const normalized = rows.map((row) => {
+    const status = String(row.status ?? "").toLowerCase();
+    const paymentNumber = nonNegativeInt(row.payment_number) ?? 0;
+    const chargeAttempts = nonNegativeInt(row.charge_attempts) ?? 0;
+    const paidAt = isoString(row.paid_at);
+    const lastAttemptAt = isoString(row.last_attempt_at);
+    return {
+      status,
+      paymentNumber,
+      chargeAttempts,
+      paidAt,
+      lastAttemptAt,
+      error: typeof row.error_message === "string" && row.error_message
+        ? row.error_message
+        : null,
+      dueAt: isoString(row.due_date),
+      hasPaymentId: typeof row.payment_id === "string" && row.payment_id.length > 0,
+    };
+  });
+
+  const succeeded = normalized.filter((row) => row.status === "succeeded");
+  const firstPaymentSucceeded = succeeded.some((row) =>
+    row.paymentNumber === 1 || row.hasPaymentId || row.paidAt !== null
+  );
+  const failedAttempts = normalized.reduce(
+    (sum, row) => sum + row.chargeAttempts,
+    0,
+  );
+  const totalAttempts = failedAttempts + succeeded.length;
+  const outstanding = normalized
+    .filter((row) => ["pending", "failed", "overdue", "processing"].includes(row.status))
+    .sort((a, b) => {
+      const aTime = a.dueAt ? Date.parse(a.dueAt) : Number.MAX_SAFE_INTEGER;
+      const bTime = b.dueAt ? Date.parse(b.dueAt) : Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
+    });
+
+  const attempted = normalized
+    .filter((row) => row.lastAttemptAt || row.paidAt)
+    .sort((a, b) => Date.parse(b.lastAttemptAt ?? b.paidAt!) - Date.parse(a.lastAttemptAt ?? a.paidAt!));
+  const latest = attempted[0] ?? null;
+
+  return {
+    firstPaymentSucceeded,
+    successfulPayments: succeeded.length,
+    failedAttempts,
+    totalAttempts,
+    currentAttempts: outstanding[0]?.chargeAttempts ?? 0,
+    latestAttemptAt: latest?.lastAttemptAt ?? latest?.paidAt ?? null,
+    latestAttemptSucceeded: latest ? latest.status === "succeeded" : null,
+    latestAttemptError: latest?.error ?? null,
+  };
+}
+
+export function hasRealInstallmentEvidence(args: {
+  evidence?: InstallmentPaymentEvidence | null;
+  paidPayments?: unknown;
+  paidAmount?: unknown;
+  providerLastChargeAt?: unknown;
+}): boolean {
+  if (args.evidence?.firstPaymentSucceeded) return true;
+  if ((nonNegativeInt(args.paidPayments) ?? 0) > 0) return true;
+  if ((finiteNumber(args.paidAmount) ?? 0) > 0) return true;
+  return isoString(args.providerLastChargeAt) !== null;
+}
+
 export function resolveInstallmentProgress(args: {
   subscriptionMeta?: unknown;
   orderMeta?: unknown;

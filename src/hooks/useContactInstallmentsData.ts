@@ -45,6 +45,11 @@ function mapOrderToPlan(order: any): UiPlan | null {
   const remainingTotal = Number(
     progress?.remaining_total_byn ?? Math.max(effectiveTotal - paidTotal, 0),
   );
+  const factualPaid = Number(order?.paid_amount ?? 0);
+
+  // Ссылка/график без первого успешного взноса — checkout-заготовка, а не
+  // рассрочка клиента. Такие записи видны только в диагностике автоплатежей.
+  if (paidCycles <= 0 && paidTotal <= 0 && factualPaid <= 0) return null;
 
   let uiStatus: UiPlan["uiStatus"] = "pending";
   if (manualReview) uiStatus = "review";
@@ -85,7 +90,7 @@ export function useContactInternalInstallments(
       let query: any = supabase
         .from("orders_v2")
         .select(
-          `id, order_number, currency, created_at, meta, product_id, tariff_id,
+          `id, order_number, currency, created_at, paid_amount, meta, product_id, tariff_id,
            products_v2:product_id ( name ),
            tariffs:tariff_id ( name )`,
         )
@@ -142,7 +147,13 @@ export function useContactLegacyInstallments(userId?: string | null) {
         .eq("user_id", userId as string)
         .order("due_date", { ascending: true });
       if (error) throw error;
-      return (data ?? []) as unknown as LegacyInstallmentRow[];
+      const rows = (data ?? []) as unknown as LegacyInstallmentRow[];
+      const realSubscriptionIds = new Set(
+        rows
+          .filter((row) => row.status === "succeeded")
+          .map((row) => row.subscription_id),
+      );
+      return rows.filter((row) => realSubscriptionIds.has(row.subscription_id));
     },
   });
 }

@@ -102,6 +102,6 @@ export function retryAttemptLabel(value: RetryObservability): string {
 export function retryAttemptSummaryLabel(value: RetryObservability): string {
   const current = retryAttemptLabel(value);
   return value.totalAttempts > value.attempts
-    ? `${current} · Σ${value.totalAttempts}`
+    ? `${current} · всего ${value.totalAttempts}`
     : current;
 }

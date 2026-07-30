@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical, ArrowUp, ArrowDown, ArrowUpDown, Power, MoreHorizontal, Wrench, Loader2, FileText, HelpCircle, ShieldAlert } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { format, isToday, isPast, isBefore, addDays, subDays, startOfDay, endOfDay } from "date-fns";
+import { format, isToday, isPast, isBefore, addDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -25,8 +25,11 @@ import { NotificationStatusIndicators, NotificationLegend, type NotificationLog 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { resolveRetryObservability, retryAttemptLabel, retryAttemptSummaryLabel, type RetryObservability } from "@/lib/autoRenewalObservability";
 import {
+  hasRealInstallmentEvidence,
   isFiniteInstallment,
   resolveInstallmentProgress,
+  summarizeInstallmentPayments,
+  type InstallmentPaymentEvidence,
   type InstallmentProgress,
 } from "@/lib/autoRenewalInstallments";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
@@ -55,6 +58,8 @@ import { CSS } from "@dnd-kit/utilities";
 
 // Timezone for all date calculations
 const MINSK_TZ = 'Europe/Minsk';
+const QUERY_PAGE_SIZE = 500;
+const TABLE_PAGE_SIZE = 100;
 
 // PATCH-6: Staff emails - excluded from metrics, reminders, and access changes
 const STAFF_EMAILS = [
@@ -64,29 +69,30 @@ const STAFF_EMAILS = [
   'irenessa@yandex.ru',
 ];
 
-type FilterType = 'all' | 'recurring' | 'installments' | 'installment_debt' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry' | 'bepaid' | 'stripe' | 'errors' | 'bad_card' | 'broken_token' | 'requires_3ds' | 'link_only';
+type FilterType = 'all' | 'recurring' | 'installments' | 'installment_drafts' | 'installment_debt' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry' | 'bepaid' | 'stripe' | 'errors' | 'bad_card' | 'broken_token' | 'requires_3ds' | 'link_only';
 
 const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'all', label: 'Все' },
   { value: 'recurring', label: 'Рекуррентные подписки', icon: RefreshCw },
   { value: 'installments', label: 'Конечные рассрочки', icon: FileText },
+  { value: 'installment_drafts', label: 'Неоплаченные заготовки', icon: FileText },
   { value: 'installment_debt', label: 'Долг по рассрочкам', icon: CreditCard },
   { value: 'errors', label: 'Ошибки списаний', icon: AlertTriangle },
   { value: 'bad_card', label: 'Проблемные карты', icon: ShieldAlert },
   { value: 'due_today', label: 'К списанию сегодня', icon: Clock },
   { value: 'due_week', label: 'К списанию за неделю' },
   { value: 'overdue', label: 'Просрочено', icon: AlertTriangle },
-  { value: 'in_grace', label: 'В grace (72ч)', icon: Clock },
+  { value: 'in_grace', label: 'В льготном периоде (72 ч)', icon: Clock },
   { value: 'expired_reentry', label: 'Удалённые', icon: XCircle },
   { value: 'no_charge_date', label: 'Нет даты списания', icon: AlertTriangle },
   { value: 'no_card', label: 'Без карты', icon: CreditCard },
   { value: 'no_token', label: 'Без токена' },
-  { value: 'pm_inactive', label: 'PM неактивен' },
+  { value: 'pm_inactive', label: 'Способ оплаты неактивен' },
   { value: 'max_attempts', label: 'Макс. попыток' },
   { value: 'bepaid', label: 'BePaid подписки', icon: CreditCard },
   { value: 'stripe', label: 'Stripe подписки', icon: CreditCard },
-  { value: 'broken_token', label: '⚠️ Broken token' },
-  { value: 'requires_3ds', label: '🔐 Requires 3DS' },
+  { value: 'broken_token', label: '⚠️ Повреждённый токен' },
+  { value: 'requires_3ds', label: '🔐 Требуется 3-D Secure' },
   { value: 'link_only', label: '🔗 Только ссылка' },
 ];
 
@@ -103,13 +109,13 @@ const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "amount", label: "След. сумма", visible: true, width: 110, order: 8 },
   { key: "next_charge", label: "След. списание", visible: true, width: 130, order: 9 },
   { key: "access_end", label: "Доступ до", visible: true, width: 100, order: 10 },
-  { key: "grace_remaining", label: "Grace", visible: true, width: 90, order: 11 },
+  { key: "grace_remaining", label: "Льготный срок", visible: true, width: 110, order: 11 },
   { key: "attempts", label: "Попытки", visible: true, width: 120, order: 12 },
   { key: "card", label: "Карта", visible: true, width: 70, order: 13 },
-  { key: "pm", label: "PM", visible: true, width: 110, order: 14 },
-  { key: "last_attempt", label: "Last Attempt", visible: true, width: 130, order: 15 },
-  { key: "tg_status", label: "TG 7/3/1", visible: true, width: 80, order: 16 },
-  { key: "email_status", label: "Email 7/3/1", visible: true, width: 80, order: 17 },
+  { key: "pm", label: "Способ оплаты", visible: true, width: 125, order: 14 },
+  { key: "last_attempt", label: "Последняя попытка", visible: true, width: 140, order: 15 },
+  { key: "tg_status", label: "Telegram 7/3/1", visible: true, width: 95, order: 16 },
+  { key: "email_status", label: "Почта 7/3/1", visible: true, width: 90, order: 17 },
 ];
 
 const STORAGE_KEY = 'admin_auto_renewals_columns_v3';
@@ -242,6 +248,7 @@ interface AutoRenewal {
   next_charge_at: string | null;
   access_end_at: string;
   status: string;
+  auto_renew: boolean;
   charge_attempts: number;
   retry_observability: RetryObservability;
   payment_method_id: string | null;
@@ -286,10 +293,25 @@ interface AutoRenewal {
   charged_today: boolean;
   // Stage 2B: provider-aware label ('bepaid' | 'stripe' | 'local')
   provider: 'bepaid' | 'stripe' | 'local';
-  kind: 'recurring' | 'installment';
+  kind: 'recurring' | 'installment' | 'installment_draft';
   installment_progress: InstallmentProgress | null;
+  installment_evidence: InstallmentPaymentEvidence | null;
   batch_action_eligible: boolean;
 }
+
+type RenewalAttemptObservation = {
+  total_attempts: number;
+  successful_attempts: number;
+  failed_attempts: number;
+  last_attempt_at: string | null;
+  last_attempt_success: boolean | null;
+  last_attempt_error: string | null;
+};
+
+type RenewalObservabilityResponse = {
+  logs: Array<NotificationLog & { channel: 'telegram' | 'email' }>;
+  attempts: Record<string, RenewalAttemptObservation>;
+};
 
 // PATCH P2.5: Compute actual billing type from token/PM/provider state
 function computeDisplayBillingType(sub: {
@@ -401,6 +423,9 @@ function isStaleOverdue(date: Date, hours = 72): boolean {
 export function AutoRenewalsTabContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
+  const [tablePage, setTablePage] = useState(1);
+  const [draftToCancel, setDraftToCancel] = useState<AutoRenewal | null>(null);
+  const [draftCancelLoading, setDraftCancelLoading] = useState(false);
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<any>(null);
   
@@ -481,48 +506,59 @@ export function AutoRenewalsTabContent() {
     queryKey: ['auto-renewals'],
     queryFn: async () => {
       // Use the safe view that excludes payment_token for security
-      const { data, error } = await supabase
-        .from('subscriptions_v2_safe')
-        .select(`
-          id,
-          user_id,
-          order_id,
-          next_charge_at,
-          access_end_at,
-          status,
-          auto_renew,
-          charge_attempts,
-          payment_method_id,
-          has_payment_token,
-          meta,
-          is_trial,
-          tariff_id,
-          billing_type,
-          grace_period_status,
-          grace_period_started_at,
-          grace_period_ends_at,
-          tariffs (
+      const data: any[] = [];
+      for (let from = 0; ; from += QUERY_PAGE_SIZE) {
+        const { data: page, error } = await supabase
+          .from('subscriptions_v2_safe')
+          .select(`
             id,
-            name,
-            original_price,
-            trial_price,
-            product_id,
-            products_v2 (id, name, category)
-          ),
-          payment_methods (status, last4, brand, verification_status, verification_error, recurring_verified),
-          orders_v2 (final_price, currency, meta)
-        `)
-        .in('status', ['active', 'trial', 'past_due'])
-        .order('next_charge_at', { ascending: true, nullsFirst: false })
-        .limit(1000);
-
-      if (error) throw error;
+            user_id,
+            order_id,
+            next_charge_at,
+            access_end_at,
+            status,
+            auto_renew,
+            charge_attempts,
+            payment_method_id,
+            has_payment_token,
+            meta,
+            is_trial,
+            tariff_id,
+            billing_type,
+            grace_period_status,
+            grace_period_started_at,
+            grace_period_ends_at,
+            tariffs (
+              id,
+              name,
+              original_price,
+              trial_price,
+              product_id,
+              products_v2 (id, name, category)
+            ),
+            payment_methods (status, last4, brand, verification_status, verification_error, recurring_verified),
+            orders_v2 (final_price, paid_amount, currency, meta)
+          `)
+          .in('status', ['active', 'trial', 'past_due'])
+          .order('next_charge_at', { ascending: true, nullsFirst: false })
+          .range(from, from + QUERY_PAGE_SIZE - 1);
+        if (error) throw error;
+        data.push(...(page ?? []));
+        if ((page?.length ?? 0) < QUERY_PAGE_SIZE) break;
+      }
 
       // PATCH 3.1: Fetch active provider_subscriptions to determine BePaid status (source of truth)
-      const { data: providerSubs } = await supabase
-        .from('provider_subscriptions')
-        .select('id, subscription_v2_id, provider, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, last_charge_at, card_brand, card_last4, raw_data, meta, state')
-        .in('state', ['active', 'trialing']);
+      const providerSubs: any[] = [];
+      for (let from = 0; ; from += QUERY_PAGE_SIZE) {
+        const { data: page, error } = await supabase
+          .from('provider_subscriptions')
+          .select('id, subscription_v2_id, provider, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, last_charge_at, card_brand, card_last4, raw_data, meta, state')
+          .in('state', ['active', 'trialing'])
+          .range(from, from + QUERY_PAGE_SIZE - 1);
+        if (error) throw error;
+        providerSubs.push(...(page ?? []));
+        if ((page?.length ?? 0) < QUERY_PAGE_SIZE) break;
+      }
 
       // Build lookup: subscription_v2_id → provider_subscription record
       const linkedPsMap = new Map<string, any>();
@@ -536,17 +572,29 @@ export function AutoRenewalsTabContent() {
       }
 
       const subscriptionIdList = (data || []).map((sub) => sub.id);
-      const installmentAttemptsBySubscription = new Map<string, number>();
+      const installmentEvidenceBySubscription = new Map<string, InstallmentPaymentEvidence>();
       if (subscriptionIdList.length > 0) {
-        const { data: installmentPayments } = await supabase
-          .from('installment_payments')
-          .select('subscription_id, charge_attempts, status, due_date')
-          .in('subscription_id', subscriptionIdList)
-          .in('status', ['pending', 'failed', 'overdue'])
-          .order('due_date', { ascending: true });
-        for (const payment of installmentPayments || []) {
-          if (!payment.subscription_id || installmentAttemptsBySubscription.has(payment.subscription_id)) continue;
-          installmentAttemptsBySubscription.set(payment.subscription_id, payment.charge_attempts || 0);
+        const rowsBySubscription = new Map<string, any[]>();
+        for (let offset = 0; offset < subscriptionIdList.length; offset += 200) {
+          const idChunk = subscriptionIdList.slice(offset, offset + 200);
+          const { data: installmentPayments, error } = await supabase
+            .from('installment_payments')
+            .select('subscription_id, payment_number, charge_attempts, status, due_date, paid_at, last_attempt_at, error_message, payment_id')
+            .in('subscription_id', idChunk)
+            .order('due_date', { ascending: true });
+          if (error) throw error;
+          for (const payment of installmentPayments || []) {
+            if (!payment.subscription_id) continue;
+            const rows = rowsBySubscription.get(payment.subscription_id) ?? [];
+            rows.push(payment);
+            rowsBySubscription.set(payment.subscription_id, rows);
+          }
+        }
+        for (const [subscriptionId, rows] of rowsBySubscription) {
+          installmentEvidenceBySubscription.set(
+            subscriptionId,
+            summarizeInstallmentPayments(rows),
+          );
         }
       }
 
@@ -619,12 +667,15 @@ export function AutoRenewalsTabContent() {
           offerIsInstallment: installmentOffer?.is_installment,
           offerInstallmentCount: installmentOffer?.installment_count,
         });
+        const installmentEvidence = installmentEvidenceBySubscription.get(sub.id) ?? null;
         const retryObservability = resolveRetryObservability({
           subscriptionAttempts: sub.charge_attempts,
-          installmentAttempts: installmentAttemptsBySubscription.get(sub.id),
+          installmentAttempts: installmentEvidence?.currentAttempts,
           subscriptionMeta: sub.meta,
           providerMeta: linkedPs?.meta,
           providerRawData: linkedPs?.raw_data,
+          successfulAttempts: installmentEvidence?.successfulPayments,
+          failedAttempts: installmentEvidence?.failedAttempts,
         });
         const installmentProgress = finiteInstallment
           ? resolveInstallmentProgress({
@@ -639,6 +690,12 @@ export function AutoRenewalsTabContent() {
               successfulAttempts: retryObservability.successfulAttempts,
             })
           : null;
+        const realInstallment = finiteInstallment && hasRealInstallmentEvidence({
+          evidence: installmentEvidence,
+          paidPayments: installmentProgress?.paidPayments,
+          paidAmount: order?.paid_amount,
+          providerLastChargeAt: linkedPs?.last_charge_at,
+        });
 
         const isOpenEndedRecurring = !!linkedPs
           || sub.auto_renew === true
@@ -669,11 +726,21 @@ export function AutoRenewalsTabContent() {
           next_charge_at: installmentProgress?.nextChargeAt ?? sub.next_charge_at,
           access_end_at: sub.access_end_at,
           status: sub.status,
+          auto_renew: sub.auto_renew === true,
           charge_attempts: sub.charge_attempts || 0,
           retry_observability: retryObservability,
           payment_method_id: sub.payment_method_id,
           has_payment_token: (sub as any).has_payment_token ?? false,
-          meta: sub.meta,
+          meta: {
+            ...((sub.meta as Record<string, unknown> | null) ?? {}),
+            ...(installmentEvidence?.latestAttemptAt
+              ? {
+                  last_charge_attempt_at: installmentEvidence.latestAttemptAt,
+                  last_charge_attempt_success: installmentEvidence.latestAttemptSucceeded,
+                  last_charge_attempt_error: installmentEvidence.latestAttemptError,
+                }
+              : {}),
+          },
           product_name: product?.name || null,
           tariff_name: tariff?.name || null,
           contact_name: profile?.full_name || null,
@@ -719,8 +786,11 @@ export function AutoRenewalsTabContent() {
           charged_today: !!linkedPs?.last_charge_at && isTodayMinsk(new Date(linkedPs.last_charge_at)),
           // Stage 2B: provider label
           provider: linkedPs?.provider === 'stripe' ? 'stripe' : (linkedPs ? 'bepaid' : 'local'),
-          kind: finiteInstallment ? 'installment' : 'recurring',
+          kind: finiteInstallment
+            ? (realInstallment ? 'installment' : 'installment_draft')
+            : 'recurring',
           installment_progress: installmentProgress,
+          installment_evidence: installmentEvidence,
           batch_action_eligible: !finiteInstallment,
         };
       });
@@ -730,13 +800,20 @@ export function AutoRenewalsTabContent() {
       const filteredSubs = mappedSubs.filter(sub => {
         if (!sub.is_subscription) return false;
         if (sub.kind === 'installment' && sub.installment_progress?.completed) return false;
+        if (
+          sub.kind === 'installment_draft'
+          && !sub.provider_subscription_id
+          && !sub.auto_renew
+        ) return false;
         const isStaleNonChargeableOverdue = !!sub.next_charge_at
           && isPastMinsk(new Date(sub.next_charge_at))
           && isStaleOverdue(new Date(sub.next_charge_at))
           && !sub.is_bepaid
           && !sub.payment_method_id
           && !sub.has_payment_token;
-        return sub.kind === 'installment' || !isStaleNonChargeableOverdue;
+        return sub.kind === 'installment'
+          || sub.kind === 'installment_draft'
+          || !isStaleNonChargeableOverdue;
       });
 
       // Do not deduplicate by user + product: each active subscription/finite
@@ -745,6 +822,9 @@ export function AutoRenewalsTabContent() {
 
       // PATCH 3.1: Append orphan provider_subscriptions (active, not linked to subscriptions_v2)
       for (const ps of orphanPs) {
+        // A provider row without any successful charge is only a checkout
+        // preparation, not a real recurring financial obligation.
+        if (!ps.last_charge_at) continue;
         const profile = ps.user_id ? profileMap.get(ps.user_id) : (ps.profile_id ? profileByIdMap.get(ps.profile_id) : null);
         const planTitle = ps.raw_data?.plan?.title || ps.raw_data?.plan?.name || null;
         const amountByn = (ps.amount_cents || 0) / 100;
@@ -757,6 +837,7 @@ export function AutoRenewalsTabContent() {
           next_charge_at: ps.next_charge_at || null,
           access_end_at: ps.next_charge_at || '',
           status: 'active',
+          auto_renew: true,
           charge_attempts: 0,
           retry_observability: resolveRetryObservability({
             providerMeta: ps.meta,
@@ -798,6 +879,7 @@ export function AutoRenewalsTabContent() {
           provider: psProvider,
           kind: 'recurring',
           installment_progress: null,
+          installment_evidence: null,
           batch_action_eligible: false,
         });
       }
@@ -814,46 +896,80 @@ export function AutoRenewalsTabContent() {
   );
 
   // Canonical reminder outbox is the delivery source of truth for both channels.
-  const { data: notificationLogs } = useQuery({
+  const { data: observability } = useQuery<RenewalObservabilityResponse>({
     queryKey: ['auto-renewals-notification-outbox', subscriptionIds],
     queryFn: async () => {
-      if (subscriptionIds.length === 0) return [];
-      const thirtyDaysAgo = subDays(new Date(), 30).toISOString();
-      const { data, error } = await supabase
-        .from('notification_outbox')
-        .select('channel, message_type, status, blocked_reason, meta, created_at, sent_at')
-        .in('channel', ['telegram', 'email'])
-        .in('message_type', ['subscription_charge_reminder', 'installment_charge_reminder'])
-        .gte('created_at', thirtyDaysAgo)
-        .order('created_at', { ascending: false });
+      if (subscriptionIds.length === 0) return { logs: [], attempts: {} };
+      const { data, error } = await supabase.functions.invoke(
+        'admin-auto-renewal-observability',
+        {
+          body: {
+            subscription_ids: subscriptionIds,
+            days: 45,
+          },
+        },
+      );
       if (error) {
         console.error('Failed to fetch reminder outbox:', error);
-        return [];
+        return { logs: [], attempts: {} };
       }
-      return (data || []).map((log) => {
-        const meta = (log.meta || {}) as Record<string, unknown>;
-        const daysBefore = Number(meta.days_before);
-        return {
-          channel: log.channel,
-          subscription_id: typeof meta.subscription_v2_id === 'string' ? meta.subscription_v2_id : '',
-          event_type: Number.isFinite(daysBefore) ? `subscription_reminder_${daysBefore}d` : '',
-          days_before: daysBefore,
-          effective_charge_at: typeof meta.effective_charge_at === 'string' ? meta.effective_charge_at : null,
-          status: log.status || '',
-          reason: log.blocked_reason || (typeof meta.reason === 'string' ? meta.reason : null),
-          error_message: typeof meta.error_message === 'string' ? meta.error_message : null,
-          created_at: log.sent_at || log.created_at,
-        };
-      }).filter((log) => subscriptionIds.includes(log.subscription_id));
+      return {
+        logs: Array.isArray(data?.logs) ? data.logs : [],
+        attempts: data?.attempts && typeof data.attempts === 'object'
+          ? data.attempts
+          : {},
+      };
     },
     enabled: subscriptionIds.length > 0,
     staleTime: 30000,
   });
+  const notificationLogs = observability?.logs ?? [];
+  const observedRenewals = useMemo(() => {
+    const attempts = observability?.attempts ?? {};
+    return (renewals ?? []).map((renewal) => {
+      const observed = attempts[renewal.id];
+      if (!observed) return renewal;
+      const successfulAttempts = Math.max(
+        renewal.retry_observability.successfulAttempts,
+        Number(observed.successful_attempts || 0),
+      );
+      const failedAttempts = Math.max(
+        renewal.retry_observability.failedAttempts,
+        Number(observed.failed_attempts || 0),
+      );
+      const totalAttempts = Math.max(
+        renewal.retry_observability.totalAttempts,
+        Number(observed.total_attempts || 0),
+        successfulAttempts + failedAttempts,
+      );
+      return {
+        ...renewal,
+        retry_observability: {
+          ...renewal.retry_observability,
+          successfulAttempts,
+          failedAttempts,
+          totalAttempts,
+        },
+        meta: observed.last_attempt_at
+          ? {
+              ...(renewal.meta ?? {}),
+              last_charge_attempt_at: observed.last_attempt_at,
+              last_charge_attempt_success: observed.last_attempt_success,
+              last_charge_attempt_error: observed.last_attempt_error,
+            }
+          : renewal.meta,
+      };
+    });
+  }, [observability?.attempts, renewals]);
 
   const filteredRenewals = useMemo(() => {
-    if (!renewals) return [];
+    if (!observedRenewals) return [];
     
-    let result = renewals;
+    // Рабочий реестр по умолчанию содержит только реальные обязательства.
+    // Неоплаченные checkout-заготовки доступны отдельным диагностическим фильтром.
+    let result = filter === 'installment_drafts'
+      ? observedRenewals
+      : observedRenewals.filter((renewal) => renewal.kind !== 'installment_draft');
     
     // Apply filter - using Minsk timezone
     const nowMinsk = toZonedTime(new Date(), MINSK_TZ);
@@ -865,6 +981,9 @@ export function AutoRenewalsTabContent() {
         break;
       case 'installments':
         result = result.filter(r => r.kind === 'installment');
+        break;
+      case 'installment_drafts':
+        result = result.filter(r => r.kind === 'installment_draft');
         break;
       case 'installment_debt':
         result = result.filter(r =>
@@ -955,7 +1074,7 @@ export function AutoRenewalsTabContent() {
     }
     
     return result;
-  }, [renewals, filter, searchQuery]);
+  }, [observedRenewals, filter, searchQuery]);
 
   // Sorting logic using useTableSort hook
   const getFieldValue = useCallback((r: AutoRenewal, key: string) => {
@@ -993,53 +1112,70 @@ export function AutoRenewalsTabContent() {
     data: filteredRenewals,
     getFieldValue,
   });
+  const pageCount = Math.max(1, Math.ceil(sortedData.length / TABLE_PAGE_SIZE));
+  const pagedData = useMemo(
+    () => sortedData.slice(
+      (tablePage - 1) * TABLE_PAGE_SIZE,
+      tablePage * TABLE_PAGE_SIZE,
+    ),
+    [sortedData, tablePage],
+  );
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [filter, searchQuery]);
+
+  useEffect(() => {
+    if (tablePage > pageCount) setTablePage(pageCount);
+  }, [pageCount, tablePage]);
 
   // Stats with amounts - PATCH-6: Exclude staff and NULL next_charge_at from due/overdue metrics
   const stats = useMemo(() => {
-    if (!renewals) return null;
+    if (!observedRenewals) return null;
     
     // PATCH-6: For due/overdue metrics, exclude staff and NULL next_charge_at
-    const eligibleForMetrics = renewals.filter(r => r.next_charge_at && !r.is_staff);
+    const realRenewals = observedRenewals.filter(r => r.kind !== 'installment_draft');
+    const eligibleForMetrics = realRenewals.filter(r => r.next_charge_at && !r.is_staff);
     
-    const chargedTodayList = renewals.filter(r => r.charged_today && !r.is_staff);
+    const chargedTodayList = realRenewals.filter(r => r.charged_today && !r.is_staff);
     const dueTodayRemainingList = eligibleForMetrics.filter(r => isTodayMinsk(new Date(r.next_charge_at!)) && !r.charged_today);
-    const dueTodayList = renewals.filter(r => !r.is_staff && (r.charged_today || (r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at)))));
+    const dueTodayList = realRenewals.filter(r => !r.is_staff && (r.charged_today || (r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at)))));
     const overdueList = eligibleForMetrics.filter(r => isPastMinsk(new Date(r.next_charge_at!)));
     // AR-P0.9.6: exclude BePaid from "no card" stat (PATCH 3.1: use is_bepaid)
-    const noCardList = renewals.filter(r => !r.payment_method_id && !r.is_bepaid);
-    const installmentList = renewals.filter(r => r.kind === 'installment');
-    const recurringList = renewals.filter(r => r.kind === 'recurring');
+    const noCardList = realRenewals.filter(r => !r.payment_method_id && !r.is_bepaid);
+    const installmentList = realRenewals.filter(r => r.kind === 'installment');
+    const recurringList = realRenewals.filter(r => r.kind === 'recurring');
     const installmentDebt = installmentList.reduce(
       (sum, r) => sum + Number(r.installment_progress?.remainingAmount || 0),
       0,
     );
     
     // PATCH-6: Count subscriptions with NULL next_charge_at
-    const noChargeDateList = renewals.filter(r => !r.next_charge_at);
+    const noChargeDateList = realRenewals.filter(r => !r.next_charge_at);
     
     const sumAmount = (list: AutoRenewal[]) => 
       list.reduce((sum, r) => sum + getChargeAmount(r).amount, 0);
     
     // PATCH 3.1: MIT/BePaid split using is_bepaid (source of truth)
-    const bepaidTotal = renewals.filter(r => r.is_bepaid).length;
-    const mitTotal = renewals.length - bepaidTotal;
+    const bepaidTotal = realRenewals.filter(r => r.is_bepaid).length;
+    const mitTotal = realRenewals.length - bepaidTotal;
     const mitDueToday = dueTodayList.filter(r => !r.is_bepaid).length;
     const bepaidDueToday = dueTodayList.filter(r => r.is_bepaid).length;
 
     // PATCH 3.2: Error and bad card counts
-    const errorsList = renewals.filter(r => {
+    const errorsList = realRenewals.filter(r => {
       const lastStatus = r.meta?.last_charge_attempt_success;
       const lastError = r.meta?.last_charge_attempt_error;
       return lastStatus === false || (lastError != null && lastError !== '');
     });
-    const badCardList = renewals.filter(r => 
+    const badCardList = realRenewals.filter(r =>
       !r.is_bepaid && 
       r.payment_method_id && 
       (r.pm_verification_status !== 'verified' || r.pm_recurring_verified !== true)
     );
 
     return {
-      total: { count: renewals.length, sum: sumAmount(renewals) },
+      total: { count: realRenewals.length, sum: sumAmount(realRenewals) },
       recurring: { count: recurringList.length, sum: sumAmount(recurringList) },
       installments: {
         count: installmentList.length,
@@ -1060,7 +1196,7 @@ export function AutoRenewalsTabContent() {
       errors: errorsList.length,
       badCard: badCardList.length,
     };
-  }, [renewals]);
+  }, [observedRenewals]);
 
   // Clickable stat card handler
   const handleStatClick = (value: FilterType) => {
@@ -1107,6 +1243,36 @@ export function AutoRenewalsTabContent() {
       success: meta.last_charge_attempt_success,
       error: meta.last_charge_attempt_error,
     };
+  };
+
+  const cancelUnpaidDraft = async () => {
+    if (!draftToCancel?.provider_subscription_id) {
+      toast.error("У заготовки нет действующей подписки провайдера");
+      return;
+    }
+    setDraftCancelLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "bepaid-cancel-subscriptions",
+        {
+          body: {
+            subscription_v2_id: draftToCancel.id,
+            source: "admin_cancel_unpaid_installment_draft",
+          },
+        },
+      );
+      if (error) throw error;
+      if (!Array.isArray(data?.canceled) || data.canceled.length === 0) {
+        throw new Error(data?.failed?.[0]?.error || "Провайдер не подтвердил отмену");
+      }
+      toast.success("Неоплаченная заготовка отменена");
+      setDraftToCancel(null);
+      await refetch();
+    } catch (error) {
+      toast.error((error as Error).message || "Не удалось отменить заготовку");
+    } finally {
+      setDraftCancelLoading(false);
+    }
   };
   
   // Selection handlers
@@ -1274,13 +1440,13 @@ export function AutoRenewalsTabContent() {
               {/* PATCH-6: Staff badge */}
               {renewal.is_staff && (
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-purple-100 text-purple-700">
-                  Staff
+                  Сотрудник
                 </Badge>
               )}
               {/* PATCH-6: Comped badge (if not staff) */}
               {!renewal.is_staff && renewal.is_comped && (
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-green-100 text-green-700">
-                  Comped
+                  Бесплатно
                 </Badge>
               )}
             </div>
@@ -1310,15 +1476,37 @@ export function AutoRenewalsTabContent() {
               'text-[10px] whitespace-nowrap',
               renewal.kind === 'installment'
                 ? 'border-amber-400 text-amber-700 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-300'
+                : renewal.kind === 'installment_draft'
+                  ? 'border-slate-400 text-slate-700 bg-slate-50 dark:bg-slate-950/20 dark:text-slate-300'
                 : 'border-blue-400 text-blue-700 bg-blue-50 dark:bg-blue-950/20 dark:text-blue-300',
             )}
           >
-            {renewal.kind === 'installment' ? 'Рассрочка' : 'Рекуррент'}
+            {renewal.kind === 'installment'
+              ? 'Рассрочка'
+              : renewal.kind === 'installment_draft'
+                ? 'Не оплачена'
+                : 'Рекуррент'}
           </Badge>
         );
       case 'progress':
         if (!renewal.installment_progress) {
           return <span className="text-xs text-muted-foreground">—</span>;
+        }
+        if (renewal.kind === 'installment_draft') {
+          return (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs text-destructive"
+              disabled={!renewal.provider_subscription_id}
+              onClick={(event) => {
+                event.stopPropagation();
+                setDraftToCancel(renewal);
+              }}
+            >
+              Отменить
+            </Button>
+          );
         }
         return (
           <Tooltip>
@@ -1362,9 +1550,9 @@ export function AutoRenewalsTabContent() {
         const dbt = renewal.display_billing_type;
         const billingConfig: Record<string, { label: string; emoji: string; className: string }> = {
           provider_managed: { label: 'bePaid', emoji: '🔄', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
-          mit: { label: 'MIT', emoji: '💳', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
-          broken_token: { label: 'Broken', emoji: '⚠️', className: 'bg-destructive/10 text-destructive' },
-          requires_3ds: { label: '3DS', emoji: '🔐', className: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' },
+          mit: { label: 'Автосписание', emoji: '💳', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
+          broken_token: { label: 'Ошибка токена', emoji: '⚠️', className: 'bg-destructive/10 text-destructive' },
+          requires_3ds: { label: 'Нужен 3-D Secure', emoji: '🔐', className: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' },
           link_only: { label: 'Ссылка', emoji: '🔗', className: 'text-muted-foreground' },
         };
         const cfg = billingConfig[dbt] || billingConfig.link_only;
@@ -1506,12 +1694,18 @@ export function AutoRenewalsTabContent() {
             )}
           >
             {renewal.pm_last4 && `•${renewal.pm_last4} `}
-            {renewal.pm_status}
+            {{
+              active: 'Активен',
+              inactive: 'Неактивен',
+              failed: 'Ошибка',
+              pending: 'Ожидает',
+              processing: 'Обрабатывается',
+            }[renewal.pm_status] || renewal.pm_status}
           </Badge>
         ) : (
           <span className="text-xs text-muted-foreground">—</span>
         );
-      case 'last_attempt':
+      case 'last_attempt': {
         if (!lastAttempt) {
           return <span className="text-xs text-muted-foreground">—</span>;
         }
@@ -1533,7 +1727,7 @@ export function AutoRenewalsTabContent() {
                   'text-[10px] truncate max-w-[80px]',
                   lastAttempt.success ? 'text-green-600' : 'text-destructive'
                 )}>
-                  {lastAttempt.success ? 'OK' : errorText.slice(0, 20) || 'Ошибка'}
+                  {lastAttempt.success ? 'Успешно' : errorText.slice(0, 20) || 'Ошибка'}
                 </span>
               </div>
             </TooltipTrigger>
@@ -1547,6 +1741,7 @@ export function AutoRenewalsTabContent() {
             </TooltipContent>
           </Tooltip>
         );
+      }
       case 'tg_status':
         // PATCH-6: Don't show indicators for NULL next_charge_at
         if (!renewal.next_charge_at) {
@@ -1780,11 +1975,11 @@ export function AutoRenewalsTabContent() {
           </div>
           
           <Select value={filter} onValueChange={(v) => setFilter(v as FilterType)}>
-            <SelectTrigger className="w-[180px] h-9">
+            <SelectTrigger className="w-full sm:w-[260px] h-9">
               <Filter className="h-3.5 w-3.5 mr-2" />
               <SelectValue placeholder="Фильтр" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="max-h-[70vh]">
               {FILTER_OPTIONS.map(opt => (
                 <SelectItem key={opt.value} value={opt.value}>
                   {opt.label}
@@ -1816,28 +2011,28 @@ export function AutoRenewalsTabContent() {
                 disabled={!hasPermission('subscriptions.edit')}
               >
                 <Wrench className="h-4 w-4 mr-2" />
-                Fix club billing dates
+                Исправить даты списаний клуба
               </DropdownMenuItem>
               <DropdownMenuItem 
                 onClick={() => setBackfillDialogOpen(true)}
                 disabled={!hasPermission('subscriptions.edit')}
               >
                 <RefreshCw className="h-4 w-4 mr-2" />
-                Backfill recurring_snapshot
+                Восстановить снимок автопродлений
               </DropdownMenuItem>
               <DropdownMenuItem 
                 onClick={() => setBackfill2026DialogOpen(true)}
                 disabled={!hasPermission('subscriptions.edit')}
               >
                 <FileText className="h-4 w-4 mr-2" />
-                Backfill Orders 2026+
+                Восстановить сделки с 2026 года
               </DropdownMenuItem>
               <DropdownMenuItem 
                 onClick={() => setFixIntegrityDialogOpen(true)}
                 disabled={!hasPermission('subscriptions.edit')}
               >
                 <Wrench className="h-4 w-4 mr-2" />
-                Fix Integrity (2026+)
+                Исправить целостность с 2026 года
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1893,12 +2088,12 @@ export function AutoRenewalsTabContent() {
                               ) : col.key === 'tg_status' ? (
                                 <div className="flex flex-col items-center">
                                   <Send className="h-3.5 w-3.5 mb-0.5" />
-                                  <span className="text-[9px]">TG 7/3/1</span>
+                                  <span className="text-[9px]">Telegram 7/3/1</span>
                                 </div>
                               ) : col.key === 'email_status' ? (
                                 <div className="flex flex-col items-center">
                                   <Mail className="h-3.5 w-3.5 mb-0.5" />
-                                  <span className="text-[9px]">Email 7/3/1</span>
+                                  <span className="text-[9px]">Почта 7/3/1</span>
                                 </div>
                               ) : col.label}
                             </SortableResizableHeader>
@@ -1906,7 +2101,7 @@ export function AutoRenewalsTabContent() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {sortedData.slice(0, 100).map((renewal) => (
+                        {pagedData.map((renewal) => (
                           <TableRow 
                             key={renewal.id}
                             className="cursor-pointer hover:bg-muted/50"
@@ -1934,8 +2129,84 @@ export function AutoRenewalsTabContent() {
                 </DndContext>
               </div>
             )}
+            {!isLoading && sortedData.length > 0 && (
+              <div className="flex flex-col gap-2 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-xs text-muted-foreground">
+                  Показано {(tablePage - 1) * TABLE_PAGE_SIZE + 1}–
+                  {Math.min(tablePage * TABLE_PAGE_SIZE, sortedData.length)} из {sortedData.length}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={tablePage <= 1}
+                    onClick={() => setTablePage((page) => Math.max(1, page - 1))}
+                  >
+                    Назад
+                  </Button>
+                  <span className="min-w-[90px] text-center text-xs">
+                    Страница {tablePage} из {pageCount}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={tablePage >= pageCount}
+                    onClick={() => setTablePage((page) => Math.min(pageCount, page + 1))}
+                  >
+                    Далее
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
+
+        <Dialog
+          open={!!draftToCancel}
+          onOpenChange={(open) => {
+            if (!open && !draftCancelLoading) setDraftToCancel(null);
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Отменить неоплаченную заготовку?</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <p>
+                Будет отменена только неоплаченная подписка у платёжного
+                провайдера. Платёж, доступ и сделка не создаются и не удаляются.
+              </p>
+              <p className="text-muted-foreground">
+                {draftToCancel?.contact_name || draftToCancel?.contact_email || 'Контакт'}
+                {' · '}
+                {draftToCancel?.product_name || 'Продукт'}
+              </p>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                disabled={draftCancelLoading}
+                onClick={() => setDraftToCancel(null)}
+              >
+                Назад
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={draftCancelLoading}
+                onClick={cancelUnpaidDraft}
+              >
+                {draftCancelLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Отменяем…
+                  </>
+                ) : (
+                  'Отменить заготовку'
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Contact Detail Sheet */}
         <ContactDetailSheet
@@ -1956,7 +2227,7 @@ export function AutoRenewalsTabContent() {
         }}>
           <DialogContent className="max-w-2xl max-h-[80vh] overflow-auto">
             <DialogHeader>
-              <DialogTitle>Fix Club Billing Dates</DialogTitle>
+              <DialogTitle>Исправление дат списаний клуба</DialogTitle>
             </DialogHeader>
             
             {!fixDryRunResult ? (
@@ -1966,7 +2237,7 @@ export function AutoRenewalsTabContent() {
                   Найти и исправить проблемные подписки клуба:
                 </p>
                 <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1">
-                  <li>NULL next_charge_at (при auto_renew=true)</li>
+                  <li>Нет даты следующего списания при включённом автопродлении</li>
                   <li>Год 2027+ в датах (баг +365 дней)</li>
                   <li>Период больше 40 дней (должен быть ~30)</li>
                   <li>Рассинхрон next_charge_at и access_end_at</li>

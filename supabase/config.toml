@@ -84,6 +84,11 @@ verify_jwt = false
 [functions.admin-backfill-2026-orders]
 verify_jwt = true
 
+# Admin-only read model for service-role notification_outbox. The function
+# validates the caller with has_role_v2 before returning reminder statuses.
+[functions.admin-auto-renewal-observability]
+verify_jwt = true
+
 # One-off storage migration: platform JWT plus in-function admin/super_admin
 # guard and an explicit confirmation phrase before any source object is removed.
 [functions.admin-migrate-student-submissions]
