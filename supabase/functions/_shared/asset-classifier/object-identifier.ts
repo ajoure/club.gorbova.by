@@ -120,6 +120,11 @@ const SYSTEM_INSTRUCTION = `
     эксплуатационные параметры, если они не разделяют виды объектов. Для
     автомобильной шины сезонность, индекс нагрузки, индекс скорости, диаметр,
     ширина и профиль не являются основаниями для выбора другой позиции каталога.
+11. Сохраняй предметное ядро объекта в normalized_name, object_type и search_phrases.
+    Не подменяй название общими признаками вроде «автоматический», «стационарный»,
+    «электрический» или «офисный». Кофемашину называй «кофемашина» или
+    «кофе-аппарат»; способ подключения к воде не является обязательным уточнением
+    для распознавания такого объекта.
 `.trim();
 
 function normalize(value: string): string {
@@ -206,6 +211,9 @@ interface LocalRule {
   isProbableComponent?: boolean;
   componentOf?: string;
 }
+
+const COFFEE_MACHINE_PATTERN =
+  /(кофе[\s-]*машин|кофемашин|кофейн[а-яё]*\s+машин|кофевар|кофе[\s-]*аппарат|кофейн.*автомат|вендинг.*коф|коф.*вендинг|эспрессо[\s-]*машин|espresso)/i;
 
 const LOCAL_RULES: LocalRule[] = [
   {
@@ -321,6 +329,32 @@ const LOCAL_RULES: LocalRule[] = [
     missingCharacteristics: ["бытовое или промышленное исполнение"],
   },
   {
+    pattern: COFFEE_MACHINE_PATTERN,
+    normalizedName: "кофе-аппарат",
+    objectType: "кофемашина или кофе-аппарат",
+    primaryFunction: "приготовление кофе и кофейных напитков",
+    searchPhrases: ["кофе-аппараты", "кофемашины"],
+    negativeMarkers: [
+      "кузнечно-прессовое оборудование",
+      "литейное оборудование",
+      "печи промышленные",
+      "деревообрабатывающие линии",
+    ],
+    confidence: "high",
+  },
+  {
+    pattern: /(аппарат|машин|оборудован).*(приготовлен.*напитк|напитк.*приготовлен)/i,
+    normalizedName: "аппарат для приготовления напитков",
+    objectType: "неопределенный аппарат для приготовления напитков",
+    primaryFunction: "приготовление напитков",
+    searchPhrases: [],
+    confidence: "low",
+    missingCharacteristics: [
+      "какой именно напиток или продукт готовит аппарат",
+      "точное наименование или модель объекта",
+    ],
+  },
+  {
     pattern: /(аккумулятор|батаре)/i,
     normalizedName: "аккумулятор электрический",
     objectType: "аккумулятор или батарея",
@@ -404,7 +438,7 @@ function fallbackReason(status?: number): IdentificationOutcome["fallbackReason"
   return "provider_error";
 }
 
-function applyVerifiedScopeGuard(
+function applyVerifiedObjectGuard(
   query: string,
   object: IdentifiedAssetObject,
 ): IdentifiedAssetObject {
@@ -415,12 +449,40 @@ function applyVerifiedScopeGuard(
     "not_an_object",
   ]);
 
-  if (
-    localObject.confidence !== "high" ||
-    !guardedScopes.has(localObject.catalogScope)
-  ) {
+  if (localObject.confidence !== "high") {
     return object;
   }
+
+  if (
+    localObject.catalogScope === "potential_fixed_asset" &&
+    COFFEE_MACHINE_PATTERN.test(normalize(query))
+  ) {
+    return {
+      ...object,
+      normalizedName: localObject.normalizedName,
+      objectType: localObject.objectType,
+      catalogScope: localObject.catalogScope,
+      primaryFunction: localObject.primaryFunction,
+      isProbableComponent: false,
+      componentOf: "",
+      missingCharacteristics: localObject.missingCharacteristics,
+      searchPhrases: Array.from(new Set([
+        ...localObject.searchPhrases,
+        ...object.searchPhrases,
+      ])).slice(0, 12),
+      positiveMarkers: Array.from(new Set([
+        ...localObject.positiveMarkers,
+        ...object.positiveMarkers,
+      ])).slice(0, 12),
+      negativeMarkers: Array.from(new Set([
+        ...localObject.negativeMarkers,
+        ...object.negativeMarkers,
+      ])).slice(0, 12),
+      confidence: object.confidence === "low" ? "high" : object.confidence,
+    };
+  }
+
+  if (!guardedScopes.has(localObject.catalogScope)) return object;
 
   return {
     ...object,
@@ -511,7 +573,7 @@ export async function identifyObjectWithGemini(
     }
 
     return {
-      object: applyVerifiedScopeGuard(query, object),
+      object: applyVerifiedObjectGuard(query, object),
       source: "gemini",
     };
   } catch (error) {

@@ -22,7 +22,18 @@ const STOP_WORDS = new Set([
 
 const GENERIC_WORDS = new Set([
   "оборудование", "устройство", "система", "аппарат", "машина", "комплекс",
-  "средство", "техника", "прочее", "общий", "применение",
+  "средство", "техника", "прибор", "прочее", "общий", "применение",
+]);
+
+const NON_DISCRIMINATING_STEMS = new Set([
+  "автомат",
+  "автоматическ",
+  "полуавтомат",
+  "полуавтоматическ",
+  "стационарн",
+  "электрическ",
+  "электронн",
+  "офисн",
 ]);
 
 const SUFFIXES = [
@@ -173,6 +184,13 @@ const VERIFIED_OBJECT_RULES: VerifiedObjectRule[] = [
     reason: "Для объекта есть прямая бытовая позиция классификатора.",
   },
   {
+    id: "coffee_machine",
+    matcher: /(кофе[\s-]*машин|кофемашин|кофейн[а-яё]*\s+машин|кофевар|кофе[\s-]*аппарат|кофейн.*автомат|вендинг.*коф|коф.*вендинг|эспрессо[\s-]*машин|espresso)/i,
+    preferredCodes: ["45804"],
+    reason:
+      "Объект распознан как кофемашина или кофе-аппарат, прямо названный в позиции 45804.",
+  },
+  {
     id: "video_equipment",
     matcher: /(видеокамера|видеомагнитофон|dvd плеер|dvd рекордер|телевизор|видеорегистратор)/i,
     preferredCodes: ["70105"],
@@ -232,6 +250,8 @@ function tokenize(value: string): string[] {
         token.length >= 3 &&
         !STOP_WORDS.has(token) &&
         !GENERIC_WORDS.has(token) &&
+        !GENERIC_WORDS.has(stem(token)) &&
+        !NON_DISCRIMINATING_STEMS.has(stem(token)) &&
         !/^\d{1,4}$/.test(token)
       ),
   ));
@@ -306,6 +326,7 @@ function toCandidate(
 }
 
 function findCatalogCandidates(
+  query: string,
   object: IdentifiedAssetObject,
   semantic: string,
 ): AssetClassifierCandidate[] {
@@ -315,6 +336,12 @@ function findCatalogCandidates(
     ...object.searchPhrases,
   ].map(normalize).filter((value) => value.length >= 4)));
   const tokens = tokenize(semantic);
+  const coreTokens = new Set(tokenize([
+    query,
+    object.normalizedName,
+    object.objectType,
+    ...object.possibleSubtypes,
+  ].join(" ")));
   const negativeMarkers = object.negativeMarkers.map(normalize).filter(Boolean);
 
   return searchableItems
@@ -357,6 +384,15 @@ function findCatalogCandidates(
       if (matchedTerms.size > 0 && argumentsFor.length === 0) {
         argumentsFor.push(`совпали признаки: ${[...matchedTerms].slice(0, 5).join(", ")}`);
       }
+
+      const hasDirectPhraseMatch = argumentsFor.some((argument) =>
+        argument.startsWith("точное совпадение") ||
+        argument.startsWith("прямая фраза")
+      );
+      const hasCoreObjectMatch = [...matchedTerms].some((term) =>
+        coreTokens.has(term)
+      );
+      if (!hasDirectPhraseMatch && !hasCoreObjectMatch) return null;
 
       const candidate = toCandidate(source.item.code, {
         score,
@@ -414,12 +450,16 @@ function buildClarifyingQuestions(
   if (rule?.clarifyingQuestions?.length) {
     return Array.from(new Set(rule.clarifyingQuestions)).slice(0, 5);
   }
-  if (candidateCount === 0) return [];
+  if (
+    candidateCount === 0 &&
+    object.catalogScope !== "potential_fixed_asset" &&
+    object.catalogScope !== "unknown"
+  ) return [];
 
   const irrelevantProductSpecification =
     /(сезон|индекс.*(нагруз|скорост)|скорост.*индекс|ширин.*профил|высот.*профил|диаметр|размер|мощност|цвет)/i;
   const classificationRelevantCharacteristic =
-    /(назначени|самостоятель|состав|комплектующ|родительск|исполнени|подключен|система.*использован|место.*использован|контекст|материал|вид.*оборудован|тип.*объект)/i;
+    /(наименован|назначени|самостоятель|состав|комплектующ|родительск|исполнени|подключен|система.*использован|место.*использован|контекст|материал|вид.*оборудован|тип.*объект|какой.*(напиток|продукт)|вид.*(напитк|продукт))/i;
 
   const questions: string[] = [];
   for (const characteristic of object.missingCharacteristics) {
@@ -629,7 +669,7 @@ export function classifyAsset(
         return candidate ? [candidate] : [];
       });
     } else if (identifiedObject.catalogScope !== "component_or_spare_part") {
-      candidates = findCatalogCandidates(identifiedObject, semantic);
+      candidates = findCatalogCandidates(query, identifiedObject, semantic);
     }
   }
 
