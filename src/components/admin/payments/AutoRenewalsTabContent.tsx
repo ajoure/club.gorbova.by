@@ -251,6 +251,7 @@ interface AutoRenewal {
   next_charge_at: string | null;
   access_end_at: string;
   status: string;
+  canceled_at: string | null;
   auto_renew: boolean;
   charge_attempts: number;
   retry_observability: RetryObservability;
@@ -309,11 +310,13 @@ type RenewalAttemptObservation = {
   last_attempt_at: string | null;
   last_attempt_success: boolean | null;
   last_attempt_error: string | null;
+  current_attempts?: number;
 };
 
 type RenewalObservabilityResponse = {
   logs: Array<NotificationLog & { channel: 'telegram' | 'email' }>;
   attempts: Record<string, RenewalAttemptObservation>;
+  source_errors?: string[];
 };
 
 // PATCH P2.5: Compute actual billing type from token/PM/provider state
@@ -334,6 +337,11 @@ function computeDisplayBillingType(sub: {
   if (sub.payment_method_id && sub.pm_status === 'active') return 'requires_3ds';
   // Link only: no auto-charge capability
   return 'link_only';
+}
+
+function canAutoCharge(renewal: AutoRenewal): boolean {
+  return renewal.display_billing_type === 'provider_managed'
+    || renewal.display_billing_type === 'mit';
 }
 
 // Helper to get charge amount with priority (PATCH-3: Trial handling, PATCH-6: Staff/comped)
@@ -520,6 +528,7 @@ export function AutoRenewalsTabContent() {
             next_charge_at,
             access_end_at,
             status,
+            canceled_at,
             auto_renew,
             charge_attempts,
             payment_method_id,
@@ -575,6 +584,27 @@ export function AutoRenewalsTabContent() {
       }
 
       const subscriptionIdList = (data || []).map((sub) => sub.id);
+      const orderIdList = Array.from(new Set(
+        (data || []).map((sub) => sub.order_id).filter(Boolean),
+      ));
+      const successfulPaymentsByOrder = new Map<string, number>();
+      for (let offset = 0; offset < orderIdList.length; offset += 200) {
+        const orderChunk = orderIdList.slice(offset, offset + 200);
+        const { data: successfulPayments, error } = await supabase
+          .from('payments_v2')
+          .select('order_id')
+          .in('order_id', orderChunk)
+          .eq('status', 'succeeded')
+          .eq('is_deleted', false);
+        if (error) throw error;
+        for (const payment of successfulPayments || []) {
+          if (!payment.order_id) continue;
+          successfulPaymentsByOrder.set(
+            payment.order_id,
+            (successfulPaymentsByOrder.get(payment.order_id) || 0) + 1,
+          );
+        }
+      }
       const installmentEvidenceBySubscription = new Map<string, InstallmentPaymentEvidence>();
       if (subscriptionIdList.length > 0) {
         const rowsBySubscription = new Map<string, any[]>();
@@ -696,7 +726,9 @@ export function AutoRenewalsTabContent() {
         const realInstallment = finiteInstallment && hasRealInstallmentEvidence({
           evidence: installmentEvidence,
           paidPayments: installmentProgress?.paidPayments,
-          paidAmount: order?.paid_amount,
+          linkedSuccessfulPayments: sub.order_id
+            ? successfulPaymentsByOrder.get(sub.order_id) || 0
+            : 0,
           providerLastChargeAt: linkedPs?.last_charge_at,
         });
 
@@ -729,6 +761,7 @@ export function AutoRenewalsTabContent() {
           next_charge_at: installmentProgress?.nextChargeAt ?? sub.next_charge_at,
           access_end_at: sub.access_end_at,
           status: sub.status,
+          canceled_at: sub.canceled_at || null,
           auto_renew: sub.auto_renew === true,
           charge_attempts: sub.charge_attempts || 0,
           retry_observability: retryObservability,
@@ -794,7 +827,7 @@ export function AutoRenewalsTabContent() {
             : 'recurring',
           installment_progress: installmentProgress,
           installment_evidence: installmentEvidence,
-          batch_action_eligible: !finiteInstallment,
+          batch_action_eligible: !realInstallment,
         };
       });
 
@@ -802,12 +835,8 @@ export function AutoRenewalsTabContent() {
       // finite internal installments. One-time products remain excluded.
       const filteredSubs = mappedSubs.filter(sub => {
         if (!sub.is_subscription) return false;
+        if (sub.canceled_at) return false;
         if (sub.kind === 'installment' && sub.installment_progress?.completed) return false;
-        if (
-          sub.kind === 'installment_draft'
-          && !sub.provider_subscription_id
-          && !sub.auto_renew
-        ) return false;
         const isStaleNonChargeableOverdue = !!sub.next_charge_at
           && isPastMinsk(new Date(sub.next_charge_at))
           && isStaleOverdue(new Date(sub.next_charge_at))
@@ -840,6 +869,7 @@ export function AutoRenewalsTabContent() {
           next_charge_at: ps.next_charge_at || null,
           access_end_at: ps.next_charge_at || '',
           status: 'active',
+          canceled_at: null,
           auto_renew: true,
           charge_attempts: 0,
           retry_observability: resolveRetryObservability({
@@ -899,7 +929,10 @@ export function AutoRenewalsTabContent() {
   );
 
   // Canonical reminder outbox is the delivery source of truth for both channels.
-  const { data: observability } = useQuery<RenewalObservabilityResponse>({
+  const {
+    data: observability,
+    error: observabilityError,
+  } = useQuery<RenewalObservabilityResponse>({
     queryKey: ['auto-renewals-notification-outbox', subscriptionIds],
     queryFn: async () => {
       if (subscriptionIds.length === 0) return { logs: [], attempts: {} };
@@ -913,14 +946,14 @@ export function AutoRenewalsTabContent() {
         },
       );
       if (error) {
-        console.error('Failed to fetch reminder outbox:', error);
-        return { logs: [], attempts: {} };
+        throw new Error(error.message || 'Не удалось получить статусы уведомлений и попыток');
       }
       return {
         logs: Array.isArray(data?.logs) ? data.logs : [],
         attempts: data?.attempts && typeof data.attempts === 'object'
           ? data.attempts
           : {},
+        source_errors: Array.isArray(data?.source_errors) ? data.source_errors : [],
       };
     },
     enabled: subscriptionIds.length > 0,
@@ -945,6 +978,10 @@ export function AutoRenewalsTabContent() {
         Number(observed.total_attempts || 0),
         successfulAttempts + failedAttempts,
       );
+      const currentAttempts = Math.max(
+        renewal.retry_observability.attempts,
+        Number(observed.current_attempts || 0),
+      );
       return {
         ...renewal,
         retry_observability: {
@@ -952,6 +989,9 @@ export function AutoRenewalsTabContent() {
           successfulAttempts,
           failedAttempts,
           totalAttempts,
+          attempts: currentAttempts,
+          exhausted: renewal.retry_observability.maxAttempts !== null
+            && currentAttempts >= renewal.retry_observability.maxAttempts,
         },
         meta: observed.last_attempt_at
           ? {
@@ -972,7 +1012,11 @@ export function AutoRenewalsTabContent() {
     // Неоплаченные checkout-заготовки доступны отдельным диагностическим фильтром.
     let result = filter === 'installment_drafts'
       ? observedRenewals
-      : observedRenewals.filter((renewal) => renewal.kind !== 'installment_draft');
+      : observedRenewals.filter((renewal) => {
+          if (renewal.kind === 'installment_draft') return false;
+          if (renewal.kind === 'installment') return true;
+          return renewal.display_billing_type !== 'link_only';
+        });
     
     // Apply filter - using Minsk timezone
     const nowMinsk = toZonedTime(new Date(), MINSK_TZ);
@@ -995,17 +1039,24 @@ export function AutoRenewalsTabContent() {
         );
         break;
       case 'due_today':
-        result = result.filter(r => r.charged_today || (r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at))));
+        result = result.filter(r =>
+          canAutoCharge(r)
+          && (r.charged_today || (r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at))))
+        );
         break;
       case 'due_week':
         result = result.filter(r => {
-          if (!r.next_charge_at) return false;
+          if (!r.next_charge_at || !canAutoCharge(r)) return false;
           const dateMinsk = toZonedTime(new Date(r.next_charge_at), MINSK_TZ);
           return isBefore(dateMinsk, weekFromNow);
         });
         break;
       case 'overdue':
-        result = result.filter(r => r.next_charge_at && isPastMinsk(new Date(r.next_charge_at)));
+        result = result.filter(r =>
+          canAutoCharge(r)
+          && r.next_charge_at
+          && isPastMinsk(new Date(r.next_charge_at))
+        );
         break;
       // PATCH-6: New filter for NULL next_charge_at
       case 'no_charge_date':
@@ -1137,12 +1188,22 @@ export function AutoRenewalsTabContent() {
     if (!observedRenewals) return null;
     
     // PATCH-6: For due/overdue metrics, exclude staff and NULL next_charge_at
-    const realRenewals = observedRenewals.filter(r => r.kind !== 'installment_draft');
-    const eligibleForMetrics = realRenewals.filter(r => r.next_charge_at && !r.is_staff);
+    const realRenewals = observedRenewals.filter((renewal) => {
+      if (renewal.kind === 'installment_draft') return false;
+      if (renewal.kind === 'installment') return true;
+      return renewal.display_billing_type !== 'link_only';
+    });
+    const eligibleForMetrics = realRenewals.filter(r =>
+      r.next_charge_at && !r.is_staff && canAutoCharge(r)
+    );
     
     const chargedTodayList = realRenewals.filter(r => r.charged_today && !r.is_staff);
     const dueTodayRemainingList = eligibleForMetrics.filter(r => isTodayMinsk(new Date(r.next_charge_at!)) && !r.charged_today);
-    const dueTodayList = realRenewals.filter(r => !r.is_staff && (r.charged_today || (r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at)))));
+    const dueTodayList = realRenewals.filter(r =>
+      !r.is_staff
+      && canAutoCharge(r)
+      && (r.charged_today || (r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at))))
+    );
     const overdueList = eligibleForMetrics.filter(r => isPastMinsk(new Date(r.next_charge_at!)));
     // AR-P0.9.6: exclude BePaid from "no card" stat (PATCH 3.1: use is_bepaid)
     const noCardList = realRenewals.filter(r => !r.payment_method_id && !r.is_bepaid);
@@ -1249,24 +1310,21 @@ export function AutoRenewalsTabContent() {
   };
 
   const cancelUnpaidDraft = async () => {
-    if (!draftToCancel?.provider_subscription_id) {
-      toast.error("У заготовки нет действующей подписки провайдера");
-      return;
-    }
+    if (!draftToCancel) return;
     setDraftCancelLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke(
-        "bepaid-cancel-subscriptions",
+        "admin-cancel-unpaid-subscription-drafts",
         {
           body: {
-            subscription_v2_id: draftToCancel.id,
-            source: "admin_cancel_unpaid_installment_draft",
+            subscription_ids: [draftToCancel.id],
+            dry_run: false,
           },
         },
       );
       if (error) throw error;
-      if (!Array.isArray(data?.canceled) || data.canceled.length === 0) {
-        throw new Error(data?.failed?.[0]?.error || "Провайдер не подтвердил отмену");
+      if (!Array.isArray(data?.canceled) || !data.canceled.includes(draftToCancel.id)) {
+        throw new Error(data?.failed?.[0]?.reason || data?.blocked?.[0]?.reason || "Заготовка не отменена");
       }
       toast.success("Неоплаченная заготовка отменена");
       setDraftToCancel(null);
@@ -1311,6 +1369,16 @@ export function AutoRenewalsTabContent() {
   const [batchDialogOpen, setBatchDialogOpen] = useState(false);
   // FIX-4: Store remaining count from server response (not local calculation)
   const [batchRemaining, setBatchRemaining] = useState<number>(0);
+  const selectedRenewals = useMemo(
+    () => (observedRenewals ?? []).filter((renewal) => selectedIds.has(renewal.id)),
+    [observedRenewals, selectedIds],
+  );
+  const batchContainsDrafts = selectedRenewals.some(
+    (renewal) => renewal.kind === 'installment_draft',
+  );
+  const batchContainsRecurring = selectedRenewals.some(
+    (renewal) => renewal.kind !== 'installment_draft',
+  );
   
   // PATCH-5: Fix club billing dates modal state
   const [fixBillingDialogOpen, setFixBillingDialogOpen] = useState(false);
@@ -1320,11 +1388,17 @@ export function AutoRenewalsTabContent() {
 
   const handleBatchDisable = async (dryRun: boolean) => {
     if (selectedIds.size === 0) return;
+    if (batchContainsDrafts && batchContainsRecurring) {
+      toast.error('Выберите либо неоплаченные заготовки, либо рекуррентные подписки');
+      return;
+    }
     
     setBatchLoading(true);
     try {
-      const { data: session } = await supabase.auth.getSession();
-      const response = await supabase.functions.invoke('admin-batch-disable-auto-renew', {
+      const functionName = batchContainsDrafts
+        ? 'admin-cancel-unpaid-subscription-drafts'
+        : 'admin-batch-disable-auto-renew';
+      const response = await supabase.functions.invoke(functionName, {
         body: { 
           subscription_ids: Array.from(selectedIds), 
           dry_run: dryRun,
@@ -1335,12 +1409,31 @@ export function AutoRenewalsTabContent() {
       if (response.error) throw new Error(response.error.message);
       
       if (dryRun) {
-        setBatchPreview(response.data.subscriptions || []);
-        // FIX-4: Use remaining from server response instead of local calc
-        setBatchRemaining(response.data.remaining ?? 0);
+        if (batchContainsDrafts) {
+          const eligible = new Set(response.data.eligible || []);
+          setBatchPreview(selectedRenewals
+            .filter((renewal) => eligible.has(renewal.id))
+            .map((renewal) => ({
+              id: renewal.id,
+              contact: renewal.contact_name || renewal.contact_email || 'Без имени',
+              product: renewal.product_name || renewal.tariff_name || 'Без продукта',
+            })));
+          setBatchRemaining(0);
+        } else {
+          setBatchPreview(response.data.subscriptions || []);
+          setBatchRemaining(response.data.remaining ?? 0);
+        }
         setBatchDialogOpen(true);
       } else {
-        toast.success(response.data.message || `Отключено: ${response.data.count}`);
+        const affected = batchContainsDrafts
+          ? response.data.canceled?.length || 0
+          : response.data.count || 0;
+        toast.success(
+          response.data.message
+            || (batchContainsDrafts
+              ? `Отменено неоплаченных заготовок: ${affected}`
+              : `Отключено: ${affected}`),
+        );
         setSelectedIds(new Set());
         setBatchDialogOpen(false);
         refetch();
@@ -1427,7 +1520,7 @@ export function AutoRenewalsTabContent() {
             aria-label={
               renewal.batch_action_eligible
                 ? 'Выбрать подписку'
-                : 'Для конечных рассрочек и провайдерских записей массовое отключение недоступно'
+                : 'Действующую рассрочку нельзя отменить как неоплаченную заготовку'
             }
             onCheckedChange={() => toggleItem(renewal)}
             onClick={(e) => e.stopPropagation()}
@@ -1501,7 +1594,6 @@ export function AutoRenewalsTabContent() {
               variant="outline"
               size="sm"
               className="h-7 text-xs text-destructive"
-              disabled={!renewal.provider_subscription_id}
               onClick={(event) => {
                 event.stopPropagation();
                 setDraftToCancel(renewal);
@@ -1540,7 +1632,7 @@ export function AutoRenewalsTabContent() {
         const cfg: Record<string, { label: string; className: string }> = {
           bepaid: { label: 'bePaid', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-blue-300/50' },
           stripe: { label: 'Stripe', className: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 border-violet-300/50' },
-          local: { label: 'Локально', className: 'bg-muted text-muted-foreground border-border' },
+          local: { label: 'Внутренняя запись', className: 'bg-muted text-muted-foreground border-border' },
         };
         const c = cfg[renewal.provider] || cfg.local;
         return (
@@ -1556,7 +1648,7 @@ export function AutoRenewalsTabContent() {
           mit: { label: 'Автосписание', emoji: '💳', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
           broken_token: { label: 'Ошибка токена', emoji: '⚠️', className: 'bg-destructive/10 text-destructive' },
           requires_3ds: { label: 'Нужен 3-D Secure', emoji: '🔐', className: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' },
-          link_only: { label: 'Ссылка', emoji: '🔗', className: 'text-muted-foreground' },
+          link_only: { label: 'Нет автосписания', emoji: '🔗', className: 'text-muted-foreground' },
         };
         const cfg = billingConfig[dbt] || billingConfig.link_only;
         return (
@@ -1781,6 +1873,23 @@ export function AutoRenewalsTabContent() {
   return (
     <TooltipProvider>
       <div className="space-y-4">
+        {(observabilityError || (observability?.source_errors?.length ?? 0) > 0) && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="font-medium">
+                Статусы уведомлений и попыток загружены не полностью
+              </div>
+              <div className="text-xs">
+                Серые индикаторы нельзя считать подтверждением отсутствия отправки.
+                Обновите страницу или проверьте диагностику.
+              </div>
+            </div>
+          </div>
+        )}
         {/* Stats with amounts - PATCH-5: Fixed borders and removed "на сумму" */}
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1924,16 +2033,20 @@ export function AutoRenewalsTabContent() {
                   onClick={() => handleBatchDisable(true)}
                 >
                   <Power className="h-4 w-4 mr-1" />
-                  Отключить автопродление
+                  {batchContainsDrafts ? 'Отменить заготовки' : 'Отключить автопродление'}
                 </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Отключить автопродление</DialogTitle>
+                  <DialogTitle>
+                    {batchContainsDrafts ? 'Отменить неоплаченные заготовки' : 'Отключить автопродление'}
+                  </DialogTitle>
                 </DialogHeader>
                 <div className="space-y-3 py-4">
                   <p className="text-sm text-muted-foreground">
-                    Будет отключено автопродление для {selectedIds.size} подписок:
+                    {batchContainsDrafts
+                      ? `Будут отменены только проверенные неоплаченные заготовки (${selectedIds.size} выбрано):`
+                      : `Будет отключено автопродление для ${selectedIds.size} подписок:`}
                   </p>
                   <ul className="text-sm max-h-40 overflow-auto space-y-1">
                     {batchPreview.map((sub: any) => (
@@ -2176,8 +2289,9 @@ export function AutoRenewalsTabContent() {
             </DialogHeader>
             <div className="space-y-3 text-sm">
               <p>
-                Будет отменена только неоплаченная подписка у платёжного
-                провайдера. Платёж, доступ и сделка не создаются и не удаляются.
+                Будет отменена только запись без единого успешного платежа.
+                Если есть активная подписка у провайдера, она тоже будет отменена.
+                Платежи, доступы и сделки не удаляются.
               </p>
               <p className="text-muted-foreground">
                 {draftToCancel?.contact_name || draftToCancel?.contact_email || 'Контакт'}

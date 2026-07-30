@@ -1,6 +1,5 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from "date-fns";
-import { toZonedTime } from "date-fns-tz";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 
@@ -50,14 +49,6 @@ const REASON_LABELS: Record<string, string> = {
   one_time_product_no_renewal: 'Разовый продукт — без продления',
 };
 
-const MINSK_TZ = "Europe/Minsk";
-
-function minskDateKey(value: string): string | null {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return null;
-  return format(toZonedTime(date, MINSK_TZ), "yyyy-MM-dd");
-}
-
 function normalizeStatus(raw: string | null | undefined): 'success' | 'skipped' | 'failed' | 'pending' {
   if (!raw) return 'pending';
   const lower = raw.toLowerCase();
@@ -80,11 +71,9 @@ export function NotificationStatusIndicators({
   const latestLogsMap = new Map<string, NotificationLog>();
   for (const log of logs) {
     if (log.subscription_id !== subscriptionId) continue;
-    if (
-      nextChargeAt &&
-      log.effective_charge_at &&
-      minskDateKey(log.effective_charge_at) !== minskDateKey(nextChargeAt)
-    ) continue;
+    // Do not discard the latest delivered reminder after a successful charge
+    // advances next_charge_at to the following cycle. The table is an audit of
+    // the latest 7/3/1 outcomes, not only a forecast for the current date.
     const eventType = log.event_type || `subscription_reminder_${log.days_before}d`;
     const existing = latestLogsMap.get(eventType);
     if (!existing || new Date(log.created_at) > new Date(existing.created_at)) {
@@ -138,7 +127,12 @@ export function NotificationStatusIndicators({
                 )}
                 {log?.created_at && (
                   <div className="text-muted-foreground">
-                    {format(new Date(log.created_at), 'dd.MM HH:mm', { locale: ru })}
+                    Отправка: {format(new Date(log.created_at), 'dd.MM HH:mm', { locale: ru })}
+                  </div>
+                )}
+                {log?.effective_charge_at && (
+                  <div className="text-muted-foreground">
+                    К списанию: {format(new Date(log.effective_charge_at), 'dd.MM.yyyy', { locale: ru })}
                   </div>
                 )}
               </div>

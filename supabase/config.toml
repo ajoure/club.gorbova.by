@@ -89,6 +89,12 @@ verify_jwt = true
 [functions.admin-auto-renewal-observability]
 verify_jwt = true
 
+# Admin-only cancellation of unpaid subscription/installment drafts. The
+# function performs an additional permission/role check and refuses records
+# that have any payment evidence.
+[functions.admin-cancel-unpaid-subscription-drafts]
+verify_jwt = true
+
 # One-off storage migration: platform JWT plus in-function admin/super_admin
 # guard and an explicit confirmation phrase before any source object is removed.
 [functions.admin-migrate-student-submissions]

@@ -178,12 +178,16 @@ export function summarizeInstallmentPayments(
 export function hasRealInstallmentEvidence(args: {
   evidence?: InstallmentPaymentEvidence | null;
   paidPayments?: unknown;
-  paidAmount?: unknown;
+  linkedSuccessfulPayments?: unknown;
   providerLastChargeAt?: unknown;
 }): boolean {
   if (args.evidence?.firstPaymentSucceeded) return true;
   if ((nonNegativeInt(args.paidPayments) ?? 0) > 0) return true;
-  if ((finiteNumber(args.paidAmount) ?? 0) > 0) return true;
+  // orders_v2.paid_amount is deliberately not accepted as evidence: a checkout
+  // draft can inherit the bundle/order amount before the first installment is
+  // actually paid. Only a succeeded payments_v2 row linked to this order is
+  // canonical payment evidence.
+  if ((nonNegativeInt(args.linkedSuccessfulPayments) ?? 0) > 0) return true;
   return isoString(args.providerLastChargeAt) !== null;
 }
 
