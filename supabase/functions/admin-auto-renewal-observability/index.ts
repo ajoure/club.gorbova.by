@@ -36,10 +36,29 @@ type OutboxRow = {
 };
 
 type PaymentAttemptRow = {
+  id: string;
   order_id: string | null;
   status: string;
   created_at: string;
   paid_at: string | null;
+  error_message: string | null;
+  meta: Record<string, unknown> | null;
+  provider_response: Record<string, unknown> | null;
+};
+
+type ProviderSubscriptionRow = {
+  subscription_v2_id: string | null;
+  provider_subscription_id: string | null;
+  order_id: string | null;
+};
+
+type InstallmentPaymentRow = {
+  subscription_id: string;
+  payment_id: string | null;
+  charge_attempts: number | null;
+  status: string;
+  paid_at: string | null;
+  last_attempt_at: string | null;
   error_message: string | null;
 };
 
@@ -113,6 +132,7 @@ Deno.serve(async (req) => {
     ? Math.max(1, Math.min(90, Math.floor(requestedDays)))
     : 45;
   const createdAfter = new Date(Date.now() - days * 86_400_000).toISOString();
+  const sourceErrors: string[] = [];
 
   const rows: OutboxRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
@@ -181,7 +201,8 @@ Deno.serve(async (req) => {
       console.error("[admin-auto-renewal-observability] telegram log query failed", {
         code: error.code,
       });
-      return json({ error: "telegram_log_query_failed" }, 500);
+      sourceErrors.push("telegram_logs");
+      break;
     }
     const page = (data ?? []) as LegacyTelegramRow[];
     legacyTelegramRows.push(...page);
@@ -221,7 +242,8 @@ Deno.serve(async (req) => {
       console.error("[admin-auto-renewal-observability] email log query failed", {
         code: error.code,
       });
-      return json({ error: "email_log_query_failed" }, 500);
+      sourceErrors.push("email_logs");
+      break;
     }
     const page = (data ?? []) as LegacyEmailRow[];
     legacyEmailRows.push(...page);
@@ -266,7 +288,8 @@ Deno.serve(async (req) => {
       console.error("[admin-auto-renewal-observability] email outcome query failed", {
         code: error.code,
       });
-      return json({ error: "email_outcome_query_failed" }, 500);
+      sourceErrors.push("audit_logs");
+      break;
     }
     const page = (data ?? []) as LegacyEmailOutcomeRow[];
     legacyEmailOutcomeRows.push(...page);
@@ -298,7 +321,7 @@ Deno.serve(async (req) => {
 
   const { data: subscriptionRows, error: subscriptionError } = await admin
     .from("subscriptions_v2")
-    .select("id, order_id")
+    .select("id, order_id, charge_attempts")
     .in("id", subscriptionIds);
   if (subscriptionError) {
     console.error("[admin-auto-renewal-observability] subscription query failed", {
@@ -308,31 +331,71 @@ Deno.serve(async (req) => {
   }
 
   const subscriptionByOrder = new Map<string, string>();
+  const currentAttemptsBySubscription = new Map<string, number>();
   for (const row of subscriptionRows ?? []) {
     if (row.order_id) subscriptionByOrder.set(row.order_id, row.id);
+    currentAttemptsBySubscription.set(row.id, Number(row.charge_attempts || 0));
   }
-  const orderIds = [...subscriptionByOrder.keys()];
-  const payments: PaymentAttemptRow[] = [];
-  for (let offset = 0; offset < orderIds.length; offset += 200) {
-    const chunk = orderIds.slice(offset, offset + 200);
-    for (let from = 0; ; from += PAGE_SIZE) {
-      const { data, error } = await admin
-        .from("payments_v2")
-        .select("order_id, status, created_at, paid_at, error_message")
-        .in("order_id", chunk)
-        .eq("is_deleted", false)
-        .order("created_at", { ascending: false })
-        .range(from, from + PAGE_SIZE - 1);
-      if (error) {
-        console.error("[admin-auto-renewal-observability] attempts query failed", {
-          code: error.code,
-        });
-        return json({ error: "attempts_query_failed" }, 500);
-      }
-      const page = (data ?? []) as PaymentAttemptRow[];
-      payments.push(...page);
-      if (page.length < PAGE_SIZE) break;
+
+  const { data: providerRowsData, error: providerRowsError } = await admin
+    .from("provider_subscriptions")
+    .select("subscription_v2_id, provider_subscription_id, order_id")
+    .in("subscription_v2_id", subscriptionIds);
+  if (providerRowsError) {
+    console.error("[admin-auto-renewal-observability] provider subscriptions query failed", {
+      code: providerRowsError.code,
+    });
+    sourceErrors.push("provider_subscriptions");
+  }
+  const providerRows = (providerRowsData ?? []) as ProviderSubscriptionRow[];
+  const subscriptionByProviderId = new Map<string, string>();
+  for (const row of providerRows) {
+    if (!row.subscription_v2_id || !requestedIds.has(row.subscription_v2_id)) continue;
+    if (row.provider_subscription_id) {
+      subscriptionByProviderId.set(row.provider_subscription_id, row.subscription_v2_id);
     }
+    if (row.order_id) subscriptionByOrder.set(row.order_id, row.subscription_v2_id);
+  }
+
+  const installmentRows: InstallmentPaymentRow[] = [];
+  for (let offset = 0; offset < subscriptionIds.length; offset += 200) {
+    const chunk = subscriptionIds.slice(offset, offset + 200);
+    const { data, error } = await admin
+      .from("installment_payments")
+      .select("subscription_id, payment_id, charge_attempts, status, paid_at, last_attempt_at, error_message")
+      .in("subscription_id", chunk);
+    if (error) {
+      console.error("[admin-auto-renewal-observability] installment payments query failed", {
+        code: error.code,
+      });
+      sourceErrors.push("installment_payments");
+      break;
+    }
+    installmentRows.push(...((data ?? []) as InstallmentPaymentRow[]));
+  }
+  const subscriptionByPaymentId = new Map<string, string>();
+  for (const row of installmentRows) {
+    if (row.payment_id) subscriptionByPaymentId.set(row.payment_id, row.subscription_id);
+  }
+
+  const payments: PaymentAttemptRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await admin
+      .from("payments_v2")
+      .select("id, order_id, status, created_at, paid_at, error_message, meta, provider_response")
+      .eq("is_deleted", false)
+      .gte("created_at", createdAfter)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("[admin-auto-renewal-observability] attempts query failed", {
+        code: error.code,
+      });
+      return json({ error: "attempts_query_failed" }, 500);
+    }
+    const page = (data ?? []) as PaymentAttemptRow[];
+    payments.push(...page);
+    if (page.length < PAGE_SIZE) break;
   }
 
   const attempts: Record<string, {
@@ -342,12 +405,10 @@ Deno.serve(async (req) => {
     last_attempt_at: string | null;
     last_attempt_success: boolean | null;
     last_attempt_error: string | null;
+    current_attempts: number;
   }> = {};
-  for (const payment of payments) {
-    const subscriptionId = payment.order_id
-      ? subscriptionByOrder.get(payment.order_id)
-      : null;
-    if (!subscriptionId) continue;
+  const countedPaymentIds = new Set<string>();
+  const ensureAttempt = (subscriptionId: string) => {
     const entry = attempts[subscriptionId] ?? {
       total_attempts: 0,
       successful_attempts: 0,
@@ -355,7 +416,54 @@ Deno.serve(async (req) => {
       last_attempt_at: null,
       last_attempt_success: null,
       last_attempt_error: null,
+      current_attempts: currentAttemptsBySubscription.get(subscriptionId) || 0,
     };
+    attempts[subscriptionId] = entry;
+    return entry;
+  };
+
+  for (const row of installmentRows) {
+    if (!requestedIds.has(row.subscription_id)) continue;
+    const entry = ensureAttempt(row.subscription_id);
+    const status = String(row.status ?? "").toLowerCase();
+    const succeeded = ["succeeded", "paid"].includes(status);
+    const failedAttempts = Math.max(0, Number(row.charge_attempts || 0));
+    entry.successful_attempts += succeeded ? 1 : 0;
+    entry.failed_attempts += failedAttempts;
+    entry.total_attempts += (succeeded ? 1 : 0) + failedAttempts;
+    entry.current_attempts = Math.max(entry.current_attempts, failedAttempts);
+    const attemptAt = row.paid_at ?? row.last_attempt_at;
+    if (attemptAt && (!entry.last_attempt_at || Date.parse(attemptAt) > Date.parse(entry.last_attempt_at))) {
+      entry.last_attempt_at = attemptAt;
+      entry.last_attempt_success = succeeded ? true : failedAttempts > 0 ? false : null;
+      entry.last_attempt_error = failedAttempts > 0 ? row.error_message : null;
+    }
+    if (row.payment_id) countedPaymentIds.add(row.payment_id);
+  }
+
+  for (const payment of payments) {
+    if (countedPaymentIds.has(payment.id)) continue;
+    const meta = payment.meta ?? {};
+    const providerResponse = payment.provider_response ?? {};
+    const directSubscriptionId = [
+      meta.subscription_v2_id,
+      meta.subscription_id,
+      providerResponse.subscription_v2_id,
+    ].find((value) => typeof value === "string" && requestedIds.has(value as string));
+    const providerSubscriptionId = [
+      meta.bepaid_subscription_id,
+      meta.provider_subscription_id,
+      providerResponse.subscription_id,
+      providerResponse.provider_subscription_id,
+    ].find((value) => typeof value === "string");
+    const subscriptionId = (directSubscriptionId as string | undefined)
+      ?? subscriptionByPaymentId.get(payment.id)
+      ?? (payment.order_id ? subscriptionByOrder.get(payment.order_id) : undefined)
+      ?? (providerSubscriptionId
+        ? subscriptionByProviderId.get(providerSubscriptionId as string)
+        : undefined);
+    if (!subscriptionId) continue;
+    const entry = ensureAttempt(subscriptionId);
     const status = String(payment.status ?? "").toLowerCase();
     const succeeded = status === "succeeded";
     const failed = ["failed", "error", "declined", "canceled", "cancelled"].includes(status);
@@ -368,12 +476,14 @@ Deno.serve(async (req) => {
       entry.last_attempt_success = succeeded ? true : failed ? false : null;
       entry.last_attempt_error = failed ? payment.error_message : null;
     }
-    attempts[subscriptionId] = entry;
   }
+
+  for (const subscriptionId of subscriptionIds) ensureAttempt(subscriptionId);
 
   return json({
     logs,
     attempts,
+    source_errors: sourceErrors,
     requested: subscriptionIds.length,
     window_days: days,
   });

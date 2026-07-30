@@ -178,11 +178,18 @@ describe("summarizeInstallmentPayments", () => {
 
   it("accepts canonical paid progress when legacy schedule rows are incomplete", () => {
     expect(hasRealInstallmentEvidence({ paidPayments: 1 })).toBe(true);
-    expect(hasRealInstallmentEvidence({ paidAmount: 250 })).toBe(true);
+    expect(hasRealInstallmentEvidence({ linkedSuccessfulPayments: 1 })).toBe(true);
     expect(
       hasRealInstallmentEvidence({
         providerLastChargeAt: "2026-07-01T08:00:00.000Z",
       }),
     ).toBe(true);
+  });
+
+  it("does not accept an order amount without a linked successful payment", () => {
+    expect(hasRealInstallmentEvidence({
+      linkedSuccessfulPayments: 0,
+      paidPayments: 0,
+    })).toBe(false);
   });
 });
