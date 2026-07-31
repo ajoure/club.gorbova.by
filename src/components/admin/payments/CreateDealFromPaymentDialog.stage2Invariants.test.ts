@@ -6,7 +6,7 @@
  *   2. Диалог НЕ содержит `.from("orders_v2").insert(...)` — order создаётся сервером.
  *   3. Диалог НЕ содержит `provider: "admin"` строкой.
  *   4. Диалог НЕ содержит прямой `.from("payment_reconcile_queue").update(...)` — очередь мутируется сервером.
- *   5. Ровно один вызов `supabase.functions.invoke("admin-create-deal-from-payment", ...)`.
+ *   5. Ровно один защищённый вызов `admin-create-deal-from-payment`.
  *   6. Клиент передаёт стабильный `idempotencyKey` в body.
  *   7. Тело содержит `rawSource`, `paymentId`, `finalAmount`, `finalCurrency` — provider на клиенте НЕ вычисляется.
  */
@@ -52,8 +52,8 @@ describe("Stage 2 · CreateDealFromPaymentDialog — payments-v2 firewall & atom
     expect(count(/\.from\(\s*["']payments_v2["']\s*\)\s*\.update\(/)).toBe(0);
   });
 
-  it("invokes admin-create-deal-from-payment exactly once", () => {
-    expect(count(/supabase\.functions\.invoke\(\s*["']admin-create-deal-from-payment["']/)).toBe(1);
+  it("invokes admin-create-deal-from-payment exactly once through the authenticated client", () => {
+    expect(count(/invokeAuthenticatedFunction(?:<[^>]+>)?\(\s*["']admin-create-deal-from-payment["']/)).toBe(1);
   });
 
   it("passes a stable idempotencyKey in the invoke body", () => {
@@ -82,7 +82,7 @@ describe("Stage 2 · CreateDealFromPaymentDialog — payments-v2 firewall & atom
 
   it("Stage 2R · server derives contactUserId/isGhost/dealOnly — client must NOT send them", () => {
     // Извлекаем тело invoke.
-    const invokeMatch = CODE.match(/supabase\.functions\.invoke\(\s*["']admin-create-deal-from-payment["'][\s\S]*?\}\s*\)/);
+    const invokeMatch = CODE.match(/invokeAuthenticatedFunction(?:<[^>]+>)?\(\s*["']admin-create-deal-from-payment["'][\s\S]*?\}\s*\)/);
     expect(invokeMatch).not.toBeNull();
     const invokeBlock = invokeMatch![0];
     expect(invokeBlock).not.toMatch(/contactUserId\s*:/);
