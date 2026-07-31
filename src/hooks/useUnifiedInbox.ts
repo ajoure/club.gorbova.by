@@ -264,7 +264,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     refetchInterval: 30_000,
     refetchOnWindowFocus: false,
     queryFn: async () => {
-      const results = await Promise.all(
+      const results = await Promise.allSettled(
         igAccountIds.map(async (accountId: string) => {
           const { data, error } = await supabase.rpc("get_instagram_dialogs_v1", {
             p_account_id: accountId,
@@ -275,7 +275,25 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
           return ((data || []) as any[]).map((d) => ({ ...d, __accountId: accountId }));
         }),
       );
-      return results.flat();
+      const failedAccountIds = results.flatMap((result, index) => {
+        if (result.status === "fulfilled") return [];
+        console.error(
+          `[unified-instagram] account ${igAccountIds[index]} could not load:`,
+          result.reason,
+        );
+        return [igAccountIds[index]];
+      });
+
+      if (failedAccountIds.length) {
+        console.warn(
+          "[unified-instagram] showing healthy accounts while failed accounts are skipped:",
+          failedAccountIds,
+        );
+      }
+
+      return results.flatMap((result) =>
+        result.status === "fulfilled" ? result.value : [],
+      );
     },
   });
 
