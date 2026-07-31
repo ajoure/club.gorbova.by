@@ -1,54 +1,54 @@
-# Отчет о выполнении: PLAN-ONLY ревизия PR #237 (SHA e5bbd482) — PASS
+# План: единый релиз main `3d47bc7a8afb2d84d9092279368e655baf85c2ce`
 
-## 1. Preflight
-- Managed HEAD = `e5bbd482aaab7e9ff9baf4771f1505c71f0edb02` (Merge PR #237), дерево чистое (`git status --porcelain` пуст).
-- Diff `8675bc3d0..e5bbd482a` ровно 8 файлов scope, ничего вне scope: `AutoRenewalsTabContent.tsx` (+196/-...), `NotificationStatusIndicators.tsx`, `autoRenewalInstallments.ts` + тест, `autoRenewalObservabilityDeliverySources.test.ts` (+51), `supabase/config.toml` (+6), `admin-auto-renewal-observability/index.ts` (+170), новая `admin-cancel-unpaid-subscription-drafts/index.ts` (+212).
+PLAN-ONLY. Ничего не применено: без sync рабочего дерева, кода, коммитов, миграций, deploy, данных и Publish.
 
-## 2. admin-auto-renewal-observability
-- `config.toml` → `verify_jwt = true` сохранён. В коде: Bearer обязателен → `auth.getUser()` → `has_role_v2` (admin/super_admin/manager/menedzher) через service-role, иначе 403.
-- Наружу отдаются только `channel, subscription_id, event_type, days_before, effective_charge_at, status, reason, error_message, created_at` и агрегаты `attempts`. Ни email, ни chat_id, ни тела сообщений, ни `meta` целиком. В логах только `error.code`.
-- Best-effort merge: canonical `notification_outbox` (жёсткий 500 при отказе) + legacy `telegram_logs`, `email_logs`, `audit_logs`; отказ legacy-источника, `provider_subscriptions` и `installment_payments` пишет имя в `sourceErrors` и не валит ответ. Ответ явно содержит `source_errors`, `requested`, `window_days`.
-- Связка попыток: `subscriptionByOrder` (order_id подписки + order_id provider-строки), `subscriptionByProviderId` (`meta.bepaid_subscription_id`, `meta.provider_subscription_id`, `providerResponse.subscription_id/provider_subscription_id`), прямые `meta.subscription_v2_id/subscription_id`, `subscriptionByPaymentId` из `installment_payments`; дубли отсечены через `countedPaymentIds`.
-- Окно `created_at >= now() - days` (по умолчанию 45, clamp 1..90), максимум 2000 ID, пустой список → `{logs:[],attempts:{}}`.
+## 1. Preflight (факты)
 
-## 3. UI: ошибка источника и последняя отправка
-- `useQuery` больше не глотает ошибку (`throw new Error(error.message ...)`), `console.error(...)+пустой ответ` удалён. При `observabilityError` или непустом `source_errors` рендерится `role="alert"`: «Статусы уведомлений и попыток загружены не полностью… Серые индикаторы нельзя считать подтверждением отсутствия отправки».
-- `NotificationStatusIndicators`: удалён фильтр `minskDateKey(log.effective_charge_at) !== minskDateKey(nextChargeAt)`, поэтому последняя доставка не пропадает после переноса `next_charge_at`. Тултип теперь показывает «Отправка:» и «К списанию:» раздельно.
+- `git fetch origin main` (только чтение) → `origin/main = 3d47bc7a8afb2d84d9092279368e655baf85c2ce` — «fix(payments): restrict subscription charge cron (#255)». Совпадает с указанным SHA.
+- Managed рабочее дерево сейчас на `d0e66f1f875f3eec83c89f33a493757e9a60590e` (#246) — **отстаёт на релизный набор**. `git status --porcelain` пуст, дерево чистое.
+- Диф `d0e66f1f..3d47bc7a8` — 24 файла: 8 edge functions + 2 shared модуля + `supabase/config.toml` + 1 новая миграция + 8 фронтенд/тест файлов.
 
-## 4. Доказательство оплаты и живые итоги
-- `hasRealInstallmentEvidence` больше не принимает `paidAmount`; поле заменено на `linkedSuccessfulPayments` с явным комментарием, что `orders_v2.paid_amount` не является доказательством. Остальные доказательства: `evidence.firstPaymentSucceeded`, `paidPayments > 0`, `providerLastChargeAt`.
-- UI считает `linkedSuccessfulPayments` из `payments_v2` по `order_id` c `status='succeeded'` и `is_deleted=false` (чанки по 200).
-- Неоплаченные заготовки помечаются `kind='installment_draft'`, исключены из живых итогов (`filter === 'installment_drafts'` — единственный режим, где они видны; в остальных `renewal.kind === 'installment_draft'` отбрасывается, включая KPI-строки 1192/1197/1204) и имеют отдельный фильтр «Неоплаченные заготовки».
-- `canAutoCharge` ограничивает «к оплате»/«автосписание» типами `provider_managed` и `mit`; `link_only` переименован в «Нет автосписания» и в суммы не попадает. `canceled_at` теперь читается и отменённые записи из списка исключаются.
+## 2. Состав релиза
 
-## 5. admin-cancel-unpaid-subscription-drafts (новая)
-- `config.toml` → `verify_jwt = true` + комментарий. В коде Bearer → `auth.getUser()` → `has_permission('subscriptions.edit')`/`has_role_v2(admin)`/`has_role_v2(super_admin)`, иначе 403.
-- Только POST, иначе 405. IDs валидируются как UUID, дедуп, `0 < n <= 100`, иначе 400.
-- Dry-run по умолчанию: мутация только при явном `dry_run === false`.
-- Блокировка при любом подтверждении оплаты: `installment_payments` (`succeeded`/`paid`/`paid_at`/`payment_id`), успешный `payments_v2` по `order_id`, `provider_subscriptions.last_charge_at`; уже отменённые → `already_canceled`.
-- Никаких `.delete()`: только `UPDATE subscriptions_v2` (`auto_renew=false`, `canceled_at`, `cancel_at`, метки в `meta`) с защитой `.is('canceled_at', null)`; платежи, сделки и доступы не трогаются. Провайдерская отмена делегируется существующей `bepaid-cancel-subscriptions`.
-- Аудит: одна строка `audit_logs` с `action='subscription.unpaid_drafts_cancel'` и только счётчиками (`requested/eligible/canceled/blocked/failed`), без PII.
+### Миграции
+| Файл | Статус в БД |
+|---|---|
+| `20260731072225_restore_rbac_helper_execute_grants.sql` | уже в дереве и **фактически уже применён**: `has_permission(uuid,text)` и `has_role(uuid,app_role)` имеют ACL `authenticated=X, service_role=X`, без PUBLIC. Повторный прогон идемпотентен (guard-проверка сигнатур + REVOKE/GRANT). |
+| `20260731091000_harden_subscription_charge_cron.sql` | **новый**. Создаёт Vault-секрет `subscription_charge_cron_secret` (только если отсутствует), SECURITY DEFINER функцию `public.subscription_charge_cron_secret()` (revoke от PUBLIC/anon/authenticated, grant только service_role), переcоздаёт cron-jobs `subscription-charge-morning` (0 6 * * *) и `subscription-charge-evening` (0 18 * * *) с заголовком `x-subscription-charge-cron-secret`. Сейчас оба job'а существуют и авторизуются только anon-ключом — это и есть закрываемая дыра. Функции `subscription_charge_cron_secret` в БД пока нет. Расписания не меняются, пользовательские данные не трогаются. |
 
-## 6. Managed schema
-- Подтверждены все выбранные колонки: `subscriptions_v2(order_id,status,canceled_at,cancel_at,auto_renew,charge_attempts,meta)`, `provider_subscriptions(subscription_v2_id,provider_subscription_id,state,last_charge_at,order_id)`, `installment_payments(subscription_id,payment_id,charge_attempts,status,paid_at,last_attempt_at,error_message)`, `payments_v2(order_id,status,is_deleted,meta,provider_response,paid_at,error_message)`, `audit_logs(action,actor_type,actor_user_id,actor_label,meta)`.
-- Индекс присутствует: `idx_audit_logs_actor_label_created_at (actor_label, created_at DESC)`.
-- RPC существуют: `has_role_v2(_user_id uuid, _role_code text)`, `has_permission(_user_id uuid, _permission_code text)`. Новых миграций этому PR не требуется.
+### Edge Functions (deploy ровно 8)
+`telegram-grant-access`, `telegram-revoke-access`, `telegram-check-expired`, `verify-inline-otp`, `cancel-trial`, `bepaid-webhook`, `installment-charge-cron`, `subscription-charge`.
 
-## Замечание (не блокер, fail-closed)
-`admin-cancel-unpaid-subscription-drafts` вызывает `has_permission` с именем аргумента `_permission`, тогда как managed-сигнатура — `_permission_code`. Вызов вернёт ошибку, `permission.data` будет `null`, и доступ останется только у `admin`/`super_admin`. Безопасность не страдает (закрывается, а не открывается), но менеджер с правом `subscriptions.edit` получит 403. Правка кода вне scope этого READ-ONLY ревью; выносится в follow-up.
+`supabase/config.toml` в этом SHA добавляет блоки `verify_jwt = false` для `telegram-grant-access`, `telegram-revoke-access`, `cancel-trial`, `subscription-charge` (пустой блок для `telegram-check-expired`) — авторизация переносится внутрь функций (exact managed service key / owner-check / Vault cron-secret).
 
-## EXECUTE-план (после одобрения, без создания нового кода)
-1. Preflight: подтвердить SHA `e5bbd482a...` и чистое дерево; STOP при mismatch.
-2. Deploy ровно двух функций: `admin-auto-renewal-observability` и `admin-cancel-unpaid-subscription-drafts`, обе с сохранением `verify_jwt = true`.
-3. Safe smokes:
-   - анонимный POST на обе функции → 401; битый Bearer → 401;
-   - observability с пустым `subscription_ids` → 200 `{logs:[],attempts:{}}`;
-   - observability на минимальном наборе существующих ID → только счётчики/агрегаты и `source_errors`, без PII в отчёте;
-   - cancel-функция: только `dry_run: true` на заведомо несуществующем UUID (ожидается `eligible: []`) и проверка границ 400 (пустой список / >100). Реальные записи не отменяются.
-4. `vitest` на `src/test/autoRenewalObservabilityDeliverySources.test.ts` и `src/lib/autoRenewalInstallments.test.ts`.
-5. Ровно один frontend Publish при всех PASS.
+### UI
+Один frontend Publish этого SHA.
 
-STOP при SHA/schema drift, любом 5xx, регрессии авторизации или critical finding.
-Запрещено и не планируется: миграции, изменение схемы/RLS/Storage/данных, секреты, cron, реальные сообщения, платежи, списания и отмены.
+## 3. Порядок EXECUTE (после отдельного approve)
 
-**Статус: PASS. Ожидаю EXECUTE.**
+1. **Preflight-STOP-gate:** sync managed дерева ровно на `3d47bc7a8`, повторно подтвердить `git rev-parse HEAD` и чистое дерево. STOP при любом mismatch.
+2. **Миграции по одной, в порядке имён:** сначала `20260731072225…`, затем `20260731091000…`. После каждой — read-back:
+   - ACL `has_permission` / `has_role`;
+   - наличие `subscription_charge_cron_secret()` и её grants (нет anon/authenticated);
+   - `cron.job` содержит ровно два job'а с прежним расписанием и заголовком cron-secret.
+   STOP при ошибке, лишнем job'е или неясном rowcount.
+3. **Deploy ровно 8 перечисленных функций.** Никаких других.
+4. **Safe smokes (без мутаций):** анонимный вызов `subscription-charge` и `installment-charge-cron` → ожидается 401/403; `telegram-check-expired` от обычного пользователя → отказ; `cancel-trial` чужой подпиской не вызывается вовсе. Ни одного `mode:"execute"`.
+5. **UI Publish** — один раз, после PASS шагов 1–4.
+6. **E2E test-only** (см. ниже).
+7. **UI proof:** скриншоты опубликованного URL для desktop и mobile viewport.
+
+## 4. E2E test-only сценарий (после Publish)
+
+- Создаётся один явно помеченный тестовый пользователь (email вида `qa+release-3d47bc7a@…`) через inline 6-значный OTP; регистрация только через штатный публичный путь.
+- Тестовый checkout/order в режиме `skipRedirect` / test-payment: реальный bePaid-платёж не инициируется, `mode:"execute"` не вызывается, amoCRM и GetCourse не затрагиваются.
+- Read-back: профиль, `orders_v2`, доступ/entitlement, повторный вызов на том же idempotency-ключе не создаёт дубль.
+- Cleanup — только безопасная проверка: фиксируем идентификаторы созданных тестовых записей и подтверждаем их изолированность. Удаление данных выполняется отдельной задачей по явному разрешению.
+
+## 5. Запрещено в этом релизе
+
+Реальные платежи и списания, `mode:"execute"`, отмены подписок живых клиентов, рассылки/сообщения, amoCRM, GetCourse, изменения ролей, RLS вне двух перечисленных миграций, deploy любых других функций, правки шаблонов и биллинга.
+
+## 6. STOP-условия
+
+SHA/state mismatch, ошибка или неясный rowcount в миграции, регрессия авторизации в smoke, 5xx у любой из 8 функций, новый critical security finding, невозможность подтвердить оба UI-proof.
