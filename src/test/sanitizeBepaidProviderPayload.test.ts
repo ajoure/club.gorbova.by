@@ -18,4 +18,14 @@ describe('sanitizeBepaidProviderPayload', () => {
     expect(JSON.stringify(safe)).not.toContain('member@example.com');
     expect(JSON.stringify(safe)).not.toContain('Member Name');
   });
+
+  it('also handles gateway error objects without copying unknown fields', () => {
+    const safe = sanitizeBepaidProviderPayload({
+      errors: { base: ['card token leaked here'] },
+      transaction: { status: 'failed', message: 'Declined', uid: 'tx_2' },
+    });
+
+    expect(safe).toMatchObject({ transaction: { uid: 'tx_2', status: 'failed', message: 'Declined' } });
+    expect(JSON.stringify(safe)).not.toContain('card token leaked here');
+  });
 });
