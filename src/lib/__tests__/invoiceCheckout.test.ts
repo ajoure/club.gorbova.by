@@ -47,7 +47,7 @@ describe("detectInvoiceOnlyOffer", () => {
     })).isInvoiceOnly).toBe(true);
   });
 
-  it("routes an explicitly bank-transfer offer to invoice checkout", () => {
-    expect(detectInvoiceOnlyOffer(offer({ payment_method: "bank_transfer" })).isInvoiceOnly).toBe(true);
+  it("keeps a regular bank-transfer offer in its configured checkout flow", () => {
+    expect(detectInvoiceOnlyOffer(offer({ payment_method: "bank_transfer" })).isInvoiceOnly).toBe(false);
   });
 });
