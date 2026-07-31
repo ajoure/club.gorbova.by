@@ -86,6 +86,11 @@ verify_jwt = false
 # Expiry cleanup is an internal job only. Its handler accepts the exact managed
 # service key and rejects any ordinary signed-in user.
 [functions.telegram-check-expired]
+
+# User self-service cancellation authenticates its owner in-function; internal
+# automation uses the exact managed service key in `apikey` or Bearer. This is
+# required for current non-JWT `sb_secret_*` service keys.
+[functions.cancel-trial]
 verify_jwt = false
 
 # Service-to-service composable fulfillment uses the same exact managed
