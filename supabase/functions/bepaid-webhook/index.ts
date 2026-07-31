@@ -21,6 +21,7 @@ import { resolveKillSwitchMode } from './rebill_builders.ts';
 import { buildRebillDepsAdapter } from './rebill_deps_adapter.ts';
 // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: shared bepaid tracking parser SOT
 import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
+import { sanitizeBepaidProviderPayload } from '../_shared/sanitize-bepaid-payload.ts';
 import { sendChargeLifecycleNotification } from '../_shared/charge-lifecycle-notifications.ts';
 
 
@@ -1103,7 +1104,7 @@ Deno.serve(async (req) => {
             card_bank_country: webhookTransaction.credit_card?.issuer_country || null,
             receipt_url: webhookTransaction.receipt_url || null,
             raw_payload: {
-              ...(body ?? {}),
+              ...sanitizeBepaidProviderPayload(body),
               _trace: {
                 replay: bypassSignature,
                 replay_mode: bypassSignature ? replayMode : null,
@@ -1348,7 +1349,7 @@ Deno.serve(async (req) => {
                   amount: transaction?.amount ? transaction.amount / 100 : null,
                   currency: transaction?.currency || body.plan?.currency || 'BYN',
                   customer_email: transaction?.customer?.email || null,
-                  raw_payload: { ...body, _trace: { body_hash: trace.bodyHash, outcome: 'orphan_subv2_missing_order_id', tracking_id: rawTrackingId } },
+                  raw_payload: { ...sanitizeBepaidProviderPayload(body), _trace: { body_hash: trace.bodyHash, outcome: 'orphan_subv2_missing_order_id', tracking_id: rawTrackingId } },
                   source: 'webhook_orphan',
                   status: 'error',
                   last_error: 'orphan_subv2_missing_order_id',
@@ -3058,7 +3059,7 @@ Deno.serve(async (req) => {
               amount: transaction?.amount ? transaction.amount / 100 : null,
               currency: transaction?.currency || body.plan?.currency || 'BYN',
               customer_email: transaction?.customer?.email || body.customer?.email || null,
-              raw_payload: { ...body, _trace: { body_hash: trace.bodyHash, outcome: 'failed_no_transaction_uid', tracking_id: rawTrackingId, subscription_id: subscriptionId } },
+              raw_payload: { ...sanitizeBepaidProviderPayload(body), _trace: { body_hash: trace.bodyHash, outcome: 'failed_no_transaction_uid', tracking_id: rawTrackingId, subscription_id: subscriptionId } },
               source: 'webhook_orphan',
               status: 'error',
               last_error: 'failed_no_transaction_uid',
@@ -3309,7 +3310,7 @@ Deno.serve(async (req) => {
               amount: transaction?.amount ? transaction.amount / 100 : null,
               currency: transaction?.currency || body.plan?.currency || 'BYN',
               customer_email: transaction?.customer?.email || null,
-              raw_payload: { ...body, _trace: { body_hash: trace.bodyHash, outcome: 'orphaned_order_not_found', tracking_id: rawTrackingId, order_id: parsedOrderId } },
+              raw_payload: { ...sanitizeBepaidProviderPayload(body), _trace: { body_hash: trace.bodyHash, outcome: 'orphaned_order_not_found', tracking_id: rawTrackingId, order_id: parsedOrderId } },
               source: 'webhook_orphan',
               status: 'error',
               last_error: 'orphaned_order_not_found',
@@ -5330,7 +5331,7 @@ Deno.serve(async (req) => {
             amount: transaction.amount / 100,
             currency: transaction.currency || 'BYN',
             customer_email: transaction.customer?.email,
-            raw_payload: body,
+            raw_payload: sanitizeBepaidProviderPayload(body),
             source: 'webhook_orphan',
             status: 'pending',
             last_error: `Failed to create order: ${String(createErr)}`,
@@ -5373,7 +5374,7 @@ Deno.serve(async (req) => {
       const basePaymentUpdate: Record<string, any> = {
         // F12 P4: fill-only — prioritize existing value, never overwrite
         provider_payment_id: paymentV2.provider_payment_id || transactionUid || null,
-        provider_response: body,
+        provider_response: sanitizeBepaidProviderPayload(body),
         error_message: transaction?.message || null,
         card_brand: transaction?.credit_card?.brand || paymentV2.card_brand || null,
         card_last4: transaction?.credit_card?.last_4 || paymentV2.card_last4 || null,

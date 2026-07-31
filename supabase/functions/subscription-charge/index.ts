@@ -8,6 +8,7 @@ import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve
 import { syncEntitlement } from '../_shared/entitlement-sync.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
+import { sanitizeBepaidProviderPayload } from '../_shared/sanitize-bepaid-payload.ts';
 import {
   accessDayHasEnded,
   isRetryExhausted,
@@ -1263,7 +1264,7 @@ async function chargeSubscription(
           status: 'succeeded',  // FIXED: was 'completed' which doesn't exist in enum
           paid_at: new Date().toISOString(),
           provider_payment_id: chargeResult.transaction.uid,
-          provider_response: chargeResult,
+          provider_response: sanitizeBepaidProviderPayload(chargeResult),
           card_last4: chargeResult.transaction.credit_card?.last_4 ?? null,
           card_brand: chargeResult.transaction.credit_card?.brand ?? null,
           receipt_url: chargeResult.transaction.receipt_url ?? null,
@@ -2047,7 +2048,7 @@ async function chargeSubscription(
         .update({
           status: 'failed',
           error_message: errorMsg,
-          provider_response: chargeResult,
+          provider_response: sanitizeBepaidProviderPayload(chargeResult),
         })
         .eq('id', payment.id);
 
