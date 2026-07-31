@@ -24,7 +24,9 @@ const positiveInt = (value: unknown): number | null => {
 
 export function resolveEffectiveRetryPolicy(
   meta: unknown,
-  defaultMaxAttempts = 3,
+  // Legacy recurring/installment records predate retry snapshots.  Preserve
+  // their established five-attempt lifecycle; explicit snapshots still win.
+  defaultMaxAttempts = 5,
 ): EffectiveRetryPolicy {
   const root = record(meta);
   const installment = record(root.installment);
@@ -56,7 +58,7 @@ export function resolveEffectiveRetryPolicy(
   }
   return {
     mode: "limited",
-    maxAttempts: positiveInt(defaultMaxAttempts) ?? 3,
+    maxAttempts: positiveInt(defaultMaxAttempts) ?? 5,
     source: "default",
   };
 }

@@ -37,6 +37,17 @@ Deno.test("explicit unlimited policy never exhausts locally", () => {
   assertEquals(isRetryExhausted(1000, policy), false);
 });
 
+Deno.test("legacy records without a retry snapshot retain five attempts", () => {
+  const policy = resolveEffectiveRetryPolicy({});
+  assertEquals(policy, {
+    mode: "limited",
+    maxAttempts: 5,
+    source: "default",
+  });
+  assertEquals(isRetryExhausted(4, policy), false);
+  assertEquals(isRetryExhausted(5, policy), true);
+});
+
 Deno.test("access is valid until the end of the Minsk calendar day", () => {
   const accessEnd = "2026-07-26T08:00:00.000Z";
   assertEquals(accessDayHasEnded(accessEnd, "2026-07-26T20:59:59.999Z"), false);
