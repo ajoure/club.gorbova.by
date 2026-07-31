@@ -107,6 +107,10 @@ export function SubscriptionDetailSheet({
   };
   const [eligibility, setEligibility] = useState<Eligibility | null>(null);
   const [eligibilityLoading, setEligibilityLoading] = useState(false);
+  // Keep the regular cancellation path hidden until provider detection settles.
+  // Stripe subscriptions are safely managed in Stripe Customer Portal rather
+  // than through the bePaid-only self-cancellation endpoint.
+  const [isStripeSubscription, setIsStripeSubscription] = useState<boolean | null>(null);
 
   // Phase 3.4 — снапшот dunning из subscriptions_v2.meta.stripe для UI «Платёж не прошёл».
   type DunningSnapshot = {
@@ -164,6 +168,10 @@ export function SubscriptionDetailSheet({
       }
     })();
     return () => { cancelled = true; };
+  }, [subId]);
+
+  useEffect(() => {
+    setIsStripeSubscription(null);
   }, [subId]);
 
   if (!subscription) return null;
@@ -398,6 +406,7 @@ export function SubscriptionDetailSheet({
           <StripePortalButton
             subscriptionV2Id={subscription.id}
             mode={dunning?.dunning_status === 'past_due_grace' ? 'recovery' : 'manage'}
+            onProviderResolved={setIsStripeSubscription}
           />
 
           {receiptUrl && (
@@ -436,7 +445,7 @@ export function SubscriptionDetailSheet({
             </Button>
           )}
 
-          {isActive && !isCanceled && (
+          {isActive && !isCanceled && isStripeSubscription === false && (
             <Button
               variant="ghost"
               className="w-full gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
