@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { getSubscriptionToken, isSkip } from '../_shared/token-resolver.ts';
 import { isRetryExhausted, resolveEffectiveRetryPolicy } from '../_shared/renewal-retry-policy.ts';
+import { sanitizeBepaidProviderPayload } from '../_shared/sanitize-bepaid-payload.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -447,7 +448,7 @@ Deno.serve(async (req) => {
               status: 'succeeded',
               paid_at: new Date().toISOString(),
               provider_payment_id: txUid,
-              provider_response: chargeResult,
+              provider_response: sanitizeBepaidProviderPayload(chargeResult),
               receipt_url: chargeResult.transaction?.receipt_url || null,
             })
             .eq('id', payment.id);
@@ -585,7 +586,7 @@ Deno.serve(async (req) => {
             .update({
               status: 'failed',
               error_message: errorMessage,
-              provider_response: chargeResult,
+              provider_response: sanitizeBepaidProviderPayload(chargeResult),
             })
             .eq('id', payment.id);
 
