@@ -9,6 +9,7 @@ import { syncEntitlement } from '../_shared/entitlement-sync.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
 import { sanitizeBepaidProviderPayload } from '../_shared/sanitize-bepaid-payload.ts';
+import { requestHasSubscriptionChargeCronSecret } from '../_shared/subscription-charge-cron-auth.ts';
 import {
   accessDayHasEnded,
   isRetryExhausted,
@@ -17,7 +18,7 @@ import {
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-subscription-charge-cron-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -2185,6 +2186,13 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    if (!await requestHasSubscriptionChargeCronSecret(req, supabase)) {
+      return new Response(JSON.stringify({ error: 'unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // Parse request body
     const body = await req.json().catch(() => ({}));

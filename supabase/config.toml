@@ -154,6 +154,12 @@ verify_jwt = false
 [functions.payment-methods-webhook]
 verify_jwt = false
 
+# Recurring charge jobs must not accept the public anon JWT: a caller could
+# otherwise trigger real bePaid token charges. The handler validates its own
+# Vault-backed, cron-only header before it reads any subscriptions.
+[functions.subscription-charge]
+verify_jwt = false
+
 [functions.public-webhook-deploy-probe]
 verify_jwt = false
 
