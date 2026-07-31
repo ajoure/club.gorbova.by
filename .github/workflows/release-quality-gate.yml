@@ -1,0 +1,68 @@
+name: Release quality gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  code-and-contracts:
+    name: Code, contracts and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      # The repository has a pre-existing global ESLint backlog.  Do not turn
+      # this release gate into a false-red check for unrelated legacy files:
+      # lint the new executable test surface, then run the complete contract
+      # suite and production build below.
+      - name: Lint release-gate code
+        run: npx eslint e2e/release-safety-gate.spec.ts
+      - name: Unit and integration contracts
+        run: npx vitest run
+      - name: Production build
+        run: npm run build
+
+  safe-production-smoke:
+    name: Opt-in test-only checkout smoke
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      E2E_RUN_SAFE_RELEASE: "true"
+      E2E_ALLOW_PRODUCTION_TEST_DATA: "true"
+      E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+      E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+      E2E_TEST_PRODUCT_ID: ${{ secrets.E2E_TEST_PRODUCT_ID }}
+      E2E_TEST_TARIFF_CODE: ${{ secrets.E2E_TEST_TARIFF_CODE }}
+      VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Assert required runner secrets
+        run: |
+          set -euo pipefail
+          for name in E2E_ADMIN_EMAIL E2E_ADMIN_PASSWORD E2E_TEST_PRODUCT_ID VITE_SUPABASE_URL; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing protected GitHub secret $name"
+              exit 1
+            fi
+          done
+      - name: Safe test-only order and access proof
+        run: npx playwright test e2e/release-safety-gate.spec.ts --project=chromium
