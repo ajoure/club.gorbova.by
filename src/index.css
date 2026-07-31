@@ -122,6 +122,23 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 
+  /*
+   * Application shell must occupy the entire viewport.  A legacy Vite
+   * `#root` rule can otherwise cap the whole React tree on wide screens,
+   * leaving a blank strip to the right of both the member area and admin.
+   * Page-level max-width utilities remain available for intentionally narrow
+   * forms, articles, and dialogs.
+   */
+  #root {
+    width: 100%;
+    min-width: 0;
+    min-height: 100dvh;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    text-align: start;
+  }
+
   /* Hard-stop горизонтального overflow на html/body — защищает страницу от
      случайного "выпирания" в PWA standalone на iOS. ВАЖНО: НЕ ставим
      overflow-x:hidden на #root и промежуточные контейнеры — это блокирует
