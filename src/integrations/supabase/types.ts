@@ -24693,6 +24693,7 @@ export type Database = {
         Args: { _payment_id: string; _primary_order_id: string }
         Returns: Json
       }
+      subscription_charge_cron_secret: { Args: never; Returns: string }
       subscription_has_payment_token: {
         Args: { p_subscription_id: string }
         Returns: boolean
