@@ -280,7 +280,11 @@ export function TariffCard({
               const rawVariant = (offer.meta?.site_button_variant ?? "").toString().trim();
               const style = VARIANT_STYLE[rawVariant] ?? { variant: "outline" as const };
               const label =
-                cc?.cta_text && offer.offer_type === "pay_now" && index === 0 && !rawVariant
+                // The visual button variant and card-configured CTA wording are
+                // independent. All current pay-now offers have a variant, so
+                // gating the label on an empty variant made the saved CTA text
+                // unreachable.
+                cc?.cta_text && offer.offer_type === "pay_now" && index === 0
                   ? cc.cta_text
                   : defaultLabelFor(offer);
               const showChevron = offer.offer_type !== "trial";
