@@ -619,11 +619,21 @@ export default function AdminProductDetailV2() {
     };
     const rawSlotRole = legacySlotRoleMap[rawSlotRoleInput] ?? rawSlotRoleInput;
     const rawVariant = (offerForm.meta?.site_button_variant ?? "").toString().trim();
-    if (rawSlotRole && !ALLOWED_SLOT_ROLES.has(rawSlotRole)) {
+    const isLegacyPlacement = Boolean(rawSlotRole && !ALLOWED_SLOT_ROLES.has(rawSlotRole));
+    // Existing offers may still refer to a historical Tilda anchor. Preserve
+    // that placement while an admin edits unrelated fields; only new offers
+    // must choose a canonical slot. This prevents a validation upgrade from
+    // blocking a safe edit or silently unlinking a live button.
+    if (isLegacyPlacement && !offerDialog.editing) {
       toast.error("Слот на странице: разрешены только «Кнопка 1»…«Кнопка 10» либо «Не размещается на сайте».");
       return;
     }
-    if (!rawVariant || !(SLOT_VARIANTS as readonly string[]).includes(rawVariant)) {
+    const normalizedVariant = (SLOT_VARIANTS as readonly string[]).includes(rawVariant)
+      ? rawVariant
+      : offerDialog.editing
+      ? "primary"
+      : "";
+    if (!normalizedVariant) {
       toast.error("Выберите цвет кнопки в блоке «Размещение кнопки на публичной странице».");
       return;
     }
@@ -662,10 +672,12 @@ export default function AdminProductDetailV2() {
     // «Не размещается на сайте» is selected. Never persist null / "" / undefined.
     if (rawSlotRole && ALLOWED_SLOT_ROLES.has(rawSlotRole)) {
       metaToSave.slot_role = rawSlotRole as OfferMetaConfig["slot_role"];
+    } else if (isLegacyPlacement && offerDialog.editing) {
+      metaToSave.slot_role = rawSlotRole as OfferMetaConfig["slot_role"];
     } else {
       delete metaToSave.slot_role;
     }
-    metaToSave.site_button_variant = rawVariant as OfferMetaConfig["site_button_variant"];
+    metaToSave.site_button_variant = normalizedVariant as OfferMetaConfig["site_button_variant"];
 
     
     if (isPreregistration) {
@@ -2290,6 +2302,12 @@ export default function AdminProductDetailV2() {
               ];
               const currentRole = (offerForm.meta?.slot_role ?? "").toString().trim();
               const currentVariant = (offerForm.meta?.site_button_variant ?? "").toString().trim();
+              const legacyPurposeOption = currentRole && !PURPOSE_OPTIONS.some((o) => o.value === currentRole)
+                ? [{
+                    value: currentRole,
+                    label: `Устаревший слот «${currentRole}» (сохранится до ручной замены)`,
+                  }]
+                : [];
               const purposeSelectValue = currentRole;
               const setRole = (val: string) => {
                 const next: OfferMetaConfig = { ...offerForm.meta };
@@ -2327,7 +2345,7 @@ export default function AdminProductDetailV2() {
                           value={purposeSelectValue}
                           onChange={(e) => setRole(e.target.value)}
                         >
-                          {PURPOSE_OPTIONS.map((o) => (
+                          {[...legacyPurposeOption, ...PURPOSE_OPTIONS].map((o) => (
                             <option key={o.value || "empty"} value={o.value}>
                               {o.label}
                             </option>
