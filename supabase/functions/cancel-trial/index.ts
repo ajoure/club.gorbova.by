@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
+import { requestHasServiceRoleKey } from '../_shared/service-request-auth.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -106,7 +107,31 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // A customer may cancel only their own trial. Internal automation may use
+    // the exact managed service key; body fields never grant that privilege.
+    const isServiceRoleCall = requestHasServiceRoleKey(req, supabaseKey);
+    let callerUserId: string | null = null;
+    if (!isServiceRoleCall) {
+      const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
+      if (!authHeader.toLowerCase().startsWith("bearer ")) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: authData, error: authError } = await authClient.auth.getUser(authHeader.slice(7).trim());
+      if (authError || !authData.user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      callerUserId = authData.user.id;
+    }
 
     const { subscriptionId, reason } = await req.json();
 
@@ -137,6 +162,13 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: "Subscription not found" }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    if (!isServiceRoleCall && subscription.user_id !== callerUserId) {
+      // Do not disclose whether another user's subscription exists.
+      return new Response(JSON.stringify({ error: "Subscription not found" }), {
+        status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // Check if it's a trial subscription
