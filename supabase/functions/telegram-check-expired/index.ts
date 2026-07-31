@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
+import { requestHasServiceRoleKey } from '../_shared/service-request-auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -59,6 +60,12 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    if (!requestHasServiceRoleKey(req, supabaseServiceKey)) {
+      return new Response(JSON.stringify({ error: 'forbidden', code: 'SERVICE_ROLE_REQUIRED' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     console.log('Starting expired access and violator check...');
@@ -157,12 +164,24 @@ Deno.serve(async (req) => {
           },
         });
 
-        if (revokeResponse.error) {
-          console.error(`Revoke error for ${access.user_id}:`, revokeResponse.error);
+        const revokeFailure = revokeResponse.error || (revokeResponse.data as any)?.success !== true;
+        if (revokeFailure) {
+          console.error(`Revoke error for ${access.user_id}:`, revokeResponse.error || (revokeResponse.data as any)?.code || 'not_confirmed');
+          await supabase.from('audit_logs').insert({
+            action: 'telegram.access_expired_revoke_failed',
+            actor_type: 'system',
+            actor_label: 'telegram-check-expired',
+            target_user_id: access.user_id,
+            meta: {
+              club_id: access.club_id,
+              reason_code: 'subscription_expired',
+              failure_code: (revokeResponse.data as any)?.code || null,
+            },
+          });
           results.errors++;
-        } else {
-          results.revoked++;
+          continue;
         }
+        results.revoked++;
 
         // Write audit_logs with system actor proof
         try {

@@ -73,6 +73,21 @@ verify_jwt = true
 [functions.grant-access-for-order]
 verify_jwt = false
 
+# Telegram access functions accept either an authenticated administrator or the
+# exact managed service key in `apikey`/Bearer. Gateway JWT verification would
+# reject the current `sb_secret_*` key before this stricter in-function policy
+# can run.
+[functions.telegram-grant-access]
+verify_jwt = false
+
+[functions.telegram-revoke-access]
+verify_jwt = false
+
+# Expiry cleanup is an internal job only. Its handler accepts the exact managed
+# service key and rejects any ordinary signed-in user.
+[functions.telegram-check-expired]
+verify_jwt = false
+
 # Service-to-service composable fulfillment uses the same exact managed
 # `apikey` authentication as grant-access-for-order. New sb_secret_* keys are
 # not JWTs, so the handler owns the exact-key check.
