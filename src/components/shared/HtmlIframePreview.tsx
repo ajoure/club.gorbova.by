@@ -581,10 +581,11 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
       if (!off) { deactivateWrapper(pw.el); continue; }
       if (pw.variant && pw.variant !== off.variant) {
         if (!swapWrapperFromTemplate(pw.el, group, off.variant)) {
-          // No template for the required variant — hide wrapper rather than
-          // rendering a mismatched button.
-          deactivateWrapper(pw.el);
-          continue;
+          // Older Tilda pages do not necessarily include hidden templates for
+          // every newly introduced variant. Keep the button actionable using
+          // its authored visual treatment instead of silently removing it.
+          // Restore it first in case a prior manifest pass had swapped it.
+          swapWrapperFromTemplate(pw.el, group, pw.variant);
         }
       } else if (pw.variant) {
         // Restore authored inner if this wrapper was previously swapped.
