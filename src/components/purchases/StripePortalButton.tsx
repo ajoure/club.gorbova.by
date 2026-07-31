@@ -17,9 +17,15 @@ interface StripePortalButtonProps {
    * 'recovery' — «Обновить карту для оплаты» (для past_due / проблема с оплатой).
    */
   mode?: "manage" | "recovery";
+  /** Lets the containing subscription sheet choose the correct self-service action. */
+  onProviderResolved?: (isStripe: boolean | null) => void;
 }
 
-export function StripePortalButton({ subscriptionV2Id, mode = "manage" }: StripePortalButtonProps) {
+export function StripePortalButton({
+  subscriptionV2Id,
+  mode = "manage",
+  onProviderResolved,
+}: StripePortalButtonProps) {
   const [isStripe, setIsStripe] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -31,12 +37,20 @@ export function StripePortalButton({ subscriptionV2Id, mode = "manage" }: Stripe
         .select("provider")
         .eq("subscription_v2_id", subscriptionV2Id);
       if (cancelled) return;
-      if (error) { setIsStripe(false); return; }
+      if (error) {
+        // Do not reveal the bePaid-only cancellation action when the provider
+        // cannot be determined (for example, due to a temporary RLS/network
+        // failure). The user can retry after reopening the sheet.
+        setIsStripe(null);
+        onProviderResolved?.(null);
+        return;
+      }
       const has = (data ?? []).some((r: any) => r.provider === "stripe");
       setIsStripe(has);
+      onProviderResolved?.(has);
     })();
     return () => { cancelled = true; };
-  }, [subscriptionV2Id]);
+  }, [subscriptionV2Id, onProviderResolved]);
 
   if (isStripe !== true) return null;
 
