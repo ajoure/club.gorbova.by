@@ -170,7 +170,9 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Upsert profile so lead/payment code paths always find one.
+  // Upsert profile before minting a session so lead/payment code paths always
+  // receive a complete identity. A consumed OTP may be retried by requesting a
+  // fresh code; issuing a session without a profile creates a broken account.
   try {
     const profilePayload: Record<string, unknown> = {
       user_id: userId,
@@ -181,11 +183,16 @@ Deno.serve(async (req) => {
     if (meta.lastName) profilePayload.last_name = meta.lastName;
     if (meta.phone) profilePayload.phone = meta.phone;
 
-    await supabase
+    const { error: profileError } = await supabase
       .from("profiles")
       .upsert(profilePayload, { onConflict: "user_id" });
+    if (profileError) {
+      console.error("[verify-inline-otp] profile upsert failed:", profileError.message);
+      return json({ error: "profile_provision_failed" }, 500);
+    }
   } catch (e) {
-    console.warn("[verify-inline-otp] profile upsert failed:", (e as Error).message);
+    console.error("[verify-inline-otp] profile upsert exception:", (e as Error).message);
+    return json({ error: "profile_provision_failed" }, 500);
   }
 
   // Mint session token via generateLink — does NOT send an email.

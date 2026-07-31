@@ -18,4 +18,10 @@ describe("inline OTP atomic consumption", () => {
     expect(migrationSource).toContain("REVOKE EXECUTE ON FUNCTION public.consume_inline_otp_attempt(uuid, text, integer) FROM PUBLIC;");
     expect(migrationSource).toContain("GRANT EXECUTE ON FUNCTION public.consume_inline_otp_attempt(uuid, text, integer) TO service_role;");
   });
+
+  it("does not mint a session when the required profile could not be provisioned", () => {
+    expect(verifierSource).toContain('error: "profile_provision_failed"');
+    expect(verifierSource).toContain("const { error: profileError } = await supabase");
+    expect(verifierSource).toContain("Upsert profile before minting a session");
+  });
 });
