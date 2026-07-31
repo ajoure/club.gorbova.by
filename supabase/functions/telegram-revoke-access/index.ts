@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
+import { requestHasServiceRoleKey } from '../_shared/service-request-auth.ts';
 
 
 const corsHeaders = {
@@ -59,7 +60,7 @@ async function banUser(botToken: string, chatId: number, userId: number): Promis
         user_id: userId,
         until_date: Math.floor(Date.now() / 1000) + 366 * 24 * 60 * 60,
       });
-      return { success: preventiveBan.ok || true, notMember: true };
+      return { success: preventiveBan.ok === true, notMember: true, error: preventiveBan.description };
     }
     if (result.description?.includes('not enough rights')) {
       return { success: false, error: result.description };
@@ -153,18 +154,16 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // ========== AUTH GUARD (PATCH-1 + PATCH-2: Service Role bypass) ==========
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
+    const isServiceRoleCall = requestHasServiceRoleKey(req, supabaseServiceKey);
+    const authHeader = req.headers.get('Authorization') || req.headers.get('authorization') || '';
+    if (!isServiceRoleCall && !authHeader.toLowerCase().startsWith('bearer ')) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized', code: 'MISSING_TOKEN' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const token = authHeader.replace('Bearer ', '');
-    
-    // PATCH-2: Allow Service Role Key as valid auth (for system-to-system calls from queue processor)
-    const isServiceRoleCall = token === supabaseServiceKey;
+    const token = authHeader.slice(7).trim();
     
     if (isServiceRoleCall) {
       console.log('[telegram-revoke-access] Service role call authorized');
@@ -522,6 +521,33 @@ Deno.serve(async (req) => {
 
     const chatRevoked = chatKickResult?.success ?? false;
     const channelRevoked = channelKickResult?.success ?? false;
+
+    const configuredTargets = Number(Boolean(club.chat_id)) + Number(Boolean(club.channel_id));
+    const completedTargets = Number(chatRevoked) + Number(channelRevoked);
+    if (configuredTargets === 0 || completedTargets !== configuredTargets) {
+      const failureMeta = {
+        club_id,
+        telegram_user_id: telegramUserId,
+        chat: chatKickResult ? { success: chatKickResult.success, error: chatKickResult.error || null } : null,
+        channel: channelKickResult ? { success: channelKickResult.success, error: channelKickResult.error || null } : null,
+      };
+      console.error('[telegram-revoke-access] Telegram ban incomplete; retaining access state for retry', failureMeta);
+      await supabase.from('audit_logs').insert({
+        action: 'telegram.revoke_delivery_failed',
+        actor_type: 'system',
+        actor_label: 'telegram-revoke-access',
+        target_user_id: profileUserId,
+        meta: failureMeta,
+      });
+      return new Response(JSON.stringify({
+        success: false,
+        code: 'TELEGRAM_REVOKE_INCOMPLETE',
+        message: 'Telegram did not confirm revocation for every configured target',
+      }), {
+        status: 502,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // Update telegram_access
     // PATCH: Set active_until = now()-1s (past) + state='revoked' for double protection.

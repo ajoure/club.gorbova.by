@@ -4,6 +4,7 @@ import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
+import { requestHasServiceRoleKey } from '../_shared/service-request-auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -257,18 +258,16 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // ========== AUTH GUARD (PATCH-1 + PATCH-2: Service Role bypass) ==========
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
+    const isServiceRoleCall = requestHasServiceRoleKey(req, supabaseServiceKey);
+    const authHeader = req.headers.get('Authorization') || req.headers.get('authorization') || '';
+    if (!isServiceRoleCall && !authHeader.toLowerCase().startsWith('bearer ')) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized', code: 'MISSING_TOKEN' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const token = authHeader.replace('Bearer ', '');
-    
-    // PATCH-2: Allow Service Role Key as valid auth (for system-to-system calls from queue processor)
-    const isServiceRoleCall = token === supabaseServiceKey;
+    const token = authHeader.slice(7).trim();
     
     if (isServiceRoleCall) {
       console.log('[telegram-grant-access] Service role call authorized');
