@@ -25,7 +25,6 @@ export function detectInvoiceOnlyOffer(offer: TariffOffer | null | undefined): I
   }) | undefined;
   const isInvoiceOnly =
     offer.offer_type === "invoice" ||
-    offer.payment_method === "bank_transfer" ||
     meta?.slot_role === "payment_invoice" ||
     meta?.site_button_variant === "legal_entity";
 
