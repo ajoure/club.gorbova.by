@@ -289,6 +289,7 @@ export async function runRebillFlow(
       });
       return {
         decision: "idempotent_skip", mode, proceedLegacy: false,
+        rebill_order_id: existing.id,
         existing_rebill_order_id: existing.id,
       };
     }

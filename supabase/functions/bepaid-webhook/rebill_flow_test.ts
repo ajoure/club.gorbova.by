@@ -182,6 +182,8 @@ Deno.test("Case 3: REBILL exists + grant_status=success → idempotent_skip", as
   const result = await runRebillFlow(makeDeps(state), baseInput());
   assertEquals(result.decision, "idempotent_skip");
   assertEquals(result.proceedLegacy, false);
+  assertEquals(result.rebill_order_id, "rebill-existing");
+  assertEquals(result.existing_rebill_order_id, "rebill-existing");
   assertEquals(state.inserted.length, 0);
   assertEquals(state.grantInvocations.length, 0);
   assertEquals(state.audits.at(-1)?.action, "bepaid.rebill.idempotent_skip");

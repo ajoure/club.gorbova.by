@@ -1683,6 +1683,14 @@ Deno.serve(async (req) => {
                       : 'provider_row_missing',
                   },
                 });
+                return new Response(JSON.stringify({
+                  ok: false,
+                  status: 'manual_review',
+                  reason: 'provider_subscription_link_repair_blocked',
+                }), {
+                  status: 202,
+                  headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                });
               }
             } catch (linkRepairError) {
               console.error('[WEBHOOK-SUBSCRIPTION] provider link repair failed:', linkRepairError);
@@ -1698,6 +1706,14 @@ Deno.serve(async (req) => {
                   order_id: orderV2Id,
                   error: String((linkRepairError as Error)?.message || linkRepairError),
                 },
+              });
+              return new Response(JSON.stringify({
+                ok: false,
+                status: 'manual_review',
+                reason: 'provider_subscription_link_repair_failed',
+              }), {
+                status: 202,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
               });
             }
           }
@@ -1967,7 +1983,9 @@ Deno.serve(async (req) => {
             console.log('[WEBHOOK-SUBSCRIPTION] REBILL flow decision=', rebillResult.decision, 'proceedLegacy=', rebillResult.proceedLegacy, 'mode=', rebillMode);
             if (!rebillResult.proceedLegacy) {
               rebillHandled = true;
-              rebillOrderIdFromFlow = rebillResult.rebill_order_id ?? null;
+              rebillOrderIdFromFlow = rebillResult.rebill_order_id
+                ?? rebillResult.existing_rebill_order_id
+                ?? null;
               rebillAccessOutcome = classifyRebillAccessOutcome(rebillResult.decision);
               // REBILL handled access. Skip legacy parent-order paid-update + STEP A grant.
               // STEP E payments_v2 upsert MUST route to the REBILL order, NOT parent
