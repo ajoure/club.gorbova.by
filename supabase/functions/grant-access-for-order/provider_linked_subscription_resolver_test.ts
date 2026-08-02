@@ -184,3 +184,58 @@ Deno.test('no_provider_linked — provider_subscriptions in terminal state filte
   });
   assertEquals(r.outcome, 'no_provider_linked');
 });
+
+Deno.test('extend — exact sbs resolves an expired chain for a new REBILL order', async () => {
+  const supabase = mock({
+    provider_subscriptions: [{
+      id: 'ps-rebill', provider: 'bepaid', subscription_v2_id: SUB_PRE,
+      provider_subscription_id: 'sbs_rebill', state: 'active', order_id: ORDER,
+      meta: { tracking_id: `subv2:${SUB_PRE}:order:${ORDER}` },
+    }],
+    subscriptions_v2: [{
+      id: SUB_PRE, user_id: USER, product_id: PRODUCT, tariff_id: TARIFF,
+      status: 'expired', access_end_at: '2026-08-01T12:00:00.000Z', auto_renew: true,
+    }],
+  });
+
+  const r = await resolveProviderLinkedSubscription(supabase as any, {
+    orderId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    userId: USER,
+    productId: PRODUCT,
+    tariffId: TARIFF,
+    providerSubscriptionId: 'sbs_rebill',
+  });
+
+  assertEquals(r.outcome, 'extend');
+  if (r.outcome === 'extend') {
+    assertEquals(r.subscription.id, SUB_PRE);
+    assertEquals(r.reason, 'provider_subscription_id_match');
+  }
+});
+
+Deno.test('manual_review — exact sbs never revives a superseded chain', async () => {
+  const supabase = mock({
+    provider_subscriptions: [{
+      id: 'ps-rebill', provider: 'bepaid', subscription_v2_id: SUB_PRE,
+      provider_subscription_id: 'sbs_rebill', state: 'active', order_id: ORDER,
+      meta: {},
+    }],
+    subscriptions_v2: [{
+      id: SUB_PRE, user_id: USER, product_id: PRODUCT, tariff_id: TARIFF,
+      status: 'superseded', access_end_at: null, auto_renew: false,
+    }],
+  });
+
+  const r = await resolveProviderLinkedSubscription(supabase as any, {
+    orderId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    userId: USER,
+    productId: PRODUCT,
+    tariffId: TARIFF,
+    providerSubscriptionId: 'sbs_rebill',
+  });
+
+  assertEquals(r.outcome, 'manual_review_provider_linkage_conflict');
+  if (r.outcome === 'manual_review_provider_linkage_conflict') {
+    assertEquals(r.reason, 'subv2_terminal_status');
+  }
+});

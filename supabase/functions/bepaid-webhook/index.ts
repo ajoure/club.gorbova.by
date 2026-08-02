@@ -16,9 +16,14 @@ import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
 import { generateInstallmentSchedule } from '../_shared/installment-schedule.ts';
 // PATCH-RB1: REBILL materialization engine (gated by BEPAID_REBILL_MATERIALIZATION).
-import { runRebillFlow } from './rebill_flow.ts';
+import {
+  classifyRebillAccessOutcome,
+  runRebillFlow,
+  type RebillAccessOutcome,
+} from './rebill_flow.ts';
 import { resolveKillSwitchMode } from './rebill_builders.ts';
 import { buildRebillDepsAdapter } from './rebill_deps_adapter.ts';
+import { decideProviderSubscriptionLinkRepair } from './provider_subscription_link_repair.ts';
 // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: shared bepaid tracking parser SOT
 import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
 import { sanitizeBepaidProviderPayload } from '../_shared/sanitize-bepaid-payload.ts';
@@ -1555,6 +1560,149 @@ Deno.serve(async (req) => {
           .eq('id', orderV2Id)
           .maybeSingle();
 
+        // Repair a narrowly proven legacy split-brain before REBILL grant:
+        // the verified tracking id points at the working subscriptions_v2 row,
+        // while provider_subscriptions still points at a superseded chain.
+        // Never steal an sbs from a non-terminal chain and never touch finite
+        // internal installments here.
+        if (subscriptionId && orderV2 && trackingParts) {
+          const subMeta = (subV2?.meta || {}) as Record<string, any>;
+          const orderMeta = (orderV2.meta || {}) as Record<string, any>;
+          const finiteIntent =
+            subMeta.payment_method === 'internal_installment' ||
+            orderMeta.payment_method === 'internal_installment' ||
+            subMeta.installment?.model === 'bepaid_finite_subscription' ||
+            orderMeta.installment?.model === 'bepaid_finite_subscription';
+
+          if (!finiteIntent) {
+            try {
+              const { data: providerLink, error: providerLinkError } = await supabase
+                .from('provider_subscriptions')
+                .select('id, subscription_v2_id')
+                .eq('provider', 'bepaid')
+                .eq('provider_subscription_id', String(subscriptionId))
+                .maybeSingle();
+
+              if (providerLinkError) throw providerLinkError;
+
+              let currentLinkedStatus: string | null = null;
+              if (
+                providerLink?.subscription_v2_id &&
+                String(providerLink.subscription_v2_id) !== String(subV2.id)
+              ) {
+                const { data: linkedSub, error: linkedSubError } = await supabase
+                  .from('subscriptions_v2')
+                  .select('status')
+                  .eq('id', providerLink.subscription_v2_id)
+                  .maybeSingle();
+                if (linkedSubError) throw linkedSubError;
+                currentLinkedStatus = linkedSub?.status ?? null;
+              }
+
+              const linkDecision = decideProviderSubscriptionLinkRepair({
+                trackingSubscriptionV2Id: subscriptionV2Id,
+                targetSubscriptionV2Id: String(subV2.id),
+                targetStatus: String(subV2.status),
+                targetUserId: subV2.user_id ?? null,
+                targetProductId: subV2.product_id ?? null,
+                targetTariffId: subV2.tariff_id ?? null,
+                targetOrderId: subV2.order_id ?? null,
+                trackingOrderId: orderV2Id,
+                orderUserId: orderV2.user_id ?? null,
+                orderProductId: orderV2.product_id ?? null,
+                orderTariffId: orderV2.tariff_id ?? null,
+                currentLinkedSubscriptionV2Id: providerLink?.subscription_v2_id ?? null,
+                currentLinkedStatus,
+              });
+
+              if (linkDecision.outcome === 'repair' && providerLink?.id) {
+                const { data: repaired, error: repairError } = await supabase
+                  .from('provider_subscriptions')
+                  .update({
+                    subscription_v2_id: subV2.id,
+                    user_id: subV2.user_id,
+                  })
+                  .eq('id', providerLink.id)
+                  .select('id, subscription_v2_id')
+                  .maybeSingle();
+                if (repairError || !repaired || String(repaired.subscription_v2_id) !== String(subV2.id)) {
+                  throw repairError || new Error('provider_link_repair_post_check_failed');
+                }
+
+                const mergedSubMeta = {
+                  ...subMeta,
+                  bepaid_subscription_id: String(subscriptionId),
+                };
+                const { error: subMetaError } = await supabase
+                  .from('subscriptions_v2')
+                  .update({ meta: mergedSubMeta })
+                  .eq('id', subV2.id);
+                if (subMetaError) throw subMetaError;
+                subV2.meta = mergedSubMeta;
+
+                await supabase.from('audit_logs').insert({
+                  actor_type: 'system',
+                  actor_label: 'bepaid-webhook',
+                  action: 'bepaid.webhook.provider_subscription_link_repaired',
+                  target_user_id: subV2.user_id,
+                  meta: {
+                    provider_subscription_id: String(subscriptionId),
+                    previous_subscription_v2_id: providerLink.subscription_v2_id,
+                    repaired_subscription_v2_id: subV2.id,
+                    order_id: orderV2Id,
+                    reason: linkDecision.reason,
+                  },
+                });
+              } else if (linkDecision.outcome === 'noop') {
+                if (String(subMeta.bepaid_subscription_id || '') !== String(subscriptionId)) {
+                  const mergedSubMeta = {
+                    ...subMeta,
+                    bepaid_subscription_id: String(subscriptionId),
+                  };
+                  const { error: subMetaError } = await supabase
+                    .from('subscriptions_v2')
+                    .update({ meta: mergedSubMeta })
+                    .eq('id', subV2.id);
+                  if (subMetaError) throw subMetaError;
+                  subV2.meta = mergedSubMeta;
+                }
+              } else if (linkDecision.outcome === 'manual_review' || !providerLink?.id) {
+                await supabase.from('audit_logs').insert({
+                  actor_type: 'system',
+                  actor_label: 'bepaid-webhook',
+                  action: 'bepaid.webhook.provider_subscription_link_repair_blocked',
+                  target_user_id: subV2.user_id,
+                  meta: {
+                    severity: 'CRITICAL',
+                    provider_subscription_id: String(subscriptionId),
+                    current_subscription_v2_id: providerLink?.subscription_v2_id ?? null,
+                    tracked_subscription_v2_id: subV2.id,
+                    order_id: orderV2Id,
+                    reason: linkDecision.outcome === 'manual_review'
+                      ? linkDecision.reason
+                      : 'provider_row_missing',
+                  },
+                });
+              }
+            } catch (linkRepairError) {
+              console.error('[WEBHOOK-SUBSCRIPTION] provider link repair failed:', linkRepairError);
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.provider_subscription_link_repair_failed',
+                target_user_id: subV2?.user_id ?? null,
+                meta: {
+                  severity: 'CRITICAL',
+                  provider_subscription_id: String(subscriptionId),
+                  tracked_subscription_v2_id: subV2?.id ?? null,
+                  order_id: orderV2Id,
+                  error: String((linkRepairError as Error)?.message || linkRepairError),
+                },
+              });
+            }
+          }
+        }
+
         // ===================================================================
         // Stage 2 — EXACT internal-installment activation guard (Stage 2 corrective).
         //
@@ -1782,6 +1930,7 @@ Deno.serve(async (req) => {
         const rebillMode = resolveKillSwitchMode(Deno.env.get('BEPAID_REBILL_MATERIALIZATION'));
         let rebillHandled = false;
         let rebillOrderIdFromFlow: string | null = null;
+        let rebillAccessOutcome: RebillAccessOutcome | null = null;
         // Stage 2 corrective: gate REBILL on INTENT, not just the FULL marker.
         // Any hint of an internal installment must skip generic REBILL — either
         // the guard is active (handled inline) or mismatch already returned 202.
@@ -1819,6 +1968,7 @@ Deno.serve(async (req) => {
             if (!rebillResult.proceedLegacy) {
               rebillHandled = true;
               rebillOrderIdFromFlow = rebillResult.rebill_order_id ?? null;
+              rebillAccessOutcome = classifyRebillAccessOutcome(rebillResult.decision);
               // REBILL handled access. Skip legacy parent-order paid-update + STEP A grant.
               // STEP E payments_v2 upsert MUST route to the REBILL order, NOT parent
               // (PATCH-RB1.2: prevent legacy STEP E from overwriting payment back to parent).
@@ -1916,8 +2066,11 @@ Deno.serve(async (req) => {
         let grantStatus = 0;
         let grantResult: any = null;
         if (rebillHandled) {
-          grantOutcome = 'ok';
-          console.log('[WEBHOOK-SUBSCRIPTION] STEP A skipped: REBILL flow already invoked canonical writer.');
+          grantOutcome = rebillAccessOutcome ?? 'error';
+          console.log(
+            '[WEBHOOK-SUBSCRIPTION] STEP A skipped: REBILL flow terminal outcome=',
+            grantOutcome,
+          );
         } else if (orderV2Id) {
           try {
             const grantResp = await fetch(
@@ -2522,12 +2675,14 @@ Deno.serve(async (req) => {
         // Close the corresponding payment_reconcile_queue row ONLY after the
         // full provider-managed cycle succeeded:
         //   1) payments_v2 upserted in STEP E (subPayResult.action !== 'error')
-        //   2) grant-access-for-order ok OR REBILL flow handled the cycle.
+        //   2) grant-access-for-order confirmed access (including a confirmed
+        //      idempotent prior grant). Payment materialization alone is not
+        //      access fulfillment.
         // On grant skip/error we MUST leave the queue row as-is so manual
         // review still sees it.
         if (
           transactionUid &&
-          (grantOutcome === 'ok' || rebillHandled) &&
+          grantOutcome === 'ok' &&
           subPayResult?.action !== 'error'
         ) {
           try {

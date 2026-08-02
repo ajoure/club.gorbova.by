@@ -55,6 +55,7 @@ export type ProviderLinkedResolverOutcome =
       reason:
         | 'order_id_match'
         | 'tracking_id_strict_match'
+        | 'provider_subscription_id_match'
         | 'checkout_order_id_subv2_fallback';
     }
   | {
@@ -76,6 +77,7 @@ export interface ResolverInput {
   userId: string;
   productId: string | null;
   tariffId: string | null;
+  providerSubscriptionId?: string | null;
 }
 
 // Permissive Supabase client type (matches the index.ts call sites).
@@ -112,6 +114,94 @@ export async function resolveProviderLinkedSubscription(
   input: ResolverInput,
 ): Promise<ProviderLinkedResolverOutcome> {
   const { orderId, userId, productId, tariffId } = input;
+
+  // A REBILL order is new, so the canonical provider row normally still
+  // references the original checkout order. Resolve it by the exact bePaid
+  // sbs id carried by the paid REBILL order before falling back to order_id.
+  // This also permits renewal of the same exact chain after local expiry.
+  if (input.providerSubscriptionId) {
+    const { data: exactProvider } = await supabase
+      .from('provider_subscriptions')
+      .select('id, subscription_v2_id, provider_subscription_id, state, order_id, meta')
+      .eq('provider', 'bepaid')
+      .eq('provider_subscription_id', input.providerSubscriptionId)
+      .maybeSingle();
+
+    if (exactProvider?.subscription_v2_id) {
+      const { data: exactSub } = await supabase
+        .from('subscriptions_v2')
+        .select('id, user_id, product_id, tariff_id, status, access_end_at, auto_renew')
+        .eq('id', exactProvider.subscription_v2_id)
+        .maybeSingle();
+
+      const conflict = (
+        reason: Extract<ProviderLinkedResolverOutcome, {
+          outcome: 'manual_review_provider_linkage_conflict';
+        }>['reason'],
+        details: Record<string, unknown>,
+      ): ProviderLinkedResolverOutcome => ({
+        outcome: 'manual_review_provider_linkage_conflict',
+        reason,
+        details,
+      });
+
+      if (!exactSub) {
+        return conflict('subv2_not_found', {
+          provider_subscription_row_id: exactProvider.id,
+          subv2_id: exactProvider.subscription_v2_id,
+        });
+      }
+      if (String(exactSub.user_id) !== String(userId)) {
+        return conflict('user_mismatch', {
+          provider_subscription_row_id: exactProvider.id,
+          subv2_id: exactSub.id,
+        });
+      }
+      if (productId && exactSub.product_id && String(exactSub.product_id) !== String(productId)) {
+        return conflict('product_mismatch', {
+          provider_subscription_row_id: exactProvider.id,
+          subv2_id: exactSub.id,
+        });
+      }
+      if (tariffId && exactSub.tariff_id && String(exactSub.tariff_id) !== String(tariffId)) {
+        return conflict('tariff_mismatch', {
+          provider_subscription_row_id: exactProvider.id,
+          subv2_id: exactSub.id,
+        });
+      }
+      // `expired` is valid here: a successful renewal can arrive just after
+      // the previous access window closed. Other terminal states remain blocked.
+      if (['canceled', 'superseded', 'expired_reentry'].includes(String(exactSub.status))) {
+        return conflict('subv2_terminal_status', {
+          provider_subscription_row_id: exactProvider.id,
+          subv2_id: exactSub.id,
+          subv2_status: exactSub.status,
+        });
+      }
+
+      return {
+        outcome: 'extend',
+        subscription: {
+          id: exactSub.id,
+          user_id: exactSub.user_id,
+          product_id: exactSub.product_id,
+          tariff_id: exactSub.tariff_id,
+          status: exactSub.status,
+          access_end_at: exactSub.access_end_at,
+          auto_renew: !!exactSub.auto_renew,
+        },
+        provider_subscription: {
+          id: exactProvider.id ?? null,
+          subscription_v2_id: exactProvider.subscription_v2_id,
+          provider_subscription_id: exactProvider.provider_subscription_id ?? null,
+          state: exactProvider.state,
+          tracking_id: (exactProvider.meta || {}).tracking_id ?? null,
+          order_id: exactProvider.order_id ?? null,
+        },
+        reason: 'provider_subscription_id_match',
+      };
+    }
+  }
 
   // 1. Candidate provider_subscriptions: same order_id OR tracking_id mentions this order.
   //    We collect BOTH and dedupe by row id.

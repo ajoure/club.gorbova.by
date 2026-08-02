@@ -839,6 +839,7 @@ Deno.serve(async (req) => {
         userId,
         productId,
         tariffId: tariffId ?? null,
+        providerSubscriptionId: (order as any).bepaid_subscription_id ?? null,
       });
 
       if (providerLinked.outcome === 'manual_review_provider_linkage_conflict') {
