@@ -1,6 +1,7 @@
 // Deno offline tests for rebill_flow.ts (§A.2 — mode=on wired) — fakes, no network.
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  classifyRebillAccessOutcome,
   runRebillFlow,
   type RebillFlowDeps,
   type RebillFlowInput,
@@ -181,6 +182,8 @@ Deno.test("Case 3: REBILL exists + grant_status=success → idempotent_skip", as
   const result = await runRebillFlow(makeDeps(state), baseInput());
   assertEquals(result.decision, "idempotent_skip");
   assertEquals(result.proceedLegacy, false);
+  assertEquals(result.rebill_order_id, "rebill-existing");
+  assertEquals(result.existing_rebill_order_id, "rebill-existing");
   assertEquals(state.inserted.length, 0);
   assertEquals(state.grantInvocations.length, 0);
   assertEquals(state.audits.at(-1)?.action, "bepaid.rebill.idempotent_skip");
@@ -386,4 +389,45 @@ Deno.test("Case 17: any mode=on terminal → proceedLegacy=false (short-circuit 
     assert(decision !== "off_noop" && decision !== "dry_run_planned",
       `decision=${decision} unexpected`);
   }
+});
+
+Deno.test("Case 18: HTTP-200 skipped grant is a retryable grant failure", async () => {
+  const state = newState();
+  state.grantResults.set("rebill-1", {
+    success: true,
+    skipped: true,
+    reason: "provider_linkage_conflict",
+    manual_review: true,
+  });
+
+  const result = await runRebillFlow(makeDeps(state), baseInput());
+
+  assertEquals(result.decision, "materialized_grant_failed");
+  assertEquals(classifyRebillAccessOutcome(result.decision), "error");
+  assert(state.metaMerges.some((m) =>
+    m.patch.grant_status === "failed" &&
+    m.patch.last_grant_error === "grant_skipped:provider_linkage_conflict"
+  ));
+});
+
+Deno.test("Case 19: unconfirmed grant response is not accepted as access proof", async () => {
+  const state = newState();
+  state.grantResults.set("rebill-1", {});
+
+  const result = await runRebillFlow(makeDeps(state), baseInput());
+
+  assertEquals(result.decision, "materialized_grant_failed");
+  assert(state.metaMerges.some((m) =>
+    m.patch.last_grant_error === "grant_unconfirmed_response"
+  ));
+});
+
+Deno.test("REBILL decision classifier closes fulfillment only on confirmed grant", () => {
+  assertEquals(classifyRebillAccessOutcome("materialized"), "ok");
+  assertEquals(classifyRebillAccessOutcome("resumed_grant"), "ok");
+  assertEquals(classifyRebillAccessOutcome("idempotent_skip"), "ok");
+  assertEquals(classifyRebillAccessOutcome("materialized_grant_failed"), "error");
+  assertEquals(classifyRebillAccessOutcome("materialized_partial"), "error");
+  assertEquals(classifyRebillAccessOutcome("skip_sbs_mismatch_pre_check"), "skip");
+  assertEquals(classifyRebillAccessOutcome("skip_grant_full_refunded"), "skip");
 });

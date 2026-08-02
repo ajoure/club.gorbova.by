@@ -88,6 +88,35 @@ export interface RebillFlowResult {
   grant_result?: unknown;
 }
 
+export type RebillAccessOutcome = "ok" | "skip" | "error";
+
+/**
+ * Translate a terminal REBILL decision into the access-delivery result seen by
+ * the webhook. Materializing/repointing a payment is not proof that access was
+ * granted, so retryable/manual-review decisions must never close the reconcile
+ * queue as successful fulfillment.
+ */
+export function classifyRebillAccessOutcome(
+  decision: RebillDecision,
+): RebillAccessOutcome {
+  switch (decision) {
+    case "materialized":
+    case "resumed_grant":
+    case "idempotent_skip":
+      return "ok";
+    case "resumed_repoint_only":
+    case "skip_grant_full_refunded":
+    case "skip_sbs_mismatch_pre_check":
+    case "conflict_uid":
+    case "off_noop":
+    case "dry_run_planned":
+      return "skip";
+    case "materialized_partial":
+    case "materialized_grant_failed":
+      return "error";
+  }
+}
+
 export interface ExistingRebillSummary {
   id: string;
   order_number: string;
@@ -260,6 +289,7 @@ export async function runRebillFlow(
       });
       return {
         decision: "idempotent_skip", mode, proceedLegacy: false,
+        rebill_order_id: existing.id,
         existing_rebill_order_id: existing.id,
       };
     }
@@ -597,12 +627,33 @@ async function safeInvokeGrant(
 ): Promise<{ ok: true; result: unknown } | { ok: false; error: string }> {
   try {
     const result = await deps.invokeGrantAccess(rebillOrderId);
-    // Heuristic: grant-access-for-order usually returns { success: true } или { error }.
-    const r = (result || {}) as Record<string, unknown>;
-    if (r && (r.error || r.success === false)) {
-      return { ok: false, error: String(r.error || "grant_returned_failure") };
+    // The canonical writer confirms a completed grant with success=true.
+    // HTTP 200 alone is not sufficient: manual-review guards intentionally
+    // return 200 with skipped=true and must stay retryable/visible.
+    if (!result || typeof result !== "object" || Array.isArray(result)) {
+      return { ok: false, error: "grant_unconfirmed_response" };
     }
-    return { ok: true, result };
+    const r = result as Record<string, unknown>;
+    // Some legacy guards returned the contradictory shape
+    // { success: true, skipped: true }. `skipped` wins: no ledger/access was
+    // written, so this is not fulfillment success.
+    if (r.skipped === true) {
+      const reason = typeof r.reason === "string" && r.reason
+        ? r.reason
+        : "unspecified";
+      return { ok: false, error: `grant_skipped:${reason}` };
+    }
+
+    if (r.success === true) return { ok: true, result };
+
+    if (r.error || r.success === false) {
+      const reason = typeof r.error === "string" && r.error
+        ? r.error
+        : "grant_returned_failure";
+      return { ok: false, error: reason };
+    }
+
+    return { ok: false, error: "grant_unconfirmed_response" };
   } catch (e) {
     return { ok: false, error: String((e as Error)?.message || e) };
   }
