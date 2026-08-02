@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const migration = readFileSync(
-  resolve(process.cwd(), 'supabase/migrations/20260802133000_exclude_group_child_orders_from_inv20.sql'),
+  resolve(process.cwd(), 'supabase/migrations/20260802143000_require_live_payments_for_inv20.sql'),
   'utf8',
 );
 
@@ -25,11 +25,15 @@ describe('INV-20 composable order contract', () => {
     expect(migration).toContain('payment_group.user_id IS NOT DISTINCT FROM b.user_id');
     expect(migration).toContain("group_item.role = 'addon'");
     expect(migration).toContain("group_payment.status::text = 'succeeded'");
+    expect(migration).toContain('COALESCE(group_payment.is_deleted, false) = false');
+    expect(migration).toContain('COALESCE(p.is_deleted, false) = false');
     expect(migration).toContain("payment_group.status::text = 'paid'");
     expect(migration).toMatch(/THEN\s+'suppressed'/i);
   });
 
   it('keeps the repair function from materializing a child payment', () => {
+    expect(repairFunction).toContain('.or("is_deleted.is.null,is_deleted.eq.false")');
+    expect(repairFunction).toContain('existing_payment_lookup_failed');
     expect(repairFunction).toContain('getGroupChildReferences(order.meta)');
     expect(repairFunction).toContain('group_child_order_payment_on_parent');
     expect(repairFunction).toContain('uid: "__no_real_payment__"');
@@ -38,6 +42,7 @@ describe('INV-20 composable order contract', () => {
     expect(repairFunction).toContain('group_child_order_group_lookup_failed');
     expect(repairFunction).toContain('group_child_membership_lookup_failed');
     expect(repairFunction).toContain('isCanonicalGroupChildLink({');
+    expect(repairFunction).toContain('id, order_id, user_id, status, is_deleted');
   });
 
   it('preserves restricted RPC execution', () => {

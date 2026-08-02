@@ -107,7 +107,14 @@ Deno.serve(async (req) => {
     // Batch check existing payments
     let allExistingOrderIds = new Set<string>();
     for (const batch of chunk(orderIds, 100)) {
-      const { data: ep } = await supabase.from("payments_v2").select("order_id").in("order_id", batch);
+      const { data: ep, error: epErr } = await supabase
+        .from("payments_v2")
+        .select("order_id")
+        .in("order_id", batch)
+        .or("is_deleted.is.null,is_deleted.eq.false");
+      if (epErr) {
+        throw new Error(`existing_payment_lookup_failed:${epErr.message}`);
+      }
       for (const p of ep || []) allExistingOrderIds.add(p.order_id);
     }
 
@@ -145,7 +152,7 @@ Deno.serve(async (req) => {
     for (const batch of chunk(groupChildPaymentIds, 100)) {
       const { data: groupPayments, error: groupPaymentsError } = await supabase
         .from("payments_v2")
-        .select("id, order_id, user_id, status")
+        .select("id, order_id, user_id, status, is_deleted")
         .in("id", batch);
       if (groupPaymentsError) {
         throw new Error(`group_child_payment_lookup_failed:${groupPaymentsError.message}`);

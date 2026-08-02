@@ -70,6 +70,7 @@ Deno.test("accepts only the exact succeeded primary payment and canonical group"
       order_id: PRIMARY_ORDER_ID,
       user_id: "1658b558-edf3-46ab-89f3-0fe712bbfbe0",
       status: "succeeded",
+      is_deleted: false,
     },
     orderGroup: {
       primary_order_id: PRIMARY_ORDER_ID,
@@ -95,5 +96,9 @@ Deno.test("accepts only the exact succeeded primary payment and canonical group"
   assertEquals(isCanonicalGroupChildLink({
     ...canonical,
     groupPayment: { ...canonical.groupPayment, status: "refunded" },
+  }), false);
+  assertEquals(isCanonicalGroupChildLink({
+    ...canonical,
+    groupPayment: { ...canonical.groupPayment, is_deleted: true },
   }), false);
 });

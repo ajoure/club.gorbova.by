@@ -13,6 +13,7 @@ interface GroupChildLinkInput {
     order_id?: string | null;
     user_id?: string | null;
     status?: string | null;
+    is_deleted?: boolean | null;
   } | null;
   orderGroup: {
     primary_order_id?: string | null;
@@ -56,6 +57,7 @@ export function getGroupChildPaymentId(meta: unknown): string | null {
 export function isCanonicalGroupChildLink(input: GroupChildLinkInput): boolean {
   const { refs, childUserId, groupPayment, orderGroup, hasAddonMembership } = input;
   if (!groupPayment || !orderGroup || !hasAddonMembership) return false;
+  if (groupPayment.is_deleted === true) return false;
   if (groupPayment.status !== "succeeded" || orderGroup.status !== "paid") return false;
   if (!groupPayment.order_id || !orderGroup.primary_order_id) return false;
   if (groupPayment.order_id.toLowerCase() !== refs.primaryOrderId) return false;
