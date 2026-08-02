@@ -1,7 +1,7 @@
 // edge function: admin-repair-missing-payments
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { getGroupChildPaymentId } from "./group_child_order.ts";
+import { getGroupChildReferences, isCanonicalGroupChildLink } from "./group_child_order.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -125,30 +125,78 @@ Deno.serve(async (req) => {
     // canonical payment stored on their parent order. Verify that exact
     // payment before suppressing a child; malformed references fail closed
     // and continue through the normal orphan/manual-review path.
+    const groupChildRefsByOrderId = new Map(
+      ordersToRepair.flatMap((order: any) => {
+        const refs = getGroupChildReferences(order.meta);
+        return refs ? [[String(order.id), refs] as const] : [];
+      }),
+    );
     const groupChildPaymentIds = [...new Set(
-      ordersToRepair
-        .map((order: any) => getGroupChildPaymentId(order.meta))
-        .filter((id: string | null): id is string => !!id),
+      [...groupChildRefsByOrderId.values()].map((refs) => refs.paymentId),
     )];
+    const groupIds = [...new Set(
+      [...groupChildRefsByOrderId.values()].map((refs) => refs.orderGroupId),
+    )];
+    const groupChildOrderIds = [...groupChildRefsByOrderId.keys()];
     const groupPaymentsById = new Map<string, any>();
+    const orderGroupsById = new Map<string, any>();
+    const groupMemberships = new Set<string>();
 
     for (const batch of chunk(groupChildPaymentIds, 100)) {
-      const { data: groupPayments } = await supabase
+      const { data: groupPayments, error: groupPaymentsError } = await supabase
         .from("payments_v2")
         .select("id, order_id, user_id, status")
         .in("id", batch);
+      if (groupPaymentsError) {
+        throw new Error(`group_child_payment_lookup_failed:${groupPaymentsError.message}`);
+      }
       for (const payment of groupPayments || []) {
         groupPaymentsById.set(String(payment.id).toLowerCase(), payment);
       }
     }
 
+    for (const batch of chunk(groupIds, 100)) {
+      const { data: groups, error: groupsError } = await supabase
+        .from("order_groups")
+        .select("id, primary_order_id, user_id, status")
+        .in("id", batch);
+      if (groupsError) {
+        throw new Error(`group_child_order_group_lookup_failed:${groupsError.message}`);
+      }
+      for (const group of groups || []) {
+        orderGroupsById.set(String(group.id).toLowerCase(), group);
+      }
+    }
+
+    for (const batch of chunk(groupChildOrderIds, 100)) {
+      const { data: items, error: itemsError } = await supabase
+        .from("order_group_items")
+        .select("order_group_id, order_id, role")
+        .in("order_id", batch);
+      if (itemsError) {
+        throw new Error(`group_child_membership_lookup_failed:${itemsError.message}`);
+      }
+      for (const item of items || []) {
+        if (item.role !== "addon") continue;
+        groupMemberships.add(
+          `${String(item.order_group_id).toLowerCase()}:${String(item.order_id).toLowerCase()}`,
+        );
+      }
+    }
+
     for (const order of ordersToRepair) {
-      const groupPaymentId = getGroupChildPaymentId(order.meta);
-      if (!groupPaymentId) continue;
-      const groupPayment = groupPaymentsById.get(groupPaymentId);
-      if (!groupPayment) continue;
-      if (String(groupPayment.order_id) === String(order.id)) continue;
-      if (String(groupPayment.user_id) !== String(order.user_id)) continue;
+      const refs = groupChildRefsByOrderId.get(String(order.id));
+      if (!refs) continue;
+      const groupPayment = groupPaymentsById.get(refs.paymentId);
+      const orderGroup = orderGroupsById.get(refs.orderGroupId);
+      const membershipKey = `${refs.orderGroupId}:${String(order.id).toLowerCase()}`;
+      if (!isCanonicalGroupChildLink({
+        refs,
+        childUserId: order.user_id,
+        groupPayment,
+        orderGroup,
+        hasAddonMembership: groupMemberships.has(membershipKey),
+      })) continue;
 
       noRealPaymentDetails.push({
         order_id: order.id,

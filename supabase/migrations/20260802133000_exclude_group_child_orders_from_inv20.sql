@@ -28,12 +28,24 @@ AS $$
           THEN 'suppressed'
         WHEN lower(COALESCE(b.meta->>'group_child_order', 'false')) = 'true'
           AND COALESCE(b.meta->>'group_payment_id', '') <> ''
+          AND COALESCE(b.meta->>'group_primary_order_id', '') <> ''
+          AND COALESCE(b.meta->>'order_group_id', '') <> ''
           AND EXISTS (
             SELECT 1
             FROM payments_v2 group_payment
+            JOIN order_groups payment_group
+              ON lower(payment_group.id::text) = lower(b.meta->>'order_group_id')
+            JOIN order_group_items group_item
+              ON group_item.order_group_id = payment_group.id
+             AND group_item.order_id = b.id
+             AND group_item.role = 'addon'
             WHERE lower(group_payment.id::text) = lower(b.meta->>'group_payment_id')
-              AND group_payment.order_id IS DISTINCT FROM b.id
+              AND lower(group_payment.order_id::text) = lower(b.meta->>'group_primary_order_id')
+              AND lower(payment_group.primary_order_id::text) = lower(b.meta->>'group_primary_order_id')
               AND group_payment.user_id IS NOT DISTINCT FROM b.user_id
+              AND payment_group.user_id IS NOT DISTINCT FROM b.user_id
+              AND group_payment.status::text = 'succeeded'
+              AND payment_group.status::text = 'paid'
           )
           THEN 'suppressed'
         WHEN lower(COALESCE(b.provider, '')) IN ('rr','manual','test','admin')
