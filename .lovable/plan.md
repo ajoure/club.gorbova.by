@@ -1,69 +1,61 @@
-# Forensic-сверка ORD-26-00321 / ORD-26-00323 (INV-20 actionable=2)
+# План (PLAN-ONLY): вывод двух synthetic runtime-test заказов из paid-контура
 
-Только чтение. Ничего не изменено. Персональные данные, payload и токены не выводятся.
+Ничего не выполнено. Только чтение. Персональные данные, payload и токены не выводятся.
 
-## 1. Заказы
+## 0. Доказанная база (read-only)
 
-| Поле | ORD-26-00321 | ORD-26-00323 |
-|---|---|---|
-| order id | 7775ebca-16ef-48d9-8f19-ca97d588da49 | a1877074-14d0-4e9b-bce5-653728b6c22c |
-| created | 2026-07-13 08:38:09Z | 2026-07-13 09:48:51Z |
-| status / final_price / paid_amount | paid / 4500.00 BYN / 4500.00 | paid / 4500.00 BYN / 4500.00 |
-| provider / provider_payment_id | stripe / NULL | stripe / NULL |
-| product / tariff / offer | 9d0d6de8… / a0f9ecc2… / 7a333f66… (Платная консультация) | те же |
-| is_deleted / parent / group / trial | false / нет / нет / false | false / нет / нет / false |
+- Enum `order_status` допускает: `draft, pending, paid, partial, failed, refunded, canceled, needs_mapping, lead, partial_refund`.
+- Канонический статус для Stripe-заказа с истёкшей сессией и без оплаты — **`pending`**: из всех заказов с audit-событием `stripe.checkout.session.expired` 22 находятся в `pending` и только эти 2 — в `paid`. Отдельного статуса `expired` в enum нет.
+- RPC `inv20_paid_orders_actionable` берёт только `status = 'paid'` без живых платежей; кроме того, любой непустой `meta->>'no_real_payment'` даёт bucket `suppressed`. То есть перевод в `pending` + пометка `no_real_payment` закрывает actionable двумя независимыми путями.
+- Доступ (entitlement 35388ec7…, subscription 033bc554…) привязан к реальному заказу ORD-26-00322 (efaee66d…, 4500 BYN, paid) и не зависит от этих двух заказов. Строки ledger трогать не будем.
 
-Оба — самостоятельные заказы: parent/child, order_group, installment-цепочки нет. Отличие только во времени создания.
+## 1. Preflight (read-only, STOP при любом расхождении)
 
-## 2. Платежи (единственные, оба soft-deleted)
+Для каждого из двух заказов подтвердить:
+- `7775ebca-16ef-48d9-8f19-ca97d588da49` = ORD-26-00321, `a1877074-14d0-4e9b-bce5-653728b6c22c` = ORD-26-00323;
+- `status='paid'`, `paid_amount=4500.00`, `final_price=4500.00`, `currency='BYN'`, `provider='stripe'`, `provider_payment_id IS NULL`, `is_deleted=false`;
+- единственный платёж соответственно `7fb77a97-998b-454b-92e1-294e6b88e226` (210 BYN, bank, idem `runtime-s4-bank-order-01`) и `f418c8e7-79d9-4b1c-854c-b72636b45bfd` (75 BYN, rr, idem `runtime-s3-rr-order-01`), у обоих `is_deleted=true`;
+- активных платежей у обоих заказов = 0;
+- по каждому есть `provider_events.event_type='checkout.session.expired'` (stripe) и audit `stripe.checkout.session.expired`;
+- entitlement 35388ec7… `active` до 2026-10-11, subscription 033bc554… `active`, `order_id=efaee66d…` — зафиксировать снимок для сверки.
 
-| Поле | ORD-26-00321 | ORD-26-00323 |
-|---|---|---|
-| payment id | 7fb77a97-998b-454b-92e1-294e6b88e226 | f418c8e7-79d9-4b1c-854c-b72636b45bfd |
-| amount / currency | 210.00 BYN | 75.00 BYN |
-| status / provider / origin | succeeded / bank / manual_admin | succeeded / rr / manual_admin |
-| paid_at | 2026-07-13 10:15:00Z | 2026-07-13 10:10:00Z |
-| provider_payment_id | NULL | NULL |
-| idempotency_key | runtime-s4-bank-order-01 | runtime-s3-rr-order-01 |
-| request_hash | 998aa7df…fad64 | 76f1038e…f89ca9 |
-| is_deleted / deleted_at | true / 2026-07-13 13:05:14Z | true / 2026-07-13 13:03:33Z |
-| deleted_by / reason | 05cd3754… (админ) / stage4_S4_order_mode | тот же админ / admin_manual_delete |
+## 2. CAS-обновления (2 отдельных UPDATE, каждый expected rowcount=1)
 
-Ключевой факт: суммы платежей (210 и 75 BYN) не имеют отношения к цене заказа 4500 BYN, provider = bank/rr при provider заказа = stripe, origin = manual_admin, idempotency-ключи вида `runtime-s3/s4-…-order-01`. Это синтетические строки ручного runtime-теста админ-сценариев удаления, созданные и удалённые в один день.
+Для каждого заказа один `UPDATE orders_v2`:
 
-## 3. Provider / Stripe evidence
+- SET: `status='pending'`, `paid_amount=0`, `updated_at=now()`;
+- SET meta: только добавление явных ключей через `jsonb_set`/`||`, без удаления существующих:
+  - `no_real_payment` = `true`
+  - `runtime_test_artifact` = `true`
+  - `unpaid_reason` = `stripe_checkout_session_expired_no_live_payment`
+  - `forensic_ref` = `INV-20 2026-08-02 forensic`
+- WHERE (все условия одновременно): `id = <order id>` AND `order_number = <номер>` AND `status='paid'` AND `paid_amount=4500.00` AND `final_price=4500.00` AND `provider='stripe'` AND `provider_payment_id IS NULL` AND `is_deleted=false` AND `meta->>'no_real_payment' IS NULL` AND NOT EXISTS (живой payment по этому order_id).
 
-- provider_events: ровно 2 события, оба `checkout.session.expired` (stripe), 14.07 08:38 и 14.07 09:48.
-- audit_logs: `stripe.checkout.session.expired` по каждому заказу (аккаунт stripe_poland) + позднее системное `crm_stage_applied_success` (backfill CRM-роутинга 21.07).
-- Ни одного `checkout.session.completed`, `payment_intent.succeeded`, charge, invoice или subscription-события Stripe по этим заказам нет. `provider_payment_id` пуст у заказов и у платежей.
+Rowcount ≠ 1 → немедленный STOP и откат транзакции. Строки не удаляются, платежи не восстанавливаются и не изменяются.
 
-Вывод: реальной подтверждённой оплаты по обоим заказам нет; Stripe-сессии истекли. Статус `paid` был выставлен именно тестовыми ручными платежами, которые затем удалены.
+Dry-run перед выполнением: тот же WHERE в виде `SELECT count(*)` — ожидание ровно 1 на каждый заказ.
 
-## 4. Доступ (access contract)
+## 3. Audit trail
 
-- entitlement: 35388ec7-ea65-4734-8d77-5983350ede48, product_code `consultation`, status `active`, expires_at 2026-10-11 09:44:32Z — общий на пользователя/продукт.
-- subscriptions_v2 033bc554-81c4-452f-998e-4423d40023a7: active, access 2026-07-13 → 2026-10-11, auto_renew=false, привязана к **другому** заказу efaee66d… / ORD-26-00322 (4500 BYN, paid) — это реальный заказ того же пользователя.
-- access_grant_ledger: 2 строки `extend` / `paid_order` (ba2a12fb…, 7733a2b4…), по одной на каждый разбираемый заказ, окна 12.08→11.09 и 11.09→11.10, все post-check pass.
+Две записи в `audit_logs` (по одной на заказ): `entity_type='orders_v2'`, `entity_id=<order id>`, `action='order_unpaid_runtime_test_artifact'`, `actor_type='system'`, `actor_label='inv20-forensic-2026-08-02'`, meta с прежним статусом/paid_amount, ID удалённого тестового платежа, его idempotency-ключом и причиной. Без персональных данных.
 
-То есть доступ по этим двум заказам **уже был выдан** (и даже продлил окно поверх реального ORD-26-00322). Недостающего договорного доступа сейчас нет — наоборот, есть выданный доступ без реальной оплаты.
+## 4. Read-back
 
-## 5. Почему Edge dry-run считает их actionable / no_real_payment
+1. Оба заказа: `status='pending'`, `paid_amount=0`, meta содержит `no_real_payment`/`runtime_test_artifact`, остальные ключи meta не изменились, `is_deleted=false`.
+2. Активных платежей у обоих = 0; строки `7fb77a97…` и `f418c8e7…` по-прежнему `is_deleted=true` с прежними `deleted_at/deleted_by/deleted_reason`.
+3. RPC `inv20_paid_orders_actionable`: `actionable_count = 0`.
+4. Dry-run `admin-repair-missing-payments`: `repaired=0`, прежние показатели INV-20 не ухудшились.
+5. Реальный контур unchanged: ORD-26-00322 (efaee66d…) `paid` 4500 BYN, subscription 033bc554… `active`, access до 2026-10-11, entitlement 35388ec7… `active` до 2026-10-11, ledger-строки ba2a12fb… и 7733a2b4… на месте и не изменены.
+6. Обе audit-записи присутствуют.
 
-Миграция `20260802143000_require_live_payments_for_inv20.sql` перестала засчитывать soft-deleted платежи как валидные. У обоих заказов активных (`is_deleted=false`) платежей нет, при этом статус заказа `paid` и `user_id` заполнен, group/child-подавление не применимо → RPC `inv20_paid_orders_actionable` возвращает actionable=2. Это корректная работа нового правила: заказы помечены оплаченными без единой живой платёжной строки.
+## 5. Recoverability
 
-## 6. Итог по доказательствам
+Откат — обратный CAS: вернуть `status='paid'`, `paid_amount=4500.00` и снять добавленные meta-ключи по тем же WHERE-предикатам; исходные значения зафиксированы в audit-записи. Ни одна строка не удаляется.
 
-- Реальная оплата: **не доказана ни по одному заказу** (Stripe-сессии expired, provider_payment_id пуст, единственные платежи — синтетические ручные тесты на 210/75 BYN, удалённые тем же админом).
-- Недостающий доступ: **отсутствует** (entitlement active до 11.10.2026, ledger-строки записаны).
-- Двойного учёта выручки в активных данных нет: активных платежей у обоих заказов 0.
+## 6. Вне scope
 
-## 7. План восстановления — STOP
+Entitlement/subscription/ledger/Telegram/email, charge/refund/void, GetCourse/AmoCRM, любые другие заказы, code/commit/migration/deploy/Publish.
 
-CAS-плана восстановления payment/access **не предлагается**: условие «только для доказанно реальных оплат» не выполняется ни для одного из двух заказов. Создание платежа под них зафиксировало бы несуществующую выручку 4500 BYN ×2.
+## 7. STOP-условия
 
-Ничего не выполняю. Возможные направления решаются отдельными задачами и требуют вашего явного решения:
-
-1. **Вариант A (рекомендуемый к обсуждению):** признать оба заказа тестовыми артефактами runtime-прогона 13.07 и вывести их из «paid» контура (смена статуса/пометка test), плюс отдельно оценить, нужно ли откатывать два ledger-продления доступа поверх реального ORD-26-00322.
-2. **Вариант B:** оставить как есть и добавить в INV-20 исключение для заказов без единого живого платежа и с истёкшей provider-сессией, чтобы actionable не шумел.
-
-Любой из вариантов — новая PLAN-ONLY задача с dry-run, expected rowcount и read-back. Сейчас: без charge/refund/void, без писем и Telegram, без GetCourse/AmoCRM, без code/commit/migration/deploy/Publish.
+Расхождение любого preflight-поля, rowcount ≠ 1, появление живого платежа, изменение subscription/entitlement/ledger, `actionable_count ≠ 0` на read-back.
