@@ -1,6 +1,7 @@
 // edge function: admin-repair-missing-payments
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getGroupChildPaymentId } from "./group_child_order.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -117,6 +118,52 @@ Deno.serve(async (req) => {
     }
 
     const totalMissing = ordersToRepair.length;
+    const noRealPaymentDetails: any[] = [];
+    const uidByOrderId = new Map<string, { uid: string; created_at: string; source: string }>();
+
+    // Group/composable checkout child orders intentionally share the single
+    // canonical payment stored on their parent order. Verify that exact
+    // payment before suppressing a child; malformed references fail closed
+    // and continue through the normal orphan/manual-review path.
+    const groupChildPaymentIds = [...new Set(
+      ordersToRepair
+        .map((order: any) => getGroupChildPaymentId(order.meta))
+        .filter((id: string | null): id is string => !!id),
+    )];
+    const groupPaymentsById = new Map<string, any>();
+
+    for (const batch of chunk(groupChildPaymentIds, 100)) {
+      const { data: groupPayments } = await supabase
+        .from("payments_v2")
+        .select("id, order_id, user_id, status")
+        .in("id", batch);
+      for (const payment of groupPayments || []) {
+        groupPaymentsById.set(String(payment.id).toLowerCase(), payment);
+      }
+    }
+
+    for (const order of ordersToRepair) {
+      const groupPaymentId = getGroupChildPaymentId(order.meta);
+      if (!groupPaymentId) continue;
+      const groupPayment = groupPaymentsById.get(groupPaymentId);
+      if (!groupPayment) continue;
+      if (String(groupPayment.order_id) === String(order.id)) continue;
+      if (String(groupPayment.user_id) !== String(order.user_id)) continue;
+
+      noRealPaymentDetails.push({
+        order_id: order.id,
+        order_number: order.order_number,
+        parent_payment_id: groupPayment.id,
+        parent_order_id: groupPayment.order_id,
+        parent_payment_status: groupPayment.status,
+        reason: "group_child_order_payment_on_parent",
+      });
+      uidByOrderId.set(order.id, {
+        uid: "__no_real_payment__",
+        created_at: order.created_at,
+        source: "group_child_order",
+      });
+    }
 
     // ========== Step 2: BATCH fetch webhook_events by tracking_id ==========
     // Build all candidate tracking_ids
@@ -127,8 +174,6 @@ Deno.serve(async (req) => {
     }
 
     // Batch fetch webhook_events (max 100 per .in())
-    const uidByOrderId = new Map<string, { uid: string; created_at: string; source: string }>();
-
     for (const batch of chunk(candidateTrackingIds, 100)) {
       const { data: weRows } = await supabase
         .from("webhook_events")
@@ -296,7 +341,6 @@ Deno.serve(async (req) => {
     }
 
     // ========== Step 4: Strategy 4 — Backfill artifacts ==========
-    const noRealPaymentDetails: any[] = [];
     const backfillOrders = ordersToRepair.filter((o: any) => {
       if (uidByOrderId.has(o.id)) return false;
       const m = o.meta as any;
@@ -409,13 +453,14 @@ Deno.serve(async (req) => {
       if (uidInfo?.uid === "__no_real_payment__") {
         noRealPayment++;
         if (!dryRun) {
+          const detail = noRealPaymentDetails.find((entry: any) => entry.order_id === order.id);
           await supabase
             .from("orders_v2")
             .update({
               meta: {
                 ...(order.meta as any || {}),
                 no_real_payment: true,
-                no_real_payment_reason: "backfill_artifact",
+                no_real_payment_reason: detail?.reason || "backfill_artifact",
                 marked_at: new Date().toISOString(),
                 marked_by_admin: user.id,
               },
