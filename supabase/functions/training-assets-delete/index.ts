@@ -158,7 +158,13 @@ async function findSharedPaths(
   const allowedSet = new Set(allowedPaths);
   const sharedSet = new Set<string>();
 
-  // Paginated fetch: only blocks that reference training-assets
+  // Paginated fetch of all blocks from other lessons.
+  //
+  // Do not push a text operator down to `lesson_blocks.content`: the column is
+  // jsonb and PostgREST can compile the `.or(...ilike...)` expression as
+  // `jsonb ~~* text`, which PostgreSQL rejects.  The recursive extractor below
+  // is the source of truth for nested paths anyway, so scan deterministically
+  // and filter in memory.
   const PAGE_SIZE = 1000;
   let offset = 0;
   let hasMore = true;
@@ -166,14 +172,16 @@ async function findSharedPaths(
   while (hasMore) {
     const { data: blocks, error } = await adminClient
       .from("lesson_blocks")
-      .select("content")
+      .select("id,content")
       .neq("lesson_id", lessonId)
-      .or("content->>url.ilike.%training-assets%,content->>storagePath.not.is.null,content->>storage_path.not.is.null")
+      .order("id", { ascending: true })
       .range(offset, offset + PAGE_SIZE - 1);
 
     if (error) {
       console.error("[findSharedPaths] query error:", error.message);
-      break;
+      // Fail closed.  Treating a failed shared-path lookup as "nothing is
+      // shared" could delete an object still referenced by another lesson.
+      throw new Error(`Shared asset lookup failed: ${error.message}`);
     }
 
     if (!blocks || blocks.length === 0) {
