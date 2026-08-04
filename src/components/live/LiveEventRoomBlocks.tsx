@@ -6,6 +6,7 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { getAccessAwareUrl } from "@/utils/accessAlias";
 
 interface RoomBlock {
   id: string;
@@ -252,7 +253,7 @@ function ProductChoiceBlock({ config }: { config: Record<string, any> }) {
         (data as any)?.redirect_url ||
         (data as any)?.checkout?.redirect_url;
       if (url) {
-        window.location.href = url;
+        window.location.href = getAccessAwareUrl(url);
       } else if ((data as any)?.error) {
         throw new Error((data as any).error);
       } else {

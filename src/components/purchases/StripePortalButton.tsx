@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { getAccessAwareUrl } from "@/utils/accessAlias";
 
 interface StripePortalButtonProps {
   subscriptionV2Id: string;
@@ -71,7 +72,7 @@ export function StripePortalButton({
         toast.error("Не удалось открыть управление подпиской");
         return;
       }
-      window.location.href = url;
+      window.location.href = getAccessAwareUrl(url);
     } catch (e) {
       toast.error(normalizeEdgeFunctionError(e));
     } finally {

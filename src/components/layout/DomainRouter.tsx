@@ -11,9 +11,10 @@ import { PublicPageFetchError } from "@/components/site-renderer/PublicPageFetch
 import type { SitePage } from "@/services/sitePages/types";
 import { Loader2 } from "lucide-react";
 import SitePageBySlug from "@/pages/SitePageBySlug";
+import { getCanonicalHostname } from "@/utils/accessAlias";
 
 export function DomainHomePage() {
-  const hostname = window.location.hostname;
+  const hostname = getCanonicalHostname(window.location.hostname);
   const domain = getCurrentDomain();
   
   // For localhost or main domain, show the club landing

@@ -20,6 +20,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { normalizeEdgeFunctionError } from '@/utils/normalizeEdgeFunctionError';
 import { SAVED_CARD_PAYMENTS_ENABLED } from '@/config/paymentFeatures';
+import { getAccessAwareUrl } from '@/utils/accessAlias';
 import { LandingHeader } from '@/components/landing/LandingHeader';
 import { LandingFooter } from '@/components/landing/LandingFooter';
 import { GlassCard } from '@/components/ui/GlassCard';
@@ -270,7 +271,7 @@ export default function PublicPayPage() {
         }
         throw new Error(data.error || 'Не удалось создать платёж');
       }
-      window.location.href = data.redirect_url;
+      window.location.href = getAccessAwareUrl(data.redirect_url);
     } catch (err) {
       setError(normalizeEdgeFunctionError(err));
       setIsProcessing(false);
@@ -354,7 +355,7 @@ export default function PublicPayPage() {
       }
       // Issuer may require additional bank confirmation → follow redirect when present.
       if (data.redirect_url) {
-        window.location.href = data.redirect_url;
+        window.location.href = getAccessAwareUrl(data.redirect_url);
         return;
       }
       window.location.href = `/purchases?order=${data.order_id}&payment=processing`;

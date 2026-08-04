@@ -22,6 +22,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
 import { getFieldDisplayLabel } from "@/lib/formFieldLabel";
 import { USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
+import { getAccessAwareUrl } from "@/utils/accessAlias";
 
 interface FormField {
   label: string;
@@ -59,7 +60,7 @@ function isSafeRedirectUrl(url: string): boolean {
 
 function safeRedirect(url: string) {
   if (url.startsWith('/')) {
-    window.location.href = url;
+    window.location.href = getAccessAwareUrl(url);
   } else {
     window.open(url, '_self', 'noopener,noreferrer');
   }

@@ -14,6 +14,8 @@
 //
 // FORBIDDEN: lovable preview, supabase functions URL, localhost.
 
+import { getAccessAliasOrigin } from './access-alias-origin.ts';
+
 const FORBIDDEN_FRAGMENTS = [
   'lovable.dev',
   'lovable.app',
@@ -40,17 +42,18 @@ export const PUBLIC_APP_HOST: string = readEnv() ?? DEFAULT_PUBLIC_APP_HOST;
 export interface StripeRedirectUrls {
   success_url: string;
   cancel_url: string;
-  source: 'connection' | 'public_app_host_fallback' | 'sandbox_fallback';
+  source: 'connection' | 'public_app_host_fallback' | 'sandbox_fallback' | 'access_alias';
 }
 
 /**
  * Resolve Stripe Checkout success/cancel URLs.
  * Priority:
- *   1) acquiring_connections.success_url / cancel_url (per-account)
- *   2) PUBLIC_APP_HOST + conventional paths
- *   3) sandbox fallback (only if `sandbox=true` AND test_mode=true)
+ *   1) exact alternate access origin for a public checkout
+ *   2) acquiring_connections.success_url / cancel_url (per-account)
+ *   3) PUBLIC_APP_HOST + conventional paths
+ *   4) sandbox fallback (only if `sandbox=true` AND test_mode=true)
  *
- * Throws only if all 3 are unavailable (which should never happen for
+ * Throws only if every source is unavailable (which should never happen for
  * test_mode connections — PUBLIC_APP_HOST always has a deterministic default).
  */
 export function resolveStripeCheckoutUrls(args: {
@@ -58,7 +61,16 @@ export function resolveStripeCheckoutUrls(args: {
   connection_cancel_url: string | null | undefined;
   test_mode: boolean;
   sandbox?: boolean;
+  request_origin?: string | null;
 }): StripeRedirectUrls {
+  const accessAliasOrigin = getAccessAliasOrigin(args.request_origin);
+  if (accessAliasOrigin && !args.sandbox) {
+    return {
+      success_url: `${accessAliasOrigin}/payment/success`,
+      cancel_url: `${accessAliasOrigin}/payment/cancel`,
+      source: 'access_alias',
+    };
+  }
   const cs = (args.connection_success_url ?? '').trim();
   const cc = (args.connection_cancel_url ?? '').trim();
   if (cs && cc) {

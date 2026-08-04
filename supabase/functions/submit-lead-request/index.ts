@@ -15,6 +15,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
+import { expandWithAccessAliasOrigins } from "../_shared/access-alias-origin.ts";
 
 const PROJECT_URLS = [
   "https://id-preview--796a93b9-74cc-403c-8ec5-cafdb2a5beaa.lovable.app",
@@ -27,6 +28,7 @@ const PROJECT_URLS = [
   "https://cons.gorbova.by",
   "https://club.gorbova.by",
 ];
+const ALLOWED_PROJECT_URLS = expandWithAccessAliasOrigins(PROJECT_URLS);
 const SYSTEM_WORKSPACE_ID = "00000000-0000-0000-0000-000000000001";
 const IDEMPOTENCY_WINDOW_MINUTES = 15;
 
@@ -37,7 +39,7 @@ function corsHeaders(origin: string | null) {
   const isLovablePreview = !!origin && /^https:\/\/[a-z0-9-]+\.lovable(project)?\.(app|dev)$/i.test(origin);
   const isLocalhost = !!origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
   const allowed =
-    origin && (PROJECT_URLS.includes(origin) || isLovablePreview || isLocalhost)
+    origin && (ALLOWED_PROJECT_URLS.has(origin) || isLovablePreview || isLocalhost)
       ? origin
       : PROJECT_URLS[1];
   return {

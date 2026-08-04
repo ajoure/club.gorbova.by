@@ -41,6 +41,7 @@ import { USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
 import { OrderSummary } from "@/components/checkout/OrderSummary";
 import { useComposableQuoteSummary } from "@/hooks/useComposableQuoteSummary";
 import { InlineAuthForm } from "@/components/auth/InlineAuthForm";
+import { getAccessAwareUrl } from "@/utils/accessAlias";
 
 interface SubscriptionMessage {
   title?: string;           // "Ежемесячная подписка" / "Подписка на Клуб"
@@ -678,7 +679,7 @@ export function PaymentDialog({
       if (!data?.success) throw new Error(data?.error || 'Ошибка создания новой подписки');
 
       if (data.redirect_url) {
-        window.location.href = data.redirect_url;
+        window.location.href = getAccessAwareUrl(data.redirect_url);
         return;
       }
       throw new Error('Не удалось получить ссылку на оплату.');
@@ -777,7 +778,7 @@ export function PaymentDialog({
       // Issuer 3DS may require extra confirmation.
       if (data.redirect_url) {
         setProcessingStage('redirecting_3ds');
-        window.location.href = data.redirect_url;
+        window.location.href = getAccessAwareUrl(data.redirect_url);
         return;
       }
       window.location.href = `/purchases?order=${data.order_id}&payment=processing`;
@@ -914,7 +915,7 @@ export function PaymentDialog({
 
         // Redirect to bePaid subscription checkout page
         if (data.redirect_url) {
-          window.location.href = data.redirect_url;
+          window.location.href = getAccessAwareUrl(data.redirect_url);
         } else {
           const message = "Не удалось получить ссылку на оплату.";
           setPaymentError(message);
@@ -1017,7 +1018,7 @@ export function PaymentDialog({
 
       // Redirect to bePaid checkout page
       if (data.redirectUrl) {
-        window.location.href = data.redirectUrl;
+        window.location.href = getAccessAwareUrl(data.redirectUrl);
       } else {
         const message = "Не удалось получить ссылку на оплату";
         setPaymentError(message);

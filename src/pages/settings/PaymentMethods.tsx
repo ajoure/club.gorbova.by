@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { getAccessAwareUrl } from "@/utils/accessAlias";
 
 interface PaymentMethod {
   id: string;
@@ -259,7 +260,7 @@ export default function PaymentMethodsSettings() {
       if (error) throw error;
 
       if (data?.redirect_url) {
-        window.location.href = data.redirect_url;
+        window.location.href = getAccessAwareUrl(data.redirect_url);
       } else {
         toast.error('Не удалось создать сессию подписки');
         setCreatingSubId(null);
@@ -400,7 +401,7 @@ export default function PaymentMethodsSettings() {
       if (data?.redirect_url) {
         // 2. Save old subscription ID for cancellation AFTER successful return
         sessionStorage.setItem('pending_cancel_provider_sub', providerSubId);
-        window.location.href = data.redirect_url;
+        window.location.href = getAccessAwareUrl(data.redirect_url);
       } else {
         toast.error('Не удалось создать сессию подписки');
       }
@@ -418,7 +419,7 @@ export default function PaymentMethodsSettings() {
       if (error) throw error;
       
       if (data?.redirect_url) {
-        window.location.href = data.redirect_url;
+        window.location.href = getAccessAwareUrl(data.redirect_url);
       } else {
         toast.error("Не удалось создать сессию токенизации");
       }

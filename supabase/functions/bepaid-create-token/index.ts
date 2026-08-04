@@ -5,6 +5,7 @@ import { referralDiscountMeta, resolveReferralCheckoutDiscount } from '../_share
 import { resolveOrderRouting, buildNegativeSnapshot, auditNegativeSnapshot } from '../_shared/crm-routing.ts';
 import { resolveComposableCheckout } from '../_shared/resolve-composable-checkout.ts';
 import { materializeComposableOrderGroup } from '../_shared/materialize-composable-order-group.ts';
+import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -744,7 +745,7 @@ Deno.serve(async (req) => {
           : null;
       }
 
-      const origin = req.headers.get('origin') || 'https://lovable.app';
+      const origin = resolvePublicReturnOrigin(req.headers.get('origin'));
       const composableQuote = offerId
         ? await resolveComposableCheckout(supabase, {
             parentOfferId: offerId,
@@ -852,10 +853,10 @@ Deno.serve(async (req) => {
     const successUrl = settingsMap['bepaid_success_url'] || '/purchases?payment=processing';
     const failUrl = settingsMap['bepaid_fail_url'] || '/purchases?payment=failed';
     
-    // Origin MUST be canonical public host — never trust req.headers.origin,
-    // because admin/embedded flows may originate from Lovable preview or
-    // legacy subdomains. See src/utils/buildPublicPaymentUrl.ts.
-    const origin = 'https://gorbova.by';
+    // The canonical host remains the default. The only accepted override is
+    // an exact HTTPS `a.*.gorbova.by` access alias; previews and arbitrary
+    // request origins are rejected by the shared resolver.
+    const origin = resolvePublicReturnOrigin(req.headers.get('origin'));
 
     // Payment amount
     let paymentAmount = productInfo.price;

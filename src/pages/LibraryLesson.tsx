@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getAccessAwareUrl } from "@/utils/accessAlias";
 
 import {
   ArrowLeft,
@@ -273,7 +274,7 @@ export default function LibraryLesson() {
               <ArrowLeft className="mr-2 h-4 w-4" />
               Назад
             </Button>
-            <Button onClick={() => window.location.href = 'https://club.gorbova.by'}>
+            <Button onClick={() => window.location.href = getAccessAwareUrl('https://club.gorbova.by')}>
               Узнать о Клубе
             </Button>
           </div>
