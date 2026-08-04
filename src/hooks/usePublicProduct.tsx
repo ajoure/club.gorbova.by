@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getCanonicalHostname } from "@/utils/accessAlias";
 
 export interface TariffFeature {
   id: string;
@@ -266,7 +267,7 @@ export function usePublicProductBySlug(slug: string | null, userId?: string | nu
 
 // Helper to get current domain (legacy — only used by DomainRouter)
 export function getCurrentDomain(): string {
-  const hostname = window.location.hostname;
+  const hostname = getCanonicalHostname(window.location.hostname);
   if (
     hostname === "localhost" ||
     hostname === "127.0.0.1" ||

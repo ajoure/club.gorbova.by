@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Loader2, User, Building, Building2, CreditCard, Mail, ArrowLeft, Check } from "lucide-react";
+import { getAccessAwareUrl } from "@/utils/accessAlias";
 
 interface ConsultationPaymentDialogProps {
   open: boolean;
@@ -92,7 +93,7 @@ export function ConsultationPaymentDialog({
 
       const redirectUrl = data?.redirectUrl || data?.checkout?.redirect_url;
       if (redirectUrl) {
-        window.location.href = redirectUrl;
+        window.location.href = getAccessAwareUrl(redirectUrl);
       } else if (data?.error) {
         throw new Error(data.error);
       } else {

@@ -11,6 +11,7 @@ import { RecoveryEmail } from '../_shared/email-templates/recovery.tsx'
 import { EmailChangeEmail } from '../_shared/email-templates/email-change.tsx'
 import { ReauthenticationEmail } from '../_shared/email-templates/reauthentication.tsx'
 import { sendViaYandexSmtp } from '../_shared/yandex-smtp-sender.ts'
+import { getAccessAliasOrigin } from '../_shared/access-alias-origin.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -291,7 +292,8 @@ async function handleWebhook(req: Request): Promise<Response> {
   try {
     const u = new URL(confirmationUrl)
     u.protocol = 'https:'
-    u.host = new URL(SITE_URL).host
+    const accessAliasOrigin = getAccessAliasOrigin(normalized.redirectTo)
+    u.host = new URL(accessAliasOrigin || SITE_URL).host
     u.pathname = VERIFY_PROXY_PATH
     confirmationUrl = u.toString()
   } catch {

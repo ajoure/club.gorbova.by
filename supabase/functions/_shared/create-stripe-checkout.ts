@@ -152,6 +152,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     connection_cancel_url: acct.cancel_url,
     test_mode: acct.test_mode,
     sandbox: false,
+    request_origin: origin,
   });
 
   // ============================================================

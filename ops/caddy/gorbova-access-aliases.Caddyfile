@@ -1,0 +1,75 @@
+# Alternate access contour for a small team that cannot reliably reach the
+# Lovable edge directly. Canonical production hosts and their DNS stay intact.
+#
+# Install this file only after the matching application SHA and Edge Functions
+# have been published. Each alias must have an exact A record to the VPS.
+
+a.gorbova.by {
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	reverse_proxy https://185.158.133.1 {
+		header_up Host gorbova.by
+		transport http {
+			tls_server_name gorbova.by
+		}
+	}
+}
+
+a.club.gorbova.by {
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	reverse_proxy https://185.158.133.1 {
+		header_up Host club.gorbova.by
+		transport http {
+			tls_server_name club.gorbova.by
+		}
+	}
+}
+
+a.cb.gorbova.by {
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	reverse_proxy https://185.158.133.1 {
+		header_up Host cb.gorbova.by
+		transport http {
+			tls_server_name cb.gorbova.by
+		}
+	}
+}
+
+a.cons.gorbova.by {
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	reverse_proxy https://185.158.133.1 {
+		header_up Host cons.gorbova.by
+		transport http {
+			tls_server_name cons.gorbova.by
+		}
+	}
+}
+
+a.consultation.gorbova.by {
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	reverse_proxy https://185.158.133.1 {
+		header_up Host consultation.gorbova.by
+		transport http {
+			tls_server_name consultation.gorbova.by
+		}
+	}
+}
+
+a.zg.gorbova.by {
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	reverse_proxy https://185.158.133.1 {
+		header_up Host zg.gorbova.by
+		transport http {
+			tls_server_name zg.gorbova.by
+		}
+	}
+}
+
+a.calendar.club.gorbova.by {
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	reverse_proxy https://185.158.133.1 {
+		header_up Host calendar.club.gorbova.by
+		transport http {
+			tls_server_name calendar.club.gorbova.by
+		}
+	}
+}

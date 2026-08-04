@@ -24,6 +24,7 @@ import type { BankInstallmentRuntime } from "@/lib/bankInstallment";
 import { startBankInstallment } from "@/lib/startBankInstallment";
 import { OrderSummary } from "@/components/checkout/OrderSummary";
 import { useComposableQuoteSummary } from "@/hooks/useComposableQuoteSummary";
+import { getAccessAwareUrl } from "@/utils/accessAlias";
 
 interface LeadRequestDialogProps {
   open: boolean;
@@ -195,12 +196,12 @@ export function LeadRequestDialog({
             customerCreditRequestedMinor: useCustomerCredit ? customerCreditMinor : 0,
           });
           if (res.mode === "runtime") {
-            window.location.href = res.paymentUrl;
+            window.location.href = getAccessAwareUrl(res.paymentUrl);
             return;
           }
           // Резолвер вернул legacy — маловероятно при enabled, но подстрахуемся.
           if (res.bankLinkUrl) {
-            window.location.href = res.bankLinkUrl;
+            window.location.href = getAccessAwareUrl(res.bankLinkUrl);
             return;
           }
           throw new Error("no_payment_url_and_no_legacy_link");
@@ -210,7 +211,7 @@ export function LeadRequestDialog({
             "Не удалось создать заявку в банк. Открываем резервную страницу оформления.",
           );
           if (bankLinkUrl) {
-            window.location.href = bankLinkUrl;
+            window.location.href = getAccessAwareUrl(bankLinkUrl);
             return;
           }
           throw rrErr;

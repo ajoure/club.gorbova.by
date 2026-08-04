@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { resolveUserIds } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
@@ -804,11 +805,10 @@ Deno.serve(async (req) => {
     const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
 
     // Build URLs from the request origin to support preview domains (and avoid hanging redirects).
-    const reqOrigin = req.headers.get('origin');
-    const reqReferer = req.headers.get('referer');
-    const origin = reqOrigin
-      || (reqReferer ? new URL(reqReferer).origin : null)
-      || 'https://club.gorbova.by';
+    const origin = resolvePublicReturnOrigin(
+      req.headers.get('origin'),
+      'https://club.gorbova.by',
+    );
 
     // bePaid webhook receiver (so we can finalize payment after 3DS)
     const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;

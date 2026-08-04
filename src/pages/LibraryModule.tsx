@@ -29,6 +29,7 @@ import { ru } from "date-fns/locale";
 import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import { formatLockedMonth } from "@/hooks/useMonthGate";
 import { getKnowledgeReturnPath } from "@/lib/knowledgeNavigation";
+import { getAccessAwareUrl } from "@/utils/accessAlias";
 
 const contentTypeConfig = {
   video: { icon: Video, label: "Видео", color: "text-blue-500" },
@@ -262,7 +263,7 @@ export default function LibraryModule() {
                     Тренинг «Бухгалтерия как бизнес» приобретается отдельно и доступен только участникам клуба на любом тарифе
                   </p>
                   <Button 
-                    onClick={() => window.location.href = 'https://gorbova.by/business-training'}
+                    onClick={() => window.location.href = getAccessAwareUrl('https://gorbova.by/business-training')}
                     className="bg-amber-600 hover:bg-amber-700 text-white"
                   >
                     Подробнее о тренинге
@@ -277,7 +278,7 @@ export default function LibraryModule() {
                     Оформите подписку на Gorbova Club, чтобы получить доступ к этим материалам
                   </p>
                   <Button 
-                    onClick={() => window.location.href = 'https://club.gorbova.by'}
+                    onClick={() => window.location.href = getAccessAwareUrl('https://club.gorbova.by')}
                     className="bg-amber-600 hover:bg-amber-700 text-white"
                   >
                     Узнать о Клубе
@@ -302,7 +303,7 @@ export default function LibraryModule() {
                 открыть видео и материалы.
               </p>
               <Button
-                onClick={() => window.location.href = "https://club.gorbova.by"}
+                onClick={() => window.location.href = getAccessAwareUrl("https://club.gorbova.by")}
                 className="bg-amber-600 hover:bg-amber-700 text-white"
               >
                 Получить доступ

@@ -9,6 +9,7 @@ import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { resolveProviderChoice, isValidProviderChoice, type CustomerProvider } from '../_shared/resolve-provider-choice.ts';
 import { materializeComposableOrderGroup } from '../_shared/materialize-composable-order-group.ts';
 import { buildFiniteInstallmentOrderMeta } from './installment-meta.ts';
+import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -310,9 +311,9 @@ Deno.serve(async (req) => {
 
     console.log('[public-checkout] target_user_resolved', { userId, resolvedVia, link_id: link.id });
 
-    // Canonical origin for return URLs — ВСЕГДА https://gorbova.by, независимо
-    // от request origin/referer (legacy домены и Lovable preview не должны утекать).
-    const origin = 'https://gorbova.by';
+    // Canonical by default; only the exact alternate access contour may keep
+    // its own origin for the provider return URL.
+    const origin = resolvePublicReturnOrigin(req.headers.get('origin'));
 
     // Delegate to shared checkout helper.
     // PATCH-PUBLIC-LINK-COUNTER: payment_link_id уходит в orders_v2.meta через канонический meta_extra

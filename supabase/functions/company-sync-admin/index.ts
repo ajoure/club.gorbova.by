@@ -1,11 +1,12 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { expandWithAccessAliasOrigins } from "../_shared/access-alias-origin.ts";
 
 type Action = "health" | "retry" | "dismiss";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function allowedOrigins() {
-  return new Set(
+  return expandWithAccessAliasOrigins(
     (Deno.env.get("COMPANY_SYNC_ADMIN_ALLOWED_ORIGINS") ?? "")
       .split(",")
       .map((origin) => origin.trim())

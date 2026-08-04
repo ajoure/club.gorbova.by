@@ -15,6 +15,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { createServiceClient } from "../_shared/rr/rr-config.ts";
 import { promoteAuthorizedRRPayment } from "../_shared/rr/rr-promote-order.ts";
+import { expandWithAccessAliasOrigins } from "../_shared/access-alias-origin.ts";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -22,8 +23,9 @@ const UUID_RE =
 // Admin-only function: restrict CORS to known operator origins. Browser
 // callers from other origins are denied at preflight; server-to-server calls
 // (curl/CLI) ignore CORS entirely.
-const ALLOWED_ORIGINS = new Set<string>([
+const ALLOWED_ORIGINS = expandWithAccessAliasOrigins([
   "https://gorbova.by",
+  "https://club.gorbova.by",
   "https://cb.gorbova.by",
   "https://gorbova.lovable.app",
 ]);
@@ -129,4 +131,3 @@ Deno.serve(async (req: Request) => {
 
   return json(200, { ok: result.ok, actor_user_id: userId, result }, cors);
 });
-

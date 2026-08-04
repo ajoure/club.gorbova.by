@@ -24,6 +24,7 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
@@ -448,12 +449,14 @@ Deno.serve(async (req) => {
     // product.primary_domain НЕ используется для payment origin.
     const CANONICAL_PUBLIC_HOST = 'https://gorbova.by';
     const FORBIDDEN_HOST_RE = /(lovable\.dev|lovable\.app|lovableproject\.com|localhost|127\.0\.0\.1)/i;
-    const canonicalOrigin = CANONICAL_PUBLIC_HOST;
+    const canonicalOrigin = resolvePublicReturnOrigin(req.headers.get('origin'), CANONICAL_PUBLIC_HOST);
     if (!/^https:\/\//.test(canonicalOrigin) || FORBIDDEN_HOST_RE.test(canonicalOrigin)) {
       console.error('[public-charge-saved-card] canonical origin rejected:', canonicalOrigin);
       return errorResponse('internal_invalid_canonical_origin', 500);
     }
-    const originSource: 'canonical_gorbova_by' = 'canonical_gorbova_by';
+    const originSource = canonicalOrigin === CANONICAL_PUBLIC_HOST
+      ? 'canonical_gorbova_by'
+      : 'access_alias';
 
     const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
     const returnUrl = `${canonicalOrigin}/purchases?order=${order.id}&payment=processing`;

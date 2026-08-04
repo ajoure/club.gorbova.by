@@ -31,6 +31,7 @@ import {
 } from './charge-notification-policy.ts';
 import { referralDiscountMeta, resolveReferralCheckoutDiscount } from './referral-checkout-discount.ts';
 import { reserveReferralCustomerCredit } from './referral-customer-credit.ts';
+import { resolvePublicReturnOrigin } from './access-alias-origin.ts';
 
 export interface CreateCheckoutParams {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -295,7 +296,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   const amountByn = amount / 100;
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
-  const effectiveOrigin = origin || 'https://gorbova.by';
+  const effectiveOrigin = resolvePublicReturnOrigin(origin);
   const actorUserId = actor_user_id || null;
   const effectiveActorType = actor_type || 'system';
   // audit_logs CHECK constraint allows only 'user' | 'system'; map 'admin' → 'user'

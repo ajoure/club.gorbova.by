@@ -29,6 +29,7 @@ import { buildSlotManifest, pageHasDynamicSlots } from "@/lib/siteSlotManifest";
 import { SiteSlotManifestContext } from "@/contexts/SiteSlotManifestContext";
 import type { SiteBlock, SitePage } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
+import { getCanonicalHostname } from "@/utils/accessAlias";
 
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -168,7 +169,7 @@ export default function SitePageBySlug({ resolvedPage = null }: SitePageBySlugPr
   const { data: queriedResolution, isLoading: queryLoading, refetch } = useQuery<PublicPageResolution>({
     queryKey: ["site-page-public", window.location.hostname, window.location.pathname, slug],
     queryFn: async () => {
-      const hostname = window.location.hostname;
+      const hostname = getCanonicalHostname(window.location.hostname);
       const isAppHost = hostname === "localhost" || hostname === "127.0.0.1" ||
         hostname === "club.gorbova.by" || hostname === "gorbova.by" ||
         hostname.includes(".lovable.app") || hostname.includes(".lovableproject.com");
