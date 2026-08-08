@@ -40,6 +40,29 @@ export type CommercialSource = 'subscription' | 'entitlement' | 'manual_access';
 export type ProjectionSource = 'telegram_access' | 'telegram_grant';
 
 /**
+ * Keep the commercial source that grants the widest access window.
+ * NULL endAt is canonical unlimited access and therefore always wins.
+ * Equal windows keep the existing source so the source priority remains stable.
+ */
+export function selectWiderCommercialAccess(
+  current: AccessCheckResult | undefined,
+  candidate: AccessCheckResult,
+): AccessCheckResult {
+  if (!candidate.valid) return current ?? candidate;
+  if (!current?.valid) return candidate;
+
+  if (current.endAt === null) return current;
+  if (candidate.endAt === null) return candidate;
+
+  const currentMs = current.endAt ? new Date(current.endAt).getTime() : Number.NEGATIVE_INFINITY;
+  const candidateMs = candidate.endAt ? new Date(candidate.endAt).getTime() : Number.NEGATIVE_INFINITY;
+
+  if (!Number.isFinite(candidateMs)) return current;
+  if (!Number.isFinite(currentMs) || candidateMs > currentMs) return candidate;
+  return current;
+}
+
+/**
  * Fetch product IDs mapped to a specific club.
  * Returns null if no clubId provided (global/unscoped check).
  */
@@ -49,12 +72,16 @@ async function getClubProductIds(
 ): Promise<string[] | null> {
   if (!clubId) return null;
   
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('access_rules')
     .select('product_id')
     .eq('target_ref', clubId)
     .eq('grant_target_type', 'club')
     .eq('is_active', true);
+
+  if (error) {
+    throw new Error(`club_access_rules_failed: ${error.message}`);
+  }
   
   return (data || []).map((r: any) => r.product_id).filter(Boolean);
 }
@@ -707,78 +734,76 @@ export async function hasCommercialAccessBatch(
       .in('status', ['active', 'trial', 'past_due'])
       .or(`access_end_at.is.null,access_end_at.gt.${subGraceNowStr}`);
     if (clubProductIds !== null) q.in('product_id', clubProductIds);
-    const { data } = await q;
+    const { data, error } = await q;
+    if (error) throw new Error(`commercial_access_subscriptions_failed: ${error.message}`);
     for (const s of data || []) {
-      if (!results.get(s.user_id)?.valid) {
-        results.set(s.user_id, {
-          valid: true, source: 'subscription', endAt: s.access_end_at, subscriptionId: s.id,
-        });
-      }
+      results.set(s.user_id, selectWiderCommercialAccess(results.get(s.user_id), {
+        valid: true, source: 'subscription', endAt: s.access_end_at, subscriptionId: s.id,
+      }));
     }
   }
 
   // 2. entitlements
-  const rem1 = userIds.filter((u) => !results.get(u)?.valid);
-  if (rem1.length > 0 && (clubProductIds === null || clubProductIds.length > 0)) {
+  if (clubProductIds === null || clubProductIds.length > 0) {
     const q = supabase
       .from('entitlements')
       .select('id, user_id, expires_at')
-      .in('user_id', rem1)
+      .in('user_id', userIds)
       .eq('status', 'active')
       .or(`expires_at.is.null,expires_at.gt.${nowStr}`);
     if (clubProductIds !== null) q.in('product_id', clubProductIds);
-    const { data } = await q;
+    const { data, error } = await q;
+    if (error) throw new Error(`commercial_access_entitlements_failed: ${error.message}`);
     for (const e of data || []) {
-      if (!results.get(e.user_id)?.valid) {
-        results.set(e.user_id, {
-          valid: true, source: 'entitlement', endAt: e.expires_at, entitlementId: e.id,
-        });
-      }
+      results.set(e.user_id, selectWiderCommercialAccess(results.get(e.user_id), {
+        valid: true, source: 'entitlement', endAt: e.expires_at, entitlementId: e.id,
+      }));
     }
   }
 
   // 3. telegram_manual_access
-  const rem2 = userIds.filter((u) => !results.get(u)?.valid);
-  if (rem2.length > 0) {
+  if (userIds.length > 0) {
     const q = supabase
       .from('telegram_manual_access')
       .select('id, user_id, valid_until')
-      .in('user_id', rem2)
+      .in('user_id', userIds)
       .eq('is_active', true)
       .or(`valid_until.is.null,valid_until.gt.${nowStr}`);
     if (clubId) q.eq('club_id', clubId);
-    const { data } = await q;
+    const { data, error } = await q;
+    if (error) throw new Error(`commercial_access_manual_failed: ${error.message}`);
     for (const m of data || []) {
-      if (!results.get(m.user_id)?.valid) {
-        results.set(m.user_id, {
-          valid: true, source: 'manual_access', endAt: m.valid_until, manualAccessId: m.id,
-        });
-      }
+      results.set(m.user_id, selectWiderCommercialAccess(results.get(m.user_id), {
+        valid: true, source: 'manual_access', endAt: m.valid_until, manualAccessId: m.id,
+      }));
     }
   }
 
   // 4. Billing-day protection (без telegram_*)
-  const rem3 = userIds.filter((u) => !results.get(u)?.valid);
-  if (rem3.length > 0) {
+  if (userIds.length > 0 && (clubProductIds === null || clubProductIds.length > 0)) {
     const todayKey = toTzDateKey(nowStr, APP_TZ);
     const { start: todayStart, end: todayEnd } = dayWindowUtc(APP_TZ, todayKey);
     const q = supabase
       .from('subscriptions_v2')
       .select('id, user_id, next_charge_at, access_end_at')
-      .in('user_id', rem3)
+      .in('user_id', userIds)
       .eq('billing_type', 'provider_managed')
       .neq('status', 'canceled')
       .gte('next_charge_at', todayStart)
       .lt('next_charge_at', todayEnd);
-    if (clubProductIds !== null && clubProductIds.length > 0) q.in('product_id', clubProductIds);
-    const { data } = await q;
+    if (clubProductIds !== null) q.in('product_id', clubProductIds);
+    const { data, error } = await q;
+    if (error) throw new Error(`commercial_access_billing_day_failed: ${error.message}`);
     for (const s of data || []) {
-      if (!results.get(s.user_id)?.valid && s.next_charge_at) {
+      if (s.next_charge_at) {
         const endOfDayUtcMs = new Date(todayEnd).getTime() - 1000;
         if (effectiveNow.getTime() <= endOfDayUtcMs) {
-          results.set(s.user_id, {
-            valid: true, source: 'subscription', endAt: s.access_end_at, subscriptionId: s.id,
-          });
+          const protectedUntil = s.access_end_at
+            ? new Date(Math.max(new Date(s.access_end_at).getTime(), endOfDayUtcMs)).toISOString()
+            : null;
+          results.set(s.user_id, selectWiderCommercialAccess(results.get(s.user_id), {
+            valid: true, source: 'subscription', endAt: protectedUntil, subscriptionId: s.id,
+          }));
         }
       }
     }
