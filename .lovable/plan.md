@@ -1,40 +1,77 @@
-# План: обновление физической инвентаризации участников двух клубов (без access-действий)
+# План: релиз PR #270 (telegram-cron-sync + shared accessValidation), fail-closed
 
-## Diagnose — проверка задеплоенного контракта `telegram-club-members`
+Только план. Ни одной записи, миграции, деплоя, Telegram-действия и Publish не выполнено.
 
-Проверен исходник ветки, соответствующий задеплоенной функции (`supabase/functions/telegram-club-members/index.ts`, 1193 строки). Ветка `action === 'check_status'` (строки 329–481):
+## 0. Diagnose (факты на момент проверки)
 
-| Требование | Факт | Вердикт |
+- Локальный HEAD = `e79814fdb3f57cc574cb9d80964d564d7a065aeb` («Синхронизировать производные сроки Telegram-доступа (#270)») — совпадает с каноническим merged SHA. Изменённые файлы в scope: `supabase/functions/_shared/accessValidation.ts` (813 строк) и `supabase/functions/telegram-cron-sync/index.ts` (538 строк).
+- Миграция не требуется: код не использует новых колонок. Все читаемые поля (`telegram_clubs.channel_grant_enabled`, `telegram_access.active_until/state_chat/state_channel`, `subscriptions_v2`, `entitlements`, `telegram_manual_access`, `access_rules`) уже существуют в production-схеме.
+- Publish не требуется: изменения только в Edge Function и её shared-модуле, фронтенд не затронут.
+- Конфигурация клубов: Gorbova Club (GC) `fa547c41-…` — chat+channel, `channel_grant_enabled=true`, `autokick_no_access=true`; «Бухгалтерия как бизнес» (BB) `4f8f9d8f-…` — `channel_grant_enabled=false`, `autokick_no_access=true`.
+
+## 1. Sync exact SHA
+
+Синхронизировать managed-состояние ровно на `e79814fdb3f57cc574cb9d80964d564d7a065aeb`. STOP при любом расхождении SHA или размера/содержимого двух файлов scope.
+
+## 2. Deploy
+
+Ровно одна функция: `telegram-cron-sync`. Её бандл включает `_shared/accessValidation.ts` (импорт из `../_shared/`), поэтому отдельного деплоя shared-модуля нет и быть не может. Никаких других функций, никакой миграции, никакого Publish.
+
+## 3. Verify маркеров задеплоенного исходника
+
+| Требование | Маркер в исходнике |
+| --- | --- |
+| Побеждает самое широкое активное коммерческое окно | `selectWiderCommercialAccess` (accessValidation.ts:47) применяется ко всем 4 источникам |
+| NULL = безлимит | `if (current.endAt === null) return current; if (candidate.endAt === null) return candidate;` |
+| Сбой чтения источников/правил = abort, а не «нет доступа» | `club_access_rules_failed`, `commercial_access_subscriptions_failed`, `commercial_access_entitlements_failed`, `commercial_access_manual_failed`, `commercial_access_billing_day_failed`, `telegram_projection_load_failed` |
+| `telegram_access` пишется только из валидного коммерческого/manual источника | ветка `if (userId && hasAccess && accessResult && accessResult.endAt !== undefined)` |
+| Физически присутствующие незабаненные промотируются | `shouldPromote = Boolean(inChat && !isProfileBanned)` |
+| BB `channel_grant_enabled=false` → `state_channel='none'` | `nextChannelState = club.channel_id && channelGrantEnabled ? 'active' : 'none'` |
+| Kick только при полном отрицательном ответе | `GUARD_SKIP` при `undefined`, `ADMIN_PROTECTED` для administrator/creator |
+
+## 4. Dry-run (уже выполнен read-only, до любого runtime-вызова)
+
+Порядок выборки cron: `telegram_club_members` с непустым `profile_id`, `ORDER BY last_telegram_check_at ASC NULLS FIRST, id ASC`, `LIMIT 200` (`TELEGRAM_CRON_BATCH_LIMIT` не переопределяется).
+
+Прогноз по текущему состоянию:
+
+| Показатель | GC | BB |
 | --- | --- | --- |
-| Только `getChatMember` для существующих записей | Список берётся из `telegram_club_members` по `club_id`; на каждого — `checkMembership` → `getChatMember` по `chat_id` и (если задан) `channel_id` | PASS |
-| Только обновление статуса/меток проверки + аудит | `update` полей `in_chat`, `in_channel`, `last_telegram_check_at`, `last_telegram_check_result`, `updated_at`; `telegram_clubs.last_status_check_at`; записи в `telegram_club_audit` (`STATUS_CHECK`) и `audit_logs` (`telegram.status_check_completed`) | PASS с оговоркой (см. ниже) |
-| Никаких grant/revoke/send/kick/ban/unban | В ветке нет вызовов `kickMember`, `banChatMember`, `unbanChatMember`, `sendMessage`, нет создания инвайтов и записей доступа | PASS |
-| Требуется текущая админ-авторизация | Без `Authorization` — 401; иначе проверка `is_super_admin` / permission / роль `admin`\|`superadmin`; альтернатива — service-ключ | PASS |
-| Полный детерминированный список | Без `member_ids` — постраничная выборка по 200 с `order('id')` до исчерпания | PASS |
-| Отчёт `checked_count == total_expected` | Возвращаются оба поля + STOP-GUARD лог при расхождении | PASS (сравнение делаем на нашей стороне) |
+| Всего связанных участников | 648 | 641 |
+| С валидным коммерческим правом | 167 | 31 |
+| В чате без права (кандидаты на autokick) | 2 | 1 |
+| Из них admin/creator (protected) | 2 | 1 |
+| **Обычных клиентов под kick** | **0** | **0** |
+| Ожидаемые update проекции | 62 | 29 |
+| Ожидаемые create проекции | 0 | 0 |
+| Валидные без проекции и вне чата (create пропускается) | 4 | 0 |
 
-Оговорка (единственная запись, меняющая смысловое поле): ADMIN GUARD — если Telegram отвечает `administrator`/`creator`, а запись имеет `access_status = 'removed'`, поле переводится в `'ok'` (строки 392–405). Это не выдача доступа в Telegram, а исправление проекции для админов/владельцев; в отчёте оно считается как `restored_from_removed`.
+Обычных клиентов под autokick нет ни в одном клубе. Евгения Стриевич, Анна Бруйло и Анна Главчинская под kick не попадают и не затрагиваются.
 
-## Текущее состояние (read-only)
+Ключевые целевые строки (GC): Марина Лойко `active_until` 2026-08-06 → 2027-05-27; Елена Филиппова `NULL` → 2027-01-05; Дарья Шикольчик 2027-05-31 без изменений. У всех троих `in_chat=true`, `in_channel=true`, статус профиля не banned → chat+channel сохраняются. В BB все трое физически отсутствуют, права нет — cron их не трогает.
 
-| Клуб | club_id | chat | channel | channel_grant_enabled | записей в инвентаре | последняя проверка |
-| --- | --- | --- | --- | --- | --- | --- |
-| Gorbova Club | fa547c41-3a84-4c4f-904a-427332a0506e | есть | есть | true | 650 | 2026-08-08 10:00:55Z |
-| Бухгалтерия как бизнес | 4f8f9d8f-07ce-4898-8012-39f1035c1456 | есть | есть | false | 642 | 2026-08-08 10:01:39Z |
+STOP-условия: любой обычный клиент в списке kick, любая финансовая/деривационная неоднозначность, отличие SHA, отличие схемы/зависимостей, ошибка `*_failed` в логах.
 
-Важно: инвентарь уже был полностью пересчитан сегодня в 10:00–10:02 UTC, то есть данные не устарели. Повторный прогон допустим, но фактически он подтверждающий, а не восстановительный.
+## 5. Сколько нужно вызовов cron
 
-## EXECUTE-план (максимум 2 вызова, только после отдельного одобрения)
+`BATCH_LIMIT=200`, обработанные строки получают свежий `last_telegram_check_at` и уходят в конец очереди, поэтому каждый следующий вызов берёт следующие 200.
 
-1. Вызов 1 — Gorbova Club: `telegram-club-members`, тело `{ "action": "check_status", "club_id": "fa547c41-3a84-4c4f-904a-427332a0506e" }`, без `member_ids`, с админской авторизацией.
-   - Ожидание: `success: true`, `full_scan: true`, `checked_count == total_expected == 650` (±расхождение только если инвентарь изменился между чтением и вызовом — тогда сверяем с фактическим `count(*)`).
-2. Пауза, сверка ответа. STOP при `checked_count != total_expected`, ошибке авторизации, отличии задеплоенного кода или любом признаке kick/ban/send в ответе или логах.
-3. Вызов 2 — «Бухгалтерия как бизнес»: то же тело с `club_id = 4f8f9d8f-07ce-4898-8012-39f1035c1456`, ожидание `checked_count == total_expected == 642`.
-4. Никаких других действий: `sync`, `kick`, `kick_present`, `mark_removed`, `telegram-cron-sync` (автокик) — запрещены.
-5. После обоих вызовов — повторный read-only mismatch-аудит по свежим физическим статусам и текущим оплаченным периодам: списки «есть право, нет присутствия», «присутствует без права», служебные аккаунты, дефекты проекции, счётчики по GC (чат+канал) и BB (только чат). Cleanup не выполняется.
+На момент проверки позиции в очереди GC: Лойко rn≈218 (вызов 2), Шикольчик rn≈370 (вызов 2), Филиппова rn≈406 (вызов 3). Минимум — **3 вызова**, жёсткий предел — **4**.
 
-## Ограничения и риски
+Важно: позиции нестабильны (между двумя чтениями они сместились из-за штатного cron), поэтому ранг обеих целевых строк пересчитывается непосредственно перед каждым вызовом; лишние вызовы не делаются, как только обе строки обработаны.
 
-- Объём: примерно 2600 вызовов `getChatMember` (по 2 на запись), время выполнения — минуты; возможен rate limit Telegram. При таймауте прогон не считается успешным, `checked_count` сравнивается по факту.
-- Побочные записи ограничены полями проверки, `last_status_check_at` и аудит-логами, плюс ADMIN GUARD-исправление `access_status` для админов.
-- Publish, миграции, деплой и сообщения пользователям не выполняются ни на одном шаге.
+После каждого вызова обязательный read-back:
+- `audit_logs`: `telegram.cron_sync.batch` (`checked`, `kicked=0`, `projection_sync_count`, `guard_skip_count`, `error_count`, `is_partial`), отсутствие `telegram.autokick.attempt` для не-admin;
+- `telegram_access` по трём целевым `user_id`;
+- `telegram_club_members.last_telegram_check_at` для подтверждения продвижения курсора.
+
+STOP при `kicked > 0` для обычного клиента, при `error_count > 0`, при любом create/update проекции без валидного источника.
+
+## 6. Финальный read-back (критерий приёмки)
+
+- GC: Лойко `active_until = 2027-05-27`, Филиппова `active_until = 2027-01-05`, Шикольчик остаётся `2027-05-31`; у всех троих `state_chat='active'`, `state_channel='active'`.
+- BB: `state_channel='none'` для всех обновлённых проекций, инвайтов в канал нет.
+- Нет сообщений/инвайтов клиентам, нет изменений в `orders_v2`, `payments_v2`, `subscriptions_v2`, `entitlements`, `access_rules`, других клубах и пользователях — только штатная сверка проекций cron.
+- Стриевич, Бруйло, Главчинская остаются нетронутыми и в статусе ambiguous.
+
+Выполнение не начато — жду отдельного EXECUTE.
