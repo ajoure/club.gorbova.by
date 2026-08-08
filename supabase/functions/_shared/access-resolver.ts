@@ -49,6 +49,7 @@ export interface SecondaryGrant {
 export interface ClubGrant {
   club_id: string;
   rule_id: string;
+  duration_days: number | null;
   granted_by: 'rule_engine_club';
 }
 
@@ -148,7 +149,7 @@ async function resolveClubGrants(
   if (tariffId) {
     const { data: tariffRules } = await supabase
       .from('access_rules')
-      .select('id, target_ref, conditions')
+      .select('id, target_ref, conditions, duration_days')
       .eq('tariff_id', tariffId)
       .eq('grant_target_type', 'club')
       .eq('is_active', true)
@@ -161,6 +162,7 @@ async function resolveClubGrants(
           grants.push({
             club_id: rule.target_ref,
             rule_id: rule.id,
+            duration_days: rule.duration_days,
             granted_by: 'rule_engine_club',
           });
           break; // Only first matching club rule
@@ -173,7 +175,7 @@ async function resolveClubGrants(
   if (grants.length === 0) {
     const { data: productRules } = await supabase
       .from('access_rules')
-      .select('id, target_ref, conditions')
+      .select('id, target_ref, conditions, duration_days')
       .eq('product_id', productId)
       .is('tariff_id', null)
       .eq('grant_target_type', 'club')
@@ -187,6 +189,7 @@ async function resolveClubGrants(
           grants.push({
             club_id: rule.target_ref,
             rule_id: rule.id,
+            duration_days: rule.duration_days,
             granted_by: 'rule_engine_club',
           });
           break;

@@ -2075,6 +2075,11 @@ Deno.serve(async (req) => {
       try {
         // Phase v23: Read from access_rules first, fallback to legacy product_club_mappings
         let clubId: string | null = null;
+        let matchedClubRule: {
+          id: string;
+          target_ref: string;
+          duration_days: number | null;
+        } | null = null;
 
         // Helper: check prior_purchase condition on a rule
         const checkPriorPurchaseCondition = async (ruleConditions: any, ruleId: string): Promise<boolean> => {
@@ -2138,7 +2143,7 @@ Deno.serve(async (req) => {
         if (tariffId) {
           const { data: tariffRules } = await supabase
             .from("access_rules")
-            .select("id, target_ref, conditions")
+            .select("id, target_ref, conditions, duration_days")
             .eq("tariff_id", tariffId)
             .eq("grant_target_type", "club")
             .eq("is_active", true)
@@ -2149,6 +2154,11 @@ Deno.serve(async (req) => {
               const conditionOk = await checkPriorPurchaseCondition(rule.conditions, rule.id);
               if (conditionOk && rule.target_ref) {
                 clubId = rule.target_ref;
+                matchedClubRule = {
+                  id: rule.id,
+                  target_ref: rule.target_ref,
+                  duration_days: rule.duration_days,
+                };
                 console.log(`[grant-access] Club from access_rules (tariff): ${clubId}`);
                 break;
               }
@@ -2158,7 +2168,7 @@ Deno.serve(async (req) => {
         if (!clubId && productId) {
           const { data: productRules } = await supabase
             .from("access_rules")
-            .select("id, target_ref, conditions")
+            .select("id, target_ref, conditions, duration_days")
             .eq("product_id", productId)
             .is("tariff_id", null)
             .eq("grant_target_type", "club")
@@ -2170,6 +2180,11 @@ Deno.serve(async (req) => {
               const conditionOk = await checkPriorPurchaseCondition(rule.conditions, rule.id);
               if (conditionOk && rule.target_ref) {
                 clubId = rule.target_ref;
+                matchedClubRule = {
+                  id: rule.id,
+                  target_ref: rule.target_ref,
+                  duration_days: rule.duration_days,
+                };
                 console.log(`[grant-access] Club from access_rules (product): ${clubId}`);
                 break;
               }
@@ -2183,7 +2198,23 @@ Deno.serve(async (req) => {
           console.log(`[grant-access] No club rule found in access_rules for product ${productId} — no club grant (default-deny)`);
         }
 
-        if (clubId) {
+        if (clubId && matchedClubRule) {
+          let clubAccessEndAt = accessEndAt;
+          let clubAccessDurationDays = durationDays;
+          if (matchedClubRule.duration_days !== null) {
+            const ruleDurationDays = Number(matchedClubRule.duration_days);
+            if (!Number.isInteger(ruleDurationDays) || ruleDurationDays <= 0) {
+              throw new Error(`invalid_club_rule_duration:${matchedClubRule.id}`);
+            }
+            // A finite bonus belongs to the club rule and starts at the first
+            // confirmed payment. It must never inherit the main product's
+            // 180/240/300-day access window.
+            clubAccessDurationDays = ruleDurationDays;
+            clubAccessEndAt = new Date(
+              baseStartDate.getTime() + ruleDurationDays * 24 * 60 * 60 * 1000,
+            );
+          }
+
           // UX fix: подтягиваем product_name/tariff_name, чтобы DM "✅ Доступ открыт"
           // содержал название продукта и тарифа (как в bePaid-сценарии).
           let dmProductName: string | null = null;
@@ -2220,12 +2251,11 @@ Deno.serve(async (req) => {
               club_id: clubId,
               source_id: orderId,
               source: 'grant-access-for-order',
-              // Keep Telegram window strictly aligned with the access window
-              // just calculated for this paid order. Without this explicit
-              // lineage, a downstream resolver can see an incomplete
-              // subscription snapshot and leave the Telegram row pending.
-              valid_until: accessEndAt.toISOString(),
-              duration_days: durationDays,
+              // Finite bonus rules use their own payment-anchored duration;
+              // open-ended direct-club rules retain the primary paid window.
+              valid_until: clubAccessEndAt.toISOString(),
+              duration_days: clubAccessDurationDays,
+              access_rule_id: matchedClubRule.id,
               product_name: dmProductName,
               tariff_name: dmTariffName,
               // Sub-patch B: Pass parent lineage from ledger write

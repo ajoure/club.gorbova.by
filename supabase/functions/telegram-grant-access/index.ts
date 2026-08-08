@@ -25,6 +25,7 @@ interface GrantAccessRequest {
   tariff_name?: string;      // For logging in telegram chat
   product_name?: string;     // For logging in telegram chat
   duration_days?: number;    // For calculating access end
+  access_rule_id?: string;   // Exact access_rules lineage for finite bonuses
   // Sub-patch B: Parent lineage for downstream ledger propagation
   parent_event_key?: string | null;
   parent_execution_key?: string | null;
@@ -313,7 +314,7 @@ Deno.serve(async (req) => {
     // ========== END AUTH GUARD ==========
 
     const body: GrantAccessRequest = await req.json();
-    const { user_id, club_id, club_ids, is_manual, admin_id, valid_until, comment, source, source_id, tariff_name, product_name, duration_days, parent_event_key, parent_execution_key, _from_primary_path } = body;
+    const { user_id, club_id, club_ids, is_manual, admin_id, valid_until, comment, source, source_id, tariff_name, product_name, duration_days, access_rule_id, parent_event_key, parent_execution_key, _from_primary_path } = body;
 
     // Sub-patch B: Validate parent lineage contract
     if (_from_primary_path === true && (!parent_event_key || !parent_execution_key)) {
@@ -766,12 +767,17 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Calculate active_until via unified shared helper (scoped to THIS club)
+      // Calculate active_until via unified shared helper (scoped to THIS club).
+      // For commercial grants the resolver is authoritative even when the
+      // caller supplied a date: it preserves a longer direct club purchase and
+      // prevents a finite bonus from inheriting the primary product window.
       let activeUntil: string | null = valid_until || null;
-      if (!activeUntil && !is_manual) {
+      if (!is_manual) {
         const { resolveEffectiveClubAccess, effectiveEndAtIso } = await import('../_shared/resolve-effective-access.ts');
         const accessSnapshot = await resolveEffectiveClubAccess(supabase, user_id, club.id);
-        activeUntil = effectiveEndAtIso(accessSnapshot);
+        if (accessSnapshot.allSources.length > 0) {
+          activeUntil = effectiveEndAtIso(accessSnapshot);
+        }
         console.log(`[grant-access] Resolved effectiveEndAt for club ${club.id}: ${activeUntil}, sources: ${accessSnapshot.allSources.length}, unlimited: ${accessSnapshot.isUnlimited}`);
       }
 
@@ -800,18 +806,20 @@ Deno.serve(async (req) => {
           .maybeSingle();
         
         if (existingGrant) {
-          // PATCH 5 (TG-P0.9.2): Update end_at if new date is later (renewal case)
+          // The same source is a projection of current commercial truth, so it
+          // must converge both upward and downward. This safely repairs old
+          // grants that accidentally inherited a main-course end date.
           const existingEnd = existingGrant.end_at ? new Date(existingGrant.end_at).getTime() : 0;
           const newEnd = activeUntil ? new Date(activeUntil).getTime() : Infinity;
           
-          if (newEnd > existingEnd) {
-            console.log(`[grant-access] Updating grant ${existingGrant.id} end_at: ${existingGrant.end_at} -> ${activeUntil}`);
+          if (newEnd !== existingEnd) {
+            console.log(`[grant-access] Aligning grant ${existingGrant.id} end_at: ${existingGrant.end_at} -> ${activeUntil}`);
             await supabase
               .from('telegram_access_grants')
               .update({ 
                 end_at: activeUntil, 
                 updated_at: new Date().toISOString(),
-                meta: { comment, chat_invite_sent: !!chatInviteLink, channel_invite_sent: !!channelInviteLink, renewed: true },
+                meta: { comment, chat_invite_sent: !!chatInviteLink, channel_invite_sent: !!channelInviteLink, renewed: true, access_rule_id: access_rule_id || null },
               })
               .eq('id', existingGrant.id);
           } else {
@@ -831,7 +839,7 @@ Deno.serve(async (req) => {
           start_at: new Date().toISOString(),
           end_at: activeUntil,
           status: 'active',
-          meta: { comment, chat_invite_sent: !!chatInviteLink, channel_invite_sent: !!channelInviteLink },
+          meta: { comment, chat_invite_sent: !!chatInviteLink, channel_invite_sent: !!channelInviteLink, access_rule_id: access_rule_id || null },
         });
       }
 
