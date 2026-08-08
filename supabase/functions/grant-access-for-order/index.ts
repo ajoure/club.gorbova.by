@@ -2158,7 +2158,7 @@ Deno.serve(async (req) => {
           try {
             if (productId) {
               const { data: prodRow } = await supabase
-                .from('products')
+                .from('products_v2')
                 .select('name')
                 .eq('id', productId)
                 .maybeSingle();
@@ -2187,6 +2187,12 @@ Deno.serve(async (req) => {
               club_id: clubId,
               source_id: orderId,
               source: 'grant-access-for-order',
+              // Keep Telegram window strictly aligned with the access window
+              // just calculated for this paid order. Without this explicit
+              // lineage, a downstream resolver can see an incomplete
+              // subscription snapshot and leave the Telegram row pending.
+              valid_until: accessEndAt.toISOString(),
+              duration_days: durationDays,
               product_name: dmProductName,
               tariff_name: dmTariffName,
               // Sub-patch B: Pass parent lineage from ledger write
@@ -2197,8 +2203,24 @@ Deno.serve(async (req) => {
           });
 
           if (telegramResponse.ok) {
-            const telegramResult = await telegramResponse.json();
-            results.telegram = telegramResult;
+            results.telegram = await telegramResponse.json();
+          } else {
+            // Telegram is downstream and must not roll back a paid product
+            // entitlement.  It must, however, be observable by the caller
+            // and audit trail; silently dropping a non-2xx response made the
+            // admin UI report a successful grant with no club access.
+            // Consume the body so the response can be closed, but never put
+            // a downstream body into a client-visible fulfilment response or
+            // audit payload: it may contain profile-specific diagnostics.
+            await telegramResponse.text().catch(() => '');
+            results.telegram = {
+              success: false,
+              error: 'telegram_grant_non_2xx',
+              http_status: telegramResponse.status,
+            };
+            console.error(
+              `[grant-access] telegram-grant-access returned ${telegramResponse.status} for order ${orderId}`,
+            );
           }
         }
       } catch (telegramError) {
