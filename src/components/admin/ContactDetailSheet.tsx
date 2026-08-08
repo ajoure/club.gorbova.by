@@ -1535,6 +1535,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
               body: {
                 orderId: orderV2.id,
                 source: "admin_grant",
+                // The UI has an explicit date range.  Pass it to the
+                // canonical fulfiller so the subscription, entitlement and
+                // downstream Telegram grant share the very same window.
+                customAccessStartAt: accessStart.toISOString(),
+                customAccessEndAt: accessEnd.toISOString(),
               },
             }
           );
@@ -1545,6 +1550,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
             toast.warning("Сделка создана, но автоматическая выдача доступа не сработала. Используйте кнопку 'Выдать доступ' на сделке.");
           } else {
             subscriptionId = grantResult?.subscription_id || null;
+            const telegramResult = grantResult?.results?.telegram;
+            if (telegramResult?.success === false) {
+              toast.warning(
+                "Доступ к продукту выдан, но Telegram пока не подключён. " +
+                "Статус сохранён в карточке контакта — повторная выдача не требуется."
+              );
+            } else if (telegramResult?.queued) {
+              toast.info(
+                "Доступ к продукту выдан. Telegram будет открыт после привязки аккаунта клиента."
+              );
+            }
           }
         } catch (grantErr) {
           console.error("grant-access-for-order call failed:", grantErr);
