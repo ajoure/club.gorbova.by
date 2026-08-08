@@ -813,27 +813,48 @@ Deno.serve(async (req) => {
     
     // Determine base start date:
     // 1. A deliberate admin correction may supply an exact start date.
-    // 2. Otherwise a commercial access window begins when the order is paid,
-    //    never when a draft/deal happened to be created.  Using created_at here
-    //    made delayed payments expire immediately after a replay/recovery.
-    // 3. Missing paid_at is an incomplete payment fact, not permission to
-    //    invent a fresh window from "now" or from the deal creation date.
+    // 2. Otherwise a commercial access window begins at the first confirmed
+    //    successful payment, never when a draft/deal happened to be created.
+    //    The payment timestamp belongs to payments_v2, not orders_v2.
+    // 3. Missing payment evidence is an incomplete payment fact, not
+    //    permission to invent a fresh window from "now" or the deal date.
     let baseStartDate: Date;
     if (customAccessStartAt) {
       baseStartDate = new Date(customAccessStartAt);
       console.log(`Using custom access start date: ${customAccessStartAt}`);
-    } else if (order.paid_at && !Number.isNaN(new Date(order.paid_at).getTime())) {
-      baseStartDate = new Date(order.paid_at);
-      console.log(`Using order paid_at as base: ${order.paid_at}`);
     } else {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "access_window_requires_paid_at",
-          message: "Невозможно определить срок доступа: у оплаченного заказа отсутствует корректная дата оплаты.",
-        }),
-        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      const { data: firstSuccessfulPayment, error: paymentWindowError } = await supabase
+        .from("payments_v2")
+        .select("paid_at")
+        .eq("order_id", orderId)
+        .eq("status", "succeeded")
+        .not("paid_at", "is", null)
+        .order("paid_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (paymentWindowError) {
+        console.error("[grant-access-for-order] payment-window lookup failed", paymentWindowError);
+        return new Response(
+          JSON.stringify({ success: false, error: "access_window_payment_lookup_failed" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const paidAt = firstSuccessfulPayment?.paid_at;
+      if (paidAt && !Number.isNaN(new Date(paidAt).getTime())) {
+        baseStartDate = new Date(paidAt);
+        console.log(`Using first successful payment as base: ${paidAt}`);
+      } else {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "access_window_requires_paid_at",
+            message: "Невозможно определить срок доступа: у оплаченного заказа отсутствует корректная дата оплаты.",
+          }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
     }
     
     // Check for existing active subscription for this product to extend from

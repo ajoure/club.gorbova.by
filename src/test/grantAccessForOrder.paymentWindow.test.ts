@@ -9,13 +9,16 @@ const source = readFileSync(
 
 describe("grant-access-for-order payment-window contract", () => {
   it("starts an ordinary access window from the confirmed payment date", () => {
-    expect(source).toMatch(/else if \(order\.paid_at && !Number\.isNaN\(new Date\(order\.paid_at\)\.getTime\(\)\)\)/);
-    expect(source).toContain("baseStartDate = new Date(order.paid_at)");
+    expect(source).toContain('.from("payments_v2")');
+    expect(source).toContain('.eq("status", "succeeded")');
+    expect(source).toContain('.order("paid_at", { ascending: true })');
+    expect(source).toContain("baseStartDate = new Date(paidAt)");
   });
 
-  it("does not revive access from the order creation date or current time", () => {
+  it("does not revive access from the order date or current time", () => {
     const startWindow = source.slice(source.indexOf("// Determine base start date:"), source.indexOf("// Check for existing active subscription"));
     expect(startWindow).not.toContain("order.created_at");
+    expect(startWindow).not.toContain("order.paid_at");
     expect(startWindow).not.toMatch(/baseStartDate\s*=\s*now/);
     expect(startWindow).toContain("access_window_requires_paid_at");
   });
