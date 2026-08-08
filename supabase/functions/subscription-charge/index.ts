@@ -1892,14 +1892,39 @@ async function chargeSubscription(
       // Grant/update Telegram access: per-club membership check
       // If user already in club → update mirrors only. If not → queue grant.
       try {
-        const { data: clubRules } = await supabase
+        const { data: productClubRules, error: productClubRulesError } = await supabase
           .from('access_rules')
-          .select('id, target_ref')
+          .select('id, target_ref, tariff_id, duration_days')
           .eq('product_id', product_id)
+          .is('tariff_id', null)
           .eq('grant_target_type', 'club')
           .eq('is_active', true);
 
-        const clubIds = (clubRules || []).map((r: any) => r.target_ref).filter(Boolean);
+        if (productClubRulesError) throw productClubRulesError;
+
+        let tariffClubRules: any[] = [];
+        if (tariff_id) {
+          const { data, error } = await supabase
+            .from('access_rules')
+            .select('id, target_ref, tariff_id, duration_days')
+            .eq('tariff_id', tariff_id)
+            .eq('grant_target_type', 'club')
+            .eq('is_active', true);
+          if (error) throw error;
+          tariffClubRules = data || [];
+        }
+
+        // Renewals only mirror open-ended/direct club rules. A finite bonus
+        // (for example 30 days bundled with CB20) is granted once from the
+        // first successful payment and must not be renewed with the main
+        // 180/240/300-day product subscription.
+        const applicableClubRules = (tariffClubRules.length > 0
+          ? tariffClubRules
+          : (productClubRules || []))
+          .filter((rule: any) => rule.duration_days === null);
+        const clubIds = [...new Set(
+          applicableClubRules.map((r: any) => r.target_ref).filter(Boolean),
+        )];
 
         if (clubIds.length > 0) {
           const { resolveEffectiveClubAccess, effectiveEndAtIso } = await import('../_shared/resolve-effective-access.ts');

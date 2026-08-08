@@ -13,9 +13,10 @@ const contactSheet = readFileSync(
 );
 
 describe("Telegram grant observability contract", () => {
-  it("keeps the Telegram expiry aligned with the paid access window", () => {
-    expect(grantHandler).toMatch(/valid_until:\s*accessEndAt\.toISOString\(\)/);
-    expect(grantHandler).toMatch(/duration_days:\s*durationDays/);
+  it("keeps the Telegram expiry aligned with the rule-scoped club window", () => {
+    expect(grantHandler).toMatch(/valid_until:\s*clubAccessEndAt\.toISOString\(\)/);
+    expect(grantHandler).toMatch(/duration_days:\s*clubAccessDurationDays/);
+    expect(grantHandler).toMatch(/access_rule_id:\s*matchedClubRule\.id/);
   });
 
   it("does not silently discard a non-2xx Telegram response", () => {

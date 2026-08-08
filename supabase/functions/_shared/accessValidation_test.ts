@@ -1,5 +1,6 @@
 import {
   type AccessCheckResult,
+  calculateRuleBoundClubEndAt,
   selectWiderCommercialAccess,
 } from './accessValidation.ts';
 
@@ -40,4 +41,35 @@ Deno.test('unlimited commercial access wins over finite windows', () => {
 Deno.test('invalid candidates never replace a valid commercial source', () => {
   const current = finite('2027-05-31T00:00:00.000Z', 'current');
   assertEquals(selectWiderCommercialAccess(current, { valid: false }), current);
+});
+
+Deno.test('finite club bonus ends exactly duration_days after confirmed payment', () => {
+  assertEquals(
+    calculateRuleBoundClubEndAt('2026-07-31T09:15:00.000Z', 30),
+    '2026-08-30T09:15:00.000Z',
+  );
+});
+
+Deno.test('finite club bonus fails closed for invalid payment anchors or durations', () => {
+  assertEquals(calculateRuleBoundClubEndAt('not-a-date', 30), null);
+  assertEquals(calculateRuleBoundClubEndAt('2026-07-31T09:15:00.000Z', 0), null);
+  assertEquals(calculateRuleBoundClubEndAt('2026-07-31T09:15:00.000Z', 30.5), null);
+});
+
+Deno.test('a longer directly paid club window wins over the finite bonus', () => {
+  const directClub: AccessCheckResult = {
+    valid: true,
+    source: 'subscription',
+    endAt: '2026-12-01T00:00:00.000Z',
+    subscriptionId: 'paid-club',
+  };
+  const bonus: AccessCheckResult = {
+    valid: true,
+    source: 'paid_order_rule',
+    endAt: '2026-08-30T09:15:00.000Z',
+    orderId: 'cb20-order',
+  };
+
+  assertEquals(selectWiderCommercialAccess(bonus, directClub), directClub);
+  assertEquals(selectWiderCommercialAccess(directClub, bonus), directClub);
 });

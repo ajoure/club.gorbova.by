@@ -18,12 +18,13 @@
 
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { toTzDateKey, dayWindowUtc, APP_TZ } from './timezone.ts';
+import { hasCommercialAccess } from './accessValidation.ts';
 
 /** Grace period: 72h after access_end_at, subscription still valid */
 const GRACE_PERIOD_MS = 72 * 60 * 60 * 1000;
 
 export interface AccessSource {
-  type: 'subscription' | 'entitlement' | 'manual_access';
+  type: 'subscription' | 'entitlement' | 'manual_access' | 'paid_order_rule';
   id: string;
   endAt: Date | null; // null = unlimited
   productId: string | null;
@@ -38,7 +39,7 @@ export interface EffectiveAccessSnapshot {
   /** True if billing-day protection is currently active */
   isProtectedByBillingDay: boolean;
   /** The source that provides the latest (or unlimited) access */
-  sourceType: 'subscription' | 'entitlement' | 'manual_access' | 'billing_day_protection' | null;
+  sourceType: 'subscription' | 'entitlement' | 'manual_access' | 'paid_order_rule' | 'billing_day_protection' | null;
   sourceId: string | null;
   /** All valid sources found */
   allSources: AccessSource[];
@@ -66,156 +67,26 @@ export async function resolveEffectiveClubAccess(
   clubId: string,
   now?: Date,
 ): Promise<EffectiveAccessSnapshot> {
-  const effectiveNow = now || new Date();
-  const nowStr = effectiveNow.toISOString();
-  const allSources: AccessSource[] = [];
-  let isProtectedByBillingDay = false;
+  const resolved = await hasCommercialAccess(supabase, userId, clubId, now);
+  if (!resolved.valid || !resolved.source) return { ...EMPTY_SNAPSHOT };
 
-  // 1. Get all active product_ids for this club via access_rules (SoT)
-  const { data: clubRules } = await supabase
-    .from('access_rules')
-    .select('product_id')
-    .eq('target_ref', clubId)
-    .eq('grant_target_type', 'club')
-    .eq('is_active', true);
-
-  const productIds = (clubRules || []).map((r: any) => r.product_id).filter(Boolean);
-
-  // 2. Check subscriptions (with 72h grace)
-  if (productIds.length > 0) {
-    const graceNowStr = new Date(effectiveNow.getTime() - GRACE_PERIOD_MS).toISOString();
-
-    const { data: subs } = await supabase
-      .from('subscriptions_v2')
-      .select('id, access_end_at, product_id, status')
-      .eq('user_id', userId)
-      .in('product_id', productIds)
-      .in('status', ['active', 'trial', 'past_due'])
-      .or(`access_end_at.is.null,access_end_at.gt.${graceNowStr}`);
-
-    for (const sub of subs || []) {
-      allSources.push({
-        type: 'subscription',
-        id: sub.id,
-        endAt: sub.access_end_at ? new Date(sub.access_end_at) : null,
-        productId: sub.product_id,
-        status: sub.status,
-      });
-    }
-  }
-
-  // 3. Check entitlements
-  if (productIds.length > 0) {
-    const { data: ents } = await supabase
-      .from('entitlements')
-      .select('id, expires_at, product_id, status')
-      .eq('user_id', userId)
-      .in('product_id', productIds)
-      .eq('status', 'active')
-      .or(`expires_at.is.null,expires_at.gt.${nowStr}`);
-
-    for (const ent of ents || []) {
-      allSources.push({
-        type: 'entitlement',
-        id: ent.id,
-        endAt: ent.expires_at ? new Date(ent.expires_at) : null,
-        productId: ent.product_id,
-        status: ent.status,
-      });
-    }
-  }
-
-  // 4. Check manual access (by club_id directly)
-  const { data: manualList } = await supabase
-    .from('telegram_manual_access')
-    .select('id, valid_until')
-    .eq('user_id', userId)
-    .eq('club_id', clubId)
-    .eq('is_active', true)
-    .or(`valid_until.is.null,valid_until.gt.${nowStr}`);
-
-  for (const ma of manualList || []) {
-    allSources.push({
-      type: 'manual_access',
-      id: ma.id,
-      endAt: ma.valid_until ? new Date(ma.valid_until) : null,
-      productId: null,
-    });
-  }
-
-  // 5. Check billing-day protection
-  if (productIds.length > 0) {
-    const todayKey = toTzDateKey(nowStr, APP_TZ);
-    const { start: todayStart, end: todayEnd } = dayWindowUtc(APP_TZ, todayKey);
-
-    const { data: bdSub } = await supabase
-      .from('subscriptions_v2')
-      .select('id, next_charge_at, access_end_at, product_id')
-      .eq('user_id', userId)
-      .in('product_id', productIds)
-      .eq('billing_type', 'provider_managed')
-      .neq('status', 'canceled')
-      .gte('next_charge_at', todayStart)
-      .lt('next_charge_at', todayEnd)
-      .limit(1)
-      .maybeSingle();
-
-    if (bdSub?.next_charge_at) {
-      // Protection until end of billing day (23:59:59 APP_TZ)
-      const endOfDayUtc = new Date(new Date(todayEnd).getTime() - 1000); // todayEnd is midnight next day, -1s = 23:59:59
-      if (effectiveNow < endOfDayUtc) {
-        isProtectedByBillingDay = true;
-        // Add as a synthetic source with end = end of day
-        // But only if no other source already covers this period
-        const alreadyCovered = allSources.some(s =>
-          s.endAt === null || (s.endAt && s.endAt >= endOfDayUtc)
-        );
-        if (!alreadyCovered) {
-          allSources.push({
-            type: 'subscription',
-            id: bdSub.id,
-            endAt: endOfDayUtc,
-            productId: bdSub.product_id,
-            status: 'billing_day_protected',
-          });
-        }
-      }
-    }
-  }
-
-  // 6. Resolve effective end date
-  if (allSources.length === 0) {
-    return { ...EMPTY_SNAPSHOT };
-  }
-
-  // Check for unlimited (NULL endAt)
-  const unlimitedSource = allSources.find(s => s.endAt === null);
-  if (unlimitedSource) {
-    return {
-      effectiveEndAt: null,
-      isUnlimited: true,
-      isProtectedByBillingDay,
-      sourceType: unlimitedSource.type,
-      sourceId: unlimitedSource.id,
-      allSources,
-    };
-  }
-
-  // Find MAX endAt
-  let maxSource = allSources[0];
-  for (const s of allSources) {
-    if (s.endAt && (!maxSource.endAt || s.endAt > maxSource.endAt)) {
-      maxSource = s;
-    }
-  }
+  const sourceId = resolved.subscriptionId || resolved.entitlementId ||
+    resolved.manualAccessId || resolved.orderId || null;
+  const endAt = resolved.endAt ? new Date(resolved.endAt) : null;
+  const source: AccessSource = {
+    type: resolved.source as AccessSource['type'],
+    id: sourceId || 'resolved-commercial-source',
+    endAt,
+    productId: null,
+  };
 
   return {
-    effectiveEndAt: maxSource.endAt,
-    isUnlimited: false,
-    isProtectedByBillingDay,
-    sourceType: maxSource.type,
-    sourceId: maxSource.id,
-    allSources,
+    effectiveEndAt: endAt,
+    isUnlimited: resolved.endAt === null,
+    isProtectedByBillingDay: false,
+    sourceType: source.type,
+    sourceId,
+    allSources: [source],
   };
 }
 

@@ -586,11 +586,12 @@ Deno.serve(async (req) => {
           // C1: Read product info
           const { data: subV2Full } = await supabase
             .from('subscriptions_v2')
-            .select('user_id, product_id, products_v2(id, code)')
+            .select('user_id, product_id, tariff_id, products_v2(id, code)')
             .eq('id', effectiveSubV2Id)
             .maybeSingle();
 
           const productId = subV2Full?.product_id;
+          const tariffId = subV2Full?.tariff_id;
           const productCode = (subV2Full?.products_v2 as any)?.code;
           const chainUserId = subV2Full?.user_id;
 
@@ -658,12 +659,31 @@ Deno.serve(async (req) => {
             });
 
             // C3: Telegram grants — extend latest active (via access_rules SoT)
-            const { data: clubRules } = await supabase
+            const { data: productClubRules, error: productClubRulesError } = await supabase
               .from('access_rules')
-              .select('id, target_ref')
+              .select('id, target_ref, tariff_id, duration_days')
               .eq('product_id', productId)
+              .is('tariff_id', null)
               .eq('grant_target_type', 'club')
               .eq('is_active', true);
+
+            if (productClubRulesError) throw productClubRulesError;
+
+            let tariffClubRules: any[] = [];
+            if (tariffId) {
+              const { data, error } = await supabase
+                .from('access_rules')
+                .select('id, target_ref, tariff_id, duration_days')
+                .eq('tariff_id', tariffId)
+                .eq('grant_target_type', 'club')
+                .eq('is_active', true);
+              if (error) throw error;
+              tariffClubRules = data || [];
+            }
+
+            const clubRules = tariffClubRules.length > 0
+              ? tariffClubRules
+              : (productClubRules || []);
 
             if (!clubRules || clubRules.length === 0) {
               await supabase.from('audit_logs').insert({
@@ -673,9 +693,24 @@ Deno.serve(async (req) => {
                 meta: { product_id: productId, subscription_id },
               });
             } else {
+              const { resolveEffectiveClubAccess, effectiveEndAtIso } = await import(
+                '../_shared/resolve-effective-access.ts'
+              );
               for (const rule of clubRules) {
                 const clubId = rule.target_ref;
                 if (!clubId) continue;
+                const clubSnapshot = await resolveEffectiveClubAccess(
+                  supabase,
+                  chainUserId,
+                  clubId,
+                );
+                if (clubSnapshot.allSources.length === 0) {
+                  console.log(
+                    `[access-chain] No active commercial source for ${chainUserId}/${clubId}; grant not extended`,
+                  );
+                  continue;
+                }
+                const clubEndAt = effectiveEndAtIso(clubSnapshot);
                 const { data: latestGrant } = await supabase
                   .from('telegram_access_grants')
                   .select('id, end_at')
@@ -687,15 +722,11 @@ Deno.serve(async (req) => {
                   .maybeSingle();
 
                 if (latestGrant) {
-                  const currentEnd = latestGrant.end_at ? new Date(latestGrant.end_at).getTime() : 0;
-                  const newEnd = new Date(accessEndAt).getTime();
-                  if (newEnd > currentEnd) {
-                    await supabase
-                      .from('telegram_access_grants')
-                      .update({ end_at: accessEndAt })
-                      .eq('id', latestGrant.id);
-                    console.log(`[access-chain] Extended telegram grant ${latestGrant.id} to ${accessEndAt}`);
-                  }
+                  await supabase
+                    .from('telegram_access_grants')
+                    .update({ end_at: clubEndAt })
+                    .eq('id', latestGrant.id);
+                  console.log(`[access-chain] Aligned telegram grant ${latestGrant.id} to ${clubEndAt}`);
                 } else {
                   await supabase
                     .from('telegram_access_grants')
@@ -706,7 +737,7 @@ Deno.serve(async (req) => {
                       source_id: subscription_id,
                       status: 'active',
                       start_at: new Date().toISOString(),
-                      end_at: accessEndAt,
+                      end_at: clubEndAt,
                     });
                   console.log(`[access-chain] Created telegram grant for ${chainUserId}/${clubId}`);
                 }

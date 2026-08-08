@@ -18,13 +18,15 @@ const GRACE_PERIOD_MS = 72 * 60 * 60 * 1000;
 
 export interface AccessCheckResult {
   valid: boolean;
-  source?: 'subscription' | 'entitlement' | 'manual_access' | 'telegram_access' | 'telegram_grant';
+  source?: 'subscription' | 'entitlement' | 'manual_access' | 'paid_order_rule' | 'telegram_access' | 'telegram_grant';
   endAt?: string | null;
   subscriptionId?: string;
   entitlementId?: string;
   manualAccessId?: string;
   telegramAccessId?: string;
   telegramGrantId?: string;
+  orderId?: string;
+  accessRuleId?: string;
 }
 
 /**
@@ -36,7 +38,7 @@ export interface AccessCheckResult {
  * — `hasValidAccess` (legacy) — объединение обоих. Сохранён для обратной совместимости.
  *   Колл-сайты revoke/kick/grace мигрируются отдельным патчем ПОСЛЕ dry-run rowcount.
  */
-export type CommercialSource = 'subscription' | 'entitlement' | 'manual_access';
+export type CommercialSource = 'subscription' | 'entitlement' | 'manual_access' | 'paid_order_rule';
 export type ProjectionSource = 'telegram_access' | 'telegram_grant';
 
 /**
@@ -62,6 +64,124 @@ export function selectWiderCommercialAccess(
   return current;
 }
 
+export interface ClubAccessRuleScope {
+  id: string;
+  productId: string;
+  tariffId: string | null;
+  durationDays: number | null;
+  conditions: Record<string, unknown> | null;
+}
+
+function parsePositiveDurationDays(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+/**
+ * A finite club bonus is anchored to the confirmed payment, not to the
+ * primary product subscription end and not to the moment a repair runs.
+ */
+export function calculateRuleBoundClubEndAt(
+  paidAt: string,
+  durationDays: number,
+): string | null {
+  const paidAtMs = new Date(paidAt).getTime();
+  if (!Number.isFinite(paidAtMs) || !Number.isInteger(durationDays) || durationDays <= 0) {
+    return null;
+  }
+  return new Date(paidAtMs + durationDays * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function ruleMatchesSource(
+  rule: ClubAccessRuleScope,
+  productId: string | null,
+  tariffId: string | null,
+): boolean {
+  if (!productId || rule.productId !== productId) return false;
+  return rule.tariffId === null || rule.tariffId === tariffId;
+}
+
+function conditionMetForUser(
+  rule: ClubAccessRuleScope,
+  userId: string,
+  paidOrders: Array<{ user_id: string; product_id: string | null; tariff_id: string | null }>,
+): boolean {
+  const conditionType = rule.conditions?.condition_type;
+  if (!conditionType) return true;
+  if (conditionType !== 'prior_purchase') return false;
+
+  const requiredProductId = typeof rule.conditions?.required_product_id === 'string'
+    ? rule.conditions.required_product_id
+    : null;
+  const requiredTariffId = typeof rule.conditions?.required_tariff_id === 'string'
+    ? rule.conditions.required_tariff_id
+    : null;
+  if (!requiredProductId) return false;
+
+  return paidOrders.some(order =>
+    order.user_id === userId &&
+    order.product_id === requiredProductId &&
+    (!requiredTariffId || order.tariff_id === requiredTariffId)
+  );
+}
+
+async function getClubRuleScope(
+  supabase: SupabaseClient,
+  clubId?: string,
+): Promise<ClubAccessRuleScope[] | null> {
+  if (!clubId) return null;
+
+  const { data, error } = await supabase
+    .from('access_rules')
+    .select('id, product_id, tariff_id, duration_days, conditions')
+    .eq('target_ref', clubId)
+    .eq('grant_target_type', 'club')
+    .eq('is_active', true);
+
+  if (error) throw new Error(`club_access_rules_failed: ${error.message}`);
+
+  const rawRules = data || [];
+  const unresolvedTariffIds = [...new Set(
+    rawRules
+      .filter((rule: any) => !rule.product_id && rule.tariff_id)
+      .map((rule: any) => rule.tariff_id),
+  )];
+  const tariffProductIds = new Map<string, string>();
+
+  if (unresolvedTariffIds.length > 0) {
+    const { data: tariffs, error: tariffError } = await supabase
+      .from('tariffs')
+      .select('id, product_id')
+      .in('id', unresolvedTariffIds);
+    if (tariffError) throw new Error(`club_access_rule_tariffs_failed: ${tariffError.message}`);
+    for (const tariff of tariffs || []) {
+      if (tariff.id && tariff.product_id) tariffProductIds.set(tariff.id, tariff.product_id);
+    }
+  }
+
+  const normalized: ClubAccessRuleScope[] = [];
+  for (const rule of rawRules as any[]) {
+    const productId = rule.product_id || (rule.tariff_id ? tariffProductIds.get(rule.tariff_id) : null);
+    // An unresolved rule must never broaden access.
+    if (!productId) continue;
+    const durationDays = parsePositiveDurationDays(rule.duration_days);
+    // Invalid finite configuration must fail closed; only an actual NULL means
+    // an open-ended/direct mapping.
+    if (rule.duration_days !== null && rule.duration_days !== undefined && durationDays === null) {
+      continue;
+    }
+    normalized.push({
+      id: rule.id,
+      productId,
+      tariffId: rule.tariff_id || null,
+      durationDays,
+      conditions: rule.conditions && typeof rule.conditions === 'object' ? rule.conditions : null,
+    });
+  }
+  return normalized;
+}
+
 /**
  * Fetch product IDs mapped to a specific club.
  * Returns null if no clubId provided (global/unscoped check).
@@ -70,20 +190,15 @@ async function getClubProductIds(
   supabase: SupabaseClient,
   clubId?: string
 ): Promise<string[] | null> {
-  if (!clubId) return null;
-  
-  const { data, error } = await supabase
-    .from('access_rules')
-    .select('product_id')
-    .eq('target_ref', clubId)
-    .eq('grant_target_type', 'club')
-    .eq('is_active', true);
+  const rules = await getClubRuleScope(supabase, clubId);
+  if (rules === null) return null;
 
-  if (error) {
-    throw new Error(`club_access_rules_failed: ${error.message}`);
-  }
-  
-  return (data || []).map((r: any) => r.product_id).filter(Boolean);
+  // Only open-ended rules align the club with the source product window.
+  // Finite bonus rules are resolved from paid_at + duration_days below; adding
+  // their product IDs here would silently turn 30 days into 6/8/10 months.
+  return [...new Set(
+    rules.filter(rule => rule.durationDays === null).map(rule => rule.productId),
+  )];
 }
 
 /**
@@ -548,6 +663,209 @@ export async function hasValidAccessBatch(
 // колл-сайтов в этом же патче. Только новые функции, готовые к миграции.
 // ============================================================================
 
+function selectApplicableRules(
+  rules: ClubAccessRuleScope[],
+  productId: string | null,
+  tariffId: string | null,
+): ClubAccessRuleScope[] {
+  const matching = rules.filter(rule => ruleMatchesSource(rule, productId, tariffId));
+  const tariffSpecific = matching.filter(rule => rule.tariffId !== null);
+  return tariffSpecific.length > 0
+    ? tariffSpecific
+    : matching.filter(rule => rule.tariffId === null);
+}
+
+async function resolveClubScopedCommercialAccessBatch(
+  supabase: SupabaseClient,
+  userIds: string[],
+  clubId: string,
+  effectiveNow: Date,
+): Promise<Map<string, AccessCheckResult>> {
+  const nowStr = effectiveNow.toISOString();
+  const subGraceNowStr = new Date(effectiveNow.getTime() - GRACE_PERIOD_MS).toISOString();
+  const results = new Map<string, AccessCheckResult>();
+  for (const uid of userIds) results.set(uid, { valid: false });
+  if (userIds.length === 0) return results;
+
+  const clubRules = await getClubRuleScope(supabase, clubId) || [];
+  const directRules = clubRules.filter(rule => rule.durationDays === null);
+  const bonusRules = clubRules.filter(rule => rule.durationDays !== null);
+  const directProductIds = [...new Set(directRules.map(rule => rule.productId))];
+
+  const conditionProductIds = clubRules.flatMap(rule => {
+    const required = rule.conditions?.required_product_id;
+    return typeof required === 'string' ? [required] : [];
+  });
+  const paidOrderProductIds = [...new Set([
+    ...bonusRules.map(rule => rule.productId),
+    ...conditionProductIds,
+  ])];
+  let paidOrders: Array<{
+    id: string;
+    user_id: string;
+    product_id: string | null;
+    tariff_id: string | null;
+  }> = [];
+
+  if (paidOrderProductIds.length > 0) {
+    const { data, error } = await supabase
+      .from('orders_v2')
+      .select('id, user_id, product_id, tariff_id')
+      .in('user_id', userIds)
+      .in('product_id', paidOrderProductIds)
+      .eq('status', 'paid');
+    if (error) throw new Error(`commercial_access_rule_orders_failed: ${error.message}`);
+    paidOrders = (data || []) as typeof paidOrders;
+  }
+
+  // 1. Direct club products: their own paid subscription window remains SoT.
+  if (directProductIds.length > 0) {
+    const { data, error } = await supabase
+      .from('subscriptions_v2')
+      .select('id, user_id, product_id, tariff_id, access_end_at')
+      .in('user_id', userIds)
+      .in('product_id', directProductIds)
+      .in('status', ['active', 'trial', 'past_due'])
+      .or(`access_end_at.is.null,access_end_at.gt.${subGraceNowStr}`);
+    if (error) throw new Error(`commercial_access_subscriptions_failed: ${error.message}`);
+
+    for (const sub of data || []) {
+      const applicable = selectApplicableRules(directRules, sub.product_id, sub.tariff_id)
+        .filter(rule => conditionMetForUser(rule, sub.user_id, paidOrders));
+      if (applicable.length === 0) continue;
+      results.set(sub.user_id, selectWiderCommercialAccess(results.get(sub.user_id), {
+        valid: true,
+        source: 'subscription',
+        endAt: sub.access_end_at,
+        subscriptionId: sub.id,
+        accessRuleId: applicable[0].id,
+      }));
+    }
+
+    const { data: entitlements, error: entitlementError } = await supabase
+      .from('entitlements')
+      .select('id, user_id, product_id, expires_at, meta')
+      .in('user_id', userIds)
+      .in('product_id', directProductIds)
+      .eq('status', 'active')
+      .or(`expires_at.is.null,expires_at.gt.${nowStr}`);
+    if (entitlementError) throw new Error(`commercial_access_entitlements_failed: ${entitlementError.message}`);
+
+    for (const entitlement of entitlements || []) {
+      const tariffId = typeof entitlement.meta?.tariff_id === 'string'
+        ? entitlement.meta.tariff_id
+        : null;
+      const applicable = selectApplicableRules(directRules, entitlement.product_id, tariffId)
+        .filter(rule => conditionMetForUser(rule, entitlement.user_id, paidOrders));
+      if (applicable.length === 0) continue;
+      results.set(entitlement.user_id, selectWiderCommercialAccess(results.get(entitlement.user_id), {
+        valid: true,
+        source: 'entitlement',
+        endAt: entitlement.expires_at,
+        entitlementId: entitlement.id,
+        accessRuleId: applicable[0].id,
+      }));
+    }
+  }
+
+  // 2. Finite bonus rules: confirmed paid_at + rule.duration_days. The primary
+  // product's subscription end is deliberately never used here.
+  const bonusSourceOrders = paidOrders.filter(order =>
+    selectApplicableRules(bonusRules, order.product_id, order.tariff_id)
+      .some(rule => conditionMetForUser(rule, order.user_id, paidOrders))
+  );
+  if (bonusSourceOrders.length > 0) {
+    const orderIds = bonusSourceOrders.map(order => order.id);
+    const { data: payments, error: paymentError } = await supabase
+      .from('payments_v2')
+      .select('id, order_id, paid_at')
+      .in('order_id', orderIds)
+      .eq('status', 'succeeded')
+      .not('paid_at', 'is', null)
+      .order('paid_at', { ascending: true });
+    if (paymentError) throw new Error(`commercial_access_rule_payments_failed: ${paymentError.message}`);
+
+    const firstPaidAtByOrder = new Map<string, string>();
+    for (const payment of payments || []) {
+      if (payment.order_id && payment.paid_at && !firstPaidAtByOrder.has(payment.order_id)) {
+        firstPaidAtByOrder.set(payment.order_id, payment.paid_at);
+      }
+    }
+
+    for (const order of bonusSourceOrders) {
+      const paidAt = firstPaidAtByOrder.get(order.id);
+      if (!paidAt) continue; // fail closed: no confirmed payment anchor
+      const applicable = selectApplicableRules(bonusRules, order.product_id, order.tariff_id)
+        .filter(rule => conditionMetForUser(rule, order.user_id, paidOrders));
+      for (const rule of applicable) {
+        const endAt = calculateRuleBoundClubEndAt(paidAt, rule.durationDays!);
+        if (!endAt || new Date(endAt).getTime() <= effectiveNow.getTime()) continue;
+        results.set(order.user_id, selectWiderCommercialAccess(results.get(order.user_id), {
+          valid: true,
+          source: 'paid_order_rule',
+          endAt,
+          orderId: order.id,
+          accessRuleId: rule.id,
+        }));
+      }
+    }
+  }
+
+  // 3. Manual club access is independent and may deliberately override rules.
+  const manualQuery = supabase
+    .from('telegram_manual_access')
+    .select('id, user_id, valid_until')
+    .in('user_id', userIds)
+    .eq('club_id', clubId)
+    .eq('is_active', true)
+    .or(`valid_until.is.null,valid_until.gt.${nowStr}`);
+  const { data: manualRows, error: manualError } = await manualQuery;
+  if (manualError) throw new Error(`commercial_access_manual_failed: ${manualError.message}`);
+  for (const manual of manualRows || []) {
+    results.set(manual.user_id, selectWiderCommercialAccess(results.get(manual.user_id), {
+      valid: true,
+      source: 'manual_access',
+      endAt: manual.valid_until,
+      manualAccessId: manual.id,
+    }));
+  }
+
+  // 4. Billing-day protection applies only to direct club subscriptions.
+  if (directProductIds.length > 0) {
+    const todayKey = toTzDateKey(nowStr, APP_TZ);
+    const { start: todayStart, end: todayEnd } = dayWindowUtc(APP_TZ, todayKey);
+    const { data, error } = await supabase
+      .from('subscriptions_v2')
+      .select('id, user_id, product_id, tariff_id, next_charge_at, access_end_at')
+      .in('user_id', userIds)
+      .in('product_id', directProductIds)
+      .eq('billing_type', 'provider_managed')
+      .neq('status', 'canceled')
+      .gte('next_charge_at', todayStart)
+      .lt('next_charge_at', todayEnd);
+    if (error) throw new Error(`commercial_access_billing_day_failed: ${error.message}`);
+
+    const endOfDayUtcMs = new Date(todayEnd).getTime() - 1000;
+    for (const sub of data || []) {
+      const applicable = selectApplicableRules(directRules, sub.product_id, sub.tariff_id)
+        .filter(rule => conditionMetForUser(rule, sub.user_id, paidOrders));
+      if (applicable.length === 0 || effectiveNow.getTime() > endOfDayUtcMs) continue;
+      const protectedUntil = sub.access_end_at
+        ? new Date(Math.max(new Date(sub.access_end_at).getTime(), endOfDayUtcMs)).toISOString()
+        : null;
+      results.set(sub.user_id, selectWiderCommercialAccess(results.get(sub.user_id), {
+        valid: true,
+        source: 'subscription',
+        endAt: protectedUntil,
+        subscriptionId: sub.id,
+        accessRuleId: applicable[0].id,
+      }));
+    }
+  }
+
+  return results;
+}
+
 /**
  * COMMERCIAL access only: subscriptions_v2 → entitlements → telegram_manual_access →
  * billing-day protection. Полностью игнорирует telegram_access / telegram_access_grants
@@ -566,6 +884,16 @@ export async function hasCommercialAccess(
   const effectiveNow = now || new Date();
   const nowStr = effectiveNow.toISOString();
   const subGraceNowStr = new Date(effectiveNow.getTime() - GRACE_PERIOD_MS).toISOString();
+
+  if (clubId) {
+    const scoped = await resolveClubScopedCommercialAccessBatch(
+      supabase,
+      [userId],
+      clubId,
+      effectiveNow,
+    );
+    return scoped.get(userId) || { valid: false };
+  }
 
   const clubProductIds = await getClubProductIds(supabase, clubId);
 
@@ -722,6 +1050,10 @@ export async function hasCommercialAccessBatch(
   const results = new Map<string, AccessCheckResult>();
   for (const uid of userIds) results.set(uid, { valid: false });
   if (userIds.length === 0) return results;
+
+  if (clubId) {
+    return resolveClubScopedCommercialAccessBatch(supabase, userIds, clubId, effectiveNow);
+  }
 
   const clubProductIds = await getClubProductIds(supabase, clubId);
 
