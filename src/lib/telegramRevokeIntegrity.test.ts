@@ -19,4 +19,15 @@ describe("Telegram revoke integrity", () => {
     expect(expirySource).toContain("if (revokeFailure)");
     expect(expirySource).toContain("continue;");
   });
+
+  it("implements a side-effect-free dry run before any revoke delivery", () => {
+    expect(revokeSource).toContain("if (dryRun)");
+    expect(revokeSource).toContain("dry_run: true");
+    expect(revokeSource.indexOf("if (dryRun)")).toBeLessThan(revokeSource.indexOf("// Ban from chat"));
+  });
+
+  it("allows a reconciliation to opt out of customer notification explicitly", () => {
+    expect(revokeSource).toContain("const notifyCustomer = body.notify_customer !== false");
+    expect(revokeSource).toContain("notify_customer: notifyCustomer");
+  });
 });
