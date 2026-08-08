@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
     // Get all active clubs with bots
     const { data: clubs } = await supabase
       .from('telegram_clubs')
-      .select('id, chat_id, channel_id, join_request_mode, club_name, telegram_bots(id, bot_token_encrypted, status)')
+      .select('id, chat_id, channel_id, channel_grant_enabled, join_request_mode, club_name, telegram_bots(id, bot_token_encrypted, status)')
       .eq('is_active', true);
 
     if (!clubs?.length) {
@@ -91,6 +91,8 @@ Deno.serve(async (req) => {
       const bot = (club as any).telegram_bots;
       if (!bot || bot.status !== 'active') continue;
       const botToken = bot.bot_token_encrypted;
+      const channelGrantEnabled = (club as any).channel_grant_enabled !== false;
+      const requiresChannel = Boolean(club.channel_id && channelGrantEnabled);
 
       // Find ghost candidates: access_status=ok, not in chat/channel, invite sent > 4h ago
       const { data: ghosts } = await supabase
@@ -198,7 +200,7 @@ Deno.serve(async (req) => {
           await new Promise(r => setTimeout(r, THROTTLE_MS));
         }
 
-        if (!ghost.in_channel && club.channel_id) {
+        if (!ghost.in_channel && requiresChannel && club.channel_id) {
           const result = await telegramRequest(botToken, 'getChatMember', {
             chat_id: club.channel_id,
             user_id: ghost.telegram_user_id,
@@ -212,7 +214,7 @@ Deno.serve(async (req) => {
 
         // If already in both, just update DB
         if ((alreadyInChat || ghost.in_chat || !club.chat_id) && 
-            (alreadyInChannel || ghost.in_channel || !club.channel_id)) {
+            (alreadyInChannel || ghost.in_channel || !requiresChannel)) {
           const update: Record<string, unknown> = { updated_at: new Date().toISOString(), last_verified_at: new Date().toISOString() };
           if (alreadyInChat) { update.in_chat = true; update.verified_in_chat_at = new Date().toISOString(); }
           if (alreadyInChannel) { update.in_channel = true; update.verified_in_channel_at = new Date().toISOString(); }
@@ -223,7 +225,7 @@ Deno.serve(async (req) => {
 
         // Step 2: Unban if needed, create invite, send DM
         const needsChat = !ghost.in_chat && !alreadyInChat && club.chat_id;
-        const needsChannel = !ghost.in_channel && !alreadyInChannel && club.channel_id;
+        const needsChannel = requiresChannel && !ghost.in_channel && !alreadyInChannel && club.channel_id;
 
         let chatLink: string | null = null;
         let channelLink: string | null = null;
