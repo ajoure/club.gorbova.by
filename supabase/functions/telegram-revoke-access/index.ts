@@ -23,6 +23,8 @@ interface RevokeAccessRequest {
    * No bans and no database state changes.
    */
   dry_run?: boolean;
+  /** Suppress customer notifications for an operator-approved reconciliation. */
+  notify_customer?: boolean;
 }
 
 
@@ -211,6 +213,9 @@ Deno.serve(async (req) => {
     const body: RevokeAccessRequest = await req.json();
     let { user_id, telegram_user_id, club_id, reason, is_manual, admin_id } = body;
     const forceRevoke = (body as any).force_revoke === true;
+    const dryRun = body.dry_run === true;
+    // Existing UI calls keep notifying. Bulk reconciliation opts out explicitly.
+    const notifyCustomer = body.notify_customer !== false;
     // Phase 1: read parent keys from body for downstream lineage (nullable, backward compat)
     const parentEventKey: string | null = (body as any).parent_event_key || null;
     const parentExecutionKey: string | null = (body as any).parent_execution_key || null;
@@ -219,7 +224,7 @@ Deno.serve(async (req) => {
     const isAdminAction = is_manual === true || (typeof admin_id === 'string' && admin_id.length > 0);
 
     console.log('Revoke access request:', {
-      user_id, club_id, reason, is_manual, admin_id, isAdminAction, forceRevoke
+      user_id, club_id, reason, is_manual, admin_id, isAdminAction, forceRevoke, dryRun, notifyCustomer
     });
 
     if (!user_id && !telegram_user_id) {
@@ -243,7 +248,9 @@ Deno.serve(async (req) => {
     // GUARD — запрет revoke если есть активный access
     // PATCH: пропускаем при isAdminAction (is_manual || admin_id) или forceRevoke
     // =================================================================
-    if (user_id && !forceRevoke && !isAdminAction) {
+    // dry_run is read-only. It intentionally bypasses this blocking branch,
+    // because the branch records a ledger/audit skip as a side effect.
+    if (user_id && !forceRevoke && !isAdminAction && !dryRun) {
       // COMMERCIAL-ONLY (2026-05-22): revoke смотрит только на коммерческое право (subs/ents/manual + billing-day).
       // Stale telegram_access projection больше не блокирует revoke. Admin/creator guard остаётся в kick-функциях.
       const accessResult = await hasCommercialAccess(supabase, user_id, club_id || undefined);
@@ -369,6 +376,27 @@ Deno.serve(async (req) => {
       });
     }
 
+    // A dry run is a genuine preflight: it must not call Telegram, write to
+    // the database, or send a customer notification. Target resolution above
+    // is retained so that the operator can verify the exact club first.
+    if (dryRun) {
+      return new Response(JSON.stringify({
+        success: true,
+        dry_run: true,
+        planned: {
+          user_id: profileUserId,
+          telegram_user_id: telegramUserId,
+          club_id,
+          revoke_chat: Boolean(telegramUserId),
+          revoke_channel: Boolean(telegramUserId),
+          notify_customer: false,
+          deactivate_manual_access: is_manual === true,
+        },
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // If user has no Telegram linked, we cannot ban/DM.
     // Send email fallback (requested behavior) and still mark access as revoked in DB.
     if (!telegramUserId && profileUserId) {
@@ -381,7 +409,7 @@ Deno.serve(async (req) => {
         .single();
 
       let emailSent = false;
-      if (profile?.email) {
+      if (notifyCustomer && profile?.email) {
         try {
           await supabase.functions.invoke('send-email', {
             body: {
@@ -647,15 +675,17 @@ Deno.serve(async (req) => {
       ? 'Доступ отозван администратором.'
       : 'Доступ к клубу закрыт.';
 
-    dmResult = await sendMessage(
-      botToken,
-      telegramUserId,
-      `❌ Доступ отозван — ${clubName}\n\n${reasonText}\n\nВы можете вернуться в любой момент, оформив подписку 👇`,
-      keyboard
-    );
+    if (notifyCustomer) {
+      dmResult = await sendMessage(
+        botToken,
+        telegramUserId,
+        `❌ Доступ отозван — ${clubName}\n\n${reasonText}\n\nВы можете вернуться в любой момент, оформив подписку 👇`,
+        keyboard
+      );
+    }
 
     // Email fallback if Telegram DM failed
-    if (!dmResult?.ok && profileUserId) {
+    if (notifyCustomer && !dmResult?.ok && profileUserId) {
       console.log('Telegram DM failed, attempting email fallback...');
       const { data: profile } = await supabase
         .from('profiles')
@@ -695,7 +725,7 @@ Deno.serve(async (req) => {
       reason,
       telegram_chat_result: chatKickResult,
       telegram_channel_result: channelKickResult,
-      meta: { dm_sent: dmResult?.ok, dm_error: dmResult?.description },
+      meta: { dm_sent: dmResult?.ok ?? false, dm_error: dmResult?.description, notify_customer: notifyCustomer },
     });
 
     // Legacy log
@@ -731,7 +761,7 @@ Deno.serve(async (req) => {
       console.error('[telegram-revoke-access] Ledger error (non-blocking):', ledgerErr);
     }
 
-    console.log('Revoke completed:', { telegramUserId, chatRevoked, channelRevoked, dm_sent: dmResult?.ok });
+    console.log('Revoke completed:', { telegramUserId, chatRevoked, channelRevoked, dm_sent: dmResult?.ok ?? false, notifyCustomer });
 
     return new Response(JSON.stringify({
       success: true,
@@ -739,7 +769,8 @@ Deno.serve(async (req) => {
       channel_revoked: channelRevoked,
       chat_error: chatKickResult?.error,
       channel_error: channelKickResult?.error,
-      dm_sent: dmResult?.ok,
+      dm_sent: dmResult?.ok ?? false,
+      notify_customer: notifyCustomer,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
