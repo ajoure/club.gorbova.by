@@ -25,6 +25,7 @@ export interface TelegramClub {
   chat_invite_link: string | null;
   chat_status: string | null;
   channel_id: number | null;
+  channel_grant_enabled: boolean;
   channel_invite_link: string | null;
   channel_status: string | null;
   access_mode: string;

@@ -374,9 +374,16 @@ Deno.serve(async (req) => {
       // Queue notification for when user links telegram
       console.log('Telegram not linked, queueing notification');
       
-      // Get club info for context
+      // Get club info for context. The grant policy must already be reflected
+      // in the pending projection even before Telegram is linked.
       // Use resolvedClubIds — NO fallback to "first active club"
       const targetClubId = resolvedClubIds[0]; // Already validated non-empty above
+      const { data: targetClub } = await supabase
+        .from('telegram_clubs')
+        .select('channel_id, channel_grant_enabled')
+        .eq('id', targetClubId)
+        .maybeSingle();
+      const targetChannelGrantEnabled = targetClub?.channel_grant_enabled !== false;
 
       // Queue access granted notification
       await supabase.from('pending_telegram_notifications').insert({
@@ -388,6 +395,7 @@ Deno.serve(async (req) => {
           source: source || (is_manual ? 'manual' : 'system'),
           comment,
           valid_until,
+          channel_grant_enabled: targetChannelGrantEnabled,
         },
         priority: 10, // High priority for access notifications
       });
@@ -398,7 +406,7 @@ Deno.serve(async (req) => {
           user_id,
           club_id: targetClubId,
           state_chat: 'pending',
-          state_channel: 'pending',
+          state_channel: targetClub?.channel_id && targetChannelGrantEnabled ? 'pending' : 'none',
           invites_pending: true,
           active_until: valid_until || null,
         }, { onConflict: 'user_id,club_id' });
@@ -593,6 +601,8 @@ Deno.serve(async (req) => {
 
       const botToken = bot.bot_token_encrypted;
       const joinRequestMode = club.join_request_mode ?? false;
+      const channelGrantEnabled = club.channel_grant_enabled !== false;
+      const shouldGrantChannel = Boolean(club.channel_id && channelGrantEnabled);
 
       let chatInviteLink: string | null = null;
       let channelInviteLink: string | null = null;
@@ -726,7 +736,7 @@ Deno.serve(async (req) => {
       }
 
       // Process channel
-      if (club.channel_id) {
+      if (shouldGrantChannel && club.channel_id) {
         const unbanResult = await unbanUser(botToken, club.channel_id, telegramUserId);
         channelUnbanned = unbanResult.was_banned || false;
         
@@ -770,7 +780,7 @@ Deno.serve(async (req) => {
         user_id,
         club_id: club.id,
         state_chat: 'pending',
-        state_channel: 'pending',
+        state_channel: shouldGrantChannel ? 'pending' : 'none',
         active_until: activeUntil,
         last_sync_at: new Date().toISOString(),
       }, { onConflict: 'user_id,club_id' });
@@ -1260,7 +1270,14 @@ Deno.serve(async (req) => {
         reason: comment,
         telegram_chat_result: { unbanned: chatUnbanned, invite_link: chatInviteLink },
         telegram_channel_result: { unbanned: channelUnbanned, invite_link: channelInviteLink },
-        meta: { dm_sent: dmSent, dm_error: dmError, valid_until: activeUntil, join_request_mode: joinRequestMode },
+        meta: {
+          dm_sent: dmSent,
+          dm_error: dmError,
+          valid_until: activeUntil,
+          join_request_mode: joinRequestMode,
+          channel_grant_enabled: channelGrantEnabled,
+          channel_skipped_by_policy: Boolean(club.channel_id && !channelGrantEnabled),
+        },
       });
 
       // Legacy log - with extended meta for UI display
@@ -1281,7 +1298,7 @@ Deno.serve(async (req) => {
         user_id,
         club_id: club.id,
         action: is_manual ? 'MANUAL_GRANT' : 'AUTO_GRANT',
-        target: 'both',
+        target: shouldGrantChannel ? 'both' : 'chat',
         status: (chatInviteLink || channelInviteLink) ? 'ok' : 'partial',
         meta: { 
           chat_invite_link: chatInviteLink, 
@@ -1295,6 +1312,8 @@ Deno.serve(async (req) => {
           source_id,
           dm_sent: dmSent,
           dm_error: dmError || null,
+          channel_grant_enabled: channelGrantEnabled,
+          channel_skipped_by_policy: Boolean(club.channel_id && !channelGrantEnabled),
           mirrored_to_telegram_messages: wasMirroredToMessages,
           telegram_message_id: mirroredTelegramMessageId,
         },
@@ -1307,6 +1326,8 @@ Deno.serve(async (req) => {
         club_id: club.id,
         chat_invite_link: chatInviteLink,
         channel_invite_link: channelInviteLink,
+        channel_grant_enabled: channelGrantEnabled,
+        channel_skipped_by_policy: Boolean(club.channel_id && !channelGrantEnabled),
         dm_sent: dmSent,
       });
     }

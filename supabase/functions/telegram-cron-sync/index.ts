@@ -223,10 +223,12 @@ Deno.serve(async (req) => {
 
               if (pendingAccess) {
                 const nowIso = new Date().toISOString();
+                const channelGrantEnabled = club.channel_grant_enabled !== false;
+                const nextChannelState = club.channel_id && channelGrantEnabled ? 'active' : 'none';
                 await supabase.from('telegram_access')
                   .update({
                     state_chat: 'active',
-                    state_channel: 'active',
+                    state_channel: nextChannelState,
                     last_sync_at: nowIso,
                   })
                   .eq('id', pendingAccess.id);
@@ -242,6 +244,8 @@ Deno.serve(async (req) => {
                     telegram_access_id: pendingAccess.id,
                     tg_user_id: member.telegram_user_id,
                     chat_status: chatStatus,
+                    channel_grant_enabled: channelGrantEnabled,
+                    channel_state: nextChannelState,
                   },
                 });
                 console.log(`PENDING→ACTIVE: user ${member.telegram_user_id} in club ${club.id}`);

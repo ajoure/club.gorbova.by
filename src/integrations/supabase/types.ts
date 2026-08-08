@@ -19817,6 +19817,7 @@ export type Database = {
           auto_resync_interval_minutes: number | null
           autokick_no_access: boolean | null
           bot_id: string
+          channel_grant_enabled: boolean
           channel_id: number | null
           channel_invite_link: string | null
           channel_status: string | null
@@ -19844,6 +19845,7 @@ export type Database = {
           auto_resync_interval_minutes?: number | null
           autokick_no_access?: boolean | null
           bot_id: string
+          channel_grant_enabled?: boolean
           channel_id?: number | null
           channel_invite_link?: string | null
           channel_status?: string | null
@@ -19871,6 +19873,7 @@ export type Database = {
           auto_resync_interval_minutes?: number | null
           autokick_no_access?: boolean | null
           bot_id?: string
+          channel_grant_enabled?: boolean
           channel_id?: number | null
           channel_invite_link?: string | null
           channel_status?: string | null
