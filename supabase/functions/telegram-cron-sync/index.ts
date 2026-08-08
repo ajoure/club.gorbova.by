@@ -71,6 +71,13 @@ async function logAudit(supabase: any, event: any) {
   await supabase.from('telegram_access_audit').insert(event);
 }
 
+function sameAccessEnd(left: string | null, right: string | null): boolean {
+  if (left === null || right === null) return left === right;
+  const leftMs = new Date(left).getTime();
+  const rightMs = new Date(right).getTime();
+  return Number.isFinite(leftMs) && Number.isFinite(rightMs) && leftMs === rightMs;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -155,6 +162,25 @@ Deno.serve(async (req) => {
       let kickedCount = 0;
       let guardSkipCount = 0;
       let errorCount = 0;
+      let projectionSyncCount = 0;
+
+      // Load Telegram projections once for the whole batch. Commercial sources
+      // are canonical; telegram_access is only their user-facing mirror.
+      const { data: accessRows, error: accessRowsError } = userIds.length > 0
+        ? await supabase
+          .from('telegram_access')
+          .select('id, user_id, active_until, state_chat, state_channel')
+          .eq('club_id', club.id)
+          .in('user_id', userIds)
+        : { data: [], error: null };
+
+      if (accessRowsError) {
+        throw new Error(`telegram_projection_load_failed: ${accessRowsError.message}`);
+      }
+
+      const accessByUserId = new Map(
+        (accessRows || []).map((row: any) => [row.user_id, row]),
+      );
 
       // Process in batches
       for (let i = 0; i < members.length; i += BATCH_SIZE) {
@@ -209,46 +235,111 @@ Deno.serve(async (req) => {
             }).eq('id', member.id);
 
             // ── pending → active transition ──────────────────────────────
-            // If Telegram confirms user is physically in chat AND their
-            // telegram_access state is still 'pending', promote to 'active'.
+            // Commercial sources are canonical. Keep telegram_access as a
+            // projection of the widest paid/manual window and promote it only
+            // when Telegram confirms the user is physically in the chat.
             const userId = member.profiles?.user_id;
-            if (inChat && userId) {
-              const { data: pendingAccess } = await supabase
-                .from('telegram_access')
-                .select('id, state_chat, state_channel')
-                .eq('user_id', userId)
-                .eq('club_id', club.id)
-                .eq('state_chat', 'pending')
-                .maybeSingle();
+            const accessResult = userId ? accessMap.get(userId) : undefined;
+            const hasAccess = accessResult?.valid ?? false;
+            const existingProjection = userId ? accessByUserId.get(userId) : undefined;
+            const isProfileBanned = member.profiles?.status === 'banned';
 
-              if (pendingAccess) {
-                const nowIso = new Date().toISOString();
-                const channelGrantEnabled = club.channel_grant_enabled !== false;
-                const nextChannelState = club.channel_id && channelGrantEnabled ? 'active' : 'none';
-                await supabase.from('telegram_access')
+            if (userId && hasAccess && accessResult && accessResult.endAt !== undefined) {
+              const nowIso = new Date().toISOString();
+              const expectedEndAt = accessResult.endAt ?? null;
+              const channelGrantEnabled = club.channel_grant_enabled !== false;
+              const shouldPromote = Boolean(inChat && !isProfileBanned);
+              const nextChatState = shouldPromote ? 'active' : existingProjection?.state_chat;
+              const nextChannelState = club.channel_id && channelGrantEnabled ? 'active' : 'none';
+              const projectedChannelState = shouldPromote
+                ? nextChannelState
+                : existingProjection?.state_channel;
+              const expiryChanged = existingProjection
+                ? !sameAccessEnd(existingProjection.active_until ?? null, expectedEndAt)
+                : false;
+              const stateChanged = existingProjection
+                ? (nextChatState !== existingProjection.state_chat || projectedChannelState !== existingProjection.state_channel)
+                : shouldPromote;
+
+              if (existingProjection && (expiryChanged || stateChanged)) {
+                const { error: projectionUpdateError } = await supabase
+                  .from('telegram_access')
                   .update({
-                    state_chat: 'active',
-                    state_channel: nextChannelState,
+                    active_until: expectedEndAt,
+                    state_chat: nextChatState,
+                    state_channel: projectedChannelState,
                     last_sync_at: nowIso,
                   })
-                  .eq('id', pendingAccess.id);
+                  .eq('id', existingProjection.id);
+
+                if (projectionUpdateError) {
+                  throw new Error(`telegram_projection_update_failed: ${projectionUpdateError.message}`);
+                }
+
+                projectionSyncCount++;
+                accessByUserId.set(userId, {
+                  ...existingProjection,
+                  active_until: expectedEndAt,
+                  state_chat: nextChatState,
+                  state_channel: projectedChannelState,
+                });
 
                 await supabase.from('audit_logs').insert({
-                  action: 'telegram.pending_to_active',
+                  action: 'telegram.access_projection.synced',
                   actor_type: 'system',
                   actor_user_id: null,
                   actor_label: 'telegram-cron-sync',
                   target_user_id: userId,
                   meta: {
                     club_id: club.id,
-                    telegram_access_id: pendingAccess.id,
+                    telegram_access_id: existingProjection.id,
                     tg_user_id: member.telegram_user_id,
-                    chat_status: chatStatus,
-                    channel_grant_enabled: channelGrantEnabled,
-                    channel_state: nextChannelState,
+                    access_source: accessResult.source,
+                    previous_active_until: existingProjection.active_until,
+                    active_until: expectedEndAt,
+                    previous_state_chat: existingProjection.state_chat,
+                    state_chat: nextChatState,
+                    previous_state_channel: existingProjection.state_channel,
+                    state_channel: projectedChannelState,
                   },
                 });
-                console.log(`PENDING→ACTIVE: user ${member.telegram_user_id} in club ${club.id}`);
+              } else if (!existingProjection && shouldPromote) {
+                const { data: createdProjection, error: projectionCreateError } = await supabase
+                  .from('telegram_access')
+                  .upsert({
+                    user_id: userId,
+                    club_id: club.id,
+                    active_until: expectedEndAt,
+                    state_chat: 'active',
+                    state_channel: nextChannelState,
+                    last_sync_at: nowIso,
+                  }, { onConflict: 'user_id,club_id' })
+                  .select('id, user_id, active_until, state_chat, state_channel')
+                  .single();
+
+                if (projectionCreateError) {
+                  throw new Error(`telegram_projection_create_failed: ${projectionCreateError.message}`);
+                }
+
+                projectionSyncCount++;
+                accessByUserId.set(userId, createdProjection);
+
+                await supabase.from('audit_logs').insert({
+                  action: 'telegram.access_projection.created',
+                  actor_type: 'system',
+                  actor_user_id: null,
+                  actor_label: 'telegram-cron-sync',
+                  target_user_id: userId,
+                  meta: {
+                    club_id: club.id,
+                    telegram_access_id: createdProjection.id,
+                    tg_user_id: member.telegram_user_id,
+                    access_source: accessResult.source,
+                    active_until: expectedEndAt,
+                    state_chat: 'active',
+                    state_channel: nextChannelState,
+                  },
+                });
               }
             }
             // ── end pending → active ─────────────────────────────────────
@@ -275,9 +366,6 @@ Deno.serve(async (req) => {
             }
 
             // COMMERCIAL-ONLY (2026-05-22): результат из hasCommercialAccessBatch.
-            const accessResult = userId ? accessMap.get(userId) : undefined;
-            const hasAccess = accessResult?.valid ?? false;
-
             if (autokick && inChat && !hasAccess) {
               // STOP-guard: if access check returned undefined/error, don't kick
               if (!accessResult) {
@@ -385,7 +473,7 @@ Deno.serve(async (req) => {
         club_id: club.id,
         event_type: 'CRON_SYNC',
         actor_type: 'cron',
-        meta: { checked_count: checkedCount, kicked_count: kickedCount, guard_skip_count: guardSkipCount, error_count: errorCount, batch_limit: BATCH_LIMIT, is_partial: isPartial },
+        meta: { checked_count: checkedCount, kicked_count: kickedCount, projection_sync_count: projectionSyncCount, guard_skip_count: guardSkipCount, error_count: errorCount, batch_limit: BATCH_LIMIT, is_partial: isPartial },
       });
 
       // P3: structured batch audit
@@ -400,6 +488,7 @@ Deno.serve(async (req) => {
           processed: members.length,
           updated: checkedCount,
           kicked: kickedCount,
+          projection_sync_count: projectionSyncCount,
           guard_skips: guardSkipCount,
           errors: errorCount,
           duration_ms: durationMs,
@@ -417,6 +506,7 @@ Deno.serve(async (req) => {
         processed: members.length,
         checked: checkedCount,
         kicked: kickedCount,
+        projection_synced: projectionSyncCount,
         guard_skips: guardSkipCount,
         errors: errorCount,
         batch_limit: BATCH_LIMIT,
