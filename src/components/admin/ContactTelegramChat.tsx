@@ -138,6 +138,7 @@ interface TelegramMessage {
   business_connection_id?: string | null;
   business_account_id?: string | null;
   message_origin?: "client" | "owner_manual" | "crm_operator" | "bot_automation" | null;
+  requires_reply?: boolean | null;
   admin_profile?: {
     full_name: string | null;
     avatar_url: string | null;
@@ -273,11 +274,43 @@ export function ContactTelegramChat({
     enabled: businessContext?.transport === "business" && !!businessContext.business_account_id,
     staleTime: 30_000,
   });
-  const businessSenderName = useMemo(() => {
-    if (!businessAccount) return "Telegram Business";
-    const fullName = [businessAccount.first_name, businessAccount.last_name].filter(Boolean).join(" ").trim();
-    return fullName || (businessAccount.username ? `@${businessAccount.username}` : "Telegram Business");
-  }, [businessAccount]);
+  // A client may have talked both to a bot and to the connected personal
+  // account. Keep every eligible Business sender available instead of hiding
+  // it merely because a later bot message became the latest inbound event.
+  const { data: dialogBusinessAccountIds = [] } = useQuery({
+    queryKey: ["telegram-dialog-business-account-ids", userId],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("telegram_messages")
+        .select("business_account_id")
+        .eq("user_id", userId)
+        .eq("transport", "business")
+        .not("business_account_id", "is", null)
+        .limit(100);
+      if (error) throw error;
+      return Array.from(new Set((data || []).map((row: any) => row.business_account_id).filter(Boolean))) as string[];
+    },
+    enabled: !!userId,
+    staleTime: 30_000,
+  });
+  const { data: dialogBusinessAccounts = [] } = useQuery({
+    queryKey: ["telegram-dialog-business-senders", dialogBusinessAccountIds],
+    queryFn: async () => {
+      if (!dialogBusinessAccountIds.length) return [];
+      const { data, error } = await supabase
+        .from("telegram_business_connections")
+        .select("id, bot_id, first_name, last_name, username, can_reply, is_enabled")
+        .in("id", dialogBusinessAccountIds);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: dialogBusinessAccountIds.length > 0,
+    staleTime: 30_000,
+  });
+  const selectedBusinessAccount = useMemo(
+    () => dialogBusinessAccounts.find((account) => account.id === selectedBusinessAccountId) || businessAccount || null,
+    [dialogBusinessAccounts, selectedBusinessAccountId, businessAccount],
+  );
   const selectedSender = selectedBusinessAccountId
     ? `business:${selectedBusinessAccountId}`
     : selectedBotId ? `bot:${selectedBotId}` : "";
@@ -297,6 +330,11 @@ export function ContactTelegramChat({
   const prevMessageCountRef = useRef<number>(0);
   // Observed boundary, зафиксированная в onMutate ДО отправки (corrective S2).
   const pendingBoundaryRef = useRef<string | null>(null);
+  const pendingReplyScopeRef = useRef<{
+    transport: "bot" | "business";
+    botId: string | null;
+    businessAccountId: string | null;
+  } | null>(null);
   const localMediaUrlsRef = useRef<string[]>([]);
   const stickyScrollUntilRef = useRef(0);
   const shouldStickToBottomRef = useRef(true);
@@ -545,6 +583,18 @@ export function ContactTelegramChat({
   // `messagesLoading` is bound to Stage 1 only — Stage 2 never blocks paint.
   const messages = fullData ?? leanData;
   const messagesLoading = leanLoading && !leanData && !fullData;
+  const { data: unansweredItems = [] } = useQuery({
+    queryKey: ["contact-center-unanswered", userId],
+    enabled: !!userId,
+    staleTime: 15_000,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_contact_center_unanswered_v1" as any, {
+        p_user_id: userId,
+      } as any);
+      if (error) throw error;
+      return (data || []) as Array<{ id: string; message_text: string | null; created_at: string }>;
+    },
+  });
 
   useEffect(() => {
     setHasOlderMessages(true);
@@ -1515,15 +1565,22 @@ export function ContactTelegramChat({
       const snapshot = (queryClient.getQueryData(["telegram-messages", userId]) as
         | TelegramMessage[]
         | undefined) || [];
+      const replyScope = selectedBusinessAccountId
+        ? { transport: "business" as const, botId: null, businessAccountId: selectedBusinessAccountId }
+        : { transport: "bot" as const, botId: selectedBotId, businessAccountId: null };
       let capturedBoundary: string | null = null;
       for (const m of snapshot) {
-        if (m?.direction === "incoming" && typeof m?.created_at === "string") {
+        const sameScope = replyScope.transport === "business"
+          ? m?.transport === "business" && m.business_account_id === replyScope.businessAccountId
+          : (m?.transport ?? "bot") === "bot" && m.bot_id === replyScope.botId;
+        if (m?.direction === "incoming" && sameScope && typeof m?.created_at === "string") {
           if (!capturedBoundary || m.created_at > capturedBoundary) {
             capturedBoundary = m.created_at;
           }
         }
       }
       pendingBoundaryRef.current = capturedBoundary;
+      pendingReplyScopeRef.current = replyScope;
 
       // Optimistically add message to UI immediately
       const localUrl = selectedFile ? URL.createObjectURL(selectedFile) : null;
@@ -1536,7 +1593,7 @@ export function ContactTelegramChat({
         message_id: null,
         status: "pending",
         created_at: new Date().toISOString(),
-        bot_id: selectedBusinessAccountId ? businessAccount?.bot_id || null : selectedBotId,
+        bot_id: selectedBusinessAccountId ? selectedBusinessAccount?.bot_id || null : selectedBotId,
         bot_username: selectedBotId ? botsMap.get(selectedBotId)?.bot_username || null : null,
         bot_name: selectedBotId ? botsMap.get(selectedBotId)?.bot_name || null : null,
         transport: selectedBusinessAccountId ? "business" : "bot",
@@ -1557,7 +1614,7 @@ export function ContactTelegramChat({
       );
       startStickyScroll(2200);
     },
-    onSuccess: () => {
+    onSuccess: async (result) => {
       // FIX B: Remove all temp messages BEFORE refetch to prevent duplicates
       queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) =>
         (old || []).filter(m => !m.id.startsWith('temp-'))
@@ -1573,11 +1630,39 @@ export function ContactTelegramChat({
       // Передаём boundary, зафиксированную ДО отправки (corrective S2).
       const b = pendingBoundaryRef.current;
       pendingBoundaryRef.current = null;
+      const replyScope = pendingReplyScopeRef.current;
+      pendingReplyScopeRef.current = null;
+      if (b && replyScope && (replyScope.businessAccountId || replyScope.botId)) {
+        const { error: resolveError } = await supabase.rpc(
+          "resolve_telegram_conversation_v1" as any,
+          {
+            p_user_id: userId,
+            p_boundary: b,
+            p_transport: replyScope.transport,
+            p_bot_id: replyScope.botId,
+            p_business_account_id: replyScope.businessAccountId,
+            // telegram-admin-chat returns Telegram's numeric message id, while
+            // resolution_message_id is the database UUID. The latter is filled
+            // by webhook-originated owner replies; do not coerce IDs here.
+            p_resolution_message_id: null,
+            p_boundary_message_id: result?.message_id ?? null,
+          } as any,
+        );
+        if (resolveError) {
+          console.warn("[ContactTelegramChat] reply state sync failed", resolveError.message);
+          toast.error("Сообщение отправлено, но статус ответа пока не синхронизирован");
+        } else {
+          queryClient.invalidateQueries({ queryKey: ["unified-inbox-telegram"] });
+          queryClient.invalidateQueries({ queryKey: ["inbox-dialogs"] });
+          queryClient.invalidateQueries({ queryKey: ["unread-messages-count"] });
+        }
+      }
       onMessageSent?.(b);
     },
     onError: async (error) => {
       setIsUploading(false);
       pendingBoundaryRef.current = null;
+      pendingReplyScopeRef.current = null;
       const msg = await formatChatErrorAsync(error);
       toast.error("Ошибка отправки: " + msg);
     },
@@ -2047,6 +2132,23 @@ export function ContactTelegramChat({
             )}
           </ScrollArea>
 
+          {unansweredItems.length > 0 && (
+            <button
+              type="button"
+              onClick={() => scrollToMessage(unansweredItems[0].id)}
+              className="absolute top-2 left-3 right-3 z-10 rounded-xl border border-primary/25 bg-background/95 px-3 py-2 text-left shadow-sm backdrop-blur transition-colors hover:bg-primary/5"
+              aria-label="Перейти к неотвеченному сообщению"
+            >
+              <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-primary">
+                <span>Нужно ответить</span>
+                {unansweredItems.length > 1 && <span>ещё {unansweredItems.length - 1}</span>}
+              </div>
+              <p className="mt-0.5 truncate text-xs text-foreground/85">
+                {unansweredItems[0].message_text || "Вложение или сообщение без текста"}
+              </p>
+            </button>
+          )}
+
           {/* Floating "scroll to bottom" button with unread badge */}
           {!isNearBottomState && chatItems.length > 0 && (
             <button
@@ -2084,7 +2186,7 @@ export function ContactTelegramChat({
             родитель уже ограничен по высоте (Telegram-вкладка),
             поэтому композер всегда виден внизу карточки. */}
         <div className="shrink-0 border-t bg-background px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)]">
-          {(activeBots.length > 0 || (businessAccount?.is_enabled && businessAccount.can_reply)) && (
+          {(activeBots.length > 0 || dialogBusinessAccounts.some((account) => account.is_enabled && account.can_reply)) && (
             <div className="flex items-center gap-1.5 pb-1.5">
               <Select value={selectedSender} onValueChange={handleSenderChange}>
                 <SelectTrigger className="h-7 w-auto min-w-[140px] text-[11px] rounded-lg border-border/40 bg-muted/30 gap-1 px-2">
@@ -2092,11 +2194,17 @@ export function ContactTelegramChat({
                   <SelectValue placeholder="Выберите отправителя" />
                 </SelectTrigger>
                 <SelectContent>
-                  {businessAccount?.is_enabled && businessAccount.can_reply && (
-                    <SelectItem value={`business:${businessAccount.id}`} className="text-xs">
-                      {businessSenderName} · личный Telegram
-                    </SelectItem>
-                  )}
+                  {dialogBusinessAccounts
+                    .filter((account) => account.is_enabled && account.can_reply)
+                    .map((account) => {
+                      const name = [account.first_name, account.last_name].filter(Boolean).join(" ").trim()
+                        || (account.username ? `@${account.username}` : "Telegram Business");
+                      return (
+                        <SelectItem key={account.id} value={`business:${account.id}`} className="text-xs">
+                          {name} · личный Telegram
+                        </SelectItem>
+                      );
+                    })}
                   {activeBots.map(bot => (
                     <SelectItem key={bot.id} value={`bot:${bot.id}`} className="text-xs">
                       {bot.bot_name?.trim() ? bot.bot_name : `@${bot.bot_username}`}

@@ -190,6 +190,20 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     [tg.data],
   );
 
+  // `is_read` means the dialog was viewed. `requires_reply` is independent:
+  // it stays open until a person replies, so the unified "Новые" queue does
+  // not lose a customer question simply because an operator opened the chat.
+  const tgUnanswered = useQuery({
+    queryKey: ["contact-center-unanswered-dialogs"],
+    enabled,
+    staleTime: 15_000,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_contact_center_unanswered_dialogs_v1" as any);
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+  });
+
   // --- Telegram: параллельно тянем chat_preferences (pin/fav) для оператора ---
   const tgPrefs = useQuery({
     queryKey: ["chat-preferences", user?.id],
@@ -440,6 +454,8 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     );
     const supportProfileMap = new Map<string, any>();
     (supportProfiles.data || []).forEach((p: any) => supportProfileMap.set(p.id, p));
+    const tgUnansweredMap = new Map<string, any>();
+    (tgUnanswered.data || []).forEach((item: any) => tgUnansweredMap.set(item.user_id, item));
 
     const out: UnifiedDialog[] = [];
 
@@ -447,6 +463,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     for (const d of tgRows) {
       const p = tgProfileMap.get(d.user_id);
       const pref = tgPrefMap.get(d.user_id);
+      const unanswered = tgUnansweredMap.get(d.user_id);
       out.push({
         key: `tg:${d.user_id}`,
         source: "telegram",
@@ -457,7 +474,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
         lastMessage: d.last_message_text || (d.last_message_type ? `[${d.last_message_type}]` : ""),
         lastMessageAt: d.last_message_at,
         unreadCount: Number(d.unread_count) || 0,
-        isUnanswered: (Number(d.unread_count) || 0) > 0,
+        isUnanswered: (Number(unanswered?.unanswered_count) || 0) > 0,
         isPinned: pref?.is_pinned || false,
         isFavorite: pref?.is_favorite || false,
         capabilities: TG_CAPS,
@@ -555,6 +572,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     tgRows,
     tgProfiles.data,
     tgPrefs.data,
+    tgUnanswered.data,
     igDialogs.data,
     igAccountLabel,
     igContactMap,
@@ -675,17 +693,17 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     rows,
     isLoading:
       enabled &&
-      (tg.isLoading || igDialogs.isLoading || support.isLoading),
+      (tg.isLoading || tgUnanswered.isLoading || igDialogs.isLoading || support.isLoading),
     errors: {
-      telegram: tg.error as Error | null,
+      telegram: (tg.error || tgUnanswered.error) as Error | null,
       instagram: igDialogs.error as Error | null,
       support: support.error as Error | null,
     },
     counts: {
-      telegramUnread: tgRows.reduce(
-        (s: number, d: any) => s + (Number(d.unread_count) || 0),
-        0,
-      ),
+      // Бейдж канала — это количество диалогов, а не число отдельных реплик.
+      // Иначе несколько сообщений одного клиента раздувают счётчик и он не
+      // совпадает с вкладкой «Новые».
+      telegramUnread: (tgUnanswered.data || []).length,
       instagramUnread: (igDialogs.data || []).reduce(
         (s: number, d: any) => s + (Number(d.unread_count) || 0),
         0,

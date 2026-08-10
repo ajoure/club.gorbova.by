@@ -131,6 +131,11 @@ verify_jwt = false
 [functions.telegram-webhook]
 verify_jwt = false
 
+# Operational notification sender. Gateway JWT plus in-function communication
+# manage permission prevents arbitrary users from notifying staff.
+[functions.contact-center-assignment-notify]
+verify_jwt = true
+
 [functions.instagram-webhook]
 verify_jwt = false
 

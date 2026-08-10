@@ -6,8 +6,9 @@ import { UNREAD_MESSAGES_COUNT_QK } from "@/constants/inboxQueryKeys";
 /**
  * useUnreadMessagesCount
  *
- * Возвращает количество непрочитанных входящих сообщений Telegram
- * (direction='incoming' AND is_read=false).
+ * Возвращает количество Telegram-вопросов, на которые ещё нужен ответ.
+ * Просмотр сообщения (`is_read`) не закрывает вопрос: это делает только
+ * человеческий ответ в точном Telegram-канале.
  *
  * Realtime-инвалидация выполняется глобальным `useInboxRealtimeInvalidation`
  * (см. `src/hooks/useInboxRealtimeInvalidation.ts`), смонтированным один раз
@@ -22,17 +23,15 @@ export function useUnreadMessagesCount() {
   const { data: count = 0 } = useQuery({
     queryKey: UNREAD_MESSAGES_COUNT_QK,
     queryFn: async () => {
-      const { count, error } = await supabase
-        .from("telegram_messages")
-        .select("*", { count: "exact", head: true })
-        .eq("direction", "incoming")
-        .eq("is_read", false);
+      const { data, error } = await supabase.rpc(
+        "get_contact_center_unanswered_total_v1" as any,
+      );
 
       if (error) {
         console.warn("[useUnreadMessagesCount] Query error:", error.message);
         return 0;
       }
-      return count || 0;
+      return Number(data) || 0;
     },
     refetchInterval: visibilityInterval,
     retry: 3,
