@@ -103,6 +103,13 @@ describe("Contact-center safety and mobile performance", () => {
     expect(unifiedInboxSource).toContain("virtualizer.getTotalSize()");
   });
 
+  it("hydrates every unanswered Telegram dialog without downloading the full inbox", () => {
+    expect(unifiedInboxHookSource).toContain("mergeTelegramWorkQueue");
+    expect(unifiedInboxHookSource).toContain("for (const queueItem of tgQueue)");
+    expect(unifiedInboxHookSource).toContain("unanswered?.oldest_message_text");
+    expect(unifiedInboxHookSource).toContain("unreadCount: Number(unanswered?.unanswered_count) || 0");
+  });
+
   it("keeps realtime invalidation scoped to contact-center tables and typed fields", () => {
     expect(realtimeInvalidationSource).toContain('table: "telegram_messages"');
     expect(realtimeInvalidationSource).toContain(
