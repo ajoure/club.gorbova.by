@@ -739,14 +739,27 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     };
   }, [contactRows]);
 
+  const loadingBySource: Record<UnifiedSource, boolean> = {
+    telegram: enabled && (tg.isLoading || tgUnanswered.isLoading),
+    instagram:
+      enabled &&
+      (igAccounts.isLoading || (igAccountIds.length > 0 && igDialogs.isLoading)),
+    support: enabled && support.isLoading,
+  };
+
   return {
     /** V3 API: одна строка на контакт. */
     contactRows,
     /** Внутренний source-level список (для legacy/debug). */
     rows,
+    // The combined inbox can render as soon as any source has produced rows.
+    // Slower integrations continue in the background instead of freezing the
+    // whole contact-center behind a full-page spinner.
     isLoading:
       enabled &&
-      (tg.isLoading || tgUnanswered.isLoading || igDialogs.isLoading || support.isLoading),
+      contactRows.length === 0 &&
+      Object.values(loadingBySource).some(Boolean),
+    loadingBySource,
     errors: {
       telegram: (tg.error || tgUnanswered.error) as Error | null,
       instagram: igDialogs.error as Error | null,

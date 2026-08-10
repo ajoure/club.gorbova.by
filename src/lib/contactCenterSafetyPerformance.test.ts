@@ -123,6 +123,16 @@ describe("Contact-center safety and mobile performance", () => {
     expect(unifiedInboxSource).toContain('sourceFilter === "all" ? row.totalUnread : rowActive.unread');
   });
 
+  it("renders ready sources progressively instead of blocking on the slowest integration", () => {
+    expect(unifiedInboxHookSource).toContain("const loadingBySource");
+    expect(unifiedInboxHookSource).toContain("contactRows.length === 0");
+    expect(unifiedInboxHookSource).toContain("Object.values(loadingBySource).some(Boolean)");
+    expect(unifiedInboxSource).toContain(
+      'sourceFilter === "all" ? isLoading : loadingBySource[sourceFilter]',
+    );
+    expect(unifiedInboxSource).toContain("viewIsLoading ?");
+  });
+
   it("keeps realtime invalidation scoped to contact-center tables and typed fields", () => {
     expect(realtimeInvalidationSource).toContain('table: "telegram_messages"');
     expect(realtimeInvalidationSource).toContain(

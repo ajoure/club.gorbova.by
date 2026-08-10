@@ -80,12 +80,14 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
   const {
     contactRows,
     isLoading,
+    loadingBySource,
     errors,
     counts,
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
   } = useUnifiedInbox({ enabled: true, search: serverSearch });
+  const viewIsLoading = sourceFilter === "all" ? isLoading : loadingBySource[sourceFilter];
   useEffect(() => {
     onCountsChange?.(counts);
   }, [counts, onCountsChange]);
@@ -667,7 +669,7 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
       </div>
 
       <div ref={parentRef} className="touch-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain">
-        {isLoading ? (
+        {viewIsLoading ? (
           <div className="p-8 text-center text-muted-foreground">
             <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
             <span className="text-sm">Загрузка...</span>
