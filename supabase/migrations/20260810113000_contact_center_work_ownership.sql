@@ -88,7 +88,7 @@ DECLARE
   v_marked integer := 0;
   v_remaining integer := 0;
 BEGIN
-  IF NOT (auth.role() = 'service_role' OR (
+  IF NOT (current_user = 'service_role' OR (
     v_caller IS NOT NULL AND public.has_admin_section_access(v_caller, 'communication', 'manage')
   )) THEN
     RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501';

@@ -5,6 +5,7 @@ import adminChatSource from "../../supabase/functions/telegram-admin-chat/index.
 import auditShapeRunnerSource from "../../supabase/functions/telegram-audit-shape-runner/index.ts?raw";
 import migrationSource from "../../supabase/migrations/20260721183552_c27995d4-a65d-4202-b4aa-add4bd025ea1.sql?raw";
 import historyRbacMigrationSource from "../../supabase/migrations/20260723063657_contact_center_telegram_history_rbac.sql?raw";
+import workOwnershipMigrationSource from "../../supabase/migrations/20260810113000_contact_center_work_ownership.sql?raw";
 import contactTelegramChatSource from "../components/admin/ContactTelegramChat.tsx?raw";
 
 describe("Telegram Business contact-centre wiring", () => {
@@ -34,9 +35,12 @@ describe("Telegram Business contact-centre wiring", () => {
   it("clears older unread customer messages when the owner replies in Telegram", () => {
     expect(webhookSource).toContain("isOwnerMessage && !update.edited_business_message");
     expect(webhookSource).toContain("business_owner_reply_read_sync_failed");
-    expect(webhookSource).toContain(".eq('direction', 'incoming')");
-    expect(webhookSource).toContain(".eq('is_read', false)");
-    expect(webhookSource).toContain(".lt('message_id', ownerMessageId)");
+    expect(webhookSource).toContain(".rpc('resolve_telegram_conversation_v1'");
+    expect(webhookSource).toContain("p_transport: 'business'");
+    expect(webhookSource).toContain("p_boundary_message_id: ownerMessageId");
+    expect(workOwnershipMigrationSource).toContain("m.direction = 'incoming'");
+    expect(workOwnershipMigrationSource).toContain("m.message_id < p_boundary_message_id");
+    expect(workOwnershipMigrationSource).toContain("requires_reply = false");
   });
 
   it("re-applies a configured webhook secret and preserves existing update types", () => {
