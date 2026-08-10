@@ -58,6 +58,13 @@ CREATE INDEX IF NOT EXISTS contact_center_message_assignments_assignee_open_idx
 
 ALTER TABLE public.contact_center_message_assignments ENABLE ROW LEVEL SECURITY;
 
+-- The project has permissive table default privileges. Keep the new work queue
+-- explicitly unavailable to anon and expose it only through authenticated RLS
+-- (service_role remains available for the notification worker).
+REVOKE ALL ON TABLE public.contact_center_message_assignments FROM PUBLIC, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.contact_center_message_assignments TO authenticated;
+GRANT ALL ON TABLE public.contact_center_message_assignments TO service_role;
+
 DROP POLICY IF EXISTS "Communication viewers can view contact center assignments" ON public.contact_center_message_assignments;
 CREATE POLICY "Communication viewers can view contact center assignments"
   ON public.contact_center_message_assignments FOR SELECT TO authenticated
@@ -289,7 +296,9 @@ AS $$
       SELECT 1 FROM public.user_roles_v2 ur
       JOIN public.roles r ON r.id = ur.role_id
       WHERE ur.user_id = p.user_id
-        AND r.code IN ('super_admin', 'admin', 'manager', 'employee')
+        -- These are the canonical production role codes. Do not translate
+        -- them to English aliases: manager/employee do not exist here.
+        AND r.code IN ('super_admin', 'admin', 'menedzher', 'support')
     )
     AND public.has_admin_section_access(auth.uid(), 'communication', 'view')
   ORDER BY 2;
