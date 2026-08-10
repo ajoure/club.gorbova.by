@@ -408,6 +408,29 @@ body.impersonation-active .impersonation-offset {
   display: none;
 }
 
+/* Contact card tabs must remain operable with a regular Windows mouse. */
+.contact-tabs-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+  overscroll-behavior-x: contain;
+}
+.contact-tabs-scroll::-webkit-scrollbar {
+  height: 9px;
+}
+.contact-tabs-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.contact-tabs-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.35);
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+}
+.contact-tabs-scroll::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.55);
+  background-clip: padding-box;
+}
+
 /* Always-visible horizontal scrollbar for wide admin tables (UX hint on narrow viewports) */
 .live-events-table-scroll::-webkit-scrollbar {
   height: 10px;
