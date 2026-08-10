@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
@@ -15,7 +15,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
-import { Search, MessageSquare, RefreshCw, Check, Star, Pin } from "lucide-react";
+import { Search, MessageSquare, RefreshCw, Check, Star, Pin, UserRoundCheck, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -43,6 +43,12 @@ import { TicketChat } from "@/components/support/TicketChat";
 import { ChannelPicker } from "./ChannelPicker";
 import { UnifiedChatHeader } from "./UnifiedChatHeader";
 import { AdminInitiateTicketDialog } from "./AdminInitiateTicketDialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const PANEL_KEY = "unified-inbox-panel-sizes";
 
@@ -71,9 +77,33 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     isFetchingNextPage,
     fetchNextPage,
   } = useUnifiedInbox({ enabled: true, search: serverSearch });
-  type FilterKind = "all" | "unread" | "favorite" | "pinned";
+  type FilterKind = "all" | "unread" | "favorite" | "pinned" | "mine";
   const [filterKind, setFilterKind] = useState<FilterKind>("all");
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [managerFilter, setManagerFilter] = useState<string>("all");
+
+  const { data: assignees = [] } = useQuery({
+    queryKey: ["contact-center-assignees"],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_contact_center_assignees_v1" as any);
+      if (error) throw error;
+      return (data || []) as Array<{ user_id: string; display_name: string }>;
+    },
+    staleTime: 60_000,
+  });
+  const { data: assignments = [] } = useQuery({
+    queryKey: ["contact-center-assignments"],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_contact_center_assignments_v1" as any);
+      if (error) throw error;
+      return (data || []) as Array<{ source_message_id: string; telegram_user_id: string; assignee_user_id: string; assignee_name: string }>;
+    },
+    staleTime: 15_000,
+  });
+  const assignmentByTelegramUserId = useMemo(
+    () => new Map(assignments.map((assignment) => [assignment.telegram_user_id, assignment])),
+    [assignments],
+  );
 
   /**
    * Per-contact override активного канала. Если override отсутствует —
@@ -138,11 +168,15 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
       if (filterKind === "unread" && !r.isUnanswered) return false;
       if (filterKind === "favorite" && !r.isFavorite) return false;
       if (filterKind === "pinned" && !r.isPinned) return false;
+      const tgUserId = r.channels.telegram?.sourceRow.meta.telegramUserId;
+      const assignment = tgUserId ? assignmentByTelegramUserId.get(tgUserId) : undefined;
+      if (filterKind === "mine" && assignment?.assignee_user_id !== user?.id) return false;
+      if (managerFilter !== "all" && assignment?.assignee_user_id !== managerFilter) return false;
       if (serverSearch && r.channels.telegram) return true;
       if (!matchesSearch(r, serverSearch)) return false;
       return true;
     });
-  }, [contactRows, sourceFilter, filterKind, serverSearch]);
+  }, [contactRows, sourceFilter, filterKind, serverSearch, assignmentByTelegramUserId, managerFilter, user?.id]);
 
   const counts2 = useMemo(() => {
     let all = 0, unread = 0, fav = 0, pinned = 0;
@@ -468,6 +502,62 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     }
   };
 
+  const assignTelegramRow = async (row: UnifiedContactRow, assigneeUserId: string) => {
+    const telegramUserId = row.channels.telegram?.sourceRow.meta.telegramUserId;
+    if (!telegramUserId) return;
+    setBusyKey(row.key);
+    try {
+      const { data: unanswered, error: unansweredError } = await supabase.rpc(
+        "get_contact_center_unanswered_v1" as any,
+        { p_user_id: telegramUserId } as any,
+      );
+      if (unansweredError) throw unansweredError;
+      const target = (unanswered || [])[0] as { id?: string } | undefined;
+      if (!target?.id) throw new Error("нет неотвеченного сообщения для назначения");
+      const { data: assignmentId, error } = await supabase.rpc(
+        "assign_contact_center_message_v1" as any,
+        { p_message_id: target.id, p_assignee_user_id: assigneeUserId, p_note: null } as any,
+      );
+      if (error) throw error;
+      // Notification is best-effort and idempotent. A missing Telegram link
+      // must not undo a successfully assigned customer question.
+      if (assignmentId) {
+        supabase.functions.invoke("contact-center-assignment-notify", {
+          body: { assignment_id: assignmentId },
+        }).catch((notificationError) => {
+          console.warn("[UnifiedInboxView] assignment notification failed", notificationError);
+        });
+      }
+      await queryClient.invalidateQueries({ queryKey: ["contact-center-assignments"] });
+      const employee = assignees.find((candidate) => candidate.user_id === assigneeUserId);
+      toast.success(`Передано: ${employee?.display_name || "сотрудник"}`);
+    } catch (error: any) {
+      toast.error("Не удалось передать вопрос: " + (error?.message || "ошибка"));
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const resolveSupportOnRow = async (row: UnifiedContactRow) => {
+    const ticketId = row.channels.support?.sourceRow.meta.ticketId;
+    if (!ticketId) return;
+    setBusyKey(row.key);
+    try {
+      const { error } = await supabase
+        .from("support_tickets")
+        .update({ status: "resolved", has_unread_admin: false })
+        .eq("id", ticketId);
+      if (error) throw error;
+      await queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
+      await queryClient.invalidateQueries({ queryKey: ["admin-tickets"] });
+      toast.success("Обращение техподдержки закрыто");
+    } catch (error: any) {
+      toast.error("Не удалось закрыть обращение: " + (error?.message || "ошибка"));
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
 
   const totalUnread = counts.telegramUnread + counts.instagramUnread + counts.supportUnread;
 
@@ -513,6 +603,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
             { key: "unread", label: "Новые", count: counts2.unread },
             { key: "favorite", label: "Избранное", count: counts2.fav },
             { key: "pinned", label: "Закреплённые", count: counts2.pinned },
+            { key: "mine", label: "Мои", count: assignments.filter((item) => item.assignee_user_id === user?.id).length },
           ] as { key: FilterKind; label: string; count: number }[]).map((chip) => (
             <Button
               key={chip.key}
@@ -530,6 +621,23 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
               {chip.count > 0 ? ` · ${chip.count}` : ""}
             </Button>
           ))}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7 px-2.5 text-xs rounded-full bg-card/60 text-muted-foreground">
+                {managerFilter === "all"
+                  ? "По менеджеру"
+                  : assignees.find((item) => item.user_id === managerFilter)?.display_name || "Менеджер"}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
+              <DropdownMenuItem onSelect={() => setManagerFilter("all")}>Все менеджеры</DropdownMenuItem>
+              {assignees.map((person) => (
+                <DropdownMenuItem key={person.user_id} onSelect={() => setManagerFilter(person.user_id)}>
+                  {person.display_name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         {(errors.telegram || errors.instagram || errors.support) && (
           <div className="text-[10px] text-destructive px-1">
@@ -564,6 +672,9 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                   : (activeSourceByKey[row.key] as UnifiedSource | undefined) ??
                     (sourceFilter !== "all" && row.channels[sourceFilter] ? sourceFilter : row.defaultActiveSource);
               const rowActive = row.channels[rowActiveSource] ?? row.channels[row.defaultActiveSource]!;
+              const telegramAssignment = row.channels.telegram?.sourceRow.meta.telegramUserId
+                ? assignmentByTelegramUserId.get(row.channels.telegram.sourceRow.meta.telegramUserId)
+                : undefined;
               return (
                 <div
                   key={row.key}
@@ -607,6 +718,11 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                             label={row.channels[s]?.sourceRow.sourceLabel ?? null}
                           />
                         ))}
+                        {telegramAssignment && (
+                          <Badge variant="secondary" className="h-4 max-w-[150px] truncate px-1 text-[9px] font-medium">
+                            {telegramAssignment.assignee_name}
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-[11px] text-muted-foreground truncate mt-0.5">
                         <span className="opacity-70">{sourceLabelByKey[row.lastMessageSource]} · </span>
@@ -649,6 +765,40 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                             onActivate={() => markReadOnRow(row)}
                           >
                             <Check className="h-3 w-3" />
+                          </IconAction>
+                        )}
+                        {row.channels.telegram?.sourceRow.meta.telegramUserId && row.isUnanswered && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                title="Передать менеджеру"
+                                onClick={(event) => event.stopPropagation()}
+                                className={cn(
+                                  "h-5 w-5 rounded-full inline-flex items-center justify-center cursor-pointer transition-colors hover:bg-primary/10",
+                                  busyKey === row.key && "pointer-events-none opacity-50",
+                                )}
+                              >
+                                <UserRoundCheck className="h-3 w-3" />
+                              </span>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="max-h-72 overflow-y-auto">
+                              {assignees.map((person) => (
+                                <DropdownMenuItem key={person.user_id} onSelect={() => assignTelegramRow(row, person.user_id)}>
+                                  {person.display_name}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                        {row.channels.support?.sourceRow.meta.ticketId && (
+                          <IconAction
+                            title="Закрыть обращение техподдержки"
+                            disabled={busyKey === row.key}
+                            onActivate={() => resolveSupportOnRow(row)}
+                          >
+                            <CheckCircle2 className="h-3 w-3" />
                           </IconAction>
                         )}
                       </div>

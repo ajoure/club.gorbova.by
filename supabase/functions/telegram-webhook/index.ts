@@ -897,16 +897,17 @@ Deno.serve(async (req) => {
           });
         }
         const { data: markedRead, error: markReadError } = await supabase
-          .from('telegram_messages')
-          .update({ is_read: true })
-          .eq('user_id', effectiveUserId)
-          .eq('business_account_id', connection.id)
-          .eq('business_connection_id', connectionId)
-          .eq('telegram_user_id', telegramUserId)
-          .eq('direction', 'incoming')
-          .eq('is_read', false)
-          .lt('message_id', ownerMessageId)
-          .select('id');
+          .rpc('resolve_telegram_conversation_v1', {
+            p_user_id: effectiveUserId,
+            p_boundary: new Date(Number(msgAny.date || Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+            p_transport: 'business',
+            p_bot_id: null,
+            p_business_account_id: connection.id,
+            // The business webhook has Telegram's numeric id here; the
+            // database UUID is not required to resolve the original task.
+            p_resolution_message_id: null,
+            p_boundary_message_id: ownerMessageId,
+          });
 
         if (markReadError) {
           console.error('[BUSINESS] owner reply failed to clear unread messages', markReadError);
@@ -919,7 +920,7 @@ Deno.serve(async (req) => {
           user_id: effectiveUserId,
           business_account_id: connection.id,
           owner_message_id: ownerMessageId,
-          marked_count: markedRead?.length || 0,
+          marked_count: Array.isArray(markedRead) ? Number(markedRead[0]?.marked_count || 0) : 0,
         });
       }
 
