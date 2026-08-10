@@ -5,6 +5,10 @@ import { INBOX_DIALOGS_QK } from "@/constants/inboxQueryKeys";
 import { useAuth } from "@/contexts/AuthContext";
 import { normalizeTelegramSearchInput } from "@/lib/telegramSearch";
 import { sanitizeExternalDisplayName } from "@/lib/sanitizeExternalDisplayName";
+import {
+  mergeTelegramWorkQueue,
+  type TelegramUnansweredSummary,
+} from "@/lib/contactCenterTelegramQueue";
 
 /**
  * useUnifiedInbox — фронтенд-нормализация трёх источников
@@ -200,9 +204,14 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     queryFn: async () => {
       const { data, error } = await supabase.rpc("get_contact_center_unanswered_dialogs_v1" as any);
       if (error) throw error;
-      return (data || []) as any[];
+      return (data || []) as TelegramUnansweredSummary[];
     },
   });
+
+  const tgQueue = useMemo(
+    () => mergeTelegramWorkQueue(tgRows, tgUnanswered.data || []),
+    [tgRows, tgUnanswered.data],
+  );
 
   // --- Telegram: параллельно тянем chat_preferences (pin/fav) для оператора ---
   const tgPrefs = useQuery({
@@ -221,32 +230,47 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
 
   // --- Telegram profile enrichment (avatar/name) для user_id, которых нет в telegram_messages payload ---
   const tgUserIds = useMemo(
-    () => tgRows.map((d: any) => d.user_id),
-    [tgRows],
+    () =>
+      Array.from(
+        new Set(
+          tgQueue
+            .map((item) => item.dialog?.user_id || item.unanswered?.user_id)
+            .filter((id): id is string => !!id),
+        ),
+      ),
+    [tgQueue],
   );
   const tgProfiles = useQuery({
     queryKey: ["unified-tg-profiles", tgUserIds],
     enabled: enabled && tgUserIds.length > 0,
     staleTime: 60_000,
     queryFn: async () => {
-      // HOTFIX: тот же баг, что в InboxTabContent — `.or(...)` с 100+ UUID
-      // превышал URL limit PostgREST. Разводим на два .in()-запроса и
-      // де-дублируем по profile.id.
-      const [byUserId, byId] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("id, user_id, full_name, email, avatar_url, telegram_user_id, telegram_username")
-          .in("user_id", tgUserIds as string[]),
-        supabase
-          .from("profiles")
-          .select("id, user_id, full_name, email, avatar_url, telegram_user_id, telegram_username")
-          .in("id", tgUserIds as string[]),
-      ]);
-      if (byUserId.error) console.error("[unified-tg-profiles] by user_id error:", byUserId.error);
-      if (byId.error) console.error("[unified-tg-profiles] by id error:", byId.error);
+      // `.or(...)` с 100+ UUID превышал URL limit PostgREST. Разводим lookup
+      // по двум колонкам на короткие batches и де-дублируем по profile.id.
+      const batches: string[][] = [];
+      for (let offset = 0; offset < tgUserIds.length; offset += 50) {
+        batches.push(tgUserIds.slice(offset, offset + 50));
+      }
+      const results = await Promise.all(
+        batches.flatMap((ids) => [
+          supabase
+            .from("profiles")
+            .select("id, user_id, full_name, email, avatar_url, telegram_user_id, telegram_username")
+            .in("user_id", ids),
+          supabase
+            .from("profiles")
+            .select("id, user_id, full_name, email, avatar_url, telegram_user_id, telegram_username")
+            .in("id", ids),
+        ]),
+      );
       const m = new Map<string, any>();
-      (byUserId.data || []).forEach((p: any) => m.set(p.id, p));
-      (byId.data || []).forEach((p: any) => m.set(p.id, p));
+      results.forEach((result) => {
+        if (result.error) {
+          console.error("[unified-tg-profiles] batch error:", result.error);
+          return;
+        }
+        (result.data || []).forEach((p: any) => m.set(p.id, p));
+      });
       return Array.from(m.values()) as any[];
     },
   });
@@ -460,32 +484,39 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     const out: UnifiedDialog[] = [];
 
     // Telegram
-    for (const d of tgRows) {
-      const p = tgProfileMap.get(d.user_id);
-      const pref = tgPrefMap.get(d.user_id);
-      const unanswered = tgUnansweredMap.get(d.user_id);
+    for (const queueItem of tgQueue) {
+      const d = queueItem.dialog;
+      const unanswered = queueItem.unanswered || tgUnansweredMap.get(d?.user_id);
+      const userId = d?.user_id || unanswered?.user_id;
+      if (!userId) continue;
+      const p = tgProfileMap.get(userId);
+      const pref = tgPrefMap.get(userId);
       out.push({
-        key: `tg:${d.user_id}`,
+        key: `tg:${userId}`,
         source: "telegram",
-        sourceId: d.user_id,
-        sourceLabel: d.last_bot_name || d.last_bot_username || null,
+        sourceId: userId,
+        sourceLabel: d?.last_bot_name || d?.last_bot_username || null,
         displayName: p?.full_name || p?.email || "Без имени",
         avatarUrl: p?.avatar_url || null,
-        lastMessage: d.last_message_text || (d.last_message_type ? `[${d.last_message_type}]` : ""),
-        lastMessageAt: d.last_message_at,
-        unreadCount: Number(d.unread_count) || 0,
+        lastMessage:
+          d?.last_message_text ||
+          (d?.last_message_type ? `[${d.last_message_type}]` : "") ||
+          unanswered?.oldest_message_text ||
+          "Неотвеченное сообщение",
+        lastMessageAt: d?.last_message_at || unanswered?.oldest_message_at,
+        unreadCount: Number(unanswered?.unanswered_count) || 0,
         isUnanswered: (Number(unanswered?.unanswered_count) || 0) > 0,
         isPinned: pref?.is_pinned || false,
         isFavorite: pref?.is_favorite || false,
         capabilities: TG_CAPS,
         meta: {
           profileId: p?.id ?? null,
-          telegramUserId: d.user_id,
+          telegramUserId: userId,
           telegramNumericId: p?.telegram_user_id ?? null,
           telegramUsername: p?.telegram_username ?? null,
-          telegramBotId: d.last_bot_id || null,
-          telegramBotUsername: d.last_bot_username || null,
-          telegramBotName: d.last_bot_name || null,
+          telegramBotId: d?.last_bot_id || null,
+          telegramBotUsername: d?.last_bot_username || null,
+          telegramBotName: d?.last_bot_name || null,
         },
       });
     }
@@ -569,7 +600,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     return out;
   }, [
     enabled,
-    tgRows,
+    tgQueue,
     tgProfiles.data,
     tgPrefs.data,
     tgUnanswered.data,
