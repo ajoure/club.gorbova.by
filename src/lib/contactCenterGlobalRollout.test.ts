@@ -20,6 +20,7 @@ describe("contact center global rollout", () => {
   it("shows employees that rollout is centralized", () => {
     expect(settingsSource).toContain("Включена для всех");
     expect(settingsSource).toContain("не зависит от браузера, устройства или localStorage");
+    expect(settingsSource).toContain("flex flex-col items-start gap-3 sm:flex-row");
     expect(settingsSource).not.toContain("UnifiedInboxToggleCard");
   });
 });

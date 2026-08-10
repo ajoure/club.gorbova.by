@@ -642,8 +642,8 @@ function UnifiedInboxRolloutCard() {
   const { enabled } = useUnifiedInboxRolloutStatus();
 
   return (
-    <GlassCard className="p-6">
-      <div className="flex items-start justify-between gap-4">
+    <GlassCard className="p-4 sm:p-6">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <MessageSquare className="w-5 h-5 text-primary" />
@@ -664,13 +664,12 @@ function UnifiedInboxRolloutCard() {
             техподдержку и не зависит от браузера, устройства или localStorage.
           </p>
         </div>
-        <div className="shrink-0 text-sm font-medium text-green-600 dark:text-green-400">
+        <div className="text-sm font-medium text-green-600 dark:text-green-400 sm:shrink-0">
           Включена для всех
         </div>
       </div>
     </GlassCard>
   );
 }
-
 
 
