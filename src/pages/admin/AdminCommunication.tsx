@@ -1,6 +1,7 @@
 // Cache bust v4
 import { lazy, Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Send, LifeBuoy, Inbox, Settings, ChevronDown, MessageSquare, Mail, Instagram, Layers, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,7 @@ import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
 import { useUnreadEmailCount } from "@/hooks/useEmailInbox";
 import { useUnreadTicketsCount } from "@/hooks/useUnreadTicketsCount";
 import type { UnifiedInboxCounts } from "@/hooks/useUnifiedInbox";
+import { CONTACT_CENTER_VISIBLE_UNREAD_QK } from "@/constants/inboxQueryKeys";
 
 const InboxTabContent = lazy(() =>
   import("@/components/admin/communication/InboxTabContent").then((module) => ({
@@ -56,6 +58,7 @@ const tabs = [
 ];
 
 export default function AdminCommunication() {
+  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   // Unified inbox: controlled rollout — включено только для superadmin (или QA-override),
   // мгновенно отключается через kill-switch. См. useContactCenterFeatureFlag.
@@ -93,6 +96,14 @@ export default function AdminCommunication() {
     ? unifiedCounts.totalUnread + emailUnread
     : telegramUnread + emailUnread + ticketsUnread;
   const unifiedSourceFilter = inboxChannel === "email" ? "all" : inboxChannel;
+
+  // The global sidebar used to show a raw Telegram-dialog total while the
+  // unified contact center rendered canonical contact cards. Publish the
+  // visible total into React Query so both badges describe the same queue.
+  useEffect(() => {
+    if (!unifiedEnabled || !unifiedCounts) return;
+    queryClient.setQueryData(CONTACT_CENTER_VISIBLE_UNREAD_QK, inboxUnread);
+  }, [emailUnread, inboxUnread, queryClient, unifiedCounts, unifiedEnabled]);
 
   // Sync tab with URL - handle legacy "support" tab redirect
   useEffect(() => {

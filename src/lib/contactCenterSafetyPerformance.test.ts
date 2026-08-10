@@ -8,6 +8,8 @@ import unifiedInboxSource from "../components/admin/communication/unified/Unifie
 import channelPickerSource from "../components/admin/communication/unified/ChannelPicker.tsx?raw";
 import instagramMediaSource from "../components/admin/communication/instagram/InstagramMessageMedia.tsx?raw";
 import communicationPageSource from "../pages/admin/AdminCommunication.tsx?raw";
+import adminSidebarSource from "../components/layout/AdminSidebar.tsx?raw";
+import inboxQueryKeysSource from "../constants/inboxQueryKeys.ts?raw";
 import unifiedInboxHookSource from "../hooks/useUnifiedInbox.ts?raw";
 import realtimeInvalidationSource from "../hooks/useInboxRealtimeInvalidation.ts?raw";
 import telegramChatSource from "../components/admin/ContactTelegramChat.tsx?raw";
@@ -122,6 +124,19 @@ describe("Contact-center safety and mobile performance", () => {
     expect(unifiedInboxSource).toContain('sourceFilter !== "all" && row.channels[sourceFilter]');
     expect(unifiedInboxSource).toContain("rowActive.lastMessagePreview");
     expect(unifiedInboxSource).toContain('sourceFilter === "all" ? row.totalUnread : rowActive.unread');
+  });
+
+  it("keeps the global contact-center badge equal to the visible canonical queue", () => {
+    expect(inboxQueryKeysSource).toContain("CONTACT_CENTER_VISIBLE_UNREAD_QK");
+    expect(communicationPageSource).toContain(
+      "queryClient.setQueryData(CONTACT_CENTER_VISIBLE_UNREAD_QK, inboxUnread)",
+    );
+    expect(adminSidebarSource).toContain(
+      'location.pathname.startsWith("/admin/communication")',
+    );
+    expect(adminSidebarSource).toContain(
+      'typeof contactCenterVisibleUnread === "number"',
+    );
   });
 
   it("renders ready sources progressively instead of blocking on the slowest integration", () => {
