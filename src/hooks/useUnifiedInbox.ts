@@ -162,6 +162,18 @@ interface Options {
   search?: string;
 }
 
+interface ContactCenterAssignmentSummary {
+  id: string;
+  source_message_id: string;
+  telegram_user_id: string;
+  assignee_user_id: string;
+  assignee_name: string;
+  assigned_at: string;
+  is_answered: boolean;
+  source_message_text: string | null;
+  source_message_at: string;
+}
+
 export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: Options) {
   const { user } = useAuth();
   const serverSearch = normalizeTelegramSearchInput(search);
@@ -216,9 +228,39 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     },
   });
 
+  // Answered assignments intentionally stay in «Мои» until the assignee
+  // removes them. Hydrate those dialogs even when they are outside page one.
+  const tgAssignments = useQuery({
+    queryKey: ["contact-center-assignments"],
+    enabled,
+    staleTime: 15_000,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_contact_center_assignments_v2" as any);
+      if (error) throw error;
+      return (data || []) as ContactCenterAssignmentSummary[];
+    },
+  });
+
+  const tgWorkSummaries = useMemo(() => {
+    const summaries = new Map<string, TelegramUnansweredSummary>(
+      (tgUnanswered.data || []).map((item) => [item.user_id, item]),
+    );
+    for (const assignment of tgAssignments.data || []) {
+      if (summaries.has(assignment.telegram_user_id)) continue;
+      summaries.set(assignment.telegram_user_id, {
+        user_id: assignment.telegram_user_id,
+        unanswered_count: 0,
+        oldest_message_id: assignment.source_message_id,
+        oldest_message_text: assignment.source_message_text,
+        oldest_message_at: assignment.source_message_at,
+      });
+    }
+    return Array.from(summaries.values());
+  }, [tgAssignments.data, tgUnanswered.data]);
+
   const tgQueue = useMemo(
-    () => mergeTelegramWorkQueue(tgRows, tgUnanswered.data || [], !serverSearch),
-    [tgRows, tgUnanswered.data, serverSearch],
+    () => mergeTelegramWorkQueue(tgRows, tgWorkSummaries, !serverSearch),
+    [tgRows, tgWorkSummaries, serverSearch],
   );
 
   // --- Telegram: параллельно тянем chat_preferences (pin/fav) для оператора ---

@@ -69,6 +69,8 @@ export function useInboxRealtimeInvalidation(): void {
       if (flushInbox) {
         queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK });
         queryClient.invalidateQueries({ queryKey: ["unified-inbox-telegram"] });
+        queryClient.invalidateQueries({ queryKey: ["contact-center-unanswered-dialogs"] });
+        queryClient.invalidateQueries({ queryKey: ["contact-center-assignments"] });
       }
       if (flushUnread) {
         queryClient.invalidateQueries({ queryKey: UNREAD_MESSAGES_COUNT_QK });

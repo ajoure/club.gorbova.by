@@ -1655,6 +1655,8 @@ export function ContactTelegramChat({
           queryClient.invalidateQueries({ queryKey: ["unified-inbox-telegram"] });
           queryClient.invalidateQueries({ queryKey: ["inbox-dialogs"] });
           queryClient.invalidateQueries({ queryKey: ["unread-messages-count"] });
+          queryClient.invalidateQueries({ queryKey: ["contact-center-unanswered-dialogs"] });
+          queryClient.invalidateQueries({ queryKey: ["contact-center-assignments"] });
         }
       }
       onMessageSent?.(b);
