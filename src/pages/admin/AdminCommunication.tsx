@@ -295,6 +295,7 @@ export default function AdminCommunication() {
                   <UnifiedInboxView
                     sourceFilter={unifiedSourceFilter}
                     onCountsChange={setUnifiedCounts}
+                    deepLinkTelegramUserId={searchParams.get("chat")}
                   />
                 )
                 : <InboxTabContent defaultChannel={inboxChannel === "all" ? "telegram" : inboxChannel} />

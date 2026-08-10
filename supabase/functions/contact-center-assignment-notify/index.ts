@@ -60,13 +60,28 @@ Deno.serve(async (request) => {
       meta: { assignment_id: assignment.id, assigned_by: authData.user.id },
     });
     if (outboxError?.code === "23505") {
-      return new Response(JSON.stringify({ success: true, skipped: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { data: existingOutbox } = await supabase
+        .from("notification_outbox")
+        .select("status")
+        .eq("idempotency_key", idempotencyKey)
+        .maybeSingle();
+      if (existingOutbox?.status === "sent") {
+        return new Response(JSON.stringify({ success: true, skipped: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      if (existingOutbox?.status === "queued") {
+        return new Response(JSON.stringify({ success: false, reason: "notification_in_progress" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      await supabase
+        .from("notification_outbox")
+        .update({ status: "queued", blocked_reason: null })
+        .eq("idempotency_key", idempotencyKey);
+    } else if (outboxError) {
+      throw outboxError;
     }
-    if (outboxError) throw outboxError;
 
     const [{ data: recipient }, { data: message }, { data: bot }] = await Promise.all([
       supabase.from("profiles").select("telegram_user_id, full_name").eq("user_id", assignment.assignee_user_id).maybeSingle(),
-      supabase.from("telegram_messages").select("message_text").eq("id", assignment.source_message_id).maybeSingle(),
+      supabase.from("telegram_messages").select("message_text, user_id").eq("id", assignment.source_message_id).maybeSingle(),
       supabase.from("telegram_bots").select("bot_token_encrypted").eq("status", "active").order("is_primary", { ascending: false }).limit(1).maybeSingle(),
     ]);
     if (!recipient?.telegram_user_id || !bot?.bot_token_encrypted) {
@@ -74,10 +89,45 @@ Deno.serve(async (request) => {
       return new Response(JSON.stringify({ success: false, reason: "recipient_or_bot_unavailable" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const preview = String(message?.message_text || "Вложение или сообщение без текста").replace(/\s+/g, " ").slice(0, 400);
+    if (!message?.user_id) {
+      await supabase.from("notification_outbox").update({ status: "failed", blocked_reason: "source_dialog_unavailable" }).eq("idempotency_key", idempotencyKey);
+      return new Response(JSON.stringify({ success: false, reason: "source_dialog_unavailable" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    const { data: contact } = await supabase
+      .from("profiles")
+      .select("full_name, email, phone, telegram_username")
+      .or(`user_id.eq.${message.user_id},id.eq.${message.user_id}`)
+      .limit(1)
+      .maybeSingle();
+    const preview = String(message.message_text || "Вложение или сообщение без текста")
+      .replace(/\s+/g, " ")
+      .slice(0, 400);
+    const contactName = String(contact?.full_name || "").replace(/\s+/g, " ").trim() || "Без имени";
+    const telegramUsername = String(contact?.telegram_username || "")
+      .trim()
+      .replace(/^@+/, "");
+    const safeTelegramUsername = /^[A-Za-z0-9_]{5,32}$/.test(telegramUsername)
+      ? telegramUsername
+      : "";
+    const contactLines = [
+      `👤 ${contactName}`,
+      safeTelegramUsername ? `✈️ @${safeTelegramUsername}` : null,
+      contact?.email ? `✉️ ${String(contact.email).trim()}` : null,
+      contact?.phone ? `📞 ${String(contact.phone).trim()}` : null,
+    ].filter(Boolean);
+    const siteUrl = (Deno.env.get("CONTACT_CENTER_SITE_URL") || "https://club.gorbova.by").replace(/\/+$/, "");
+    const dialogUrl = `${siteUrl}/admin/communication?tab=inbox&chat=${encodeURIComponent(message.user_id)}`;
+    const inlineKeyboard = [[{ text: "Посмотреть вопрос", url: dialogUrl }]];
+    if (safeTelegramUsername) {
+      inlineKeyboard.push([{ text: "Открыть в Telegram", url: `https://t.me/${safeTelegramUsername}` }]);
+    }
     const sent = await telegramRequest(bot.bot_token_encrypted, "sendMessage", {
       chat_id: recipient.telegram_user_id,
-      text: `Вам назначен вопрос в контакт-центре:\n\n${preview}\n\nОткройте «Сообщения» → «Мои».`,
+      text: `Вам назначен вопрос в контакт-центре\n\n${contactLines.join("\n")}\n\nВопрос:\n${preview}`,
+      disable_web_page_preview: true,
+      reply_markup: {
+        inline_keyboard: inlineKeyboard,
+      },
     });
     await supabase.from("notification_outbox").update({
       status: sent?.ok ? "sent" : "failed",

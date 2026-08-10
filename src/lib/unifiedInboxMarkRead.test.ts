@@ -18,6 +18,12 @@ describe("Unified inbox Telegram mark-as-read wiring", () => {
     expect(unifiedInboxSource).toContain(
       "unread_count: remainingUnread",
     );
+    expect(unifiedInboxSource).toContain(
+      '["contact-center-unanswered-dialogs"]',
+    );
+    expect(unifiedInboxSource).toContain(
+      'old.filter((dialog: any) => dialog?.user_id !== userId)',
+    );
   });
 
   it("does not report success before cache reconciliation finishes", () => {

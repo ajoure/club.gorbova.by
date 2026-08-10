@@ -15,7 +15,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
-import { Search, MessageSquare, RefreshCw, Check, Star, Pin, UserRoundCheck, CheckCircle2 } from "lucide-react";
+import { Search, MessageSquare, RefreshCw, Check, Star, Pin, UserRoundCheck, UserMinus, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -66,9 +66,15 @@ interface Props {
   sourceFilter?: SourceFilter;
   /** Поднимает канонические счётчики карточек в общий header контакт-центра. */
   onCountsChange?: (counts: UnifiedInboxCounts) => void;
+  /** Авторизованный deep-link из Telegram-уведомления на конкретный диалог. */
+  deepLinkTelegramUserId?: string | null;
 }
 
-export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props) {
+export function UnifiedInboxView({
+  sourceFilter = "all",
+  onCountsChange,
+  deepLinkTelegramUserId = null,
+}: Props) {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -108,15 +114,39 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
   const { data: assignments = [] } = useQuery({
     queryKey: ["contact-center-assignments"],
     queryFn: async () => {
-      const { data, error } = await supabase.rpc("get_contact_center_assignments_v1" as any);
+      const { data, error } = await supabase.rpc("get_contact_center_assignments_v2" as any);
       if (error) throw error;
-      return (data || []) as Array<{ source_message_id: string; telegram_user_id: string; assignee_user_id: string; assignee_name: string }>;
+      return (data || []) as Array<{
+        id: string;
+        source_message_id: string;
+        telegram_user_id: string;
+        assignee_user_id: string;
+        assignee_name: string;
+        is_answered: boolean;
+      }>;
     },
     staleTime: 15_000,
   });
   const assignmentByTelegramUserId = useMemo(
-    () => new Map(assignments.map((assignment) => [assignment.telegram_user_id, assignment])),
+    () => {
+      const byDialog = new Map<string, (typeof assignments)[number]>();
+      for (const assignment of assignments) {
+        // RPC returns newest first. Keep one canonical folder card per dialog.
+        if (!byDialog.has(assignment.telegram_user_id)) {
+          byDialog.set(assignment.telegram_user_id, assignment);
+        }
+      }
+      return byDialog;
+    },
     [assignments],
+  );
+  const myAssignmentCount = useMemo(
+    () => new Set(
+      assignments
+        .filter((assignment) => assignment.assignee_user_id === user?.id)
+        .map((assignment) => assignment.telegram_user_id),
+    ).size,
+    [assignments, user?.id],
   );
 
   /**
@@ -132,6 +162,7 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
    * новую grouped row, содержащую тот же source key.
    */
   const [lastSelectedSourceKey, setLastSelectedSourceKey] = useState<string | null>(null);
+  const openedDeepLinkRef = useRef<string | null>(null);
 
   // PATCH-ADMIN-INITIATE-SUPPORT-TICKET: диалог создания обращения из карточки контакта.
   const [initiateFor, setInitiateFor] = useState<UnifiedContactRow | null>(null);
@@ -282,6 +313,20 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
     setLastSelectedSourceKey(ch.key);
   };
 
+  // Ссылка из Telegram открывает именно назначенный диалог, включая mobile/PWA.
+  // Повторные фоновые refetch не должны перехватывать ручной выбор оператора.
+  useEffect(() => {
+    if (!deepLinkTelegramUserId || openedDeepLinkRef.current === deepLinkTelegramUserId) return;
+    const row = contactRows.find(
+      (candidate) => candidate.channels.telegram?.sourceRow.meta.telegramUserId === deepLinkTelegramUserId,
+    );
+    if (!row?.channels.telegram) return;
+    openedDeepLinkRef.current = deepLinkTelegramUserId;
+    setSelectedKey(row.key);
+    setActiveSourceByKey((prev) => ({ ...prev, [row.key]: "telegram" }));
+    setLastSelectedSourceKey(row.channels.telegram.key);
+  }, [contactRows, deepLinkTelegramUserId]);
+
   const changeActiveSource = (source: UnifiedSource) => {
     if (!selected || !selected.channels[source]) return;
     setActiveSourceByKey((prev) => ({ ...prev, [selected.key]: source }));
@@ -308,6 +353,8 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
     queryClient.invalidateQueries({ queryKey: ["unified-ig-contacts"] });
     queryClient.invalidateQueries({ queryKey: ["unified-support-tickets"] });
     queryClient.invalidateQueries({ queryKey: ["profile-channels"] });
+    queryClient.invalidateQueries({ queryKey: ["contact-center-unanswered-dialogs"] });
+    queryClient.invalidateQueries({ queryKey: ["contact-center-assignments"] });
   };
 
   // ------- Row actions apply to activeChannel of the row (V1 safe) -------
@@ -474,6 +521,20 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
                   )
                 : old,
           );
+          queryClient.setQueryData<any[]>(
+            ["contact-center-unanswered-dialogs"],
+            (old) => {
+              if (!Array.isArray(old)) return old;
+              if (remainingUnread === 0) {
+                return old.filter((dialog: any) => dialog?.user_id !== userId);
+              }
+              return old.map((dialog: any) =>
+                dialog?.user_id === userId
+                  ? { ...dialog, unanswered_count: remainingUnread }
+                  : dialog,
+              );
+            },
+          );
         } catch (e) {
           clearSelfMark(userId);
           throw e;
@@ -482,6 +543,8 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
           queryClient.invalidateQueries({ queryKey: ["unified-inbox-telegram"] }),
           queryClient.invalidateQueries({ queryKey: INBOX_DIALOGS_QK }),
           queryClient.invalidateQueries({ queryKey: UNREAD_MESSAGES_COUNT_QK }),
+          queryClient.invalidateQueries({ queryKey: ["contact-center-unanswered-dialogs"] }),
+          queryClient.invalidateQueries({ queryKey: ["contact-center-assignments"] }),
         ]);
         toast.success("Отмечено прочитанным · Telegram");
         return;
@@ -521,32 +584,53 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
     if (!telegramUserId) return;
     setBusyKey(row.key);
     try {
-      const { data: unanswered, error: unansweredError } = await supabase.rpc(
-        "get_contact_center_unanswered_v1" as any,
-        { p_user_id: telegramUserId } as any,
-      );
-      if (unansweredError) throw unansweredError;
-      const target = (unanswered || [])[0] as { id?: string } | undefined;
-      if (!target?.id) throw new Error("нет неотвеченного сообщения для назначения");
       const { data: assignmentId, error } = await supabase.rpc(
-        "assign_contact_center_message_v1" as any,
-        { p_message_id: target.id, p_assignee_user_id: assigneeUserId, p_note: null } as any,
+        "assign_contact_center_dialog_v2" as any,
+        {
+          p_user_id: telegramUserId,
+          p_assignee_user_id: assigneeUserId,
+          p_note: null,
+        } as any,
       );
       if (error) throw error;
-      // Notification is best-effort and idempotent. A missing Telegram link
-      // must not undo a successfully assigned customer question.
+      let notificationDelivered = false;
       if (assignmentId) {
-        supabase.functions.invoke("contact-center-assignment-notify", {
-          body: { assignment_id: assignmentId },
-        }).catch((notificationError) => {
-          console.warn("[UnifiedInboxView] assignment notification failed", notificationError);
-        });
+        const { data: notification, error: notificationError } = await supabase.functions.invoke(
+          "contact-center-assignment-notify",
+          { body: { assignment_id: assignmentId } },
+        );
+        notificationDelivered = !notificationError && notification?.success === true;
       }
       await queryClient.invalidateQueries({ queryKey: ["contact-center-assignments"] });
       const employee = assignees.find((candidate) => candidate.user_id === assigneeUserId);
-      toast.success(`Передано: ${employee?.display_name || "сотрудник"}`);
+      if (notificationDelivered) {
+        toast.success(`Передано: ${employee?.display_name || "сотрудник"}`);
+      } else {
+        toast.warning(`Передано: ${employee?.display_name || "сотрудник"}. Telegram-уведомление не доставлено`);
+      }
     } catch (error: any) {
-      toast.error("Не удалось передать вопрос: " + (error?.message || "ошибка"));
+      const message = String(error?.message || "ошибка");
+      toast.error(
+        message.includes("unanswered_message_not_found")
+          ? "Вопрос уже закрыт или был обработан другим сотрудником"
+          : "Не удалось передать вопрос: " + message,
+      );
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const removeOwnAssignment = async (row: UnifiedContactRow, assignmentId: string) => {
+    setBusyKey(row.key);
+    try {
+      const { error } = await supabase.rpc("unassign_contact_center_dialog_v1" as any, {
+        p_assignment_id: assignmentId,
+      } as any);
+      if (error) throw error;
+      await queryClient.invalidateQueries({ queryKey: ["contact-center-assignments"] });
+      toast.success("Убрано из «Мои»");
+    } catch (error: any) {
+      toast.error("Не удалось убрать из «Мои»: " + (error?.message || "ошибка"));
     } finally {
       setBusyKey(null);
     }
@@ -623,7 +707,7 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
             { key: "unread", label: "Новые", count: counts2.unread },
             { key: "favorite", label: "Избранное", count: counts2.fav },
             { key: "pinned", label: "Закреплённые", count: counts2.pinned },
-            { key: "mine", label: "Мои", count: assignments.filter((item) => item.assignee_user_id === user?.id).length },
+            { key: "mine", label: "Мои", count: myAssignmentCount },
           ] as { key: FilterKind; label: string; count: number }[]).map((chip) => (
             <Button
               key={chip.key}
@@ -745,7 +829,14 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
                           />
                         ))}
                         {telegramAssignment && (
-                          <Badge variant="secondary" className="h-4 max-w-[150px] truncate px-1 text-[9px] font-medium">
+                          <Badge
+                            variant="secondary"
+                            className={cn(
+                              "h-4 max-w-[180px] truncate px-1 text-[9px] font-medium",
+                              telegramAssignment.is_answered && "bg-emerald-100 text-emerald-800",
+                            )}
+                          >
+                            {telegramAssignment.is_answered ? "Ответ дан · " : ""}
                             {telegramAssignment.assignee_name}
                           </Badge>
                         )}
@@ -818,6 +909,15 @@ export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props
                               ))}
                             </DropdownMenuContent>
                           </DropdownMenu>
+                        )}
+                        {telegramAssignment?.assignee_user_id === user?.id && (
+                          <IconAction
+                            title="Убрать из «Мои»"
+                            disabled={busyKey === row.key}
+                            onActivate={() => removeOwnAssignment(row, telegramAssignment.id)}
+                          >
+                            <UserMinus className="h-3 w-3" />
+                          </IconAction>
                         )}
                         {row.channels.support?.sourceRow.meta.ticketId && (
                           <IconAction
