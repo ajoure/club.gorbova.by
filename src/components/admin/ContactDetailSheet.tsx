@@ -166,6 +166,7 @@ import { isStaffRole } from "@/lib/liveRoomRoles";
 import { useAuth } from "@/contexts/AuthContext";
 import { ContactChannelsSection } from "./ContactChannelsSection";
 import { ContactReferralsTab } from "./contact/ContactReferralsTab";
+import { scrollHorizontalRibbon } from "@/lib/horizontalWheelScroll";
 
 // formatContactName imported from @/lib/nameUtils
 
@@ -1998,8 +1999,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         </SheetHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex min-h-0 w-full min-w-0 flex-col overflow-hidden">
-          {/* Scrollable tabs for mobile */}
-          <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
+          {/* Scrollable tabs: visible native scrollbar plus vertical-wheel support for Windows mice. */}
+          <div
+            className="contact-tabs-scroll flex-shrink-0 overflow-x-auto overflow-y-hidden pb-1"
+            style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}
+            aria-label="Разделы карточки контакта"
+            onWheel={(event) => {
+              if (scrollHorizontalRibbon(event.currentTarget, event.deltaX, event.deltaY)) {
+                event.preventDefault();
+              }
+            }}
+          >
             <TabsList className="mx-4 sm:mx-6 mt-0 mb-0 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
               <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
               <TabsTrigger value="companies" className="text-xs sm:text-sm px-2.5 sm:px-3">
