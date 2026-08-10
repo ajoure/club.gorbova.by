@@ -24858,6 +24858,7 @@ export type Database = {
           sections_updated: number
         }[]
       }
+      tariff_access_rank: { Args: { p_tariff_id: string }; Returns: number }
       tariff_archive: { Args: { p_tariff_id: string }; Returns: Json }
       tariff_delete_safety_check: {
         Args: { p_tariff_id: string }
@@ -24885,6 +24886,10 @@ export type Database = {
           _name: string
           _package_id: string
         }
+        Returns: Json
+      }
+      upsert_club_bonus_entitlement_source: {
+        Args: { p_access_rule_id: string; p_order_id: string }
         Returns: Json
       }
       upsert_package_field_catalog: {
