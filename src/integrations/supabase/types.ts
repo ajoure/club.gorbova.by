@@ -22314,6 +22314,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      assign_contact_center_dialog_v2: {
+        Args: { p_assignee_user_id: string; p_note?: string; p_user_id: string }
+        Returns: string
+      }
       assign_contact_center_message_v1: {
         Args: {
           p_assignee_user_id: string
@@ -23492,6 +23496,21 @@ export type Database = {
           id: string
           note: string
           source_message_id: string
+          telegram_user_id: string
+        }[]
+      }
+      get_contact_center_assignments_v2: {
+        Args: never
+        Returns: {
+          assigned_at: string
+          assignee_name: string
+          assignee_user_id: string
+          id: string
+          is_answered: boolean
+          note: string
+          source_message_at: string
+          source_message_id: string
+          source_message_text: string
           telegram_user_id: string
         }[]
       }
@@ -24847,6 +24866,10 @@ export type Database = {
       tariff_hard_delete: { Args: { p_tariff_id: string }; Returns: Json }
       trigger_card_verification: { Args: never; Returns: undefined }
       try_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
+      unassign_contact_center_dialog_v1: {
+        Args: { p_assignment_id: string }
+        Returns: boolean
+      }
       unlink_instagram_contact_from_profile: {
         Args: { p_instagram_contact_id: string }
         Returns: Json
