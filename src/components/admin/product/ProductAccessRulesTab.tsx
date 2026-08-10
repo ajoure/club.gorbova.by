@@ -356,6 +356,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       grant_target_type: "training_content" as GrantTargetType,
       target_ref: targetRef,
       target_label: targetLabel,
+      grant_tariff_id: "",
       is_active: true,
       priority: "",
       duration_mode: "tariff",
@@ -404,6 +405,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     grant_target_type: "club" as GrantTargetType,
     target_ref: "",
     target_label: "",
+    grant_tariff_id: "",
     is_active: true,
     priority: "",
     duration_mode: "tariff" as "tariff" | "manual",
@@ -426,6 +428,33 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     // document_generation fields (Sprint 3S v2 — UUID only)
     dg_access_mode: "full" as "full" | "partial",
     dg_allowed_package_ids: [] as string[],
+  });
+
+  const { data: availableClubTariffs = [] } = useQuery({
+    queryKey: ["club-target-tariffs", form.target_ref],
+    queryFn: async () => {
+      if (!form.target_ref) return [];
+      const { data: products, error: productError } = await supabase
+        .from("products_v2")
+        .select("id, name")
+        .eq("telegram_club_id", form.target_ref)
+        .eq("is_active", true)
+        .limit(2);
+      if (productError) throw productError;
+      if ((products || []).length !== 1) return [];
+
+      const targetProduct = products![0];
+      const { data: targetTariffs, error: tariffError } = await supabase
+        .from("tariffs")
+        .select("id, name, public_id, meta, sort_order, display_order")
+        .eq("product_id", targetProduct.id)
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true })
+        .order("display_order", { ascending: true });
+      if (tariffError) throw tariffError;
+      return (targetTariffs || []).map(tariff => ({ ...tariff, product_name: targetProduct.name }));
+    },
+    enabled: form.grant_target_type === "club" && !!form.target_ref,
   });
 
   // Confirm-dialog для перевода existing partial → full
@@ -547,6 +576,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       grant_target_type: "club",
       target_ref: "",
       target_label: "",
+      grant_tariff_id: "",
       is_active: true,
       priority: "",
       duration_mode: "tariff",
@@ -609,6 +639,9 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       grant_target_type: isDgRule ? "training_content" : rule.grant_target_type,
       target_ref: isDgRule ? "" : rule.target_ref,
       target_label: isDgRule ? "" : (rule.target_label || ""),
+      grant_tariff_id: rule.grant_target_type === "club" && typeof conditions.grant_tariff_id === "string"
+        ? conditions.grant_tariff_id
+        : "",
       is_active: rule.is_active,
       priority: rule.priority ? String(rule.priority) : "",
       duration_mode: rule.duration_days != null ? "manual" : "tariff",
@@ -675,9 +708,22 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       return;
     }
 
+    if (
+      form.grant_target_type === "club" &&
+      form.duration_mode === "manual" &&
+      Number(form.duration_days) > 0 &&
+      !form.grant_tariff_id
+    ) {
+      toast.error("Для временного бонуса выберите уровень доступа на платформе");
+      return;
+    }
+
     const conditions: Record<string, unknown> = {};
     if (form.rule_purpose !== "primary") {
       conditions.rule_purpose = form.rule_purpose;
+    }
+    if (form.grant_target_type === "club" && form.grant_tariff_id) {
+      conditions.grant_tariff_id = form.grant_tariff_id;
     }
 
     // Multi-product target storage (add-only JSONB)
@@ -828,7 +874,14 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     } else if (form.grant_target_type === "entitlement") {
       label = ref;
     }
-    setForm({ ...form, target_ref: ref, target_label: label });
+    setForm({
+      ...form,
+      target_ref: ref,
+      target_label: label,
+      grant_tariff_id: form.grant_target_type === "club" && ref !== form.target_ref
+        ? ""
+        : form.grant_tariff_id,
+    });
   };
 
   // Format duration — pure number formatter, no business logic
@@ -1407,6 +1460,34 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                       ))}
                     </SelectContent>
                   </Select>
+                  {form.target_ref && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Уровень доступа на платформе</Label>
+                      <Select
+                        value={form.grant_tariff_id}
+                        onValueChange={(value) => setForm({ ...form, grant_tariff_id: value })}
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue placeholder="Выберите тариф продукта клуба" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableClubTariffs.map((tariff) => (
+                            <SelectItem key={tariff.id} value={tariff.id}>
+                              <span className="flex items-center gap-2">
+                                {tariff.name}
+                                <Badge variant="outline" className="text-[9px] px-1 py-0">
+                                  {tariff.public_id}
+                                </Badge>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground">
+                        Для временного бонуса это отдельный уровень доступа со своим сроком. Платная подписка сохраняется.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 

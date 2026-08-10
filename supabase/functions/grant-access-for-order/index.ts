@@ -22,6 +22,7 @@ import {
 } from './caller_auth.ts';
 import { resolveStaleAccessPolicy } from './stale_access_policy.ts';
 import { evaluateGrantEligibility, type Branch as EligibilityBranch, type CallerType as EligibilityCallerType } from '../_shared/grant-eligibility.ts';
+import { syncConfiguredClubBonusSource } from '../_shared/club-bonus-entitlement-source.ts';
 
 
 
@@ -742,6 +743,16 @@ Deno.serve(async (req) => {
         console.error('[grant-access] secondary sync on idempotent path failed (non-critical):', e);
       }
 
+      // A finite Club bonus is a separate entitlement source.  It must also be
+      // repaired on the idempotent path because an earlier attempt could have
+      // committed the primary product and failed before creating the bonus.
+      const clubBonusSource = await syncConfiguredClubBonusSource(supabase, {
+        orderId,
+        userId,
+        productId,
+        tariffId: order.tariff_id || null,
+      });
+
       await supabase.from("audit_logs").insert({
         action: "grant-access-for-order.skip_already_fulfilled",
         ...auditActor,
@@ -764,6 +775,8 @@ Deno.serve(async (req) => {
           // PATCH 12.2 telemetry: confirms skip was allowed (dates fresh).
           skip_guard_passed: true,
           expected_min_end: expectedMinEndForSkipGuard.toISOString(),
+          club_bonus_source_status: clubBonusSource.status,
+          club_bonus_access_rule_id: clubBonusSource.access_rule_id || null,
         },
       });
 
@@ -789,6 +802,7 @@ Deno.serve(async (req) => {
             guard_match_source: guardSource,
           },
           product_access: secondaryActions,
+          club_bonus_source: clubBonusSource,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -2065,6 +2079,17 @@ Deno.serve(async (req) => {
         }
       }
     }
+
+    // The Club bonus has its own finite source and does not replace a paid
+    // CHAT/FULL subscription.  Rules without grant_tariff_id remain legacy
+    // Telegram-only rules and produce a safe not_configured no-op.
+    const clubBonusSource = await syncConfiguredClubBonusSource(supabase, {
+      orderId,
+      userId,
+      productId,
+      tariffId: tariffId || null,
+    });
+    results.club_bonus_source = clubBonusSource;
 
     // Pre-declare ledger keys for telegram lineage (populated later in step 7)
     let grantLedgerExecutionKey: string | null = null;

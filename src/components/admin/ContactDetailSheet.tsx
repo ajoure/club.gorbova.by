@@ -637,6 +637,57 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
     enabled: !!contact?.id,
   });
 
+  // Independent entitlement sources are displayed separately from the
+  // aggregate entitlement and from paid subscriptions.  This makes a finite
+  // bonus auditable without hiding or replacing the customer's paid access.
+  const { data: entitlementSources = [], isLoading: sourcesLoading } = useQuery({
+    queryKey: ["contact-entitlement-sources", contact?.id, resolvedUserId],
+    queryFn: async () => {
+      if (!contact?.id) return [];
+      const userIds = [contact.id];
+      if (resolvedUserId && resolvedUserId !== contact.id) userIds.push(resolvedUserId);
+
+      const { data: sourceRows, error: sourceError } = await supabase
+        .from("entitlement_sources")
+        .select("id, source_type, source_ref, user_id, product_id, tariff_id, starts_at, expires_at, status, meta, created_at")
+        .in("user_id", userIds)
+        .eq("source_type", "bonus")
+        .order("created_at", { ascending: false });
+      if (sourceError) throw sourceError;
+
+      const productIds = [...new Set((sourceRows || []).map(row => row.product_id).filter(Boolean))];
+      const tariffIds = [...new Set((sourceRows || []).map(row => row.tariff_id).filter(Boolean))] as string[];
+      let sourceProducts: Array<{ id: string; name: string; code: string }> = [];
+      if (productIds.length > 0) {
+        const { data, error } = await supabase
+          .from("products_v2")
+          .select("id, name, code")
+          .in("id", productIds);
+        if (error) throw error;
+        sourceProducts = data || [];
+      }
+
+      let sourceTariffs: Array<{ id: string; name: string; code: string }> = [];
+      if (tariffIds.length > 0) {
+        const { data, error } = await supabase
+          .from("tariffs")
+          .select("id, name, code")
+          .in("id", tariffIds);
+        if (error) throw error;
+        sourceTariffs = data || [];
+      }
+
+      const productById = new Map((sourceProducts || []).map(product => [product.id, product]));
+      const tariffById = new Map((sourceTariffs || []).map(tariff => [tariff.id, tariff]));
+      return (sourceRows || []).map(row => ({
+        ...row,
+        product: productById.get(row.product_id) || null,
+        tariff: row.tariff_id ? tariffById.get(row.tariff_id) || null : null,
+      }));
+    },
+    enabled: !!contact?.id,
+  });
+
   // Fetch products for grant access
   const { data: products } = useQuery({
     queryKey: ["products-for-grant"],
@@ -1777,8 +1828,16 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
     (activeSubscriptions || []).map(s => s.product_id).filter(Boolean)
   );
 
+  const activeEntitlementSources = entitlementSources.filter(source => {
+    if (source.status !== "active") return false;
+    const now = Date.now();
+    if (new Date(source.starts_at).getTime() > now) return false;
+    return !source.expires_at || new Date(source.expires_at).getTime() > now;
+  });
+  const activeSourceProductIds = new Set(activeEntitlementSources.map(source => source.product_id));
+
   const activeEntitlements = (entitlements || []).filter(e => {
-    if (!e.product_id || activeSubscriptionProductIds.has(e.product_id)) return false;
+    if (!e.product_id || activeSubscriptionProductIds.has(e.product_id) || activeSourceProductIds.has(e.product_id)) return false;
     if (e.status !== 'active') return false;
     if (e.expires_at && new Date(e.expires_at) < new Date()) return false;
     const product = e.products_v2 as any;
@@ -1797,7 +1856,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
   });
 
   // Unified effective access count
-  const totalActiveAccess = activeSubscriptions.length + activeEntitlements.length;
+  const totalActiveAccess = new Set([
+    ...activeSubscriptions.map(sub => sub.product_id).filter(Boolean),
+    ...activeEntitlements.map(ent => ent.product_id).filter(Boolean),
+    ...activeEntitlementSources.map(source => source.product_id).filter(Boolean),
+  ]).size;
 
   if (!contact) return null;
 
@@ -3358,7 +3421,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
               </Card>
 
               {/* Current active access (subscriptions + entitlements) */}
-              {(subsLoading || entLoading) ? (
+              {(subsLoading || entLoading || sourcesLoading) ? (
                 <div className="space-y-3">
                   {[1, 2].map(i => <Skeleton key={i} className="h-24 w-full" />)}
                 </div>
@@ -3694,6 +3757,54 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                     );
                   })}
 
+                  {/* A finite bonus remains visible even when the same product
+                      also has a paid subscription. */}
+                  {activeEntitlementSources.map(source => {
+                    const sourceMeta = source.meta && typeof source.meta === "object" && !Array.isArray(source.meta)
+                      ? source.meta as Record<string, unknown>
+                      : {};
+                    const sourceLabel = typeof sourceMeta.source_product_name === "string"
+                      ? sourceMeta.source_product_name
+                      : "отдельному основанию";
+                    return (
+                      <Card key={`source-${source.id}`} className="transition-all border-l-2 border-l-violet-400">
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between gap-3 mb-2">
+                            <div className="min-w-0">
+                              <div className="font-medium truncate">{source.product?.name || "Продукт"}</div>
+                              <div className="flex flex-wrap items-center gap-1 mt-1">
+                                {source.tariff?.name && (
+                                  <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                    {source.tariff.name}
+                                  </Badge>
+                                )}
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-violet-600 border-violet-200">
+                                  {source.source_type === "bonus" ? "бонусный доступ" : "отдельный источник"}
+                                </Badge>
+                              </div>
+                            </div>
+                            <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 shrink-0">
+                              Активен
+                            </Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground mb-2">
+                            через {sourceLabel}
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
+                            <div>
+                              <span className="text-muted-foreground">С: </span>
+                              <span>{format(new Date(source.starts_at), "dd.MM.yy")}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">До: </span>
+                              <span>{source.expires_at ? format(new Date(source.expires_at), "dd.MM.yy") : "бессрочно"}</span>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+
                   {/* Active entitlements (order_based_only products not covered by subscriptions) */}
                   {activeEntitlements.map(ent => {
                     const product = ent.products_v2 as any;
@@ -3708,7 +3819,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                                 <Badge variant="outline" className="text-[10px] px-1.5 py-0">доступ по продукту</Badge>
                                 {meta?.source_rule_id && (
                                   <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-green-600 border-green-200">
-                                    {(meta?.business_subscription_id || (meta?.source_rule_id === '1b497fba-031a-4318-8d9f-2530f1bac116' && (meta?.canonical_source === 'BUSINESS_subscription'))) ? "через BUSINESS" : "по правилу"}
+                                    {meta?.source_product_name ? `через ${meta.source_product_name}` : "по правилу"}
                                   </Badge>
                                 )}
                                 {!meta?.source_rule_id && meta?.historical_purchase_type && (

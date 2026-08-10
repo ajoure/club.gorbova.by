@@ -1397,6 +1397,29 @@ async function chargeSubscription(
               mode_filter: 'subscription_based',
             });
             console.log(`[subscription-charge] Entitlement sync: ${syncResult.action} for ${productForSync.code}`);
+
+            // Re-resolve the aggregate from all independent sources.  A paid
+            // renewal can extend the commercial window, but it must not erase
+            // a currently active higher-tier finite bonus.
+            const { error: recalcError } = await supabase.rpc('recalculate_entitlement_aggregate', {
+              p_user_id: user_id,
+              p_product_id: product_id,
+            });
+            if (recalcError) {
+              console.error('[subscription-charge] Aggregate recalc failed after renewal:', recalcError);
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'subscription-charge',
+                action: 'entitlement.aggregate_recalc_failed',
+                target_user_id: user_id,
+                meta: {
+                  subscription_id: id,
+                  product_id,
+                  error: recalcError.message,
+                },
+              });
+            }
           }
         } catch (entSyncErr) {
           console.error('[subscription-charge] Entitlement sync error (non-blocking):', entSyncErr);
