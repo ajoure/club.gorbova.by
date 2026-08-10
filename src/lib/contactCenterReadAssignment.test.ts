@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import unifiedInboxSource from "../components/admin/communication/unified/UnifiedInboxView.tsx?raw";
+import inboxSource from "../components/admin/communication/InboxTabContent.tsx?raw";
 import unifiedInboxHookSource from "../hooks/useUnifiedInbox.ts?raw";
 import communicationPageSource from "../pages/admin/AdminCommunication.tsx?raw";
 import notificationSource from "../../supabase/functions/contact-center-assignment-notify/index.ts?raw";
@@ -53,7 +54,10 @@ describe("Contact-center read and assignment lifecycle", () => {
     expect(notificationSource).toContain('text: "Посмотреть вопрос"');
     expect(notificationSource).toContain('text: "Открыть в Telegram"');
     expect(notificationSource).toContain("/admin/communication?tab=inbox&chat=");
+    expect(communicationPageSource).toContain('<InboxTabContent');
     expect(communicationPageSource).toContain('deepLinkTelegramUserId={searchParams.get("chat")}');
+    expect(inboxSource).toContain('deepLinkTelegramUserId?: string | null');
+    expect(inboxSource).toContain('setSelectedUserId(deepLinkTelegramUserId)');
     expect(unifiedInboxSource).toContain("openedDeepLinkRef");
     expect(unifiedInboxSource).toContain('[row.key]: "telegram"');
   });
