@@ -317,7 +317,7 @@ export function useTrainingModules() {
             ? enrichedModules.find(rm => rm.id === m.parent_module_id && !rm.parent_module_id)?.id || m.parent_module_id
             : m.id;
           
-          const filter = resolveTrainingContentFilter(tcRules, rootId, m.product_id, tcUserTariffIds, tcEntTariffsByProduct, tcManualEntProducts);
+          const filter = resolveTrainingContentFilter(tcRules, rootId, m.product_id, tcUserTariffIds, tcEntTariffsByProduct, tcManualEntProducts, tcData?.tariffRanks || {});
           if (filter && filter.mode === "partial") {
             if (m.parent_module_id === null) {
               return m; // Root: keep visible, children filtered individually

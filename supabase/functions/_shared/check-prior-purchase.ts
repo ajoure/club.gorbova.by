@@ -36,12 +36,14 @@ export interface PriorPurchaseResult {
  * @param userId - auth.users UUID
  * @param targetProductId - UUID of the product to check for prior purchase
  * @param excludeOrderId - order to exclude from the search (current order)
+ * @param requiredTariffId - optional UUID of the exact historical tariff
  */
 export async function checkPriorPurchase(
   supabase: SupabaseClient,
   userId: string,
   targetProductId: string,
   excludeOrderId: string,
+  requiredTariffId?: string,
 ): Promise<PriorPurchaseResult> {
   const NOT_FOUND: PriorPurchaseResult = {
     found: false,
@@ -52,13 +54,16 @@ export async function checkPriorPurchase(
 
   // Step 1: Direct match by orders_v2.product_id
   // Prefer orders with tariff_id (full product purchase) over module-only orders
-  const { data: directOrders, error: directErr } = await supabase
+  let directQuery = supabase
     .from('orders_v2')
     .select('id, tariff_id, purchase_snapshot')
     .eq('user_id', userId)
     .eq('product_id', targetProductId)
     .eq('status', 'paid')
-    .neq('id', excludeOrderId)
+    .neq('id', excludeOrderId);
+  if (requiredTariffId) directQuery = directQuery.eq('tariff_id', requiredTariffId);
+
+  const { data: directOrders, error: directErr } = await directQuery
     .order('tariff_id', { ascending: false, nullsFirst: false })
     .limit(5);
 
@@ -88,14 +93,17 @@ export async function checkPriorPurchase(
   // Only for historical_purchase_type = 'module_only_standalone'
   // Only when module_list_mapped contains exactly 1 UUID matching targetProductId
   // Use JSONB containment for efficient server-side filtering
-  const { data: moduleOrders, error: moduleErr } = await supabase
+  let moduleQuery = supabase
     .from('orders_v2')
     .select('id, tariff_id, purchase_snapshot')
     .eq('user_id', userId)
     .eq('status', 'paid')
     .neq('id', excludeOrderId)
     .eq('purchase_snapshot->>historical_purchase_type', 'module_only_standalone')
-    .contains('purchase_snapshot', { module_list_mapped: [targetProductId] })
+    .contains('purchase_snapshot', { module_list_mapped: [targetProductId] });
+  if (requiredTariffId) moduleQuery = moduleQuery.eq('tariff_id', requiredTariffId);
+
+  const { data: moduleOrders, error: moduleErr } = await moduleQuery
     .limit(5);
 
   if (moduleErr) {

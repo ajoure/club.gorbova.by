@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { buildAccessRankMap, selectHighestRankedTariff } from "@/lib/accessTierRank";
 import { useAuth } from "@/contexts/AuthContext";
 import { logTrainingContentDiag } from "@/lib/trainingContentDiag";
 
@@ -183,16 +184,32 @@ export function useActiveTrainingContentRules() {
         .eq("user_id", user.id)
         .eq("status", "active");
 
-      const productIds = [...new Set((ents || []).map(e => e.product_id).filter(Boolean))] as string[];
+      const entitlementProductIds = (ents || []).map(e => e.product_id).filter(Boolean) as string[];
 
       // Get user's active tariff IDs
       const { data: subs } = await supabase
         .from("subscriptions_v2")
-        .select("tariff_id")
+        .select("product_id, tariff_id")
         .eq("user_id", user.id)
         .in("status", ["active", "trial"]);
 
       const tariffIds = (subs || []).map(s => s.tariff_id).filter(Boolean);
+
+      const nowIso = new Date().toISOString();
+      const { data: activeSources, error: sourceError } = await supabase
+        .from("entitlement_sources")
+        .select("product_id, tariff_id")
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .lte("starts_at", nowIso)
+        .or(`expires_at.is.null,expires_at.gt.${nowIso}`);
+      if (sourceError) throw sourceError;
+
+      const productIds = [...new Set([
+        ...entitlementProductIds,
+        ...(subs || []).map(sub => sub.product_id).filter(Boolean),
+        ...(activeSources || []).map(source => source.product_id).filter(Boolean),
+      ])] as string[];
 
       // Product-scoped tariff IDs from entitlement.meta (для entitlement-only доступа)
       // Uses ONLY active entitlements with valid UUID in meta.tariff_id
@@ -226,6 +243,42 @@ export function useActiveTrainingContentRules() {
         }
       });
 
+      // Independent sources override the aggregate entitlement's cached tier
+      // list for their product.  Expired bonuses disappear immediately and the
+      // active paid subscription remains available as a separate tariff.
+      for (const source of activeSources || []) {
+        if (!source.product_id) continue;
+        if (!entitlementTariffsByProduct[source.product_id]) {
+          entitlementTariffsByProduct[source.product_id] = [];
+        }
+        if (source.tariff_id && !entitlementTariffsByProduct[source.product_id].includes(source.tariff_id)) {
+          entitlementTariffsByProduct[source.product_id].push(source.tariff_id);
+        }
+      }
+      for (const sub of subs || []) {
+        if (!sub.product_id || !sub.tariff_id) continue;
+        if (!entitlementTariffsByProduct[sub.product_id]) {
+          entitlementTariffsByProduct[sub.product_id] = [];
+        }
+        if (!entitlementTariffsByProduct[sub.product_id].includes(sub.tariff_id)) {
+          entitlementTariffsByProduct[sub.product_id].push(sub.tariff_id);
+        }
+      }
+
+      const allEffectiveTariffIds = [...new Set([
+        ...tariffIds,
+        ...(activeSources || []).map(source => source.tariff_id).filter(Boolean),
+      ])] as string[];
+      let tariffRanks: Record<string, number> = {};
+      if (allEffectiveTariffIds.length > 0) {
+        const { data: rankRows, error: rankError } = await supabase
+          .from("tariffs")
+          .select("id, meta, sort_order, display_order")
+          .in("id", allEffectiveTariffIds);
+        if (rankError) throw rankError;
+        tariffRanks = buildAccessRankMap(rankRows || []);
+      }
+
       if (productIds.length === 0 && tariffIds.length === 0) return [];
 
       // Get all active training_content rules for user's products
@@ -255,6 +308,7 @@ export function useActiveTrainingContentRules() {
         rules: [...dbRules, ...syntheticRules],
         userTariffIds: tariffIds,
         entitlementTariffsByProduct,
+        tariffRanks,
         productsWithManualEnt: [...productsWithManualEnt],
       };
     },
@@ -502,6 +556,7 @@ export function resolveTrainingContentFilter(
   userTariffIds: string[],
   entitlementTariffsByProduct: Record<string, string[]> = {},
   productsWithManualEnt: Set<string> | string[] = [],
+  tariffRanks: Record<string, number> = {},
 ): TrainingContentFilter | null {
   if (!productId || rules.length === 0) return null;
 
@@ -529,13 +584,8 @@ export function resolveTrainingContentFilter(
     ? [...userTariffIds, ...productEntTariffs]
     : userTariffIds;
 
-  for (const rule of dbRules) {
-    if (rule.tariff_id && effectiveTariffIds.includes(rule.tariff_id)) {
-      bestRule = rule;
-      ruleSource = "db_tariff";
-      break;
-    }
-  }
+  bestRule = selectHighestRankedTariff(dbRules, effectiveTariffIds, tariffRanks);
+  if (bestRule) ruleSource = "db_tariff";
 
   // Priority 2: Product-level DB rules (no tariff specified)
   if (!bestRule) {

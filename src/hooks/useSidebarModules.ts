@@ -228,7 +228,7 @@ export function useSidebarModules() {
         ? (modules.find(rm => rm.id === m.parent_module_id && !rm.parent_module_id)?.id || m.parent_module_id)
         : m.id;
 
-      const filter = resolveTrainingContentFilter(tcData.rules, rootId, effectiveProductId, tcData.userTariffIds, tcData.entitlementTariffsByProduct || {}, (tcData as any).productsWithManualEnt || []);
+      const filter = resolveTrainingContentFilter(tcData.rules, rootId, effectiveProductId, tcData.userTariffIds, tcData.entitlementTariffsByProduct || {}, (tcData as any).productsWithManualEnt || [], tcData.tariffRanks || {});
       if (!filter || filter.mode === "full") return true;
 
       // SOT rule (2026-05-13): «Доступы» в карточке контакта = SOT видимости.

@@ -269,7 +269,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         
         if (rootContainer) {
           const filter = resolveTrainingContentFilter(
-            tcData.rules, rootContainer.id, container.productId, tcData.userTariffIds, tcData.entitlementTariffsByProduct || {}, (tcData as any).productsWithManualEnt || []
+            tcData.rules, rootContainer.id, container.productId, tcData.userTariffIds, tcData.entitlementTariffsByProduct || {}, (tcData as any).productsWithManualEnt || [], tcData.tariffRanks || {}
           );
           if (filter && filter.mode === "partial") {
             if (!isLessonAllowed(filter, lesson.id, lesson.module_id)) {
