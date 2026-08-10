@@ -18,6 +18,7 @@ import { useUnifiedInboxFlag } from "@/hooks/useContactCenterFeatureFlag";
 import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
 import { useUnreadEmailCount } from "@/hooks/useEmailInbox";
 import { useUnreadTicketsCount } from "@/hooks/useUnreadTicketsCount";
+import type { UnifiedInboxCounts } from "@/hooks/useUnifiedInbox";
 
 const InboxTabContent = lazy(() =>
   import("@/components/admin/communication/InboxTabContent").then((module) => ({
@@ -77,7 +78,21 @@ export default function AdminCommunication() {
   const { data: emailUnread = 0 } = useUnreadEmailCount();
   const ticketsUnread = useUnreadTicketsCount();
 
-  const inboxUnread = telegramUnread + emailUnread + ticketsUnread;
+  const [unifiedCounts, setUnifiedCounts] = useState<UnifiedInboxCounts | null>(null);
+  const telegramBadgeUnread = unifiedEnabled && unifiedCounts
+    ? unifiedCounts.telegramUnread
+    : telegramUnread;
+  const supportBadgeUnread = unifiedEnabled && unifiedCounts
+    ? unifiedCounts.supportUnread
+    : ticketsUnread;
+  const instagramBadgeUnread = unifiedEnabled && unifiedCounts
+    ? unifiedCounts.instagramUnread
+    : 0;
+
+  const inboxUnread = unifiedEnabled && unifiedCounts
+    ? unifiedCounts.totalUnread + emailUnread
+    : telegramUnread + emailUnread + ticketsUnread;
+  const unifiedSourceFilter = inboxChannel === "email" ? "all" : inboxChannel;
 
   // Sync tab with URL - handle legacy "support" tab redirect
   useEffect(() => {
@@ -172,9 +187,9 @@ export default function AdminCommunication() {
                       >
                         <MessageSquare className="h-3.5 w-3.5" />
                         Telegram
-                        {telegramUnread > 0 && (
+                        {telegramBadgeUnread > 0 && (
                           <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] rounded-full bg-primary text-primary-foreground">
-                            {telegramUnread}
+                            {telegramBadgeUnread}
                           </Badge>
                         )}
                       </DropdownMenuItem>
@@ -202,9 +217,9 @@ export default function AdminCommunication() {
                       >
                         <LifeBuoy className="h-3.5 w-3.5" />
                         Техподдержка
-                        {ticketsUnread > 0 && (
+                        {supportBadgeUnread > 0 && (
                           <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] rounded-full bg-orange-500 text-white">
-                            {ticketsUnread}
+                            {supportBadgeUnread}
                           </Badge>
                         )}
                       </DropdownMenuItem>
@@ -217,6 +232,11 @@ export default function AdminCommunication() {
                       >
                         <Instagram className="h-3.5 w-3.5" />
                         Instagram
+                        {instagramBadgeUnread > 0 && (
+                          <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] rounded-full bg-primary text-primary-foreground">
+                            {instagramBadgeUnread}
+                          </Badge>
+                        )}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -259,8 +279,13 @@ export default function AdminCommunication() {
         <div className="flex-1 min-h-0 overflow-hidden">
           <Suspense fallback={<ContactCenterPanelFallback />}>
             {activeTab === "inbox" && (
-              inboxChannel === "all" && unifiedEnabled
-                ? <UnifiedInboxView sourceFilter="all" />
+              unifiedEnabled && inboxChannel !== "email"
+                ? (
+                  <UnifiedInboxView
+                    sourceFilter={unifiedSourceFilter}
+                    onCountsChange={setUnifiedCounts}
+                  />
+                )
                 : <InboxTabContent defaultChannel={inboxChannel === "all" ? "telegram" : inboxChannel} />
             )}
             {activeTab === "broadcasts" && <BroadcastsTabContent />}
