@@ -42,7 +42,7 @@ import {
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { OlegSettingsSection } from "./OlegSettingsSection";
 import { useUnifiedInboxRolloutStatus } from "@/hooks/useContactCenterFeatureFlag";
-import { Power, PowerOff } from "lucide-react";
+import { Power } from "lucide-react";
 
 interface EmailTemplate {
   id: string;
@@ -239,7 +239,7 @@ export function CommunicationSettingsTabContent() {
   return (
     <ScrollArea className="h-full">
       <div className="p-4 md:p-6 space-y-6">
-        <UnifiedInboxToggleCard />
+        <UnifiedInboxRolloutCard />
 
         {/* Email Templates Section */}
         <GlassCard className="p-6">
@@ -638,14 +638,8 @@ export function CommunicationSettingsTabContent() {
   );
 }
 
-function UnifiedInboxToggleCard() {
-  const { enabled, source, isLoading, optin, setOptin } = useUnifiedInboxRolloutStatus();
-
-  const badgeClass = enabled
-    ? "bg-green-500/20 text-green-600 dark:text-green-400 border-green-500/30"
-    : "bg-muted text-muted-foreground border-border/30";
-
-  const Icon = enabled ? Power : PowerOff;
+function UnifiedInboxRolloutCard() {
+  const { enabled } = useUnifiedInboxRolloutStatus();
 
   return (
     <GlassCard className="p-6">
@@ -656,41 +650,27 @@ function UnifiedInboxToggleCard() {
             <h2 className="text-lg font-semibold">
               Единая лента «Сообщения»
             </h2>
-            <Badge variant="outline" className={cn("text-[10px]", badgeClass)}>
-              <Icon className="w-3 h-3 mr-1" />
+            <Badge
+              variant="outline"
+              className="text-[10px] bg-green-500/20 text-green-600 dark:text-green-400 border-green-500/30"
+            >
+              <Power className="w-3 h-3 mr-1" />
               {enabled ? "ON" : "OFF"}
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Личная настройка. Включает единую ленту «Все» (Telegram / Instagram /
-            Техподдержка) в разделе «Сообщения» — только в этом браузере и только
-            для вас. Не влияет на других сотрудников. По умолчанию для всех
-            выключено; production rollout по умолчанию — отложен (deferred).
+            Включена централизованно для всех сотрудников с доступом к
+            контакт-центру. Единая лента «Все» объединяет Telegram, Instagram и
+            техподдержку и не зависит от браузера, устройства или localStorage.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Label htmlFor="unified-inbox-optin" className="text-sm text-muted-foreground">
-            {optin ? "Включена" : "Выключена"}
-          </Label>
-          <Switch
-            id="unified-inbox-optin"
-            checked={optin}
-            disabled={isLoading}
-            onCheckedChange={(v) => setOptin(!!v)}
-            aria-label="Включить единую ленту «Сообщения» для меня"
-          />
+        <div className="shrink-0 text-sm font-medium text-green-600 dark:text-green-400">
+          Включена для всех
         </div>
       </div>
-      {source === "user-optin" && (
-        <p className="text-xs text-muted-foreground mt-3">
-          Настройка синхронизируется только в этом браузере. При очистке
-          localStorage выключится автоматически.
-        </p>
-      )}
     </GlassCard>
   );
 }
-
 
 
 
