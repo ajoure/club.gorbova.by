@@ -60,8 +60,9 @@ const tabs = [
 export default function AdminCommunication() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  // Unified inbox: controlled rollout — включено только для superadmin (или QA-override),
-  // мгновенно отключается через kill-switch. См. useContactCenterFeatureFlag.
+  // Единая лента опубликована для всех сотрудников с доступом к контакт-центру.
+  // Доступ по-прежнему ограничивают маршрут, RPC и RLS; frontend-флаг отвечает
+  // только за выбор нового интерфейса.
   const [unifiedEnabled] = useUnifiedInboxFlag();
   const [activeTab, setActiveTab] = useState<string>(searchParams.get("tab") || "inbox");
   const [inboxChannel, setInboxChannel] = useState<"all" | "telegram" | "email" | "support" | "instagram">(
