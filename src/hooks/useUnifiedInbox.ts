@@ -133,6 +133,14 @@ export interface UnifiedContactRow {
   isFavorite: boolean;
 }
 
+export interface UnifiedInboxCounts {
+  /** Distinct contact cards with an open question in any unified channel. */
+  totalUnread: number;
+  telegramUnread: number;
+  instagramUnread: number;
+  supportUnread: number;
+}
+
 /** Backward-compat alias. */
 export type UnifiedInboxRow = UnifiedContactRow;
 
@@ -717,6 +725,20 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     return list;
   }, [enabled, rows]);
 
+  const counts = useMemo<UnifiedInboxCounts>(() => {
+    const open = (source: UnifiedSource) =>
+      contactRows.filter((row) => row.channels[source]?.sourceRow.isUnanswered).length;
+
+    return {
+      // The unified list renders one card per canonical contact. Its badges
+      // must count those same cards, not raw messages, tickets or Telegram IDs.
+      totalUnread: contactRows.filter((row) => row.isUnanswered).length,
+      telegramUnread: open("telegram"),
+      instagramUnread: open("instagram"),
+      supportUnread: open("support"),
+    };
+  }, [contactRows]);
+
   return {
     /** V3 API: одна строка на контакт. */
     contactRows,
@@ -730,17 +752,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
       instagram: igDialogs.error as Error | null,
       support: support.error as Error | null,
     },
-    counts: {
-      // Бейдж канала — это количество диалогов, а не число отдельных реплик.
-      // Иначе несколько сообщений одного клиента раздувают счётчик и он не
-      // совпадает с вкладкой «Новые».
-      telegramUnread: (tgUnanswered.data || []).length,
-      instagramUnread: (igDialogs.data || []).reduce(
-        (s: number, d: any) => s + (Number(d.unread_count) || 0),
-        0,
-      ),
-      supportUnread: supportRows.filter((t: any) => t.has_unread_admin).length,
-    },
+    counts,
     hasNextPage: !!tg.hasNextPage || !!support.hasNextPage,
     isFetchingNextPage: tg.isFetchingNextPage || support.isFetchingNextPage,
     fetchNextPage: async () => {

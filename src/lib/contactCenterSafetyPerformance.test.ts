@@ -110,6 +110,19 @@ describe("Contact-center safety and mobile performance", () => {
     expect(unifiedInboxHookSource).toContain("unreadCount: Number(unanswered?.unanswered_count) || 0");
   });
 
+  it("keeps channel badges and channel views on the same unified contact queue", () => {
+    expect(unifiedInboxHookSource).toContain("totalUnread: contactRows.filter");
+    expect(unifiedInboxHookSource).toContain('telegramUnread: open("telegram")');
+    expect(communicationPageSource).toContain("onCountsChange={setUnifiedCounts}");
+    expect(communicationPageSource).toContain('unifiedEnabled && inboxChannel !== "email"');
+    expect(communicationPageSource).toContain("sourceFilter={unifiedSourceFilter}");
+    expect(communicationPageSource).toContain("instagramBadgeUnread");
+    expect(unifiedInboxSource).toContain("isUnansweredForSource(r, sourceFilter)");
+    expect(unifiedInboxSource).toContain('sourceFilter !== "all" && row.channels[sourceFilter]');
+    expect(unifiedInboxSource).toContain("rowActive.lastMessagePreview");
+    expect(unifiedInboxSource).toContain('sourceFilter === "all" ? row.totalUnread : rowActive.unread');
+  });
+
   it("keeps realtime invalidation scoped to contact-center tables and typed fields", () => {
     expect(realtimeInvalidationSource).toContain('table: "telegram_messages"');
     expect(realtimeInvalidationSource).toContain(

@@ -35,6 +35,7 @@ import {
   type UnifiedContactRow,
   type UnifiedSource,
   type SourceChannelRef,
+  type UnifiedInboxCounts,
 } from "@/hooks/useUnifiedInbox";
 import { SourceBadge } from "./SourceBadge";
 import { ContactTelegramChat } from "@/components/admin/ContactTelegramChat";
@@ -54,12 +55,20 @@ const PANEL_KEY = "unified-inbox-panel-sizes";
 
 type SourceFilter = "all" | UnifiedSource;
 
+function isUnansweredForSource(row: UnifiedContactRow, source: SourceFilter): boolean {
+  return source === "all"
+    ? row.isUnanswered
+    : !!row.channels[source]?.sourceRow.isUnanswered;
+}
+
 interface Props {
   /** Внешний фильтр по источнику из дропдауна «Сообщения». Undefined = «Все». */
   sourceFilter?: SourceFilter;
+  /** Поднимает канонические счётчики карточек в общий header контакт-центра. */
+  onCountsChange?: (counts: UnifiedInboxCounts) => void;
 }
 
-export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
+export function UnifiedInboxView({ sourceFilter = "all", onCountsChange }: Props) {
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -77,6 +86,9 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     isFetchingNextPage,
     fetchNextPage,
   } = useUnifiedInbox({ enabled: true, search: serverSearch });
+  useEffect(() => {
+    onCountsChange?.(counts);
+  }, [counts, onCountsChange]);
   type FilterKind = "all" | "unread" | "favorite" | "pinned" | "mine";
   const [filterKind, setFilterKind] = useState<FilterKind>("all");
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -165,7 +177,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   const filtered = useMemo(() => {
     return contactRows.filter((r) => {
       if (sourceFilter !== "all" && !r.channels[sourceFilter]) return false;
-      if (filterKind === "unread" && !r.isUnanswered) return false;
+      if (filterKind === "unread" && !isUnansweredForSource(r, sourceFilter)) return false;
       if (filterKind === "favorite" && !r.isFavorite) return false;
       if (filterKind === "pinned" && !r.isPinned) return false;
       const tgUserId = r.channels.telegram?.sourceRow.meta.telegramUserId;
@@ -183,7 +195,7 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
     for (const r of contactRows) {
       if (sourceFilter !== "all" && !r.channels[sourceFilter]) continue;
       all++;
-      if (r.isUnanswered) unread++;
+      if (isUnansweredForSource(r, sourceFilter)) unread++;
       if (r.isFavorite) fav++;
       if (r.isPinned) pinned++;
     }
@@ -559,7 +571,13 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
   };
 
 
-  const totalUnread = counts.telegramUnread + counts.instagramUnread + counts.supportUnread;
+  const totalUnread = sourceFilter === "all"
+    ? counts.totalUnread
+    : sourceFilter === "telegram"
+      ? counts.telegramUnread
+      : sourceFilter === "instagram"
+        ? counts.instagramUnread
+        : counts.supportUnread;
 
   const sourceLabelByKey: Record<UnifiedSource, string> = {
     telegram: "Telegram",
@@ -667,11 +685,13 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
             {virtualItems.map((vr) => {
               const row = filtered[vr.index];
               const rowActiveSource: UnifiedSource =
-                row.key === selected?.key
-                  ? activeSource
-                  : (activeSourceByKey[row.key] as UnifiedSource | undefined) ??
-                    (sourceFilter !== "all" && row.channels[sourceFilter] ? sourceFilter : row.defaultActiveSource);
+                sourceFilter !== "all" && row.channels[sourceFilter]
+                  ? sourceFilter
+                  : row.key === selected?.key
+                    ? activeSource
+                    : (activeSourceByKey[row.key] as UnifiedSource | undefined) ?? row.defaultActiveSource;
               const rowActive = row.channels[rowActiveSource] ?? row.channels[row.defaultActiveSource]!;
+              const rowDisplayUnread = sourceFilter === "all" ? row.totalUnread : rowActive.unread;
               const telegramAssignment = row.channels.telegram?.sourceRow.meta.telegramUserId
                 ? assignmentByTelegramUserId.get(row.channels.telegram.sourceRow.meta.telegramUserId)
                 : undefined;
@@ -698,17 +718,21 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                           {row.displayName[0]?.toUpperCase() || "?"}
                         </AvatarFallback>
                       </Avatar>
-                      {row.totalUnread > 0 && (
+                      {rowDisplayUnread > 0 && (
                         <div className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[9px] font-bold">
-                          {row.totalUnread > 99 ? "99+" : row.totalUnread}
+                          {rowDisplayUnread > 99 ? "99+" : rowDisplayUnread}
                         </div>
                       )}
                     </div>
                     <div className="min-w-0 overflow-hidden">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-xs font-semibold truncate flex-1">{row.displayName}</span>
-                        {row.isPinned && <Pin className="h-2.5 w-2.5 text-primary shrink-0" />}
-                        {row.isFavorite && <Star className="h-2.5 w-2.5 text-amber-500 shrink-0 fill-current" />}
+                        {(sourceFilter === "all" ? row.isPinned : rowActive.pinned) && (
+                          <Pin className="h-2.5 w-2.5 text-primary shrink-0" />
+                        )}
+                        {(sourceFilter === "all" ? row.isFavorite : rowActive.favorite) && (
+                          <Star className="h-2.5 w-2.5 text-amber-500 shrink-0 fill-current" />
+                        )}
                       </div>
                       <div className="mt-0.5 flex items-center gap-1 flex-wrap">
                         {row.availableSources.map((s) => (
@@ -725,14 +749,14 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                         )}
                       </div>
                       <p className="text-[11px] text-muted-foreground truncate mt-0.5">
-                        <span className="opacity-70">{sourceLabelByKey[row.lastMessageSource]} · </span>
-                        {row.lastMessagePreview}
+                        <span className="opacity-70">{sourceLabelByKey[rowActive.source]} · </span>
+                        {rowActive.lastMessagePreview}
                       </p>
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                        {row.lastMessageAt
-                          ? formatDistanceToNow(new Date(row.lastMessageAt), { locale: ru, addSuffix: false })
+                        {rowActive.lastMessageAt
+                          ? formatDistanceToNow(new Date(rowActive.lastMessageAt), { locale: ru, addSuffix: false })
                           : ""}
                       </span>
                       <div
@@ -767,7 +791,8 @@ export function UnifiedInboxView({ sourceFilter = "all" }: Props) {
                             <Check className="h-3 w-3" />
                           </IconAction>
                         )}
-                        {row.channels.telegram?.sourceRow.meta.telegramUserId && row.isUnanswered && (
+                        {row.channels.telegram?.sourceRow.meta.telegramUserId &&
+                          row.channels.telegram.sourceRow.isUnanswered && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <span
