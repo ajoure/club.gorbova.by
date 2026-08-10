@@ -91,4 +91,17 @@ describe("Telegram Business contact-centre wiring", () => {
       "setHasOlderMessages(nextMessages.length === 200)",
     );
   });
+
+  it("uses production staff role codes and keeps assignment rows away from anon", () => {
+    expect(workOwnershipMigrationSource).toContain(
+      "r.code IN ('super_admin', 'admin', 'menedzher', 'support')",
+    );
+    expect(workOwnershipMigrationSource).not.toContain("'manager', 'employee'");
+    expect(workOwnershipMigrationSource).toContain(
+      "REVOKE ALL ON TABLE public.contact_center_message_assignments FROM PUBLIC, anon",
+    );
+    expect(workOwnershipMigrationSource).toContain(
+      "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.contact_center_message_assignments TO authenticated",
+    );
+  });
 });
