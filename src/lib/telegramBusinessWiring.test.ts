@@ -5,7 +5,8 @@ import adminChatSource from "../../supabase/functions/telegram-admin-chat/index.
 import auditShapeRunnerSource from "../../supabase/functions/telegram-audit-shape-runner/index.ts?raw";
 import migrationSource from "../../supabase/migrations/20260721183552_c27995d4-a65d-4202-b4aa-add4bd025ea1.sql?raw";
 import historyRbacMigrationSource from "../../supabase/migrations/20260723063657_contact_center_telegram_history_rbac.sql?raw";
-import workOwnershipMigrationSource from "../../supabase/migrations/20260810113000_contact_center_work_ownership.sql?raw";
+import workOwnershipMigrationSource from "../../supabase/migrations/20260810095920_cd313d47-3142-4045-b5db-b1f234b4a06b.sql?raw";
+import securityFinalizeMigrationSource from "../../supabase/migrations/20260810121000_contact_center_security_finalize.sql?raw";
 import contactTelegramChatSource from "../components/admin/ContactTelegramChat.tsx?raw";
 
 describe("Telegram Business contact-centre wiring", () => {
@@ -24,6 +25,8 @@ describe("Telegram Business contact-centre wiring", () => {
   it("routes contact-centre sends through business_connection_id", () => {
     expect(adminChatSource).toContain("sendBody.business_connection_id = businessConnectionId");
     expect(adminChatSource).toContain('transport: businessConnectionId ? "business" : "bot"');
+    expect(adminChatSource.match(/message_origin: "crm_operator"/g)).toHaveLength(2);
+    expect(contactTelegramChatSource).toContain('message_origin: "crm_operator"');
   });
 
   it("validates an explicitly selected personal sender against the dialog", () => {
@@ -103,5 +106,18 @@ describe("Telegram Business contact-centre wiring", () => {
     expect(workOwnershipMigrationSource).toContain(
       "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.contact_center_message_assignments TO authenticated",
     );
+    for (const signature of [
+      "resolve_telegram_conversation_v1(uuid, timestamptz, text, uuid, uuid, uuid, bigint)",
+      "get_contact_center_unanswered_v1(uuid)",
+      "get_contact_center_unanswered_dialogs_v1()",
+      "get_contact_center_unanswered_total_v1()",
+      "assign_contact_center_message_v1(uuid, uuid, text)",
+      "get_contact_center_assignments_v1()",
+      "get_contact_center_assignees_v1()",
+    ]) {
+      expect(securityFinalizeMigrationSource).toContain(
+        `REVOKE ALL ON FUNCTION public.${signature} FROM PUBLIC, anon`,
+      );
+    }
   });
 });

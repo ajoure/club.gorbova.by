@@ -937,12 +937,12 @@ Deno.serve(async (req) => {
             storage_path: storagePath,
             mime_type: file ? guessMimeType(file.name, file.type) : null,
             source: businessConnectionId ? "telegram_business" : "contact_center",
-            message_origin: businessConnectionId ? "crm_operator" : null,
+            message_origin: "crm_operator",
           },
           transport: businessConnectionId ? "business" : "bot",
           business_connection_id: businessConnectionId,
           business_account_id: businessAccountId,
-          message_origin: businessConnectionId ? "crm_operator" : null,
+          message_origin: "crm_operator",
         };
 
         await supabase.from("telegram_messages").insert(messageLogData);

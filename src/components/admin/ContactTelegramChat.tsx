@@ -1599,7 +1599,7 @@ export function ContactTelegramChat({
         transport: selectedBusinessAccountId ? "business" : "bot",
         business_connection_id: selectedBusinessAccountId ? businessContext?.business_connection_id || null : null,
         business_account_id: selectedBusinessAccountId,
-        message_origin: selectedBusinessAccountId ? "crm_operator" : null,
+        message_origin: "crm_operator",
         meta: selectedFile ? {
           file_type: selectedFileType,
           file_name: selectedFile.name,
