@@ -108,6 +108,7 @@ describe("Contact-center safety and mobile performance", () => {
     expect(unifiedInboxHookSource).toContain("for (const queueItem of tgQueue)");
     expect(unifiedInboxHookSource).toContain("unanswered?.oldest_message_text");
     expect(unifiedInboxHookSource).toContain("unreadCount: Number(unanswered?.unanswered_count) || 0");
+    expect(unifiedInboxHookSource).toContain("!serverSearch");
   });
 
   it("keeps channel badges and channel views on the same unified contact queue", () => {

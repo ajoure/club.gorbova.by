@@ -217,8 +217,8 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
   });
 
   const tgQueue = useMemo(
-    () => mergeTelegramWorkQueue(tgRows, tgUnanswered.data || []),
-    [tgRows, tgUnanswered.data],
+    () => mergeTelegramWorkQueue(tgRows, tgUnanswered.data || [], !serverSearch),
+    [tgRows, tgUnanswered.data, serverSearch],
   );
 
   // --- Telegram: параллельно тянем chat_preferences (pin/fav) для оператора ---

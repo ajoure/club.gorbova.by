@@ -45,4 +45,22 @@ describe("mergeTelegramWorkQueue", () => {
     expect(result[0].unanswered).toBeNull();
     expect(result[1].unanswered?.unanswered_count).toBe(3);
   });
+
+  it("does not leak the full unanswered queue into scoped search results", () => {
+    const result = mergeTelegramWorkQueue(
+      [{ user_id: "search-match" }],
+      [
+        { user_id: "search-match", unanswered_count: 1 },
+        { user_id: "unrelated-open-dialog", unanswered_count: 4 },
+      ],
+      false,
+    );
+
+    expect(result).toEqual([
+      {
+        dialog: { user_id: "search-match" },
+        unanswered: { user_id: "search-match", unanswered_count: 1 },
+      },
+    ]);
+  });
 });

@@ -20,6 +20,7 @@ export interface TelegramQueueItem<TDialog extends { user_id: string }> {
 export function mergeTelegramWorkQueue<TDialog extends { user_id: string }>(
   dialogs: TDialog[],
   unanswered: TelegramUnansweredSummary[],
+  appendMissing = true,
 ): TelegramQueueItem<TDialog>[] {
   const unansweredByUser = new Map(unanswered.map((item) => [item.user_id, item]));
   const loadedUserIds = new Set(dialogs.map((dialog) => dialog.user_id));
@@ -29,7 +30,7 @@ export function mergeTelegramWorkQueue<TDialog extends { user_id: string }>(
     unanswered: unansweredByUser.get(dialog.user_id) ?? null,
   }));
 
-  const missing = unanswered
+  const missing = appendMissing ? unanswered
     .filter((item) => !loadedUserIds.has(item.user_id))
     .sort((a, b) => {
       const byDate = String(b.oldest_message_at || "").localeCompare(
@@ -37,7 +38,7 @@ export function mergeTelegramWorkQueue<TDialog extends { user_id: string }>(
       );
       return byDate || a.user_id.localeCompare(b.user_id);
     })
-    .map((item) => ({ dialog: null, unanswered: item }));
+    .map((item) => ({ dialog: null, unanswered: item })) : [];
 
   return [...loaded, ...missing];
 }
