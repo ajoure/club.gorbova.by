@@ -21,6 +21,8 @@ describe("contact center global rollout", () => {
     expect(settingsSource).toContain("Включена для всех");
     expect(settingsSource).toContain("не зависит от браузера, устройства или localStorage");
     expect(settingsSource).toContain("flex flex-col items-start gap-3 sm:flex-row");
+    expect(settingsSource).toContain("w-[calc(100vw-2rem)] min-w-0 max-w-full");
+    expect(settingsSource).toContain("w-full max-w-full overflow-hidden");
     expect(settingsSource).not.toContain("UnifiedInboxToggleCard");
   });
 });

@@ -238,7 +238,7 @@ export function CommunicationSettingsTabContent() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="p-4 md:p-6 space-y-6">
+      <div className="w-[calc(100vw-2rem)] min-w-0 max-w-full space-y-6 p-4 md:w-auto md:p-6">
         <UnifiedInboxRolloutCard />
 
         {/* Email Templates Section */}
@@ -642,7 +642,7 @@ function UnifiedInboxRolloutCard() {
   const { enabled } = useUnifiedInboxRolloutStatus();
 
   return (
-    <GlassCard className="p-4 sm:p-6">
+    <GlassCard className="w-full max-w-full overflow-hidden p-4 sm:p-6">
       <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -658,7 +658,7 @@ function UnifiedInboxRolloutCard() {
               {enabled ? "ON" : "OFF"}
             </Badge>
           </div>
-          <p className="text-sm text-muted-foreground max-w-2xl">
+          <p className="max-w-2xl break-words text-sm text-muted-foreground">
             Включена централизованно для всех сотрудников с доступом к
             контакт-центру. Единая лента «Все» объединяет Telegram, Instagram и
             техподдержку и не зависит от браузера, устройства или localStorage.
@@ -671,5 +671,4 @@ function UnifiedInboxRolloutCard() {
     </GlassCard>
   );
 }
-
 
