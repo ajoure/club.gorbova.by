@@ -4728,6 +4728,66 @@ export type Database = {
         }
         Relationships: []
       }
+      contact_center_message_assignments: {
+        Row: {
+          assigned_at: string
+          assigned_by_user_id: string
+          assignee_user_id: string
+          created_at: string
+          id: string
+          note: string | null
+          resolution_message_id: string | null
+          resolved_at: string | null
+          resolved_by_user_id: string | null
+          source: string
+          source_message_id: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by_user_id: string
+          assignee_user_id: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          resolution_message_id?: string | null
+          resolved_at?: string | null
+          resolved_by_user_id?: string | null
+          source: string
+          source_message_id: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by_user_id?: string
+          assignee_user_id?: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          resolution_message_id?: string | null
+          resolved_at?: string | null
+          resolved_by_user_id?: string | null
+          source?: string
+          source_message_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contact_center_message_assignments_resolution_message_id_fkey"
+            columns: ["resolution_message_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contact_center_message_assignments_source_message_id_fkey"
+            columns: ["source_message_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_files: {
         Row: {
           company_id: string | null
@@ -20240,6 +20300,7 @@ export type Database = {
           message_text: string | null
           meta: Json | null
           reply_to_message_id: number | null
+          requires_reply: boolean
           sent_by_admin: string | null
           status: string
           telegram_user_id: number
@@ -20262,6 +20323,7 @@ export type Database = {
           message_text?: string | null
           meta?: Json | null
           reply_to_message_id?: number | null
+          requires_reply?: boolean
           sent_by_admin?: string | null
           status?: string
           telegram_user_id: number
@@ -20284,6 +20346,7 @@ export type Database = {
           message_text?: string | null
           meta?: Json | null
           reply_to_message_id?: number | null
+          requires_reply?: boolean
           sent_by_admin?: string | null
           status?: string
           telegram_user_id?: number
@@ -22251,6 +22314,14 @@ export type Database = {
         }
         Returns: undefined
       }
+      assign_contact_center_message_v1: {
+        Args: {
+          p_assignee_user_id: string
+          p_message_id: string
+          p_note?: string
+        }
+        Returns: string
+      }
       autoweb_history_comments_list: {
         Args: { _session_id: string; _source_event_id: string }
         Returns: {
@@ -23405,6 +23476,47 @@ export type Database = {
           updated_at: string
         }[]
       }
+      get_contact_center_assignees_v1: {
+        Args: never
+        Returns: {
+          display_name: string
+          user_id: string
+        }[]
+      }
+      get_contact_center_assignments_v1: {
+        Args: never
+        Returns: {
+          assigned_at: string
+          assignee_name: string
+          assignee_user_id: string
+          id: string
+          note: string
+          source_message_id: string
+          telegram_user_id: string
+        }[]
+      }
+      get_contact_center_unanswered_dialogs_v1: {
+        Args: never
+        Returns: {
+          oldest_message_at: string
+          oldest_message_id: string
+          oldest_message_text: string
+          unanswered_count: number
+          user_id: string
+        }[]
+      }
+      get_contact_center_unanswered_total_v1: { Args: never; Returns: number }
+      get_contact_center_unanswered_v1: {
+        Args: { p_user_id: string }
+        Returns: {
+          bot_id: string
+          business_account_id: string
+          created_at: string
+          id: string
+          message_text: string
+          transport: string
+        }[]
+      }
       get_contact_tab_counts: { Args: { p_search?: string }; Returns: Json }
       get_cron_runs_24h_count: {
         Args: never
@@ -24359,6 +24471,21 @@ export type Database = {
           has_email: boolean
           has_telegram: boolean
           user_id: string
+        }[]
+      }
+      resolve_telegram_conversation_v1: {
+        Args: {
+          p_bot_id?: string
+          p_boundary: string
+          p_boundary_message_id?: number
+          p_business_account_id?: string
+          p_resolution_message_id?: string
+          p_transport: string
+          p_user_id: string
+        }
+        Returns: {
+          marked_count: number
+          remaining_unanswered_count: number
         }[]
       }
       resolve_user_id: {
