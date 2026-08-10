@@ -298,7 +298,12 @@ export default function AdminCommunication() {
                     deepLinkTelegramUserId={searchParams.get("chat")}
                   />
                 )
-                : <InboxTabContent defaultChannel={inboxChannel === "all" ? "telegram" : inboxChannel} />
+                : (
+                  <InboxTabContent
+                    defaultChannel={inboxChannel === "all" ? "telegram" : inboxChannel}
+                    deepLinkTelegramUserId={searchParams.get("chat")}
+                  />
+                )
             )}
             {activeTab === "broadcasts" && <BroadcastsTabContent />}
             {activeTab === "settings" && <CommunicationSettingsTabContent />}

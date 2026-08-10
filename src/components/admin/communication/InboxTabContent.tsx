@@ -145,6 +145,8 @@ const initialFilters: Filters = {
 
 interface InboxTabContentProps {
   defaultChannel?: "telegram" | "email" | "support" | "instagram";
+  /** profiles.user_id from the assignment notification deep link. */
+  deepLinkTelegramUserId?: string | null;
 }
 
 const PANEL_SIZE_KEY = "communication-panel-sizes";
@@ -158,7 +160,10 @@ function getTelegramPlainText(text: string | null | undefined): string {
   return doc.body.textContent || "";
 }
 
-export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContentProps) {
+export function InboxTabContent({
+  defaultChannel = "telegram",
+  deepLinkTelegramUserId = null,
+}: InboxTabContentProps) {
   const { user } = useAuth();
   const { canWrite, isSuperAdmin } = usePermissions();
   const queryClient = useQueryClient();
@@ -186,6 +191,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
     } catch {}
   };
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const openedDeepLinkRef = useRef<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
   const serverSearchQuery = normalizeTelegramSearchInput(debouncedSearchQuery);
@@ -754,6 +760,21 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
 
   const selectedDialog = filteredDialogs.find(d => d.user_id === selectedUserId) || dialogs.find(d => d.user_id === selectedUserId);
   const clearFilters = () => setAdvancedFilters(initialFilters);
+
+  // Assignment links must open the same Telegram dialog in the legacy inbox
+  // too. The unified inbox already handles this parameter, but the rollout
+  // flag is browser-local; after auth Safari may legitimately render this
+  // legacy view. Select immediately: ContactTelegramChat can hydrate by user
+  // id even while the dialog list RPC is still loading. The list/profile then
+  // enriches the header when it arrives. Run once so background refreshes
+  // never steal a later manual selection.
+  useEffect(() => {
+    if (!deepLinkTelegramUserId || openedDeepLinkRef.current === deepLinkTelegramUserId) return;
+
+    openedDeepLinkRef.current = deepLinkTelegramUserId;
+    setChannel("telegram");
+    setSelectedUserId(deepLinkTelegramUserId);
+  }, [deepLinkTelegramUserId]);
 
   // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.1:
   // Idle-prefetch the top 3 dialogs after the list resolves. Uses
