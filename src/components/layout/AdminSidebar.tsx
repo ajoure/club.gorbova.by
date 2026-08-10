@@ -10,6 +10,7 @@ import { useAdminMenuSettings, MENU_ICONS, MenuItem, MenuGroup } from "@/hooks/u
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { resolveAdminSectionForPath } from "@/lib/adminMenuRegistry";
 import { supabase } from "@/integrations/supabase/client";
+import { CONTACT_CENTER_VISIBLE_UNREAD_QK } from "@/constants/inboxQueryKeys";
 import {
   Sidebar,
   SidebarContent,
@@ -58,7 +59,18 @@ export function AdminSidebar() {
   const adminAccess = useAdminAccess();
   const unreadMessagesCount = useUnreadMessagesCount();
   const { data: unreadEmailCount = 0 } = useUnreadEmailCount();
-  const totalUnread = (unreadMessagesCount || 0) + (unreadEmailCount || 0);
+  const { data: contactCenterVisibleUnread = null } = useQuery<number | null>({
+    queryKey: CONTACT_CENTER_VISIBLE_UNREAD_QK,
+    queryFn: async () => null,
+    enabled: false,
+    initialData: null,
+  });
+  const fallbackUnread = (unreadMessagesCount || 0) + (unreadEmailCount || 0);
+  const totalUnread =
+    location.pathname.startsWith("/admin/communication") &&
+    typeof contactCenterVisibleUnread === "number"
+      ? contactCenterVisibleUnread
+      : fallbackUnread;
   const collapsed = state === "collapsed";
   
   const [menuSettingsOpen, setMenuSettingsOpen] = useState(false);
