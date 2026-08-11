@@ -1,11 +1,11 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { classifyPostCancelCharge } from "../bepaid-webhook/post_cancel_charge.ts";
+import { classifyPostCancelCharge } from "./post_cancel_charge.ts";
 import {
   buildRebillOrderNumber,
   buildRebillOrderPayload,
-} from "../bepaid-webhook/rebill_builders.ts";
-import { buildRebillDepsAdapter } from "../bepaid-webhook/rebill_deps_adapter.ts";
-import { runRebillFlow } from "../bepaid-webhook/rebill_flow.ts";
+} from "./rebill_builders.ts";
+import { buildRebillDepsAdapter } from "./rebill_deps_adapter.ts";
+import { runRebillFlow } from "./rebill_flow.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
