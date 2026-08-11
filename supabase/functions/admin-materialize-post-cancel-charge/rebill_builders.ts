@@ -14,6 +14,7 @@ export function resolveKillSwitchMode(envValue: string | null | undefined): Kill
   if (v === "dry_run" || v === "dryrun" || v === "dry-run") return "dry_run";
   return "off";
 }
+
 /**
  * Канонический формат order_number для REBILL-orders.
  * Production-паттерн: `REBILL-<first 11 chars of payment uuid>`,

@@ -6,6 +6,7 @@ export interface PostCancelChargeInput {
   transactionStatus: string | null | undefined;
   transactionPaidAt: string | null | undefined;
 }
+
 export type PostCancelChargeDecision =
   | {
     outcome: "post_cancel_charge";
