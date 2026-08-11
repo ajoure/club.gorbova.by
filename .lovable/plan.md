@@ -78,31 +78,46 @@ provider-веток (Stripe ~411, bePaid далее) и завершает за�
 
 ## Critical findings
 
-- **CF-1 (блокирующий процесс, не код):** exact merged SHA не синхронизирован —
+- **CF-1 (блокирующий процесс, не код):** merged SHA `bc8333df` не синхронизирован —
   побайтовая ревизия диффа невозможна до sync.
 - **CF-2:** recovery обязан быть однократным и привязанным к конкретному коду
-  ошибки; общий `catch` вокруг любой ошибки intent недопустим.
-- **CF-3:** отсутствует постоянный след — при раннем отказе не пишется
-  `audit_logs`. Рекомендуется добавить запись `refund_rejected` / `group_settled_on_refund`
-  (не блокирует релиз).
+  ошибки; общий `catch` вокруг любой ошибки intent недопустим. Проверяется при сверке.
+- **CF-3 (снят патчем, требует сверки):** патч уже пишет audit-события
+  `group_recovered` / `group_recovery_failed`, то есть постоянный след при
+  recovery появляется. Достаточно подтвердить это построчно и убедиться, что в
+  audit не попадают PII, provider UID и токены.
 - **CF-4:** первопричина `pending`-группы (почему settlement не отработал при
   оплате) патчем не устраняется — нужен отдельный follow-up по webhook-пути.
 
-## EXECUTE-план (после отдельного разрешения)
+## EXECUTE-план (после Approval)
 
-1. Sync managed HEAD на exact merged SHA `7adcdecc…`; подтвердить HEAD в отчёте.
-2. Построчно сверить только 2 файла scope; проверить пункты CF-2 и порядок
-   «composable до provider».
-3. Прогнать `src/test/refundComposableGroupRecovery.test.ts` + существующие
-   refund-тесты; ожидание — все PASS.
-4. Deploy **только** `subscription-admin-actions`. Миграций и data-fix нет.
-5. Read-back без реального возврата: подтвердить маркер `settle_composable_order_group`
-   в развёрнутом бандле; проверить, что для заказа
-   `1e5890d0…` группа всё ещё `pending`, аллокаций нет, refund-строк нет.
-6. Реальный возврат 250 BYN — только по отдельному явному разрешению
-   пользователя, с read-back группы (`paid`), аллокации, intent, refund-строки и
-   сохранённого доступа/подписки.
+Границы: без миграций, без DML/RPC/data-fix, без создания кода и коммитов, без
+site Publish, без реального refund.
 
-## STOP
+1. Синхронизировать managed HEAD ровно на
+   `bc8333df798dffdcbd501af5d5ad5f9246d802f9`; подтвердить exact HEAD в отчёте.
+2. Побайтово сверить **только два файла** PR #297:
+   `supabase/functions/subscription-admin-actions/index.ts` и
+   `src/test/refundComposableGroupRecovery.test.ts`. Проверить: триггер recovery
+   строго по `refundable_order_group_not_found`, один повтор, неизменный
+   `refund_request_key`, composable-блок остаётся до provider-веток, whitelist и
+   дефолт access action не изменены, audit `group_recovered` /
+   `group_recovery_failed` без чувствительных данных.
+3. Прогнать `src/test/refundComposableGroupRecovery.test.ts` и существующие
+   refund-тесты; ожидание — все PASS. Изменений в файлы не вносить.
+4. Deploy **только** Edge Function `subscription-admin-actions`.
+5. Read-back после deploy:
+   - подтвердить deployed source/version функции и наличие маркеров
+     `settle_composable_order_group`, `group_recovered`, `group_recovery_failed`
+     в развёрнутой версии;
+   - read-only подтвердить, что исходный refund 250 BYN всё ещё НЕ выполнен:
+     группа `0ce392a6…` = `pending`, `payment_allocations` для item пусто,
+     composable refund intent отсутствует, refund-строк по заказу
+     `1e5890d0…` нет, платёж `succeeded` с `refunded_amount = 0`.
+6. Реальный возврат 250 BYN в этот execute НЕ входит — только по отдельному
+   явному разрешению.
 
-Дальнейших действий не выполнялось.
+## STOP — Approval needed
+
+Требуется явное одобрение пользователя для запуска EXECUTE-плана. Дальнейших
+действий не выполнялось.
