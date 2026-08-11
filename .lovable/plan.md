@@ -1,10 +1,13 @@
-# План: PLAN-ONLY ревизия PR #297 (7adcdecc) — VERDICT: CONDITIONAL PASS
+# План: PLAN-ONLY ревизия PR #297 (merged SHA bc8333df) — VERDICT: CONDITIONAL PASS
 
 Мутаций нет: код, БД, функции, deploy, Publish и реальный возврат не выполнялись.
 
 ## 0. Ограничение ревизии (важно)
 
-Коммит `7adcdecc` **не синхронизирован** в managed-воркспейс: в дереве нет
+PR #297 уже MERGED, exact merged SHA — `bc8333df798dffdcbd501af5d5ad5f9246d802f9`
+(ранее ошибочно указанный `7adcdecc` не используется).
+
+Этот SHA **не синхронизирован** в managed-воркспейс: в дереве нет
 `src/test/refundComposableGroupRecovery.test.ts`, а в
 `supabase/functions/subscription-admin-actions/index.ts` нет ни одного упоминания
 `settle_composable_order_group`. Прямое чтение диффа через GitHub API также
@@ -13,7 +16,7 @@
 Поэтому ревизия сделана по: (а) текущему deployed-коду функции, (б) фактическим
 определениям RPC в production, (в) реальным данным инцидента. Пункты ниже
 подтверждают/отклоняют саму инженерную идею патча. Побайтовая сверка диффа
-возможна только после синхронизации exact merged SHA.
+возможна только после синхронизации `bc8333df`.
 
 ## 1. Root cause — ПОДТВЕРЖДЁН (PASS)
 
