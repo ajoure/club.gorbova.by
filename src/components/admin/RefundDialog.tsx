@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId } from "react";
 import {
   Dialog,
   DialogContent,
@@ -45,6 +45,112 @@ interface RefundDialogProps {
   currency: string;
   paymentProvider?: string | null;
   onSuccess?: () => void;
+}
+
+interface RefundAccessActionSelectorProps {
+  value: RefundAccessAction;
+  isFullRefund: boolean;
+  onValueChange: (value: RefundAccessAction) => void;
+}
+
+export function RefundAccessActionSelector({
+  value,
+  isFullRefund,
+  onValueChange,
+}: RefundAccessActionSelectorProps) {
+  const groupId = useId();
+
+  const options: Array<{
+    value: RefundAccessAction;
+    title: string;
+    description: string;
+    icon: typeof Ban;
+    iconClassName: string;
+    disabled?: boolean;
+  }> = [
+    {
+      value: "revoke",
+      title: "Аннулировать доступ",
+      description: "Полный возврат — доступ будет немедленно отозван",
+      icon: Ban,
+      iconClassName: "text-red-500",
+      disabled: !isFullRefund,
+    },
+    {
+      value: "reduce",
+      title: "Сократить срок доступа",
+      description: "Частичный возврат — уменьшить срок на указанное количество дней",
+      icon: Calendar,
+      iconClassName: "text-amber-500",
+    },
+    {
+      value: "keep",
+      title: "Сохранить доступ",
+      description: "Только возврат денег, без изменения доступа и Telegram",
+      icon: CreditCard,
+      iconClassName: "text-green-500",
+    },
+    {
+      value: "keep_subscription",
+      title: "Сохранить подписку",
+      description: "Возврат денег, подписка остаётся, следующее списание по графику",
+      icon: RefreshCcw,
+      iconClassName: "text-blue-500",
+    },
+  ];
+
+  return (
+    <RadioGroup
+      value={value}
+      onValueChange={(nextValue) => onValueChange(nextValue as RefundAccessAction)}
+      className="space-y-2"
+      aria-label="Действие с доступом"
+    >
+      {options.map((option) => {
+        const optionId = `${groupId}-${option.value}`;
+        const Icon = option.icon;
+        const isSelected = value === option.value;
+        const selectOption = () => {
+          if (!option.disabled) onValueChange(option.value);
+        };
+
+        return (
+          <div
+            key={option.value}
+            data-testid={`refund-access-action-${option.value}`}
+            data-selected={isSelected ? "true" : "false"}
+            onClick={selectOption}
+            className={`flex items-center space-x-3 rounded-lg border p-3 transition-colors ${
+              option.disabled
+                ? "cursor-not-allowed opacity-50"
+                : "cursor-pointer hover:bg-muted/50"
+            } ${isSelected ? "border-primary bg-primary/5" : ""}`}
+          >
+            <RadioGroupItem
+              value={option.value}
+              id={optionId}
+              disabled={option.disabled}
+              onClick={(event) => event.stopPropagation()}
+            />
+            <Label
+              htmlFor={optionId}
+              className={`flex-1 ${option.disabled ? "cursor-not-allowed" : "cursor-pointer"}`}
+              onClick={(event) => {
+                event.preventDefault();
+                selectOption();
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <Icon className={`h-4 w-4 ${option.iconClassName}`} />
+                <span className="font-medium">{option.title}</span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{option.description}</p>
+            </Label>
+          </div>
+        );
+      })}
+    </RadioGroup>
+  );
 }
 
 export function RefundDialog({
@@ -304,66 +410,11 @@ export function RefundDialog({
 
           <div className="space-y-3">
             <Label>Действие с доступом</Label>
-            <RadioGroup
+            <RefundAccessActionSelector
               value={accessAction}
-              onValueChange={(val) => setAccessAction(val as RefundAccessAction)}
-              className="space-y-2"
-            >
-              <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="revoke" id="revoke" disabled={!isFullRefund} />
-                <Label
-                  htmlFor="revoke"
-                  className={`flex-1 cursor-pointer ${!isFullRefund ? "opacity-50" : ""}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Ban className="w-4 h-4 text-red-500" />
-                    <span className="font-medium">Аннулировать доступ</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Полный возврат — доступ будет немедленно отозван
-                  </p>
-                </Label>
-              </div>
-
-              <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="reduce" id="reduce" />
-                <Label htmlFor="reduce" className="flex-1 cursor-pointer">
-                  <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-amber-500" />
-                    <span className="font-medium">Сократить срок доступа</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Частичный возврат — уменьшить срок на указанное количество дней
-                  </p>
-                </Label>
-              </div>
-
-              <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="keep" id="keep" />
-                <Label htmlFor="keep" className="flex-1 cursor-pointer">
-                  <div className="flex items-center gap-2">
-                    <CreditCard className="w-4 h-4 text-green-500" />
-                    <span className="font-medium">Сохранить доступ</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Только возврат денег, без изменения доступа и Telegram
-                  </p>
-                </Label>
-              </div>
-
-              <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="keep_subscription" id="keep_subscription" />
-                <Label htmlFor="keep_subscription" className="flex-1 cursor-pointer">
-                  <div className="flex items-center gap-2">
-                    <RefreshCcw className="w-4 h-4 text-blue-500" />
-                    <span className="font-medium">Сохранить подписку</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Возврат денег, подписка остаётся, следующее списание по графику
-                  </p>
-                </Label>
-              </div>
-            </RadioGroup>
+              isFullRefund={isFullRefund}
+              onValueChange={setAccessAction}
+            />
           </div>
 
           {accessAction === "reduce" && (
