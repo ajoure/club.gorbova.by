@@ -101,6 +101,10 @@ import {
   buildQuotePreview,
 } from "./chat/telegramFormat";
 import { selectDefaultTelegramSender } from "@/lib/telegramSenderSelection";
+import {
+  getTelegramMessageIdentityLabel,
+  type TelegramBusinessIdentity,
+} from "@/lib/telegramBusinessIdentity";
 
 interface ContactTelegramChatProps {
   userId: string;
@@ -238,9 +242,7 @@ export function ContactTelegramChat({
   const { data: businessContext } = useQuery({
     queryKey: ["telegram-latest-incoming-sender-context", userId],
     queryFn: async () => {
-      // Generated DB types are refreshed only after the migration is deployed.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from("telegram_messages")
         .select("business_connection_id, business_account_id, bot_id, transport, created_at")
         .eq("user_id", userId)
@@ -277,22 +279,31 @@ export function ContactTelegramChat({
   // A client may have talked both to a bot and to the connected personal
   // account. Keep every eligible Business sender available instead of hiding
   // it merely because a later bot message became the latest inbound event.
-  const { data: dialogBusinessAccountIds = [] } = useQuery({
-    queryKey: ["telegram-dialog-business-account-ids", userId],
+  const { data: dialogBusinessMessageLinks = [] } = useQuery({
+    queryKey: ["telegram-dialog-business-message-links", userId],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from("telegram_messages")
-        .select("business_account_id")
+        .select("id, business_account_id")
         .eq("user_id", userId)
         .eq("transport", "business")
         .not("business_account_id", "is", null)
-        .limit(100);
+        .order("created_at", { ascending: false })
+        .limit(1000);
       if (error) throw error;
-      return Array.from(new Set((data || []).map((row: any) => row.business_account_id).filter(Boolean))) as string[];
+      return (data || []) as Array<{ id: string; business_account_id: string }>;
     },
     enabled: !!userId,
     staleTime: 30_000,
   });
+  const dialogBusinessAccountIds = useMemo(
+    () => Array.from(new Set(dialogBusinessMessageLinks.map((row) => row.business_account_id))),
+    [dialogBusinessMessageLinks],
+  );
+  const businessAccountIdByMessageId = useMemo(
+    () => new Map(dialogBusinessMessageLinks.map((row) => [row.id, row.business_account_id])),
+    [dialogBusinessMessageLinks],
+  );
   const { data: dialogBusinessAccounts = [] } = useQuery({
     queryKey: ["telegram-dialog-business-senders", dialogBusinessAccountIds],
     queryFn: async () => {
@@ -942,17 +953,30 @@ export function ContactTelegramChat({
         }
       }
 
-      // Bot label — flatten join + botsMap.
+      // The connected bot is only the transport bridge for Telegram Business.
+      // Show the personal account identity for Business messages and reserve
+      // the bot label for ordinary Bot API conversations.
       const joined = msg.telegram_bots;
       const fromMap = msg.bot_id ? botsMap.get(msg.bot_id) : null;
       const botNameRaw = msg.bot_name ?? joined?.bot_name ?? fromMap?.bot_name ?? null;
       const botUsernameRaw = msg.bot_username ?? joined?.bot_username ?? fromMap?.bot_username ?? null;
-      const botLabelName = botNameRaw?.trim();
-      const botLabel = msg.direction === "outgoing" && metaAny.source === "telegram_business"
-        ? (metaAny.message_origin === "owner_manual" ? "Екатерина · вручную" : "Екатерина · CRM")
-        : botLabelName
-          ? botLabelName
-          : (botUsernameRaw?.trim() ? `@${botUsernameRaw.trim()}` : null);
+      const flattenedSource = (msgAny.source ?? null) as string | null;
+      const messageSource = (metaAny.source ?? flattenedSource) as string | null;
+      const businessAccountId = msg.business_account_id ?? businessAccountIdByMessageId.get(msg.id) ?? null;
+      const resolvedBusinessAccount = businessAccountId
+        ? dialogBusinessAccounts.find((account) => account.id === businessAccountId) ?? null
+        : dialogBusinessAccounts.length === 1
+          ? dialogBusinessAccounts[0]
+          : null;
+      const botLabel = getTelegramMessageIdentityLabel({
+        direction: msg.direction,
+        transport: msg.transport ?? null,
+        source: messageSource,
+        messageOrigin: msg.message_origin ?? metaAny.message_origin ?? null,
+        businessAccount: resolvedBusinessAccount as TelegramBusinessIdentity | null,
+        botName: botNameRaw,
+        botUsername: botUsernameRaw,
+      });
 
       // Automated badge.
       const automated = msg.direction === "outgoing" && !msg.sent_by_admin && !!(msg.meta as any)?.automated;
@@ -1019,7 +1043,15 @@ export function ContactTelegramChat({
 
       return { key: msg.id, showDateSeparator, dateLabel, bubble: bubbleData };
     });
-  }, [chatItems, telegramReactionsMap, clientName, avatarUrl, botsMap]);
+  }, [
+    chatItems,
+    telegramReactionsMap,
+    clientName,
+    avatarUrl,
+    botsMap,
+    businessAccountIdByMessageId,
+    dialogBusinessAccounts,
+  ]);
 
   // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1: первый рендер
   // блокируем ТОЛЬКО сообщениями.

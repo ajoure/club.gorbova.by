@@ -5,10 +5,9 @@ import type { UnifiedSource } from "@/hooks/useUnifiedInbox";
 interface Props {
   source: UnifiedSource;
   /**
-   * @deprecated V2-BADGES-SHORT: суффикс `· <bot>/@<account>` больше не
-   * отображается в списке/edge header — источник подписывается per-message
-   * внутри чат-панели. Значение сохраняется как `title`/`aria-label` для a11y,
-   * но не рендерится в тексте.
+   * Bot/account suffixes stay hidden for compact channel badges. Telegram
+   * Business is the exception: the personal-account label is user-critical
+   * and must remain visible so it cannot be confused with the connected bot.
    */
   label?: string | null;
   className?: string;
@@ -16,12 +15,13 @@ interface Props {
 
 /**
  * Единый бейдж источника в строке ленты / unified header.
- * Формат (после V2-BADGES-SHORT):
+ * Формат:
  *   Telegram
+ *   Катерина Горбова · личный Telegram
  *   Instagram
  *   Техподдержка
- * Полный `label` (имя бота/@аккаунта) остаётся доступным через title/aria-label
- * при наведении, но не занимает место в UI.
+ * Имя обычного бота/@аккаунта остаётся только в title/aria-label; личный
+ * Telegram показывается явно.
  */
 export function SourceBadge({ source, label, className }: Props) {
   const config = {
@@ -43,7 +43,9 @@ export function SourceBadge({ source, label, className }: Props) {
   }[source];
 
   const { Icon, base, color } = config;
+  const isPersonalTelegram = source === "telegram" && !!label?.includes("личный Telegram");
   const a11y = label ? `${base} · ${label}` : base;
+  const visibleLabel = isPersonalTelegram ? label : base;
 
   return (
     <span
@@ -56,7 +58,7 @@ export function SourceBadge({ source, label, className }: Props) {
       aria-label={a11y}
     >
       <Icon className="h-2.5 w-2.5" />
-      <span className="truncate max-w-[140px]">{base}</span>
+      <span className="truncate max-w-[190px]">{visibleLabel}</span>
     </span>
   );
 }

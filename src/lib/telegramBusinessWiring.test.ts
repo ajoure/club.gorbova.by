@@ -8,6 +8,8 @@ import historyRbacMigrationSource from "../../supabase/migrations/20260723063657
 import workOwnershipMigrationSource from "../../supabase/migrations/20260810095920_cd313d47-3142-4045-b5db-b1f234b4a06b.sql?raw";
 import securityFinalizeMigrationSource from "../../supabase/migrations/20260810121000_contact_center_security_finalize.sql?raw";
 import contactTelegramChatSource from "../components/admin/ContactTelegramChat.tsx?raw";
+import unifiedInboxHookSource from "../hooks/useUnifiedInbox.ts?raw";
+import sourceBadgeSource from "../components/admin/communication/unified/SourceBadge.tsx?raw";
 
 describe("Telegram Business contact-centre wiring", () => {
   it("subscribes and handles every Business update family", () => {
@@ -27,6 +29,14 @@ describe("Telegram Business contact-centre wiring", () => {
     expect(adminChatSource).toContain('transport: businessConnectionId ? "business" : "bot"');
     expect(adminChatSource.match(/message_origin: "crm_operator"/g)).toHaveLength(2);
     expect(contactTelegramChatSource).toContain('message_origin: "crm_operator"');
+  });
+
+  it("shows the personal Telegram identity instead of the technical connected bot", () => {
+    expect(contactTelegramChatSource).toContain("getTelegramMessageIdentityLabel");
+    expect(contactTelegramChatSource).toContain("businessAccountIdByMessageId");
+    expect(unifiedInboxHookSource).toContain("getTelegramPersonalChannelLabel");
+    expect(unifiedInboxHookSource).toContain("latestIdentity.transport === \"business\"");
+    expect(sourceBadgeSource).toContain('label?.includes("личный Telegram")');
   });
 
   it("validates an explicitly selected personal sender against the dialog", () => {
