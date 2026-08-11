@@ -489,10 +489,10 @@ Deno.serve(async (req) => {
       // Telegram. Stop before every local propagation block and leave the
       // financial fact for the explicit admin recovery path.
       const lastTxForGuard = sub.last_transaction;
-      if (effectiveSubV2Id && lastTxForGuard?.uid) {
+      if (effectiveSubV2Id) {
         const { data: localSubForGuard, error: localSubForGuardError } = await supabase
           .from('subscriptions_v2')
-          .select('status, auto_renew, canceled_at, auto_renew_disabled_at, access_end_at')
+          .select('id, user_id, product_id, tariff_id, status, auto_renew, canceled_at, auto_renew_disabled_at, access_end_at')
           .eq('id', effectiveSubV2Id)
           .maybeSingle();
 
@@ -501,14 +501,40 @@ Deno.serve(async (req) => {
         }
 
         if (localSubForGuard) {
+          const terminalStatus = ['expired', 'superseded', 'past_due'].includes(
+            String(localSubForGuard.status || '').toLowerCase(),
+          );
+          let hasCompetingActiveSubscription = false;
+          if (terminalStatus) {
+            if (!localSubForGuard.user_id || !localSubForGuard.product_id) {
+              hasCompetingActiveSubscription = true;
+            } else {
+              const { data: activeCandidates, error: activeCandidatesError } = await supabase
+                .from('subscriptions_v2')
+                .select('id, tariff_id')
+                .eq('user_id', localSubForGuard.user_id)
+                .eq('product_id', localSubForGuard.product_id)
+                .eq('status', 'active')
+                .neq('id', localSubForGuard.id);
+              if (activeCandidatesError) {
+                throw new Error(`post_cancel_guard_candidate_lookup_failed:${activeCandidatesError.message}`);
+              }
+              hasCompetingActiveSubscription = (activeCandidates || []).some(
+                (candidate) => candidate.tariff_id === localSubForGuard.tariff_id,
+              );
+            }
+          }
+
           const guard = classifyLocalPropagation({
+            providerState: normalizedState,
+            hasCompetingActiveSubscription,
             localStatus: localSubForGuard.status,
             autoRenew: localSubForGuard.auto_renew,
             canceledAt: localSubForGuard.canceled_at,
             autoRenewDisabledAt: localSubForGuard.auto_renew_disabled_at,
             currentAccessEnd: localSubForGuard.access_end_at,
-            transactionStatus: lastTxForGuard.status,
-            transactionPaidAt: lastTxForGuard.paid_at || lastTxForGuard.created_at || null,
+            transactionStatus: lastTxForGuard?.status || snapshot.last_payment_status || null,
+            transactionPaidAt: lastTxForGuard?.paid_at || lastTxForGuard?.created_at || null,
             proposedAccessEnd: truthAccessEnd,
           });
 
@@ -516,7 +542,7 @@ Deno.serve(async (req) => {
             const detectedAt = new Date().toISOString();
             const guardMarker = {
               detected_at: detectedAt,
-              transaction_uid: String(lastTxForGuard.uid),
+              transaction_uid: lastTxForGuard?.uid ? String(lastTxForGuard.uid) : null,
               decision: guard.decision,
               reason: guard.reason,
               requires_manual_review: true,
@@ -544,8 +570,8 @@ Deno.serve(async (req) => {
                 access_propagation_blocked: true,
                 subscription_v2_id: effectiveSubV2Id,
                 provider_subscription_id: subscription_id,
-                transaction_uid: String(lastTxForGuard.uid),
-                transaction_paid_at: lastTxForGuard.paid_at || lastTxForGuard.created_at || null,
+                transaction_uid: lastTxForGuard?.uid ? String(lastTxForGuard.uid) : null,
+                transaction_paid_at: lastTxForGuard?.paid_at || lastTxForGuard?.created_at || null,
                 local_stop_at: guard.localStopAt,
                 local_status: localSubForGuard.status,
                 local_auto_renew: localSubForGuard.auto_renew,
@@ -562,9 +588,9 @@ Deno.serve(async (req) => {
               snapshot,
               is_cancelable: snapshot.is_cancelable,
               cancellation_capability,
-              local_propagation: 'blocked_post_cancel_charge',
+              local_propagation: guard.decision,
               manual_review: true,
-              transaction_uid: String(lastTxForGuard.uid),
+              transaction_uid: lastTxForGuard?.uid ? String(lastTxForGuard.uid) : null,
             }), {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
@@ -605,7 +631,7 @@ Deno.serve(async (req) => {
         // but access_end_at is being extended into the future (renewal payment received)
         const effectiveAccessEnd = subV2Updates.access_end_at || oldSubV2?.access_end_at;
         const currentStatus = oldSubV2?.status;
-        const restoredStatuses = ['expired', 'past_due'];
+        const restoredStatuses = ['expired', 'past_due', 'superseded'];
         // Read billing_type for safeguard — only restore provider_managed subscriptions
         const { data: billingCheck } = await supabase
           .from('subscriptions_v2')
@@ -640,7 +666,7 @@ Deno.serve(async (req) => {
               old_auto_renew: oldSubV2?.auto_renew,
               new_auto_renew: true,
               access_end_at: effectiveAccessEnd,
-              reason: 'sync detected access_end_at in future with expired/past_due status',
+              reason: 'sync detected active paid provider coverage with no competing subscription',
             },
           });
         }
