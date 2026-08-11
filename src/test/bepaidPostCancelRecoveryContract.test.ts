@@ -12,6 +12,13 @@ const recoverySource = readFileSync(
   'utf8',
 );
 
+const bundledRecoveryModules = [
+  'post_cancel_charge.ts',
+  'rebill_builders.ts',
+  'rebill_flow.ts',
+  'rebill_deps_adapter.ts',
+] as const;
+
 describe('bePaid post-cancel recovery safety', () => {
   it('blocks a proven post-cancel charge before any local access propagation', () => {
     const guardIndex = syncSource.indexOf('classifyLocalPropagation({');
@@ -53,6 +60,25 @@ describe('bePaid post-cancel recovery safety', () => {
     expect(recoverySource).not.toMatch(/\.from\(["']entitlements["']\)\s*\.\s*(insert|update|upsert|delete)/s);
     expect(recoverySource).not.toMatch(/\.from\(["']telegram_access_grants["']\)\s*\.\s*(insert|update|upsert|delete)/s);
     expect(recoverySource).not.toContain('grant-access-for-order');
+  });
+
+  it('keeps the recovery function self-contained for Lovable Edge bundling', () => {
+    expect(recoverySource).not.toContain('../bepaid-webhook/');
+
+    for (const moduleName of bundledRecoveryModules) {
+      const canonical = readFileSync(
+        resolve(process.cwd(), `supabase/functions/bepaid-webhook/${moduleName}`),
+        'utf8',
+      );
+      const bundled = readFileSync(
+        resolve(
+          process.cwd(),
+          `supabase/functions/admin-materialize-post-cancel-charge/${moduleName}`,
+        ),
+        'utf8',
+      );
+      expect(bundled.trimEnd()).toBe(canonical.trimEnd());
+    }
   });
 
   it('classifies the known incident timeline as a blocked post-cancel charge', () => {
