@@ -430,4 +430,42 @@ Deno.test("REBILL decision classifier closes fulfillment only on confirmed grant
   assertEquals(classifyRebillAccessOutcome("materialized_partial"), "error");
   assertEquals(classifyRebillAccessOutcome("skip_sbs_mismatch_pre_check"), "skip");
   assertEquals(classifyRebillAccessOutcome("skip_grant_full_refunded"), "skip");
+  assertEquals(classifyRebillAccessOutcome("materialized_no_grant_post_cancel"), "skip");
+});
+
+Deno.test("post-cancel charge is materialized without invoking access grant", async () => {
+  const state = newState();
+  const result = await runRebillFlow(makeDeps(state), baseInput({
+    accessPolicy: "suppress_post_cancel_charge",
+  }));
+
+  assertEquals(result.decision, "materialized_no_grant_post_cancel");
+  assertEquals(result.proceedLegacy, false);
+  assertEquals(state.inserted.length, 1);
+  assertEquals(state.insertedPayments.length, 1);
+  assertEquals(state.grantInvocations.length, 0);
+  assertEquals((state.inserted[0].payload.meta as any).do_not_grant_access, true);
+  assert(state.metaMerges.some((m) =>
+    m.orderId === state.inserted[0].id &&
+    m.patch.refund_candidate === true &&
+    m.patch.grant_status === "suppressed_post_cancel_charge"
+  ));
+  assertEquals(state.audits.at(-1)?.action, "bepaid.rebill.post_cancel_charge_recorded");
+});
+
+Deno.test("post-cancel replay resumes payment but still never grants access", async () => {
+  const state = newState();
+  state.rebillByOrderNumber.set(REBILL_NUM, {
+    id: "rebill-post-cancel",
+    order_number: REBILL_NUM,
+    meta: { materialization_status: "post_cancel_charge_recorded" },
+  });
+
+  const result = await runRebillFlow(makeDeps(state), baseInput({
+    accessPolicy: "suppress_post_cancel_charge",
+  }));
+
+  assertEquals(result.decision, "materialized_no_grant_post_cancel");
+  assertEquals(state.grantInvocations.length, 0);
+  assertEquals(state.insertedPayments.length, 1);
 });

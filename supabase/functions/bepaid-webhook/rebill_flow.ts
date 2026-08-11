@@ -51,6 +51,7 @@ export interface RebillFlowInput {
   };
   payment: { uid: string; amount: number; paid_at: string; currency?: string | null };
   subscriptionId: string | null;
+  accessPolicy?: "grant" | "suppress_post_cancel_charge";
 }
 
 export type RebillDecision =
@@ -62,6 +63,7 @@ export type RebillDecision =
   | "skip_grant_full_refunded"   // payment uid сам уже refunded
   | "skip_sbs_mismatch_pre_check"
   | "dry_run_planned"
+  | "materialized_no_grant_post_cancel"
   | "materialized"               // happy path: insert + repoint + grant ok
   | "materialized_partial"       // insert ok, repoint failed → retryable
   | "materialized_grant_failed"; // insert + repoint ok, grant failed → retryable
@@ -107,6 +109,7 @@ export function classifyRebillAccessOutcome(
     case "resumed_repoint_only":
     case "skip_grant_full_refunded":
     case "skip_sbs_mismatch_pre_check":
+    case "materialized_no_grant_post_cancel":
     case "conflict_uid":
     case "off_noop":
     case "dry_run_planned":
@@ -193,6 +196,7 @@ export async function runRebillFlow(
     sbs: input.subscriptionId,
     parent_order_id: input.parentOrder.id,
     payment_flow: "bepaid_subscription_charge",
+    access_policy: input.accessPolicy ?? "grant",
   };
 
   // 1) SBS mismatch pre-check
@@ -245,6 +249,7 @@ export async function runRebillFlow(
       payment: input.payment,
       subscriptionId: input.subscriptionId,
       materializationRun: MATERIALIZATION_RUN,
+      accessPolicy: input.accessPolicy,
     });
     const existingPayment = await deps.findMainPaymentByUid(input.payment.uid);
     await deps.writeAudit({
@@ -261,7 +266,7 @@ export async function runRebillFlow(
           will_create_payment: !existingPayment,
           will_repoint_to: existing?.id ?? "<new_rebill_order_id>",
         },
-        planned_grant_call: fullyRefunded ? null : {
+        planned_grant_call: fullyRefunded || input.accessPolicy === "suppress_post_cancel_charge" ? null : {
           fn: "grant-access-for-order",
           args: { order_id: existing?.id ?? "<new_rebill_order_id>" },
         },
@@ -341,6 +346,14 @@ export async function runRebillFlow(
         decision: "resumed_repoint_only", mode, proceedLegacy: false,
         rebill_order_id: existing.id,
       };
+    }
+
+    if (input.accessPolicy === "suppress_post_cancel_charge") {
+      return await finalizeSuppressedPostCancelCharge(deps, {
+        ...baseMeta,
+        rebillOrderId: existing.id,
+        phase: "resume",
+      });
     }
 
     const grant = await safeInvokeGrant(deps, existing.id);
@@ -426,6 +439,7 @@ export async function runRebillFlow(
     payment: input.payment,
     subscriptionId: input.subscriptionId,
     materializationRun: MATERIALIZATION_RUN,
+    accessPolicy: input.accessPolicy,
   });
 
   let rebillOrderId: string;
@@ -515,6 +529,15 @@ export async function runRebillFlow(
     };
   }
 
+
+  if (input.accessPolicy === "suppress_post_cancel_charge") {
+    return await finalizeSuppressedPostCancelCharge(deps, {
+      ...baseMeta,
+      rebillOrderId,
+      phase: "fresh",
+    });
+  }
+
   // 3f) Invoke grant.
   const grant = await safeInvokeGrant(deps, rebillOrderId);
   if (grant.ok) {
@@ -576,6 +599,42 @@ export async function runRebillFlow(
       rebill_order_id: rebillOrderId, grant_result: { error: grant.error },
     };
   }
+}
+
+async function finalizeSuppressedPostCancelCharge(
+  deps: RebillFlowDeps,
+  input: Record<string, unknown> & { rebillOrderId: string; phase: string },
+): Promise<RebillFlowResult> {
+  const at = new Date().toISOString();
+  await deps.mergeOrderMeta({
+    orderId: input.rebillOrderId,
+    patch: {
+      do_not_grant_access: true,
+      grant_status: "suppressed_post_cancel_charge",
+      materialization_status: "post_cancel_charge_recorded",
+      manual_review: true,
+      refund_candidate: true,
+      refund_candidate_reason: "provider_charge_after_confirmed_cancel",
+      last_attempt_at: at,
+    },
+  });
+  await deps.writeAudit({
+    action: "bepaid.rebill.post_cancel_charge_recorded",
+    meta: {
+      ...input,
+      decision: "materialized_no_grant_post_cancel",
+      severity: "CRITICAL",
+      grant_invoked: false,
+      at,
+    },
+  });
+  return {
+    decision: "materialized_no_grant_post_cancel",
+    mode: "on",
+    proceedLegacy: false,
+    rebill_order_id: input.rebillOrderId,
+    reason: "provider_charge_after_confirmed_cancel",
+  };
 }
 
 // ---- helpers ----

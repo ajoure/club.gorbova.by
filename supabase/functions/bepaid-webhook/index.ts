@@ -24,6 +24,7 @@ import {
 import { resolveKillSwitchMode } from './rebill_builders.ts';
 import { buildRebillDepsAdapter } from './rebill_deps_adapter.ts';
 import { decideProviderSubscriptionLinkRepair } from './provider_subscription_link_repair.ts';
+import { classifyPostCancelCharge } from './post_cancel_charge.ts';
 // PATCH-VERONIKA-MATUK-GORBOVA-CLUB-REPAIR: shared bepaid tracking parser SOT
 import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
 import { sanitizeBepaidProviderPayload } from '../_shared/sanitize-bepaid-payload.ts';
@@ -1559,6 +1560,177 @@ Deno.serve(async (req) => {
           .select('*')
           .eq('id', orderV2Id)
           .maybeSingle();
+
+        // A successful charge that happened after a persisted local cancel is
+        // a financial incident, not a renewal. Materialize the money exactly
+        // once, suppress every access grant, keep the subscription canceled,
+        // and stop before provider-link repair/provider-sync can reactivate it.
+        const transactionPaidAt = transaction?.paid_at || transaction?.created_at || null;
+        const postCancelCharge = classifyPostCancelCharge({
+          subscriptionStatus: subV2?.status,
+          autoRenew: subV2?.auto_renew,
+          canceledAt: subV2?.canceled_at,
+          autoRenewDisabledAt: subV2?.auto_renew_disabled_at,
+          transactionStatus: transaction?.status,
+          transactionPaidAt,
+        });
+
+        if (postCancelCharge.outcome === 'post_cancel_charge') {
+          const postCancelMode = resolveKillSwitchMode(
+            Deno.env.get('BEPAID_REBILL_MATERIALIZATION'),
+          );
+          if (!orderV2 || !transactionUid || postCancelMode !== 'on') {
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'bepaid-webhook',
+              action: 'bepaid.webhook.post_cancel_charge_blocked',
+              target_user_id: subV2?.user_id ?? null,
+              meta: {
+                severity: 'CRITICAL',
+                manual_review: true,
+                reason: !orderV2
+                  ? 'order_missing'
+                  : (!transactionUid ? 'transaction_uid_missing' : 'materialization_not_on'),
+                materialization_mode: postCancelMode,
+                order_id: orderV2Id,
+                subscription_v2_id: subV2?.id ?? null,
+                provider_subscription_id: subscriptionId,
+                transaction_uid: transactionUid,
+                canceled_at: postCancelCharge.cancellationConfirmedAt,
+                charged_at: postCancelCharge.chargedAt,
+                provider_cancel_required: true,
+                access_grant_suppressed: true,
+              },
+            });
+            return new Response(JSON.stringify({
+              ok: false,
+              status: 'manual_review',
+              reason: 'post_cancel_charge_materialization_blocked',
+            }), {
+              status: 202,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          try {
+            const deps = buildRebillDepsAdapter(supabase);
+            const result = await runRebillFlow(deps, {
+              mode: 'on',
+              accessPolicy: 'suppress_post_cancel_charge',
+              parentOrder: {
+                id: String(orderV2.id),
+                user_id: orderV2.user_id ?? null,
+                profile_id: orderV2.profile_id ?? null,
+                product_id: orderV2.product_id ?? null,
+                tariff_id: orderV2.tariff_id ?? null,
+                currency: orderV2.currency ?? 'BYN',
+                pipeline_id: orderV2.pipeline_id ?? null,
+                pipeline_stage_id: orderV2.pipeline_stage_id ?? null,
+                bepaid_subscription_id: subscriptionId ? String(subscriptionId) : null,
+                customer_email: orderV2.customer_email ?? null,
+                customer_phone: orderV2.customer_phone ?? null,
+                payer_type: orderV2.payer_type ?? null,
+                meta: (orderV2.meta || {}) as Record<string, unknown>,
+              },
+              payment: {
+                uid: String(transactionUid),
+                amount: transaction?.amount
+                  ? transaction.amount / 100
+                  : (body.plan?.amount ? body.plan.amount / 100 : Number(orderV2.final_price) || 0),
+                paid_at: postCancelCharge.chargedAt,
+                currency: transaction?.currency || body.plan?.currency || 'BYN',
+              },
+              subscriptionId: subscriptionId ? String(subscriptionId) : null,
+            });
+
+            if (result.decision !== 'materialized_no_grant_post_cancel' || !result.rebill_order_id) {
+              throw new Error(`post_cancel_materialization_unconfirmed:${result.decision}`);
+            }
+
+            const [{ data: paymentReadback }, { data: orderReadback }] = await Promise.all([
+              supabase
+                .from('payments_v2')
+                .select('id, order_id, status')
+                .eq('provider', 'bepaid')
+                .eq('provider_payment_id', String(transactionUid))
+                .maybeSingle(),
+              supabase
+                .from('orders_v2')
+                .select('id, meta')
+                .eq('id', result.rebill_order_id)
+                .maybeSingle(),
+            ]);
+            const readbackMeta = (orderReadback?.meta || {}) as Record<string, unknown>;
+            if (
+              !paymentReadback ||
+              String(paymentReadback.order_id) !== String(result.rebill_order_id) ||
+              !orderReadback ||
+              readbackMeta.do_not_grant_access !== true ||
+              readbackMeta.refund_candidate !== true
+            ) {
+              throw new Error('post_cancel_materialization_readback_failed');
+            }
+
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'bepaid-webhook',
+              action: 'bepaid.webhook.post_cancel_charge_materialized',
+              target_user_id: subV2?.user_id ?? null,
+              meta: {
+                severity: 'CRITICAL',
+                order_id: result.rebill_order_id,
+                subscription_v2_id: subV2?.id ?? null,
+                provider_subscription_id: subscriptionId,
+                transaction_uid: transactionUid,
+                canceled_at: postCancelCharge.cancellationConfirmedAt,
+                charged_at: postCancelCharge.chargedAt,
+                provider_cancel_required: true,
+                access_grant_suppressed: true,
+                refund_candidate: true,
+                readback_ok: true,
+              },
+            });
+
+            return new Response(JSON.stringify({
+              ok: true,
+              status: 'post_cancel_charge_materialized_no_grant',
+              refund_candidate: true,
+              provider_cancel_required: true,
+            }), {
+              status: 200,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          } catch (postCancelError) {
+            console.error('[WEBHOOK-SUBSCRIPTION] post-cancel materialization failed:', postCancelError);
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'bepaid-webhook',
+              action: 'bepaid.webhook.post_cancel_charge_materialization_failed',
+              target_user_id: subV2?.user_id ?? null,
+              meta: {
+                severity: 'CRITICAL',
+                manual_review: true,
+                order_id: orderV2Id,
+                subscription_v2_id: subV2?.id ?? null,
+                provider_subscription_id: subscriptionId,
+                transaction_uid: transactionUid,
+                canceled_at: postCancelCharge.cancellationConfirmedAt,
+                charged_at: postCancelCharge.chargedAt,
+                provider_cancel_required: true,
+                access_grant_suppressed: true,
+                error: String((postCancelError as Error)?.message || postCancelError),
+              },
+            });
+            return new Response(JSON.stringify({
+              ok: false,
+              status: 'manual_review',
+              reason: 'post_cancel_charge_materialization_failed',
+            }), {
+              status: 202,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        }
 
         // Repair a narrowly proven legacy split-brain before REBILL grant:
         // the verified tracking id points at the working subscriptions_v2 row,
