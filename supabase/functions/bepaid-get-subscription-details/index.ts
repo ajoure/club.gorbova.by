@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { endOfDayAppTz } from '../_shared/timezone.ts';
+import { classifyLocalPropagation } from './local_propagation_guard.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -483,6 +484,94 @@ Deno.serve(async (req) => {
         console.error(`[bepaid-get-subscription-details] Update error:`, updateError);
       }
 
+      // A provider snapshot is safe to persist, but a charge recorded after a
+      // local cancellation must never extend subscriptions, entitlements or
+      // Telegram. Stop before every local propagation block and leave the
+      // financial fact for the explicit admin recovery path.
+      const lastTxForGuard = sub.last_transaction;
+      if (effectiveSubV2Id && lastTxForGuard?.uid) {
+        const { data: localSubForGuard, error: localSubForGuardError } = await supabase
+          .from('subscriptions_v2')
+          .select('status, auto_renew, canceled_at, auto_renew_disabled_at, access_end_at')
+          .eq('id', effectiveSubV2Id)
+          .maybeSingle();
+
+        if (localSubForGuardError) {
+          throw new Error(`post_cancel_guard_lookup_failed:${localSubForGuardError.message}`);
+        }
+
+        if (localSubForGuard) {
+          const guard = classifyLocalPropagation({
+            localStatus: localSubForGuard.status,
+            autoRenew: localSubForGuard.auto_renew,
+            canceledAt: localSubForGuard.canceled_at,
+            autoRenewDisabledAt: localSubForGuard.auto_renew_disabled_at,
+            currentAccessEnd: localSubForGuard.access_end_at,
+            transactionStatus: lastTxForGuard.status,
+            transactionPaidAt: lastTxForGuard.paid_at || lastTxForGuard.created_at || null,
+            proposedAccessEnd: truthAccessEnd,
+          });
+
+          if (guard.decision !== 'allow') {
+            const detectedAt = new Date().toISOString();
+            const guardMarker = {
+              detected_at: detectedAt,
+              transaction_uid: String(lastTxForGuard.uid),
+              decision: guard.decision,
+              reason: guard.reason,
+              requires_manual_review: true,
+            };
+
+            const { error: guardMetaError } = await supabase
+              .from('provider_subscriptions')
+              .update({
+                meta: { ...newMeta, post_cancel_charge: guardMarker },
+              })
+              .eq('provider', 'bepaid')
+              .eq('provider_subscription_id', subscription_id);
+            if (guardMetaError) {
+              throw new Error(`post_cancel_guard_marker_failed:${guardMetaError.message}`);
+            }
+
+            await supabase.from('audit_logs').insert({
+              action: 'bepaid.sync.post_cancel_charge_manual_review',
+              actor_type: 'system',
+              actor_label: 'bepaid-get-subscription-details',
+              target_user_id: existingPs.user_id || null,
+              meta: {
+                severity: 'CRITICAL',
+                manual_review: true,
+                access_propagation_blocked: true,
+                subscription_v2_id: effectiveSubV2Id,
+                provider_subscription_id: subscription_id,
+                transaction_uid: String(lastTxForGuard.uid),
+                transaction_paid_at: lastTxForGuard.paid_at || lastTxForGuard.created_at || null,
+                local_stop_at: guard.localStopAt,
+                local_status: localSubForGuard.status,
+                local_auto_renew: localSubForGuard.auto_renew,
+                current_access_end_at: localSubForGuard.access_end_at,
+                proposed_access_end_at: truthAccessEnd,
+                decision: guard.decision,
+                reason: guard.reason,
+              },
+            });
+
+            return new Response(JSON.stringify({
+              success: true,
+              subscription_id,
+              snapshot,
+              is_cancelable: snapshot.is_cancelable,
+              cancellation_capability,
+              local_propagation: 'blocked_post_cancel_charge',
+              manual_review: true,
+              transaction_uid: String(lastTxForGuard.uid),
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        }
+      }
+
       // PATCH-B5: STOP-guard for missing truth
       if (!truthNextCharge && !truthAccessEnd) {
         await supabase.from('audit_logs').insert({
@@ -776,6 +865,23 @@ Deno.serve(async (req) => {
       // PATCH 2.E: Upsert last_transaction into payments_v2
       const lastTx = sub.last_transaction;
       if (lastTx?.uid) {
+        const lastTxAmountCents = Number(lastTx.amount);
+        if (!Number.isFinite(lastTxAmountCents) || lastTxAmountCents <= 0) {
+          await supabase.from('audit_logs').insert({
+            action: 'bepaid.payment.upsert_skipped_no_amount',
+            actor_type: 'system',
+            actor_label: 'bepaid-get-subscription-details',
+            target_user_id: existingPs.user_id || null,
+            meta: {
+              provider_payment_id: lastTx.uid,
+              provider_subscription_id: subscription_id,
+              last_transaction_status: lastTx.status || null,
+              manual_review: true,
+              reason: 'provider_last_transaction_amount_missing_or_invalid',
+            },
+          });
+          console.warn(`[bepaid-get-subscription-details] Skipping payment ${lastTx.uid}: provider amount is missing or invalid`);
+        } else {
         const txStatus = lastTx.status === 'successful' ? 'succeeded' : 'failed';
         
         // Resolve user_id and profile_id
@@ -844,7 +950,7 @@ Deno.serve(async (req) => {
             user_id: resolvedUserId,
             profile_id: resolvedProfileId,
             status: txStatus,
-            amount: lastTx.amount ? lastTx.amount / 100 : null,
+            amount: lastTxAmountCents / 100,
             currency: lastTx.currency || 'BYN',
             paid_at: lastTx.created_at || lastTx.paid_at || new Date().toISOString(),
             card_last4: lastTx.credit_card?.last_4 || sub.credit_card?.last_4 || null,
@@ -943,6 +1049,7 @@ Deno.serve(async (req) => {
               payment_id: persistedPaymentId,
             },
           });
+        }
         }
       }
     }
