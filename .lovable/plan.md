@@ -1,56 +1,105 @@
-# Отчет: READ-ONLY диагностика повторной попытки refund — STOP
+# План: PLAN-ONLY ревизия PR #297 (7adcdecc) — VERDICT: CONDITIONAL PASS
 
-Мутаций нет: код, данные, функции, deploy, Publish и реальный возврат не выполнялись.
+Мутаций нет: код, БД, функции, deploy, Publish и реальный возврат не выполнялись.
 
-## 1) Свежий runtime-факт
+## 0. Ограничение ревизии (важно)
 
-- Последний вызов `subscription-admin-actions`: **2026-08-11 15:24:20 UTC**.
-- Лог: `Admin [redacted] performing refund`.
-- После этой строки нет логов `Sending refund to bePaid`, ответа bePaid, `record_refund_atomic` или post-refund.
-- Точный исход этого пути: **HTTP 400**.
-- Response body (безопасно):
+Коммит `7adcdecc` **не синхронизирован** в managed-воркспейс: в дереве нет
+`src/test/refundComposableGroupRecovery.test.ts`, а в
+`supabase/functions/subscription-admin-actions/index.ts` нет ни одного упоминания
+`settle_composable_order_group`. Прямое чтение диффа через GitHub API также
+недоступно (404 — приватный репозиторий).
 
-```json
-{"success":false,"error":"refundable_order_group_not_found"}
-```
+Поэтому ревизия сделана по: (а) текущему deployed-коду функции, (б) фактическим
+определениям RPC в production, (в) реальным данным инцидента. Пункты ниже
+подтверждают/отклоняют саму инженерную идею патча. Побайтовая сверка диффа
+возможна только после синхронизации exact merged SHA.
 
-- Этап падения: **composable pre-refund RPC `create_composable_refund_intent`**, до обращения к bePaid.
+## 1. Root cause — ПОДТВЕРЖДЁН (PASS)
 
-## 2) Сопоставленный заказ (PII и provider UID скрыты)
+- `create_composable_refund_intent` первым делом требует
+  `order_groups.status IN ('paid','partially_refunded')`, иначе
+  `refundable_order_group_not_found`.
+- Факт инцидента: группа `0ce392a6…` имеет `status = pending`, при этом
+  `orders_v2` = `paid`, платёж bePaid = `succeeded`, 250 BYN.
+- `payment_allocations` для item `4ac3af31…` отсутствует — сработала бы и
+  вторая проверка `payment_allocation_not_found`.
+- Это ровно рассинхронизация settlement, а не ошибка суммы/доступа/авторизации.
 
-- Contact: Филиппова Елена (идентичность сверена, в отчёте персональные идентификаторы не приводятся).
-- Order ID: `1e5890d0-132a-4f58-9898-516c2671d9fe`.
-- Public/order number: `SUB-LINK-MSL13KY3`.
-- Order: `paid`, сумма/оплачено `250 BYN`.
-- Payment: provider `bepaid`, status `succeeded`, transaction type `payment`, `refunded_amount = 0`, `refunded_at = NULL`.
-- Subscription: `09b0f74f-1226-4dd2-aae9-72c19e8684a2`, status `active`, billing type `provider_managed`, auto-renew включён.
+## 2. Recovery через settle → один повтор intent — БЕЗОПАСНО (PASS, с условиями)
 
-## 3) Точная причина
+`settle_composable_order_group(_primary_order_id, _payment_id)` в production:
 
-Заказ и платёж сами по себе валидны. Ошибка находится в composable-слое:
+- жёсткие guard-и: платёж должен принадлежать primary order, быть `succeeded`,
+  совпадать по валюте и **точно** по сумме с `order_groups.total_amount`;
+- идемпотентен: `payment_allocations` пишется через
+  `ON CONFLICT (payment_id, order_group_item_id) DO UPDATE`, группа переводится
+  в `paid`;
+- `orders_v2` перезаписывает только строки с `role = 'addon'`; primary-заказ не трогается;
+- денег не двигает, провайдера не вызывает.
 
-- заказ включён в `order_group`;
-- в группе есть primary item на 250 BYN, поэтому `RefundDialog` автоматически отправляет `order_group_item_id` и `refund_request_key`;
-- но `order_groups.status = pending`, хотя связанный `orders_v2.status = paid` и платёж `succeeded`;
-- для item отсутствует строка `payment_allocations`;
-- RPC сначала требует статус группы `paid` или `partially_refunded`; из-за `pending` немедленно выбрасывает `refundable_order_group_not_found`;
-- функция превращает эту RPC-ошибку в HTTP 400. До следующей проверки `payment_allocation_not_found` выполнение не доходит.
+На данных инцидента все guard-и проходят (250.00 BYN = 250.00 BYN, один item с
+`role = primary`). Повторный `create_composable_refund_intent` с тем же
+`refund_request_key` идемпотентен по `request_key`.
 
-Итого: **это рассинхронизация materialization order group, а не ошибка `keep_subscription`, auth, bePaid или оплаченного платежа**.
+Обязательные условия для PASS:
+1. recovery запускается **только** при точном тексте ошибки
+   `refundable_order_group_not_found` (и, опционально, `payment_allocation_not_found`);
+2. ровно один повтор, без цикла;
+3. `refund_request_key` не перегенерируется между попытками;
+4. при повторной ошибке — немедленный выход 400/409 без вызова провайдера;
+5. ветка idempotent (HTTP 409, `composable_refund_request_already_exists`)
+   сохраняется без изменений.
 
-## 4) Проверка, произошёл ли возврат
+## 3. bePaid недостижим при неудаче settlement/intent — ПОДТВЕРЖДЁН (PASS)
 
-**Нет, возврат в bePaid не произошёл.** Доказательства:
+В текущем коде блок composable (строки ~340–395) расположен **до** любых
+provider-веток (Stripe ~411, bePaid далее) и завершает запрос `return`-ом при
+ошибке. Пока патч не переносит recovery ниже provider-вызова, деньги не
+затрагиваются. Это должно быть проверено построчно при синхронизации SHA.
 
-- код вызывает `create_composable_refund_intent` до provider API и завершает запрос HTTP 400 при ошибке RPC;
-- нет лога отправки refund в bePaid;
-- нет composable refund intent;
-- нет refund payment-row для заказа;
-- исходный payment остаётся `succeeded`, `refunded_amount = 0`, `refunded_at = NULL`;
-- нет refund audit-маркеров для этого заказа/попытки.
+## 4. keep_subscription / keep_access — БЕЗ ИЗМЕНЕНИЙ (PASS, требует сверки)
 
-Повторная попытка также ничего у провайдера не изменила.
+`effectiveAccessAction` вычисляется до composable-блока и передаётся в intent
+как есть; whitelist RPC (`revoke/reduce/keep/keep_subscription`) в production не
+менялся, безопасный дефолт `keep` на месте (`src/lib/refundAccessPolicy.ts`).
+Патч не должен добавлять новых значений и не должен менять дефолт.
+
+## 5. Для production нужен только deploy функции — ПОДТВЕРЖДЁН (PASS)
+
+`settle_composable_order_group` уже существует в production с нужной сигнатурой
+и правами (`service_role` EXECUTE, contract-тест
+`supabase/tests/composable_checkout_catalog_contract.sql`). Миграции и правки
+данных не требуются: испорченная строка группы чинится самим вызовом RPC во
+время следующего возврата.
+
+## Critical findings
+
+- **CF-1 (блокирующий процесс, не код):** exact merged SHA не синхронизирован —
+  побайтовая ревизия диффа невозможна до sync.
+- **CF-2:** recovery обязан быть однократным и привязанным к конкретному коду
+  ошибки; общий `catch` вокруг любой ошибки intent недопустим.
+- **CF-3:** отсутствует постоянный след — при раннем отказе не пишется
+  `audit_logs`. Рекомендуется добавить запись `refund_rejected` / `group_settled_on_refund`
+  (не блокирует релиз).
+- **CF-4:** первопричина `pending`-группы (почему settlement не отработал при
+  оплате) патчем не устраняется — нужен отдельный follow-up по webhook-пути.
+
+## EXECUTE-план (после отдельного разрешения)
+
+1. Sync managed HEAD на exact merged SHA `7adcdecc…`; подтвердить HEAD в отчёте.
+2. Построчно сверить только 2 файла scope; проверить пункты CF-2 и порядок
+   «composable до provider».
+3. Прогнать `src/test/refundComposableGroupRecovery.test.ts` + существующие
+   refund-тесты; ожидание — все PASS.
+4. Deploy **только** `subscription-admin-actions`. Миграций и data-fix нет.
+5. Read-back без реального возврата: подтвердить маркер `settle_composable_order_group`
+   в развёрнутом бандле; проверить, что для заказа
+   `1e5890d0…` группа всё ещё `pending`, аллокаций нет, refund-строк нет.
+6. Реальный возврат 250 BYN — только по отдельному явному разрешению
+   пользователя, с read-back группы (`paid`), аллокации, intent, refund-строки и
+   сохранённого доступа/подписки.
 
 ## STOP
 
-Никаких исправлений или дополнительных runtime-вызовов не выполнялось.
+Дальнейших действий не выполнялось.
