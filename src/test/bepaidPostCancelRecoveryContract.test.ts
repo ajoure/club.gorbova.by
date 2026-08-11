@@ -46,6 +46,7 @@ describe('bePaid post-cancel recovery safety', () => {
       'provider_row_id',
       'provider_subscription_id',
       'expected_uid',
+      'cancellation_evidence_subscription_id',
       'expected_amount',
       'expected_currency',
       'expected_paid_at',
@@ -53,6 +54,13 @@ describe('bePaid post-cancel recovery safety', () => {
       expect(recoverySource).toContain(field);
     }
     expect(recoverySource).toContain('const dryRun = body.dry_run !== false');
+    expect(recoverySource).toContain('cancellation_evidence_scope_mismatch');
+    expect(recoverySource).toContain(
+      '.eq("id", body.cancellation_evidence_subscription_id!)',
+    );
+    expect(recoverySource).toContain(
+      'String(cancellationEvidence.tariff_id || "") !== String(localSub.tariff_id)',
+    );
     expect(recoverySource).toContain('accessPolicy: "suppress_post_cancel_charge"');
     expect(recoverySource).toContain('refund_candidate: true');
     expect(recoverySource).toContain('protected_access_unchanged: true');

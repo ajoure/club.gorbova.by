@@ -23,6 +23,7 @@ interface RequestBody {
   provider_row_id?: string;
   provider_subscription_id?: string;
   expected_uid?: string;
+  cancellation_evidence_subscription_id?: string;
   expected_amount?: number;
   expected_currency?: string;
   expected_paid_at?: string;
@@ -117,6 +118,7 @@ Deno.serve(async (req) => {
       body.provider_row_id,
       body.provider_subscription_id,
       body.expected_uid,
+      body.cancellation_evidence_subscription_id,
       body.expected_currency,
       body.expected_paid_at,
     ];
@@ -129,7 +131,8 @@ Deno.serve(async (req) => {
     }
     if (
       !UUID_RE.test(body.queue_id!) || !UUID_RE.test(body.provider_row_id!) ||
-      !UUID_RE.test(body.expected_uid!)
+      !UUID_RE.test(body.expected_uid!) ||
+      !UUID_RE.test(body.cancellation_evidence_subscription_id!)
     ) {
       return json({ error: "invalid_uuid" }, 400);
     }
@@ -222,11 +225,36 @@ Deno.serve(async (req) => {
       return json({ error: "canonical_linkage_mismatch" }, 409);
     }
 
+    const { data: cancellationEvidence, error: cancellationEvidenceError } =
+      await supabase
+        .from("subscriptions_v2")
+        .select(
+          "id,user_id,profile_id,product_id,tariff_id,status,auto_renew,canceled_at,auto_renew_disabled_at",
+        )
+        .eq("id", body.cancellation_evidence_subscription_id!)
+        .maybeSingle();
+    if (cancellationEvidenceError) {
+      throw new Error(
+        `cancellation_evidence_lookup_failed:${cancellationEvidenceError.message}`,
+      );
+    }
+    if (!cancellationEvidence) {
+      return json({ error: "cancellation_evidence_not_found" }, 404);
+    }
+    if (
+      String(cancellationEvidence.user_id || "") !== String(localSub.user_id) ||
+      String(cancellationEvidence.product_id || "") !==
+        String(localSub.product_id) ||
+      String(cancellationEvidence.tariff_id || "") !== String(localSub.tariff_id)
+    ) {
+      return json({ error: "cancellation_evidence_scope_mismatch" }, 409);
+    }
+
     const postCancel = classifyPostCancelCharge({
-      subscriptionStatus: localSub.status,
-      autoRenew: localSub.auto_renew,
-      canceledAt: localSub.canceled_at,
-      autoRenewDisabledAt: localSub.auto_renew_disabled_at,
+      subscriptionStatus: cancellationEvidence.status,
+      autoRenew: cancellationEvidence.auto_renew,
+      canceledAt: cancellationEvidence.canceled_at,
+      autoRenewDisabledAt: cancellationEvidence.auto_renew_disabled_at,
       transactionStatus: "successful",
       transactionPaidAt: queue.paid_at,
     });
@@ -295,6 +323,7 @@ Deno.serve(async (req) => {
             recovery_origin: "admin-materialize-post-cancel-charge",
             access_suppressed: true,
             source_queue_id: queue.id,
+            cancellation_evidence_subscription_id: cancellationEvidence.id,
             recovered_by_user_id: user.id,
           },
         });
@@ -372,6 +401,7 @@ Deno.serve(async (req) => {
           meta: {
             queue_id: queue.id,
             transaction_uid: body.expected_uid,
+            cancellation_evidence_subscription_id: cancellationEvidence.id,
             order_id: existingOrder.id,
             payment_id: paymentReadback.id,
             access_actions: 0,
@@ -387,6 +417,7 @@ Deno.serve(async (req) => {
         order_id: existingOrder.id,
         payment_id: existingPayment.id,
         access_actions: 0,
+        cancellation_evidence_subscription_id: cancellationEvidence.id,
       });
     }
 
@@ -435,6 +466,7 @@ Deno.serve(async (req) => {
           manual_review: true,
           refund_candidate: true,
         },
+        cancellation_evidence_subscription_id: cancellationEvidence.id,
       });
     }
 
@@ -457,6 +489,7 @@ Deno.serve(async (req) => {
         recovery_origin: "admin-materialize-post-cancel-charge",
         access_suppressed: true,
         source_queue_id: queue.id,
+        cancellation_evidence_subscription_id: cancellationEvidence.id,
         recovered_by_user_id: user.id,
       },
     });
@@ -556,6 +589,7 @@ Deno.serve(async (req) => {
         provider_row_id: providerRow.id,
         provider_subscription_id: providerRow.provider_subscription_id,
         transaction_uid: body.expected_uid,
+        cancellation_evidence_subscription_id: cancellationEvidence.id,
         order_id: flow.rebill_order_id,
         payment_id: updatedPayment.id,
         amount: expectedAmount,
@@ -577,6 +611,7 @@ Deno.serve(async (req) => {
       access_actions: 0,
       protected_access_unchanged: true,
       refund_candidate: true,
+      cancellation_evidence_subscription_id: cancellationEvidence.id,
     });
   } catch (error) {
     console.error("[admin-materialize-post-cancel-charge]", error);
