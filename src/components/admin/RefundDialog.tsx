@@ -15,6 +15,11 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { AlertTriangle, CreditCard, Ban, Calendar, RefreshCcw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import {
+  adjustRefundAccessActionForAmount,
+  DEFAULT_REFUND_ACCESS_ACTION,
+  type RefundAccessAction,
+} from "@/lib/refundAccessPolicy";
 
 interface GroupRefundItem {
   id: string;
@@ -42,8 +47,6 @@ interface RefundDialogProps {
   onSuccess?: () => void;
 }
 
-type AccessAction = "revoke" | "reduce" | "keep" | "keep_subscription";
-
 export function RefundDialog({
   open,
   onOpenChange,
@@ -57,7 +60,7 @@ export function RefundDialog({
   const [reason, setReason] = useState("");
   const [refundAmount, setRefundAmount] = useState(amount);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [accessAction, setAccessAction] = useState<AccessAction>("revoke");
+  const [accessAction, setAccessAction] = useState<RefundAccessAction>(DEFAULT_REFUND_ACCESS_ACTION);
   const [reduceDays, setReduceDays] = useState(30);
   const [groupItems, setGroupItems] = useState<GroupRefundItem[]>([]);
   const [groupPrimaryOrderId, setGroupPrimaryOrderId] = useState<string | null>(null);
@@ -75,7 +78,7 @@ export function RefundDialog({
     if (open) {
       setRefundAmount(amount);
       setReason("");
-      setAccessAction("revoke");
+      setAccessAction(DEFAULT_REFUND_ACCESS_ACTION);
       setReduceDays(30);
       setRefundRequestKey(crypto.randomUUID());
       setGroupItems([]);
@@ -127,15 +130,12 @@ export function RefundDialog({
     }
   }, [open, amount, orderId]);
 
-  // Auto-set access action based on refund amount
+  // A partial refund cannot revoke all access. A full refund keeps the explicit
+  // administrator choice and never silently switches `keep` back to `revoke`.
   useEffect(() => {
-    const max = selectedAvailable ?? amount;
-    if (refundAmount >= max) {
-      setAccessAction("revoke");
-    } else if (accessAction === "revoke") {
-      setAccessAction("reduce");
-    }
-  }, [refundAmount, amount, selectedAvailable, accessAction]);
+    const adjusted = adjustRefundAccessActionForAmount(accessAction, isFullRefund);
+    if (adjusted !== accessAction) setAccessAction(adjusted);
+  }, [accessAction, isFullRefund]);
 
   const handleRefund = async () => {
     if (!reason.trim()) {
@@ -231,7 +231,7 @@ export function RefundDialog({
                       onClick={() => {
                         setSelectedGroupItemId(item.id);
                         setRefundAmount(available);
-                        setAccessAction("revoke");
+                        setAccessAction(DEFAULT_REFUND_ACCESS_ACTION);
                         setRefundRequestKey(crypto.randomUUID());
                       }}
                       className={`w-full rounded-xl border p-3 text-left transition ${
@@ -306,7 +306,7 @@ export function RefundDialog({
             <Label>Действие с доступом</Label>
             <RadioGroup
               value={accessAction}
-              onValueChange={(val) => setAccessAction(val as AccessAction)}
+              onValueChange={(val) => setAccessAction(val as RefundAccessAction)}
               className="space-y-2"
             >
               <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
@@ -338,20 +338,18 @@ export function RefundDialog({
                 </Label>
               </div>
 
-              {(!isFullRefund || !!selectedGroupItemId) && (
-                <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                  <RadioGroupItem value="keep" id="keep" />
-                  <Label htmlFor="keep" className="flex-1 cursor-pointer">
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-green-500" />
-                      <span className="font-medium">Сохранить доступ</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Только возврат денег, без изменения доступа
-                    </p>
-                  </Label>
-                </div>
-              )}
+              <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                <RadioGroupItem value="keep" id="keep" />
+                <Label htmlFor="keep" className="flex-1 cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-green-500" />
+                    <span className="font-medium">Сохранить доступ</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Только возврат денег, без изменения доступа и Telegram
+                  </p>
+                </Label>
+              </div>
 
               <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
                 <RadioGroupItem value="keep_subscription" id="keep_subscription" />
