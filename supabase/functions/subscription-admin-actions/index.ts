@@ -299,6 +299,18 @@ Deno.serve(async (req) => {
         });
       }
 
+      const allowedRefundAccessActions = new Set(['revoke', 'reduce', 'keep', 'keep_subscription']);
+      const effectiveAccessAction = access_action || 'keep';
+      if (!allowedRefundAccessActions.has(effectiveAccessAction)) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'invalid_access_action',
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       // Get order with related payment
       const { data: order, error: orderError } = await supabase
         .from('orders_v2')
@@ -350,7 +362,7 @@ Deno.serve(async (req) => {
             _order_group_item_id: order_group_item_id,
             _amount: actualRefundAmount,
             _reason: refund_reason,
-            _access_action: access_action || 'keep',
+            _access_action: effectiveAccessAction,
             _reduce_days: reduce_days || null,
             _request_key: refund_request_key,
             _created_by: adminUserId,
@@ -426,7 +438,7 @@ Deno.serve(async (req) => {
           stripeRefundError = err instanceof Error ? err.message : String(err);
         }
 
-        const effective = access_action || 'keep';
+        const effective = effectiveAccessAction;
         const stripeOk = !stripeRefundError && stripeRefundResp?.ok === true;
         if (stripeOk && composableRefundIntentId && stripeRefundResp?.refund_id) {
           const { error: bindError } = await supabase.rpc(
@@ -871,7 +883,7 @@ Deno.serve(async (req) => {
               refunded_by: adminUserId,
               bepaid_refund: null,
               bepaid_refund_error: bepaidRefundError,
-              access_action: access_action || 'revoke',
+              access_action: effectiveAccessAction,
               reduce_days: reduce_days || null,
               partial_refund_total: totalRefundedAfter,
               paid_sum: paidSumForOrder,
@@ -892,8 +904,6 @@ Deno.serve(async (req) => {
       }
 
       // Handle access action
-      const effectiveAccessAction = access_action || 'revoke';
-      
       // Find related subscription
       const { data: relatedSubscription } = await supabase
         .from('subscriptions_v2')
@@ -953,6 +963,7 @@ Deno.serve(async (req) => {
                 is_manual: true,
                 reason: 'refund',
                 admin_id: adminUserId,
+                respect_remaining_access: true,
                 parent_event_key: refundRevokeSourceEventKey || null,
                 parent_execution_key: refundRevokeExecutionKey || null,
               },

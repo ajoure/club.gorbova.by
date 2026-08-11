@@ -25,6 +25,11 @@ interface RevokeAccessRequest {
   dry_run?: boolean;
   /** Suppress customer notifications for an operator-approved reconciliation. */
   notify_customer?: boolean;
+  /**
+   * Admin action that must still preserve Telegram when another commercial
+   * access source remains active (for example, a refund of one of two rights).
+   */
+  respect_remaining_access?: boolean;
 }
 
 
@@ -214,6 +219,7 @@ Deno.serve(async (req) => {
     let { user_id, telegram_user_id, club_id, reason, is_manual, admin_id } = body;
     const forceRevoke = (body as any).force_revoke === true;
     const dryRun = body.dry_run === true;
+    const respectRemainingAccess = body.respect_remaining_access === true;
     // Existing UI calls keep notifying. Bulk reconciliation opts out explicitly.
     const notifyCustomer = body.notify_customer !== false;
     // Phase 1: read parent keys from body for downstream lineage (nullable, backward compat)
@@ -224,7 +230,8 @@ Deno.serve(async (req) => {
     const isAdminAction = is_manual === true || (typeof admin_id === 'string' && admin_id.length > 0);
 
     console.log('Revoke access request:', {
-      user_id, club_id, reason, is_manual, admin_id, isAdminAction, forceRevoke, dryRun, notifyCustomer
+      user_id, club_id, reason, is_manual, admin_id, isAdminAction, forceRevoke,
+      respectRemainingAccess, dryRun, notifyCustomer
     });
 
     if (!user_id && !telegram_user_id) {
@@ -246,11 +253,14 @@ Deno.serve(async (req) => {
 
     // =================================================================
     // GUARD — запрет revoke если есть активный access
-    // PATCH: пропускаем при isAdminAction (is_manual || admin_id) или forceRevoke
+    // Admin actions normally bypass this guard. Refunds explicitly opt back in
+    // so revoking one purchase cannot destroy another active club right.
     // =================================================================
     // dry_run is read-only. It intentionally bypasses this blocking branch,
     // because the branch records a ledger/audit skip as a side effect.
-    if (user_id && !forceRevoke && !isAdminAction && !dryRun) {
+    const shouldCheckRemainingAccess = !forceRevoke && !dryRun
+      && (!isAdminAction || respectRemainingAccess);
+    if (user_id && shouldCheckRemainingAccess) {
       // COMMERCIAL-ONLY (2026-05-22): revoke смотрит только на коммерческое право (subs/ents/manual + billing-day).
       // Stale telegram_access projection больше не блокирует revoke. Admin/creator guard остаётся в kick-функциях.
       const accessResult = await hasCommercialAccess(supabase, user_id, club_id || undefined);
@@ -318,7 +328,7 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-    } else if (isAdminAction) {
+    } else if (isAdminAction && !respectRemainingAccess) {
       console.log(`[telegram-revoke-access] Guard bypassed: isAdminAction=true (is_manual=${is_manual}, admin_id=${admin_id ? 'set' : 'null'})`);
     }
 
