@@ -334,7 +334,11 @@ Deno.serve(async (req) => {
 
       const actualRefundAmount = refund_amount || order.final_price;
       const payments = order.payments_v2 as any[];
-      const successfulPayment = payments?.find((p: any) => p.status === 'succeeded' && p.provider_payment_id);
+      const successfulPayment = payments?.find((p: any) =>
+        p.status === 'succeeded' &&
+        p.provider_payment_id &&
+        p.transaction_type !== 'refund'
+      );
       let composableRefundIntentId: string | null = null;
       let composableAccessOrderId: string | null = null;
       if (order_group_item_id) {
@@ -355,7 +359,7 @@ Deno.serve(async (req) => {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
-        const { data: intent, error: intentError } = await supabase.rpc(
+        const createComposableIntent = () => supabase.rpc(
           'create_composable_refund_intent',
           {
             _primary_order_id: order_id,
@@ -368,6 +372,78 @@ Deno.serve(async (req) => {
             _created_by: adminUserId,
           },
         );
+
+        let { data: intent, error: intentError } = await createComposableIntent();
+        const initialIntentError = intentError?.message || intent?.error || '';
+
+        // Some provider-managed subscription orders were paid successfully before
+        // their one-item order group was materialized. The refund UI can still see
+        // that group, but create_composable_refund_intent correctly rejects its
+        // stale `pending` status. Repair it through the existing canonical
+        // settlement RPC, then retry the idempotent intent exactly once. The
+        // provider refund is not called until both steps succeed.
+        if (
+          initialIntentError.includes('refundable_order_group_not_found') &&
+          successfulPayment?.id
+        ) {
+          const { data: settlement, error: settlementError } = await supabase.rpc(
+            'settle_composable_order_group',
+            {
+              _primary_order_id: order_id,
+              _payment_id: successfulPayment.id,
+            },
+          );
+
+          if (
+            settlementError ||
+            settlement?.ok !== true ||
+            settlement?.state === 'not_grouped'
+          ) {
+            const settlementCode = settlementError?.message ||
+              settlement?.state ||
+              'composable_order_group_settlement_failed';
+            await supabase.from('audit_logs').insert({
+              actor_user_id: adminUserId,
+              target_user_id: order.user_id,
+              actor_type: 'user',
+              actor_label: 'subscription-admin-actions[refund][group-recovery]',
+              action: 'admin.subscription.refund_group_recovery_failed',
+              meta: {
+                order_id,
+                payment_id: successfulPayment.id,
+                order_group_item_id,
+                access_action: effectiveAccessAction,
+                stage: 'settle_composable_order_group',
+                error: settlementCode,
+              },
+            });
+            return new Response(JSON.stringify({
+              success: false,
+              error: `composable_order_group_settlement_failed:${settlementCode}`,
+            }), {
+              status: 409,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          await supabase.from('audit_logs').insert({
+            actor_user_id: adminUserId,
+            target_user_id: order.user_id,
+            actor_type: 'user',
+            actor_label: 'subscription-admin-actions[refund][group-recovery]',
+            action: 'admin.subscription.refund_group_recovered',
+            meta: {
+              order_id,
+              payment_id: successfulPayment.id,
+              order_group_item_id,
+              access_action: effectiveAccessAction,
+              settlement_state: settlement.state,
+            },
+          });
+
+          ({ data: intent, error: intentError } = await createComposableIntent());
+        }
+
         if (intentError || intent?.ok !== true) {
           return new Response(JSON.stringify({
             success: false,
