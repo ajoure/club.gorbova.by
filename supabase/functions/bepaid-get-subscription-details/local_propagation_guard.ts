@@ -1,9 +1,13 @@
 export type LocalPropagationDecision =
   | "allow"
+  | "blocked_provider_not_active"
+  | "blocked_transaction_not_successful"
   | "blocked_post_cancel_charge"
   | "blocked_ambiguous_terminal_charge";
 
 export interface LocalPropagationGuardInput {
+  providerState: string | null | undefined;
+  hasCompetingActiveSubscription: boolean;
   localStatus: string | null | undefined;
   autoRenew: boolean | null | undefined;
   canceledAt: string | null | undefined;
@@ -61,9 +65,18 @@ function isSuccessful(status: string | null | undefined): boolean {
 export function classifyLocalPropagation(
   input: LocalPropagationGuardInput,
 ): LocalPropagationGuardResult {
+  const providerState = String(input.providerState || "").trim().toLowerCase();
+  if (providerState !== "active" && providerState !== "trial") {
+    return {
+      decision: "blocked_provider_not_active",
+      localStopAt: null,
+      reason: "provider_state_not_active",
+    };
+  }
+
   if (!isSuccessful(input.transactionStatus)) {
     return {
-      decision: "allow",
+      decision: "blocked_transaction_not_successful",
       localStopAt: null,
       reason: "transaction_not_successful",
     };
@@ -98,8 +111,28 @@ export function classifyLocalPropagation(
     };
   }
 
+  if (status === "canceled" || status === "cancelled") {
+    return {
+      decision: "blocked_ambiguous_terminal_charge",
+      localStopAt: stop.iso,
+      reason: "canceled_without_complete_charge_timeline",
+    };
+  }
+
   const currentAccessEnd = parseInstant(input.currentAccessEnd);
   const proposedAccessEnd = parseInstant(input.proposedAccessEnd);
+  if (
+    (status === "expired" || status === "superseded" ||
+      status === "past_due") &&
+    !input.hasCompetingActiveSubscription && stop.ms === null &&
+    proposedAccessEnd !== null && proposedAccessEnd > Date.now()
+  ) {
+    return {
+      decision: "allow",
+      localStopAt: null,
+      reason: "active_provider_paid_coverage_without_local_cancel",
+    };
+  }
   const wouldExtendTerminalAccess = proposedAccessEnd !== null &&
     (currentAccessEnd === null || proposedAccessEnd > currentAccessEnd);
 

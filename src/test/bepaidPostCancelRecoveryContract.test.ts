@@ -30,7 +30,7 @@ describe('bePaid post-cancel recovery safety', () => {
     expect(subscriptionUpdateIndex).toBeGreaterThan(guardIndex);
     expect(entitlementUpdateIndex).toBeGreaterThan(guardIndex);
     expect(telegramUpdateIndex).toBeGreaterThan(guardIndex);
-    expect(syncSource).toContain("local_propagation: 'blocked_post_cancel_charge'");
+    expect(syncSource).toContain("local_propagation: guard.decision");
   });
 
   it('does not attempt to insert a provider transaction with no amount', () => {
@@ -91,6 +91,8 @@ describe('bePaid post-cancel recovery safety', () => {
 
   it('classifies the known incident timeline as a blocked post-cancel charge', () => {
     expect(classifyLocalPropagation({
+      providerState: 'active',
+      hasCompetingActiveSubscription: false,
       localStatus: 'canceled',
       autoRenew: false,
       canceledAt: '2026-08-10T11:10:00Z',
