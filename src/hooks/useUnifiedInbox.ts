@@ -6,6 +6,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { normalizeTelegramSearchInput } from "@/lib/telegramSearch";
 import { sanitizeExternalDisplayName } from "@/lib/sanitizeExternalDisplayName";
 import {
+  getTelegramPersonalChannelLabel,
+  type TelegramBusinessIdentity,
+} from "@/lib/telegramBusinessIdentity";
+import {
   mergeTelegramWorkQueue,
   type TelegramUnansweredSummary,
 } from "@/lib/contactCenterTelegramQueue";
@@ -262,6 +266,49 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     () => mergeTelegramWorkQueue(tgRows, tgWorkSummaries, !serverSearch),
     [tgRows, tgWorkSummaries, serverSearch],
   );
+
+  const tgLastMessageIds = useMemo(
+    () => Array.from(new Set(tgQueue.map((item) => item.dialog?.last_message_id).filter(Boolean))) as string[],
+    [tgQueue],
+  );
+  const tgLastMessageIdentities = useQuery({
+    queryKey: ["unified-tg-last-message-identities", tgLastMessageIds],
+    enabled: enabled && tgLastMessageIds.length > 0,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("telegram_messages")
+        .select("id, transport, business_account_id")
+        .in("id", tgLastMessageIds);
+      if (error) throw error;
+      return (data || []) as Array<{
+        id: string;
+        transport: "bot" | "business";
+        business_account_id: string | null;
+      }>;
+    },
+  });
+  const tgBusinessAccountIds = useMemo(
+    () => Array.from(new Set(
+      (tgLastMessageIdentities.data || [])
+        .map((row) => row.business_account_id)
+        .filter((id): id is string => !!id),
+    )),
+    [tgLastMessageIdentities.data],
+  );
+  const tgBusinessAccounts = useQuery({
+    queryKey: ["unified-tg-business-accounts", tgBusinessAccountIds],
+    enabled: enabled && tgBusinessAccountIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("telegram_business_connections")
+        .select("id, first_name, last_name, username")
+        .in("id", tgBusinessAccountIds);
+      if (error) throw error;
+      return (data || []) as TelegramBusinessIdentity[];
+    },
+  });
 
   // --- Telegram: параллельно тянем chat_preferences (pin/fav) для оператора ---
   const tgPrefs = useQuery({
@@ -530,6 +577,12 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
     (supportProfiles.data || []).forEach((p: any) => supportProfileMap.set(p.id, p));
     const tgUnansweredMap = new Map<string, any>();
     (tgUnanswered.data || []).forEach((item: any) => tgUnansweredMap.set(item.user_id, item));
+    const tgMessageIdentityMap = new Map(
+      (tgLastMessageIdentities.data || []).map((row) => [row.id, row]),
+    );
+    const tgBusinessAccountMap = new Map(
+      (tgBusinessAccounts.data || []).map((account) => [account.id, account]),
+    );
 
     const out: UnifiedDialog[] = [];
 
@@ -541,11 +594,24 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
       if (!userId) continue;
       const p = tgProfileMap.get(userId);
       const pref = tgPrefMap.get(userId);
+      const latestIdentity = d?.last_message_id
+        ? tgMessageIdentityMap.get(d.last_message_id)
+        : null;
+      const businessAccount = latestIdentity?.business_account_id
+        ? tgBusinessAccountMap.get(latestIdentity.business_account_id) ?? null
+        : null;
+      // Until the identity read completes, prefer a neutral Telegram badge
+      // over briefly showing the connected bot for a personal conversation.
+      const sourceLabel = !latestIdentity
+        ? null
+        : latestIdentity.transport === "business"
+          ? getTelegramPersonalChannelLabel(businessAccount)
+          : d?.last_bot_name || d?.last_bot_username || null;
       out.push({
         key: `tg:${userId}`,
         source: "telegram",
         sourceId: userId,
-        sourceLabel: d?.last_bot_name || d?.last_bot_username || null,
+        sourceLabel,
         displayName: p?.full_name || p?.email || "Без имени",
         avatarUrl: p?.avatar_url || null,
         lastMessage:
@@ -651,6 +717,8 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
   }, [
     enabled,
     tgQueue,
+    tgLastMessageIdentities.data,
+    tgBusinessAccounts.data,
     tgProfiles.data,
     tgPrefs.data,
     tgUnanswered.data,
