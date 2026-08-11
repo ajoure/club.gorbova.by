@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { syncEntitlement } from '../_shared/entitlement-sync.ts';
+import {
+  LIVE_PROVIDER_STATES,
+  resolveProviderCancellationTargets,
+  type ProviderCancellationCandidate,
+} from './provider_cancellation_resolver.ts';
 
 // ============= Resume eligibility (3-level check) =============
 // SOT: local state + payment method + provider state.
@@ -142,6 +147,95 @@ function eligibilityToHttpError(e: ResumeEligibility): { code: string; message: 
   }
 }
 
+// deno-lint-ignore no-explicit-any
+async function loadProviderCancellationCandidates(supabase: any, subscription: any): Promise<{
+  candidates: ProviderCancellationCandidate[];
+  error: string | null;
+}> {
+  const fields = 'id, provider, provider_subscription_id, state, user_id, subscription_v2_id, order_id';
+  const liveStates = LIVE_PROVIDER_STATES as unknown as string[];
+  const [directResult, userResult] = await Promise.all([
+    supabase
+      .from('provider_subscriptions')
+      .select(fields)
+      .eq('subscription_v2_id', subscription.id)
+      .in('state', liveStates),
+    supabase
+      .from('provider_subscriptions')
+      .select(fields)
+      .eq('user_id', subscription.user_id)
+      .in('state', liveStates),
+  ]);
+
+  if (directResult.error || userResult.error) {
+    return {
+      candidates: [],
+      error: directResult.error?.message || userResult.error?.message || 'provider_lookup_failed',
+    };
+  }
+
+  const rowMap = new Map<string, any>();
+  for (const row of [...(directResult.data || []), ...(userResult.data || [])]) {
+    if (row?.id) rowMap.set(String(row.id), row);
+  }
+  const rows = [...rowMap.values()];
+  const subscriptionIds = [...new Set(rows.map((row) => row.subscription_v2_id).filter(Boolean))];
+  const orderIds = [...new Set(rows.map((row) => row.order_id).filter(Boolean))];
+
+  const [linkedSubsResult, linkedOrdersResult] = await Promise.all([
+    subscriptionIds.length > 0
+      ? supabase
+        .from('subscriptions_v2')
+        .select('id, user_id, product_id')
+        .in('id', subscriptionIds)
+      : Promise.resolve({ data: [], error: null }),
+    orderIds.length > 0
+      ? supabase
+        .from('orders_v2')
+        .select('id, user_id, product_id')
+        .in('id', orderIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (linkedSubsResult.error || linkedOrdersResult.error) {
+    return {
+      candidates: [],
+      error: linkedSubsResult.error?.message || linkedOrdersResult.error?.message || 'provider_identity_lookup_failed',
+    };
+  }
+
+  const linkedSubs = new Map(
+    (linkedSubsResult.data || []).map((row: any) => [String(row.id), row]),
+  );
+  const linkedOrders = new Map(
+    (linkedOrdersResult.data || []).map((row: any) => [String(row.id), row]),
+  );
+
+  return {
+    error: null,
+    candidates: rows.map((row): ProviderCancellationCandidate => {
+      const linkedSub: any = row.subscription_v2_id
+        ? linkedSubs.get(String(row.subscription_v2_id))
+        : null;
+      const linkedOrder: any = row.order_id
+        ? linkedOrders.get(String(row.order_id))
+        : null;
+      return {
+        rowId: String(row.id),
+        provider: String(row.provider || ''),
+        providerSubscriptionId: row.provider_subscription_id ?? null,
+        state: String(row.state || ''),
+        userId: row.user_id ?? null,
+        subscriptionV2Id: row.subscription_v2_id ?? null,
+        linkedUserId: linkedSub?.user_id ?? null,
+        linkedProductId: linkedSub?.product_id ?? null,
+        orderUserId: linkedOrder?.user_id ?? null,
+        orderProductId: linkedOrder?.product_id ?? null,
+      };
+    }),
+  };
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
@@ -211,14 +305,22 @@ serve(async (req) => {
         // A provider-managed subscription must be canceled remotely before we
         // promise success locally. The old path only changed subscriptions_v2,
         // leaving the bePaid sbs_* active and able to charge again.
-        const { data: providerRows, error: providerRowsError } = await supabase
-          .from('provider_subscriptions')
-          .select('provider, provider_subscription_id, state')
-          .eq('subscription_v2_id', subscription_id)
-          .order('updated_at', { ascending: false });
+        if (!subscription.product_id) {
+          return new Response(JSON.stringify({
+            error: 'Failed to identify subscription product',
+            code: 'provider_subscription_product_missing',
+          }), {
+            status: 409,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
 
-        if (providerRowsError) {
-          console.error('Error loading provider subscriptions:', providerRowsError);
+        const providerCandidates = await loadProviderCancellationCandidates(
+          supabase,
+          subscription,
+        );
+        if (providerCandidates.error) {
+          console.error('Error loading provider cancellation candidates:', providerCandidates.error);
           return new Response(JSON.stringify({
             error: 'Failed to verify provider subscription',
             code: 'provider_subscription_lookup_failed',
@@ -228,26 +330,36 @@ serve(async (req) => {
           });
         }
 
-        const liveProviderRows = (providerRows || []).filter((row: any) => {
-          const state = String(row.state || '').toLowerCase();
-          return ['active', 'pending', 'trial', 'past_due', 'failed_attempt'].includes(state);
+        const providerResolution = resolveProviderCancellationTargets({
+          subscriptionV2Id: subscription_id,
+          userId: subscription.user_id,
+          productId: subscription.product_id,
+          billingType: subscription.billing_type ?? null,
+          candidates: providerCandidates.candidates,
         });
-        const liveBepaidRows = liveProviderRows.filter((row: any) => row.provider === 'bepaid');
-        const unsupportedLiveRows = liveProviderRows.filter((row: any) => row.provider !== 'bepaid');
 
-        if (unsupportedLiveRows.length > 0) {
-          const providers = [...new Set(unsupportedLiveRows.map((row: any) => row.provider))];
+        if (providerResolution.outcome === 'blocked') {
+          const status = providerResolution.reason === 'provider_cancel_not_supported' ? 409 : 502;
+          console.error('Provider cancellation resolution blocked:', {
+            reason: providerResolution.reason,
+            matched_rows: providerResolution.matchedRows,
+          });
           return new Response(JSON.stringify({
-            error: 'This subscription must be canceled through its payment provider',
-            code: 'provider_cancel_not_supported',
-            providers,
+            error: providerResolution.reason === 'provider_cancel_not_supported'
+              ? 'This subscription must be canceled through its payment provider'
+              : 'Failed to resolve the active payment-provider subscription',
+            code: providerResolution.reason,
+            providers: providerResolution.providers,
           }), {
-            status: 409,
+            status,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
 
-        if (liveBepaidRows.length > 0) {
+        const providerSubscriptionIds = providerResolution.outcome === 'cancel'
+          ? providerResolution.providerSubscriptionIds
+          : [];
+        if (providerSubscriptionIds.length > 0) {
           const providerResponse = await fetch(
             `${supabaseUrl}/functions/v1/bepaid-cancel-subscriptions`,
             {
@@ -258,7 +370,7 @@ serve(async (req) => {
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                subscription_v2_id: subscription_id,
+                provider_subscription_ids: providerSubscriptionIds,
                 source: 'user_self_cancel',
               }),
             },
@@ -272,9 +384,7 @@ serve(async (req) => {
           }
 
           const expectedIds = new Set(
-            liveBepaidRows
-              .map((row: any) => row.provider_subscription_id)
-              .filter(Boolean),
+            providerSubscriptionIds,
           );
           const canceledIds = new Set(
             Array.isArray(providerResult?.canceled) ? providerResult.canceled : [],
@@ -294,7 +404,13 @@ serve(async (req) => {
               error: 'Failed to cancel subscription at payment provider',
               code: 'provider_cancel_failed',
               provider: 'bepaid',
-              details: providerResult,
+              provider_result: {
+                canceled_count: canceledIds.size,
+                expected_count: expectedIds.size,
+                failed_count: Array.isArray(providerResult?.failed)
+                  ? providerResult.failed.length
+                  : 0,
+              },
             }), {
               status: 502,
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -357,8 +473,11 @@ serve(async (req) => {
             subscription_id,
             cancel_at: cancelAt,
             cancel_source: 'user',
-            provider_cancel_confirmed: liveBepaidRows.length > 0,
-            provider_subscription_ids: liveBepaidRows.map((row: any) => row.provider_subscription_id),
+            provider_cancel_confirmed: providerSubscriptionIds.length > 0,
+            provider_cancel_resolution: providerResolution.outcome === 'cancel'
+              ? providerResolution.source
+              : 'local_only',
+            provider_cancel_count: providerSubscriptionIds.length,
           },
         });
         if (auditError) {
@@ -369,7 +488,10 @@ serve(async (req) => {
         return new Response(JSON.stringify({
           success: true,
           cancel_at: cancelAt,
-          provider_cancel_confirmed: liveBepaidRows.length > 0,
+          provider_cancel_confirmed: providerSubscriptionIds.length > 0,
+          provider_cancel_resolution: providerResolution.outcome === 'cancel'
+            ? providerResolution.source
+            : 'local_only',
           audit_logged: !auditError,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },

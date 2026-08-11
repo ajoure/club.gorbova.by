@@ -52,6 +52,7 @@ export interface RebillOrderPayloadInput {
   };
   subscriptionId: string | null;
   materializationRun: string;
+  accessPolicy?: "grant" | "suppress_post_cancel_charge";
 }
 
 /**
@@ -62,6 +63,7 @@ export interface RebillOrderPayloadInput {
 export function buildRebillOrderPayload(input: RebillOrderPayloadInput) {
   const parentMeta = (input.parentOrder.meta || {}) as Record<string, unknown>;
   const dealMonth = formatDealMonthMinsk(input.payment.paid_at);
+  const suppressGrant = input.accessPolicy === "suppress_post_cancel_charge";
 
   return {
     order_number: buildRebillOrderNumber(input.payment.uid),
@@ -92,7 +94,16 @@ export function buildRebillOrderPayload(input: RebillOrderPayloadInput) {
       materialized_from_payment_uid: input.payment.uid,
       materialization_run: input.materializationRun,
       deal_month: dealMonth,
-      // do_not_grant_access НЕ ставим: REBILL-order — единый source для grant.
+      ...(suppressGrant
+        ? {
+            do_not_grant_access: true,
+            grant_status: "suppressed_post_cancel_charge",
+            materialization_status: "post_cancel_charge_recorded",
+            manual_review: true,
+            refund_candidate: true,
+            refund_candidate_reason: "provider_charge_after_confirmed_cancel",
+          }
+        : {}),
       original_parent_payment_flow: parentMeta.payment_flow ?? null,
     },
   };

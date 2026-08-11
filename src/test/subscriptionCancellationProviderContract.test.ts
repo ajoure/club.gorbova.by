@@ -7,6 +7,14 @@ const subscriptionActions = readFileSync(
   "utf8",
 );
 
+const providerCancellationResolver = readFileSync(
+  resolve(
+    process.cwd(),
+    "supabase/functions/subscription-actions/provider_cancellation_resolver.ts",
+  ),
+  "utf8",
+);
+
 const bepaidCancel = readFileSync(
   resolve(process.cwd(), "supabase/functions/bepaid-cancel-subscriptions/index.ts"),
   "utf8",
@@ -41,11 +49,14 @@ describe("provider-backed subscription cancellation", () => {
     expect(localCancelWrite).toBeGreaterThan(providerCall);
     expect(subscriptionActions).toContain("code: 'provider_cancel_failed'");
     expect(subscriptionActions).toContain("provider_cancel_confirmed");
+    expect(subscriptionActions).toContain("resolveProviderCancellationTargets");
+    expect(subscriptionActions).toContain("provider_subscription_ids: providerSubscriptionIds");
+    expect(providerCancellationResolver).toContain("provider_subscription_link_missing");
   });
 
   it("does not report success for an unsupported live provider", () => {
-    expect(subscriptionActions).toContain("unsupportedLiveRows.length > 0");
-    expect(subscriptionActions).toContain("code: 'provider_cancel_not_supported'");
+    expect(subscriptionActions).toContain("provider_cancel_not_supported");
+    expect(subscriptionActions).toContain("providerResolution.outcome === 'blocked'");
   });
 
   it("preserves paid access end while marking bePaid renewal canceled", () => {

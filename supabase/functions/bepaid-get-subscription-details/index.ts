@@ -179,7 +179,7 @@ Deno.serve(async (req) => {
     // PATCH-B1: Fetch existingPs with raw_data for truth fallback
     const { data: existingPs } = await supabase
       .from('provider_subscriptions')
-      .select('meta, subscription_v2_id, user_id, raw_data')
+      .select('meta, subscription_v2_id, user_id, raw_data, order_id')
       .eq('provider', 'bepaid')
       .eq('provider_subscription_id', subscription_id)
       .maybeSingle();
@@ -781,6 +781,7 @@ Deno.serve(async (req) => {
         // Resolve user_id and profile_id
         let resolvedUserId = existingPs.user_id;
         let resolvedProfileId: string | null = null;
+        let resolvedOrderId: string | null = existingPs.order_id || null;
 
         if (resolvedUserId) {
           const { data: profile } = await supabase
@@ -794,10 +795,11 @@ Deno.serve(async (req) => {
         if (!resolvedUserId && effectiveSubV2Id) {
           const { data: subV2 } = await supabase
             .from('subscriptions_v2')
-            .select('user_id')
+            .select('user_id, order_id')
             .eq('id', effectiveSubV2Id)
             .maybeSingle();
           resolvedUserId = subV2?.user_id || null;
+          resolvedOrderId = resolvedOrderId || subV2?.order_id || null;
           if (resolvedUserId) {
             const { data: profile } = await supabase
               .from('profiles')
@@ -806,6 +808,13 @@ Deno.serve(async (req) => {
               .maybeSingle();
             resolvedProfileId = profile?.id || null;
           }
+        } else if (effectiveSubV2Id) {
+          const { data: subV2 } = await supabase
+            .from('subscriptions_v2')
+            .select('order_id')
+            .eq('id', effectiveSubV2Id)
+            .maybeSingle();
+          resolvedOrderId = resolvedOrderId || subV2?.order_id || null;
         }
 
         if (!resolvedUserId) {
@@ -819,11 +828,15 @@ Deno.serve(async (req) => {
           });
         } else {
           // Check if payment already exists
-          const { data: existingPayment } = await supabase
+          const { data: existingPayment, error: existingPaymentError } = await supabase
             .from('payments_v2')
             .select('id')
+            .eq('provider', 'bepaid')
             .eq('provider_payment_id', lastTx.uid)
             .maybeSingle();
+          if (existingPaymentError) {
+            throw new Error(`payment_lookup_failed:${existingPaymentError.message}`);
+          }
 
           const paymentData: Record<string, any> = {
             provider_payment_id: lastTx.uid,
@@ -847,23 +860,62 @@ Deno.serve(async (req) => {
 
           // Add order_id from provider_subscriptions meta if available
           const psMetaOrderId = (existingPs.meta as any)?.order_id;
-          if (psMetaOrderId) {
-            paymentData.order_id = psMetaOrderId;
+          if (resolvedOrderId || psMetaOrderId) {
+            paymentData.order_id = resolvedOrderId || psMetaOrderId;
           }
 
+          let persistedPaymentId: string | null = null;
           if (existingPayment) {
-            await supabase
+            const { data: updatedPayment, error: updatePaymentError } = await supabase
               .from('payments_v2')
               .update(paymentData)
-              .eq('id', existingPayment.id);
-            console.log(`[bepaid-get-subscription-details] Updated payment ${existingPayment.id} from last_transaction`);
+              .eq('id', existingPayment.id)
+              .select('id')
+              .maybeSingle();
+            if (updatePaymentError || !updatedPayment?.id) {
+              const message = updatePaymentError?.message || 'payment_update_post_check_failed';
+              await supabase.from('audit_logs').insert({
+                action: 'bepaid.payment.upsert_from_last_transaction_failed',
+                actor_type: 'system',
+                actor_label: 'bepaid-get-subscription-details',
+                target_user_id: resolvedUserId,
+                meta: {
+                  provider_payment_id: lastTx.uid,
+                  provider_subscription_id: subscription_id,
+                  stage: 'update',
+                  error: message,
+                  severity: 'CRITICAL',
+                },
+              });
+              throw new Error(`payment_update_failed:${message}`);
+            }
+            persistedPaymentId = String(updatedPayment.id);
+            console.log(`[bepaid-get-subscription-details] Updated payment ${persistedPaymentId} from last_transaction`);
           } else {
-            const { data: newPayment } = await supabase
+            const { data: newPayment, error: insertPaymentError } = await supabase
               .from('payments_v2')
               .insert(paymentData)
               .select('id')
               .maybeSingle();
-            console.log(`[bepaid-get-subscription-details] Inserted payment ${newPayment?.id} from last_transaction`);
+            if (insertPaymentError || !newPayment?.id) {
+              const message = insertPaymentError?.message || 'payment_insert_post_check_failed';
+              await supabase.from('audit_logs').insert({
+                action: 'bepaid.payment.upsert_from_last_transaction_failed',
+                actor_type: 'system',
+                actor_label: 'bepaid-get-subscription-details',
+                target_user_id: resolvedUserId,
+                meta: {
+                  provider_payment_id: lastTx.uid,
+                  provider_subscription_id: subscription_id,
+                  stage: 'insert',
+                  error: message,
+                  severity: 'CRITICAL',
+                },
+              });
+              throw new Error(`payment_insert_failed:${message}`);
+            }
+            persistedPaymentId = String(newPayment.id);
+            console.log(`[bepaid-get-subscription-details] Inserted payment ${persistedPaymentId} from last_transaction`);
 
             // Detect missed webhook
             if (txStatus === 'succeeded') {
@@ -888,6 +940,7 @@ Deno.serve(async (req) => {
               status: txStatus, 
               provider_subscription_id: subscription_id,
               is_new: !existingPayment,
+              payment_id: persistedPaymentId,
             },
           });
         }
