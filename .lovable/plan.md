@@ -1,52 +1,56 @@
-# План: READ-ONLY диагностика инцидента refund (access_action=keep_subscription, 250 BYN, 2026-08-11)
+# Отчет: READ-ONLY диагностика повторной попытки refund — STOP
 
-Мутаций нет: код, миграции, функции, данные и Publish не трогались. Реальный возврат не выполнялся.
+Мутаций нет: код, данные, функции, deploy, Publish и реальный возврат не выполнялись.
 
-## 1) Live-логи последнего неудачного вызова — ЧАСТИЧНО НЕДОСТУПНЫ
+## 1) Свежий runtime-факт
 
-- `subscription-admin-actions`: за доступное окно логов возвращается только служебное `shutdown` (2026-08-11 15:13Z), записей самого вызова нет.
-- Выборка `function_edge_logs` по URL `subscription-admin-actions` за окно ретенции — пусто; окно логов покрывает примерно последний час, момент инцидента в него не попал.
-- Вывод: исходный exception/stack по этому конкретному вызову в текущей ретенции недоступен. Ниже — вывод об этапе падения по косвенным доказательствам (см. п.4).
+- Последний вызов `subscription-admin-actions`: **2026-08-11 15:24:20 UTC**.
+- Лог: `Admin [redacted] performing refund`.
+- После этой строки нет логов `Sending refund to bePaid`, ответа bePaid, `record_refund_atomic` или post-refund.
+- Точный исход этого пути: **HTTP 400**.
+- Response body (безопасно):
 
-## 2) Сверка deployed-версии с GitHub commit dfeb5cc6
+```json
+{"success":false,"error":"refundable_order_group_not_found"}
+```
 
-Managed HEAD = `dfeb5cc60351ceba4d108560df458d297c286576`. Ключевые места в исходнике совпадают с ожидаемыми:
+- Этап падения: **composable pre-refund RPC `create_composable_refund_intent`**, до обращения к bePaid.
 
-- whitelist: `new Set(['revoke','reduce','keep','keep_subscription'])`;
-- безопасный дефолт: `const effectiveAccessAction = access_action || 'keep'`;
-- provider-aware ветка Stripe/bePaid и запись через `record_refund_atomic` / `record_refund_atomic_multi` присутствуют.
+## 2) Сопоставленный заказ (PII и provider UID скрыты)
 
-Runtime-проба развёрнутой функции (безопасный несуществующий order_id, `access_action=keep_subscription`) вернула HTTP **404 `Order not found`**, а НЕ `400 invalid_access_action`. Значит deployed-бандл действительно содержит whitelist с `keep_subscription` и проходит валидацию — deployed соответствует ожидаемому исходнику.
+- Contact: Филиппова Елена (идентичность сверена, в отчёте персональные идентификаторы не приводятся).
+- Order ID: `1e5890d0-132a-4f58-9898-516c2671d9fe`.
+- Public/order number: `SUB-LINK-MSL13KY3`.
+- Order: `paid`, сумма/оплачено `250 BYN`.
+- Payment: provider `bepaid`, status `succeeded`, transaction type `payment`, `refunded_amount = 0`, `refunded_at = NULL`.
+- Subscription: `09b0f74f-1226-4dd2-aae9-72c19e8684a2`, status `active`, billing type `provider_managed`, auto-renew включён.
 
-## 3) Развёрнут ли backend PR #295 (merge 0958006f)
+## 3) Точная причина
 
-Да. Дефолт `keep` и whitelist из PR #295 присутствуют и в managed-источнике, и в развёрнутом бандле (подтверждено пробой выше). Старая функция с дефолтом `revoke` в production не используется.
+Заказ и платёж сами по себе валидны. Ошибка находится в composable-слое:
 
-## 4) Успел ли bePaid реально выполнить возврат — НЕТ (по имеющимся данным)
+- заказ включён в `order_group`;
+- в группе есть primary item на 250 BYN, поэтому `RefundDialog` автоматически отправляет `order_group_item_id` и `refund_request_key`;
+- но `order_groups.status = pending`, хотя связанный `orders_v2.status = paid` и платёж `succeeded`;
+- для item отсутствует строка `payment_allocations`;
+- RPC сначала требует статус группы `paid` или `partially_refunded`; из-за `pending` немедленно выбрасывает `refundable_order_group_not_found`;
+- функция превращает эту RPC-ошибку в HTTP 400. До следующей проверки `payment_allocation_not_found` выполнение не доходит.
 
-- `audit_logs` за 2026-08-11 по refund-действиям: всего 6 строк — три пары `refund_recorded` + `admin.subscription.refund` в 11:27, 11:28, 11:30 UTC, суммы 55 / 55 / 150 BYN, `access_action = revoke`. Записей с суммой 250 или с `keep_subscription` нет.
-- Маркеров частичного провала нет: `refund_db_recording_failed`, `refund_already_refunded_*`, `refund_failed` за сегодня отсутствуют.
-- `composable_refund_intents` за 2026-08-10..11 — пусто, то есть composable-ветка не создавала intent.
-- Логика функции: любые ошибки bePaid возвращаются со статусом **200** (`success:false`), а non-2xx возможен только до обращения к провайдеру: 401 (JWT), 403 (не админ), 400 (нет `order_id` / `refund_reason` / невалидный access_action / заказ не `paid` / composable без provider payment), 404 (заказ не найден), 409 (дубликат composable-запроса).
+Итого: **это рассинхронизация materialization order group, а не ошибка `keep_subscription`, auth, bePaid или оплаченного платежа**.
 
-**Вывод по этапу падения:** падение произошло на пред-провайдерной стадии — auth/validation/резолв заказа (наиболее вероятно 404 `Order not found` либо 400 `Only paid orders can be refunded` / composable-валидация), до вызова bePaid и до RPC. Списание/возврат в bePaid по этому запросу **не выполнялся**, дублей при повторе не будет. Идентификаторы платежей, PII и токены в отчёте не раскрываются.
+## 4) Проверка, произошёл ли возврат
 
-## 5) Минимальный план исправления (к утверждению, пока не выполнен)
+**Нет, возврат в bePaid не произошёл.** Доказательства:
 
-Проблема — не в бизнес-логике возврата, а в том, что UI показывает сырое «Edge Function returned a non-2xx status code» вместо человекочитаемой причины, из-за чего инцидент неотличим от реального сбоя провайдера.
+- код вызывает `create_composable_refund_intent` до provider API и завершает запрос HTTP 400 при ошибке RPC;
+- нет лога отправки refund в bePaid;
+- нет composable refund intent;
+- нет refund payment-row для заказа;
+- исходный payment остаётся `succeeded`, `refunded_amount = 0`, `refunded_at = NULL`;
+- нет refund audit-маркеров для этого заказа/попытки.
 
-1. Frontend (`RefundDialog.tsx` / общий invoke-хелпер): при ошибке `FunctionsHttpError` читать `error.context.text()`/JSON и показывать поле `error` из ответа функции (например «Заказ не найден», «Возврат возможен только для оплаченных заказов»), с фолбэком на текущий текст.
-2. Backend (`subscription-admin-actions`, refund-ветка): перед каждым ранним non-2xx `return` писать компактную аудит-строку `admin.subscription.refund_rejected` с `order_id`, `stage` (`validation` / `order_not_found` / `order_not_paid` / `composable`), `access_action` — без сумм-PII и без провайдерских uid. Это даёт постоянный след даже после истечения ретенции логов.
-3. Никаких изменений в whitelist, дефолте access action, вызове bePaid и RPC не требуется.
+Повторная попытка также ничего у провайдера не изменила.
 
-## Безопасная runtime-проверка без реального возврата
+## STOP
 
-- Повторить пробу функции с заведомо несуществующим `order_id` и `access_action=keep_subscription` — ожидание `404 Order not found` (уже подтверждено).
-- Проба с существующим, но не `paid` заказом — ожидание `400 Only paid orders can be refunded`.
-- Проба без `refund_reason` — ожидание `400 refund_reason required`.
-- В UI: открыть диалог возврата на любом заказе и убедиться, что текст ошибки читаемый; диалог закрывать без подтверждения возврата.
-- Дополнительно: попросить администратора назвать `order_number`, по которому была попытка на 250 BYN — read-only проверка его `status`/`payments_v2` однозначно закроет вопрос об этапе падения.
-
-## Явно вне scope
-
-Другие задачи, шаблоны, биллинг, роли, чаты, данные пользователей, миграции, deploy и Publish.
+Никаких исправлений или дополнительных runtime-вызовов не выполнялось.
