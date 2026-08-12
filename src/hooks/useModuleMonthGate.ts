@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  isExplicitProductBypassRule,
+  isMonthPurchaseRule,
+} from "@/lib/monthGateRulePolicy";
 
 /**
  * Module-level month-gate resolver (mirrors useMonthGate but operates on module_id).
@@ -148,19 +152,15 @@ export function useModuleMonthGate(modules: ModuleMonthGateInput[]): {
           .in("target_ref", rootIds);
         if (rulesErr) throw rulesErr;
 
-        const rules: TcRuleRow[] = (rulesRaw || []).filter(
-          (r: any) => r?.conditions?.match_purchase_month === true && r.tariff_id,
-        );
+        const rules: TcRuleRow[] = (rulesRaw || []).filter(isMonthPurchaseRule);
 
         // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1
-        // Explicit product-grant bypass: rule must be active, training_content,
-        // target_ref ∈ rootIds, have product_id and non-empty allowed_module_ids.
-        // User must have ACTIVE entitlement on that product_id.
-        // full/root rules with empty allowlist DO NOT bypass.
-        const bypassCandidateRules = (rulesRaw || []).filter((r: any) => {
-          const allowed = r?.conditions?.allowed_module_ids;
-          return r?.product_id && Array.isArray(allowed) && allowed.length > 0;
-        });
+        // Mirrors useMonthGate exactly: a bypass is allowed only for an
+        // explicit non-month allowlist, and tariff-scoped rules additionally
+        // require that exact active tariff. Monthly rules always use the RPC.
+        const bypassCandidateRules = (rulesRaw || []).filter(
+          isExplicitProductBypassRule,
+        );
         const bypassProductIds = Array.from(
           new Set(bypassCandidateRules.map((r: any) => r.product_id as string)),
         );
@@ -181,12 +181,30 @@ export function useModuleMonthGate(modules: ModuleMonthGateInput[]): {
               )
               .map((e: any) => e.product_id as string),
           );
+
+          const { data: subRows, error: subErr } = await supabase
+            .from("subscriptions_v2")
+            .select("tariff_id, status")
+            .eq("user_id", user.id)
+            .in("status", ["active", "trial"]);
+          if (subErr) throw subErr;
+          const userTariffIds = new Set<string>(
+            (subRows || [])
+              .map((s: any) => s.tariff_id as string | null)
+              .filter((id: string | null): id is string => Boolean(id)),
+          );
+
           for (const r of bypassCandidateRules) {
             if (!activeProductIds.has(r.product_id)) continue;
-            for (const mid of (r.conditions as any).allowed_module_ids as string[]) {
+            if (r.tariff_id && !userTariffIds.has(r.tariff_id)) continue;
+            const allowedModules = Array.isArray(
+              (r.conditions as any).allowed_module_ids,
+            )
+              ? ((r.conditions as any).allowed_module_ids as string[])
+              : [];
+            for (const mid of allowedModules) {
               bypassModuleIds.add(mid);
             }
-
           }
         }
 
@@ -249,6 +267,21 @@ export function useModuleMonthGate(modules: ModuleMonthGateInput[]): {
           return;
         }
 
+        // Fail closed from this point on: these modules are proven to be
+        // covered by an active month-gated rule. A transient RPC failure must
+        // not turn paid-month content into public content.
+        for (const [moduleId, tuples] of moduleTuples.entries()) {
+          const first = tuples[0];
+          const monthKey = first.content_month.length >= 7
+            ? first.content_month.substring(0, 7)
+            : first.content_month;
+          result.set(moduleId, {
+            lock_reason: "month_mismatch",
+            locked_month: monthKey,
+            required_tariff_id: first.tariff_id,
+          });
+        }
+
         const { data: rpcData, error: rpcErr } = await supabase.rpc(
           "has_month_purchase_bulk" as any,
           { _user_id: user.id, _items: payload as any },
@@ -266,23 +299,13 @@ export function useModuleMonthGate(modules: ModuleMonthGateInput[]): {
         // required_tariff_id для UI = первый matching tariff (fallback CTA).
         for (const [moduleId, tuples] of moduleTuples.entries()) {
           const anyOk = tuples.some((t) => okSyntheticKeys.has(t.syntheticKey));
-          if (!anyOk) {
-            const first = tuples[0];
-            const monthKey = first.content_month.length >= 7
-              ? first.content_month.substring(0, 7)
-              : first.content_month;
-            result.set(moduleId, {
-              lock_reason: "month_mismatch",
-              locked_month: monthKey,
-              required_tariff_id: first.tariff_id,
-            });
-          }
+          if (anyOk) result.delete(moduleId);
         }
 
         if (!cancelled) setMap(result);
       } catch (err) {
-        console.warn("[useModuleMonthGate] resolution failed (fallback: open):", err);
-        if (!cancelled) setMap(new Map());
+        console.warn("[useModuleMonthGate] resolution failed (matched rules stay locked):", err);
+        if (!cancelled) setMap(result);
       } finally {
         if (!cancelled) setLoading(false);
       }

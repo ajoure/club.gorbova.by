@@ -15,7 +15,9 @@
  * - grant-access-for-order/index.ts (per-product prior purchase check)
  */
 
-import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+type SupabaseQueryClient = {
+  from: (relation: string) => any;
+};
 
 export interface PriorPurchaseResult {
   found: boolean;
@@ -37,13 +39,15 @@ export interface PriorPurchaseResult {
  * @param targetProductId - UUID of the product to check for prior purchase
  * @param excludeOrderId - order to exclude from the search (current order)
  * @param requiredTariffId - optional UUID of the exact historical tariff
+ * @param profileId - optional profiles.id for legacy/profile-only orders
  */
 export async function checkPriorPurchase(
-  supabase: SupabaseClient,
+  supabase: SupabaseQueryClient,
   userId: string,
   targetProductId: string,
   excludeOrderId: string,
   requiredTariffId?: string,
+  profileId?: string | null,
 ): Promise<PriorPurchaseResult> {
   const NOT_FOUND: PriorPurchaseResult = {
     found: false,
@@ -52,28 +56,64 @@ export async function checkPriorPurchase(
     order_data: null,
   };
 
-  // Step 1: Direct match by orders_v2.product_id
-  // Prefer orders with tariff_id (full product purchase) over module-only orders
-  let directQuery = supabase
-    .from('orders_v2')
-    .select('id, tariff_id, purchase_snapshot')
-    .eq('user_id', userId)
-    .eq('product_id', targetProductId)
-    .eq('status', 'paid')
-    .neq('id', excludeOrderId);
-  if (requiredTariffId) directQuery = directQuery.eq('tariff_id', requiredTariffId);
+  const profileIds = new Set<string>();
+  if (profileId) profileIds.add(profileId);
+  const { data: linkedProfiles, error: profileErr } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('user_id', userId);
+  if (profileErr) {
+    console.error('[check-prior-purchase] Profile identity query error:', profileErr.message);
+  }
+  for (const profile of linkedProfiles || []) {
+    if (profile.id) profileIds.add(profile.id);
+  }
 
-  const { data: directOrders, error: directErr } = await directQuery
-    .order('tariff_id', { ascending: false, nullsFirst: false })
-    .limit(5);
+  const queryOrders = async (
+    channel: 'user_id' | 'profile_id',
+    value: string | string[],
+    moduleFallback: boolean,
+  ) => {
+    let query = supabase
+      .from('orders_v2')
+      .select('id, tariff_id, purchase_snapshot')
+      .eq('status', 'paid')
+      .neq('id', excludeOrderId);
 
-  if (directErr) {
-    console.error('[check-prior-purchase] Direct query error:', directErr.message);
+    query = Array.isArray(value)
+      ? query.in(channel, value)
+      : query.eq(channel, value);
+
+    if (moduleFallback) {
+      query = query
+        .eq('purchase_snapshot->>historical_purchase_type', 'module_only_standalone')
+        .contains('purchase_snapshot', { module_list_mapped: [targetProductId] });
+    } else {
+      query = query.eq('product_id', targetProductId);
+    }
+    if (requiredTariffId) query = query.eq('tariff_id', requiredTariffId);
+    return await query.limit(5);
+  };
+
+  // Step 1: direct match through either canonical user_id or the linked profile.
+  const directResults = await Promise.all([
+    queryOrders('user_id', userId, false),
+    ...(profileIds.size > 0
+      ? [queryOrders('profile_id', [...profileIds], false)]
+      : []),
+  ]);
+  const directOrders: any[] = [];
+  for (const response of directResults) {
+    if (response.error) {
+      console.error('[check-prior-purchase] Direct query error:', response.error.message);
+      continue;
+    }
+    directOrders.push(...(response.data || []));
   }
 
   // Pick best: prefer order with tariff_id (full purchase)
-  const directOrder = (directOrders || []).find((o: any) => o.tariff_id)
-    || (directOrders || [])[0]
+  const directOrder = directOrders.find((o: any) => o.tariff_id)
+    || directOrders[0]
     || null;
 
   if (directOrder) {
@@ -93,22 +133,19 @@ export async function checkPriorPurchase(
   // Only for historical_purchase_type = 'module_only_standalone'
   // Only when module_list_mapped contains exactly 1 UUID matching targetProductId
   // Use JSONB containment for efficient server-side filtering
-  let moduleQuery = supabase
-    .from('orders_v2')
-    .select('id, tariff_id, purchase_snapshot')
-    .eq('user_id', userId)
-    .eq('status', 'paid')
-    .neq('id', excludeOrderId)
-    .eq('purchase_snapshot->>historical_purchase_type', 'module_only_standalone')
-    .contains('purchase_snapshot', { module_list_mapped: [targetProductId] });
-  if (requiredTariffId) moduleQuery = moduleQuery.eq('tariff_id', requiredTariffId);
-
-  const { data: moduleOrders, error: moduleErr } = await moduleQuery
-    .limit(5);
-
-  if (moduleErr) {
-    console.error('[check-prior-purchase] Module fallback query error:', moduleErr.message);
-    return NOT_FOUND;
+  const moduleResults = await Promise.all([
+    queryOrders('user_id', userId, true),
+    ...(profileIds.size > 0
+      ? [queryOrders('profile_id', [...profileIds], true)]
+      : []),
+  ]);
+  const moduleOrders: any[] = [];
+  for (const response of moduleResults) {
+    if (response.error) {
+      console.error('[check-prior-purchase] Module fallback query error:', response.error.message);
+      continue;
+    }
+    moduleOrders.push(...(response.data || []));
   }
 
   for (const order of (moduleOrders || [])) {

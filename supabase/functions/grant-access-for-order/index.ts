@@ -2115,20 +2115,15 @@ Deno.serve(async (req) => {
           const requiredTariffId = ruleConditions.required_tariff_id;
           if (!requiredProductId) return true;
 
-          let query = supabase
-            .from('orders_v2')
-            .select('id')
-            .eq('user_id', userId)
-            .eq('product_id', requiredProductId)
-            .eq('status', 'paid')
-            .limit(1);
-          
-          if (requiredTariffId) {
-            query = query.eq('tariff_id', requiredTariffId);
-          }
-
-          const { data: priorOrder } = await query.maybeSingle();
-          const conditionMet = !!priorOrder;
+          const priorPurchase = await checkPriorPurchase(
+            supabase,
+            userId,
+            requiredProductId,
+            orderId,
+            requiredTariffId || undefined,
+            profileId || null,
+          );
+          const conditionMet = priorPurchase.found;
           
           console.log(`[grant-access] Conditional rule ${ruleId}: prior_purchase check for product ${requiredProductId}${requiredTariffId ? ` tariff ${requiredTariffId}` : ''} → ${conditionMet ? 'PASSED' : 'FAILED'}`);
           

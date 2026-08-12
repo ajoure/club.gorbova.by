@@ -1,5 +1,9 @@
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkPriorPurchase } from './check-prior-purchase.ts';
+
+type SupabaseQueryClient = {
+  from: (relation: string) => any;
+  rpc: (fn: string, args?: Record<string, unknown>) => any;
+};
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -32,7 +36,7 @@ function configuredDurationDays(rule: ClubRule): number | null {
 }
 
 async function conditionMatches(
-  supabase: SupabaseClient,
+  supabase: SupabaseQueryClient,
   rule: ClubRule,
   userId: string,
   orderId: string,
@@ -61,7 +65,7 @@ async function conditionMatches(
 }
 
 async function loadConfiguredRules(
-  supabase: SupabaseClient,
+  supabase: SupabaseQueryClient,
   productId: string,
   tariffId: string | null,
 ): Promise<ClubRule[]> {
@@ -105,7 +109,7 @@ async function loadConfiguredRules(
  * tariff validation again and owns idempotency.
  */
 export async function syncConfiguredClubBonusSource(
-  supabase: SupabaseClient,
+  supabase: SupabaseQueryClient,
   params: {
     orderId: string;
     userId: string;
