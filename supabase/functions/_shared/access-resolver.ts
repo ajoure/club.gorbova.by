@@ -87,7 +87,7 @@ export async function resolveAccessForOrder(
   supabase: any,
   input: AccessResolutionInput,
 ): Promise<AccessResolution> {
-  const { order_id, product_id, tariff_id, user_id } = input;
+  const { order_id, product_id, tariff_id, user_id, profile_id } = input;
 
   const result: AccessResolution = {
     primary_grant: {
@@ -116,12 +116,19 @@ export async function resolveAccessForOrder(
   result.primary_grant.product_code = primaryProduct.code || '';
 
   // 2. Resolve club grants from access_rules
-  const clubGrants = await resolveClubGrants(supabase, product_id, tariff_id, user_id, order_id);
+  const clubGrants = await resolveClubGrants(
+    supabase,
+    product_id,
+    tariff_id,
+    user_id,
+    order_id,
+    profile_id,
+  );
   result.club_grants = clubGrants;
 
   // 3. Resolve product_access grants from access_rules
   const secondaryGrants = await resolveProductAccessGrants(
-    supabase, product_id, tariff_id, user_id, order_id,
+    supabase, product_id, tariff_id, user_id, order_id, profile_id,
   );
   result.secondary_grants = secondaryGrants;
 
@@ -142,6 +149,7 @@ async function resolveClubGrants(
   tariffId: string | null,
   userId: string,
   orderId: string,
+  profileId?: string | null,
 ): Promise<ClubGrant[]> {
   const grants: ClubGrant[] = [];
 
@@ -157,7 +165,13 @@ async function resolveClubGrants(
 
     if (tariffRules?.length) {
       for (const rule of tariffRules) {
-        const conditionOk = await checkPriorPurchaseCondition(supabase, rule.conditions, userId, orderId);
+        const conditionOk = await checkPriorPurchaseCondition(
+          supabase,
+          rule.conditions,
+          userId,
+          orderId,
+          profileId,
+        );
         if (conditionOk && rule.target_ref) {
           grants.push({
             club_id: rule.target_ref,
@@ -184,7 +198,13 @@ async function resolveClubGrants(
 
     if (productRules?.length) {
       for (const rule of productRules) {
-        const conditionOk = await checkPriorPurchaseCondition(supabase, rule.conditions, userId, orderId);
+        const conditionOk = await checkPriorPurchaseCondition(
+          supabase,
+          rule.conditions,
+          userId,
+          orderId,
+          profileId,
+        );
         if (conditionOk && rule.target_ref) {
           grants.push({
             club_id: rule.target_ref,
@@ -211,6 +231,7 @@ async function resolveProductAccessGrants(
   tariffId: string | null,
   userId: string,
   orderId: string,
+  profileId?: string | null,
 ): Promise<SecondaryGrant[]> {
   const grants: SecondaryGrant[] = [];
 
@@ -294,7 +315,14 @@ async function resolveProductAccessGrants(
 
         if (productToCheck) {
           // Use canonical shared resolver (direct match + module_list_mapped fallback)
-          const priorResult = await checkPriorPurchase(supabase, userId, productToCheck, orderId);
+          const priorResult = await checkPriorPurchase(
+            supabase,
+            userId,
+            productToCheck,
+            orderId,
+            undefined,
+            profileId,
+          );
 
           if (!priorResult.found) {
             grants.push({
@@ -457,6 +485,7 @@ async function checkPriorPurchaseCondition(
   conditions: any,
   userId: string,
   orderId: string,
+  profileId?: string | null,
 ): Promise<boolean> {
   if (!conditions) return true;
   if (conditions.condition_type !== 'prior_purchase') return true;
@@ -464,15 +493,13 @@ async function checkPriorPurchaseCondition(
   const requiredProductId = conditions.required_product_id;
   if (!requiredProductId) return true;
 
-  const { data: priorOrder } = await supabase
-    .from('orders_v2')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('product_id', requiredProductId)
-    .eq('status', 'paid')
-    .neq('id', orderId)
-    .limit(1)
-    .maybeSingle();
-
-  return !!priorOrder;
+  const result = await checkPriorPurchase(
+    supabase,
+    userId,
+    requiredProductId,
+    orderId,
+    conditions.required_tariff_id || undefined,
+    profileId,
+  );
+  return result.found;
 }

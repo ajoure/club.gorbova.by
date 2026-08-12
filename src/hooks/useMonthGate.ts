@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  isExplicitProductBypassRule,
+  isMonthPurchaseRule,
+} from "@/lib/monthGateRulePolicy";
 
 /**
  * Month-gate resolver for cabinet lessons.
@@ -168,9 +172,7 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
           .in("target_ref", rootModuleIds);
         if (rulesErr) throw rulesErr;
 
-        const rules: TcRuleRow[] = (rulesRaw || []).filter(
-          (r: any) => r?.conditions?.match_purchase_month === true && r.tariff_id
-        );
+        const rules: TcRuleRow[] = (rulesRaw || []).filter(isMonthPurchaseRule);
 
         // PATCH-WEBINAR-PRODUCT-VISIBILITY-BYPASS-V1 (+ tariff scoping)
         // Bypass ТОЛЬКО для partial-правил без match_purchase_month:
@@ -180,15 +182,9 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
         //  - у пользователя есть активный entitlement по product_id.
         // Правила с match_purchase_month=true — НЕ bypass; они обрабатываются
         // основной веткой ниже строго по tariff_id (никакого product-level fanout).
-        const bypassCandidateRules = (rulesRaw || []).filter((r: any) => {
-          if (r?.conditions?.match_purchase_month === true) return false;
-          const am = r?.conditions?.allowed_module_ids;
-          const al = r?.conditions?.allowed_lesson_ids;
-          const hasAllow =
-            (Array.isArray(am) && am.length > 0) ||
-            (Array.isArray(al) && al.length > 0);
-          return r?.product_id && hasAllow;
-        });
+        const bypassCandidateRules = (rulesRaw || []).filter(
+          isExplicitProductBypassRule,
+        );
         const bypassProductIds = Array.from(
           new Set(bypassCandidateRules.map((r: any) => r.product_id as string))
         );
@@ -303,6 +299,16 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
           return;
         }
 
+        // Fail closed from this point on: these lessons are proven to be
+        // covered by an active month-gated rule. A transient RPC failure must
+        // not turn paid-month content into public content.
+        for (const [lessonId, tuples] of lessonTuples.entries()) {
+          result.set(lessonId, {
+            lock_reason: "month_mismatch",
+            locked_month: tuples[0].content_month,
+          });
+        }
+
         const { data: rpcData, error: rpcErr } = await supabase.rpc(
           "has_month_purchase_bulk" as any,
           { _user_id: user.id, _items: payload as any }
@@ -319,18 +325,13 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
         // OR-aggregate per lesson: locked only if NO tuple passed.
         for (const [lessonId, tuples] of lessonTuples.entries()) {
           const anyOk = tuples.some((t) => okSyntheticKeys.has(t.syntheticKey));
-          if (!anyOk) {
-            result.set(lessonId, {
-              lock_reason: "month_mismatch",
-              locked_month: tuples[0].content_month,
-            });
-          }
+          if (anyOk) result.delete(lessonId);
         }
 
         if (!cancelled) setMap(result);
       } catch (err) {
-        console.warn("[useMonthGate] resolution failed (fallback: open):", err);
-        if (!cancelled) setMap(new Map());
+        console.warn("[useMonthGate] resolution failed (matched rules stay locked):", err);
+        if (!cancelled) setMap(result);
       } finally {
         if (!cancelled) setLoading(false);
       }

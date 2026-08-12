@@ -23,6 +23,7 @@
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { writeLedgerEntry, type LedgerSourceEventType, type LedgerSourceSubjectType } from './fulfillment-executor.ts';
 import { checkPriorPurchase } from './check-prior-purchase.ts';
+import { resolvePriorPurchaseOwner } from './prior-purchase-identity.ts';
 
 export type SecondaryGrantOutcome =
   | 'granted'        // new entitlement created
@@ -224,41 +225,67 @@ export async function buildPriorPurchaseCache(
   const CHUNK = 500;
   for (let i = 0; i < uniqueUsers.length; i += CHUNK) {
     const slice = uniqueUsers.slice(i, i + CHUNK);
+    const sliceUserIds = new Set(slice);
+    const { data: linkedProfiles, error: profileErr } = await supabase
+      .from('profiles')
+      .select('id, user_id')
+      .in('user_id', slice);
+    if (profileErr) throw profileErr;
+    const profileToUserId = new Map<string, string>();
+    for (const profile of linkedProfiles || []) {
+      if (profile.id && profile.user_id && sliceUserIds.has(profile.user_id)) {
+        profileToUserId.set(profile.id, profile.user_id);
+      }
+    }
+    const identityChannels: Array<{ column: 'user_id' | 'profile_id'; ids: string[] }> = [
+      { column: 'user_id', ids: slice },
+    ];
+    if (profileToUserId.size > 0) {
+      identityChannels.push({ column: 'profile_id', ids: [...profileToUserId.keys()] });
+    }
 
     // ── Channel 1: direct product match ─────────────────────────────────
     {
-      let q = supabase
-        .from('orders_v2')
-        .select('user_id, product_id, id, tariff_id, purchase_snapshot')
-        .eq('status', 'paid')
-        .in('user_id', slice)
-        .in('product_id', uniqueProducts);
-      if (excludeOrderId) q = q.neq('id', excludeOrderId);
+      for (const channel of identityChannels) {
+        let q = supabase
+          .from('orders_v2')
+          .select('user_id, profile_id, product_id, id, tariff_id, purchase_snapshot')
+          .eq('status', 'paid')
+          .in(channel.column, channel.ids)
+          .in('product_id', uniqueProducts);
+        if (excludeOrderId) q = q.neq('id', excludeOrderId);
 
-      let from = 0;
-      const PAGE = 1000;
-      while (true) {
-        const { data, error } = await q.range(from, from + PAGE - 1);
-        if (error) throw error;
-        const rows = data || [];
-        for (const row of rows as Array<{
-          user_id: string; product_id: string; id: string;
-          tariff_id: string | null; purchase_snapshot: Record<string, any> | null;
-        }>) {
-          if (!row.user_id || !row.product_id) continue;
-          const snapshot = row.purchase_snapshot || {};
-          recordInfo(row.user_id, row.product_id, {
-            match_type: 'direct',
-            order_id: row.id,
-            historical_purchase_type: snapshot.historical_purchase_type
-              || (row.tariff_id ? 'base_tariff_purchase' : null),
-            historical_tariff_id: row.tariff_id || (snapshot.tariff_id || null),
-            historical_module_product_ids: Array.isArray(snapshot.module_list_mapped)
-              ? snapshot.module_list_mapped : [],
-          });
+        let from = 0;
+        const PAGE = 1000;
+        while (true) {
+          const { data, error } = await q.range(from, from + PAGE - 1);
+          if (error) throw error;
+          const rows = data || [];
+          for (const row of rows as Array<{
+            user_id: string | null; profile_id: string | null;
+            product_id: string; id: string; tariff_id: string | null;
+            purchase_snapshot: Record<string, any> | null;
+          }>) {
+            const ownerUserId = resolvePriorPurchaseOwner(
+              row,
+              sliceUserIds,
+              profileToUserId,
+            );
+            if (!ownerUserId || !row.product_id) continue;
+            const snapshot = row.purchase_snapshot || {};
+            recordInfo(ownerUserId, row.product_id, {
+              match_type: 'direct',
+              order_id: row.id,
+              historical_purchase_type: snapshot.historical_purchase_type
+                || (row.tariff_id ? 'base_tariff_purchase' : null),
+              historical_tariff_id: row.tariff_id || (snapshot.tariff_id || null),
+              historical_module_product_ids: Array.isArray(snapshot.module_list_mapped)
+                ? snapshot.module_list_mapped : [],
+            });
+          }
+          if (rows.length < PAGE) break;
+          from += PAGE;
         }
-        if (rows.length < PAGE) break;
-        from += PAGE;
       }
     }
 
@@ -267,36 +294,43 @@ export async function buildPriorPurchaseCache(
     // contains it in purchase_snapshot.module_list_mapped (UUID match).
     // Use containment per product to leverage JSONB index.
     for (const targetProdId of uniqueProducts) {
-      let q = supabase
-        .from('orders_v2')
-        .select('user_id, product_id, id, tariff_id, purchase_snapshot')
-        .eq('status', 'paid')
-        .in('user_id', slice)
-        .eq('purchase_snapshot->>historical_purchase_type', 'module_only_standalone')
-        .contains('purchase_snapshot', { module_list_mapped: [targetProdId] });
-      if (excludeOrderId) q = q.neq('id', excludeOrderId);
+      for (const channel of identityChannels) {
+        let q = supabase
+          .from('orders_v2')
+          .select('user_id, profile_id, product_id, id, tariff_id, purchase_snapshot')
+          .eq('status', 'paid')
+          .in(channel.column, channel.ids)
+          .eq('purchase_snapshot->>historical_purchase_type', 'module_only_standalone')
+          .contains('purchase_snapshot', { module_list_mapped: [targetProdId] });
+        if (excludeOrderId) q = q.neq('id', excludeOrderId);
 
-      const { data, error } = await q.range(0, 999);
-      if (error) {
-        console.error('[product-access-grants] module fallback query error:', error.message);
-        continue;
-      }
-      for (const row of (data || []) as Array<{
-        user_id: string; product_id: string; id: string;
-        tariff_id: string | null; purchase_snapshot: Record<string, any> | null;
-      }>) {
-        if (!row.user_id) continue;
-        const snapshot = row.purchase_snapshot || {};
-        const moduleList = Array.isArray(snapshot.module_list_mapped) ? snapshot.module_list_mapped : [];
-        // Confirm UUID containment (defensive — query already filtered)
-        if (!moduleList.includes(targetProdId)) continue;
-        recordInfo(row.user_id, targetProdId, {
-          match_type: 'module_list_mapped',
-          order_id: row.id,
-          historical_purchase_type: 'module_only_standalone',
-          historical_tariff_id: row.tariff_id || (snapshot.tariff_id || null),
-          historical_module_product_ids: moduleList,
-        });
+        const { data, error } = await q.range(0, 999);
+        if (error) {
+          console.error('[product-access-grants] module fallback query error:', error.message);
+          continue;
+        }
+        for (const row of (data || []) as Array<{
+          user_id: string | null; profile_id: string | null;
+          product_id: string; id: string; tariff_id: string | null;
+          purchase_snapshot: Record<string, any> | null;
+        }>) {
+          const ownerUserId = resolvePriorPurchaseOwner(
+            row,
+            sliceUserIds,
+            profileToUserId,
+          );
+          if (!ownerUserId) continue;
+          const snapshot = row.purchase_snapshot || {};
+          const moduleList = Array.isArray(snapshot.module_list_mapped) ? snapshot.module_list_mapped : [];
+          if (!moduleList.includes(targetProdId)) continue;
+          recordInfo(ownerUserId, targetProdId, {
+            match_type: 'module_list_mapped',
+            order_id: row.id,
+            historical_purchase_type: 'module_only_standalone',
+            historical_tariff_id: row.tariff_id || (snapshot.tariff_id || null),
+            historical_module_product_ids: moduleList,
+          });
+        }
       }
     }
   }
@@ -420,7 +454,14 @@ export async function syncSecondaryProductAccessForUser(
               priorInfo = getPriorFromCache(targetProdId);
               conditionMet = !!priorInfo;
             } else {
-              const r = await checkPriorPurchase(supabase, userId, targetProdId, excludeOrderId);
+              const r = await checkPriorPurchase(
+                supabase,
+                userId,
+                targetProdId,
+                excludeOrderId,
+                undefined,
+                profileId,
+              );
               conditionMet = r.found;
               if (r.found && r.order_data) {
                 const snap = r.order_data.purchase_snapshot || {};
@@ -448,7 +489,14 @@ export async function syncSecondaryProductAccessForUser(
             }
           } else {
             for (const reqId of reqList) {
-              const r = await checkPriorPurchase(supabase, userId, reqId, excludeOrderId);
+              const r = await checkPriorPurchase(
+                supabase,
+                userId,
+                reqId,
+                excludeOrderId,
+                undefined,
+                profileId,
+              );
               if (matchMode === 'any' && r.found) { conditionMet = true; break; }
               if (matchMode === 'all' && !r.found) { conditionMet = false; break; }
               if (matchMode === 'all') conditionMet = true;
