@@ -18,7 +18,10 @@
 
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { toTzDateKey, dayWindowUtc, APP_TZ } from './timezone.ts';
-import { hasCommercialAccess } from './accessValidation.ts';
+import {
+  accessBearingSubscriptionFilter,
+  hasCommercialAccess,
+} from './accessValidation.ts';
 
 /** Grace period: 72h after access_end_at, subscription still valid */
 const GRACE_PERIOD_MS = 72 * 60 * 60 * 1000;
@@ -114,8 +117,8 @@ export async function resolveEffectiveProductAccess(
     .select('id, access_end_at, product_id, status')
     .eq('user_id', userId)
     .eq('product_id', productId)
-    .in('status', ['active', 'trial', 'past_due'])
-    .or(`access_end_at.is.null,access_end_at.gt.${graceNowStr}`);
+    .in('status', ['active', 'trial', 'past_due', 'canceled'])
+    .or(accessBearingSubscriptionFilter(graceNowStr));
 
   for (const sub of subs || []) {
     allSources.push({

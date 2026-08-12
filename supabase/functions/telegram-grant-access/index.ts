@@ -610,6 +610,34 @@ Deno.serve(async (req) => {
       let chatUnbanned = false;
       let channelUnbanned = false;
 
+      // Resolve the commercial window before the duplicate-DM guard. A repeat
+      // fulfilment may skip a second notification only while the projection is
+      // already healthy. Missing/revoked projections must pass through the full
+      // unban + personal-link flow below.
+      let activeUntil: string | null = valid_until || null;
+      if (!is_manual) {
+        const { resolveEffectiveClubAccess, effectiveEndAtIso } = await import('../_shared/resolve-effective-access.ts');
+        const accessSnapshot = await resolveEffectiveClubAccess(supabase, user_id, club.id);
+        if (accessSnapshot.allSources.length > 0) {
+          activeUntil = effectiveEndAtIso(accessSnapshot);
+        }
+        console.log(`[grant-access] Resolved effectiveEndAt for club ${club.id}: ${activeUntil}, sources: ${accessSnapshot.allSources.length}, unlimited: ${accessSnapshot.isUnlimited}`);
+      }
+
+      const { data: currentProjection, error: currentProjectionError } = await supabase
+        .from('telegram_access')
+        .select('id, state_chat, state_channel, active_until')
+        .eq('user_id', user_id)
+        .eq('club_id', club.id)
+        .maybeSingle();
+      if (currentProjectionError) {
+        throw new Error(`telegram_access_projection_read_failed: ${currentProjectionError.message}`);
+      }
+
+      const projectionNeedsRestore = !currentProjection
+        || currentProjection.state_chat === 'revoked'
+        || (shouldGrantChannel && currentProjection.state_channel === 'revoked');
+
       // ============================================================
       // PATCH TG-DUPLICATE-DM-GUARD: skip if access_granted_dm already
       // sent for this (user, club, canonical_business_ref).
@@ -653,7 +681,20 @@ Deno.serve(async (req) => {
           }
 
           const dup = existingDm || legacyMatch;
-          if (dup) {
+          if (dup && !projectionNeedsRestore) {
+            // Even when the DM is a duplicate, converge the access window. Do
+            // not overwrite healthy active/pending membership states.
+            const { error: projectionUpdateError } = await supabase
+              .from('telegram_access')
+              .update({
+                active_until: activeUntil,
+                last_sync_at: new Date().toISOString(),
+              })
+              .eq('id', currentProjection.id);
+            if (projectionUpdateError) {
+              throw new Error(`telegram_access_projection_failed: ${projectionUpdateError.message}`);
+            }
+
             console.log(`[telegram-grant-access] SKIP duplicate access_granted_dm: user=${user_id} club=${club.id} ref=${canonicalBusinessRef} existing_msg=${(dup as any).id}`);
             await supabase.from('audit_logs').insert({
               action: 'telegram.grant.skipped_duplicate_dm',
@@ -699,9 +740,25 @@ Deno.serve(async (req) => {
             });
             continue;
           }
+
+          if (dup && projectionNeedsRestore) {
+            console.log(`[telegram-grant-access] Duplicate DM exists, but access projection requires restore: user=${user_id} club=${club.id}`);
+          }
         } catch (dupErr) {
           console.warn('[telegram-grant-access] duplicate-DM lookup failed (continuing):', dupErr);
         }
+      }
+
+      const { error: projectionError } = await supabase.from('telegram_access').upsert({
+        user_id,
+        club_id: club.id,
+        state_chat: 'pending',
+        state_channel: shouldGrantChannel ? 'pending' : 'none',
+        active_until: activeUntil,
+        last_sync_at: new Date().toISOString(),
+      }, { onConflict: 'user_id,club_id' });
+      if (projectionError) {
+        throw new Error(`telegram_access_projection_failed: ${projectionError.message}`);
       }
 
       // Process chat
@@ -766,30 +823,6 @@ Deno.serve(async (req) => {
           }
         }
       }
-
-      // Calculate active_until via unified shared helper (scoped to THIS club).
-      // For commercial grants the resolver is authoritative even when the
-      // caller supplied a date: it preserves a longer direct club purchase and
-      // prevents a finite bonus from inheriting the primary product window.
-      let activeUntil: string | null = valid_until || null;
-      if (!is_manual) {
-        const { resolveEffectiveClubAccess, effectiveEndAtIso } = await import('../_shared/resolve-effective-access.ts');
-        const accessSnapshot = await resolveEffectiveClubAccess(supabase, user_id, club.id);
-        if (accessSnapshot.allSources.length > 0) {
-          activeUntil = effectiveEndAtIso(accessSnapshot);
-        }
-        console.log(`[grant-access] Resolved effectiveEndAt for club ${club.id}: ${activeUntil}, sources: ${accessSnapshot.allSources.length}, unlimited: ${accessSnapshot.isUnlimited}`);
-      }
-
-      // Update telegram_access
-      await supabase.from('telegram_access').upsert({
-        user_id,
-        club_id: club.id,
-        state_chat: 'pending',
-        state_channel: shouldGrantChannel ? 'pending' : 'none',
-        active_until: activeUntil,
-        last_sync_at: new Date().toISOString(),
-      }, { onConflict: 'user_id,club_id' });
 
       // Create access grant record (FIX-1: Idempotency check to prevent duplicates)
       const grantSource = source || (is_manual ? 'manual' : 'system');

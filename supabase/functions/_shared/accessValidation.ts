@@ -16,6 +16,18 @@ import { toTzDateKey, dayWindowUtc, APP_TZ } from './timezone.ts';
 /** Grace period: 72 hours after access_end_at, subscription still counts as valid */
 const GRACE_PERIOD_MS = 72 * 60 * 60 * 1000;
 
+/**
+ * Technical provider-managed checkouts are pre-created as
+ * `past_due + access_end_at=NULL`. They are not paid/perpetual access.
+ *
+ * NULL remains unlimited only for confirmed `active`/`trial` subscriptions.
+ * Dated `canceled` rows remain valid through their already-paid window, while
+ * every dated active/trial/past_due/canceled row keeps the normal grace check.
+ */
+export function accessBearingSubscriptionFilter(graceNowIso: string): string {
+  return `and(access_end_at.is.null,status.in.(active,trial)),access_end_at.gt.${graceNowIso}`;
+}
+
 export interface AccessCheckResult {
   valid: boolean;
   source?: 'subscription' | 'entitlement' | 'manual_access' | 'paid_order_rule' | 'telegram_access' | 'telegram_grant';
@@ -298,8 +310,8 @@ export async function hasValidAccess(
     .from('subscriptions_v2')
     .select('id, access_end_at')
     .eq('user_id', userId)
-    .in('status', ['active', 'trial', 'past_due'])
-    .or(`access_end_at.is.null,access_end_at.gt.${subGraceNowStr}`)
+    .in('status', ['active', 'trial', 'past_due', 'canceled'])
+    .or(accessBearingSubscriptionFilter(subGraceNowStr))
     .limit(1);
 
   // PATCH-STAT-1: scope by club products when clubId provided
@@ -470,8 +482,8 @@ export async function hasValidAccessBatch(
       .from('subscriptions_v2')
       .select('id, user_id, access_end_at')
       .in('user_id', userIds)
-      .in('status', ['active', 'trial', 'past_due'])
-      .or(`access_end_at.is.null,access_end_at.gt.${subGraceNowStr}`);
+      .in('status', ['active', 'trial', 'past_due', 'canceled'])
+      .or(accessBearingSubscriptionFilter(subGraceNowStr));
 
     if (clubProductIds !== null) {
       subQuery.in('product_id', clubProductIds);
@@ -725,8 +737,8 @@ async function resolveClubScopedCommercialAccessBatch(
       .select('id, user_id, product_id, tariff_id, access_end_at')
       .in('user_id', userIds)
       .in('product_id', directProductIds)
-      .in('status', ['active', 'trial', 'past_due'])
-      .or(`access_end_at.is.null,access_end_at.gt.${subGraceNowStr}`);
+      .in('status', ['active', 'trial', 'past_due', 'canceled'])
+      .or(accessBearingSubscriptionFilter(subGraceNowStr));
     if (error) throw new Error(`commercial_access_subscriptions_failed: ${error.message}`);
 
     for (const sub of data || []) {
@@ -903,8 +915,8 @@ export async function hasCommercialAccess(
       .from('subscriptions_v2')
       .select('id, access_end_at')
       .eq('user_id', userId)
-      .in('status', ['active', 'trial', 'past_due'])
-      .or(`access_end_at.is.null,access_end_at.gt.${subGraceNowStr}`)
+      .in('status', ['active', 'trial', 'past_due', 'canceled'])
+      .or(accessBearingSubscriptionFilter(subGraceNowStr))
       .limit(1);
 
     if (clubProductIds !== null) subQuery.in('product_id', clubProductIds);
@@ -1063,8 +1075,8 @@ export async function hasCommercialAccessBatch(
       .from('subscriptions_v2')
       .select('id, user_id, access_end_at')
       .in('user_id', userIds)
-      .in('status', ['active', 'trial', 'past_due'])
-      .or(`access_end_at.is.null,access_end_at.gt.${subGraceNowStr}`);
+      .in('status', ['active', 'trial', 'past_due', 'canceled'])
+      .or(accessBearingSubscriptionFilter(subGraceNowStr));
     if (clubProductIds !== null) q.in('product_id', clubProductIds);
     const { data, error } = await q;
     if (error) throw new Error(`commercial_access_subscriptions_failed: ${error.message}`);

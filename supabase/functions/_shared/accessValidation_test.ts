@@ -1,8 +1,22 @@
 import {
   type AccessCheckResult,
+  accessBearingSubscriptionFilter,
   calculateRuleBoundClubEndAt,
   selectWiderCommercialAccess,
 } from './accessValidation.ts';
+
+Deno.test('technical past_due subscriptions without an access end are excluded', () => {
+  assertEquals(
+    accessBearingSubscriptionFilter('2026-08-09T00:00:00.000Z'),
+    'and(access_end_at.is.null,status.in.(active,trial)),access_end_at.gt.2026-08-09T00:00:00.000Z',
+  );
+});
+
+Deno.test('the shared filter preserves active/trial perpetual and dated canceled access', () => {
+  const filter = accessBearingSubscriptionFilter('2026-08-09T00:00:00.000Z');
+  assertEquals(filter.includes('status.in.(active,trial)'), true);
+  assertEquals(filter.includes('access_end_at.gt.2026-08-09T00:00:00.000Z'), true);
+});
 
 function assertEquals(actual: unknown, expected: unknown): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
