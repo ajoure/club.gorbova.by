@@ -549,6 +549,29 @@ Deno.serve(async (req) => {
       .order('created_at', { ascending: false });
     const paymentsArr = (paymentsForOrder || []) as any[];
 
+    // TEMP-STRIPE-DOCUMENT-GENERATION-DISABLED:
+    // Stripe payments must not produce billing documents while the accounting
+    // workflow is being reviewed. This is an unconditional generation guard:
+    // admin_force may bypass legacy eligibility checks, but must not bypass
+    // this provider-level suspension. Preview remains available for diagnosis.
+    const succeededStripePayment = paymentsArr.find((p: any) =>
+      String(p?.status || '').toLowerCase() === 'succeeded'
+      && String(p?.provider || '').toLowerCase() === 'stripe'
+    );
+    if (mode === 'generate' && succeededStripePayment) {
+      await supabase.from('audit_logs').insert({
+        actor_user_id: userId,
+        actor_type: isAdmin ? 'admin' : 'user',
+        action: 'document.generate_blocked_stripe',
+        meta: {
+          order_id: orderId,
+          payment_id: succeededStripePayment.id,
+          provider: 'stripe',
+        },
+      });
+      return json({ error: 'stripe_document_generation_disabled' }, 403);
+    }
+
     const guardWarnings: string[] = [];
     const guardSkipped: string[] = [];
 
