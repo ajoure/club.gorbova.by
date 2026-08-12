@@ -367,9 +367,40 @@ Deno.serve(async (req) => {
       }
     } else {
       console.error("[admin-invoice-checkout-issue] strict failed", strictResp.status, strictJson);
+      await admin.from("audit_logs").insert({
+        actor_user_id: actor.id,
+        actor_type: "user",
+        target_user_id: targetProfile.user_id,
+        action: "admin_invoice_checkout.document_generate_failed",
+        entity_type: "order",
+        entity_id: newOrder.id,
+        meta: {
+          order_id: newOrder.id,
+          order_number: newOrder.order_number,
+          offer_id: offer.id,
+          status: strictResp.status,
+          response: strictJson,
+          via: "canonical-document-generate-strict",
+        },
+      });
     }
   } catch (e) {
     console.error("[admin-invoice-checkout-issue] strict exception", e);
+    await admin.from("audit_logs").insert({
+      actor_user_id: actor.id,
+      actor_type: "user",
+      target_user_id: targetProfile.user_id,
+      action: "admin_invoice_checkout.document_generate_failed",
+      entity_type: "order",
+      entity_id: newOrder.id,
+      meta: {
+        order_id: newOrder.id,
+        order_number: newOrder.order_number,
+        offer_id: offer.id,
+        error: e instanceof Error ? e.message : String(e),
+        via: "canonical-document-generate-strict",
+      },
+    });
   }
 
   // Запускаем ту же каноническую доставку, что и в пользовательском

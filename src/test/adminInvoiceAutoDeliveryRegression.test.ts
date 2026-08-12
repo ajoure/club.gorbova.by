@@ -30,4 +30,14 @@ describe("admin invoice automatic delivery regression", () => {
     expect(source).toContain("entity_type: \"ai_generated_document\"");
     expect(source).toContain("entity_id: documentId");
   });
+
+  it("persists strict generation failures beyond short-lived edge logs", () => {
+    expect(source).toContain(
+      "admin_invoice_checkout.document_generate_failed",
+    );
+    expect(source).toContain('entity_type: "order"');
+    expect(source).toContain('via: "canonical-document-generate-strict"');
+    expect(source).toContain("status: strictResp.status");
+    expect(source).toContain("response: strictJson");
+  });
 });
