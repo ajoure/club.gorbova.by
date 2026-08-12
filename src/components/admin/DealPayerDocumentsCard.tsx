@@ -211,6 +211,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   const executorOverride: string | null = documents.executor_override || null;
 
   const channel = useMemo(() => derivePaymentChannel(payment as any), [payment]);
+  const isStripePayment = String(payment?.provider || "").toLowerCase() === "stripe";
   // Live matched scenario: payer_type для матча берём из orders_v2.payer_type
   // (SOT-колонка). Если null — fallback 'individual'.
   const resolverPayerType: PayerType = (order?.payer_type as PayerType) || "individual";
@@ -655,26 +656,33 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
 
         {/* Создание документа */}
         <div className="pt-2 border-t space-y-2">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="text-xs text-muted-foreground">
-              {effectiveTemplateId && effectiveExecutorId
-                ? "Готово к созданию документа"
-                : "Заполните шаблон и исполнителя, чтобы создать документ"}
+          {isStripePayment ? (
+            <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>Создание актов по платежам Stripe временно отключено.</span>
             </div>
-            <Button
-              size="sm"
-              onClick={generate}
-              disabled={!canEdit || generating || saving || dirty || !effectiveTemplateId || !effectiveExecutorId || templateOverrideDeleted}
-              title={
-                templateOverrideDeleted
-                  ? "Выберите новый шаблон — текущий удалён"
-                  : dirty ? "Сначала сохраните изменения" : undefined
-              }
-            >
-              {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FilePlus2 className="h-3 w-3 mr-1" />}
-              Создать документ
-            </Button>
-          </div>
+          ) : (
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-xs text-muted-foreground">
+                {effectiveTemplateId && effectiveExecutorId
+                  ? "Готово к созданию документа"
+                  : "Заполните шаблон и исполнителя, чтобы создать документ"}
+              </div>
+              <Button
+                size="sm"
+                onClick={generate}
+                disabled={!canEdit || generating || saving || dirty || !effectiveTemplateId || !effectiveExecutorId || templateOverrideDeleted}
+                title={
+                  templateOverrideDeleted
+                    ? "Выберите новый шаблон — текущий удалён"
+                    : dirty ? "Сначала сохраните изменения" : undefined
+                }
+              >
+                {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FilePlus2 className="h-3 w-3 mr-1" />}
+                Создать документ
+              </Button>
+            </div>
+          )}
           {history.length > 0 && (
             <div className="space-y-1">
               <div className="text-xs font-medium text-muted-foreground">История ({history.length})</div>
