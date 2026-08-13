@@ -1,109 +1,80 @@
-# План: утренний READ-ONLY preflight 12.08.2026 (рассылка ЦБ20 + свежие ссылки)
+# План: свежий Stripe-чек по клику (payment-receipt-resolve)
 
-Строго read-only. Мутаций, сообщений, ссылок, Telegram-действий не выполнялось. Срез на 12.08.2026 05:45 UTC.
+PLAN-ONLY. Ни одного изменения не сделано: без кода, миграций, DML/DDL, deploy, sync, Publish, provider-writes и уведомлений. Ниже — только результаты read-only проверки Lovable Cloud и план патча.
 
-## 1. Refund-notification cohort (rowcount = 9, сумма 1660 BYN)
+## CURRENT STATE
 
-Критерий: `payments_v2.transaction_type in ('refund','Возврат средств')` + `meta.bepaid_response.status='successful'`. Ольга Глушкова отсутствует в выборке (её попытка отклонена провайдером) — исключена корректно. Новых успешных возвратов после 11.08 17:18 UTC нет.
+**Данные (read-only SQL).**
+- `payments_v2`: stripe — 7 записей, из них 5 с сохранённым `receipt_url` (последние оплаты 10.06–11.08.2026). bePaid — 1455 с `receipt_url` (их поведение не меняем).
+- Все stripe-платежи, кроме одного legacy без метаданных, имеют точные `meta.stripe.charge_id` (`ch_…`) и `payment_intent_id` (`pi_…`), `meta.stripe.account_code='stripe_poland'`.
+- `meta.stripe.livemode` — **NULL во всех строках**; `acquiring_connections` содержит одну активную запись `stripe / stripe_poland / test_mode=false / status=active / is_default=true`.
 
-| # | ФИО | Возврат, BYN | Время (UTC) | Бонусный tier | Бонус активен до (UTC) |
-|---|---|---|---|---|---|
-| 1 | Alexandra Sermyazhko | 55.00 | 11.08 11:27 | BUSINESS | 2026-09-09 21:59 |
-| 2 | Олеся Волынец | 55.00 | 11.08 11:28 | BUSINESS | 2026-09-09 21:59 |
-| 3 | Валентина Хрущёва | 150.00 | 11.08 11:30 | BUSINESS | 2026-09-09 21:59 |
-| 4 | Елена Филиппова | 250.00 | 11.08 17:08 | FULL | 2026-09-09 21:59 |
-| 5 | Светлана Василевская | 250.00 | 11.08 17:12 | BUSINESS | 2026-09-09 21:59 |
-| 6 | Нинель Дудина | 250.00 | 11.08 17:13 | BUSINESS | 2026-09-09 21:59 |
-| 7 | Вероника Матук | 250.00 | 11.08 17:14 | BUSINESS | 2026-09-09 21:59 |
-| 8 | Анастасия Жевнерова | 250.00 | 11.08 17:16 | BUSINESS | 2026-09-09 21:59 |
-| 9 | Наталья Киричко | 150.00 | 11.08 17:18 | FULL | 2026-09-09 21:59 |
+**Код.**
+- Защищённый резолвер `admin-payment-documents-resolve` существует и **развёрнут** (OPTIONS → 200). RBAC: VIEW = `super_admin|admin|accountant`, REFRESH = `super_admin|admin`, диагностика = `super_admin`. Он умеет exact retrieve `payment_intents/charges/invoices/refunds/credit_notes` через account+mode-aware vault, без list/search, без записей в платежи/заказы.
+- Функции `payment-receipt-resolve` нет (404).
+- Фронт открывает **сохранённый** URL напрямую в 6 местах: `src/pages/Purchases.tsx` (661), `src/components/purchases/OrderListItem.tsx`, `src/components/purchases/SubscriptionDetailSheet.tsx` (349), `src/components/admin/DealDetailSheet.tsx` (1153–1155), `src/pages/admin/AdminOrdersV2.tsx` (485–490), реестр платежей через `src/hooks/useUnifiedPayments.tsx` (398–441, `document_url`). Именно эти ссылки протухают у Stripe (~30 дней → «Receipt URL Expired»).
+- Клиентский слой резолвера уже есть: `src/hooks/usePaymentDocuments.ts`, `src/types/paymentDocuments.ts`, дровер в `PaymentsTable.tsx` (только админ-реестр).
 
-Бонусный `entitlement_source`: 9/9 `active`, tier совпадает с правилом CB20 (Главный бухгалтер → FULL, Бизнес-леди → BUSINESS).
+## RISKS
 
-## 2. Access/link cohort (10 человек)
+1. **Mode not resolved.** `livemode` пуст, поэтому `normalizeStripeMode` вернёт `STRIPE_MODE_NOT_RESOLVED` и refresh упадёт для всех текущих stripe-платежей. Без учёта этого фича не заработает в проде.
+2. **Расширение резолвера на владельца** ослабляет текущий admin-only контракт, если ownership-проверка и capability-матрица не разведены явно.
+3. **Соблазн fallback'а** на сохранённый URL при ошибке провайдера — приведёт к повторению инцидента; запрещено.
+4. **Popup-blocker**: асинхронный retrieve перед `window.open` теряет user-gesture.
+5. bePaid-чеки не должны затрагиваться; их URL долговечны.
+6. Резолвер не должен ничего писать (кроме уже существующего audit при refresh).
 
-К девяти выше добавляется **Ирина Дикалова**. Проверка:
-- у неё есть активный бонусный источник `bonus / controlled_cb20_bonus_backfill_20260810`, активен до 2026-09-09 21:59 UTC, Telegram привязан;
-- возврата у неё нет — в refund-cohort она НЕ входит;
-- чат + канал ей положены (бонусный доступ активен);
-- в базе два профиля с этим ФИО: рабочий (с Telegram и бонусом) и пустой дубль от 03.03 без доступов — при отправке использовать только профиль с активным бонусом (дубль — отдельный неблокирующий finding по дедупликации).
+## RECOMMENDED DESIGN
 
-## 3. Состояние сохранённых invite links (created_at >= 09.08)
+**1) Отдельная функция `payment-receipt-resolve`** (а не расширение админского резолвера).
+Аргументация: `admin-payment-documents-resolve` — «толстый» админ-контракт (внутренние документы, signed storage URLs, generation-статусы, diagnostics). Открывать его клиенту небезопасно и требует переписывать матрицу возможностей. Новая функция переиспользует shared-модули `_shared/payments/documents/stripe-client-factory.ts` и `stripe-documents.ts` без дублирования Stripe-логики.
 
-| ФИО | chat | channel | sent (UTC) | expires (UTC) | used | used_by |
-|---|---|---|---|---|---|---|
-| Alexandra Sermyazhko | expired | expired | 10.08 18:04 | 11.08 18:04 | — | — |
-| Валентина Хрущёва | expired | expired | 10.08 18:04 | 11.08 18:04 | — | — |
-| Олеся Волынец (1) | expired | expired | 10.08 18:03 | 11.08 18:03 | — | — |
-| Олеся Волынец (2) | used | used | 11.08 12:08 | 12.08 12:08 | 11.08 12:08 | match |
-| Елена Филиппова | used | used | 10.08 05:14 | 11.08 05:14 | 10.08 05:16 | match |
-| Вероника Матук | sent | sent | 11.08 09:00 | 12.08 09:00 | — | — |
-| Ирина Дикалова | expired | expired | 10.08 18:04 | 11.08 18:04 | — | — |
-| Светлана Василевская | ссылок нет | | | | | |
-| Нинель Дудина | ссылок нет | | | | | |
-| Анастасия Жевнерова | ссылок нет | | | | | |
-| Наталья Киричко | ссылок нет | | | | | |
+Контракт:
+- `verify_jwt = true`, вход `{ payment_id: uuid }`, выход `{ payment_id, provider, receipt: { url, source: 'provider_fresh'|'local_bepaid', expires_hint } | null, error_code? }`.
+- Авторизация: VIEW-роли (`super_admin|admin|accountant`) через `has_role_v2`, **или** владелец — `orders_v2.user_id = auth.uid()` по `payments_v2.order_id` (для refund — через `meta.parent_payment_id`). Иначе 403 без деталей.
+- Stripe: на каждый клик exact retrieve `charges/{ch_…}`; если `charge_id` нет — `payment_intents/{pi_…}` → `latest_charge` → retrieve charge. Только whitelisted поле `receipt_url`. **Никакого list/search.**
+- **Mode/account:** account_code из `meta.stripe.account_code`; при отсутствующем `livemode` — детерминированный fallback на `acquiring_connections.test_mode` для этого `account_code` (одна активная запись). Без live↔test перебора; при конфликте — ошибка.
+- При любой неудаче (`STRIPE_*`, timeout, network, пустой `receipt_url`) вернуть `receipt=null` + machine-code. **Сохранённый Stripe URL не возвращается никогда.**
+- bePaid: сохранённый `receipt_url` возвращается как есть (`local_bepaid`), провайдер не вызывается.
+- Ноль записей в `payments_v2/orders_v2/subscriptions_v2/entitlements`; опционально одна audit-строка без PII.
 
-`used_by` = ожидаемый Telegram-профиль в обоих случаях использования (**match**, mismatch = 0). Audit: за период есть только `invite_links.expire_batch` (8 записей, последняя 11.08 23:00) — событий `INVITE_MISMATCH` / `INVITE_EXPIRED_OR_REUSED` нет. Чужого использования ссылок не зафиксировано.
+**2) Фронт.** Новый хук `useFreshReceipt()` + общий компонент кнопки `ReceiptLinkButton`:
+- popup-safe: `const w = window.open('', '_blank')` синхронно по клику → после ответа `w.location = url`, при ошибке `w.close()` и toast с локализованным кодом;
+- для Stripe UI больше не рендерит `href={receipt_url}`, а вызывает резолвер;
+- для bePaid поведение не меняется.
+Точки подключения: `DealDetailSheet.tsx`, реестр платежей (`useUnifiedPayments`/`PaymentsTable`), `AdminOrdersV2.tsx`, `Purchases.tsx`, `OrderListItem.tsx`, `SubscriptionDetailSheet.tsx`.
 
-## 4. join_request_mode и защита ссылок
+**3) Тесты** (vitest + deno-тесты рядом с существующими):
+- RBAC: аноним → 401; чужой пользователь → 403; владелец → 200; accountant → 200.
+- Ownership по refund через parent payment.
+- Stale replacement: сохранённый Stripe URL в БД ≠ возвращаемому; при успехе возвращается только свежий.
+- Provider failure: 4xx/5xx/timeout/пустой receipt → `receipt=null`, старый URL не отдаётся.
+- Guard «no list/search»: счётчик exact retrieve, отсутствие вызовов list.
+- Popup: клик открывает окно синхронно; при ошибке окно закрывается.
 
-`telegram_clubs`: Gorbova Club — `join_request_mode = false` (и для чата, и для канала; отдельного флага по типам в схеме нет). Второй клуб — тоже false.
+## EXACT DEPLOY LIST (после merge, managed)
 
-Соответствие GitHub `telegram-grant-access`: при выключенном режиме создаётся ссылка с `member_limit: 1` и `expire_date = now + 86400` (24 ч); ветка `creates_join_request` (с удалением `member_limit`) не активируется, поэтому `telegram-webhook` не выполняет pre-join проверку коммерческого доступа.
+1. Sync проекта строго на merge-SHA PR.
+2. Миграций **нет** (RBAC-хелперы и таблицы существуют). Если решите добавить audit-action — это данные, не схема.
+3. Deploy Edge Functions: `payment-receipt-resolve` (новая). `admin-payment-documents-resolve` — только если общий shared-модуль менялся.
+4. Добавить `payment-receipt-resolve` в `supabase/functions.registry.txt` (в PR, не в проде).
+5. Publish frontend с того же SHA.
 
-Вывод по защите: ссылка **не защищена от пересылки на этапе входа** — вход по ней получит любой, кто первым перейдёт; ограничение `member_limit=1` лишь гасит ссылку после первого использования, а несоответствие ловится только post-join (сверка `used_by` и последующий kick). Фактически по текущей когорте пересылки не было: оба использования — match, остальные ссылки истекли неиспользованными.
+## VERIFICATION (read-back)
 
-**Фактическая причина жалоб «ссылка недействительна»: истечение 24-часового TTL** (ссылки от 10.08 18:03–18:04 умерли 11.08 в те же минуты). Отзывов, банов и подмен нет.
+- `OPTIONS /functions/v1/payment-receipt-resolve` → 200.
+- Как admin: вызов по `e0c1f0ed-…` (stripe, 11.08) → `source='provider_fresh'`, URL ≠ значения `payments_v2.receipt_url`.
+- Как владелец: свой платёж → 200; чужой → 403; без JWT → 401.
+- Старый stripe-платёж 10.06 → либо свежий URL, либо `receipt=null` с кодом; **никогда** просроченный сохранённый.
+- bePaid-платёж → прежний чек открывается как раньше.
+- SQL read-back: `payments_v2/orders_v2/entitlements` — 0 изменений (`updated_at` неизменны).
+- UI-пруф после Publish: desktop 1440 и mobile 390 для сделки, реестра платежей, `/admin/orders` и клиентских «Мои покупки».
 
-## 5. getChatMember — не выполнен (ограничение, требуется решение)
+## STOP GATES
 
-Живой `getChatMember` доступен только через существующие Edge Functions (`telegram-club-members` / `telegram-cron-sync`), которые пишут в БД (обновляют `telegram_club_members`, `last_telegram_check_*`). В режиме STRICT READ-ONLY они не вызывались.
-
-Сохранённая проекция (плановая синхронизация 12.08 03:00–05:00 UTC):
-- 9/9 refund-cohort: `in_chat=true`, `in_channel=true`, `access_status='ok'`, `can_dm=true`, live-результат чата `status: member`; поле канала — `derived_from_chat`, независимо не подтверждено;
-- Ирина Дикалова: строки в `telegram_club_members` нет вовсе → **не состоит ни в чате, ни в канале**;
-- `kicked` / `banned` / `blocked` — 0 случаев.
-
-Finding (неблокирующий): членство в канале по всей когорте выводится из чата, а не проверяется. Прямая проверка канала возможна только с записью в БД — вынести в первый шаг execute.
-
-## 6. EXECUTE-план на сегодня (не выполнен, требует одобрения)
-
-Rowcounts: refund DM — 9; access DM со свежими ссылками — 7; без ссылок — 3.
-
-**Получатели refund-уведомления (9):** Alexandra Sermyazhko 55, Олеся Волынец 55, Валентина Хрущёва 150, Елена Филиппова 250, Светлана Василевская 250, Нинель Дудина 250, Вероника Матук 250, Анастасия Жевнерова 250, Наталья Киричко 150.
-
-**Получатели свежей пары ссылок (7):** Alexandra Sermyazhko, Валентина Хрущёва, Светлана Василевская, Нинель Дудина, Анастасия Жевнерова, Наталья Киричко, Ирина Дикалова (по явному запросу 11.08 21:24–21:25, доступ подтверждён, в чате/канале не состоит).
-
-**Без новых ссылок (3):** Елена Филиппова (обе ссылки использованы, member), Олеся Волынец (вторая пара использована, member), Вероника Матук (пара действительна до 12.08 09:00 UTC, member). Если отправка сдвинется позже 09:00 UTC — Веронику перенести в группу «нужны свежие ссылки».
-
-Порядок:
-1. Шаг 0 (с записью в БД, минимальный): точечный `getChatMember` по чату И каналу для 10 человек через существующую синхронизацию. Любой `kicked/banned` или отсутствие в канале — STOP и отдельный finding, отправка по этому человеку не выполняется.
-2. Шаг 1 — refund DM, 9 человек, партиями 3+3+3, только `@gorbovabybot`, без ссылок и кнопок. Read-back после каждой партии: 3 × `status='sent'`, корректные имя/tier/сумма.
-3. Шаг 2 — канонический access DM с двумя персональными кнопками, 7 человек (или 8 с Вероникой), партиями 3+3+остаток. Ссылки минтить непосредственно перед каждой партией (TTL 24 ч). Read-back: по 2 новые `telegram_invite_links` (chat + channel, `member_limit=1`, `status='sent'`) и 1 DM `access_granted_dm` на человека.
-4. Запрещено менять: `entitlement_sources`, `entitlements`, tier, срок бонуса (2026-09-09 21:59:59+00), платежи, возвраты, заказы, `telegram_access.active_until`.
-5. Только существующие функции: `telegram-send-notification` (refund-текст без ссылок) и `telegram-grant-access` (минт ссылок + канонический access DM). Итого до двух последовательных сообщений на человека. Нового кода не создавать.
-6. Финальный read-back: 9 refund DM, 7–8 access DM, 14–16 свежих ссылок, доступ active у всех, Ольга Глушкова отсутствует ни в одной выборке.
-
-### Текст 1 — refund-уведомление (без ссылок и кнопок)
-
-«Здравствуйте, [Имя]! 💙
-
-Благодарим вас за покупку программы „Ценный бухгалтер 2.0 — 20 поток“.
-
-Возврат оплаты за Gorbova Club в размере [СУММА] BYN успешно проведён на карту, с которой совершалась оплата. Срок зачисления зависит от банка.
-
-Возврат не отменяет бонусный доступ: в рамках программы вам предоставлен бесплатный доступ к Gorbova Club на 30 дней — по 9 сентября 2026 года включительно. Ваш бонусный тариф: [BUSINESS/FULL].
-
-Спасибо, что вы с нами!
-Команда Gorbova Club 💙»
-
-### Текст 2 — канонический access DM (две кнопки, ссылки персональные)
-
-Канонический текст функции `telegram-grant-access` с двумя inline-кнопками:
-«💬 Войти в чат клуба» и «📣 Войти в канал клуба».
-Ссылки одноразовые и действуют 24 часа — об этом в тексте предупредить; полные URL в отчётах не выводить.
-
-## STOP
-
-Отчёт закрыт. Ничего не отправлено и не изменено. Жду отдельного одобрения на EXECUTE.
+- Любой ответ, содержащий сохранённый Stripe URL при ошибке провайдера → стоп.
+- Обнаружен list/search-вызов Stripe → стоп.
+- Ненулевой rowcount по write в платёжные/заказные/доступные таблицы → стоп, rollback.
+- 403 для владельца или 200 для чужого пользователя → стоп.
+- `STRIPE_MODE_NOT_RESOLVED` на боевом платеже после фикса mode-fallback → стоп, не публиковать.
+- Расхождение синхронизированного SHA с merge-SHA → стоп.
