@@ -1,6 +1,7 @@
 // reference: deno.land/x/types/index.d.ts
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { evaluateWebhookDelivery } from "../_shared/payment-health-policy.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -499,15 +500,32 @@ Deno.serve(async (req) => {
       .eq("provider", "bepaid")
       .gte("created_at", webhookCutoff);
 
-    const webhookSilence = !webhookCountError && (recentBepaidWebhookCount || 0) === 0;
+    const { count: recentBepaidPaymentCount, error: paymentCountError } = await supabase
+      .from("payments_v2")
+      .select("id", { count: "exact", head: true })
+      .eq("provider", "bepaid")
+      .eq("status", "succeeded")
+      .gte("created_at", webhookCutoff);
+
+    const webhookEvidence = evaluateWebhookDelivery({
+      webhookCount: recentBepaidWebhookCount || 0,
+      successfulPaymentCount: recentBepaidPaymentCount || 0,
+      queryFailed: Boolean(webhookCountError || paymentCountError),
+    });
+    const webhookQueryError = webhookCountError || paymentCountError;
     invariants.push({
       name: "INV-23: bePaid webhook silence (24h)",
-      passed: !webhookCountError && !webhookSilence,
-      count: webhookCountError || webhookSilence ? 1 : 0,
-      samples: webhookSilence ? [{ since: webhookCutoff }] : [],
-      description: webhookCountError
-        ? `Could not count bePaid webhook events: ${webhookCountError.message}`
-        : `${recentBepaidWebhookCount || 0} bePaid webhook event(s) received in the last 24h.`,
+      passed: webhookEvidence.passed,
+      count: webhookEvidence.passed ? 0 : 1,
+      samples: webhookEvidence.passed ? [] : [{
+        since: webhookCutoff,
+        successful_bepaid_payments: recentBepaidPaymentCount || 0,
+      }],
+      description: webhookQueryError
+        ? `Could not inspect bePaid delivery evidence: ${webhookQueryError.message}`
+        : webhookEvidence.quietWindow
+        ? "No bePaid webhook or successful payment activity in the last 24h; quiet window, not a proven delivery outage."
+        : `${recentBepaidWebhookCount || 0} bePaid webhook event(s) and ${recentBepaidPaymentCount || 0} successful payment(s) in the last 24h.`,
     });
 
     // INV-24: queue rows must never be terminal without canonical payments_v2.

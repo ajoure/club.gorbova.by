@@ -161,7 +161,7 @@ const INVARIANT_TRANSLATIONS: Record<string, {
   },
   'INV-23': {
     title: 'Нет webhook от bePaid (24ч)',
-    explain: 'За сутки не получено ни одного события bePaid — возможен обрыв доставки',
+    explain: 'Есть платёжная активность bePaid, но за сутки не зарегистрирован webhook — возможен обрыв доставки',
     action: 'Проверить notification URL и доставку webhook в кабинете bePaid',
     urlPath: '/admin/payments?tab=diagnostics',
   },
