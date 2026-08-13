@@ -1,5 +1,9 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import {
+  evaluateCronRuns,
+  isProviderRenewalOverdue,
+} from "../_shared/payment-health-policy.ts";
 
 /**
  * SYSTEM-HEALTH-FULL-CHECK — Единый оркестратор проверки системы
@@ -86,15 +90,15 @@ async function checkFunctionAvailability(
   projectRef: string
 ): Promise<FunctionCheckResult> {
   const url = `https://${projectRef}.supabase.co/functions/v1/${entry.name}`;
+  const timeout = entry.healthcheck_method === "OPTIONS"
+    ? Math.min(entry.timeout_ms, 8000)
+    : Math.min(entry.timeout_ms, 15000);
   
   try {
     const controller = new AbortController();
     // PATCH P0.9.4: Respect registry timeout_ms, with reasonable caps
     // OPTIONS: max 8s (preflight should be fast)
     // POST: max 15s (allows cold start)
-    const timeout = entry.healthcheck_method === "OPTIONS" 
-      ? Math.min(entry.timeout_ms, 8000)   
-      : Math.min(entry.timeout_ms, 15000);
     const timeoutId = setTimeout(() => controller.abort(), timeout);
     
     const method = entry.healthcheck_method === "POST" ? "POST" : "OPTIONS";
@@ -170,7 +174,7 @@ async function checkFunctionAvailability(
       error: statusOk ? undefined : `Unexpected status ${response.status}`,
     };
   } catch (error) {
-    if (error.name === "AbortError") {
+    if (error instanceof Error && error.name === "AbortError") {
       // PATCH P0.9.4: TIMEOUT means function EXISTS but was slow to respond
       return {
         name: entry.name,
@@ -203,38 +207,38 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   
-  // INV-P0-1: bePaid auto-renewals in 24h (source of truth = bepaid.payment.upsert_from_last_transaction).
-  // MIT-карты отключены, продления идут через bePaid subscription engine + webhook.
-  // Legacy критерий (action='subscription.charged', actor_type='system') давал false-red,
-  // т.к. такие события не пишутся с Feb 2026. Diagnose: .lovable/proofs/inv_p0_1_p0_4_diagnose.txt
-  // actor_type намеренно НЕ фильтруется (diagnose: 100% system, но оставляем устойчивым к будущим service-actor).
+  // INV-P0-1: provider subscriptions overdue beyond the provider grace window.
+  // A quiet day is normal when no subscription was due. The provider snapshot,
+  // not the total number of locally active subscriptions, is the source of truth.
   try {
-    const { count: bepaidRenewals24h } = await supabase
-      .from("audit_logs")
-      .select("*", { count: "exact", head: true })
-      .eq("action", "bepaid.payment.upsert_from_last_transaction")
-      .gte("created_at", yesterday.toISOString());
+    const { data: overdueCandidates, error: overdueError } = await supabase
+      .from("provider_subscriptions")
+      .select("state,next_charge_at,last_charge_at")
+      .eq("state", "active")
+      .not("next_charge_at", "is", null)
+      .lte("next_charge_at", yesterday.toISOString())
+      .limit(1000);
+    if (overdueError) throw overdueError;
 
-    const { count: activeSubsCount } = await supabase
-      .from("subscriptions_v2")
-      .select("*", { count: "exact", head: true })
-      .eq("status", "active")
-      .eq("auto_renew", true);
-
-    const hasActiveAutoRenew = (activeSubsCount || 0) > 0;
-    const hasRenewals = (bepaidRenewals24h || 0) > 0;
+    const overdueRenewals = (overdueCandidates || []).filter((row: any) =>
+      isProviderRenewalOverdue(row, now.getTime())
+    );
 
     results.push({
       code: "INV-P0-1",
-      name: "Автопродления за 24ч (bePaid)",
-      passed: !hasActiveAutoRenew || hasRenewals,
-      count: bepaidRenewals24h || 0,
+      name: "Просроченные автопродления bePaid (>24ч)",
+      passed: overdueRenewals.length === 0,
+      count: overdueRenewals.length,
       severity: "CRITICAL",
+      samples: overdueRenewals.slice(0, 5).map((row: any) => ({
+        next_charge_at: row.next_charge_at,
+        last_charge_at: row.last_charge_at,
+      })),
     });
   } catch (e) {
     results.push({
       code: "INV-P0-1",
-      name: "Автопродления за 24ч (bePaid)",
+      name: "Просроченные автопродления bePaid (>24ч)",
       passed: false,
       count: 0,
       severity: "CRITICAL",
@@ -306,23 +310,49 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
   // INV-P0-4: Cron jobs running (source of truth = cron.job_run_details, не audit_logs).
   // Legacy критерий (action='cron.job.triggered') давал false-red — события не пишутся с 2026-04-23.
   // Diagnose: 4912 runs / 99.9% success в последние 24ч. Proof: .lovable/proofs/inv_p0_1_p0_4_diagnose.txt
-  // RPC get_cron_runs_24h_count — SECURITY DEFINER, service-role only, схема cron не доступна напрямую.
+  // RPC is service-role only because cron schema is not exposed through PostgREST.
+  // A bounded audit fallback prevents a false CRITICAL if PostgREST temporarily
+  // misses the RPC while jobs demonstrably continue to execute.
   try {
     const { data: cronStats, error: cronErr } = await supabase
-      .rpc("get_cron_runs_24h_count");
-    if (cronErr) throw cronErr;
+      .rpc("get_cron_runs_24h_count_v2");
 
     const row = Array.isArray(cronStats) ? cronStats[0] : cronStats;
     const succRuns24h = Number(row?.succ_runs_24h ?? 0);
     const totalRuns24h = Number(row?.total_runs_24h ?? 0);
 
+    const [{ count: cronSourceCount }, { count: cronActorCount }] = await Promise.all([
+      supabase
+        .from("audit_logs")
+        .select("id", { count: "exact", head: true })
+        .contains("meta", { source: "cron" })
+        .gte("created_at", yesterday.toISOString()),
+      supabase
+        .from("audit_logs")
+        .select("id", { count: "exact", head: true })
+        .ilike("actor_label", "%cron%")
+        .gte("created_at", yesterday.toISOString()),
+    ]);
+    const cronAuditRows = Math.max(cronSourceCount || 0, cronActorCount || 0);
+    const cronEvidence = evaluateCronRuns({
+      successfulRpcRuns: succRuns24h,
+      cronAuditRows,
+      rpcFailed: Boolean(cronErr),
+    });
+
     results.push({
       code: "INV-P0-4",
       name: "Cron jobs за 24ч (pg_cron)",
-      passed: succRuns24h > 0,
-      count: succRuns24h,
-      severity: succRuns24h === 0 ? "CRITICAL" : "INFO",
-      samples: totalRuns24h > 0 ? [{ succ_runs_24h: succRuns24h, total_runs_24h: totalRuns24h }] : undefined,
+      passed: cronEvidence.passed,
+      count: cronEvidence.count,
+      severity: cronEvidence.passed ? "INFO" : "CRITICAL",
+      samples: [{
+        source: cronEvidence.source,
+        succ_runs_24h: succRuns24h,
+        total_runs_24h: totalRuns24h,
+        cron_audit_rows: cronAuditRows,
+        rpc_error: cronErr?.message || undefined,
+      }],
     });
   } catch (e) {
     results.push({
