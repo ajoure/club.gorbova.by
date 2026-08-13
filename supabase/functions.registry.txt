@@ -37,6 +37,7 @@ admin-delete-payment-preview
 admin-delete-payment-execute
 # PATCH-STRIPE-DOCUMENTS-DRAWER-V2 — registry-only entry (deploy reserved for Approve D)
 admin-payment-documents-resolve
+payment-receipt-resolve
 admin-invoice-checkout-issue
 auth-actions
 auth-check-email

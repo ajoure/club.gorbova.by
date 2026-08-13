@@ -78,6 +78,7 @@ import { CallsHistorySection } from "./calls/CallsHistorySection";
 import { CallButton } from "./calls/CallButton";
 import { SmsButton } from "./sms/SmsButton";
 import { ComposeEmailDialog } from "./ComposeEmailDialog";
+import { PaymentReceiptButton } from "@/components/payments/PaymentReceiptButton";
 
 import { InternalInstallmentBlock } from "@/components/installments/InternalInstallmentBlock";
 
@@ -1154,6 +1155,10 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                       const receiptUrl = (payment as any)?.receipt_url ||
                                         (payment as any)?.provider_response?.transaction?.receipt_url;
                       const isBepaid = (payment as any)?.provider === 'bepaid';
+                      const receiptProvider = String((payment as any)?.provider ?? '').toLowerCase();
+                      const canResolveReceipt = payment.status === 'succeeded' && (
+                        receiptProvider === 'stripe' || (receiptProvider === 'bepaid' && !!receiptUrl)
+                      );
                       const refunds = ((payment as any)?.refunds || []) as any[];
                       const refundedAmount = Number((payment as any)?.refunded_amount) || 0;
 
@@ -1194,13 +1199,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                                   : format(new Date(payment.created_at), "dd.MM.yy HH:mm")}
                               </div>
                               <div className="flex items-center gap-1">
-                                {receiptUrl ? (
-                                  <Button variant="outline" size="sm" asChild>
-                                    <a href={receiptUrl} target="_blank" rel="noopener noreferrer">
-                                      <Receipt className="w-4 h-4 mr-2" />
-                                      Чек
-                                    </a>
-                                  </Button>
+                                {canResolveReceipt ? (
+                                  <PaymentReceiptButton paymentId={payment.id} label="Открыть чек" />
                                 ) : isBepaid && (
                                   <Button
                                     variant="outline"

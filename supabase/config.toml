@@ -200,6 +200,11 @@ verify_jwt = true
 [functions.asset-classifier]
 verify_jwt = true
 
+# Authenticated receipt resolver. It performs an exact-ID provider refresh for
+# Stripe and authorizes either the order owner or existing finance/admin roles.
+[functions.payment-receipt-resolve]
+verify_jwt = true
+
 [functions.legal-og-image]
 # Public social-preview image. It exposes only metadata from published documents.
 verify_jwt = false

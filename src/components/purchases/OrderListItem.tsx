@@ -26,6 +26,7 @@ import {
 import { useOrderOfferMeta } from "@/hooks/useOrderOfferMeta";
 import { derivePaymentChannel } from "@/utils/derivePaymentChannel";
 import { invokeAuthenticatedFunction } from "@/utils/invokeAuthenticatedFunction";
+import { PaymentReceiptButton } from "@/components/payments/PaymentReceiptButton";
 
 interface Order {
   id: string;
@@ -76,7 +77,11 @@ export function OrderListItem({ order }: OrderListItemProps) {
   const hasRealPayment = hasRealSucceededPayment(payments);
   // Валидный чек bePaid — только у реального платежа и при непустом receipt_url.
   const realPayment = payments.find((p) => isPaid && p.status === "succeeded");
-  const receiptUrl = hasRealPayment ? getValidReceiptUrl(realPayment) : null;
+  const receiptProvider = String(realPayment?.provider ?? '').toLowerCase();
+  const canResolveReceipt = !!realPayment && (
+    receiptProvider === 'stripe' ||
+    (receiptProvider === 'bepaid' && !!getValidReceiptUrl(realPayment))
+  );
 
   // Резолв купленного офера + его document rules.
   const { data: resolvedOffer } = useOrderOfferMeta(order);
@@ -277,17 +282,14 @@ export function OrderListItem({ order }: OrderListItemProps) {
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
-        {/* Чек bePaid — только реальный платёж с валидным receipt_url */}
-        {receiptUrl && (
-          <Button
+        {/* Provider receipt is resolved at click time (Stripe URLs expire). */}
+        {canResolveReceipt && realPayment?.id && (
+          <PaymentReceiptButton
+            paymentId={realPayment.id}
             variant="ghost"
-            size="sm"
-            onClick={() => window.open(receiptUrl, "_blank", "noopener")}
-            title="Чек bePaid"
-          >
-            <ExternalLink className="h-4 w-4" />
-            <span className="hidden sm:inline ml-1">Чек</span>
-          </Button>
+            label="Открыть чек"
+            className="px-2"
+          />
         )}
 
         {/* Существующий канонический документ — доступен ВСЕГДА, даже если правила сейчас не выполняются */}

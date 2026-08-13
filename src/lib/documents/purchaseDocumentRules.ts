@@ -98,6 +98,7 @@ const EXCLUDED_PROVIDERS = new Set([
 ]);
 
 export interface PaymentLike {
+  id?: string;
   status?: string | null;
   provider?: string | null;
   receipt_url?: string | null;
