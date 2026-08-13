@@ -1,175 +1,48 @@
-// Resolve a provider receipt at click time.
+// payment-receipt-resolve — свежий чек по клику (Stripe hosted receipt expires ~30 дней).
 //
-// Stripe hosted receipt URLs expire. This endpoint therefore never returns a
-// stored Stripe URL: it performs an exact-ID retrieve and returns only the
-// freshly issued provider URL. The operation is read-only.
+// Hard contract:
+//   - verify_jwt = true; вход { payment_id }
+//   - Доступ: VIEW-роли (super_admin|admin|accountant) ИЛИ владелец заказа
+//   - Stripe: exact retrieve charges/{ch_…} (или payment_intents → latest_charge).
+//     НИКАКОГО list/search. Account+mode-aware через общую фабрику.
+//   - При любой ошибке провайдера возвращается receipt=null + machine-code.
+//     Сохранённый (протухший) Stripe URL НИКОГДА не возвращается.
+//   - bePaid: отдаём сохранённый receipt_url как есть (local_bepaid).
+//   - Ноль записей в payments_v2 / orders_v2 / subscriptions_v2 / entitlements.
 
 import { corsHeaders } from '../_shared/cors.ts';
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { createClient, SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import {
   createStripeClientForPayment,
   makeStripeRetrieveOverHttp,
-  resolveStripeAccountCode,
   type ConnectionLookup,
   type ReadSecret,
   type StripeClientResolution,
 } from '../_shared/payments/documents/stripe-client-factory.ts';
-import { resolveStripeDocuments, type StripeRetrieve } from '../_shared/payments/documents/stripe-documents.ts';
-import { resolveBePaidDocuments } from '../_shared/payments/documents/bepaid-documents.ts';
-import type { ProviderDocument } from '../_shared/payments/documents/types.ts';
 import { readAcquiringSecret } from '../_shared/acquiring/vault.ts';
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VIEW_ROLES = ['super_admin', 'admin', 'accountant'] as const;
-const SUCCESS_STATUSES = new Set(['succeeded', 'successful', 'refunded', 'partially_refunded']);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type PaymentRow = {
-  id: string;
-  provider: string | null;
-  provider_payment_id: string | null;
-  status: string | null;
-  order_id: string | null;
-  receipt_url: string | null;
-  meta: Record<string, unknown> | null;
-};
+export type ReceiptSource = 'provider_fresh' | 'local_bepaid';
 
-export type ReceiptResolveResult =
-  | { status: 200; body: { ok: true; payment_id: string; provider: string; url: string; document_type: string; can_download: boolean } }
-  | { status: number; body: { ok: false; error: string; retryable?: boolean } };
-
-export interface ReceiptResolverDeps {
-  loadPayment(id: string): Promise<PaymentRow | null>;
-  loadOrderOwner(orderId: string): Promise<string | null>;
-  buildStripeClient(args: { accountCode: string | null; livemode: boolean | null; testMode: boolean | null }): Promise<StripeClientResolution>;
+export interface ReceiptResponse {
+  payment_id: string;
+  provider: string;
+  receipt: { url: string; source: ReceiptSource } | null;
+  error_code?: string;
 }
 
-function exactProviderId(id: string | null, prefix: string): string | null {
-  return id?.startsWith(prefix) ? id : null;
-}
-
-function pickFreshStripeDocument(documents: ProviderDocument[]): ProviderDocument | null {
-  const fresh = documents.filter((document) =>
-    document.status === 'available' &&
-    !!document.url &&
-    (document.source === 'provider_api' || document.source === 'local_meta+provider_api')
-  );
-  const priority: ProviderDocument['type'][] = ['receipt', 'invoice_pdf', 'hosted_invoice'];
-  return fresh.sort((a, b) => priority.indexOf(a.type) - priority.indexOf(b.type))[0] ?? null;
-}
-
-export async function resolveReceiptForActor(
-  paymentId: string,
-  actor: { userId: string; isStaff: boolean },
-  deps: ReceiptResolverDeps,
-): Promise<ReceiptResolveResult> {
-  if (!UUID_RE.test(paymentId)) return { status: 400, body: { ok: false, error: 'INVALID_REQUEST' } };
-
-  const payment = await deps.loadPayment(paymentId);
-  if (!payment) return { status: 404, body: { ok: false, error: 'PAYMENT_NOT_FOUND' } };
-
-  if (!actor.isStaff) {
-    if (!payment.order_id) return { status: 403, body: { ok: false, error: 'FORBIDDEN' } };
-    const ownerId = await deps.loadOrderOwner(payment.order_id);
-    if (!ownerId || ownerId !== actor.userId) return { status: 403, body: { ok: false, error: 'FORBIDDEN' } };
-  }
-
-  if (!SUCCESS_STATUSES.has(String(payment.status ?? '').toLowerCase())) {
-    return { status: 409, body: { ok: false, error: 'PAYMENT_NOT_SUCCESSFUL' } };
-  }
-
-  const provider = String(payment.provider ?? '').toLowerCase();
-  const meta = payment.meta ?? {};
-
-  if (provider === 'stripe') {
-    const sm = ((meta as { stripe?: Record<string, unknown> }).stripe ?? {}) as {
-      payment_intent_id?: string; charge_id?: string; invoice_id?: string;
-      account_code?: string; livemode?: boolean; test_mode?: boolean;
-      charge?: { receipt_url?: string | null };
-      hosted_invoice_url?: string | null; invoice_pdf?: string | null;
-      invoice?: { hosted_invoice_url?: string | null; invoice_pdf?: string | null };
-    };
-    const paymentIntentId = sm.payment_intent_id ?? exactProviderId(payment.provider_payment_id, 'pi_');
-    const chargeId = sm.charge_id ?? exactProviderId(payment.provider_payment_id, 'ch_');
-    const invoiceId = sm.invoice_id ?? exactProviderId(payment.provider_payment_id, 'in_');
-
-    const account = resolveStripeAccountCode({
-      stripeAccountCode: sm.account_code ?? null,
-      rootAccountCode: (meta as { account_code?: string }).account_code ?? null,
-    });
-    if (!account.ok) {
-      return { status: 409, body: { ok: false, error: 'STRIPE_PAYMENT_CONTEXT_NOT_RESOLVED' } };
-    }
-
-    const client = await deps.buildStripeClient({
-      accountCode: account.accountCode,
-      livemode: typeof sm.livemode === 'boolean' ? sm.livemode : null,
-      testMode: typeof sm.test_mode === 'boolean' ? sm.test_mode : null,
-    });
-    if (!client.ok) {
-      return { status: 502, body: { ok: false, error: 'STRIPE_RECEIPT_REFRESH_FAILED', retryable: client.retryable } };
-    }
-
-    const resolved = await resolveStripeDocuments({
-      local: {
-        ids: {
-          payment_intent_id: paymentIntentId ?? null,
-          charge_id: chargeId ?? null,
-          invoice_id: invoiceId ?? null,
-        },
-        // Local URLs are provided only so a matching fresh provider document
-        // can replace them. pickFreshStripeDocument rejects local-only values.
-        urls: {
-          charge_receipt_url: sm.charge?.receipt_url ?? payment.receipt_url,
-          hosted_invoice_url: sm.hosted_invoice_url ?? sm.invoice?.hosted_invoice_url ?? null,
-          invoice_pdf: sm.invoice_pdf ?? sm.invoice?.invoice_pdf ?? null,
-        },
-      },
-      refresh: true,
-      stripe: client.client,
-      accountResolved: true,
-    });
-    const fresh = pickFreshStripeDocument(resolved.documents);
-    if (!fresh?.url) {
-      return { status: 502, body: { ok: false, error: 'STRIPE_RECEIPT_REFRESH_FAILED', retryable: true } };
-    }
-    return {
-      status: 200,
-      body: {
-        ok: true,
-        payment_id: payment.id,
-        provider,
-        url: fresh.url,
-        document_type: fresh.type,
-        can_download: fresh.can_download,
-      },
-    };
-  }
-
-  if (provider === 'bepaid') {
-    const transaction = (meta as { provider_response?: { transaction?: { uid?: string; receipt_url?: string } } })
-      .provider_response?.transaction ?? {};
-    const resolved = resolveBePaidDocuments({
-      receipt_url: payment.receipt_url,
-      provider_payment_id: payment.provider_payment_id,
-      transaction_uid: transaction.uid ?? null,
-      transaction_receipt_url: transaction.receipt_url ?? null,
-    }, false);
-    const document = resolved.documents.find((item) => item.status === 'available' && !!item.url);
-    if (!document?.url) return { status: 404, body: { ok: false, error: 'RECEIPT_NOT_AVAILABLE' } };
-    return {
-      status: 200,
-      body: {
-        ok: true,
-        payment_id: payment.id,
-        provider,
-        url: document.url,
-        document_type: document.type,
-        can_download: document.can_download,
-      },
-    };
-  }
-
-  return { status: 409, body: { ok: false, error: 'PROVIDER_NOT_SUPPORTED' } };
+export interface ReceiptDeps {
+  supabase: SupabaseClient;
+  /** Возвращает клиента Stripe для (account_code, mode). Вызывается только для stripe. */
+  buildStripeClient: (args: {
+    accountCode: string | null;
+    livemode: boolean | null;
+    testMode: boolean | null;
+  }) => Promise<StripeClientResolution>;
+  /** test_mode активного подключения для account_code (fallback, когда livemode пуст). */
+  connectionTestMode: (accountCode: string) => Promise<boolean | null>;
 }
 
 function json(body: unknown, status = 200) {
@@ -179,94 +52,251 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function productionDeps(supabase: SupabaseClient): ReceiptResolverDeps {
-  const lookupConnection: ConnectionLookup = {
-    async list(accountCode: string) {
-      const { data, error } = await supabase
-        .from('acquiring_connections')
-        .select('id, provider, account_code, test_mode, status')
-        .eq('provider', 'stripe')
-        .eq('account_code', accountCode)
-        .eq('status', 'active');
-      if (error || !Array.isArray(data)) return [];
-      return data.map((row) => ({
-        id: String(row.id),
-        provider: 'stripe' as const,
-        account_code: String(row.account_code),
-        test_mode: !!row.test_mode,
-        status: String(row.status),
-      }));
-    },
+function extractStripeMeta(meta: Record<string, unknown>) {
+  const s = (meta as { stripe?: Record<string, unknown> }).stripe ?? {};
+  const sm = s as {
+    charge_id?: string;
+    payment_intent_id?: string;
+    account_code?: string;
+    livemode?: boolean;
+    test_mode?: boolean;
   };
-  const readSecret: ReadSecret = (provider, accountCode, kind) => readAcquiringSecret(provider, accountCode, kind);
   return {
-    async loadPayment(id) {
-      const { data, error } = await supabase
+    chargeId: typeof sm.charge_id === 'string' ? sm.charge_id : null,
+    paymentIntentId: typeof sm.payment_intent_id === 'string' ? sm.payment_intent_id : null,
+    accountCode: (typeof sm.account_code === 'string' && sm.account_code.trim())
+      ? sm.account_code.trim()
+      : ((meta as { account_code?: string }).account_code ?? null),
+    livemode: typeof sm.livemode === 'boolean' ? sm.livemode : null,
+    testMode: typeof sm.test_mode === 'boolean' ? sm.test_mode : null,
+  };
+}
+
+/** Ядро: чистая функция поверх deps (тестируемая). */
+export async function resolveFreshReceipt(
+  paymentId: string,
+  deps: ReceiptDeps,
+): Promise<{ status: number; body: ReceiptResponse | { error: string } }> {
+  if (!UUID_RE.test(paymentId)) return { status: 400, body: { error: 'INVALID_REQUEST' } };
+
+  const { data: payment, error } = await deps.supabase
+    .from('payments_v2')
+    .select('id, provider, order_id, amount, meta, receipt_url')
+    .eq('id', paymentId)
+    .maybeSingle();
+  if (error) return { status: 500, body: { error: 'INTERNAL_ERROR' } };
+  if (!payment) return { status: 404, body: { error: 'PAYMENT_NOT_FOUND' } };
+
+  const provider = String(payment.provider ?? 'bepaid');
+  let meta = (payment.meta ?? {}) as Record<string, unknown>;
+  const amount = payment.amount != null ? Number(payment.amount) : null;
+  const isRefund = (amount ?? 0) < 0 || !!(meta as { is_refund?: boolean }).is_refund;
+
+  // Refund → чек берём у родительского платежа (canonical link only).
+  if (isRefund) {
+    const parentId = (meta as { parent_payment_id?: string }).parent_payment_id ?? null;
+    if (parentId && UUID_RE.test(parentId)) {
+      const { data: parent } = await deps.supabase
         .from('payments_v2')
-        .select('id, provider, provider_payment_id, status, order_id, receipt_url, meta')
-        .eq('id', id)
+        .select('meta, receipt_url')
+        .eq('id', parentId)
         .maybeSingle();
-      return error ? null : data as PaymentRow | null;
-    },
-    async loadOrderOwner(orderId) {
-      const { data, error } = await supabase.from('orders_v2').select('user_id').eq('id', orderId).maybeSingle();
-      return error ? null : (data?.user_id as string | null) ?? null;
-    },
-    async buildStripeClient(args) {
-      let testMode = args.testMode;
-      let livemode = args.livemode;
-
-      // Legacy Stripe rows can have account_code but no mode metadata. Infer
-      // the mode only from the single active connection for that exact
-      // account. Never probe both live and test modes.
-      if (testMode === null && livemode === null && args.accountCode) {
-        const rows = await lookupConnection.list(args.accountCode);
-        if (rows.length !== 1) {
-          return { ok: false, code: 'STRIPE_MODE_NOT_RESOLVED', retryable: false };
-        }
-        testMode = rows[0].test_mode;
-        livemode = !testMode;
+      if (parent) {
+        meta = (parent.meta ?? {}) as Record<string, unknown>;
+        (payment as { receipt_url?: string | null }).receipt_url =
+          (parent as { receipt_url?: string | null }).receipt_url ?? null;
       }
+    }
+  }
 
-      return createStripeClientForPayment({
-        ...args,
-        testMode,
-        livemode,
-      }, {
-        lookupConnection,
-        readSecret,
-        makeRetrieve: (secret: string): StripeRetrieve => makeStripeRetrieveOverHttp(secret),
-      });
-    },
+  if (provider !== 'stripe') {
+    const local = (payment as { receipt_url?: string | null }).receipt_url ?? null;
+    return {
+      status: 200,
+      body: {
+        payment_id: paymentId,
+        provider,
+        receipt: local ? { url: local, source: 'local_bepaid' } : null,
+        ...(local ? {} : { error_code: 'RECEIPT_NOT_AVAILABLE' }),
+      },
+    };
+  }
+
+  const sm = extractStripeMeta(meta);
+  if (!sm.accountCode) {
+    return {
+      status: 200,
+      body: { payment_id: paymentId, provider, receipt: null, error_code: 'STRIPE_ACCOUNT_NOT_RESOLVED' },
+    };
+  }
+
+  // Mode: livemode из meta; при отсутствии — детерминированный fallback на
+  // test_mode активного подключения этого account_code (без live↔test перебора).
+  let testMode = sm.testMode;
+  if (sm.livemode === null && testMode === null) {
+    testMode = await deps.connectionTestMode(sm.accountCode);
+    if (testMode === null) {
+      return {
+        status: 200,
+        body: { payment_id: paymentId, provider, receipt: null, error_code: 'STRIPE_MODE_NOT_RESOLVED' },
+      };
+    }
+  }
+
+  const resolution = await deps.buildStripeClient({
+    accountCode: sm.accountCode,
+    livemode: sm.livemode,
+    testMode,
+  });
+  if (!resolution.ok) {
+    return {
+      status: 200,
+      body: { payment_id: paymentId, provider, receipt: null, error_code: resolution.code },
+    };
+  }
+
+  let chargeId = sm.chargeId;
+  if (!chargeId && sm.paymentIntentId) {
+    const pi = await resolution.client.retrieve('payment_intents', sm.paymentIntentId);
+    if (!pi.ok || !pi.data) {
+      return {
+        status: 200,
+        body: {
+          payment_id: paymentId,
+          provider,
+          receipt: null,
+          error_code: pi.error?.code ?? 'STRIPE_HTTP_ERROR',
+        },
+      };
+    }
+    const latest = (pi.data as { latest_charge?: unknown }).latest_charge;
+    chargeId = typeof latest === 'string' ? latest : null;
+  }
+
+  if (!chargeId) {
+    return {
+      status: 200,
+      body: { payment_id: paymentId, provider, receipt: null, error_code: 'PROVIDER_DOCUMENT_ID_NOT_RESOLVED' },
+    };
+  }
+
+  const charge = await resolution.client.retrieve('charges', chargeId);
+  if (!charge.ok || !charge.data) {
+    return {
+      status: 200,
+      body: {
+        payment_id: paymentId,
+        provider,
+        receipt: null,
+        error_code: charge.error?.code ?? 'STRIPE_HTTP_ERROR',
+      },
+    };
+  }
+  const url = (charge.data as { receipt_url?: unknown }).receipt_url;
+  if (typeof url !== 'string' || !url.startsWith('https://')) {
+    return {
+      status: 200,
+      body: { payment_id: paymentId, provider, receipt: null, error_code: 'RECEIPT_NOT_AVAILABLE' },
+    };
+  }
+
+  return {
+    status: 200,
+    body: { payment_id: paymentId, provider, receipt: { url, source: 'provider_fresh' } },
   };
 }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
-  if (req.method !== 'POST') return json({ ok: false, error: 'INVALID_REQUEST' }, 400);
+  if (req.method !== 'POST') return json({ error: 'INVALID_REQUEST' }, 400);
+
+  let body: { payment_id?: string };
+  try { body = await req.json(); } catch { return json({ error: 'INVALID_REQUEST' }, 400); }
+  const paymentId = body.payment_id;
+  if (!paymentId || typeof paymentId !== 'string' || !UUID_RE.test(paymentId)) {
+    return json({ error: 'INVALID_REQUEST' }, 400);
+  }
 
   const authHeader = req.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
-  let body: { payment_id?: unknown };
-  try { body = await req.json(); } catch { return json({ ok: false, error: 'INVALID_REQUEST' }, 400); }
-  if (typeof body.payment_id !== 'string') return json({ ok: false, error: 'INVALID_REQUEST' }, 400);
+  if (!authHeader) return json({ error: 'UNAUTHORIZED' }, 401);
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
-  const { data: { user }, error } = await supabase.auth.getUser(authHeader.slice(7));
-  if (error || !user) return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
+  const token = authHeader.replace('Bearer ', '');
+  const { data: { user }, error: uErr } = await supabase.auth.getUser(token);
+  if (uErr || !user) return json({ error: 'UNAUTHORIZED' }, 401);
 
+  // ── Авторизация: роль ИЛИ владелец заказа ────────────────────────────────
   const roleChecks = await Promise.all(
-    VIEW_ROLES.map((role) => supabase.rpc('has_role_v2', { _user_id: user.id, _role_code: role })),
+    VIEW_ROLES.map((r) => supabase.rpc('has_role_v2', { _user_id: user.id, _role_code: r })),
   );
-  const isStaff = roleChecks.some((result) => result.data === true);
+  let allowed = roleChecks.some((r) => !!r.data);
+
+  const { data: paymentRow } = await supabase
+    .from('payments_v2')
+    .select('id, order_id, meta')
+    .eq('id', paymentId)
+    .maybeSingle();
+  if (!paymentRow) return json({ error: 'PAYMENT_NOT_FOUND' }, 404);
+
+  if (!allowed) {
+    let orderId = (paymentRow as { order_id?: string | null }).order_id ?? null;
+    if (!orderId) {
+      const parentId = ((paymentRow.meta ?? {}) as { parent_payment_id?: string }).parent_payment_id ?? null;
+      if (parentId && UUID_RE.test(parentId)) {
+        const { data: parent } = await supabase
+          .from('payments_v2').select('order_id').eq('id', parentId).maybeSingle();
+        orderId = (parent?.order_id as string | null) ?? null;
+      }
+    }
+    if (orderId) {
+      const { data: order } = await supabase
+        .from('orders_v2').select('user_id').eq('id', orderId).maybeSingle();
+      allowed = !!order && (order as { user_id?: string | null }).user_id === user.id;
+    }
+  }
+  if (!allowed) return json({ error: 'FORBIDDEN' }, 403);
+
+  const lookupConnection: ConnectionLookup = {
+    async list(account_code: string) {
+      const { data, error } = await supabase
+        .from('acquiring_connections')
+        .select('id, provider, account_code, test_mode, status')
+        .eq('provider', 'stripe')
+        .eq('account_code', account_code)
+        .eq('status', 'active');
+      if (error || !Array.isArray(data)) return [];
+      return data.map((r) => ({
+        id: String((r as { id: string }).id),
+        provider: 'stripe' as const,
+        account_code: String((r as { account_code: string }).account_code),
+        test_mode: !!(r as { test_mode: boolean }).test_mode,
+        status: String((r as { status: string }).status),
+      }));
+    },
+  };
+  const readSecret: ReadSecret = (provider, account_code, kind) =>
+    readAcquiringSecret(provider, account_code, kind);
 
   try {
-    const result = await resolveReceiptForActor(body.payment_id, { userId: user.id, isStaff }, productionDeps(supabase));
-    return json(result.body, result.status);
+    const r = await resolveFreshReceipt(paymentId, {
+      supabase,
+      buildStripeClient: (args) =>
+        createStripeClientForPayment(args, {
+          lookupConnection,
+          readSecret,
+          makeRetrieve: (secret) => makeStripeRetrieveOverHttp(secret),
+        }),
+      connectionTestMode: async (accountCode) => {
+        const rows = await lookupConnection.list(accountCode);
+        if (rows.length !== 1) return null;
+        return rows[0].test_mode;
+      },
+    });
+    return json(r.body, r.status);
   } catch {
-    return json({ ok: false, error: 'INTERNAL_ERROR' }, 500);
+    return json({ error: 'INTERNAL_ERROR' }, 500);
   }
 });
