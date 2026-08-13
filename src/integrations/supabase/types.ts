@@ -23545,6 +23545,14 @@ export type Database = {
           total_runs_24h: number
         }[]
       }
+      get_cron_runs_24h_count_v2: {
+        Args: never
+        Returns: {
+          failed_runs_24h: number
+          succ_runs_24h: number
+          total_runs_24h: number
+        }[]
+      }
       get_db_now: { Args: never; Returns: string }
       get_deal_requisites_status: {
         Args: { p_order_id: string }

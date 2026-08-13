@@ -1,11 +1,18 @@
 export interface TrainingContentRuleLike {
   product_id?: string | null;
   tariff_id?: string | null;
-  conditions?: Record<string, unknown> | null;
+  conditions?: unknown;
+}
+
+function asConditions(rule: TrainingContentRuleLike): Record<string, unknown> {
+  const c = rule.conditions;
+  return c && typeof c === "object" && !Array.isArray(c)
+    ? (c as Record<string, unknown>)
+    : {};
 }
 
 export function isMonthPurchaseRule(rule: TrainingContentRuleLike): boolean {
-  return rule.conditions?.match_purchase_month === true && Boolean(rule.tariff_id);
+  return asConditions(rule).match_purchase_month === true && Boolean(rule.tariff_id);
 }
 
 /**
@@ -16,14 +23,16 @@ export function isMonthPurchaseRule(rule: TrainingContentRuleLike): boolean {
 export function isExplicitProductBypassRule(
   rule: TrainingContentRuleLike,
 ): boolean {
-  if (!rule.product_id || rule.conditions?.match_purchase_month === true) {
+  const conditions = asConditions(rule);
+  if (!rule.product_id || conditions.match_purchase_month === true) {
     return false;
   }
 
-  const allowedModules = rule.conditions?.allowed_module_ids;
-  const allowedLessons = rule.conditions?.allowed_lesson_ids;
+  const allowedModules = conditions.allowed_module_ids;
+  const allowedLessons = conditions.allowed_lesson_ids;
   return (
     (Array.isArray(allowedModules) && allowedModules.length > 0) ||
     (Array.isArray(allowedLessons) && allowedLessons.length > 0)
   );
 }
+
