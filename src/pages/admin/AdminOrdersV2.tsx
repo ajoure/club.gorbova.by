@@ -61,6 +61,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
 import { usePermissions } from "@/hooks/usePermissions";
+import { PaymentReceiptButton } from "@/components/payments/PaymentReceiptButton";
 
 const ORDER_STATUS_LABELS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
   draft: { label: "Черновик", variant: "secondary" },
@@ -418,8 +419,6 @@ export default function AdminOrdersV2() {
                     const bepaidPayment = ((order as any).payments_v2 || []).find((p: any) =>
                       (p.provider === 'bepaid' || p.provider === 'stripe') && p.status === 'succeeded'
                     );
-                    const stripeHosted = bepaidPayment?.meta?.stripe?.hosted_invoice_url || null;
-                    const stripeInvoicePdf = bepaidPayment?.meta?.stripe?.invoice_pdf || null;
                     const refundedAmount = bepaidPayment ? Number(bepaidPayment.refunded_amount) || 0 : 0;
                     const paymentAmount = bepaidPayment ? Number(bepaidPayment.amount) || 0 : 0;
                     const refundStatus = refundedAmount >= paymentAmount && refundedAmount > 0 ? 'full' : refundedAmount > 0 ? 'partial' : 'none';
@@ -482,60 +481,24 @@ export default function AdminOrdersV2() {
                         </TableCell>
                         {/* Receipt column */}
                         <TableCell>
-                          {bepaidPayment?.receipt_url ? (
+                          {bepaidPayment && (
+                            bepaidPayment.provider === 'stripe' || !!bepaidPayment.receipt_url
+                          ) ? (
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <a 
-                                    href={bepaidPayment.receipt_url} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent"
-                                  >
-                                    <Receipt className="h-4 w-4 text-green-600" />
-                                  </a>
+                                  <PaymentReceiptButton
+                                    paymentId={bepaidPayment.id}
+                                    variant="ghost"
+                                    size="icon"
+                                    showLabel={false}
+                                    label="Открыть чек"
+                                    className="h-8 w-8 text-green-600"
+                                  />
                                 </TooltipTrigger>
                                 <TooltipContent>Открыть чек</TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
-                          ) : stripeHosted || stripeInvoicePdf ? (
-                            // Phase 8-C: Stripe subscription invoice links.
-                            <div className="flex items-center gap-1">
-                              {stripeHosted && (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <a
-                                        href={stripeHosted}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent"
-                                      >
-                                        <Receipt className="h-4 w-4 text-blue-600" />
-                                      </a>
-                                    </TooltipTrigger>
-                                    <TooltipContent>Stripe-инвойс (онлайн)</TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              )}
-                              {stripeInvoicePdf && (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <a
-                                        href={stripeInvoicePdf}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent"
-                                      >
-                                        <Download className="h-4 w-4 text-blue-600" />
-                                      </a>
-                                    </TooltipTrigger>
-                                    <TooltipContent>Stripe-инвойс (PDF)</TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              )}
-                            </div>
                           ) : bepaidPayment?.provider === 'bepaid' && bepaidPayment?.provider_payment_id ? (
                             <TooltipProvider>
                               <Tooltip>

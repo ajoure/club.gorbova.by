@@ -5,6 +5,7 @@ import { FileText, Clock, AlertCircle, XCircle, RefreshCw, ExternalLink } from "
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { PaymentReceiptButton } from "@/components/payments/PaymentReceiptButton";
 
 export type ReceiptStatus = 'available' | 'pending' | 'unavailable' | 'error';
 export type ReceiptErrorCode = 
@@ -111,8 +112,9 @@ export default function ReceiptStatusBadge({
     }
   };
   
-  // Available: show icon with link
-  if (derivedStatus === 'available' && receiptUrl) {
+  // Successful provider payments resolve the receipt at click time. Stripe
+  // links expire, so a stored receiptUrl must never be opened directly.
+  if (['successful', 'succeeded'].includes(statusNormalized) && (isStripe || derivedStatus === 'available')) {
     let tooltipText = 'Открыть чек';
     if (isStripe) {
       if (isRefund && isParentReceiptFallback) {
@@ -126,11 +128,14 @@ export default function ReceiptStatusBadge({
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="sm" className={cn("h-6 px-1", className)} asChild>
-            <a href={receiptUrl} target="_blank" rel="noopener noreferrer">
-              <FileText className="h-4 w-4 text-green-600" />
-            </a>
-          </Button>
+          <PaymentReceiptButton
+            paymentId={paymentId}
+            variant="ghost"
+            size="sm"
+            showLabel={false}
+            label={tooltipText}
+            className={cn("h-6 px-1 text-green-600", className)}
+          />
         </TooltipTrigger>
         <TooltipContent>
           <div className="flex items-center gap-1 text-xs">

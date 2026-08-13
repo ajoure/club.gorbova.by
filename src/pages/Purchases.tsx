@@ -53,6 +53,7 @@ interface OrderV2 {
   payments_v2: Array<{
     id: string;
     status: string;
+    provider: string | null;
     provider_payment_id: string | null;
     card_brand: string | null;
     card_last4: string | null;
@@ -100,6 +101,7 @@ interface SubscriptionV2 {
     payments_v2: Array<{
       id: string;
       status: string;
+      provider: string | null;
       provider_payment_id: string | null;
       card_brand: string | null;
       card_last4: string | null;
@@ -656,10 +658,15 @@ export default function Purchases() {
         onResume={handleResumeSubscription}
         onDownloadReceipt={downloadSubscriptionReceipt}
         lastPaidOrderId={selectedSubscription?.orders_v2?.id || selectedSubscription?.order_id || null}
-        receiptUrl={(() => {
-          const p = selectedSubscription?.orders_v2?.payments_v2?.[0] as any;
-          return p?.receipt_url || p?.provider_response?.transaction?.receipt_url || null;
-        })()}
+        receiptPaymentId={selectedSubscription?.orders_v2?.payments_v2?.find(
+          (payment) => {
+            if (payment.status !== 'succeeded') return false;
+            const provider = String(payment.provider ?? '').toLowerCase();
+            return provider === 'stripe' || (provider === 'bepaid' && !!(
+              payment.receipt_url || payment.provider_response?.transaction?.receipt_url
+            ));
+          },
+        )?.id ?? null}
         isProcessing={isProcessing}
       />
 

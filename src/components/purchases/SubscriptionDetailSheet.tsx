@@ -18,6 +18,8 @@ import {
 } from "@/components/ui/sheet";
 import { SubscriptionDocumentActions } from "./SubscriptionDocumentActions";
 import { StripePortalButton } from "./StripePortalButton";
+import { PaymentReceiptButton } from "@/components/payments/PaymentReceiptButton";
+import { getValidReceiptUrl } from "@/lib/documents/purchaseDocumentRules";
 
 
 interface Payment {
@@ -29,6 +31,8 @@ interface Payment {
   paid_at: string | null;
   card_brand: string | null;
   card_last4: string | null;
+  provider?: string | null;
+  receipt_url?: string | null;
   provider_response?: {
     transaction?: {
       receipt_url?: string;
@@ -73,7 +77,7 @@ interface SubscriptionDetailSheetProps {
   onCancel: (sub: Subscription) => void;
   onResume: (sub: Subscription) => void;
   onDownloadReceipt: (sub: Subscription) => void;
-  receiptUrl?: string | null;
+  receiptPaymentId?: string | null;
   /** Последний оплаченный order_id этой подписки — для канонических документов. */
   lastPaidOrderId?: string | null;
   isProcessing: boolean;
@@ -87,7 +91,7 @@ export function SubscriptionDetailSheet({
   onCancel,
   onResume,
   onDownloadReceipt,
-  receiptUrl,
+  receiptPaymentId,
   lastPaidOrderId,
   isProcessing,
 }: SubscriptionDetailSheetProps) {
@@ -346,7 +350,11 @@ export function SubscriptionDetailSheet({
               </h4>
               <div className="divide-y divide-border/40">
                 {visiblePayments.map((payment) => {
-                  const paymentReceiptUrl = (payment as any).receipt_url || payment.provider_response?.transaction?.receipt_url;
+                  const receiptProvider = String(payment.provider ?? '').toLowerCase();
+                  const canResolveReceipt = payment.status === 'succeeded' && (
+                    receiptProvider === 'stripe' ||
+                    (receiptProvider === 'bepaid' && !!getValidReceiptUrl(payment))
+                  );
                   return (
                     <div key={payment.id} className="flex items-center justify-between gap-3 px-4 py-3">
                       <div className="flex flex-col min-w-0">
@@ -358,16 +366,15 @@ export function SubscriptionDetailSheet({
                         </span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        {paymentReceiptUrl && (
-                          <Button
+                        {canResolveReceipt && (
+                          <PaymentReceiptButton
+                            paymentId={payment.id}
                             variant="ghost"
                             size="sm"
+                            showLabel={false}
+                            label="Открыть чек"
                             className="h-7 px-2"
-                            title={payment.status === 'succeeded' ? 'Чек bePaid' : 'Чек ошибки bePaid'}
-                            onClick={() => window.open(paymentReceiptUrl, '_blank')}
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                          </Button>
+                          />
                         )}
                         {getPaymentStatusBadge(payment.status)}
                       </div>
@@ -409,20 +416,19 @@ export function SubscriptionDetailSheet({
             onProviderResolved={setIsStripeSubscription}
           />
 
-          {receiptUrl && (
-            <Button
+          {receiptPaymentId && (
+            <PaymentReceiptButton
+              paymentId={receiptPaymentId}
               variant="default"
-              className="w-full gap-2"
-              onClick={() => window.open(receiptUrl, '_blank')}
-            >
-              <ExternalLink className="h-4 w-4" />
-              Чек bePaid
-            </Button>
+              size="default"
+              label="Открыть чек"
+              className="w-full"
+            />
           )}
 
           {/* Legacy виртуальная квитанция — показываем ТОЛЬКО когда нет реального
               эквайрингового чека (для будущих безналичных/рассрочечных сценариев). */}
-          {!receiptUrl && (
+          {!receiptPaymentId && (
             <Button
               variant="outline"
               className="w-full gap-2"
