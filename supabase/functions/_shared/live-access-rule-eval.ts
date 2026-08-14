@@ -31,6 +31,7 @@ export interface LiveAccessRuleResult {
 export interface LiveAccessRuleContext {
   now?: Date;
   contentMonth?: unknown;
+  purchaseMonths?: unknown;
 }
 
 interface LiveAccessRuleDependencies {
@@ -42,6 +43,18 @@ const defaultDependencies: LiveAccessRuleDependencies = {
   resolveProductAccess: resolveEffectiveProductAccess,
   checkPurchaseMonth: checkMonthPurchase,
 };
+
+export function resolveAllowedPurchaseMonths(
+  purchaseMonths: unknown,
+  contentMonth: unknown,
+): string[] {
+  const explicitMonths = Array.isArray(purchaseMonths)
+    ? [...new Set(purchaseMonths.filter(isValidMonthKey))]
+    : [];
+
+  if (explicitMonths.length > 0) return explicitMonths;
+  return isValidMonthKey(contentMonth) ? [contentMonth] : [];
+}
 
 export function snapshotProvesRuleAccess(
   snapshot: EffectiveAccessSnapshot,
@@ -96,18 +109,33 @@ export async function evaluateLiveAccessRule(
   }
 
   const conditions = rule.conditions ?? {};
-  if (conditions.match_purchase_month === true && isValidMonthKey(context.contentMonth)) {
-    const monthCheck = await dependencies.checkPurchaseMonth(supabase, {
-      user_id: userId,
-      tariff_id: rule.tariff_id ?? null,
-      month: context.contentMonth,
-    });
-    if (!monthCheck.passed) {
+  if (conditions.match_purchase_month === true) {
+    const allowedMonths = resolveAllowedPurchaseMonths(
+      context.purchaseMonths,
+      context.contentMonth,
+    );
+    let monthGatePassed = allowedMonths.length === 0;
+    let monthGateReason = 'no_paid_order_in_month';
+
+    for (const month of allowedMonths) {
+      const monthCheck = await dependencies.checkPurchaseMonth(supabase, {
+        user_id: userId,
+        tariff_id: rule.tariff_id ?? null,
+        month,
+      });
+      if (monthCheck.passed) {
+        monthGatePassed = true;
+        break;
+      }
+      if (monthCheck.reason === 'rpc_error') monthGateReason = 'rpc_error';
+    }
+
+    if (!monthGatePassed) {
       return {
         allowed: false,
         reason: 'month_gate_failed',
         ruleId,
-        monthGateReason: monthCheck.reason,
+        monthGateReason,
       };
     }
   }
