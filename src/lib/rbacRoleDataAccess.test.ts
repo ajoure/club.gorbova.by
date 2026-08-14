@@ -5,6 +5,7 @@ import formsBulkActionsSource from "../components/admin/forms/FormsBulkActionsBa
 import formsLoadErrorSource from "../components/admin/forms/FormsHubLoadError.tsx?raw";
 import formsDetailSource from "../components/admin/forms/FormsDetailOpener.tsx?raw";
 import preregistrationDetailSource from "../components/admin/PreregistrationDetailSheet.tsx?raw";
+import permissionsSource from "../hooks/usePermissions.tsx?raw";
 
 describe("RBAC role-to-data access contract", () => {
   it("persists and resolves none/view/edit/manage without losing explicit denies", () => {
@@ -73,5 +74,12 @@ describe("RBAC role-to-data access contract", () => {
     expect(formsDetailSource).toContain('canAccessSection("forms-hub", "edit")');
     expect(formsDetailSource).toContain('readOnly={!canEdit}');
     expect(preregistrationDetailSource).toContain("!readOnly &&");
+  });
+
+  it("does not admit a role to the admin shell when every explicit grant is none", () => {
+    expect(permissionsSource).toContain(
+      "LEVEL_RANK[level] >= LEVEL_RANK.view",
+    );
+    expect(permissionsSource).not.toContain("return sectionLevels.size > 0");
   });
 });

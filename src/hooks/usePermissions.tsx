@@ -187,7 +187,9 @@ export function usePermissions() {
     ];
     if (hasAnyPermission(adminPermissions)) return true;
     // RBAC v3: any section access at view+ grants admin shell
-    return sectionLevels.size > 0;
+    return Array.from(sectionLevels.values()).some(
+      (level) => LEVEL_RANK[level] >= LEVEL_RANK.view,
+    );
   }, [hasRole, hasAnyPermission, adminAccess]);
 
   // refetch by invalidating the query
