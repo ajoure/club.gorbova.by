@@ -326,6 +326,7 @@ async function userMatchesEventAccess(
   if (rules && rules.length > 0) {
     const evaluation = await evaluateLiveAccessRules(supabase, userId, rules, {
       contentMonth: event.metadata?.content_month,
+      purchaseMonths: event.metadata?.access_purchase_months,
     });
     return evaluation.allowed;
   }

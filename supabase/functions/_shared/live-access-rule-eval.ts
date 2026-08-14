@@ -1,5 +1,5 @@
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { checkMonthPurchase, isValidMonthKey } from './check-month-purchase.ts';
+import { checkAnyMonthPurchase, isValidMonthKey } from './check-month-purchase.ts';
 import {
   EffectiveAccessSnapshot,
   resolveEffectiveProductAccess,
@@ -31,17 +31,30 @@ export interface LiveAccessRuleResult {
 export interface LiveAccessRuleContext {
   now?: Date;
   contentMonth?: unknown;
+  purchaseMonths?: unknown;
 }
 
 interface LiveAccessRuleDependencies {
   resolveProductAccess: typeof resolveEffectiveProductAccess;
-  checkPurchaseMonth: typeof checkMonthPurchase;
+  checkPurchaseMonths: typeof checkAnyMonthPurchase;
 }
 
 const defaultDependencies: LiveAccessRuleDependencies = {
   resolveProductAccess: resolveEffectiveProductAccess,
-  checkPurchaseMonth: checkMonthPurchase,
+  checkPurchaseMonths: checkAnyMonthPurchase,
 };
+
+export function resolveAllowedPurchaseMonths(
+  purchaseMonths: unknown,
+  contentMonth: unknown,
+): string[] {
+  const explicitMonths = Array.isArray(purchaseMonths)
+    ? [...new Set(purchaseMonths.filter(isValidMonthKey))]
+    : [];
+
+  if (explicitMonths.length > 0) return explicitMonths;
+  return isValidMonthKey(contentMonth) ? [contentMonth] : [];
+}
 
 export function snapshotProvesRuleAccess(
   snapshot: EffectiveAccessSnapshot,
@@ -96,11 +109,15 @@ export async function evaluateLiveAccessRule(
   }
 
   const conditions = rule.conditions ?? {};
-  if (conditions.match_purchase_month === true && isValidMonthKey(context.contentMonth)) {
-    const monthCheck = await dependencies.checkPurchaseMonth(supabase, {
+  if (conditions.match_purchase_month === true) {
+    const allowedMonths = resolveAllowedPurchaseMonths(
+      context.purchaseMonths,
+      context.contentMonth,
+    );
+    const monthCheck = await dependencies.checkPurchaseMonths(supabase, {
       user_id: userId,
       tariff_id: rule.tariff_id ?? null,
-      month: context.contentMonth,
+      months: allowedMonths,
     });
     if (!monthCheck.passed) {
       return {

@@ -68,6 +68,8 @@ import { ru } from "date-fns/locale";
 import { slugify } from "@/utils/slugify";
 import { LiveEventAccessRulesEditor, type AccessRuleRow } from "@/components/admin/live/LiveEventAccessRulesEditor";
 import { MonthYearPicker } from "@/components/ui/month-year-picker";
+import { LiveEventPurchaseMonthsPicker } from "@/components/admin/live/LiveEventPurchaseMonthsPicker";
+import { normalizeLiveAccessPurchaseMonths } from "@/lib/liveEventAccessMonths";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventModerationPanel } from "@/components/live/LiveEventModeration";
@@ -165,6 +167,7 @@ interface LiveEventForm {
   event_timezone: string;
   kinescope_live_event_id: string;
   content_month: string | null;
+  access_purchase_months: string[];
   /** Transient provider data from create — persisted on save for new events */
   _providerDraft?: {
     live_event_id: string;
@@ -207,6 +210,7 @@ const defaultForm: LiveEventForm = {
   event_timezone: "Europe/Minsk",
   kinescope_live_event_id: "",
   content_month: null,
+  access_purchase_months: [],
   _providerDraft: null,
   notification_enabled: false,
   notification_template_id: "",
@@ -821,6 +825,10 @@ export default function AdminLiveEvents() {
 
       // Persist content_month for month-gated access (null clears the field)
       mergedMetadata.content_month = data.content_month || null;
+      mergedMetadata.access_purchase_months = normalizeLiveAccessPurchaseMonths(
+        data.access_purchase_months,
+        data.content_month,
+      );
 
 
       // SURGICAL HARDENING (live-bugfix): never write platform_status/status from form save.
@@ -1051,6 +1059,10 @@ export default function AdminLiveEvents() {
       event_timezone: event.event_timezone || "Europe/Minsk",
       kinescope_live_event_id: event.kinescope_live_event_id || "",
       content_month: (meta.content_month as string | undefined) ?? null,
+      access_purchase_months: normalizeLiveAccessPurchaseMonths(
+        meta.access_purchase_months,
+        meta.content_month,
+      ),
       notification_enabled: ns.enabled ?? false,
       notification_template_id: ns.template_id || "",
       notification_channels: ns.channels || ["telegram"],
@@ -1628,13 +1640,36 @@ export default function AdminLiveEvents() {
                   <Label className="text-sm font-medium">Месяц контента</Label>
                   <MonthYearPicker
                     value={form.content_month}
-                    onChange={(v) => setForm({ ...form, content_month: v })}
+                    onChange={(v) => {
+                      const wasUsingOnlyFallback = form.access_purchase_months.length === 0 ||
+                        (form.access_purchase_months.length === 1 && form.access_purchase_months[0] === form.content_month);
+                      setForm({
+                        ...form,
+                        content_month: v,
+                        access_purchase_months: wasUsingOnlyFallback
+                          ? (v ? [v] : [])
+                          : form.access_purchase_months,
+                      });
+                    }}
                     placeholder="Не задан (берётся из даты эфира)"
                   />
                   <p className="text-[11px] text-muted-foreground">
-                    Используется правилами с включённым флагом «Совпадение месяца покупки».
+                    Основной месяц эфира для архива и отображения.
                   </p>
                 </div>
+                {form.access_rules.some((rule) => rule.match_purchase_month === true) && (
+                  <div className="space-y-2 mb-4 rounded-lg border bg-muted/20 p-3">
+                    <Label className="text-sm font-medium">Месяцы покупок, которые дают доступ</Label>
+                    <LiveEventPurchaseMonthsPicker
+                      value={form.access_purchase_months}
+                      fallbackMonth={form.content_month}
+                      onChange={(months) => setForm({ ...form, access_purchase_months: months })}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Можно выбрать несколько месяцев. Пользователь войдёт, если оплатил выбранный тариф хотя бы в одном из них.
+                    </p>
+                  </div>
+                )}
                 {editingId && !accessRulesLoadedForEditing && (
                   <p className="text-xs text-muted-foreground mb-2">
                     Правила доступа загружаются…
@@ -1647,7 +1682,14 @@ export default function AdminLiveEvents() {
                     // edited. Only then will saveMutation delete+reinsert
                     // live_event_access_rules.
                     accessRulesDirtyRef.current = true;
-                    setForm({ ...form, access_rules: rules });
+                    const monthGateEnabled = rules.some((rule) => rule.match_purchase_month === true);
+                    setForm({
+                      ...form,
+                      access_rules: rules,
+                      access_purchase_months: monthGateEnabled && form.access_purchase_months.length === 0 && form.content_month
+                        ? [form.content_month]
+                        : form.access_purchase_months,
+                    });
                   }}
                 />
                 {editingId && existingRulesFetching && (

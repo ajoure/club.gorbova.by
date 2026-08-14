@@ -22,6 +22,19 @@ describe("live event access parity", () => {
     expect(resolveSource).toContain("await evaluateLiveAccessRule(");
     expect(tokenSource).toContain("await evaluateLiveAccessRules(");
     expect(tokenSource).toContain("path: 'reentry'");
+    expect(notificationSource).toContain("purchaseMonths: meta?.access_purchase_months");
+    expect(resolveSource).toContain("purchaseMonths: eventAllowedPurchaseMonths");
+    expect(tokenSource).toContain("purchaseMonths: event.metadata?.access_purchase_months");
+    expect(resolveSource).toContain("eventAllowedPurchaseMonths");
+  });
+
+  it("checks exact-tariff month lists through the bulk purchase RPC", () => {
+    const monthCheckSource = readRepoFile(
+      "supabase/functions/_shared/check-month-purchase.ts",
+    );
+    expect(monthCheckSource).toContain("has_month_purchase_bulk");
+    expect(monthCheckSource).toContain("data.some");
+    expect(monthCheckSource).toContain("months.length === 0");
   });
 
   it("does not use a product entitlement as proof of a selected tariff", () => {
