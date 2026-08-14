@@ -100,4 +100,4 @@ Hard stop (немедленно прекратить EXECUTE):
 - view-роль получает успешный UPDATE/DELETE, либо explicit none возвращает `true`;
 - деградация запросов `profiles`/`orders_v2` в админ-списках.
 
-**Итог: PASS (условный).** Критических дефектов в миграции нет; перед EXECUTE требуется решение по F1 (`hasAdminAccess` и строки `none`) и план замера по F2.
+**Итог: PASS.** F1 закрыт на head SHA `0f97a2999269cffd9ca45e80aab9ea3db9f38a5d`, критических дефектов нет, новых находок в diff `ffd06c51…..0f97a299…` нет. PR #310 может идти в merge после зелёных GitHub checks; открытым остаётся только F2 как pre-Publish performance gate (не блокирует merge, блокирует Publish).
