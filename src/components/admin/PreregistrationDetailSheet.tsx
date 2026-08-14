@@ -84,6 +84,8 @@ interface PreregistrationDetailSheetProps {
   preregistration: Preregistration | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  readOnly?: boolean;
+  canSendNotification?: boolean;
 }
 
 const statusOptions = [
@@ -107,6 +109,8 @@ export function PreregistrationDetailSheet({
   preregistration,
   open,
   onOpenChange,
+  readOnly = false,
+  canSendNotification = true,
 }: PreregistrationDetailSheetProps) {
   const queryClient = useQueryClient();
   const [newStatus, setNewStatus] = useState<string>("");
@@ -362,6 +366,7 @@ export function PreregistrationDetailSheet({
             <Select
               value={newStatus || preregistration.status}
               onValueChange={setNewStatus}
+              disabled={readOnly}
             >
               <SelectTrigger className="bg-background">
                 <SelectValue />
@@ -385,24 +390,27 @@ export function PreregistrationDetailSheet({
               placeholder="Добавить заметку..."
               rows={3}
               className="bg-background resize-none"
+              readOnly={readOnly}
             />
           </div>
 
           {/* Actions */}
           <div className="flex flex-col gap-2 pt-2">
-            <Button
-              onClick={() => updateMutation.mutate({
-                status: newStatus || preregistration.status,
-                notes,
-              })}
-              disabled={updateMutation.isPending}
-              className="w-full"
-            >
-              <Save className="h-4 w-4 mr-2" />
-              {updateMutation.isPending ? "Сохранение..." : "Сохранить изменения"}
-            </Button>
+            {!readOnly && (
+              <Button
+                onClick={() => updateMutation.mutate({
+                  status: newStatus || preregistration.status,
+                  notes,
+                })}
+                disabled={updateMutation.isPending}
+                className="w-full"
+              >
+                <Save className="h-4 w-4 mr-2" />
+                {updateMutation.isPending ? "Сохранение..." : "Сохранить изменения"}
+              </Button>
+            )}
 
-            {hasTelegram && (
+            {hasTelegram && canSendNotification && (
               <Button
                 variant="outline"
                 onClick={() => sendNotificationMutation.mutate()}

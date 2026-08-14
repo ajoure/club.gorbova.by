@@ -10,6 +10,7 @@ import { loadTrainingDetailContext, type TrainingDetailData } from "@/lib/traini
 import { supabase } from "@/integrations/supabase/client";
 import type { FormsHubRow } from "@/hooks/useFormsHubData";
 import { stripTechnicalSuffix } from "@/lib/formFieldLabel";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 
 interface Props {
   row: FormsHubRow | null;
@@ -17,6 +18,11 @@ interface Props {
 }
 
 export function FormsDetailOpener({ row, onClose }: Props) {
+  const { canAccessSection } = useAdminAccess();
+  const canEdit = canAccessSection("forms-hub", "edit");
+  const canManage = canAccessSection("forms-hub", "manage");
+  const canManagePayments = canAccessSection("payments", "manage");
+
   if (!row) return null;
 
   // PATCH E: site_questionnaire использует тот же existing training bridge
@@ -26,7 +32,14 @@ export function FormsDetailOpener({ row, onClose }: Props) {
   }
 
   if (row.source_type === "preorder") {
-    return <PreregistrationDetailBridge row={row} onClose={onClose} />;
+    return (
+      <PreregistrationDetailBridge
+        row={row}
+        onClose={onClose}
+        canEdit={canEdit}
+        canSendNotification={canManage && canManagePayments}
+      />
+    );
   }
 
   return <SiteFormDetailDialog row={row} onClose={onClose} />;
@@ -109,12 +122,24 @@ function TrainingDetailBridge({ row, onClose }: { row: FormsHubRow; onClose: () 
 
 // ── Preorder → existing PreregistrationDetailSheet ────────────────────
 
-function PreregistrationDetailBridge({ row, onClose }: { row: FormsHubRow; onClose: () => void }) {
+function PreregistrationDetailBridge({
+  row,
+  onClose,
+  canEdit,
+  canSendNotification,
+}: {
+  row: FormsHubRow;
+  onClose: () => void;
+  canEdit: boolean;
+  canSendNotification: boolean;
+}) {
   return (
     <PreregistrationDetailSheet
       preregistration={row.raw}
       open={true}
       onOpenChange={(open) => { if (!open) onClose(); }}
+      readOnly={!canEdit}
+      canSendNotification={canSendNotification}
     />
   );
 }

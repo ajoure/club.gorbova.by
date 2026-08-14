@@ -2,7 +2,7 @@
  * Forms Bulk Actions Bar — обёртка над BulkActionsBar с confirm-dialog для bulk-delete.
  *
  * Логика безопасности:
- * - Только admin/super_admin
+ * - Только уровень manage секции forms-hub (admin/super_admin получают его через canonical bypass)
  * - Удаление только site_form + preorder
  * - training всегда показывается как "будет пропущено" в dry-run summary
  */
@@ -18,7 +18,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { buildDeleteSummary, useFormsBulkDelete } from "@/hooks/useFormsBulkDelete";
 import type { FormsHubRow } from "@/hooks/useFormsHubData";
 
@@ -30,8 +30,8 @@ interface Props {
 }
 
 export function FormsBulkActionsBar({ selectedRows, totalCount, onClearSelection, onSelectAll }: Props) {
-  const { role } = useAuth();
-  const isAdmin = role === "admin" || role === "superadmin";
+  const { canAccessSection } = useAdminAccess();
+  const canDelete = canAccessSection("forms-hub", "manage");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const deleteMutation = useFormsBulkDelete();
 
@@ -55,7 +55,7 @@ export function FormsBulkActionsBar({ selectedRows, totalCount, onClearSelection
         entityName="записей"
         onClearSelection={onClearSelection}
         onSelectAll={onSelectAll}
-        onBulkDelete={isAdmin ? () => setConfirmOpen(true) : undefined}
+        onBulkDelete={canDelete ? () => setConfirmOpen(true) : undefined}
       />
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
