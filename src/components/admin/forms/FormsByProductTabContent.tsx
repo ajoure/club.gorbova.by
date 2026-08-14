@@ -10,6 +10,7 @@ import { FormsHubFiltersPanel } from "./FormsHubFilters";
 import { FormsHubTable } from "./FormsHubTable";
 import { FormsDetailOpener } from "./FormsDetailOpener";
 import { FormsBulkActionsBar } from "./FormsBulkActionsBar";
+import { FormsHubLoadError } from "./FormsHubLoadError";
 
 /**
  * "По продуктам" — двухуровневая (для training: трёхуровневая) группировка.
@@ -23,7 +24,7 @@ import { FormsBulkActionsBar } from "./FormsBulkActionsBar";
  */
 export function FormsByProductTabContent() {
   const [filters, setFilters] = useState<FormsHubFilters>(DEFAULT_FILTERS);
-  const { data, isLoading } = useFormsHubData(filters, undefined, { page: 1, pageSize: 50 }, { exportMode: true });
+  const { data, isLoading, isError, refetch } = useFormsHubData(filters, undefined, { page: 1, pageSize: 50 }, { exportMode: true });
   const [selectedRow, setSelectedRow] = useState<FormsHubRow | null>(null);
   const [selectedRows, setSelectedRows] = useState<FormsHubRow[]>([]);
   const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
@@ -117,7 +118,9 @@ export function FormsByProductTabContent() {
         <ColumnSettings columns={columns} onChange={setColumns} />
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <FormsHubLoadError onRetry={() => void refetch()} />
+      ) : isLoading ? (
         <div className="text-sm text-muted-foreground py-8 text-center">Загрузка...</div>
       ) : productGroups.length === 0 ? (
         <div className="text-sm text-muted-foreground py-8 text-center">Нет записей</div>

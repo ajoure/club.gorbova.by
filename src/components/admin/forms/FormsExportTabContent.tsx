@@ -9,6 +9,7 @@ import { FormsHubFiltersPanel } from "./FormsHubFilters";
 import { exportToExcel, exportToCSV, type ExportColumn } from "@/utils/exportTableData";
 import { format } from "date-fns";
 import type { FormsHubRow } from "@/hooks/useFormsHubData";
+import { FormsHubLoadError } from "./FormsHubLoadError";
 
 const SOURCE_LABELS: Record<FormsSourceType, string> = {
   site_form: "Анкета сайта",
@@ -36,7 +37,7 @@ const exportColumns: ExportColumn<FormsHubRow>[] = [
 export function FormsExportTabContent() {
   const [filters, setFilters] = useState<FormsHubFilters>(DEFAULT_FILTERS);
   const [exportFormat, setExportFormat] = useState<"xlsx" | "csv">("xlsx");
-  const { data, isLoading } = useFormsHubData(filters, undefined, { page: 1, pageSize: 50 }, { exportMode: true });
+  const { data, isLoading, isError, refetch } = useFormsHubData(filters, undefined, { page: 1, pageSize: 50 }, { exportMode: true });
 
   const rows = data?.rows;
   const totalCount = data?.totalCount ?? 0;
@@ -65,7 +66,9 @@ export function FormsExportTabContent() {
     <div className="space-y-3">
       <FormsHubFiltersPanel filters={filters} onChange={setFilters} />
 
-      <Card>
+      {isError && <FormsHubLoadError onRetry={() => void refetch()} />}
+
+      {!isError && <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Download className="h-4 w-4" />
@@ -97,7 +100,7 @@ export function FormsExportTabContent() {
             Экспорт применяет текущие фильтры. Выберите нужные параметры выше.
           </p>
         </CardContent>
-      </Card>
+      </Card>}
     </div>
   );
 }

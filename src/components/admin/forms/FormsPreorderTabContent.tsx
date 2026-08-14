@@ -30,6 +30,7 @@ import { FormsHubTable } from "./FormsHubTable";
 import { FormsHubPaginator } from "./FormsHubPaginator";
 import { FormsDetailOpener } from "./FormsDetailOpener";
 import { FormsBulkActionsBar } from "./FormsBulkActionsBar";
+import { FormsHubLoadError } from "./FormsHubLoadError";
 
 type BillingSegment = "all" | "pending" | "no_card" | "failed" | "paid";
 
@@ -40,13 +41,13 @@ export function FormsPreorderTabContent() {
   });
   const [pagination, setPagination] = useState<FormsHubPagination>(DEFAULT_PAGINATION);
   const [billingFilter, setBillingFilter] = useState<BillingSegment>("all");
-  const { data, isLoading } = useFormsHubData(filters, undefined, pagination);
+  const { data, isLoading, isError, refetch } = useFormsHubData(filters, undefined, pagination);
   const [selectedRow, setSelectedRow] = useState<FormsHubRow | null>(null);
   const [selectedRows, setSelectedRows] = useState<FormsHubRow[]>([]);
   const { columns, setColumns } = useFormsColumns();
 
   // Stats query — same shape as legacy, but limited to product filter scope.
-  const { data: stats } = useQuery({
+  const { data: stats, isError: isStatsError, refetch: refetchStats } = useQuery({
     queryKey: ["preregistration-stats", filters.product_id],
     queryFn: async () => {
       let query = supabase
@@ -192,12 +193,21 @@ export function FormsPreorderTabContent() {
         <span>Всего: <strong className="text-foreground">{data?.totalCount ?? "..."}</strong></span>
       </div>
 
-      <FormsHubTable
-        rows={filteredRows}
-        isLoading={isLoading}
-        onOpenDetail={handleOpenDetail}
-        onSelectionChange={handleSelectionChange}
-      />
+      {isError || isStatsError ? (
+        <FormsHubLoadError
+          onRetry={() => {
+            void refetch();
+            void refetchStats();
+          }}
+        />
+      ) : (
+        <FormsHubTable
+          rows={filteredRows}
+          isLoading={isLoading}
+          onOpenDetail={handleOpenDetail}
+          onSelectionChange={handleSelectionChange}
+        />
+      )}
 
       <FormsHubPaginator
         page={pagination.page}

@@ -4,7 +4,7 @@
  * Контракт безопасности (PATCH 3):
  * - DELETE доступен ТОЛЬКО для site_form (`site_form_submissions`) и preorder (`course_preregistrations`)
  * - training НИКОГДА не удаляется (это пользовательский прогресс в lesson_progress_state)
- * - Гард ролей: только admin/super_admin (RLS на таблицах + клиентский guard)
+ * - Гард ролей: forms-hub/manage (RLS на таблицах + клиентский guard)
  * - Dry-run summary до execute: сколько site_form, сколько preorder, сколько training будет пропущено
  * - После успеха инвалидируем все relevant queries forms-hub
  */

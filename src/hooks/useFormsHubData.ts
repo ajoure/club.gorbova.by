@@ -129,7 +129,8 @@ async function fetchSiteForms(
     query = query.range(offset, offset + pagination.pageSize - 1);
   }
 
-  const { data: forms, count } = await query;
+  const { data: forms, count, error } = await query;
+  if (error) throw error;
 
   // Batch-resolve profile user_ids
   const profileIdsToResolve: string[] = [];
@@ -142,10 +143,11 @@ async function fetchSiteForms(
 
   let profileUserIdMap: Record<string, string | null> = {};
   if (profileIdsToResolve.length > 0) {
-    const { data: profiles } = await supabase
+    const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
       .select("id, user_id")
       .in("id", [...new Set(profileIdsToResolve)]);
+    if (profilesError) throw profilesError;
     if (profiles) {
       for (const p of profiles) {
         profileUserIdMap[p.id] = p.user_id;
@@ -164,10 +166,11 @@ async function fetchSiteForms(
 
   let productMap: Record<string, { id: string; name: string }> = {};
   if (productIdsToResolve.size > 0) {
-    const { data: products } = await supabase
+    const { data: products, error: productsError } = await supabase
       .from("products_v2")
       .select("id, name")
       .in("id", [...productIdsToResolve]);
+    if (productsError) throw productsError;
     if (products) {
       for (const p of products) productMap[p.id] = { id: p.id, name: p.name };
     }
@@ -217,10 +220,11 @@ let _productCodeMapPromise: Promise<Record<string, { id: string; name: string }>
 async function getProductCodeMap(): Promise<Record<string, { id: string; name: string }>> {
   if (!_productCodeMapPromise) {
     _productCodeMapPromise = (async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("products_v2")
         .select("id, code, name")
         .not("code", "is", null);
+      if (error) throw error;
       const map: Record<string, { id: string; name: string }> = {};
       for (const p of data || []) {
         if (p.code) map[p.code] = { id: p.id, name: p.name };
@@ -262,10 +266,11 @@ async function fetchPreorders(
     query = query.range(offset, offset + pagination.pageSize - 1);
   }
 
-  const [{ data: preorders, count }, productMap] = await Promise.all([
+  const [{ data: preorders, count, error }, productMap] = await Promise.all([
     query,
     getProductCodeMap(),
   ]);
+  if (error) throw error;
 
   const rows: FormsHubRow[] = (preorders || []).map((p) => {
     const resolved = p.product_code ? productMap[p.product_code] : null;
@@ -329,7 +334,8 @@ async function fetchTraining(
     query = query.range(offset, offset + pagination.pageSize - 1);
   }
 
-  const { data: progress, count } = await query;
+  const { data: progress, count, error } = await query;
+  if (error) throw error;
 
   if (!progress) return { rows: [], count: 0 };
 
@@ -337,10 +343,11 @@ async function fetchTraining(
   const userIds = [...new Set(progress.map(p => p.user_id).filter(Boolean))];
   let profileMap: Record<string, any> = {};
   if (userIds.length > 0) {
-    const { data: profiles } = await supabase
+    const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
       .select("user_id, full_name, email")
       .in("user_id", userIds);
+    if (profilesError) throw profilesError;
     if (profiles) {
       for (const p of profiles) {
         if (p.user_id) profileMap[p.user_id] = p;
@@ -495,11 +502,12 @@ export function useFormsHubProducts() {
   return useQuery({
     queryKey: ["forms-hub-products"],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("products_v2")
         .select("id, name")
         .eq("is_active", true)
         .order("name");
+      if (error) throw error;
       return data || [];
     },
     staleTime: 5 * 60_000,

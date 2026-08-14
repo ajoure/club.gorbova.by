@@ -7,11 +7,12 @@ import { FormsHubTable } from "./FormsHubTable";
 import { FormsHubPaginator } from "./FormsHubPaginator";
 import { FormsDetailOpener } from "./FormsDetailOpener";
 import { FormsBulkActionsBar } from "./FormsBulkActionsBar";
+import { FormsHubLoadError } from "./FormsHubLoadError";
 
 export function FormsTrainingTabContent() {
   const [filters, setFilters] = useState<FormsHubFilters>({ ...DEFAULT_FILTERS, source_type: "training" });
   const [pagination, setPagination] = useState<FormsHubPagination>(DEFAULT_PAGINATION);
-  const { data, isLoading } = useFormsHubData(filters, "training", pagination);
+  const { data, isLoading, isError, refetch } = useFormsHubData(filters, "training", pagination);
   const [selectedRow, setSelectedRow] = useState<FormsHubRow | null>(null);
   const [selectedRows, setSelectedRows] = useState<FormsHubRow[]>([]);
   const { columns, setColumns } = useFormsColumns();
@@ -42,12 +43,16 @@ export function FormsTrainingTabContent() {
         <span>Всего: <strong className="text-foreground">{data?.totalCount ?? '...'}</strong></span>
       </div>
 
-      <FormsHubTable
-        rows={data?.rows || []}
-        isLoading={isLoading}
-        onOpenDetail={handleOpenDetail}
-        onSelectionChange={handleSelectionChange}
-      />
+      {isError ? (
+        <FormsHubLoadError onRetry={() => void refetch()} />
+      ) : (
+        <FormsHubTable
+          rows={data?.rows || []}
+          isLoading={isLoading}
+          onOpenDetail={handleOpenDetail}
+          onSelectionChange={handleSelectionChange}
+        />
+      )}
 
       <FormsHubPaginator
         page={pagination.page}
