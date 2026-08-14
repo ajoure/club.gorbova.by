@@ -100,4 +100,19 @@ Hard stop (немедленно прекратить EXECUTE):
 - view-роль получает успешный UPDATE/DELETE, либо explicit none возвращает `true`;
 - деградация запросов `profiles`/`orders_v2` в админ-списках.
 
-**Итог: PASS.** F1 закрыт на head SHA `0f97a2999269cffd9ca45e80aab9ea3db9f38a5d`, критических дефектов нет, новых находок в diff `ffd06c51…..0f97a299…` нет. PR #310 может идти в merge после зелёных GitHub checks; открытым остаётся только F2 как pre-Publish performance gate (не блокирует merge, блокирует Publish).
+## 8. SHA REFRESH (2026-08-14, read-only)
+
+Проверка обновления head PR #310: `0f97a2999269cffd9ca45e80aab9ea3db9f38a5d` → `661f9d2fb8e419ddf00838d949c71e62a3d5258b` (merge актуального main `747d576e77a5ef1cb79841d87fc6ad593bbe6472`).
+
+Что проверено фактически (managed-зеркало Lovable, только чтение):
+- `747d576e77a5ef1cb79841d87fc6ad593bbe6472` присутствует и является merge-коммитом «Update plan»; `git show --stat` = **1 файл, `.lovable/plan.md`, +11/−3**. Никаких изменений в `supabase/migrations/**`, `supabase/functions/**` или frontend-файлах RBAC этот шаг main не вносит.
+- В дереве `747d576e` файла `supabase/migrations/20260814134846_fix_role_data_access_contract.sql` нет — миграция по-прежнему живёт только в ветке PR #310 и не применена.
+- Коммиты `0f97a2999…` и `661f9d2fb…` в managed-зеркале отсутствуют (`git cat-file`: not found; `git fetch` по SHA: `not our ref`) — ветки PR в это зеркало не реплицируются. Побайтовое сравнение диапазона `0f97a2999..661f9d2fb` из Lovable невозможно и должно оставаться на стороне GitHub (сравнение файлов PR-diff и зелёные checks).
+
+Вердикт: **SHA REFRESH PASS (условный, ограниченная область проверки).**
+- PASS по подтверждаемой части: продвижение main `…→747d576e` содержит только `.lovable/plan.md` и не может изменить миграцию `20260814134846` или RBAC-файлы приложения.
+- Не подтверждено из Lovable: что сам merge-коммит `661f9d2fb` не содержит ручных правок поверх merge. Подтверждение — GitHub «Files changed» PR #310 на head `661f9d2fb`: файл миграции идентичен ревизованному, изменённых RBAC-файлов ровно столько же, что и на `0f97a2999`.
+- Ранее выданный **PASS сохраняет силу**, F1 остаётся закрытым, **F2 остаётся обязательным pre-Publish performance gate** без изменений порогов (медиана Execution Time: не более 2× и не более 1000 мс; `shared read`: не более 3×).
+- Условие EXECUTE не меняется: managed sync выполняется строго на **exact merged main SHA** после merge PR #310 (не на head ветки), затем preflight раздела 2.
+
+**Итог: PASS.** F1 закрыт, критических дефектов нет, содержательный scope не изменился. Действий не выполнял: только чтение git-истории.
