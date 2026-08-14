@@ -1,6 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { resolveEffectiveProductAccess } from '../_shared/resolve-effective-access.ts';
-import { checkMonthPurchase, isValidMonthKey } from '../_shared/check-month-purchase.ts';
+import { evaluateLiveAccessRule } from '../_shared/live-access-rule-eval.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 
 const corsHeaders = {
@@ -169,7 +168,7 @@ Deno.serve(async (req) => {
             .from('subscriptions_v2')
             .select('user_id')
             .eq('product_id', productId)
-            .in('status', ['active', 'trial']);
+            .in('status', ['active', 'trial', 'past_due', 'canceled']);
           subs?.forEach(s => candidateUserIds.add(s.user_id));
 
           const { data: ents } = await supabase
@@ -181,52 +180,13 @@ Deno.serve(async (req) => {
         }
 
         const verifiedUserIds = new Set<string>();
-        const eventContentMonth = isValidMonthKey(meta?.content_month)
-          ? meta.content_month
-          : null;
         for (const userId of candidateUserIds) {
           for (const rule of accessRules) {
-            const snapshot = await resolveEffectiveProductAccess(supabase, userId, rule.product_id, now);
-            const hasAccess = snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > now);
-            if (!hasAccess) continue;
-
-            if (rule.tariff_id) {
-              const { data: tariffSub } = await supabase
-                .from('subscriptions_v2')
-                .select('id')
-                .eq('user_id', userId)
-                .eq('product_id', rule.product_id)
-                .eq('tariff_id', rule.tariff_id)
-                .in('status', ['active', 'trial'])
-                .limit(1)
-                .maybeSingle();
-
-              // Keep the legacy entitlement fallback identical to live-resolve.
-              // Otherwise an entitlement-only member could open the event but
-              // would never receive its notification.
-              if (!tariffSub) {
-                const { data: tariffEnt } = await supabase
-                  .from('entitlements')
-                  .select('id')
-                  .eq('user_id', userId)
-                  .eq('product_id', rule.product_id)
-                  .eq('status', 'active')
-                  .limit(1)
-                  .maybeSingle();
-                if (!tariffEnt) continue;
-              }
-            }
-
-            const conditions = (rule.conditions || {}) as Record<string, unknown>;
-            if (conditions.match_purchase_month === true && eventContentMonth) {
-              const monthCheck = await checkMonthPurchase(supabase, {
-                user_id: userId,
-                tariff_id: rule.tariff_id ?? null,
-                month: eventContentMonth,
-              });
-              if (!monthCheck.passed) continue;
-            }
-
+            const evaluation = await evaluateLiveAccessRule(supabase, userId, rule, {
+              now,
+              contentMonth: meta?.content_month,
+            });
+            if (!evaluation.allowed) continue;
             verifiedUserIds.add(userId);
             break;
           }

@@ -31,6 +31,7 @@ export interface AccessSource {
   id: string;
   endAt: Date | null; // null = unlimited
   productId: string | null;
+  tariffId?: string | null;
   status?: string;
 }
 
@@ -114,7 +115,7 @@ export async function resolveEffectiveProductAccess(
   // 1. Subscriptions
   const { data: subs } = await supabase
     .from('subscriptions_v2')
-    .select('id, access_end_at, product_id, status')
+    .select('id, access_end_at, product_id, tariff_id, status')
     .eq('user_id', userId)
     .eq('product_id', productId)
     .in('status', ['active', 'trial', 'past_due', 'canceled'])
@@ -126,6 +127,7 @@ export async function resolveEffectiveProductAccess(
       id: sub.id,
       endAt: sub.access_end_at ? new Date(sub.access_end_at) : null,
       productId: sub.product_id,
+      tariffId: sub.tariff_id,
       status: sub.status,
     });
   }

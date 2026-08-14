@@ -6,19 +6,31 @@ const readRepoFile = (path: string) =>
   readFileSync(resolve(process.cwd(), path), "utf8");
 
 describe("live event access parity", () => {
-  it("applies the explicit month gate before scheduling a notification", () => {
-    const source = readRepoFile(
+  it("uses the shared rule evaluator in every entry path", () => {
+    const notificationSource = readRepoFile(
       "supabase/functions/live-event-notifications-cron/index.ts",
     );
+    const resolveSource = readRepoFile("supabase/functions/live-resolve/index.ts");
+    const tokenSource = readRepoFile(
+      "supabase/functions/live-token-validate/index.ts",
+    );
 
-    expect(source).toContain(
+    expect(notificationSource).toContain(
       "select('product_id, tariff_id, conditions')",
     );
-    expect(source).toContain("conditions.match_purchase_month === true");
-    expect(source).toContain("await checkMonthPurchase(supabase");
-    expect(source).toContain("if (!monthCheck.passed) continue");
-    expect(source).toContain("const { data: tariffEnt }");
-    expect(source).toContain("if (!tariffEnt) continue");
+    expect(notificationSource).toContain("await evaluateLiveAccessRule(");
+    expect(resolveSource).toContain("await evaluateLiveAccessRule(");
+    expect(tokenSource).toContain("await evaluateLiveAccessRules(");
+    expect(tokenSource).toContain("path: 'reentry'");
+  });
+
+  it("does not use a product entitlement as proof of a selected tariff", () => {
+    const evaluator = readRepoFile(
+      "supabase/functions/_shared/live-access-rule-eval.ts",
+    );
+    expect(evaluator).toContain("source.tariffId === rule.tariff_id");
+    expect(evaluator).toContain("no_matching_tariff_access");
+    expect(evaluator).not.toContain("from('entitlements')");
   });
 
   it("counts legacy profile-linked paid orders in the single-event gate", () => {

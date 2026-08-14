@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { resolveEffectiveProductAccess } from '../_shared/resolve-effective-access.ts';
+import { evaluateLiveAccessRules } from '../_shared/live-access-rule-eval.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -208,7 +208,7 @@ async function handleValidate(
     // Fetch event for slug + published check
     const { data: event } = await supabase
       .from('live_events')
-      .select('id, slug, is_published, platform_status, status, replay_enabled')
+      .select('id, slug, is_published, product_id, access_rule, metadata, platform_status, status, replay_enabled')
       .eq('id', link.live_event_id)
       .maybeSingle();
 
@@ -221,6 +221,15 @@ async function handleValidate(
     if (((event as any).platform_status === 'ended' || (event as any).platform_status === 'archived' || (event as any).status === 'ended') && !(event as any).replay_enabled) {
       await logAudit(supabase, 'live_link_replay_disabled', 'user', user.id, { link_id: link.id, live_event_id: event.id, path: 'reentry' });
       return jsonResponse({ status: 'replay_disabled' }, 410);
+    }
+
+    if (!await userMatchesEventAccess(supabase, user.id, event)) {
+      await logAudit(supabase, 'live_access_denied', 'user', user.id, {
+        link_id: link.id,
+        live_event_id: event.id,
+        path: 'reentry',
+      });
+      return jsonResponse({ status: 'access_denied' }, 403);
     }
 
     // Refresh proof + session for owner re-entry
@@ -246,7 +255,7 @@ async function handleValidate(
   // 10. Check event exists + published
   const { data: event, error: eventErr } = await supabase
     .from('live_events')
-    .select('id, slug, is_published, product_id, access_rule, status, platform_status, replay_enabled')
+    .select('id, slug, is_published, product_id, access_rule, metadata, status, platform_status, replay_enabled')
     .eq('id', link.live_event_id)
     .maybeSingle();
 
@@ -262,51 +271,13 @@ async function handleValidate(
     return jsonResponse({ status: 'replay_disabled' }, 410);
   }
 
-  // 11. Canonical access check
-  const accessRule = event.access_rule as { mode: string; product_id?: string; tariff_id?: string };
-  let accessValid = false;
-
-  if (accessRule.mode === 'all') {
-    accessValid = true;
-  } else {
-    const productId = accessRule.product_id || event.product_id;
-    const snapshot = await resolveEffectiveProductAccess(supabase, user.id, productId);
-
-    if (snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > new Date())) {
-      accessValid = true;
-    }
-
-    if (accessValid && accessRule.mode === 'tariff' && accessRule.tariff_id) {
-      const { data: tariffSub } = await supabase
-        .from('subscriptions_v2')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('product_id', productId)
-        .eq('tariff_id', accessRule.tariff_id)
-        .in('status', ['active', 'trial'])
-        .limit(1)
-        .maybeSingle();
-
-      if (!tariffSub) {
-        const { data: tariffEnt } = await supabase
-          .from('entitlements')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('product_id', productId)
-          .eq('status', 'active')
-          .limit(1)
-          .maybeSingle();
-
-        if (!tariffEnt) {
-          accessValid = false;
-        }
-      }
-    }
-  }
+  // 11. Canonical access check — same multi-rule evaluator as live-resolve
+  // and the notification audience.
+  const accessValid = await userMatchesEventAccess(supabase, user.id, event);
 
   if (!accessValid) {
     await logAudit(supabase, 'live_access_denied', 'user', user.id, {
-      link_id: link.id, live_event_id: event.id, access_rule_mode: accessRule.mode,
+      link_id: link.id, live_event_id: event.id, path: 'activation',
     });
     return jsonResponse({ status: 'access_denied' }, 403);
   }
@@ -334,6 +305,48 @@ async function handleValidate(
     redirect_slug: event.slug,
     session_key: sessionKey,
   });
+}
+
+async function userMatchesEventAccess(
+  supabase: any,
+  userId: string,
+  event: any,
+): Promise<boolean> {
+  const { data: rules, error: rulesError } = await supabase
+    .from('live_event_access_rules')
+    .select('id, product_id, tariff_id, conditions, rule_kind')
+    .eq('live_event_id', event.id);
+
+  // Access checks fail closed when the canonical rule table cannot be read.
+  if (rulesError) {
+    console.error('[live-token-validate] access rules error:', rulesError);
+    return false;
+  }
+
+  if (rules && rules.length > 0) {
+    const evaluation = await evaluateLiveAccessRules(supabase, userId, rules, {
+      contentMonth: event.metadata?.content_month,
+    });
+    return evaluation.allowed;
+  }
+
+  // Legacy events without rows retain their historic single-rule contract,
+  // but tariff mode still requires evidence for that exact tariff.
+  const legacy = event.access_rule as {
+    mode?: string;
+    product_id?: string | null;
+    tariff_id?: string | null;
+  } | null;
+  if (legacy?.mode === 'all') return true;
+
+  const productId = legacy?.product_id || event.product_id;
+  if (!productId) return false;
+  const evaluation = await evaluateLiveAccessRules(supabase, userId, [{
+    rule_kind: 'product',
+    product_id: productId,
+    tariff_id: legacy?.mode === 'tariff' ? legacy.tariff_id ?? null : null,
+  }]);
+  return evaluation.allowed;
 }
 
 // ════════════════════════════════════════════════════════════
