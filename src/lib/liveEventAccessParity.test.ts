@@ -22,6 +22,9 @@ describe("live event access parity", () => {
     expect(resolveSource).toContain("await evaluateLiveAccessRule(");
     expect(tokenSource).toContain("await evaluateLiveAccessRules(");
     expect(tokenSource).toContain("path: 'reentry'");
+    expect(notificationSource).toContain("purchaseMonths: meta?.access_purchase_months");
+    expect(resolveSource).toContain("purchaseMonths: eventAllowedPurchaseMonths");
+    expect(tokenSource).toContain("purchaseMonths: event.metadata?.access_purchase_months");
   });
 
   it("does not use a product entitlement as proof of a selected tariff", () => {

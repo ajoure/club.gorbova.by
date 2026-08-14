@@ -248,7 +248,7 @@ function RuleRow({ rule, index, products, usedProductIds, onUpdateProduct, onUpd
                 Совпадение месяца покупки
               </Label>
               <p className="text-[11px] text-muted-foreground">
-                Доступ только если у пользователя есть оплата в месяце эфира.
+                Доступ только при оплате в одном из месяцев, выбранных в настройках эфира.
               </p>
             </div>
           </div>

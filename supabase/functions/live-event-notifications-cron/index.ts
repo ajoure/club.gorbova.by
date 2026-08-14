@@ -185,6 +185,7 @@ Deno.serve(async (req) => {
             const evaluation = await evaluateLiveAccessRule(supabase, userId, rule, {
               now,
               contentMonth: meta?.content_month,
+              purchaseMonths: meta?.access_purchase_months,
             });
             if (!evaluation.allowed) continue;
             verifiedUserIds.add(userId);

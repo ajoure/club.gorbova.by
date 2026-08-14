@@ -1,6 +1,9 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { isValidMonthKey } from '../_shared/check-month-purchase.ts';
-import { evaluateLiveAccessRule } from '../_shared/live-access-rule-eval.ts';
+import {
+  evaluateLiveAccessRule,
+  resolveAllowedPurchaseMonths,
+} from '../_shared/live-access-rule-eval.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -173,11 +176,16 @@ Deno.serve(async (req) => {
         accessValid = true;
       }
 
-      // Month-gate context: derived from event.metadata.content_month
+      // Month-gate context: an explicit multi-month allowlist with the legacy
+      // single content_month as a backwards-compatible fallback.
       const eventMeta = (event.metadata || {}) as Record<string, any>;
       const eventContentMonth: string | null = isValidMonthKey(eventMeta.content_month)
         ? eventMeta.content_month
         : null;
+      const eventAllowedPurchaseMonths = resolveAllowedPurchaseMonths(
+        eventMeta.access_purchase_months,
+        eventContentMonth,
+      );
 
       // Dedup audit: one month-gate verdict per request
       let monthGateAudited = false;
@@ -197,6 +205,7 @@ Deno.serve(async (req) => {
           {
             rule_id: ruleId,
             content_month: eventContentMonth,
+            access_purchase_months: eventAllowedPurchaseMonths,
             ...extra,
           },
         );
@@ -207,12 +216,13 @@ Deno.serve(async (req) => {
           if (rule.rule_kind === 'any_authenticated' || !rule.product_id) continue;
           const evaluation = await evaluateLiveAccessRule(supabase, userId, rule, {
             contentMonth: eventContentMonth,
+            purchaseMonths: eventAllowedPurchaseMonths,
           });
           const monthGateEnabled = rule.conditions?.match_purchase_month === true;
           if (monthGateEnabled) {
-            if (!eventContentMonth) {
+            if (eventAllowedPurchaseMonths.length === 0) {
               await auditMonthGate(true, rule.id, {
-                skip_reason: 'event_has_no_content_month',
+                skip_reason: 'event_has_no_purchase_months',
               });
             } else if (evaluation.reason === 'month_gate_failed') {
               await auditMonthGate(false, rule.id, {
