@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import migrationSource from "../../supabase/migrations/20260814134846_fix_role_data_access_contract.sql?raw";
+import migrationSource from "../../supabase/migrations/20260814161253_7e1ec164-e1ea-4aac-9510-9a437ab6ef57.sql?raw";
 import formsHubSource from "../hooks/useFormsHubData.ts?raw";
 import formsBulkActionsSource from "../components/admin/forms/FormsBulkActionsBar.tsx?raw";
 import formsLoadErrorSource from "../components/admin/forms/FormsHubLoadError.tsx?raw";
