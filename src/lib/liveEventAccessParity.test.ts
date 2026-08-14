@@ -1,0 +1,46 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const readRepoFile = (path: string) =>
+  readFileSync(resolve(process.cwd(), path), "utf8");
+
+describe("live event access parity", () => {
+  it("uses the shared rule evaluator in every entry path", () => {
+    const notificationSource = readRepoFile(
+      "supabase/functions/live-event-notifications-cron/index.ts",
+    );
+    const resolveSource = readRepoFile("supabase/functions/live-resolve/index.ts");
+    const tokenSource = readRepoFile(
+      "supabase/functions/live-token-validate/index.ts",
+    );
+
+    expect(notificationSource).toContain(
+      "select('product_id, tariff_id, conditions')",
+    );
+    expect(notificationSource).toContain("await evaluateLiveAccessRule(");
+    expect(resolveSource).toContain("await evaluateLiveAccessRule(");
+    expect(tokenSource).toContain("await evaluateLiveAccessRules(");
+    expect(tokenSource).toContain("path: 'reentry'");
+  });
+
+  it("does not use a product entitlement as proof of a selected tariff", () => {
+    const evaluator = readRepoFile(
+      "supabase/functions/_shared/live-access-rule-eval.ts",
+    );
+    expect(evaluator).toContain("source.tariffId === rule.tariff_id");
+    expect(evaluator).toContain("no_matching_tariff_access");
+    expect(evaluator).not.toContain("from('entitlements')");
+  });
+
+  it("counts legacy profile-linked paid orders in the single-event gate", () => {
+    const migration = readRepoFile(
+      "supabase/migrations/20260814130836_fix_live_month_gate_profile_fallback.sql",
+    );
+
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.has_month_purchase");
+    expect(migration).toContain("p.id = o.profile_id");
+    expect(migration).toContain("p.user_id = _user_id");
+    expect(migration).toContain("COALESCE(o.meta->>'source', '') <> 'rule_engine'");
+  });
+});

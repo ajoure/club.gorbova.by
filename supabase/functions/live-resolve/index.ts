@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { resolveEffectiveProductAccess } from '../_shared/resolve-effective-access.ts';
-import { checkMonthPurchase, isValidMonthKey } from '../_shared/check-month-purchase.ts';
+import { isValidMonthKey } from '../_shared/check-month-purchase.ts';
+import { evaluateLiveAccessRule } from '../_shared/live-access-rule-eval.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -205,75 +205,28 @@ Deno.serve(async (req) => {
       if (!accessValid && accessRules && accessRules.length > 0) {
         for (const rule of accessRules) {
           if (rule.rule_kind === 'any_authenticated' || !rule.product_id) continue;
-          const snapshot = await resolveEffectiveProductAccess(supabase, userId, rule.product_id);
-          let productOk = false;
-          if (snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > new Date())) {
-            productOk = true;
-          }
-
-          if (productOk && rule.tariff_id) {
-            const { data: tariffSub } = await supabase
-              .from('subscriptions_v2')
-              .select('id')
-              .eq('user_id', userId)
-              .eq('product_id', rule.product_id)
-              .eq('tariff_id', rule.tariff_id)
-              .in('status', ['active', 'trial'])
-              .limit(1)
-              .maybeSingle();
-
-            if (!tariffSub) {
-              // Legacy fallback: allow if user has an active entitlement on the same product
-              const { data: tariffEnt } = await supabase
-                .from('entitlements')
-                .select('id')
-                .eq('user_id', userId)
-                .eq('product_id', rule.product_id)
-                .eq('status', 'active')
-                .limit(1)
-                .maybeSingle();
-
-              if (!tariffEnt) {
-                productOk = false;
-              }
+          const evaluation = await evaluateLiveAccessRule(supabase, userId, rule, {
+            contentMonth: eventContentMonth,
+          });
+          const monthGateEnabled = rule.conditions?.match_purchase_month === true;
+          if (monthGateEnabled) {
+            if (!eventContentMonth) {
+              await auditMonthGate(true, rule.id, {
+                skip_reason: 'event_has_no_content_month',
+              });
+            } else if (evaluation.reason === 'month_gate_failed') {
+              await auditMonthGate(false, rule.id, {
+                reason: evaluation.monthGateReason,
+                tariff_id: rule.tariff_id,
+              });
+            } else if (evaluation.allowed) {
+              await auditMonthGate(true, rule.id, {
+                tariff_id: rule.tariff_id,
+              });
             }
           }
 
-          // Month-gate: применяется только при явном флаге в conditions
-          if (productOk) {
-            const ruleConditions = (rule.conditions || {}) as Record<string, any>;
-            const monthGateEnabled = ruleConditions.match_purchase_month === true;
-
-            if (monthGateEnabled) {
-              if (!eventContentMonth) {
-                // Флаг включён, но у события нет content_month — gate пропускает
-                // (нечего сверять). Явный аудит для прозрачности.
-                await auditMonthGate(true, rule.id, {
-                  skip_reason: 'event_has_no_content_month',
-                });
-              } else {
-                const monthCheck = await checkMonthPurchase(supabase, {
-                  user_id: userId,
-                  tariff_id: rule.tariff_id ?? null,
-                  month: eventContentMonth,
-                });
-                if (!monthCheck.passed) {
-                  productOk = false;
-                  await auditMonthGate(false, rule.id, {
-                    reason: monthCheck.reason,
-                    tariff_id: rule.tariff_id,
-                  });
-                  continue; // пробуем следующее правило
-                } else {
-                  await auditMonthGate(true, rule.id, {
-                    tariff_id: rule.tariff_id,
-                  });
-                }
-              }
-            }
-          }
-
-          if (productOk) {
+          if (evaluation.allowed) {
             accessValid = true;
             break;
           }
@@ -287,38 +240,12 @@ Deno.serve(async (req) => {
         } else {
           const productId = accessRule.product_id || event.product_id;
           if (productId) {
-            const snapshot = await resolveEffectiveProductAccess(supabase, userId, productId);
-
-            if (snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > new Date())) {
-              accessValid = true;
-            }
-
-            if (accessValid && accessRule.mode === 'tariff' && accessRule.tariff_id) {
-              const { data: tariffSub } = await supabase
-                .from('subscriptions_v2')
-                .select('id')
-                .eq('user_id', userId)
-                .eq('product_id', productId)
-                .eq('tariff_id', accessRule.tariff_id)
-                .in('status', ['active', 'trial'])
-                .limit(1)
-                .maybeSingle();
-
-              if (!tariffSub) {
-                const { data: tariffEnt } = await supabase
-                  .from('entitlements')
-                  .select('id')
-                  .eq('user_id', userId)
-                  .eq('product_id', productId)
-                  .eq('status', 'active')
-                  .limit(1)
-                  .maybeSingle();
-
-                if (!tariffEnt) {
-                  accessValid = false;
-                }
-              }
-            }
+            const evaluation = await evaluateLiveAccessRule(supabase, userId, {
+              rule_kind: 'product',
+              product_id: productId,
+              tariff_id: accessRule.mode === 'tariff' ? accessRule.tariff_id : null,
+            });
+            accessValid = evaluation.allowed;
           }
         }
       }
