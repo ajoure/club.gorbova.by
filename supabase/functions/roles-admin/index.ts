@@ -61,7 +61,7 @@ interface RolesAdminRequest {
 
 async function sendRoleChangeEmail(
   supabaseUrl: string,
-  anonKey: string,
+  serviceRoleKey: string,
   userEmail: string,
   roleName: string,
   isAssign: boolean
@@ -98,7 +98,7 @@ async function sendRoleChangeEmail(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${anonKey}`,
+        "Authorization": `Bearer ${serviceRoleKey}`,
       },
       body: JSON.stringify({
         to: userEmail,
@@ -407,7 +407,7 @@ serve(async (req: Request): Promise<Response> => {
         const userEmail = await getUserEmail(userId);
         if (userEmail) {
           const roleDisplayName = await getRoleName(roleCode);
-          await sendRoleChangeEmail(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY") || "", userEmail, roleDisplayName, true);
+          await sendRoleChangeEmail(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "", userEmail, roleDisplayName, true);
           
           // Send Telegram notifications
           const actorEmail = await getUserEmail(actorUserId);
@@ -502,7 +502,7 @@ serve(async (req: Request): Promise<Response> => {
         const userEmail = await getUserEmail(userId);
         if (userEmail) {
           const roleDisplayName = await getRoleName(roleCode);
-          await sendRoleChangeEmail(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY") || "", userEmail, roleDisplayName, false);
+          await sendRoleChangeEmail(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "", userEmail, roleDisplayName, false);
           
           // Send Telegram notifications
           const actorEmail = await getUserEmail(actorUserId);

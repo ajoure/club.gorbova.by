@@ -459,7 +459,56 @@ const handler = async (req: Request): Promise<Response> => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Defense in depth beyond config.toml's JWT wall. A public/anon key can be
+    // presented as a JWT on legacy projects, so only the service role or a
+    // real signed-in administrator may use this privileged SMTP sender.
+    const authHeader = req.headers.get("Authorization") ?? req.headers.get("authorization");
+    const bearer = authHeader?.match(/^Bearer\\s+(.+)$/i)?.[1]?.trim();
+    if (!bearer) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+
+    if (bearer !== supabaseKey) {
+      const authResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        method: "GET",
+        headers: {
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${bearer}`,
+        },
+      });
+      if (!authResponse.ok) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const actor = await authResponse.json() as { id?: string };
+      if (!actor.id) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const [adminRole, superAdminRole] = await Promise.all([
+        supabase.rpc("has_role_v2", { _user_id: actor.id, _role_code: "admin" }),
+        supabase.rpc("has_role_v2", { _user_id: actor.id, _role_code: "super_admin" }),
+      ]);
+      if (adminRole.error || superAdminRole.error ||
+        (adminRole.data !== true && superAdminRole.data !== true)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+    }
 
     parsedRequest = await req.json() as EmailRequest;
     const {

@@ -189,6 +189,11 @@ verify_jwt = false
 [functions.crm-pipeline-automation-worker]
 verify_jwt = true
 
+# Email delivery must never be callable anonymously: the handler additionally
+# permits only the service role or an authenticated admin/super_admin.
+[functions.send-email]
+verify_jwt = true
+
 [functions.temp-cbold-dump]
 verify_jwt = false
 
