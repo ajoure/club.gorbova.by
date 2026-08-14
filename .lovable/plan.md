@@ -39,8 +39,16 @@ PASS:
 
 Findings (не блокируют SQL, но требуют решения):
 
-- **F1 (medium, требует решения до EXECUTE).** `usePermissions.hasAdminAccess()` разрешает админ-оболочку при `sectionLevels.size > 0`. После патча `get_admin_access` возвращает и строки с `access_level='none'`, поэтому роль, у которой есть только явные `none`, получит доступ в админ-оболочку. Сейчас таких ролей нет (`support` имеет реальные гранты), но контракт «none = нет доступа» формально нарушается. Нужен фронтенд-фикс: считать только уровни `>= view`.
-- **F2 (medium, производительность).** `profiles` (12k) и `orders_v2` (4.6k) получают per-row вызов `has_admin_section_access` → `get_admin_access` (plpgsql, множественные CTE). Требуется замер плана на реальном списке до Publish; при деградации — обёртка-кэш или `(SELECT has_admin_section_access(...))` для однократного вычисления.
+- **F1 — ЗАКРЫТ (PASS) на head SHA `0f97a2999269cffd9ca45e80aab9ea3db9f38a5d`.** Diff `ffd06c51…..0f97a299…` — 2 файла, одно смысловое изменение: `usePermissions.hasAdminAccess()` вместо `sectionLevels.size > 0` возвращает `Array.from(sectionLevels.values()).some(level => LEVEL_RANK[level] >= LEVEL_RANK.view)`. `LEVEL_RANK = {none:0, view:1, edit:2, manage:3}`, в `sectionLevels` попадают только section-строки (`resource_code IS NULL`) с максимальным рангом — роль с одними явными `none` в админ-оболочку больше не попадает, `view/edit/manage` сохраняют доступ. Legacy-ветки (`super_admin`/`admin`, permission-коды) не затронуты, `useAdminAccess`/`AdminRouteGuard` (deny-by-default) не менялись. Добавлен regression source-contract тест. Новых дефектов и расширений прав diff не вносит.
+- **F2 (medium, производительность) — обязательный pre-Publish gate.** `profiles` (12074) и `orders_v2` (4629) получают per-row вызов `has_admin_section_access` → `get_admin_access` (plpgsql, набор CTE).
+
+  Уточнённый план замера:
+  - Метод: `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` под ролью `authenticated` с подставленными `request.jwt.claims` тестового пользователя для каждой категории (view-роль, manage-роль, explicit none). Возвращаются только план и тайминги — ни одной строки данных, без PII и без UUID пользователей в отчёте.
+  - Запросы: те же, что шлёт UI, но в безопасной форме — `SELECT count(*)` и `SELECT 1 FROM … LIMIT 50` c реальными фильтрами и сортировкой списков контактов (`public.profiles`) и сделок (`public.orders_v2`).
+  - Baseline — на текущем production до применения миграции; пост-замер — сразу после применения, те же запросы и роли, 3 прогона, медиана.
+  - Hard stop: рост медианного `Execution Time` более чем в 2 раза или свыше 1000 мс на любом запросе; рост `shared read` буферов более чем в 3 раза; появление в плане вызовов функции числом порядка количества строк таблицы.
+  - При превышении порога Publish не выполняется, миграция откатывается по разделу 7, смягчение — однократное вычисление через `(SELECT public.has_admin_section_access(...))` или STABLE-обёртка с кэшем на запрос.
+
 - **F3 (low, асимметрия).** На `course_preregistrations` legacy admin-политики удаляются, а на `site_form_submissions` аналогичные `Admins can …` остаются. Итог корректен (permissive OR), но контракт «доступ только через forms-hub» соблюдён не полностью.
 - **F4 (low, расширение видимости).** Новая SELECT-политика на `profiles` открывает все исторические профили любому с `contacts:view` — это заявленная семантика, но фиксируем как осознанное расширение PII-видимости.
 - **F5 (info).** `products_v2`/`site_pages` уже имеют публичные/широкие SELECT-политики; новые permissive-политики не сужают и не расширяют реальную поверхность.
@@ -92,4 +100,4 @@ Hard stop (немедленно прекратить EXECUTE):
 - view-роль получает успешный UPDATE/DELETE, либо explicit none возвращает `true`;
 - деградация запросов `profiles`/`orders_v2` в админ-списках.
 
-**Итог: PASS (условный).** Критических дефектов в миграции нет; перед EXECUTE требуется решение по F1 (`hasAdminAccess` и строки `none`) и план замера по F2.
+**Итог: PASS.** F1 закрыт на head SHA `0f97a2999269cffd9ca45e80aab9ea3db9f38a5d`, критических дефектов нет, новых находок в diff `ffd06c51…..0f97a299…` нет. PR #310 может идти в merge после зелёных GitHub checks; открытым остаётся только F2 как pre-Publish performance gate (не блокирует merge, блокирует Publish).
