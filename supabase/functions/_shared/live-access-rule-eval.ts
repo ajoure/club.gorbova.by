@@ -1,5 +1,5 @@
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { checkMonthPurchase, isValidMonthKey } from './check-month-purchase.ts';
+import { checkAnyMonthPurchase, isValidMonthKey } from './check-month-purchase.ts';
 import {
   EffectiveAccessSnapshot,
   resolveEffectiveProductAccess,
@@ -36,12 +36,12 @@ export interface LiveAccessRuleContext {
 
 interface LiveAccessRuleDependencies {
   resolveProductAccess: typeof resolveEffectiveProductAccess;
-  checkPurchaseMonth: typeof checkMonthPurchase;
+  checkPurchaseMonths: typeof checkAnyMonthPurchase;
 }
 
 const defaultDependencies: LiveAccessRuleDependencies = {
   resolveProductAccess: resolveEffectiveProductAccess,
-  checkPurchaseMonth: checkMonthPurchase,
+  checkPurchaseMonths: checkAnyMonthPurchase,
 };
 
 export function resolveAllowedPurchaseMonths(
@@ -114,28 +114,17 @@ export async function evaluateLiveAccessRule(
       context.purchaseMonths,
       context.contentMonth,
     );
-    let monthGatePassed = allowedMonths.length === 0;
-    let monthGateReason = 'no_paid_order_in_month';
-
-    for (const month of allowedMonths) {
-      const monthCheck = await dependencies.checkPurchaseMonth(supabase, {
-        user_id: userId,
-        tariff_id: rule.tariff_id ?? null,
-        month,
-      });
-      if (monthCheck.passed) {
-        monthGatePassed = true;
-        break;
-      }
-      if (monthCheck.reason === 'rpc_error') monthGateReason = 'rpc_error';
-    }
-
-    if (!monthGatePassed) {
+    const monthCheck = await dependencies.checkPurchaseMonths(supabase, {
+      user_id: userId,
+      tariff_id: rule.tariff_id ?? null,
+      months: allowedMonths,
+    });
+    if (!monthCheck.passed) {
       return {
         allowed: false,
         reason: 'month_gate_failed',
         ruleId,
-        monthGateReason,
+        monthGateReason: monthCheck.reason,
       };
     }
   }
