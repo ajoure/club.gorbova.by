@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveEffectiveProductAccess } from '../_shared/resolve-effective-access.ts';
+import { checkMonthPurchase, isValidMonthKey } from '../_shared/check-month-purchase.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 
 const corsHeaders = {
@@ -151,10 +152,11 @@ Deno.serve(async (req) => {
         const windowStart = new Date(scheduledAt.getTime() - offset.minutes * 60 * 1000);
         if (now < windowStart || now > scheduledAt) continue;
 
-        // Canonical audience via resolveEffectiveProductAccess
+        // Canonical audience must mirror live-resolve. Never invite a user who
+        // will be rejected by the event's explicit month gate.
         const { data: accessRules } = await supabase
           .from('live_event_access_rules')
-          .select('product_id, tariff_id')
+          .select('product_id, tariff_id, conditions')
           .eq('live_event_id', event.id);
 
         if (!accessRules || accessRules.length === 0) continue;
@@ -179,6 +181,9 @@ Deno.serve(async (req) => {
         }
 
         const verifiedUserIds = new Set<string>();
+        const eventContentMonth = isValidMonthKey(meta?.content_month)
+          ? meta.content_month
+          : null;
         for (const userId of candidateUserIds) {
           for (const rule of accessRules) {
             const snapshot = await resolveEffectiveProductAccess(supabase, userId, rule.product_id, now);
@@ -195,7 +200,31 @@ Deno.serve(async (req) => {
                 .in('status', ['active', 'trial'])
                 .limit(1)
                 .maybeSingle();
-              if (!tariffSub) continue;
+
+              // Keep the legacy entitlement fallback identical to live-resolve.
+              // Otherwise an entitlement-only member could open the event but
+              // would never receive its notification.
+              if (!tariffSub) {
+                const { data: tariffEnt } = await supabase
+                  .from('entitlements')
+                  .select('id')
+                  .eq('user_id', userId)
+                  .eq('product_id', rule.product_id)
+                  .eq('status', 'active')
+                  .limit(1)
+                  .maybeSingle();
+                if (!tariffEnt) continue;
+              }
+            }
+
+            const conditions = (rule.conditions || {}) as Record<string, unknown>;
+            if (conditions.match_purchase_month === true && eventContentMonth) {
+              const monthCheck = await checkMonthPurchase(supabase, {
+                user_id: userId,
+                tariff_id: rule.tariff_id ?? null,
+                month: eventContentMonth,
+              });
+              if (!monthCheck.passed) continue;
             }
 
             verifiedUserIds.add(userId);
@@ -380,7 +409,7 @@ Deno.serve(async (req) => {
                         user_id: userId,
                         telegram_user_id: profile.telegram_user_id,
                         bot_id: club?.botId ?? null,
-                        text: renderedText,
+                        text: renderedText ?? '',
                         telegram_message_id: result.result.message_id,
                         reply_markup: keyboard,
                         source: 'live-event-notifications-cron',
