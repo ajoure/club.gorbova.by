@@ -467,7 +467,7 @@ const handler = async (req: Request): Promise<Response> => {
     // signed-in administrator with communication:manage may use this
     // privileged SMTP sender.
     const authHeader = req.headers.get("Authorization") ?? req.headers.get("authorization");
-    const bearer = authHeader?.match(/^Bearer\\s+(.+)$/i)?.[1]?.trim();
+    const bearer = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
     console.log(`[send-email][auth] handler_enter method=${req.method} bearer=${bearer ? "present" : "missing"}`);
     if (!bearer) {
       console.warn("[send-email][auth] deny reason=missing_bearer");

@@ -15,6 +15,8 @@ describe("send-email authentication boundary", () => {
   });
 
   it("permits only the service role or verified communication administrators", () => {
+    expect(sender).toContain('match(/^Bearer\\s+(.+)$/i)');
+    expect(sender).not.toContain('match(/^Bearer\\\\s+(.+)$/i)');
     expect(sender).toContain("if (bearer !== supabaseKey)");
     expect(sender).toContain("userClient.auth.getClaims(bearer)");
     expect(sender).toContain('"has_admin_section_access"');
