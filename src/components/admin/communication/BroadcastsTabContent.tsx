@@ -198,6 +198,22 @@ function readableBroadcastError(value: unknown): string {
     : "Не удалось выполнить операцию. Повторите попытку или обратитесь к суперадминистратору.";
 }
 
+async function readableFunctionInvokeError(value: unknown): Promise<string> {
+  const context = value && typeof value === "object" && "context" in value
+    ? (value as { context?: { json?: () => Promise<unknown> } }).context
+    : undefined;
+  if (context && typeof context.json === "function") {
+    try {
+      const payload = await context.json() as { error?: unknown; message?: unknown };
+      const detail = payload?.error ?? payload?.message;
+      if (detail) return readableBroadcastError(detail);
+    } catch {
+      // The response body may already be consumed; fall back to the client error.
+    }
+  }
+  return readableBroadcastError(value);
+}
+
 export function BroadcastsTabContent() {
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled">("templates");
@@ -725,7 +741,10 @@ export function BroadcastsTabContent() {
       }
 
       const { data, error } = await supabase.functions.invoke("telegram-send-test", { body: common });
-      if (error) throw new Error(readableBroadcastError(error));
+      if (error) throw new Error(await readableFunctionInvokeError(error));
+      if (data && typeof data === "object" && "error" in data && data.error) {
+        throw new Error(readableBroadcastError(data.error));
+      }
       return data;
     },
     onSuccess: () => {
@@ -751,7 +770,12 @@ export function BroadcastsTabContent() {
         .replace(/<[^>]*>/g, " ")
         .replace(/\s+/g, " ")
         .trim()}`;
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !session?.access_token) {
+        throw new Error("Сессия истекла. Войдите в систему заново и повторите попытку.");
+      }
       const { data, error } = await supabase.functions.invoke("send-email", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
         body: {
           to: recipient,
           subject: `[ТЕСТ] ${emailSubject.trim()}`,
@@ -764,7 +788,10 @@ export function BroadcastsTabContent() {
           },
         },
       });
-      if (error) throw new Error(readableBroadcastError(error));
+      if (error) throw new Error(await readableFunctionInvokeError(error));
+      if (data && typeof data === "object" && "error" in data && data.error) {
+        throw new Error(readableBroadcastError(data.error));
+      }
       return data;
     },
     onSuccess: () => {

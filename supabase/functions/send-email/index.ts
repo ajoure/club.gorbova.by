@@ -464,10 +464,13 @@ const handler = async (req: Request): Promise<Response> => {
 
     // Defense in depth beyond config.toml's JWT wall. A public/anon key can be
     // presented as a JWT on legacy projects, so only the service role or a
-    // real signed-in administrator may use this privileged SMTP sender.
+    // signed-in administrator with communication:manage may use this
+    // privileged SMTP sender.
     const authHeader = req.headers.get("Authorization") ?? req.headers.get("authorization");
     const bearer = authHeader?.match(/^Bearer\\s+(.+)$/i)?.[1]?.trim();
+    console.log(`[send-email][auth] handler_enter method=${req.method} bearer=${bearer ? "present" : "missing"}`);
     if (!bearer) {
+      console.warn("[send-email][auth] deny reason=missing_bearer");
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { "Content-Type": "application/json", ...corsHeaders },
@@ -475,39 +478,44 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     if (bearer !== supabaseKey) {
-      const authResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
-        method: "GET",
-        headers: {
-          apikey: supabaseAnonKey,
-          Authorization: `Bearer ${bearer}`,
-        },
+      const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: `Bearer ${bearer}` } },
       });
-      if (!authResponse.ok) {
+      const { data: claimsData, error: claimsError } = await userClient.auth.getClaims(bearer);
+      const actorId = claimsData?.claims?.sub;
+      if (claimsError || !actorId) {
+        console.warn("[send-email][auth] deny reason=invalid_claims");
         return new Response(JSON.stringify({ error: "Unauthorized" }), {
           status: 401,
           headers: { "Content-Type": "application/json", ...corsHeaders },
         });
       }
 
-      const actor = await authResponse.json() as { id?: string };
-      if (!actor.id) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-          status: 401,
-          headers: { "Content-Type": "application/json", ...corsHeaders },
-        });
-      }
-
-      const [adminRole, superAdminRole] = await Promise.all([
-        supabase.rpc("has_role_v2", { _user_id: actor.id, _role_code: "admin" }),
-        supabase.rpc("has_role_v2", { _user_id: actor.id, _role_code: "super_admin" }),
+      const [communicationManage, adminRole, superAdminRole] = await Promise.all([
+        supabase.rpc("has_admin_section_access", {
+          _user_id: actorId,
+          _section_code: "communication",
+          _min_level: "manage",
+        }),
+        supabase.rpc("has_role_v2", { _user_id: actorId, _role_code: "admin" }),
+        supabase.rpc("has_role_v2", { _user_id: actorId, _role_code: "super_admin" }),
       ]);
-      if (adminRole.error || superAdminRole.error ||
-        (adminRole.data !== true && superAdminRole.data !== true)) {
+      const hasCommunicationManage = communicationManage.data === true;
+      const hasAdminRole = adminRole.data === true;
+      const hasSuperAdminRole = superAdminRole.data === true;
+      const rbacError = communicationManage.error || adminRole.error || superAdminRole.error;
+      console.log(
+        `[send-email][auth] decision communication_manage=${hasCommunicationManage} admin=${hasAdminRole} super_admin=${hasSuperAdminRole} rbac_error=${rbacError ? "yes" : "no"}`,
+      );
+      if (rbacError || (!hasCommunicationManage && !hasAdminRole && !hasSuperAdminRole)) {
+        console.warn(`[send-email][auth] deny reason=${rbacError ? "rbac_lookup_failed" : "insufficient_access"}`);
         return new Response(JSON.stringify({ error: "Forbidden" }), {
           status: 403,
           headers: { "Content-Type": "application/json", ...corsHeaders },
         });
       }
+    } else {
+      console.log("[send-email][auth] allow source=service_role");
     }
 
     parsedRequest = await req.json() as EmailRequest;
