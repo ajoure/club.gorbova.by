@@ -14,11 +14,16 @@ describe("send-email authentication boundary", () => {
     expect(config).toMatch(/\[functions\.send-email\]\s+verify_jwt\s*=\s*true/);
   });
 
-  it("permits only the service role or a verified admin role in the handler", () => {
+  it("permits only the service role or verified communication administrators", () => {
     expect(sender).toContain("if (bearer !== supabaseKey)");
-    expect(sender).toContain("/auth/v1/user");
-    expect(sender).toContain('"has_role_v2", { _user_id: actor.id, _role_code: "admin" }');
-    expect(sender).toContain('"has_role_v2", { _user_id: actor.id, _role_code: "super_admin" }');
+    expect(sender).toContain("userClient.auth.getClaims(bearer)");
+    expect(sender).toContain('"has_admin_section_access"');
+    expect(sender).toContain('_section_code: "communication"');
+    expect(sender).toContain('_min_level: "manage"');
+    expect(sender).toContain('"has_role_v2", { _user_id: actorId, _role_code: "admin" }');
+    expect(sender).toContain('"has_role_v2", { _user_id: actorId, _role_code: "super_admin" }');
+    expect(sender).toContain("[send-email][auth] handler_enter");
+    expect(sender).not.toContain("/auth/v1/user");
     expect(sender.indexOf("parsedRequest = await req.json()")).toBeGreaterThan(
       sender.indexOf("if (bearer !== supabaseKey)"),
     );

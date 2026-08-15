@@ -19,6 +19,10 @@ describe("broadcast composer test delivery and responsive layout", () => {
     expect(composer).toContain('supabase.functions.invoke("send-email"');
     expect(composer).toContain('to: recipient');
     expect(composer).toContain('event_type: "broadcast_test"');
+    expect(composer).toContain("supabase.auth.getSession()");
+    expect(composer).toContain('headers: { Authorization: `Bearer ${session.access_token}` }');
+    expect(composer).toContain("readableFunctionInvokeError(error)");
+    expect(composer).toContain('"error" in data');
     expect(composer).not.toContain("sendTestMutation.mutate()");
   });
 
