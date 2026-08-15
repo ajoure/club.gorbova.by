@@ -774,9 +774,17 @@ export function BroadcastsTabContent() {
       if (sessionError || !session?.access_token) {
         throw new Error("Сессия истекла. Войдите в систему заново и повторите попытку.");
       }
-      const { data, error } = await supabase.functions.invoke("send-email", {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        body: {
+      // Direct fetch is intentional here: in the Lovable Cloud runtime the
+      // functions client dropped the per-invocation Authorization header,
+      // while the same explicit transport is already reliable for Telegram.
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
           to: recipient,
           subject: `[ТЕСТ] ${emailSubject.trim()}`,
           html,
@@ -786,13 +794,25 @@ export function BroadcastsTabContent() {
             event_type: "broadcast_test",
             meta: { source: "broadcast_editor", test_only: true },
           },
-        },
+        }),
       });
-      if (error) throw new Error(await readableFunctionInvokeError(error));
-      if (data && typeof data === "object" && "error" in data && data.error) {
-        throw new Error(readableBroadcastError(data.error));
+
+      const responseText = await response.text();
+      let result: unknown = null;
+      if (responseText) {
+        try {
+          result = JSON.parse(responseText);
+        } catch {
+          result = responseText;
+        }
       }
-      return data;
+      const resultError = result && typeof result === "object" && "error" in result
+        ? (result as { error?: unknown }).error
+        : null;
+      if (!response.ok || resultError) {
+        throw new Error(readableBroadcastError(resultError || `Ошибка сервера (${response.status})`));
+      }
+      return result;
     },
     onSuccess: () => {
       toast.success(`Тестовое письмо принято к отправке: ${testEmail.trim()}`);
