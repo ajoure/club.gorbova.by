@@ -16,7 +16,10 @@ const SYNTHETIC_ID_PATTERNS = [
 
 function isSyntheticId(value: string | null | undefined): boolean {
   if (!value) return true;
-  const v = value.trim();
+  // Legacy callers sometimes prefixed the account label with `@` before it
+  // reached the canonical resolver. Treat `@mc:*` exactly like `mc:*` so a
+  // transport identifier can never leak into the operator-facing UI.
+  const v = value.trim().replace(/^@+/, "");
   if (!v) return true;
   return SYNTHETIC_ID_PATTERNS.some((p) => p.test(v));
 }

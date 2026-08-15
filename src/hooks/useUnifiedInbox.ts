@@ -5,6 +5,7 @@ import { INBOX_DIALOGS_QK } from "@/constants/inboxQueryKeys";
 import { useAuth } from "@/contexts/AuthContext";
 import { normalizeTelegramSearchInput } from "@/lib/telegramSearch";
 import { sanitizeExternalDisplayName } from "@/lib/sanitizeExternalDisplayName";
+import { resolveInstagramAccountDisplayName } from "@/lib/resolveInstagramSourceLabel";
 import {
   getTelegramPersonalChannelLabel,
   type TelegramBusinessIdentity,
@@ -433,10 +434,9 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
   });
 
   const igAccountLabel = useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, string | null>();
     (igAccounts.data || []).forEach((a: any) => {
-      const name = a.display_name || a.account_name || a.instagram_page_id || a.id;
-      map.set(a.id, name);
+      map.set(a.id, resolveInstagramAccountDisplayName(a));
     });
     return map;
   }, [igAccounts.data]);
@@ -647,7 +647,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
         key: `ig:${d.__accountId}:${d.thread_key || d.peer_id}`,
         source: "instagram",
         sourceId: `${d.__accountId}:${d.thread_key || d.peer_id}`,
-        sourceLabel: accountLabel ? `@${accountLabel}` : null,
+        sourceLabel: accountLabel,
         displayName:
           sanitizeExternalDisplayName(d.full_name) ||
           sanitizeExternalDisplayName(d.sender_name) ||
