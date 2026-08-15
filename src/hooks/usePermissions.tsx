@@ -1,7 +1,11 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  AccessLevel,
+  permissionGrantedByAdminSections,
+} from "@/lib/rbacPermissionFallback";
 
 interface Role {
   id: string;
@@ -14,8 +18,6 @@ interface PermissionsData {
   permissions: string[];
   userRoles: Role[];
 }
-
-type AccessLevel = "none" | "view" | "edit" | "manage";
 
 interface AdminAccessRow {
   section_code: string;
@@ -105,37 +107,42 @@ export function usePermissions() {
     refetchOnWindowFocus: false,
   });
 
-  const permissions = data?.permissions ?? [];
-  const userRoles = data?.userRoles ?? [];
-  const adminAccess = data?.adminAccess ?? [];
+  const permissions = useMemo(() => data?.permissions ?? [], [data?.permissions]);
+  const userRoles = useMemo(() => data?.userRoles ?? [], [data?.userRoles]);
+  const adminAccess = useMemo(() => data?.adminAccess ?? [], [data?.adminAccess]);
 
   // Section access map (highest level wins, resource overrides ignored here — section gate is enough for canWrite)
-  const sectionLevels = new Map<string, AccessLevel>();
-  for (const row of adminAccess) {
-    if (row.resource_code) continue;
-    const prev = sectionLevels.get(row.section_code) ?? "none";
-    if (LEVEL_RANK[row.access_level] > LEVEL_RANK[prev]) {
-      sectionLevels.set(row.section_code, row.access_level);
+  const sectionLevels = useMemo(() => {
+    const levels = new Map<string, AccessLevel>();
+    for (const row of adminAccess) {
+      if (row.resource_code) continue;
+      const prev = levels.get(row.section_code) ?? "none";
+      if (LEVEL_RANK[row.access_level] > LEVEL_RANK[prev]) {
+        levels.set(row.section_code, row.access_level);
+      }
     }
-  }
+    return levels;
+  }, [adminAccess]);
 
-  const sectionMeets = (sectionCode: string, min: AccessLevel): boolean => {
+  const sectionMeets = useCallback((sectionCode: string, min: AccessLevel): boolean => {
     const have = sectionLevels.get(sectionCode) ?? "none";
     return LEVEL_RANK[have] >= LEVEL_RANK[min];
-  };
+  }, [sectionLevels]);
 
   const hasPermission = useCallback(
     (permissionCode: string): boolean => {
-      return permissions.includes(permissionCode);
+      if (permissions.includes(permissionCode)) return true;
+
+      return permissionGrantedByAdminSections(permissionCode, sectionLevels);
     },
-    [permissions]
+    [permissions, sectionLevels]
   );
 
   const hasAnyPermission = useCallback(
     (permissionCodes: string[]): boolean => {
-      return permissionCodes.some((code) => permissions.includes(code));
+      return permissionCodes.some((code) => hasPermission(code));
     },
-    [permissions]
+    [hasPermission]
   );
 
   const hasRole = useCallback(
@@ -175,7 +182,7 @@ export function usePermissions() {
     const section = CATEGORY_TO_SECTION[category];
     if (section && sectionMeets(section, "edit")) return true;
     return false;
-  }, [hasRole, isViewOnlyRole, hasPermission, adminAccess]);
+  }, [hasRole, isViewOnlyRole, hasPermission, sectionMeets]);
 
   const hasAdminAccess = useCallback((): boolean => {
     if (hasRole("super_admin") || hasRole("admin")) return true;
@@ -190,7 +197,7 @@ export function usePermissions() {
     return Array.from(sectionLevels.values()).some(
       (level) => LEVEL_RANK[level] >= LEVEL_RANK.view,
     );
-  }, [hasRole, hasAnyPermission, adminAccess]);
+  }, [hasRole, hasAnyPermission, sectionLevels]);
 
   // refetch by invalidating the query
   const refetch = useCallback(() => {
