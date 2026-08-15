@@ -141,7 +141,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "consents", label: "Согласия", path: "/admin/consents", icon: "ClipboardCheck", order: 8, permission: "users.view" },
       { id: "roles", label: "Сотрудники и роли", path: "/admin/roles", icon: "Shield", order: 9, permission: "roles.view" },
       { id: "training", label: "Тренинги", path: "/admin/training-modules", icon: "GraduationCap", order: 10, permission: "content.view" },
-      { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram", icon: "MessageCircle", order: 11 },
+      { id: "club-members", label: "Участники клуба", path: "/admin/club-members", icon: "MessageCircle", order: 11 },
       { id: "live-events", label: "Эфиры", path: "/admin/live-events", icon: "Video", order: 12, permission: "content.edit" },
       { id: "legislation", label: "Законодательство", path: "/admin/legislation", icon: "Library", order: 13, permission: "content.view" },
       { id: "telegram-invite-audit", label: "Telegram invite audit", path: "/admin/telegram/invite-audit", icon: "ShieldCheck", order: 14, permission: "telegram.clubs.manage" },
@@ -199,7 +199,9 @@ function mergeMenuSettings(saved: MenuSettings): MenuSettings {
               icon: "Library",
               permission: "content.view",
             }
-          : item,
+          : item.id === "club-members"
+            ? { ...item, path: "/admin/club-members" }
+            : item,
       )
       .filter(
         item => !DEPRECATED_ITEM_IDS.has(item.id) && !REPOSITION_ITEM_IDS.has(item.id)

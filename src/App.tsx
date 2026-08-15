@@ -117,6 +117,7 @@ const AdminIntegrations = lazy(() => import("./pages/admin/AdminIntegrations"));
 // отдельный маршрут /admin/integrations/acquiring убран.
 
 const TelegramClubMembers = lazy(() => import("./pages/admin/TelegramClubMembers"));
+const AdminClubMembers = lazy(() => import("./pages/admin/AdminClubMembers"));
 const TelegramInvites = lazy(() => import("./pages/admin/TelegramInvites"));
 const ProductClubMappings = lazy(() => import("./pages/admin/ProductClubMappings"));
 const TelegramChatAnalytics = lazy(() => import("./pages/admin/TelegramChatAnalytics"));
@@ -324,6 +325,7 @@ const App = () => {
               <Route path="/admin/integrations/socials" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminIntegrations /></AdminLayout></LazyRoute></ProtectedRoute>} />
               {/* /admin/integrations/acquiring removed (UI merge patch — Stripe lives in /admin/integrations/payments). */}
               <Route path="/admin/integrations/telegram/clubs/:clubId/members" element={<ProtectedRoute><LazyRoute><TelegramClubMembers /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/club-members" element={<ProtectedRoute><LazyRoute><AdminClubMembers /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/invites" element={<ProtectedRoute><LazyRoute><TelegramInvites /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><LazyRoute><ProductClubMappings /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/analytics" element={<ProtectedRoute><LazyRoute><AdminLayout><TelegramChatAnalytics /></AdminLayout></LazyRoute></ProtectedRoute>} />

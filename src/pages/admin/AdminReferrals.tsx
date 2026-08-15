@@ -13,14 +13,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { formatBynMinor, referralStatusLabel } from "@/lib/referrals";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 
 const PARTNERS_PAGE_SIZE = 50;
 
 export default function AdminReferrals() {
   const qc = useQueryClient();
-  const { isSuperAdmin } = usePermissions();
-  const canConfigure = isSuperAdmin();
+  const access = useAdminAccess();
+  const canManage = access.canAccessSection("referrals", "manage");
+  const canConfigure = canManage;
   const [partnersPage, setPartnersPage] = useState(0);
 
   const query = useQuery({
@@ -94,7 +95,7 @@ export default function AdminReferrals() {
   }, [partnersPage, partnersPages]);
 
   if (query.isLoading) return <div className="min-h-[50vh] grid place-items-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
-  if (query.error) return <div className="p-6 text-sm text-destructive">Реферальная схема недоступна.</div>;
+  if (query.error) return <div className="p-6 text-sm text-destructive">Не удалось загрузить реферальные данные. Это ошибка доступа или загрузки, а не отсутствие истории.</div>;
   const data = query.data!;
   const summary = data.summary as Record<string, number>;
 
@@ -154,7 +155,7 @@ export default function AdminReferrals() {
       <TabsContent value="payouts">
         <Section title="Заявки на выплату" subtitle="Последние 100 заявок">
           <div className="divide-y">
-            {data.payouts.map((p: any) => <CompactRow key={p.id} title={p.public_id} meta={new Date(p.requested_at).toLocaleDateString("ru-BY")} aside={<div className="flex items-center gap-2"><span className="font-medium">{formatBynMinor(p.amount_minor)}</span><Badge variant="secondary" className="text-[11px] font-medium">{p.status}</Badge>{p.status === "pending" && <><Button size="sm" variant="outline" className="h-7 px-2 text-xs font-medium" onClick={() => decidePayout.mutate({ id: p.id, decision: "rejected" })}>Отклонить</Button><Button size="sm" className="h-7 px-2 text-xs font-medium" onClick={() => decidePayout.mutate({ id: p.id, decision: "paid" })}>Погасить</Button></>}</div>} />)}
+            {data.payouts.map((p: any) => <CompactRow key={p.id} title={p.public_id} meta={new Date(p.requested_at).toLocaleDateString("ru-BY")} aside={<div className="flex items-center gap-2"><span className="font-medium">{formatBynMinor(p.amount_minor)}</span><Badge variant="secondary" className="text-[11px] font-medium">{p.status}</Badge>{canManage && p.status === "pending" && <><Button size="sm" variant="outline" className="h-7 px-2 text-xs font-medium" onClick={() => decidePayout.mutate({ id: p.id, decision: "rejected" })}>Отклонить</Button><Button size="sm" className="h-7 px-2 text-xs font-medium" onClick={() => decidePayout.mutate({ id: p.id, decision: "paid" })}>Погасить</Button></>}</div>} />)}
             {!data.payouts.length && <Empty>Заявок пока нет.</Empty>}
           </div>
         </Section>
@@ -184,9 +185,9 @@ export default function AdminReferrals() {
       </TabsContent>
 
       <TabsContent value="settings">
-        <Section title="Настройки программы" subtitle="Общие настройки изменяет только суперадминистратор">
+        <Section title="Настройки программы" subtitle="Общие настройки изменяет сотрудник с полным доступом к реферальной программе">
           <div className="grid gap-2 p-3 sm:grid-cols-2">
-            <Setting label="Программа включена" checked={data.settings.is_enabled} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ is_enabled: value })} />
+            <Setting label="Программа включена" checked={data.settings.is_enabled} disabled={!canManage} onChange={(value) => updateSettings.mutate({ is_enabled: value })} />
             <Setting label="Ссылки и привязка" checked={data.settings.tracking_enabled} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ tracking_enabled: value })} />
             <Setting label="Кабинет партнёра" checked={data.settings.partner_portal_enabled} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ partner_portal_enabled: value })} />
             <Setting label="Реальные начисления" checked={data.settings.accrual_enabled && !data.settings.shadow_mode} disabled={!canConfigure} onChange={(value) => updateSettings.mutate({ accrual_enabled: value, shadow_mode: !value })} />

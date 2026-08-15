@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -102,7 +102,9 @@ function resolveEntitlementProfile(
 
 export default function AdminEntitlements() {
   const navigate = useNavigate();
-  const { hasPermission } = usePermissions();
+  const access = useAdminAccess();
+  const canEdit = access.canAccessSection("payments", "edit");
+  const canManage = access.canAccessSection("payments", "manage");
   const [search, setSearch] = useState("");
   
   const [grantDialog, setGrantDialog] = useState(false);
@@ -390,13 +392,13 @@ export default function AdminEntitlements() {
               className="pl-9"
             />
           </div>
-          {hasPermission("entitlements.manage") && (
+          {canManage && (
             <Button variant="outline" onClick={() => setApplyRulesDialog(true)}>
               <Wand2 className="w-4 h-4 mr-2" />
               Применить правила тарифа
             </Button>
           )}
-          {hasPermission("entitlements.manage") && (
+          {canEdit && (
             <Button onClick={() => setGrantDialog(true)}>
               <Plus className="w-4 h-4 mr-2" />
               Выдать доступ
@@ -454,7 +456,7 @@ export default function AdminEntitlements() {
                   {format(new Date(ent.created_at), "dd MMM yyyy", { locale: ru })}
                 </TableCell>
                 <TableCell>
-                  {hasPermission("entitlements.manage") && ent.status === "active" && (
+                  {canManage && ent.status === "active" && (
                     <Button
                       variant="ghost"
                       size="icon"

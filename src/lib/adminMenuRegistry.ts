@@ -18,6 +18,8 @@ export interface AdminResourceDef {
   label: string;
   /** Полный путь (или путь с query) — для прямой проверки маршрута. */
   route: string;
+  /** Legacy/detail routes governed by the same resource override. */
+  altPrefixes?: string[];
 }
 
 export interface AdminSectionDef {
@@ -43,9 +45,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
     resources: [
       { code: "inbox",      label: "Входящие",     route: "/admin/communication" },
       { code: "broadcasts", label: "Рассылки",     route: "/admin/communication?tab=broadcasts" },
-      { code: "email",      label: "Email",        route: "/admin/communication?tab=email" },
-      { code: "support",    label: "Техподдержка", route: "/admin/communication?tab=support" },
-      { code: "instagram",  label: "Instagram",    route: "/admin/communication?tab=instagram" },
+      { code: "settings",   label: "Настройки",    route: "/admin/communication?tab=settings" },
     ],
   },
   {
@@ -59,6 +59,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
     label: "Сделки",
     group: "crm",
     routePrefix: "/admin/deals",
+    altPrefixes: ["/admin/tasks"],
   },
 
 
@@ -67,6 +68,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
     label: "Контакты",
     group: "crm",
     routePrefix: "/admin/contacts",
+    altPrefixes: ["/admin/users", "/admin/duplicates", "/admin/fields"],
   },
   {
     code: "referrals",
@@ -85,11 +87,24 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
     label: "Платежи",
     group: "crm",
     routePrefix: "/admin/payments",
+    altPrefixes: [
+      "/admin/payments-v2",
+      "/admin/entitlements",
+      "/admin/orders",
+      "/admin/orders-v2",
+      "/admin/subscriptions-v2",
+      "/admin/refunds-v2",
+      "/admin/bepaid-sync",
+      "/admin/bepaid-subscriptions",
+      "/admin/bepaid-archive-import",
+      "/admin/installments",
+    ],
     resources: [
       { code: "overview",             label: "Обзор",              route: "/admin/payments" },
       { code: "auto-renewals",        label: "Автопродления",      route: "/admin/payments/auto-renewals" },
       { code: "statement",            label: "Выписка",            route: "/admin/payments/statement" },
       { code: "links",                label: "Платёжные ссылки",   route: "/admin/payments/links" },
+      { code: "invoices",             label: "Счета",              route: "/admin/payments/invoices" },
       { code: "bepaid-subscriptions", label: "bePaid подписки",    route: "/admin/payments/bepaid-subscriptions" },
       { code: "payment-issues",       label: "Проблемы платежей",  route: "/admin/payments/payment-issues" },
       { code: "diagnostics",          label: "Диагностика",        route: "/admin/payments/diagnostics" },
@@ -100,20 +115,35 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
     label: "Анкеты и данные",
     group: "crm",
     routePrefix: "/admin/forms",
+    altPrefixes: ["/admin/preregistrations"],
+    resources: [
+      { code: "all",        label: "Все",           route: "/admin/forms" },
+      { code: "site",       label: "Анкеты сайта",  route: "/admin/forms?tab=site" },
+      { code: "preorders",  label: "Предзаписи",    route: "/admin/forms?tab=preorders" },
+      { code: "training",   label: "Обучение",      route: "/admin/forms?tab=training" },
+      { code: "by-product", label: "По продуктам",  route: "/admin/forms?tab=by-product" },
+      { code: "export",     label: "Экспорт",       route: "/admin/forms?tab=export" },
+    ],
   },
 
   // ─────────── Служебные ───────────
-  { code: "documents",           label: "Документы",          group: "service", routePrefix: "/admin/documents" },
+  { code: "documents",           label: "Документы",          group: "service", routePrefix: "/admin/documents", altPrefixes: ["/admin/document-templates", "/admin/executors"] },
   {
     code: "integrations",
     label: "Интеграции",
     group: "service",
     routePrefix: "/admin/integrations",
+    altPrefixes: ["/admin/amocrm", "/admin/telegram-diagnostics", "/admin/telegram/audit-shape-runs"],
     resources: [
-      { code: "crm",      label: "CRM",      route: "/admin/integrations/crm" },
+      { code: "crm",      label: "CRM",      route: "/admin/integrations/crm", altPrefixes: ["/admin/amocrm"] },
       { code: "payments", label: "Платежи",  route: "/admin/integrations/payments" },
       { code: "email",    label: "Email",    route: "/admin/integrations/email" },
-      { code: "telegram", label: "Telegram", route: "/admin/integrations/telegram" },
+      {
+        code: "telegram",
+        label: "Telegram",
+        route: "/admin/integrations/telegram",
+        altPrefixes: ["/admin/telegram-diagnostics", "/admin/telegram/audit-shape-runs"],
+      },
       { code: "socials",  label: "Соцсети",  route: "/admin/integrations/socials" },
       { code: "other",    label: "Прочие",   route: "/admin/integrations/other" },
     ],
@@ -123,11 +153,11 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
   { code: "ai",                   label: "Нейросеть",            group: "service", routePrefix: "/admin/ai" },
   { code: "products",             label: "Продукты",             group: "service", routePrefix: "/admin/products-v2", altPrefixes: ["/admin/products"] },
   { code: "sections",             label: "Разделы платформы",    group: "service", routePrefix: "/admin/sections" },
-  { code: "editorial",            label: "Редакция",             group: "service", routePrefix: "/admin/editorial", altPrefixes: ["/admin/news"] },
+  { code: "editorial",            label: "Редакция",             group: "service", routePrefix: "/admin/editorial", altPrefixes: ["/admin/news", "/admin/content"] },
   { code: "consents",             label: "Согласия",             group: "service", routePrefix: "/admin/consents" },
-  { code: "roles",                label: "Сотрудники и роли",    group: "service", routePrefix: "/admin/roles" },
-  { code: "training",             label: "Тренинги",             group: "service", routePrefix: "/admin/training-modules", altPrefixes: ["/admin/training"] },
-  { code: "club-members",         label: "Участники клуба",      group: "service", routePrefix: "/admin/integrations/telegram" },
+  { code: "roles",                label: "Сотрудники и роли",    group: "service", routePrefix: "/admin/roles", altPrefixes: ["/admin/audit", "/admin/tenants"] },
+  { code: "training",             label: "Тренинги",             group: "service", routePrefix: "/admin/training-modules", altPrefixes: ["/admin/training", "/admin/training-lessons", "/admin/kb-import"] },
+  { code: "club-members",         label: "Участники клуба",      group: "service", routePrefix: "/admin/club-members", altPrefixes: ["/admin/integrations/telegram/clubs"] },
   { code: "live-events",          label: "Эфиры",                group: "service", routePrefix: "/admin/live-events" },
   { code: "legislation",          label: "Законодательство",     group: "service", routePrefix: "/admin/legislation" },
   { code: "telegram-invite-audit",label: "Telegram invite audit",group: "service", routePrefix: "/admin/telegram/invite-audit" },
@@ -144,22 +174,11 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
  * Root /admin резолвится отдельной веткой ниже (exact match).
  */
 const ADMIN_OPEN_PATHS: readonly string[] = [
-  "/admin/audit",
   "/admin/system",                     // /admin/system/audit и т.д.
   "/admin/system-health",
   "/admin/docs",
   "/admin/help",
-  "/admin/tenants",
-  "/admin/content",                    // legacy
-  "/admin/entitlements",               // legacy
-  "/admin/duplicates",                 // legacy
-  "/admin/fields",
   "/admin/email",                      // legacy, до миграции в communication
-  "/admin/refunds-v2",
-  "/admin/orders",
-  "/admin/orders-v2",
-  "/admin/subscriptions-v2",
-  "/admin/users",
 ];
 
 export interface ResolvedAdminRoute {
@@ -169,7 +188,9 @@ export interface ResolvedAdminRoute {
 }
 
 /** Возвращает секцию для пути; deny-by-default — если ничего не подошло, kind='unknown'. */
-export function resolveAdminSectionForPath(pathname: string): ResolvedAdminRoute {
+export function resolveAdminSectionForPath(pathOrLocation: string): ResolvedAdminRoute {
+  const url = new URL(pathOrLocation, "https://admin.local");
+  const pathname = url.pathname;
   if (!pathname.startsWith("/admin")) {
     return { kind: "unknown" };
   }
@@ -201,15 +222,31 @@ export function resolveAdminSectionForPath(pathname: string): ResolvedAdminRoute
   }
   if (!best) return { kind: "unknown" };
 
-  // resource match
+  // Resource match. Query-aware resources take priority over the default
+  // resource on the same pathname (communication/forms tabs).
   let resourceCode: string | undefined;
   if (best.section.resources) {
-    let bestRes: { res: AdminResourceDef; len: number } | null = null;
+    let bestRes: { res: AdminResourceDef; score: number } | null = null;
     for (const r of best.section.resources) {
-      const base = r.route.split("?")[0];
-      if (pathname === base || pathname.startsWith(base + "/")) {
-        if (!bestRes || base.length > bestRes.len) {
-          bestRes = { res: r, len: base.length };
+      const routeCandidates = [r.route, ...(r.altPrefixes ?? [])];
+      for (const candidate of routeCandidates) {
+        const resourceUrl = new URL(candidate, "https://admin.local");
+        const base = resourceUrl.pathname;
+        if (!(pathname === base || pathname.startsWith(base + "/"))) continue;
+
+        const queryMatches = Array.from(resourceUrl.searchParams.entries()).every(
+          ([key, value]) => url.searchParams.get(key) === value,
+        );
+        if (!queryMatches) continue;
+
+        // A default resource only matches when the current URL has no tab query;
+        // otherwise an unknown tab inherits the section grant instead of silently
+        // borrowing the first resource's override.
+        if (!resourceUrl.search && url.searchParams.has("tab")) continue;
+
+        const score = base.length * 100 + Array.from(resourceUrl.searchParams).length;
+        if (!bestRes || score > bestRes.score) {
+          bestRes = { res: r, score };
         }
       }
     }

@@ -51,6 +51,7 @@ import {
 import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { useTaskRelations } from "@/hooks/useTaskRelations";
 import { normalizeCompanyName } from "@/lib/companies/normalizeCompanyName";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 
 import {
   TASK_DIALOG_GLASS,
@@ -107,6 +108,8 @@ export function ViewCrmTaskDialog({
   const { data: types = [] } = useCrmTaskTypes();
   const { data: staff = [] } = useStaffOptions();
   const updateStatus = useUpdateCrmTaskStatus();
+  const access = useAdminAccess();
+  const canEdit = access.canAccessSection("deals", "edit");
 
   const relations = useTaskRelations(
     task?.deal_id ? [task.deal_id] : [],
@@ -388,7 +391,7 @@ export function ViewCrmTaskDialog({
         </div>
 
         {/* Footer */}
-        <DialogFooter className="px-5 py-3 border-t border-white/50 bg-white/30 flex flex-row flex-nowrap items-center justify-end gap-2 overflow-x-auto">
+        {canEdit && <DialogFooter className="px-5 py-3 border-t border-white/50 bg-white/30 flex flex-row flex-nowrap items-center justify-end gap-2 overflow-x-auto">
           {showCancel && (
             <Button
               size="sm"
@@ -432,7 +435,7 @@ export function ViewCrmTaskDialog({
               Готово
             </Button>
           )}
-        </DialogFooter>
+        </DialogFooter>}
       </DialogContent>
     </Dialog>
   );

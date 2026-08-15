@@ -145,7 +145,8 @@ export function useTelegramClubs() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('telegram_clubs')
-        .select('*, telegram_bots(*)')
+        // Never expose encrypted bot credentials to read-only club staff.
+        .select('*, telegram_bots(id,bot_name,bot_username,bot_id,status,is_primary,last_check_at,error_message,created_at,updated_at)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;

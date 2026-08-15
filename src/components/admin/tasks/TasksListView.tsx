@@ -36,6 +36,7 @@ import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { useTaskRelations } from "@/hooks/useTaskRelations";
 import { normalizeCompanyName } from "@/lib/companies/normalizeCompanyName";
 import { TasksBulkActionsBar } from "./TasksBulkActionsBar";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 
 const TYPE_ICONS: Record<string, typeof CircleDot> = {
   Phone,
@@ -80,6 +81,8 @@ interface Props {
 }
 
 export function TasksListView({ tasks, types, onOpenTask, onOpenCompany }: Props) {
+  const access = useAdminAccess();
+  const canEdit = access.canAccessSection("deals", "edit");
   const typeMap = useMemo(() => Object.fromEntries(types.map((t) => [t.id, t])), [types]);
   const { data: staff = [] } = useStaffOptions();
   const staffMap = useMemo(
@@ -135,7 +138,7 @@ export function TasksListView({ tasks, types, onOpenTask, onOpenCompany }: Props
 
   return (
     <div className="space-y-2">
-      {selected.size > 0 && (
+      {canEdit && selected.size > 0 && (
         <TasksBulkActionsBar
           selectedIds={Array.from(selected)}
           types={types}
@@ -149,6 +152,7 @@ export function TasksListView({ tasks, types, onOpenTask, onOpenCompany }: Props
             <TableRow>
               <TableHead className="w-[36px]">
                 <Checkbox
+                  disabled={!canEdit}
                   checked={allSelected ? true : someSelected ? "indeterminate" : false}
                   onCheckedChange={toggleAll}
                   aria-label="Выбрать все задачи на странице"
@@ -189,6 +193,7 @@ export function TasksListView({ tasks, types, onOpenTask, onOpenCompany }: Props
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Checkbox
+                      disabled={!canEdit}
                       checked={checked}
                       onCheckedChange={() => toggleOne(t.id)}
                       aria-label="Выбрать задачу"
@@ -254,7 +259,7 @@ export function TasksListView({ tasks, types, onOpenTask, onOpenCompany }: Props
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                    {t.status !== "done" && t.status !== "canceled" ? (
+                    {canEdit && t.status !== "done" && t.status !== "canceled" ? (
                       <Button
                         size="sm"
                         variant="outline"

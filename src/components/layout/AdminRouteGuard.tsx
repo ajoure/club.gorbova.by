@@ -23,15 +23,16 @@ export function AdminRouteGuard({ children }: AdminRouteGuardProps) {
   const access = useAdminAccess();
 
   const pathname = location.pathname;
+  const pathWithSearch = `${location.pathname}${location.search}`;
   const isAdminPath = pathname.startsWith("/admin");
 
   useEffect(() => {
     if (!isAdminPath || access.isLoading) return;
-    if (access.canAccessPath(pathname)) return;
+    if (access.canAccessPath(pathWithSearch)) return;
     // лог только когда реально закрываем
     // eslint-disable-next-line no-console
     console.warn("[AdminRouteGuard] denied:", pathname);
-  }, [pathname, isAdminPath, access]);
+  }, [pathname, pathWithSearch, isAdminPath, access]);
 
   if (!isAdminPath) return <>{children}</>;
 
@@ -43,7 +44,7 @@ export function AdminRouteGuard({ children }: AdminRouteGuardProps) {
     );
   }
 
-  if (access.canAccessPath(pathname)) {
+  if (access.canAccessPath(pathWithSearch)) {
     return <>{children}</>;
   }
 
@@ -58,6 +59,13 @@ export function AdminRouteGuard({ children }: AdminRouteGuardProps) {
 
 function findFirstAccessibleAdminPath(access: ReturnType<typeof useAdminAccess>): string | null {
   for (const s of ADMIN_SECTIONS) {
+    if (s.resources?.length) {
+      const resource = s.resources.find((candidate) =>
+        access.canAccessResource(s.code, candidate.code),
+      );
+      if (resource) return resource.route;
+      continue;
+    }
     if (access.canAccessSection(s.code)) return s.routePrefix;
   }
   return null;

@@ -143,26 +143,52 @@ export function RoleAccessEditor() {
     staleTime: 60_000,
   });
 
-  // Авто-синк каталога секций из кода в БД: если в коде есть секции,
-  // которых нет в admin_section — синхронизируем один раз при открытии редактора.
+  // Авто-синк полного каталога из кода. Ранее проверялись только секции,
+  // поэтому новые вкладки/resources не появлялись в редакторе прав.
   useEffect(() => {
     if (!canManageRoles) return;
     const sections = catalogQ.data?.sections;
-    if (!sections) return;
+    const resources = catalogQ.data?.resources;
+    if (!sections || !resources) return;
     const dbCodes = new Set(sections.map((s) => s.code));
     const missing = ADMIN_SECTIONS.filter((s) => !dbCodes.has(s.code)).map((s) => s.code);
-    if (missing.length === 0) return;
-    console.info("[RoleAccessEditor] Синхронизация недостающих секций:", missing);
+    const sectionIdByCode = new Map(sections.map((section) => [section.code, section.id]));
+    const dbResourcesByKey = new Map(resources.map((resource) => {
+      const sectionCode = sections.find((section) => section.id === resource.section_id)?.code;
+      return [`${sectionCode}:${resource.code}`, resource] as const;
+    }));
+    const missingResources = ADMIN_SECTIONS.flatMap((section) =>
+      (section.resources ?? [])
+        .filter((resource) => !dbResourcesByKey.has(`${section.code}:${resource.code}`))
+        .map((resource) => `${section.code}:${resource.code}`),
+    );
+    const routeDrift = ADMIN_SECTIONS.some((section) => {
+      const dbSection = sections.find((candidate) => candidate.id === sectionIdByCode.get(section.code));
+      return dbSection && dbSection.route_prefix !== section.routePrefix;
+    });
+    const resourceRouteDrift = ADMIN_SECTIONS.some((section) =>
+      (section.resources ?? []).some((resource) => {
+        const dbResource = dbResourcesByKey.get(`${section.code}:${resource.code}`);
+        return dbResource && dbResource.route !== resource.route;
+      }),
+    );
+    if (missing.length === 0 && missingResources.length === 0 && !routeDrift && !resourceRouteDrift) return;
+    console.info("[RoleAccessEditor] Синхронизация каталога:", {
+      missing,
+      missingResources,
+      routeDrift,
+      resourceRouteDrift,
+    });
     callRolesAdmin("sync_menu_registry", { menuPayload: buildSyncRegistryPayload() })
       .then(() => {
-        toast.success(`Добавлены новые разделы: ${missing.join(", ")}`);
+        toast.success("Каталог разделов и вкладок синхронизирован");
         qc.invalidateQueries({ queryKey: ["roles-admin", "catalog"] });
       })
       .catch((err) => {
         console.warn("[RoleAccessEditor] sync_menu_registry failed:", err);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalogQ.data?.sections, canManageRoles]);
+  }, [catalogQ.data?.sections, catalogQ.data?.resources, canManageRoles]);
 
 
 

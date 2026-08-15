@@ -54,7 +54,7 @@ export interface AdminAccessApi {
   canAccessSection(sectionCode: string, min?: AccessLevel): boolean;
   canAccessResource(sectionCode: string, resourceCode: string, min?: AccessLevel): boolean;
   /** Главная проверка для AdminRouteGuard. Deny-by-default. */
-  canAccessPath(pathname: string, min?: AccessLevel): boolean;
+  canAccessPath(pathOrLocation: string, min?: AccessLevel): boolean;
 }
 
 export function useAdminAccess(): AdminAccessApi {
@@ -127,9 +127,9 @@ export function useAdminAccess(): AdminAccessApi {
     const canAccessResource = (sectionCode: string, resourceCode: string, min: AccessLevel = "view") =>
       meets(getResourceLevel(sectionCode, resourceCode), min);
 
-    const canAccessPath = (pathname: string, min: AccessLevel = "view") => {
+    const canAccessPath = (pathOrLocation: string, min: AccessLevel = "view") => {
       if (bypass) return true;
-      const r = resolveAdminSectionForPath(pathname);
+      const r = resolveAdminSectionForPath(pathOrLocation);
       if (r.kind === "open") return true;
       if (r.kind === "unknown") return false; // deny-by-default
       if (r.resourceCode) return canAccessResource(r.sectionCode!, r.resourceCode, min);

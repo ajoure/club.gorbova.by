@@ -1,5 +1,5 @@
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { useSearchParams } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { ClipboardList, FileText, GraduationCap, Layers, Download, LayoutList } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FormsAllTabContent } from "@/components/admin/forms/FormsAllTabContent";
@@ -8,6 +8,7 @@ import { FormsSiteTabContent } from "@/components/admin/forms/FormsSiteTabConten
 import { FormsTrainingTabContent } from "@/components/admin/forms/FormsTrainingTabContent";
 import { FormsByProductTabContent } from "@/components/admin/forms/FormsByProductTabContent";
 import { FormsExportTabContent } from "@/components/admin/forms/FormsExportTabContent";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 
 const tabs = [
   { id: "all", label: "Все", icon: LayoutList },
@@ -19,8 +20,19 @@ const tabs = [
 ];
 
 export default function AdminFormsHub() {
+  const access = useAdminAccess();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get("tab") || "all";
+  const visibleTabs = tabs.filter((tab) =>
+    access.canAccessResource("forms-hub", tab.id),
+  );
+
+  if (!visibleTabs.some((tab) => tab.id === activeTab) && visibleTabs[0]) {
+    const target = visibleTabs[0].id === "all"
+      ? "/admin/forms"
+      : `/admin/forms?tab=${visibleTabs[0].id}`;
+    return <Navigate to={target} replace />;
+  }
 
   const handleTabChange = (tabId: string) => {
     setSearchParams({ tab: tabId }, { replace: true });
@@ -32,7 +44,7 @@ export default function AdminFormsHub() {
         {/* Glass Pills Tabs */}
         <div className="px-3 md:px-4 pt-1 pb-1.5 shrink-0">
           <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
-            {tabs.map((tab) => {
+            {visibleTabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               return (

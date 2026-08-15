@@ -1,5 +1,5 @@
 // Cache bust v4
-import { lazy, Suspense, useState, useEffect } from "react";
+import { lazy, Suspense, useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -21,6 +21,7 @@ import { useUnreadEmailCount } from "@/hooks/useEmailInbox";
 import { useUnreadTicketsCount } from "@/hooks/useUnreadTicketsCount";
 import type { UnifiedInboxCounts } from "@/hooks/useUnifiedInbox";
 import { CONTACT_CENTER_VISIBLE_UNREAD_QK } from "@/constants/inboxQueryKeys";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 
 const InboxTabContent = lazy(() =>
   import("@/components/admin/communication/InboxTabContent").then((module) => ({
@@ -59,7 +60,12 @@ const tabs = [
 
 export default function AdminCommunication() {
   const queryClient = useQueryClient();
+  const access = useAdminAccess();
   const [searchParams, setSearchParams] = useSearchParams();
+  const visibleTabs = useMemo(
+    () => tabs.filter((tab) => access.canAccessResource("communication", tab.id)),
+    [access],
+  );
   // Единая лента опубликована для всех сотрудников с доступом к контакт-центру.
   // Доступ по-прежнему ограничивают маршрут, RPC и RLS; frontend-флаг отвечает
   // только за выбор нового интерфейса.
@@ -118,10 +124,13 @@ export default function AdminCommunication() {
       return;
     }
     
-    if (tabFromUrl && tabFromUrl !== activeTab) {
+    if (tabFromUrl && visibleTabs.some((tab) => tab.id === tabFromUrl) && tabFromUrl !== activeTab) {
       setActiveTab(tabFromUrl);
+    } else if (!visibleTabs.some((tab) => tab.id === activeTab) && visibleTabs[0]) {
+      setActiveTab(visibleTabs[0].id);
+      setSearchParams({ tab: visibleTabs[0].id }, { replace: true });
     }
-  }, [searchParams]);
+  }, [activeTab, searchParams, setSearchParams, visibleTabs]);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
@@ -141,7 +150,7 @@ export default function AdminCommunication() {
         {/* Compact Glass Tabs - Bitrix24 style */}
         <div className="px-3 md:px-4 pt-1 pb-1.5 shrink-0">
           <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20">
-            {tabs.map((tab) => {
+            {visibleTabs.map((tab) => {
               const Icon = tab.icon;
               const unread = getUnreadCount(tab.id);
               const isActive = activeTab === tab.id;
