@@ -136,6 +136,26 @@ verify_jwt = false
 [functions.contact-center-assignment-notify]
 verify_jwt = true
 
+# Broadcast UI endpoints require a signed-in employee and perform an additional
+# communication-section role check inside the handler.
+[functions.broadcast-audience-preview]
+verify_jwt = true
+
+[functions.telegram-send-test]
+verify_jwt = true
+
+# Mass senders are used both by signed-in managers and by the scheduled
+# dispatcher with an exact internal secret. The handlers validate both paths;
+# gateway JWT verification must stay off for the non-JWT internal secret.
+[functions.telegram-mass-broadcast]
+verify_jwt = false
+
+[functions.email-mass-broadcast]
+verify_jwt = false
+
+[functions.process-scheduled-broadcasts]
+verify_jwt = false
+
 [functions.instagram-webhook]
 verify_jwt = false
 

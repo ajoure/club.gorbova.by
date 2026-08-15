@@ -19,7 +19,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.45.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-broadcast-internal-secret',
 };
 
 interface DispatchRequest {
@@ -52,6 +52,14 @@ interface BroadcastTemplate {
   email_only_when_no_telegram: boolean;
   template_type: string | null;
   live_event_id: string | null;
+  trigger_kind?: string | null;
+}
+
+interface AutomationDelivery {
+  id: string;
+  template_id: string;
+  user_id: string;
+  event_key: string;
 }
 
 interface BroadcastFunctionResult {
@@ -77,6 +85,21 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+  // This endpoint performs real scheduled sends and must never be public.
+  // Accept either the exact service key used by the managed scheduler or the
+  // same internal broadcast secret used for dispatcher-to-sender calls.
+  const authorization = req.headers.get('Authorization') || '';
+  const bearer = authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : '';
+  const apiKey = req.headers.get('apikey') || '';
+  const internalHeader = req.headers.get('x-broadcast-internal-secret') || '';
+  const internalSecret = Deno.env.get('BROADCAST_INTERNAL_SECRET') || Deno.env.get('BROADCAST_FORCE_SECRET') || '';
+  const isServiceCaller = Boolean(supabaseServiceKey && (bearer === supabaseServiceKey || apiKey === supabaseServiceKey));
+  const isInternalCaller = Boolean(internalSecret && internalHeader === internalSecret);
+  if (!isServiceCaller && !isInternalCaller) {
+    return jsonRes({ ok: false, error: 'Доступ к планировщику запрещён' }, { status: 401 });
+  }
+
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   let reqBody: DispatchRequest = {};
@@ -169,6 +192,92 @@ Deno.serve(async (req) => {
 
   let totalSent = 0, totalFailed = 0, totalSkipped = 0;
   const perTemplateLog: unknown[] = [];
+
+  // Event-driven education broadcasts use a durable, idempotent queue. The
+  // same dispatcher processes them so scheduling, kill-switch and audit rules
+  // stay in one existing broadcast subsystem.
+  if (!isDryRun) {
+    const { data: claimed, error: claimError } = await supabase
+      .rpc('claim_broadcast_automation_deliveries', { _limit: 50 });
+    if (claimError) {
+      console.error('[broadcast-dispatcher] automation claim failed:', claimError);
+      perTemplateLog.push({ automation_error: 'automation_claim_failed' });
+    } else {
+      for (const delivery of (claimed || []) as AutomationDelivery[]) {
+        try {
+          const { data: automationTemplate, error: templateError } = await supabase
+            .from('broadcast_templates')
+            .select('*')
+            .eq('id', delivery.template_id)
+            .eq('status', 'recurring')
+            .eq('approval_status', 'approved')
+            .maybeSingle();
+          if (templateError || !automationTemplate) {
+            throw new Error('Автоматическая рассылка выключена или не одобрена');
+          }
+          const eventTemplate = automationTemplate as BroadcastTemplate;
+          const eventChannels = eventTemplate.channels?.length ? eventTemplate.channels : [eventTemplate.channel];
+          const internalSecret = Deno.env.get('BROADCAST_INTERNAL_SECRET') || Deno.env.get('BROADCAST_FORCE_SECRET') || '';
+          const systemHeaders = {
+            'x-system-actor': 'broadcast-dispatcher',
+            'x-broadcast-internal-secret': internalSecret,
+          };
+          let sent = 0;
+          let failed = 0;
+          for (const channel of eventChannels) {
+            const directFilters = {
+              ...(eventTemplate.audience_filters || {}),
+              direct_user_ids: [delivery.user_id],
+            };
+            if (channel === 'telegram') {
+              const { data, error } = await supabase.functions.invoke('telegram-mass-broadcast', {
+                headers: systemHeaders,
+                body: {
+                  message: eventTemplate.message_text || '',
+                  include_button: !!eventTemplate.button_url,
+                  button_text: eventTemplate.button_text || undefined,
+                  button_url: eventTemplate.button_url || undefined,
+                  filters: directFilters,
+                  media_storage_path: eventTemplate.media_storage_path || undefined,
+                  media_type: eventTemplate.media_type || undefined,
+                  media_file_name: eventTemplate.media_file_name || undefined,
+                },
+              });
+              if (error) throw new Error(error.message);
+              sent += Number((data as BroadcastFunctionResult | null)?.sent || 0);
+              failed += Number((data as BroadcastFunctionResult | null)?.failed || 0);
+            } else if (channel === 'email') {
+              const { data, error } = await supabase.functions.invoke('email-mass-broadcast', {
+                headers: systemHeaders,
+                body: {
+                  subject: eventTemplate.email_subject || '',
+                  html: eventTemplate.email_body_html || '',
+                  filters: directFilters,
+                },
+              });
+              if (error) throw new Error(error.message);
+              sent += Number((data as BroadcastFunctionResult | null)?.sent || 0);
+              failed += Number((data as BroadcastFunctionResult | null)?.failed || 0);
+            }
+          }
+          const status = sent > 0 && failed === 0 ? 'sent' : 'failed';
+          await supabase.from('broadcast_automation_deliveries').update({
+            status,
+            sent_at: status === 'sent' ? new Date().toISOString() : null,
+            error: status === 'sent' ? null : 'Не удалось доставить автоматическое сообщение',
+          }).eq('id', delivery.id);
+          totalSent += sent;
+          totalFailed += failed;
+          perTemplateLog.push({ template_id: delivery.template_id, event_key: delivery.event_key, sent, failed });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Неизвестная ошибка';
+          await supabase.from('broadcast_automation_deliveries').update({ status: 'failed', error: message }).eq('id', delivery.id);
+          totalFailed += 1;
+          perTemplateLog.push({ template_id: delivery.template_id, event_key: delivery.event_key, error: message });
+        }
+      }
+    }
+  }
 
   for (const tpl of list) {
     const channels = (tpl.channels && tpl.channels.length > 0)

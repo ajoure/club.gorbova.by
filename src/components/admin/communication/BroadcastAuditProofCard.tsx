@@ -51,7 +51,7 @@ export function BroadcastAuditProofCard() {
           ) : (
             <ShieldAlert className="h-4 w-4 text-muted-foreground" />
           )}
-          Последний runtime audit proof (scheduled dispatcher)
+          Последний запуск планировщика рассылок
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -61,12 +61,11 @@ export function BroadcastAuditProofCard() {
           </div>
         ) : error ? (
           <div className="text-sm text-destructive">
-            Ошибка загрузки: {(error as Error).message}
+            Не удалось загрузить историю запусков. Проверьте доступ к контакт-центру и повторите попытку.
           </div>
         ) : !data ? (
           <div className="text-sm text-muted-foreground">
-            Ожидание первого реального запуска через scheduled dispatcher.
-            Записей audit_logs с actor_label='broadcast-dispatcher' пока нет.
+            Планировщик ещё не выполнял ни одной реальной рассылки.
           </div>
         ) : (
           <div className="space-y-2 text-sm">
@@ -74,16 +73,16 @@ export function BroadcastAuditProofCard() {
               <div className="text-muted-foreground">Дата</div>
               <div>{new Date(data.created_at).toLocaleString("ru-RU")}</div>
 
-              <div className="text-muted-foreground">Action</div>
-              <div className="font-mono text-xs">{data.action}</div>
+              <div className="text-muted-foreground">Действие</div>
+              <div>{data.action === "telegram_mass_broadcast" ? "Telegram-рассылка" : "Email-рассылка"}</div>
 
-              <div className="text-muted-foreground">Actor</div>
+              <div className="text-muted-foreground">Источник</div>
               <div className="flex items-center gap-2">
-                <Badge variant="secondary">{data.actor_type}</Badge>
-                <Badge variant="outline">{data.actor_label}</Badge>
+                <Badge variant="secondary">Система</Badge>
+                <Badge variant="outline">Планировщик</Badge>
               </div>
 
-              <div className="text-muted-foreground">Sent / Failed</div>
+              <div className="text-muted-foreground">Отправлено / ошибок</div>
               <div>
                 <Badge variant="default" className="bg-green-600">
                   {data.sent}
@@ -100,7 +99,7 @@ export function BroadcastAuditProofCard() {
                 <ChevronDown
                   className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`}
                 />
-                Diagnostic
+                Технические сведения
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <pre className="mt-2 p-2 bg-muted rounded text-xs overflow-auto">

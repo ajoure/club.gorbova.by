@@ -76,6 +76,7 @@ import {
   Trash2,
   Search,
   Inbox,
+  Sparkles,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -112,7 +113,7 @@ interface BroadcastRunRow {
   triggered_by: string | null;
 }
 
-type TypeFilter = "all" | "scheduled" | "recurring";
+type TypeFilter = "all" | "scheduled" | "recurring" | "event";
 type StatusFilter = "all" | "active" | "paused" | "sent" | "error" | "archived";
 type ChannelFilter = "all" | "telegram" | "email";
 
@@ -142,6 +143,19 @@ function fmtDate(iso: string | null) {
   } catch {
     return "—";
   }
+}
+
+function scheduledErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error || "");
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("forbidden") || normalized.includes("permission")) {
+    return "Недостаточно прав для управления рассылками";
+  }
+  if (normalized.includes("not found")) return "Рассылка не найдена";
+  if (normalized.includes("edge function") || normalized.includes("non-2xx")) {
+    return "Сервер не выполнил операцию. Повторите попытку.";
+  }
+  return /[А-Яа-яЁё]/.test(raw) ? raw : "Не удалось выполнить действие";
 }
 
 export function ScheduledBroadcastsSection({ onEdit }: Props) {
@@ -198,6 +212,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
 
       if (typeFilter === "scheduled" && r.send_mode !== "scheduled") return false;
       if (typeFilter === "recurring" && r.send_mode !== "recurring") return false;
+      if (typeFilter === "event" && r.send_mode !== "event") return false;
 
       if (statusFilter === "active" && !["scheduled", "recurring"].includes(r.status)) return false;
       if (statusFilter === "paused" && r.status !== "paused") return false;
@@ -311,7 +326,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
       qc.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
       setSelected(new Set());
     },
-    onError: (e) => toast.error("Ошибка: " + (e as Error).message),
+    onError: (e) => toast.error("Ошибка: " + scheduledErrorMessage(e)),
   });
 
   // RESUME
@@ -374,7 +389,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
       qc.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
       setSelected(new Set());
     },
-    onError: (e) => toast.error("Ошибка: " + (e as Error).message),
+    onError: (e) => toast.error("Ошибка: " + scheduledErrorMessage(e)),
   });
 
   // UNSCHEDULE → draft
@@ -406,7 +421,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
       qc.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
       setSelected(new Set());
     },
-    onError: (e) => toast.error("Ошибка: " + (e as Error).message),
+    onError: (e) => toast.error("Ошибка: " + scheduledErrorMessage(e)),
   });
 
   // DELETE — safe: hard delete если нет runs, иначе soft-archive
@@ -475,7 +490,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
       qc.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
       setSelected(new Set());
     },
-    onError: (e) => toast.error("Ошибка: " + (e as Error).message),
+    onError: (e) => toast.error("Ошибка: " + scheduledErrorMessage(e)),
   });
 
   // DUPLICATE
@@ -486,7 +501,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
         .select("*")
         .eq("id", id)
         .single();
-      if (readErr || !src) throw readErr ?? new Error("not found");
+      if (readErr || !src) throw readErr ?? new Error("Рассылка не найдена");
 
       const { id: _id, created_at: _ca, updated_at: _ua, sent_at: _sa, sent_count: _sc, failed_count: _fc, total_runs: _tr, last_run_at: _lr, ...rest } =
         src as Record<string, unknown>;
@@ -504,7 +519,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
       toast.success("Скопировано в черновики");
       qc.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
     },
-    onError: (e) => toast.error("Ошибка копирования: " + (e as Error).message),
+    onError: (e) => toast.error("Ошибка копирования: " + scheduledErrorMessage(e)),
   });
 
   // APPROVE (PATCH-E) — gated server-side by entitlements.manage via RPC
@@ -517,12 +532,12 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
       return data;
     },
     onSuccess: () => {
-      toast.success("Шаблон одобрен — попадёт в обычный cron");
+      toast.success("Рассылка одобрена и будет отправлена планировщиком");
       setApproveTarget(null);
       setApproveAudienceCount(null);
       qc.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
     },
-    onError: (e) => toast.error("Ошибка approve: " + (e as Error).message),
+    onError: () => toast.error("Не удалось одобрить рассылку. Проверьте права и повторите попытку."),
   });
 
   const openApproveConfirm = async (row: SchedRow) => {
@@ -530,16 +545,14 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
     setApproveAudienceCount(null);
     setApproveAudienceLoading(true);
     try {
-      // Reuse canonical RPC; in client context entitlements.manage is required to call it.
-      // If the user lacks perms, we silently fall back to "—" — RPC failure is not fatal here.
       const { data, error } = await supabase
         .from("broadcast_templates")
         .select("audience_filters")
         .eq("id", row.id)
         .single();
       if (!error && data) {
-        const { data: aud } = await supabase.rpc("resolve_broadcast_audience", {
-          _filters: (data.audience_filters ?? {}) as never,
+        const { data: aud } = await supabase.functions.invoke("broadcast-audience-preview", {
+          body: { filters: data.audience_filters ?? {} },
         });
         const totalCount = (aud as Record<string, unknown> | null)?.total_count;
         setApproveAudienceCount(typeof totalCount === "number" ? totalCount : null);
@@ -581,7 +594,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
         {row.approval_status === "pending_approval" && ["scheduled", "recurring"].includes(row.status) && (
           <>
             <DropdownMenuItem onClick={() => openApproveConfirm(row)}>
-              <Play className="h-4 w-4 mr-2 text-emerald-600" /> Одобрить (Approve)
+              <Play className="h-4 w-4 mr-2 text-emerald-600" /> Одобрить
             </DropdownMenuItem>
             <DropdownMenuSeparator />
           </>
@@ -655,6 +668,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
             <SelectItem value="all">Все типы</SelectItem>
             <SelectItem value="scheduled">Однократные</SelectItem>
             <SelectItem value="recurring">Повторяющиеся</SelectItem>
+            <SelectItem value="event">По событию ученика</SelectItem>
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
@@ -750,7 +764,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
                 <TableHead>Следующая</TableHead>
                 <TableHead>Последняя</TableHead>
                 <TableHead>Статус</TableHead>
-                <TableHead>Approve</TableHead>
+                <TableHead>Одобрение</TableHead>
                 <TableHead>Создано</TableHead>
                 <TableHead className="w-10" />
               </TableRow>
@@ -791,7 +805,11 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
                       </button>
                     </TableCell>
                     <TableCell>
-                      {row.send_mode === "recurring" ? (
+                      {row.send_mode === "event" ? (
+                        <Badge variant="secondary" className="gap-1">
+                          <Sparkles className="h-3 w-3" /> По событию
+                        </Badge>
+                      ) : row.send_mode === "recurring" ? (
                         <Badge variant="secondary" className="gap-1">
                           <Repeat className="h-3 w-3" /> Повторяющаяся
                         </Badge>
@@ -824,9 +842,9 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
                     <TableCell>{statusBadge(row)}</TableCell>
                     <TableCell>
                       {row.approval_status === "approved" ? (
-                        <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">Approved</Badge>
+                        <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">Одобрено</Badge>
                       ) : row.approval_status === "rejected" ? (
-                        <Badge variant="destructive">Rejected</Badge>
+                        <Badge variant="destructive">Отклонено</Badge>
                       ) : ["scheduled", "recurring"].includes(row.status) ? (
                         <Button
                           size="sm"
@@ -837,7 +855,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
                           <Play className="h-3 w-3 mr-1" /> Одобрить
                         </Button>
                       ) : (
-                        <Badge variant="outline">Pending</Badge>
+                        <Badge variant="outline">Ожидает</Badge>
                       )}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
@@ -887,15 +905,22 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm">
                 <div><span className="text-muted-foreground">Имя: </span><b>{approveTarget?.name}</b></div>
-                <div><span className="text-muted-foreground">Дата/время: </span>{fmtDate(approveTarget?.next_run_at ?? null)}</div>
+                <div>
+                  <span className="text-muted-foreground">Запуск: </span>
+                  {approveTarget?.send_mode === "event" ? "по действию ученика" : fmtDate(approveTarget?.next_run_at ?? null)}
+                </div>
                 <div><span className="text-muted-foreground">Каналы: </span>{(approveTarget?.channels ?? []).join(", ") || "—"}</div>
                 <div>
-                  <span className="text-muted-foreground">Аудитория: </span>
+                  <span className="text-muted-foreground">
+                    {approveTarget?.send_mode === "event" ? "Сейчас условию соответствуют: " : "Аудитория: "}
+                  </span>
                   {approveAudienceLoading ? "считаю…" : (approveAudienceCount ?? "—")}
                 </div>
                 <div className="text-xs text-muted-foreground pt-2">
-                  После approval шаблон будет взят обычным cron при наступлении next_run_at.
-                  Глобальный safety gate (production_approved) остаётся выключенным — отправка из обычного cron заблокирована до отдельного решения.
+                  {approveTarget?.send_mode === "event"
+                    ? "После одобрения сообщение будет автоматически отправляться при наступлении выбранного события."
+                    : "После одобрения рассылка будет автоматически отправлена в указанное время."}
+                  Системная защита от случайного запуска остаётся активной.
                 </div>
               </div>
             </AlertDialogDescription>
@@ -943,7 +968,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
                       <span>Отправлено: {r.sent_count ?? 0}</span>
                       <span>Ошибок: {r.failed_count ?? 0}</span>
                       <span>Пропущено: {r.skipped_count ?? 0}</span>
-                      {r.dry_run && <Badge variant="secondary">dry-run</Badge>}
+                      {r.dry_run && <Badge variant="secondary">Проверка без отправки</Badge>}
                       {r.triggered_by && (
                         <span className="text-muted-foreground">
                           источник: {r.triggered_by}
@@ -951,7 +976,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
                       )}
                     </div>
                     {r.error && (
-                      <p className="text-xs text-destructive">{r.error}</p>
+                      <p className="text-xs text-destructive">{scheduledErrorMessage(r.error)}</p>
                     )}
                   </CardContent>
                 </Card>

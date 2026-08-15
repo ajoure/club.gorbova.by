@@ -68,6 +68,8 @@ import {
   Eye,
   ChevronRight,
   Image,
+  FileText,
+  Film,
   Video,
   Music,
   Circle,
@@ -87,6 +89,8 @@ import { ru } from "date-fns/locale";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
 import { ScheduledBroadcastsSection } from "./scheduled/ScheduledBroadcastsSection";
 import { BroadcastAuditProofCard } from "./BroadcastAuditProofCard";
+import { uploadToTelegramMedia } from "@/components/admin/chat/uploadToTelegramMedia";
+import { TelegramMessagePreview } from "./TelegramMessagePreview";
 
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { RuleListEditor } from "./RuleListEditor";
@@ -106,6 +110,11 @@ interface BroadcastFilters {
   club_membership: "current" | "ever" | "any";
   bot_ids: string[];      // [] = primary bot
   channels?: ("telegram" | "email")[];
+  education?: {
+    module_id: string;
+    lesson_id: string;
+    status: "lesson_completed" | "lesson_not_completed" | "homework_submitted" | "homework_not_submitted" | "form_answered" | "form_not_answered";
+  };
 }
 
 interface AudiencePreview {
@@ -129,15 +138,17 @@ interface AudiencePreview {
 
 const EMPTY_RULE: AudienceRule = { product_id: "", tariff_ids: [], mode: "purchased" };
 
-type MediaType = "photo" | "video" | "audio" | "video_note" | null;
+type MediaType = "photo" | "animation" | "video" | "audio" | "video_note" | "document" | null;
 
 interface MediaFile {
   type: MediaType;
-  file: File;
+  file?: File;
+  fileName: string;
+  storagePath?: string;
   preview?: string;
 }
 
-type SendMode = "now" | "scheduled" | "recurring";
+type SendMode = "now" | "scheduled" | "recurring" | "event" | "template";
 type Frequency = "daily" | "weekly" | "monthly";
 
 interface RecurrenceRule {
@@ -160,11 +171,32 @@ const DEFAULT_RECURRENCE: RecurrenceRule = {
   timezone: "Europe/Minsk",
 };
 
+function readableBroadcastError(value: unknown): string {
+  const raw = value instanceof Error ? value.message : String(value || "");
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("forbidden") || normalized.includes("permission")) {
+    return "Недостаточно прав для управления рассылками. Обновите страницу или обратитесь к суперадминистратору.";
+  }
+  if (normalized.includes("unauthorized") || normalized.includes("invalid token")) {
+    return "Сессия истекла. Войдите в систему заново и повторите попытку.";
+  }
+  if (normalized.includes("network") || normalized.includes("fetch")) {
+    return "Нет связи с сервером. Проверьте интернет и повторите попытку.";
+  }
+  if (normalized.includes("edge function") || normalized.includes("non-2xx")) {
+    return "Сервер не выполнил операцию. Проверьте данные и повторите попытку.";
+  }
+  return /[А-Яа-яЁё]/.test(raw)
+    ? raw
+    : "Не удалось выполнить операцию. Повторите попытку или обратитесь к суперадминистратору.";
+}
+
 export function BroadcastsTabContent() {
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled">("templates");
   // Sprint B rev3 — фаза 2: id шаблона в режиме редактирования (открывается из «Запланированные»)
   const [editTemplateId, setEditTemplateId] = useState<string | null>(null);
+  const openTemplateForSendRef = useRef(false);
 
   // Channel toggles — независимые: можно отправить TG-only / Email-only / TG+Email одновременно
   const [sendToTelegram, setSendToTelegram] = useState(true);
@@ -190,6 +222,7 @@ export function BroadcastsTabContent() {
 
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingMediaTypeRef = useRef<Exclude<MediaType, null>>("document");
 
   const [filters, setFilters] = useState<BroadcastFilters>({
     include: [],
@@ -209,6 +242,7 @@ export function BroadcastsTabContent() {
     exclude: filters.exclude,
     club_ids: filters.club_ids,
     club_membership: filters.club_membership,
+    education: filters.education,
     include_archived: includeArchived,
   }), [filters, includeArchived]);
 
@@ -226,6 +260,17 @@ export function BroadcastsTabContent() {
   }, [filters.include]);
 
   const showCfWarning = hasCfTokens && !productContextId;
+  const telegramWillSplit = useMemo(() => {
+    if (!mediaFile || !message.trim()) return false;
+    return mediaFile.type === "video_note" || message.trim().length > 1024;
+  }, [mediaFile, message]);
+  const telegramDeliveryHint = telegramWillSplit
+    ? mediaFile?.type === "video_note"
+      ? "Telegram не поддерживает подпись у кружка: кружок и текст будут отправлены двумя сообщениями."
+      : "Подпись длиннее 1024 символов: медиа и текст будут отправлены двумя сообщениями."
+    : mediaFile
+    ? "Медиа, короткий текст и кнопка будут отправлены одним сообщением."
+    : "Текст и кнопка будут отправлены одним сообщением.";
 
   // All product_ids referenced in include/exclude (for tariff fetch)
   const referencedProductIds = useMemo(() => {
@@ -278,6 +323,35 @@ export function BroadcastsTabContent() {
     },
   });
 
+  const { data: trainingModules } = useQuery({
+    queryKey: ["broadcast-training-modules"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("training_modules")
+        .select("id, title")
+        .eq("is_active", true)
+        .order("title");
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const { data: trainingLessons } = useQuery({
+    queryKey: ["broadcast-training-lessons", filters.education?.module_id],
+    queryFn: async () => {
+      if (!filters.education?.module_id) return [];
+      const { data, error } = await supabase
+        .from("training_lessons")
+        .select("id, title")
+        .eq("module_id", filters.education.module_id)
+        .eq("is_active", true)
+        .order("sort_order");
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: Boolean(filters.education?.module_id),
+  });
+
   // Fetch active telegram bots
   const { data: bots } = useQuery({
     queryKey: ["broadcast-bots"],
@@ -302,17 +376,15 @@ export function BroadcastsTabContent() {
   // Audience preview via RPC (single source of truth, used by edge funcs too).
   // ВАЖНО: ошибки RPC НЕ маскируем под нулевую аудиторию — иначе админ видит
   // «0 получателей» вместо явной причины и думает, что фильтр пустой.
-  const { data: audience, isLoading: audienceLoading, error: audienceError } = useQuery<AudiencePreview, Error>({
+  const { data: audience, isLoading: audienceLoading, error: audienceError, refetch: refetchAudience } = useQuery<AudiencePreview, Error>({
     queryKey: ["broadcast-audience-rpc", rpcFilters],
     queryFn: async () => {
-      const { data, error } = await supabase.rpc("resolve_broadcast_audience", {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        _filters: rpcFilters as any,
+      const { data, error } = await supabase.functions.invoke("broadcast-audience-preview", {
+        body: { filters: rpcFilters },
       });
       if (error) {
         console.error("[broadcast] audience rpc error", error, "filters:", rpcFilters);
-        // Бросаем — react-query положит в `error`, UI покажет красный alert.
-        throw new Error(error.message || "Ошибка расчёта аудитории");
+        throw new Error("Не удалось рассчитать аудиторию. Проверьте доступ к контакт-центру и повторите попытку.");
       }
       const r = (data ?? {}) as Record<string, unknown>;
       return {
@@ -345,30 +417,42 @@ export function BroadcastsTabContent() {
   const history = historyItems;
 
   // Handle file selection
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: Exclude<MediaType, null>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const maxSize = type === "video" ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+    const maxSize = ["video", "animation", "video_note", "document"].includes(type)
+      ? 50 * 1024 * 1024
+      : 10 * 1024 * 1024;
     if (file.size > maxSize) {
-      toast.error(`Файл слишком большой. Максимум: ${type === "video" ? "50" : "10"} МБ`);
+      toast.error(`Файл слишком большой. Максимум: ${maxSize / 1024 / 1024} МБ`);
+      e.target.value = "";
       return;
     }
 
     let preview: string | undefined;
-    if (type === "photo" || type === "video") {
+    if (type === "photo" || type === "animation" || type === "video") {
       preview = URL.createObjectURL(file);
     }
 
-    setMediaFile({ type, file, preview });
+    setMediaFile({ type, file, fileName: file.name, preview });
+    e.target.value = "";
   };
 
-  const removeMedia = () => {
+  const chooseMedia = (type: Exclude<MediaType, null>, accept: string) => {
+    pendingMediaTypeRef.current = type;
+    if (fileInputRef.current) {
+      fileInputRef.current.accept = accept;
+      fileInputRef.current.click();
+    }
+  };
+
+  const removeMedia = useCallback(() => {
     if (mediaFile?.preview) {
       URL.revokeObjectURL(mediaFile.preview);
     }
     setMediaFile(null);
-  };
+  }, [mediaFile]);
 
   // ===== Edit-mode lifecycle helpers =====
   // Snapshot загруженного шаблона для определения «грязных» изменений (unsaved guard).
@@ -388,13 +472,17 @@ export function BroadcastsTabContent() {
       buttonText,
       buttonUrl,
       filters,
+      includeArchived,
+      mediaType: mediaFile?.type ?? null,
+      mediaFileName: mediaFile?.fileName ?? null,
+      mediaStoragePath: mediaFile?.storagePath ?? null,
       recurrence,
       scheduledAt: scheduledAt ? scheduledAt.toISOString() : null,
       scheduledTime,
     });
   }, [
     sendToTelegram, sendToEmail, sendMode, scheduledName, message, emailSubject,
-    emailBody, includeButton, buttonText, buttonUrl, filters, recurrence,
+    emailBody, includeButton, buttonText, buttonUrl, filters, includeArchived, mediaFile, recurrence,
     scheduledAt, scheduledTime,
   ]);
 
@@ -418,9 +506,13 @@ export function BroadcastsTabContent() {
     setIncludeButton(true);
     setButtonText("Открыть платформу");
     setButtonUrl("https://club.gorbova.by/products");
-    if (mediaFile) removeMedia();
+    setSendToTelegram(true);
+    setSendToEmail(false);
+    setIncludeArchived(false);
+    setFilters({ include: [], exclude: [], club_ids: [], club_membership: "current", bot_ids: [] });
+    removeMedia();
     setRecurrence(DEFAULT_RECURRENCE);
-  }, [mediaFile]);
+  }, [removeMedia]);
 
   const exitEditMode = useCallback(() => {
     setEditTemplateId(null);
@@ -437,7 +529,8 @@ export function BroadcastsTabContent() {
         (filters.include?.length ?? 0) === 0 &&
         (filters.exclude?.length ?? 0) === 0 &&
         (filters.club_ids?.length ?? 0) === 0 &&
-        (filters.bot_ids?.length ?? 0) === 0;
+        (filters.bot_ids?.length ?? 0) === 0 &&
+        !filters.education;
       let allowFullAudience = false;
       if (isFullBase) {
         const phrase = `ОТПРАВИТЬ ВСЕМ ${audience?.telegramCount ?? 0}`;
@@ -450,7 +543,7 @@ export function BroadcastsTabContent() {
         allowFullAudience = true;
       }
 
-      if (mediaFile) {
+      if (mediaFile?.file) {
         const formData = new FormData();
         formData.append("message", message.trim().replace(/\[\[align:(left|center|right)\]\]/g, ""));
         formData.append("include_button", String(includeButton));
@@ -482,7 +575,7 @@ export function BroadcastsTabContent() {
 
         if (!response.ok) {
           const error = await response.json();
-          throw new Error(error.error || "Failed to send broadcast");
+          throw new Error(readableBroadcastError(error.error));
         }
 
         return response.json();
@@ -496,6 +589,11 @@ export function BroadcastsTabContent() {
         filters,
         product_context_id: productContextId,
       };
+      if (mediaFile?.storagePath) {
+        body.media_storage_path = mediaFile.storagePath;
+        body.media_type = mediaFile.type;
+        body.media_file_name = mediaFile.fileName;
+      }
       if (allowFullAudience) {
         body.allow_full_audience = true;
         body.confirm_full_audience_text = "SEND TO ALL";
@@ -515,7 +613,7 @@ export function BroadcastsTabContent() {
       queryClient.invalidateQueries({ queryKey: ["broadcast-history"] });
     },
     onError: (error) => {
-      toast.error("Ошибка отправки: " + (error as Error).message);
+      toast.error("Ошибка отправки: " + readableBroadcastError(error));
     },
   });
 
@@ -526,7 +624,8 @@ export function BroadcastsTabContent() {
       const isFullBase =
         (filters.include?.length ?? 0) === 0 &&
         (filters.exclude?.length ?? 0) === 0 &&
-        (filters.club_ids?.length ?? 0) === 0;
+        (filters.club_ids?.length ?? 0) === 0 &&
+        !filters.education;
       const body: Record<string, unknown> = {
         subject: emailSubject.trim(),
         html: emailBody.trim(),
@@ -559,39 +658,55 @@ export function BroadcastsTabContent() {
       queryClient.invalidateQueries({ queryKey: ["broadcast-history"] });
     },
     onError: (error) => {
-      toast.error("Ошибка отправки: " + (error as Error).message);
+      toast.error("Ошибка отправки: " + readableBroadcastError(error));
     },
   });
 
   // Send test message to admin
   const sendTestMutation = useMutation<unknown, Error, void>({
     mutationFn: async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: bots } = await (supabase as any)
-        .from("telegram_bots")
-        .select("id")
-        .eq("status", "active")
-        .limit(1);
-      
-      if (!bots?.length) throw new Error("Нет активного бота");
-      
-      const { data, error } = await supabase.functions.invoke("telegram-send-test", {
-        body: {
-          botId: bots[0].id,
-          messageText: message.trim().replace(/\[\[align:(left|center|right)\]\]/g, ""),
-          buttonText: includeButton ? buttonText : undefined,
-          buttonUrl: includeButton ? buttonUrl : undefined,
-          product_context_id: productContextId,
-        },
-      });
-      if (error) throw error;
+      const selectedBot = bots?.find((bot) => filters.bot_ids.includes(bot.id))
+        || bots?.find((bot) => bot.is_primary)
+        || bots?.[0];
+      if (!selectedBot) throw new Error("Нет активного Telegram-бота");
+
+      const cleanMessage = message.trim().replace(/\[\[align:(left|center|right)\]\]/g, "");
+      const common = {
+        botId: selectedBot.id,
+        messageText: cleanMessage,
+        buttonText: includeButton ? buttonText : undefined,
+        buttonUrl: includeButton ? buttonUrl : undefined,
+        product_context_id: productContextId,
+        media_type: mediaFile?.type,
+        media_storage_path: mediaFile?.storagePath,
+        media_file_name: mediaFile?.fileName,
+      };
+
+      if (mediaFile?.file) {
+        const formData = new FormData();
+        Object.entries(common).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) formData.append(key, String(value));
+        });
+        formData.append("media", mediaFile.file);
+        const { data: { session } } = await supabase.auth.getSession();
+        const response = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-send-test`,
+          { method: "POST", headers: { Authorization: `Bearer ${session?.access_token}` }, body: formData },
+        );
+        const result = await response.json();
+        if (!response.ok) throw new Error(readableBroadcastError(result.error));
+        return result;
+      }
+
+      const { data, error } = await supabase.functions.invoke("telegram-send-test", { body: common });
+      if (error) throw new Error(readableBroadcastError(error));
       return data;
     },
     onSuccess: () => {
       toast.success("Тестовое сообщение отправлено вам в Telegram");
     },
     onError: (error) => {
-      toast.error("Ошибка: " + error.message);
+      toast.error("Ошибка: " + readableBroadcastError(error));
     },
   });
 
@@ -612,6 +727,8 @@ export function BroadcastsTabContent() {
   }, [sendToTelegram, sendToEmail]);
 
   // Hydrate composer from existing template when editTemplateId is set
+  // Гидратация запускается только при смене id. snapshotCurrentComposer намеренно
+  // не является зависимостью: он меняется вместе с полями, которые этот effect заполняет.
   useEffect(() => {
     if (!editTemplateId) return;
     let cancelled = false;
@@ -640,7 +757,24 @@ export function BroadcastsTabContent() {
       setIncludeButton(!!btnUrl);
       if (btnText) setButtonText(btnText);
       if (btnUrl) setButtonUrl(btnUrl);
+      const storedMediaPath = (tpl.media_storage_path as string) || "";
+      const storedMediaType = (tpl.media_type as Exclude<MediaType, null>) || null;
+      if (storedMediaPath && storedMediaType) {
+        const slash = storedMediaPath.indexOf("/");
+        const bucket = slash > 0 ? storedMediaPath.slice(0, slash) : "telegram-media";
+        const key = slash > 0 ? storedMediaPath.slice(slash + 1) : storedMediaPath;
+        const { data: signed } = await supabase.storage.from(bucket).createSignedUrl(key, 3600);
+        setMediaFile({
+          type: storedMediaType,
+          fileName: String(tpl.media_file_name || "Медиафайл"),
+          storagePath: storedMediaPath,
+          preview: signed?.signedUrl,
+        });
+      } else {
+        setMediaFile(null);
+      }
       const af = (tpl.audience_filters as Record<string, unknown>) || {};
+      setIncludeArchived(Boolean(af.include_archived));
       if (af.include || af.exclude || af.club_ids) {
         setFilters({
           include: ((af.include as AudienceRule[]) || []),
@@ -648,10 +782,13 @@ export function BroadcastsTabContent() {
           club_ids: ((af.club_ids as string[]) || []),
           club_membership: ((af.club_membership as "current" | "ever" | "any") || "current"),
           bot_ids: ((af.bot_ids as string[]) || []),
+          education: af.education as BroadcastFilters["education"],
         });
       }
       const mode = String(tpl.send_mode || "manual");
-      if (mode === "scheduled") {
+      if (String(tpl.trigger_kind || "") === "lesson_event" || mode === "event") {
+        setSendMode("event");
+      } else if (mode === "scheduled") {
         setSendMode("scheduled");
         const sf = tpl.scheduled_for ? new Date(tpl.scheduled_for as string) : null;
         if (sf) {
@@ -663,8 +800,9 @@ export function BroadcastsTabContent() {
         const rule = (tpl.recurrence_rule as RecurrenceRule) || DEFAULT_RECURRENCE;
         setRecurrence({ ...DEFAULT_RECURRENCE, ...rule });
       } else {
-        setSendMode("now");
+        setSendMode(openTemplateForSendRef.current ? "now" : String(tpl.status || "") === "draft" ? "template" : "now");
       }
+      openTemplateForSendRef.current = false;
       toast.info(`Загружен шаблон «${tpl.name}» для редактирования`);
       // Snapshot — после применения всех setState (через micro-task), для guard «грязных» изменений.
       setTimeout(() => {
@@ -674,6 +812,7 @@ export function BroadcastsTabContent() {
     return () => {
       cancelled = true;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editTemplateId]);
 
   // Save scheduled/recurring template (INSERT or UPDATE — без дубля)
@@ -681,6 +820,8 @@ export function BroadcastsTabContent() {
   const saveScheduledMutation = useMutation({
     mutationFn: async () => {
       const isRecurring = sendMode === "recurring";
+      const isEvent = sendMode === "event";
+      const isTemplate = sendMode === "template";
 
       // Validate recurrence rule shape (monthly requires by_monthday, weekly requires by_weekday)
       if (isRecurring) {
@@ -703,8 +844,16 @@ export function BroadcastsTabContent() {
         if (rpcErr) throw new Error("RPC compute_next_broadcast_run: " + rpcErr.message);
         nextRunAt = (nextTs as string | null) ?? null;
         if (!nextRunAt) throw new Error("Не удалось вычислить следующий запуск по правилу повторения");
-      } else {
+      } else if (!isTemplate && !isEvent) {
         nextRunAt = composeScheduledAt();
+      }
+
+      let mediaStoragePath = mediaFile?.storagePath || null;
+      if (mediaFile?.file) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error("Сессия истекла. Войдите в систему заново.");
+        const uploaded = await uploadToTelegramMedia(mediaFile.file, user.id);
+        mediaStoragePath = `${uploaded.bucket}/${uploaded.path}`;
       }
 
       const payload: Record<string, unknown> = {
@@ -717,23 +866,28 @@ export function BroadcastsTabContent() {
         button_url: sendToTelegram && includeButton ? buttonUrl : null,
         email_subject: sendToEmail ? emailSubject.trim() : null,
         email_body_html: sendToEmail ? emailBody.trim() : null,
-        audience_filters: filters as unknown as Record<string, unknown>,
-        send_mode: isRecurring ? "recurring" : "scheduled",
+        audience_filters: { ...filters, include_archived: includeArchived } as unknown as Record<string, unknown>,
+        media_storage_path: sendToTelegram ? mediaStoragePath : null,
+        media_type: sendToTelegram ? mediaFile?.type || null : null,
+        media_file_name: sendToTelegram ? mediaFile?.fileName || null : null,
+        send_mode: isTemplate ? "manual" : isEvent ? "event" : isRecurring ? "recurring" : "scheduled",
         // CRITICAL: recurring saved with status='recurring', чтобы pause/resume
         // корректно восстанавливал metadata.paused_from_status.
-        status: isRecurring ? "recurring" : "scheduled",
+        status: isTemplate ? "draft" : isEvent || isRecurring ? "recurring" : "scheduled",
         recurrence_rule: isRecurring ? (recurrence as unknown as Record<string, unknown>) : null,
-        scheduled_for: isRecurring ? null : composeScheduledAt(),
+        scheduled_for: isTemplate || isRecurring || isEvent ? null : composeScheduledAt(),
         next_run_at: nextRunAt,
+        trigger_kind: isEvent ? "lesson_event" : sendMode === "scheduled" && filters.education ? "scheduled_condition" : "manual",
+        education_condition: filters.education || null,
       };
 
       if (editTemplateId) {
         const { error } = await supabase
           .from("broadcast_templates")
-          .update(payload as any)
+          .update(payload as never)
           .eq("id", editTemplateId);
         if (error) throw error;
-        return { id: editTemplateId, mode: "update" as const };
+        return { id: editTemplateId, mode: "update" as const, mediaStoragePath };
       }
       const { data, error } = await supabase
         .from("broadcast_templates")
@@ -742,14 +896,18 @@ export function BroadcastsTabContent() {
         .select("id")
         .single();
       if (error) throw error;
-      return { id: data.id as string, mode: "insert" as const };
+      return { id: data.id as string, mode: "insert" as const, mediaStoragePath };
     },
     onSuccess: (res) => {
       toast.success(
         res.mode === "update"
-          ? "Запланированная рассылка обновлена"
+          ? sendMode === "template" ? "Шаблон обновлён" : "Запланированная рассылка обновлена"
+          : sendMode === "template"
+          ? "Шаблон сохранён"
           : sendMode === "recurring"
           ? "Повторяющаяся рассылка создана"
+          : sendMode === "event"
+          ? "Автоматическая рассылка по событию создана"
           : "Рассылка запланирована",
       );
       // CRITICAL: использовать canonical queryKey таблицы «Запланированные» (Фаза 1).
@@ -765,7 +923,7 @@ export function BroadcastsTabContent() {
         setSendMode("now");
         setScheduledAt(null);
         setScheduledName("");
-        setMainTab("scheduled");
+        setMainTab(sendMode === "template" ? "templates" : "scheduled");
       }
     },
     onError: (err) => {
@@ -790,6 +948,26 @@ export function BroadcastsTabContent() {
     }
     if (sendToEmail && (!emailSubject.trim() || !emailBody.trim())) {
       toast.error("Заполните тему и текст письма для Email");
+      return;
+    }
+    if ((sendMode === "template" || sendMode === "event") && !scheduledName.trim()) {
+      toast.error(sendMode === "template" ? "Укажите название шаблона" : "Укажите название автоматической рассылки");
+      return;
+    }
+    if (filters.education && !filters.education.lesson_id) {
+      toast.error("Выберите урок для условия по обучению");
+      return;
+    }
+    if (sendMode === "event" && !filters.education) {
+      toast.error("Для отправки по событию задайте условие по обучению");
+      return;
+    }
+    if (sendMode === "event" && filters.education && ![
+      "lesson_completed",
+      "homework_submitted",
+      "form_answered",
+    ].includes(filters.education.status)) {
+      toast.error("По событию доступны только положительные действия: урок пройден, ДЗ сдано или анкета заполнена");
       return;
     }
 
@@ -833,17 +1011,33 @@ export function BroadcastsTabContent() {
         </TabsList>
 
         <TabsContent value="templates" className="mt-6">
-          <BroadcastTemplatesSection />
+          <BroadcastTemplatesSection
+            onCreate={() => {
+              setEditTemplateId(null);
+              resetComposer();
+              setSendMode("template");
+              setMainTab("quick");
+            }}
+            onEdit={(id) => {
+              openTemplateForSendRef.current = false;
+              setEditTemplateId(id);
+              setMainTab("quick");
+            }}
+            onUse={(id) => {
+              openTemplateForSendRef.current = true;
+              setEditTemplateId(id);
+              setMainTab("quick");
+            }}
+          />
         </TabsContent>
 
         <TabsContent value="scheduled" className="mt-6 space-y-6">
           <BroadcastAuditProofCard />
           <ScheduledBroadcastsSection
             onEdit={(id) => {
+              openTemplateForSendRef.current = false;
               setEditTemplateId(id);
               setMainTab("quick");
-              // TODO (Sprint B rev3 — фаза 2): гидратация composer'а из broadcast_templates по editTemplateId
-              toast.info("Открытие редактирования: фаза 2 (гидратация composer'а)");
             }}
           />
         </TabsContent>
@@ -885,17 +1079,18 @@ export function BroadcastsTabContent() {
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  // «Новая рассылка» вне режима редактирования — сброс полей с подтверждением, если есть контент.
+                  // Крестик закрывает редактор и возвращает к списку шаблонов.
                   const hasContent = !!(message.trim() || emailSubject.trim() || emailBody.trim() || scheduledName.trim() || mediaFile);
                   if (hasContent) {
                     setExitConfirmOpen({ kind: "new" });
                   } else {
                     resetComposer();
+                    setMainTab("templates");
                   }
                 }}
               >
                 <X className="h-4 w-4 mr-1" />
-                Новая рассылка
+                Закрыть редактор
               </Button>
             </div>
           )}
@@ -908,7 +1103,7 @@ export function BroadcastsTabContent() {
                 <AlertDialogDescription>
                   {exitConfirmOpen?.kind === "exit"
                     ? "В шаблоне есть несохранённые изменения. Выйти из редактирования и потерять их?"
-                    : "В композере есть введённые данные. Очистить форму и начать новую рассылку?"}
+                    : "В редакторе есть несохранённые данные. Закрыть его и потерять изменения?"}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -920,11 +1115,12 @@ export function BroadcastsTabContent() {
                       toast.info("Выход из режима редактирования");
                     } else {
                       resetComposer();
+                      setMainTab("templates");
                     }
                     setExitConfirmOpen(null);
                   }}
                 >
-                  {exitConfirmOpen?.kind === "exit" ? "Выйти без сохранения" : "Очистить"}
+                  {exitConfirmOpen?.kind === "exit" ? "Выйти без сохранения" : "Закрыть без сохранения"}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -945,15 +1141,10 @@ export function BroadcastsTabContent() {
                   <AlertTriangle className="h-4 w-4" />
                   <AlertDescription className="space-y-2">
                     <div className="font-medium">Ошибка расчёта аудитории</div>
-                    <div className="text-xs opacity-90 break-words">
-                      {audienceError?.message}
-                    </div>
-                    <details className="text-xs">
-                      <summary className="cursor-pointer underline">Показать переданные фильтры</summary>
-                      <pre className="mt-2 p-2 bg-background/50 rounded overflow-auto text-[10px] leading-tight">
-                        {JSON.stringify(rpcFilters, null, 2)}
-                      </pre>
-                    </details>
+                    <div className="text-xs opacity-90 break-words">{readableBroadcastError(audienceError)}</div>
+                    <Button type="button" variant="outline" size="sm" onClick={() => refetchAudience()}>
+                      Повторить расчёт
+                    </Button>
                   </AlertDescription>
                 </Alert>
               )}
@@ -1031,7 +1222,7 @@ export function BroadcastsTabContent() {
               <RadioGroup
                 value={sendMode}
                 onValueChange={(v) => setSendMode(v as SendMode)}
-                className="grid grid-cols-1 sm:grid-cols-3 gap-2"
+                className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2"
               >
                 <Label
                   htmlFor="mode-now"
@@ -1066,7 +1257,38 @@ export function BroadcastsTabContent() {
                   <Repeat className="h-4 w-4" />
                   Повторять
                 </Label>
+                <Label
+                  htmlFor="mode-template"
+                  className={cn(
+                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    sendMode === "template" && "border-primary bg-primary/5",
+                  )}
+                >
+                  <RadioGroupItem id="mode-template" value="template" />
+                  <FileText className="h-4 w-4" />
+                  Сохранить как шаблон
+                </Label>
+                <Label
+                  htmlFor="mode-event"
+                  className={cn(
+                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    sendMode === "event" && "border-primary bg-primary/5",
+                  )}
+                >
+                  <RadioGroupItem id="mode-event" value="event" />
+                  <Sparkles className="h-4 w-4" />
+                  По событию ученика
+                </Label>
               </RadioGroup>
+
+              {sendMode === "event" && (
+                <Alert>
+                  <Sparkles className="h-4 w-4" />
+                  <AlertDescription>
+                    После прохождения урока, сдачи домашнего задания или заполнения анкеты сообщение будет поставлено в очередь автоматически. Повторная отправка одному ученику по тому же событию блокируется.
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {/* Scheduled DateTime — canonical platform DateTimePicker */}
               {sendMode === "scheduled" && (
@@ -1218,7 +1440,7 @@ export function BroadcastsTabContent() {
 
               {sendMode !== "now" && (
                 <div className="space-y-2 pt-2">
-                  <Label>Название рассылки (для таблицы «Запланированные»)</Label>
+                  <Label>{sendMode === "template" ? "Название шаблона" : sendMode === "event" ? "Название автоматической рассылки" : "Название рассылки (для таблицы «Запланированные»)"}</Label>
                   <Input
                     value={scheduledName}
                     onChange={(e) => setScheduledName(e.target.value)}
@@ -1239,8 +1461,8 @@ export function BroadcastsTabContent() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Media attachment (только для send_now — scheduled/recurring без медиа в фазе 2) */}
-                {sendMode === "now" && (mediaFile ? (
+                {/* Одно и то же медиа для немедленной, запланированной и шаблонной рассылки. */}
+                {mediaFile ? (
                   <div className="relative rounded-lg border p-3 bg-muted/50">
                     <Button
                       variant="ghost"
@@ -1259,6 +1481,19 @@ export function BroadcastsTabContent() {
                           <Video className="h-8 w-8 text-muted-foreground" />
                         </div>
                       )}
+                      {mediaFile.type === "animation" && (
+                        mediaFile.preview ? (
+                          mediaFile.fileName.toLowerCase().endsWith(".mp4") ? (
+                            <video src={mediaFile.preview} autoPlay loop muted playsInline className="w-20 h-20 object-cover rounded" />
+                          ) : (
+                            <img src={mediaFile.preview} alt="Предпросмотр GIF" className="w-20 h-20 object-cover rounded" />
+                          )
+                        ) : (
+                          <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
+                            <Film className="h-8 w-8 text-muted-foreground" />
+                          </div>
+                        )
+                      )}
                       {mediaFile.type === "audio" && (
                         <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
                           <Music className="h-8 w-8 text-muted-foreground" />
@@ -1269,11 +1504,18 @@ export function BroadcastsTabContent() {
                           <Circle className="h-8 w-8 text-muted-foreground" />
                         </div>
                       )}
+                      {mediaFile.type === "document" && (
+                        <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
+                          <FileText className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{mediaFile.file.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {(mediaFile.file.size / 1024 / 1024).toFixed(2)} МБ
-                        </p>
+                        <p className="text-sm font-medium truncate">{mediaFile.fileName}</p>
+                        {mediaFile.file && (
+                          <p className="text-xs text-muted-foreground">
+                            {(mediaFile.file.size / 1024 / 1024).toFixed(2)} МБ
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1284,20 +1526,7 @@ export function BroadcastsTabContent() {
                         type="file"
                         ref={fileInputRef}
                         className="hidden"
-                        accept="image/*,video/*,audio/*"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const type = file.type.startsWith("image/")
-                              ? "photo"
-                              : file.type.startsWith("video/")
-                              ? "video"
-                              : file.type.startsWith("audio/")
-                              ? "audio"
-                              : null;
-                            if (type) handleFileSelect(e, type);
-                          }
-                        }}
+                        onChange={(e) => handleFileSelect(e, pendingMediaTypeRef.current)}
                       />
                       <Popover>
                         <PopoverTrigger asChild>
@@ -1306,40 +1535,54 @@ export function BroadcastsTabContent() {
                             Вложение
                           </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-40 p-2" align="start">
+                        <PopoverContent className="w-56 p-2" align="start">
                           <div className="space-y-1">
                             <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
-                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "image/*"; fileInputRef.current.click(); } }}>
+                              onClick={() => chooseMedia("photo", "image/jpeg,image/png,image/webp")}>
                               <Image className="h-4 w-4" /> Фото
                             </Button>
                             <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
-                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "video/*"; fileInputRef.current.click(); } }}>
+                              onClick={() => chooseMedia("animation", "image/gif,video/mp4")}>
+                              <Film className="h-4 w-4" /> GIF / анимация
+                            </Button>
+                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
+                              onClick={() => chooseMedia("video", "video/mp4,video/quicktime,video/webm")}>
                               <Video className="h-4 w-4" /> Видео
                             </Button>
                             <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
-                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "audio/*"; fileInputRef.current.click(); } }}>
+                              onClick={() => chooseMedia("audio", "audio/*")}>
                               <Music className="h-4 w-4" /> Аудио
                             </Button>
                             <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
-                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "video/mp4"; fileInputRef.current.click(); } }}>
+                              onClick={() => chooseMedia("video_note", "video/mp4")}>
                               <Circle className="h-4 w-4" /> Кружок
+                            </Button>
+                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
+                              onClick={() => chooseMedia("document", ".pdf,.doc,.docx,.xls,.xlsx,.zip,.txt")}>
+                              <FileText className="h-4 w-4" /> Файл
                             </Button>
                           </div>
                         </PopoverContent>
                       </Popover>
-                      <span className="text-xs text-muted-foreground">до 10 МБ, видео до 50 МБ</span>
+                      <span className="text-xs text-muted-foreground">GIF — файл .gif или короткий зацикленный .mp4</span>
                     </div>
                   </div>
-                ))}
+                )}
 
                 <div className="space-y-2">
-                  <Label>Текст сообщения {sendMode === "now" && mediaFile && "(подпись)"}</Label>
+                  <Label>Текст сообщения {mediaFile && "(подпись к медиа)"}</Label>
                   <TokenizedRichInput
                     value={message}
                     onChange={setMessage}
                     placeholder="Введите текст сообщения для рассылки..."
                     rows={6}
                   />
+                  {mediaFile && (
+                    <Alert variant={telegramWillSplit ? "destructive" : "default"}>
+                      {telegramWillSplit ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
+                      <AlertDescription>{telegramDeliveryHint}</AlertDescription>
+                    </Alert>
+                  )}
                   {showCfWarning && (
                     <Alert variant="destructive">
                       <AlertTriangle className="h-4 w-4" />
@@ -1383,6 +1626,21 @@ export function BroadcastsTabContent() {
                     </div>
                   </div>
                 )}
+
+                <Separator />
+                <div className="space-y-2">
+                  <Label>Предпросмотр в Telegram</Label>
+                  <TelegramMessagePreview
+                    text={message}
+                    mediaType={mediaFile?.type}
+                    mediaUrl={mediaFile?.preview}
+                    fileName={mediaFile?.fileName}
+                    showButton={includeButton}
+                    buttonText={buttonText}
+                    deliveryHint={telegramDeliveryHint}
+                    willSplit={telegramWillSplit}
+                  />
+                </div>
               </CardContent>
             </Card>
           )}
@@ -1434,7 +1692,7 @@ export function BroadcastsTabContent() {
               <Button
                 variant="outline"
                 onClick={() => sendTestMutation.mutate()}
-                disabled={!message.trim() || sendTestMutation.isPending}
+                disabled={(!message.trim() && !mediaFile) || sendTestMutation.isPending}
               >
                 {sendTestMutation.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -1470,10 +1728,15 @@ export function BroadcastsTabContent() {
                   <CalendarIcon className="h-4 w-4" />
                   {editTemplateId ? "Сохранить изменения" : "Запланировать"}
                 </>
-              ) : (
+              ) : sendMode === "recurring" ? (
                 <>
                   <Repeat className="h-4 w-4" />
                   {editTemplateId ? "Сохранить изменения" : "Создать повторяющуюся"}
+                </>
+              ) : (
+                <>
+                  <FileText className="h-4 w-4" />
+                  {editTemplateId ? "Сохранить шаблон" : "Сохранить как шаблон"}
                 </>
               )}
             </Button>
@@ -1588,6 +1851,87 @@ export function BroadcastsTabContent() {
 
               <Separator />
 
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Условие по обучению</Label>
+                  {filters.education && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setFilters((current) => ({ ...current, education: undefined }))}
+                    >
+                      Сбросить
+                    </Button>
+                  )}
+                </div>
+                <Select
+                  value={filters.education?.module_id || "none"}
+                  onValueChange={(moduleId) => setFilters((current) => ({
+                    ...current,
+                    education: moduleId === "none" ? undefined : {
+                      module_id: moduleId,
+                      lesson_id: "",
+                      status: "lesson_completed",
+                    },
+                  }))}
+                >
+                  <SelectTrigger><SelectValue placeholder="Без условия" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Без условия</SelectItem>
+                    {(trainingModules || []).map((module) => (
+                      <SelectItem key={module.id} value={module.id}>{module.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {filters.education && (
+                  <>
+                    <Select
+                      value={filters.education.lesson_id || ""}
+                      onValueChange={(lessonId) => setFilters((current) => ({
+                        ...current,
+                        education: current.education ? { ...current.education, lesson_id: lessonId } : undefined,
+                      }))}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Выберите урок" /></SelectTrigger>
+                      <SelectContent>
+                        {(trainingLessons || []).map((lesson) => (
+                          <SelectItem key={lesson.id} value={lesson.id}>{lesson.title}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={filters.education.status}
+                      onValueChange={(status) => setFilters((current) => ({
+                        ...current,
+                        education: current.education ? {
+                          ...current.education,
+                          status: status as NonNullable<BroadcastFilters["education"]>["status"],
+                        } : undefined,
+                      }))}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="lesson_completed">Урок пройден</SelectItem>
+                        <SelectItem value="lesson_not_completed">Урок не пройден</SelectItem>
+                        <SelectItem value="homework_submitted">Домашнее задание сдано</SelectItem>
+                        <SelectItem value="homework_not_submitted">Домашнее задание не сдано</SelectItem>
+                        <SelectItem value="form_answered">Анкета заполнена</SelectItem>
+                        <SelectItem value="form_not_answered">Анкета не заполнена</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {!filters.education.lesson_id && (
+                      <p className="text-xs text-destructive">Выберите конкретный урок.</p>
+                    )}
+                  </>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Перед отправкой условие проверяется повторно по фактическому прогрессу ученика.
+                </p>
+              </div>
+
+              <Separator />
+
               {/* Telegram clubs (multi) */}
               <div className="space-y-2">
                 <Label>Telegram-клубы</Label>
@@ -1697,15 +2041,12 @@ export function BroadcastsTabContent() {
                 ) : hasAudienceError ? (
                   <Alert variant="destructive">
                     <AlertTriangle className="h-4 w-4" />
-                    <AlertDescription className="text-xs space-y-1">
+                    <AlertDescription className="text-xs space-y-2">
                       <div className="font-medium">Ошибка расчёта</div>
-                      <div className="break-words opacity-90">{audienceError?.message}</div>
-                      <details>
-                        <summary className="cursor-pointer underline">Фильтры</summary>
-                        <pre className="mt-1 p-1.5 bg-background/50 rounded overflow-auto text-[10px] leading-tight">
-                          {JSON.stringify(rpcFilters, null, 2)}
-                        </pre>
-                      </details>
+                      <div className="break-words opacity-90">{readableBroadcastError(audienceError)}</div>
+                      <Button type="button" variant="outline" size="sm" onClick={() => refetchAudience()}>
+                        Повторить
+                      </Button>
                     </AlertDescription>
                   </Alert>
                 ) : (

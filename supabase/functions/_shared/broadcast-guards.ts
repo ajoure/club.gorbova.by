@@ -55,6 +55,17 @@ function hasAudienceRestriction(filters: any): boolean {
   // Bot-only segmentation тоже валидное ограничение для telegram
   if (Array.isArray(filters.bot_ids) && filters.bot_ids.length > 0) return true;
 
+  // A concrete education condition is also a real audience restriction. The
+  // server validates lesson_id/status before resolving recipients.
+  if (
+    filters.education
+    && typeof filters.education === 'object'
+    && typeof filters.education.lesson_id === 'string'
+    && filters.education.lesson_id.trim()
+    && typeof filters.education.status === 'string'
+    && filters.education.status.trim()
+  ) return true;
+
   return false;
 }
 
@@ -78,8 +89,7 @@ export function evaluateBroadcastGuards(input: BroadcastGuardInput): BroadcastGu
         blocked: true,
         reason: 'broadcast_blocked_empty_audience_filters',
         message:
-          'Empty audience filters: real send to entire base is blocked. ' +
-          'Pass allow_full_audience=true with confirm_full_audience_text="SEND TO ALL" to override.',
+          'Не выбрана аудитория. Отправка по всей базе заблокирована до явного подтверждения.',
         meta: {
           would_be_full_audience: true,
           filters,
@@ -91,8 +101,7 @@ export function evaluateBroadcastGuards(input: BroadcastGuardInput): BroadcastGu
         blocked: true,
         reason: 'broadcast_blocked_full_audience_without_confirm',
         message:
-          'Full-audience override requested but confirm_full_audience_text is missing or wrong. ' +
-          `Expected exact value: "${FULL_AUDIENCE_CONFIRM_TEXT}".`,
+          'Подтверждение отправки по всей базе отсутствует или введено неверно.',
         meta: {
           would_be_full_audience: true,
           allow_full_audience: true,
@@ -108,10 +117,9 @@ export function evaluateBroadcastGuards(input: BroadcastGuardInput): BroadcastGu
   if (!isDryRun && !isTestSelf && trimmedLen < 5) {
     return {
       blocked: true,
-      reason: 'broadcast_blocked_short_message',
-      message:
-        `Message too short for real broadcast (length=${trimmedLen}, min=5). ` +
-        'Use dry_run=true for testing.',
+        reason: 'broadcast_blocked_short_message',
+        message:
+        `Сообщение слишком короткое для реальной рассылки: ${trimmedLen} символов, требуется не менее 5.`,
       meta: {
         message_length: trimmedLen,
         would_be_full_audience: wouldBeFullAudience,
