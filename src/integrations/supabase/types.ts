@@ -2935,6 +2935,56 @@ export type Database = {
         }
         Relationships: []
       }
+      broadcast_automation_deliveries: {
+        Row: {
+          attempted_at: string | null
+          created_at: string
+          error: string | null
+          event_key: string
+          id: string
+          sent_at: string | null
+          status: string
+          telegram_chat_id: number | null
+          telegram_message_id: number | null
+          template_id: string
+          user_id: string
+        }
+        Insert: {
+          attempted_at?: string | null
+          created_at?: string
+          error?: string | null
+          event_key: string
+          id?: string
+          sent_at?: string | null
+          status?: string
+          telegram_chat_id?: number | null
+          telegram_message_id?: number | null
+          template_id: string
+          user_id: string
+        }
+        Update: {
+          attempted_at?: string | null
+          created_at?: string
+          error?: string | null
+          event_key?: string
+          id?: string
+          sent_at?: string | null
+          status?: string
+          telegram_chat_id?: number | null
+          telegram_message_id?: number | null
+          template_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_automation_deliveries_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       broadcast_dispatcher_config: {
         Row: {
           enabled: boolean
@@ -3036,6 +3086,7 @@ export type Database = {
           channels: string[]
           created_at: string | null
           created_by: string | null
+          education_condition: Json | null
           email_body_html: string | null
           email_only_when_no_telegram: boolean
           email_subject: string | null
@@ -3060,6 +3111,7 @@ export type Database = {
           targeting_tariff_id: string | null
           template_type: string
           total_runs: number
+          trigger_kind: string
           updated_at: string | null
         }
         Insert: {
@@ -3073,6 +3125,7 @@ export type Database = {
           channels?: string[]
           created_at?: string | null
           created_by?: string | null
+          education_condition?: Json | null
           email_body_html?: string | null
           email_only_when_no_telegram?: boolean
           email_subject?: string | null
@@ -3097,6 +3150,7 @@ export type Database = {
           targeting_tariff_id?: string | null
           template_type?: string
           total_runs?: number
+          trigger_kind?: string
           updated_at?: string | null
         }
         Update: {
@@ -3110,6 +3164,7 @@ export type Database = {
           channels?: string[]
           created_at?: string | null
           created_by?: string | null
+          education_condition?: Json | null
           email_body_html?: string | null
           email_only_when_no_telegram?: boolean
           email_subject?: string | null
@@ -3134,6 +3189,7 @@ export type Database = {
           targeting_tariff_id?: string | null
           template_type?: string
           total_runs?: number
+          trigger_kind?: string
           updated_at?: string | null
         }
         Relationships: [
@@ -22525,6 +22581,28 @@ export type Database = {
           payment_status: string
         }[]
       }
+      claim_broadcast_automation_deliveries: {
+        Args: { _limit?: number }
+        Returns: {
+          attempted_at: string | null
+          created_at: string
+          error: string | null
+          event_key: string
+          id: string
+          sent_at: string | null
+          status: string
+          telegram_chat_id: number | null
+          telegram_message_id: number | null
+          template_id: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "broadcast_automation_deliveries"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       claim_media_jobs: {
         Args: { p_limit?: number; p_user_id?: string }
         Returns: {
@@ -24056,6 +24134,7 @@ export type Database = {
         }[]
       }
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
+      invoke_process_scheduled_broadcasts: { Args: never; Returns: number }
       is_live_event_presenter: {
         Args: { _live_event_id: string; _user_id: string }
         Returns: boolean
@@ -24966,6 +25045,10 @@ export type Database = {
           resolved_product_id: string
           valid: boolean
         }[]
+      }
+      verify_broadcast_dispatcher_cron_secret: {
+        Args: { _candidate: string }
+        Returns: boolean
       }
     }
     Enums: {
