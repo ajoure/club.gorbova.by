@@ -148,6 +148,13 @@ interface MediaFile {
   preview?: string;
 }
 
+interface BroadcastTestRecipient {
+  full_name: string | null;
+  email: string | null;
+  telegram_username: string | null;
+  telegram_user_id: string | number | null;
+}
+
 type SendMode = "now" | "scheduled" | "recurring" | "event" | "template";
 type Frequency = "daily" | "weekly" | "monthly";
 
@@ -219,6 +226,7 @@ export function BroadcastsTabContent() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
   const [selectedBroadcast, setSelectedBroadcast] = useState<Record<string, unknown> | null>(null);
+  const [testEmail, setTestEmail] = useState("");
 
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -371,6 +379,24 @@ export function BroadcastsTabContent() {
         .order("bot_name", { ascending: true });
       return data || [];
     },
+  });
+
+  // Тест в Telegram всегда идёт текущему авторизованному администратору.
+  // Показываем его явно, чтобы оператор не ожидал отправку другому сотруднику.
+  const { data: testRecipient, isLoading: testRecipientLoading } = useQuery<BroadcastTestRecipient | null>({
+    queryKey: ["broadcast-test-recipient"],
+    queryFn: async () => {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) throw new Error("Не удалось определить текущего администратора");
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("full_name, email, telegram_username, telegram_user_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (error) throw error;
+      return data as BroadcastTestRecipient | null;
+    },
+    staleTime: 60_000,
   });
 
   // Audience preview via RPC (single source of truth, used by edge funcs too).
@@ -662,8 +688,8 @@ export function BroadcastsTabContent() {
     },
   });
 
-  // Send test message to admin
-  const sendTestMutation = useMutation<unknown, Error, void>({
+  // Telegram-тест текущему авторизованному администратору.
+  const sendTelegramTestMutation = useMutation<unknown, Error, void>({
     mutationFn: async () => {
       const selectedBot = bots?.find((bot) => filters.bot_ids.includes(bot.id))
         || bots?.find((bot) => bot.is_primary)
@@ -703,10 +729,49 @@ export function BroadcastsTabContent() {
       return data;
     },
     onSuccess: () => {
-      toast.success("Тестовое сообщение отправлено вам в Telegram");
+      toast.success(`Тест отправлен в Telegram: ${testRecipient?.full_name || "текущий администратор"}`);
     },
     onError: (error) => {
       toast.error("Ошибка: " + readableBroadcastError(error));
+    },
+  });
+
+  // Email-тест идёт только на явно введённый адрес и не использует аудиторию рассылки.
+  const sendEmailTestMutation = useMutation<unknown, Error, void>({
+    mutationFn: async () => {
+      const recipient = testEmail.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+        throw new Error("Введите корректный Email для теста");
+      }
+      if (!emailSubject.trim()) throw new Error("Добавьте тему тестового письма");
+      if (!emailBody.trim()) throw new Error("Добавьте текст тестового письма");
+
+      const html = `<div style="margin:0 0 16px;padding:12px 16px;border-radius:8px;background:#eef6ff;color:#1d4ed8;font-weight:600">Тестовое письмо — рассылка не запущена</div>${emailBody.trim()}`;
+      const text = `Тестовое письмо — рассылка не запущена\n\n${emailBody
+        .replace(/<[^>]*>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()}`;
+      const { data, error } = await supabase.functions.invoke("send-email", {
+        body: {
+          to: recipient,
+          subject: `[ТЕСТ] ${emailSubject.trim()}`,
+          html,
+          text,
+          product_id: productContextId || undefined,
+          context: {
+            event_type: "broadcast_test",
+            meta: { source: "broadcast_editor", test_only: true },
+          },
+        },
+      });
+      if (error) throw new Error(readableBroadcastError(error));
+      return data;
+    },
+    onSuccess: () => {
+      toast.success(`Тестовое письмо принято к отправке: ${testEmail.trim()}`);
+    },
+    onError: (error) => {
+      toast.error("Ошибка Email-теста: " + readableBroadcastError(error));
     },
   });
 
@@ -1001,7 +1066,7 @@ export function BroadcastsTabContent() {
     saveScheduledMutation.isPending;
 
   return (
-    <div className="container max-w-6xl py-6 space-y-6 overflow-auto h-full">
+    <div className="w-full max-w-[1680px] mx-auto px-4 md:px-6 xl:px-8 py-6 space-y-6 overflow-auto h-full">
       {/* Main Tabs: Templates vs Quick Send */}
       <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick" | "scheduled")}>
         <TabsList>
@@ -1043,9 +1108,9 @@ export function BroadcastsTabContent() {
         </TabsContent>
 
         <TabsContent value="quick" className="mt-6">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-6 2xl:gap-8">
         {/* Main Content */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="min-w-0 space-y-6">
           {/* Edit-mode banner + actions */}
           {editTemplateId ? (
             <Alert>
@@ -1222,62 +1287,62 @@ export function BroadcastsTabContent() {
               <RadioGroup
                 value={sendMode}
                 onValueChange={(v) => setSendMode(v as SendMode)}
-                className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2"
+                className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-5 gap-3"
               >
                 <Label
                   htmlFor="mode-now"
                   className={cn(
-                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    "grid min-h-16 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
                     sendMode === "now" && "border-primary bg-primary/5",
                   )}
                 >
                   <RadioGroupItem id="mode-now" value="now" />
-                  <Send className="h-4 w-4" />
-                  Отправить сейчас
+                  <Send className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 text-sm font-medium leading-tight">Отправить сейчас</span>
                 </Label>
                 <Label
                   htmlFor="mode-scheduled"
                   className={cn(
-                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    "grid min-h-16 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
                     sendMode === "scheduled" && "border-primary bg-primary/5",
                   )}
                 >
                   <RadioGroupItem id="mode-scheduled" value="scheduled" />
-                  <CalendarIcon className="h-4 w-4" />
-                  Запланировать
+                  <CalendarIcon className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 text-sm font-medium leading-tight">Запланировать</span>
                 </Label>
                 <Label
                   htmlFor="mode-recurring"
                   className={cn(
-                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    "grid min-h-16 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
                     sendMode === "recurring" && "border-primary bg-primary/5",
                   )}
                 >
                   <RadioGroupItem id="mode-recurring" value="recurring" />
-                  <Repeat className="h-4 w-4" />
-                  Повторять
+                  <Repeat className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 text-sm font-medium leading-tight">Повторять</span>
                 </Label>
                 <Label
                   htmlFor="mode-template"
                   className={cn(
-                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    "grid min-h-16 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
                     sendMode === "template" && "border-primary bg-primary/5",
                   )}
                 >
                   <RadioGroupItem id="mode-template" value="template" />
-                  <FileText className="h-4 w-4" />
-                  Сохранить как шаблон
+                  <FileText className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 text-sm font-medium leading-tight">Сохранить как шаблон</span>
                 </Label>
                 <Label
                   htmlFor="mode-event"
                   className={cn(
-                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    "grid min-h-16 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
                     sendMode === "event" && "border-primary bg-primary/5",
                   )}
                 >
                   <RadioGroupItem id="mode-event" value="event" />
-                  <Sparkles className="h-4 w-4" />
-                  По событию ученика
+                  <Sparkles className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 text-sm font-medium leading-tight">По событию ученика</span>
                 </Label>
               </RadioGroup>
 
@@ -1686,22 +1751,106 @@ export function BroadcastsTabContent() {
             </Card>
           )}
 
+          {/* Safe single-recipient tests. These never use the broadcast audience. */}
+          {sendMode === "now" && (sendToTelegram || sendToEmail) && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg">Тестовая отправка</CardTitle>
+                <CardDescription>
+                  Проверяет сообщение на одном получателе. Рассылка по аудитории не запускается.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {sendToTelegram && (
+                  <div className="rounded-lg border p-4 space-y-3 min-w-0">
+                    <div className="flex items-start gap-3">
+                      <MessageCircle className="h-5 w-5 shrink-0 text-blue-500 mt-0.5" />
+                      <div className="min-w-0">
+                        <p className="font-medium">Telegram текущему администратору</p>
+                        <p className="text-sm text-muted-foreground break-words">
+                          {testRecipientLoading
+                            ? "Проверяем профиль…"
+                            : testRecipient?.full_name || "Имя администратора не указано"}
+                          {testRecipient?.telegram_username ? ` · @${testRecipient.telegram_username.replace(/^@/, "")}` : ""}
+                        </p>
+                        {!testRecipientLoading && !testRecipient?.telegram_user_id && (
+                          <p className="text-sm text-destructive mt-1">
+                            Telegram не привязан к этому профилю. Войдите под нужным администратором или привяжите его Telegram.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full gap-2"
+                      onClick={() => sendTelegramTestMutation.mutate()}
+                      disabled={
+                        testRecipientLoading ||
+                        !testRecipient?.telegram_user_id ||
+                        (!message.trim() && !mediaFile) ||
+                        sendTelegramTestMutation.isPending
+                      }
+                    >
+                      {sendTelegramTestMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                      Отправить тест в Telegram
+                    </Button>
+                  </div>
+                )}
+
+                {sendToEmail && (
+                  <div className="rounded-lg border p-4 space-y-3 min-w-0">
+                    <div className="flex items-start gap-3">
+                      <Mail className="h-5 w-5 shrink-0 text-orange-500 mt-0.5" />
+                      <div className="min-w-0">
+                        <Label htmlFor="broadcast-test-email" className="font-medium">
+                          Email для теста
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          Адрес вводится явно и не зависит от профиля текущего администратора.
+                        </p>
+                      </div>
+                    </div>
+                    <Input
+                      id="broadcast-test-email"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="email"
+                      value={testEmail}
+                      onChange={(event) => setTestEmail(event.target.value)}
+                      placeholder="name@example.com"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full gap-2"
+                      onClick={() => sendEmailTestMutation.mutate()}
+                      disabled={
+                        !testEmail.trim() ||
+                        !emailSubject.trim() ||
+                        !emailBody.trim() ||
+                        sendEmailTestMutation.isPending
+                      }
+                    >
+                      {sendEmailTestMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Mail className="h-4 w-4" />
+                      )}
+                      Отправить тестовое письмо
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Send Buttons */}
           <div className="flex gap-2">
-            {sendToTelegram && sendMode === "now" && (
-              <Button
-                variant="outline"
-                onClick={() => sendTestMutation.mutate()}
-                disabled={(!message.trim() && !mediaFile) || sendTestMutation.isPending}
-              >
-                {sendTestMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : (
-                  <Send className="h-4 w-4 mr-2" />
-                )}
-                🧪 Тест себе
-              </Button>
-            )}
             <Button
               size="lg"
               className="flex-1 gap-2"
@@ -1816,7 +1965,7 @@ export function BroadcastsTabContent() {
         </div>
 
         {/* Sidebar - Filters & Preview */}
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6 xl:w-[360px]">
           {/* Filters */}
           <Card>
             <CardHeader className="pb-3">
