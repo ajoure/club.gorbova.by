@@ -24134,6 +24134,7 @@ export type Database = {
         }[]
       }
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
+      invoke_process_scheduled_broadcasts: { Args: never; Returns: number }
       is_live_event_presenter: {
         Args: { _live_event_id: string; _user_id: string }
         Returns: boolean
@@ -25044,6 +25045,10 @@ export type Database = {
           resolved_product_id: string
           valid: boolean
         }[]
+      }
+      verify_broadcast_dispatcher_cron_secret: {
+        Args: { _candidate: string }
+        Returns: boolean
       }
     }
     Enums: {
