@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { resolveSystemTokens, extractUsedTokens } from "../_shared/systemTokens.ts";
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from "../_shared/customFieldTokens.ts";
 import { evaluateBroadcastGuards, auditBlockedAttempt } from "../_shared/broadcast-guards.ts";
+import { filterUsersByEducationCondition } from "../_shared/broadcastEducation.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -270,7 +271,7 @@ Deno.serve(async (req) => {
     // ===== Auth path resolution =====
     // Two paths:
     //   (A) System actor (scheduled dispatcher): x-system-actor + internal secret.
-    //   (B) User JWT with entitlements.manage permission.
+    //   (B) User JWT with contact-center broadcast management permission.
     const authHeader = req.headers.get('Authorization');
     const systemActor = req.headers.get('x-system-actor');
     const internalSecretHeader = req.headers.get('x-broadcast-internal-secret');
@@ -299,7 +300,7 @@ Deno.serve(async (req) => {
           has_secret: !!providedSecret,
         });
         return new Response(
-          JSON.stringify({ error: 'Forbidden' }),
+          JSON.stringify({ error: 'Доступ к системной отправке запрещён' }),
           { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -308,7 +309,7 @@ Deno.serve(async (req) => {
       // User JWT path (unchanged).
       if (!authHeader) {
         return new Response(
-          JSON.stringify({ error: 'Unauthorized' }),
+          JSON.stringify({ error: 'Требуется авторизация' }),
           { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -316,17 +317,22 @@ Deno.serve(async (req) => {
       const { data: { user: authedUser }, error: authError } = await supabase.auth.getUser(token);
       if (authError || !authedUser) {
         return new Response(
-          JSON.stringify({ error: 'Unauthorized' }),
+          JSON.stringify({ error: 'Сессия недействительна' }),
           { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      const { data: hasPermission } = await supabase.rpc('has_permission', {
-        _user_id: authedUser.id,
-        _permission_code: 'entitlements.manage',
-      });
-      if (!hasPermission) {
+      const [{ data: canManage }, { data: isAdmin }, { data: isSuperAdmin }] = await Promise.all([
+        supabase.rpc('has_admin_section_access', {
+          _user_id: authedUser.id,
+          _section_code: 'communication',
+          _min_level: 'manage',
+        }),
+        supabase.rpc('has_role_v2', { _user_id: authedUser.id, _role_code: 'admin' }),
+        supabase.rpc('has_role_v2', { _user_id: authedUser.id, _role_code: 'super_admin' }),
+      ]);
+      if (!canManage && !isAdmin && !isSuperAdmin) {
         return new Response(
-          JSON.stringify({ error: 'Forbidden' }),
+          JSON.stringify({ error: 'Недостаточно прав для управления рассылками' }),
           { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -406,6 +412,10 @@ Deno.serve(async (req) => {
     const hasExcludeArr = Array.isArray(filters?.exclude);
     const hasClubIdsArr = Array.isArray(filters?.club_ids);
     const hasNewSchemaShape = hasIncludeArr || hasExcludeArr || hasClubIdsArr;
+    const hasConditionAudience = Boolean(filters?.education)
+      || (isSystemActor
+        && Array.isArray(filters?.direct_user_ids)
+        && filters.direct_user_ids.length > 0);
     const newSchemaHasContent =
       (hasIncludeArr && (filters!.include as unknown[]).length > 0) ||
       (hasExcludeArr && (filters!.exclude as unknown[]).length > 0) ||
@@ -428,7 +438,7 @@ Deno.serve(async (req) => {
 
     // Rule 2: if new-schema shape is present at all, it must contain content.
     // (Empty include/exclude/club_ids arrays => caller intended targeting but forgot to fill it.)
-    if (hasNewSchemaShape && !newSchemaHasContent && !allowFullAudience) {
+    if (hasNewSchemaShape && !newSchemaHasContent && !allowFullAudience && !hasConditionAudience) {
       console.error('[email-broadcast] GUARD: new-schema filters present but all empty');
       return new Response(
         JSON.stringify({
@@ -505,25 +515,16 @@ Deno.serve(async (req) => {
         // По умолчанию архивные НЕ включаются. Явный opt-in приходит из UI.
         include_archived: (reqBody as Record<string, unknown>)?.include_archived === true,
       };
-      let rpcErr: { message: string } | null = null;
-      if (isSystemActor) {
-        const r = await supabase.rpc('resolve_broadcast_audience_contacts_system', { _filters: rpcFilters });
-        audienceContacts = (r.data as ContactRow[]) || [];
-        rpcErr = r.error as typeof rpcErr;
-      } else {
-        const userClient = createClient(
-          Deno.env.get('SUPABASE_URL')!,
-          Deno.env.get('SUPABASE_ANON_KEY')!,
-          { global: { headers: { Authorization: authHeader! } } }
-        );
-        const r = await userClient.rpc('resolve_broadcast_audience_contacts', { _filters: rpcFilters });
-        audienceContacts = (r.data as ContactRow[]) || [];
-        rpcErr = r.error as typeof rpcErr;
-      }
+      // Authorization has already been checked above. Use the service-only
+      // wrapper to avoid the obsolete entitlements.manage gate in the legacy
+      // contact resolver.
+      const r = await supabase.rpc('resolve_broadcast_audience_contacts_system', { _filters: rpcFilters });
+      audienceContacts = (r.data as ContactRow[]) || [];
+      const rpcErr = r.error as { message: string } | null;
       if (rpcErr) {
         console.error('[email-broadcast] contact RPC failed:', rpcErr);
         return new Response(
-          JSON.stringify({ error: `Audience resolution failed: ${rpcErr.message}` }),
+          JSON.stringify({ error: 'Не удалось рассчитать аудиторию рассылки' }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -633,6 +634,21 @@ Deno.serve(async (req) => {
         });
       }
       allowedCount = baseProfiles.length;
+      foundCount = filteredProfiles.length;
+    }
+
+    if (filters?.education) {
+      const eligible = await filterUsersByEducationCondition(
+        supabase,
+        filteredProfiles.map((profile) => profile.user_id).filter((id): id is string => Boolean(id)),
+        filters.education,
+      );
+      filteredProfiles = filteredProfiles.filter((profile) => Boolean(profile.user_id && eligible.has(profile.user_id)));
+      foundCount = filteredProfiles.length;
+    }
+    if (isSystemActor && Array.isArray(filters?.direct_user_ids)) {
+      const direct = new Set(filters.direct_user_ids.filter(Boolean));
+      filteredProfiles = filteredProfiles.filter((profile) => Boolean(profile.user_id && direct.has(profile.user_id)));
       foundCount = filteredProfiles.length;
     }
 

@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveSystemTokens, extractUsedTokens } from '../_shared/systemTokens.ts';
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from '../_shared/customFieldTokens.ts';
 import { evaluateBroadcastGuards, auditBlockedAttempt } from '../_shared/broadcast-guards.ts';
+import { filterUsersByEducationCondition } from '../_shared/broadcastEducation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -70,6 +71,8 @@ interface BroadcastFilters {
   club_ids?: string[];
   club_membership?: 'current' | 'ever' | 'any';
   bot_ids?: string[];
+  direct_user_ids?: string[];
+  education?: Record<string, unknown>;
   channel?: 'telegram' | 'email' | 'any';
 }
 
@@ -119,7 +122,7 @@ Deno.serve(async (req) => {
     );
 
     // ===== Auth path resolution =====
-    // (A) System actor (scheduled dispatcher), or (B) User JWT with entitlements.manage.
+    // (A) System actor (scheduled dispatcher), or (B) authenticated contact-center manager.
     const authHeader = req.headers.get('Authorization');
     const systemActor = req.headers.get('x-system-actor');
     const internalSecretHeader = req.headers.get('x-broadcast-internal-secret');
@@ -146,7 +149,7 @@ Deno.serve(async (req) => {
           has_secret: !!providedSecret,
         });
         return new Response(
-          JSON.stringify({ error: 'Forbidden' }),
+          JSON.stringify({ error: 'Доступ к системной отправке запрещён' }),
           { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -154,7 +157,7 @@ Deno.serve(async (req) => {
     } else {
       if (!authHeader) {
         return new Response(
-          JSON.stringify({ error: 'Unauthorized' }),
+          JSON.stringify({ error: 'Требуется авторизация' }),
           { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -162,17 +165,22 @@ Deno.serve(async (req) => {
       const { data: { user: authedUser }, error: authError } = await supabase.auth.getUser(token);
       if (authError || !authedUser) {
         return new Response(
-          JSON.stringify({ error: 'Unauthorized' }),
+          JSON.stringify({ error: 'Сессия недействительна' }),
           { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      const { data: hasPermission } = await supabase.rpc('has_permission', {
-        _user_id: authedUser.id,
-        _permission_code: 'entitlements.manage',
-      });
-      if (!hasPermission) {
+      const [{ data: canManage }, { data: isAdmin }, { data: isSuperAdmin }] = await Promise.all([
+        supabase.rpc('has_admin_section_access', {
+          _user_id: authedUser.id,
+          _section_code: 'communication',
+          _min_level: 'manage',
+        }),
+        supabase.rpc('has_role_v2', { _user_id: authedUser.id, _role_code: 'admin' }),
+        supabase.rpc('has_role_v2', { _user_id: authedUser.id, _role_code: 'super_admin' }),
+      ]);
+      if (!canManage && !isAdmin && !isSuperAdmin) {
         return new Response(
-          JSON.stringify({ error: 'Forbidden' }),
+          JSON.stringify({ error: 'Недостаточно прав для управления рассылками' }),
           { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -283,7 +291,7 @@ Deno.serve(async (req) => {
         } catch (e) {
           console.error('[telegram-mass-broadcast] media_url download failed:', e);
           return new Response(
-            JSON.stringify({ error: `Media download failed: ${(e as Error).message}` }),
+            JSON.stringify({ error: `Не удалось загрузить медиафайл: ${(e as Error).message}` }),
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
@@ -294,7 +302,7 @@ Deno.serve(async (req) => {
 
     if (!message && !mediaBuffer) {
       return new Response(
-        JSON.stringify({ error: 'Message or media is required' }),
+        JSON.stringify({ error: 'Добавьте текст или медиафайл' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -341,6 +349,10 @@ Deno.serve(async (req) => {
     const hasExcludeArr = Array.isArray((filters as any)?.exclude);
     const hasClubIdsArr = Array.isArray((filters as any)?.club_ids);
     const hasNewSchemaShape = hasIncludeArr || hasExcludeArr || hasClubIdsArr;
+    const hasConditionAudience = Boolean((filters as any)?.education)
+      || (isSystemActor
+        && Array.isArray((filters as any)?.direct_user_ids)
+        && (filters as any).direct_user_ids.length > 0);
     const newSchemaHasContent =
       (hasIncludeArr && ((filters as any).include as unknown[]).length > 0) ||
       (hasExcludeArr && ((filters as any).exclude as unknown[]).length > 0) ||
@@ -362,7 +374,7 @@ Deno.serve(async (req) => {
 
     // Rule 2: new-schema shape present but all empty => caller forgot to fill targeting.
     // Exception: explicit full-audience broadcast (allowFullAudience=true) intentionally targets the whole base.
-    if (hasNewSchemaShape && !newSchemaHasContent && !allowFullAudience) {
+    if (hasNewSchemaShape && !newSchemaHasContent && !allowFullAudience && !hasConditionAudience) {
       console.error('[telegram-broadcast] GUARD: new-schema filters present but all empty');
       return new Response(
         JSON.stringify({
@@ -413,26 +425,16 @@ Deno.serve(async (req) => {
         club_membership: filters.club_membership || 'any',
         channel: 'telegram',
       };
-      let audience: Array<{ user_id: string; has_telegram: boolean; has_email: boolean }> | null = null;
-      let rpcErrMsg: string | null = null;
-      if (isSystemActor) {
-        const r = await supabase.rpc('resolve_broadcast_audience_user_ids_system', { _filters: rpcFilters });
-        audience = (r.data as typeof audience) ?? null;
-        rpcErrMsg = r.error ? r.error.message : null;
-      } else {
-        const userClient = createClient(
-          Deno.env.get('SUPABASE_URL')!,
-          Deno.env.get('SUPABASE_ANON_KEY')!,
-          { global: { headers: { Authorization: authHeader! } } }
-        );
-        const r = await userClient.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
-        audience = (r.data as typeof audience) ?? null;
-        rpcErrMsg = r.error ? r.error.message : null;
-      }
+      // Authorization has already been checked above. Use the service-only
+      // wrapper so the obsolete entitlements.manage gate inside the legacy
+      // resolver cannot reject valid contact-center managers.
+      const r = await supabase.rpc('resolve_broadcast_audience_user_ids_system', { _filters: rpcFilters });
+      const audience = (r.data as Array<{ user_id: string; has_telegram: boolean; has_email: boolean }> | null) ?? null;
+      const rpcErrMsg = r.error ? r.error.message : null;
       if (rpcErrMsg) {
         console.error('[broadcast] resolve_broadcast_audience_user_ids failed:', rpcErrMsg);
         return new Response(
-          JSON.stringify({ error: `Audience resolution failed: ${rpcErrMsg}` }),
+          JSON.stringify({ error: `Не удалось рассчитать аудиторию: ${rpcErrMsg}` }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -448,12 +450,19 @@ Deno.serve(async (req) => {
 
     if (!allProfiles?.length) {
       return new Response(
-        JSON.stringify({ error: 'No users with Telegram found', sent: 0, failed: 0 }),
+        JSON.stringify({ error: 'В выбранной аудитории нет получателей с Telegram', sent: 0, failed: 0 }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     let profiles = allProfiles;
+
+    const directUserIds = isSystemActor && Array.isArray(filters.direct_user_ids)
+      ? new Set(filters.direct_user_ids.filter(Boolean))
+      : null;
+    if (directUserIds) {
+      profiles = profiles.filter((profile) => directUserIds.has(profile.user_id));
+    }
 
     if (useNewSchema && allowedUserIds) {
       profiles = profiles.filter(p => allowedUserIds!.has(p.user_id));
@@ -496,11 +505,21 @@ Deno.serve(async (req) => {
       }
     }
 
+    if (filters.education) {
+      const educationUserIds = await filterUsersByEducationCondition(
+        supabase,
+        profiles.map((profile) => profile.user_id),
+        filters.education,
+      );
+      profiles = profiles.filter((profile) => educationUserIds.has(profile.user_id));
+    }
+
     // Always include administrators
-    const { data: adminRoles } = await supabase
+    const appendAdministrators = !directUserIds && !filters.education;
+    const { data: adminRoles } = appendAdministrators ? await supabase
       .from('user_roles')
       .select('user_id')
-      .eq('role', 'admin');
+      .eq('role', 'admin') : { data: [] };
     
     const adminUserIds = new Set(adminRoles?.map(r => r.user_id) || []);
     
@@ -531,7 +550,7 @@ Deno.serve(async (req) => {
     if (botsError || !allActiveBots?.length) {
       console.error('No active bot found', botsError);
       return new Response(
-        JSON.stringify({ error: 'No active bot found' }),
+        JSON.stringify({ error: 'Не найден активный Telegram-бот' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -548,7 +567,7 @@ Deno.serve(async (req) => {
     const targetBots = allActiveBots.filter((b) => selectedBotIds.includes(b.id));
     if (targetBots.length === 0) {
       return new Response(
-        JSON.stringify({ error: 'Selected bots are not active', selected_bot_ids: selectedBotIds }),
+        JSON.stringify({ error: 'Один или несколько выбранных ботов неактивны', selected_bot_ids: selectedBotIds }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -764,11 +783,16 @@ Deno.serve(async (req) => {
 
             switch (mediaType) {
               case 'photo': method = 'sendPhoto'; mediaField = 'photo'; break;
+              case 'animation': method = 'sendAnimation'; mediaField = 'animation'; break;
               case 'video': method = 'sendVideo'; mediaField = 'video'; break;
               case 'audio': method = 'sendAudio'; mediaField = 'audio'; break;
               case 'video_note': method = 'sendVideoNote'; mediaField = 'video_note'; break;
               default: method = 'sendDocument'; mediaField = 'document';
             }
+
+            const shouldSplit = Boolean(
+              personalizedMessage && (mediaType === 'video_note' || personalizedMessage.length > 1024)
+            );
 
             result = await telegramUploadMedia(
               botToken,
@@ -777,9 +801,17 @@ Deno.serve(async (req) => {
               mediaField,
               mediaBuffer,
               mediaFileName,
-              personalizedMessage || undefined,
-              keyboard
+              shouldSplit ? undefined : personalizedMessage || undefined,
+              shouldSplit ? undefined : keyboard
             );
+            if (result.ok && shouldSplit) {
+              result = await telegramRequest(botToken, 'sendMessage', {
+                chat_id: profile.telegram_user_id,
+                text: personalizedMessage,
+                parse_mode: 'Markdown',
+                reply_markup: keyboard,
+              });
+            }
           } else {
             result = await telegramRequest(botToken, 'sendMessage', {
               chat_id: profile.telegram_user_id,

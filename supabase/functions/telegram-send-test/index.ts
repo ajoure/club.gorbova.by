@@ -47,7 +47,7 @@ Deno.serve(async (req: Request) => {
   }
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), { 
+    return new Response(JSON.stringify({ error: "Метод не поддерживается" }), {
       status: 405, 
       headers: { ...corsHeaders, "Content-Type": "application/json" } 
     });
@@ -56,7 +56,7 @@ Deno.serve(async (req: Request) => {
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), { 
+      return new Response(JSON.stringify({ error: "Требуется авторизация" }), {
         status: 401, 
         headers: { ...corsHeaders, "Content-Type": "application/json" } 
       });
@@ -79,7 +79,7 @@ Deno.serve(async (req: Request) => {
     const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
     if (claimsError || !claimsData?.claims?.sub) {
       console.error("getClaims error:", claimsError);
-      return new Response(JSON.stringify({ error: "Invalid token" }), { 
+      return new Response(JSON.stringify({ error: "Сессия недействительна" }), {
         status: 401, 
         headers: { ...corsHeaders, "Content-Type": "application/json" } 
       });
@@ -87,12 +87,61 @@ Deno.serve(async (req: Request) => {
 
     const userId = claimsData.claims.sub;
 
-    // Get request body
-    const body = await req.json();
-    const { botId, messageText, buttonText, buttonUrl, product_context_id } = body;
+    const [{ data: canManage }, { data: isAdmin }, { data: isSuperAdmin }] = await Promise.all([
+      supabaseAdmin.rpc("has_admin_section_access", {
+        _user_id: userId,
+        _section_code: "communication",
+        _min_level: "manage",
+      }),
+      supabaseAdmin.rpc("has_role_v2", { _user_id: userId, _role_code: "admin" }),
+      supabaseAdmin.rpc("has_role_v2", { _user_id: userId, _role_code: "super_admin" }),
+    ]);
+    if (!canManage && !isAdmin && !isSuperAdmin) {
+      return new Response(JSON.stringify({ error: "Недостаточно прав для управления рассылками" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    if (!botId || !messageText) {
-      return new Response(JSON.stringify({ error: "botId and messageText required" }), { 
+    // JSON и multipart используют один контракт, чтобы тестировать те же медиа,
+    // которые администратор видит в предпросмотре.
+    let botId = "";
+    let messageText = "";
+    let buttonText = "";
+    let buttonUrl = "";
+    let product_context_id: string | null = null;
+    let mediaType: string | null = null;
+    let mediaFileName = "media";
+    let mediaBuffer: ArrayBuffer | null = null;
+    let mediaStoragePath: string | null = null;
+    const contentType = req.headers.get("content-type") || "";
+    if (contentType.includes("multipart/form-data")) {
+      const form = await req.formData();
+      botId = String(form.get("botId") || "");
+      messageText = String(form.get("messageText") || "");
+      buttonText = String(form.get("buttonText") || "");
+      buttonUrl = String(form.get("buttonUrl") || "");
+      product_context_id = String(form.get("product_context_id") || "") || null;
+      mediaType = String(form.get("media_type") || "") || null;
+      const media = form.get("media");
+      if (media instanceof File) {
+        mediaFileName = media.name;
+        mediaBuffer = await media.arrayBuffer();
+      }
+    } else {
+      const body = await req.json();
+      botId = String(body.botId || "");
+      messageText = String(body.messageText || "");
+      buttonText = String(body.buttonText || "");
+      buttonUrl = String(body.buttonUrl || "");
+      product_context_id = body.product_context_id || null;
+      mediaType = body.media_type || null;
+      mediaFileName = body.media_file_name || "media";
+      mediaStoragePath = body.media_storage_path || null;
+    }
+
+    if (!botId || (!messageText && !mediaBuffer && !mediaStoragePath)) {
+      return new Response(JSON.stringify({ error: "Выберите бота и добавьте текст или медиафайл" }), {
         status: 400, 
         headers: { ...corsHeaders, "Content-Type": "application/json" } 
       });
@@ -120,12 +169,15 @@ Deno.serve(async (req: Request) => {
 
     const telegramChatId = profile.telegram_user_id;
 
-    // Get bot token from environment
-    const botToken = Deno.env.get("PRIMARY_TELEGRAM_BOT_TOKEN");
-    
+    const { data: bot } = await supabaseAdmin
+      .from("telegram_bots")
+      .select("bot_token_encrypted")
+      .eq("id", botId)
+      .eq("status", "active")
+      .maybeSingle();
+    const botToken = bot?.bot_token_encrypted || Deno.env.get("PRIMARY_TELEGRAM_BOT_TOKEN");
     if (!botToken) {
-      console.error("PRIMARY_TELEGRAM_BOT_TOKEN not configured");
-      return new Response(JSON.stringify({ error: "Bot token not configured" }), { 
+      return new Response(JSON.stringify({ error: "У выбранного бота не настроен токен" }), {
         status: 500, 
         headers: { ...corsHeaders, "Content-Type": "application/json" } 
       });
@@ -150,24 +202,62 @@ Deno.serve(async (req: Request) => {
       }]]
     } : undefined;
 
-    // Send test message
-    const telegramUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
-    const telegramResponse = await fetch(telegramUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: telegramChatId,
-        text: `🧪 ТЕСТОВОЕ СООБЩЕНИЕ\n\n${personalizedMessage}`,
-        parse_mode: "Markdown",
-        reply_markup: keyboard,
-      }),
-    });
+    if (!mediaBuffer && mediaStoragePath) {
+      const slash = mediaStoragePath.indexOf("/");
+      const bucket = slash > 0 ? mediaStoragePath.slice(0, slash) : "telegram-media";
+      const key = slash > 0 ? mediaStoragePath.slice(slash + 1) : mediaStoragePath;
+      const { data: signed, error: signError } = await supabaseAdmin.storage.from(bucket).createSignedUrl(key, 600);
+      if (signError || !signed?.signedUrl) throw new Error("Не удалось открыть сохранённый медиафайл");
+      const downloaded = await fetch(signed.signedUrl);
+      if (!downloaded.ok) throw new Error("Не удалось загрузить сохранённый медиафайл");
+      mediaBuffer = await downloaded.arrayBuffer();
+    }
+
+    const testMessage = personalizedMessage ? `🧪 ТЕСТОВОЕ СООБЩЕНИЕ\n\n${personalizedMessage}` : "";
+    let telegramResponse: Response;
+    if (mediaBuffer && mediaType) {
+      const config: Record<string, { method: string; field: string }> = {
+        photo: { method: "sendPhoto", field: "photo" },
+        animation: { method: "sendAnimation", field: "animation" },
+        video: { method: "sendVideo", field: "video" },
+        audio: { method: "sendAudio", field: "audio" },
+        video_note: { method: "sendVideoNote", field: "video_note" },
+        document: { method: "sendDocument", field: "document" },
+      };
+      const selected = config[mediaType] || config.document;
+      const shouldSplit = Boolean(testMessage && (mediaType === "video_note" || testMessage.length > 1024));
+      const mediaForm = new FormData();
+      mediaForm.append("chat_id", String(telegramChatId));
+      mediaForm.append(selected.field, new Blob([mediaBuffer]), mediaFileName);
+      if (!shouldSplit && testMessage) {
+        mediaForm.append("caption", testMessage);
+        mediaForm.append("parse_mode", "Markdown");
+      }
+      if (!shouldSplit && keyboard) mediaForm.append("reply_markup", JSON.stringify(keyboard));
+      telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/${selected.method}`, {
+        method: "POST",
+        body: mediaForm,
+      });
+      if (telegramResponse.ok && shouldSplit) {
+        telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: telegramChatId, text: testMessage, parse_mode: "Markdown", reply_markup: keyboard }),
+        });
+      }
+    } else {
+      telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: telegramChatId, text: testMessage, parse_mode: "Markdown", reply_markup: keyboard }),
+      });
+    }
 
     if (!telegramResponse.ok) {
       const errText = await telegramResponse.text();
       console.error("Telegram API error:", errText);
       return new Response(JSON.stringify({ 
-        error: "Telegram API error",
+        error: "Telegram отклонил тестовое сообщение",
         details: errText
       }), { 
         status: 500, 
@@ -206,7 +296,7 @@ Deno.serve(async (req: Request) => {
 
   } catch (error: unknown) {
     console.error("Error in telegram-send-test:", error);
-    const message = error instanceof Error ? error.message : "Internal error";
+    const message = error instanceof Error ? error.message : "Внутренняя ошибка";
     return new Response(JSON.stringify({ error: message }), { 
       status: 500, 
       headers: { ...corsHeaders, "Content-Type": "application/json" } 
