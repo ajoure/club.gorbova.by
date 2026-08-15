@@ -19,7 +19,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.45.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-broadcast-internal-secret',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-broadcast-internal-secret, x-broadcast-cron-secret',
 };
 
 interface DispatchRequest {
@@ -87,20 +87,28 @@ Deno.serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
   // This endpoint performs real scheduled sends and must never be public.
-  // Accept either the exact service key used by the managed scheduler or the
-  // same internal broadcast secret used for dispatcher-to-sender calls.
+  // Accept the exact service key, the dispatcher-to-sender internal secret,
+  // or the dedicated pg_cron secret verified against Vault by a service-only RPC.
   const authorization = req.headers.get('Authorization') || '';
   const bearer = authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : '';
   const apiKey = req.headers.get('apikey') || '';
   const internalHeader = req.headers.get('x-broadcast-internal-secret') || '';
+  const cronHeader = req.headers.get('x-broadcast-cron-secret') || '';
   const internalSecret = Deno.env.get('BROADCAST_INTERNAL_SECRET') || Deno.env.get('BROADCAST_FORCE_SECRET') || '';
   const isServiceCaller = Boolean(supabaseServiceKey && (bearer === supabaseServiceKey || apiKey === supabaseServiceKey));
   const isInternalCaller = Boolean(internalSecret && internalHeader === internalSecret);
-  if (!isServiceCaller && !isInternalCaller) {
-    return jsonRes({ ok: false, error: 'Доступ к планировщику запрещён' }, { status: 401 });
-  }
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  let isCronCaller = false;
+  if (cronHeader) {
+    const { data: cronSecretValid, error: cronSecretError } = await supabase
+      .rpc('verify_broadcast_dispatcher_cron_secret', { _candidate: cronHeader });
+    isCronCaller = !cronSecretError && cronSecretValid === true;
+  }
+
+  if (!isServiceCaller && !isInternalCaller && !isCronCaller) {
+    return jsonRes({ ok: false, error: 'Доступ к планировщику запрещён' }, { status: 401 });
+  }
 
   let reqBody: DispatchRequest = {};
   try { reqBody = await req.json(); } catch { /* empty body ok for cron */ }
