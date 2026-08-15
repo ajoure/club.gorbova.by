@@ -16,13 +16,14 @@ describe("broadcast composer test delivery and responsive layout", () => {
 
   it("sends Email tests only to an explicitly entered single address", () => {
     expect(composer).toContain('id="broadcast-test-email"');
-    expect(composer).toContain('supabase.functions.invoke("send-email"');
+    expect(composer).toContain('`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`');
+    expect(composer).toContain('Authorization: `Bearer ${session.access_token}`');
+    expect(composer).toContain("apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY");
+    expect(composer).toContain('"Content-Type": "application/json"');
+    expect(composer).toContain("if (!response.ok || resultError)");
     expect(composer).toContain('to: recipient');
     expect(composer).toContain('event_type: "broadcast_test"');
     expect(composer).toContain("supabase.auth.getSession()");
-    expect(composer).toContain('headers: { Authorization: `Bearer ${session.access_token}` }');
-    expect(composer).toContain("readableFunctionInvokeError(error)");
-    expect(composer).toContain('"error" in data');
     expect(composer).not.toContain("sendTestMutation.mutate()");
   });
 
