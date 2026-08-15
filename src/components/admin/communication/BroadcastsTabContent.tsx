@@ -1287,7 +1287,7 @@ export function BroadcastsTabContent() {
               <RadioGroup
                 value={sendMode}
                 onValueChange={(v) => setSendMode(v as SendMode)}
-                className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-5 gap-3"
+                className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 min-[1750px]:grid-cols-5"
               >
                 <Label
                   htmlFor="mode-now"
@@ -1298,7 +1298,7 @@ export function BroadcastsTabContent() {
                 >
                   <RadioGroupItem id="mode-now" value="now" />
                   <Send className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 text-sm font-medium leading-tight">Отправить сейчас</span>
+                  <span className="min-w-0 whitespace-normal break-words text-sm font-medium leading-tight">Отправить сейчас</span>
                 </Label>
                 <Label
                   htmlFor="mode-scheduled"
@@ -1309,7 +1309,7 @@ export function BroadcastsTabContent() {
                 >
                   <RadioGroupItem id="mode-scheduled" value="scheduled" />
                   <CalendarIcon className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 text-sm font-medium leading-tight">Запланировать</span>
+                  <span className="min-w-0 whitespace-normal break-words text-sm font-medium leading-tight">Запланировать</span>
                 </Label>
                 <Label
                   htmlFor="mode-recurring"
@@ -1320,7 +1320,7 @@ export function BroadcastsTabContent() {
                 >
                   <RadioGroupItem id="mode-recurring" value="recurring" />
                   <Repeat className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 text-sm font-medium leading-tight">Повторять</span>
+                  <span className="min-w-0 whitespace-normal break-words text-sm font-medium leading-tight">Повторять</span>
                 </Label>
                 <Label
                   htmlFor="mode-template"
@@ -1331,7 +1331,7 @@ export function BroadcastsTabContent() {
                 >
                   <RadioGroupItem id="mode-template" value="template" />
                   <FileText className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 text-sm font-medium leading-tight">Сохранить как шаблон</span>
+                  <span className="min-w-0 whitespace-normal break-words text-sm font-medium leading-tight">Сохранить как шаблон</span>
                 </Label>
                 <Label
                   htmlFor="mode-event"
@@ -1342,7 +1342,7 @@ export function BroadcastsTabContent() {
                 >
                   <RadioGroupItem id="mode-event" value="event" />
                   <Sparkles className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 text-sm font-medium leading-tight">По событию ученика</span>
+                  <span className="min-w-0 whitespace-normal break-words text-sm font-medium leading-tight">По событию ученика</span>
                 </Label>
               </RadioGroup>
 
