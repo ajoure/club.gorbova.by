@@ -4,6 +4,7 @@ import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat, Link2, FileT
 import { cn } from "@/lib/utils";
 import { useAutoRenewalAlerts } from "@/hooks/useAutoRenewalAlerts";
 import { usePaymentIssuesCounters } from "@/hooks/admin/usePaymentIssuesCounters";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 
 // Tab content components
 import { PaymentsTabContent } from "@/components/admin/payments/PaymentsTabContent";
@@ -19,26 +20,30 @@ import { InvoicesTabContent } from "@/components/admin/payments/InvoicesTabConte
 // Route /admin/payments/payment-issues остаётся доступным напрямую (legacy hidden);
 // backend / PaymentIssuesTabContent НЕ удалены.
 const tabs = [
-  { id: "transactions", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
-  { id: "links", label: "Ссылки", icon: Link2, path: "/admin/payments/links" },
-  { id: "invoices", label: "Счета", icon: FileText, path: "/admin/payments/invoices" },
-  { id: "auto-renewals", label: "Автопродления", icon: RefreshCw, path: "/admin/payments/auto-renewals" },
-  { id: "bepaid-subs", label: "Подписки", icon: Repeat, path: "/admin/payments/bepaid-subscriptions" },
-  { id: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
-  { id: "statement", label: "Выписка BePaid", icon: FileSpreadsheet, path: "/admin/payments/statement" },
+  { id: "transactions", resource: "overview", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
+  { id: "links", resource: "links", label: "Ссылки", icon: Link2, path: "/admin/payments/links" },
+  { id: "invoices", resource: "invoices", label: "Счета", icon: FileText, path: "/admin/payments/invoices" },
+  { id: "auto-renewals", resource: "auto-renewals", label: "Автопродления", icon: RefreshCw, path: "/admin/payments/auto-renewals" },
+  { id: "bepaid-subs", resource: "bepaid-subscriptions", label: "Подписки", icon: Repeat, path: "/admin/payments/bepaid-subscriptions" },
+  { id: "diagnostics", resource: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
+  { id: "statement", resource: "statement", label: "Выписка BePaid", icon: FileSpreadsheet, path: "/admin/payments/statement" },
 ];
 
 export default function AdminPaymentsHub() {
   const location = useLocation();
   const navigate = useNavigate();
+  const access = useAdminAccess();
   const { data: renewalAlerts } = useAutoRenewalAlerts();
   const { data: paymentIssues } = usePaymentIssuesCounters();
+  const visibleTabs = tabs.filter((tab) =>
+    access.canAccessResource("payments", tab.resource),
+  );
   
   // Determine active tab from path
   const getActiveTab = () => {
     const path = location.pathname;
-    const matchedTab = tabs.find(t => t.path === path);
-    return matchedTab?.id || "transactions";
+    const matchedTab = visibleTabs.find(t => t.path === path);
+    return matchedTab?.id || visibleTabs[0]?.id || "transactions";
   };
   
   const activeTab = getActiveTab();
@@ -53,7 +58,7 @@ export default function AdminPaymentsHub() {
         {/* Glass Pills Tabs - identical to Contact Center */}
         <div className="px-3 md:px-4 pt-1 pb-1.5 shrink-0">
           <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
-            {tabs.map((tab) => {
+            {visibleTabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               

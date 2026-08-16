@@ -261,16 +261,21 @@ Deno.serve(async (req) => {
     const isServiceInvocation = authHeader === `Bearer ${supabaseServiceKey}`;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // Authenticate missing-header calls before parsing JSON so the safe
+    // anonymous runtime probe is a deterministic 401 even without a body.
+    if (!isServiceInvocation && !authHeader) {
+      return new Response(JSON.stringify({ error: 'Authorization required' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const body = await req.json();
+    const { action, club_id, member_ids, profile_id, telegram_user_id } = body;
+
     let requesterLabel = 'internal';
     let requesterId: string | undefined;
 
     if (!isServiceInvocation) {
-      if (!authHeader) {
-        return new Response(JSON.stringify({ error: 'Authorization required' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
       const userClient = createClient(supabaseUrl, supabaseAnonKey, {
         global: { headers: { Authorization: authHeader } },
       });
@@ -282,15 +287,30 @@ Deno.serve(async (req) => {
         });
       }
 
-      const { data: hasPermission } = await userClient.rpc('has_permission', {
-        _user_id: user.id, _permission_code: 'telegram.clubs.manage',
-      });
-      const { data: userRole } = await userClient.rpc('get_user_role', { _user_id: user.id });
-      const { data: isSuperAdmin } = await userClient.rpc('is_super_admin', { _user_id: user.id });
+      const requiredLevel = ['kick', 'kick_present', 'mark_removed'].includes(action)
+        ? 'manage'
+        : ['preview', 'get_audit'].includes(action)
+          ? 'view'
+          : 'edit';
+      const permissionCode = `telegram.clubs.${requiredLevel}`;
+      const [permissionResult, sectionResult, userRoleResult, superAdminResult] = await Promise.all([
+        userClient.rpc('has_permission', {
+          _user_id: user.id, _permission_code: permissionCode,
+        }),
+        userClient.rpc('has_admin_section_access', {
+          _user_id: user.id, _section_code: 'club-members', _min_level: requiredLevel,
+        }),
+        userClient.rpc('get_user_role', { _user_id: user.id }),
+        userClient.rpc('is_super_admin', { _user_id: user.id }),
+      ]);
 
-      const isAdmin = !!hasPermission || !!isSuperAdmin || userRole === 'admin' || userRole === 'superadmin';
+      const isAdmin = !!permissionResult.data
+        || !!sectionResult.data
+        || !!superAdminResult.data
+        || userRoleResult.data === 'admin'
+        || userRoleResult.data === 'superadmin';
       if (!isAdmin) {
-        return new Response(JSON.stringify({ error: 'Admin access required' }), {
+        return new Response(JSON.stringify({ error: `${requiredLevel} access required` }), {
           status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
@@ -299,8 +319,6 @@ Deno.serve(async (req) => {
       requesterId = user.id;
     }
 
-    const body = await req.json();
-    const { action, club_id, member_ids, profile_id, telegram_user_id } = body;
     console.log(`Club members action: ${action}, club_id: ${club_id}, requester: ${requesterLabel}`);
 
     // Get club with bot

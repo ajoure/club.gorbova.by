@@ -26,6 +26,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import type { CrmTaskType } from "@/hooks/useCrmTasks";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 
 interface FormState {
   id?: string;
@@ -66,6 +67,8 @@ function useTaskTypesAll() {
 }
 
 export default function AdminTaskTypes() {
+  const access = useAdminAccess();
+  const canEdit = access.canAccessSection("deals", "edit");
   const qc = useQueryClient();
   const { data: types = [], isLoading } = useTaskTypesAll();
   const [open, setOpen] = useState(false);
@@ -173,9 +176,11 @@ export default function AdminTaskTypes() {
             </p>
           </div>
         </div>
-        <Button onClick={startCreate} size="sm">
-          <Plus className="h-4 w-4 mr-1" />Новый тип
-        </Button>
+        {canEdit && (
+          <Button onClick={startCreate} size="sm">
+            <Plus className="h-4 w-4 mr-1" />Новый тип
+          </Button>
+        )}
       </div>
 
       <div className="rounded-md border">
@@ -231,27 +236,33 @@ export default function AdminTaskTypes() {
                     )}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => startEdit(t)}
-                      title="Редактировать"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => toggle.mutate(t)}
-                      disabled={toggle.isPending}
-                      title={t.is_active ? "Выключить" : "Включить"}
-                    >
-                      {t.is_active ? (
-                        <PowerOff className="h-4 w-4" />
-                      ) : (
-                        <Power className="h-4 w-4" />
-                      )}
-                    </Button>
+                    {canEdit ? (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => startEdit(t)}
+                          title="Редактировать"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggle.mutate(t)}
+                          disabled={toggle.isPending}
+                          title={t.is_active ? "Выключить" : "Включить"}
+                        >
+                          {t.is_active ? (
+                            <PowerOff className="h-4 w-4" />
+                          ) : (
+                            <Power className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">Только чтение</span>
+                    )}
                   </TableCell>
                 </TableRow>
               ))

@@ -49,6 +49,7 @@ export default function AdminTasks() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const companyAccess = useAdminAccess();
+  const canEditTasks = companyAccess.canAccessSection("deals", "edit");
   const {
     selectedContact,
     contactSheetOpen,
@@ -167,10 +168,10 @@ export default function AdminTasks() {
           <Button asChild size="sm" variant="outline">
             <a href="/admin/tasks/types">Типы задач</a>
           </Button>
-          <Button onClick={() => setCreateOpen(true)} size="sm">
+          {canEditTasks && <Button onClick={() => setCreateOpen(true)} size="sm">
             <Plus className="h-4 w-4 mr-1" />
             Новая задача
-          </Button>
+          </Button>}
         </div>
       </div>
 

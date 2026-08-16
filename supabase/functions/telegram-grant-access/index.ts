@@ -290,8 +290,13 @@ Deno.serve(async (req) => {
         _user_id: user.id,
         _permission_code: 'entitlements.manage',
       });
+      const { data: canEditClubMembers } = await supabase.rpc('has_admin_section_access', {
+        _user_id: user.id,
+        _section_code: 'club-members',
+        _min_level: 'edit',
+      });
 
-      if (!hasPermission) {
+      if (!hasPermission && !canEditClubMembers) {
         // Fallback: check admin/superadmin role
         const { data: isAdmin } = await supabase.rpc('has_role', {
           _user_id: user.id,

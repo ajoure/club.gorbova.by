@@ -8,7 +8,7 @@ import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
 import { useUnreadEmailCount } from "@/hooks/useUnreadEmailCount";
 import { useAdminMenuSettings, MENU_ICONS, MenuItem, MenuGroup } from "@/hooks/useAdminMenuSettings";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
-import { resolveAdminSectionForPath } from "@/lib/adminMenuRegistry";
+import { ADMIN_SECTIONS, resolveAdminSectionForPath } from "@/lib/adminMenuRegistry";
 import { supabase } from "@/integrations/supabase/client";
 import { CONTACT_CENTER_VISIBLE_UNREAD_QK } from "@/constants/inboxQueryKeys";
 import {
@@ -158,6 +158,17 @@ export function AdminSidebar() {
   // app_settings.admin_section_gating_enabled или роли super_admin/admin
   // (обрабатывается внутри useAdminAccess).
   const hasMenuItemPermission = (item: MenuItem): boolean => {
+    // Standard menu items carry the canonical section code. Prefer it over a
+    // shared/legacy path (notably the old Telegram club-members link).
+    const section = ADMIN_SECTIONS.find((candidate) => candidate.code === item.id);
+    if (section) {
+      if (section.resources?.length) {
+        return section.resources.some((resource) =>
+          adminAccess.canAccessResource(section.code, resource.code),
+        );
+      }
+      return adminAccess.canAccessSection(item.id);
+    }
     // Резолвим секцию по пути пункта меню (надёжнее, чем item.id, т.к.
     // item.id в DEFAULT_MENU совпадает с section.code, но могут быть кастомные пункты).
     const resolved = resolveAdminSectionForPath(item.path);
@@ -165,6 +176,9 @@ export function AdminSidebar() {
     if (resolved.kind === "unknown") {
       // Незнакомый путь в кастомном меню — закрываем для не-админов.
       return adminAccess.isSuperAdmin || adminAccess.isAdmin;
+    }
+    if (resolved.resourceCode) {
+      return adminAccess.canAccessResource(resolved.sectionCode!, resolved.resourceCode);
     }
     return adminAccess.canAccessSection(resolved.sectionCode!);
   };

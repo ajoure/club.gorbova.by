@@ -47,9 +47,14 @@ import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { HelpLabel } from '@/components/help/HelpComponents';
 import { ClubSettingsDialog } from './ClubSettingsDialog';
+import { useAdminAccess } from '@/hooks/useAdminAccess';
 
 export function TelegramClubsTab() {
   const navigate = useNavigate();
+  const access = useAdminAccess();
+  const canEditClubs = access.canAccessSection('club-members', 'edit') ||
+    access.canAccessResource('integrations', 'telegram', 'edit');
+  const canManageTelegramIntegration = access.canAccessResource('integrations', 'telegram', 'manage');
   const { data: clubs, isLoading } = useTelegramClubs();
   const { data: bots } = useTelegramBots();
   const createClub = useCreateTelegramClub();
@@ -155,31 +160,31 @@ export function TelegramClubsTab() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 mt-4 sm:mt-0">
-            <Button 
+            {canManageTelegramIntegration && <Button
               variant="outline" 
               size="sm"
               onClick={() => navigate('/admin/integrations/telegram/product-mappings')}
             >
               <Layers className="h-4 w-4 mr-2 text-indigo-500" />
               <span className="hidden sm:inline">Автодоступ</span>
-            </Button>
-            <Button 
+            </Button>}
+            {canManageTelegramIntegration && <Button
               variant="outline"
               size="sm"
               onClick={() => navigate('/admin/integrations/telegram/invites')}
             >
               <Link2 className="h-4 w-4 mr-2" />
               <span className="hidden sm:inline">Инвайты</span>
-            </Button>
-            <Button 
+            </Button>}
+            {canManageTelegramIntegration && <Button
               variant="outline"
               size="sm"
               onClick={() => navigate('/admin/integrations/telegram/analytics')}
             >
               <BarChart3 className="h-4 w-4 mr-2" />
               <span className="hidden sm:inline">Аналитика</span>
-            </Button>
-            <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+            </Button>}
+            {canEditClubs && <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
               <DialogTrigger asChild>
                 <Button size="sm" disabled={activeBots.length === 0}>
                   <Plus className="h-4 w-4 sm:mr-2" />
@@ -283,7 +288,7 @@ export function TelegramClubsTab() {
                 </Button>
               </DialogFooter>
             </DialogContent>
-            </Dialog>
+            </Dialog>}
           </div>
         </div>
       </CardHeader>
@@ -363,12 +368,13 @@ export function TelegramClubsTab() {
                   <TableCell>
                     <Switch
                       checked={club.is_active}
+                      disabled={!canEditClubs}
                       onCheckedChange={() => handleToggleActive(club.id, club.is_active)}
                     />
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <TooltipProvider>
+                      {canEditClubs && <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
@@ -386,7 +392,7 @@ export function TelegramClubsTab() {
                           </TooltipTrigger>
                           <TooltipContent>Участники</TooltipContent>
                         </Tooltip>
-                      </TooltipProvider>
+                      </TooltipProvider>}
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -415,11 +421,11 @@ export function TelegramClubsTab() {
       </CardContent>
 
       {/* Settings Dialog */}
-      <ClubSettingsDialog 
+      {canEditClubs && <ClubSettingsDialog
         club={editingClub}
         bots={bots || []}
         onClose={() => setEditingClub(null)}
-      />
+      />}
     </Card>
   );
 }

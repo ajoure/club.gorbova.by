@@ -102,6 +102,7 @@ import { MemberDetailsDrawer } from '@/components/telegram/MemberDetailsDrawer';
 import { ContactDetailSheet } from '@/components/admin/ContactDetailSheet';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAdminAccess } from '@/hooks/useAdminAccess';
 import { toast } from 'sonner';
 
 // Interface for contact to show in sheet
@@ -130,6 +131,9 @@ export default function TelegramClubMembers() {
   const { clubId } = useParams<{ clubId: string }>();
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
+  const adminAccess = useAdminAccess();
+  const canEditClubMembers = adminAccess.canAccessSection('club-members', 'edit');
+  const canManageClubMembers = adminAccess.canAccessSection('club-members', 'manage');
   
   const { data: clubs } = useTelegramClubs();
   const club = clubs?.find(c => c.id === clubId);
@@ -1033,7 +1037,7 @@ export default function TelegramClubMembers() {
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/admin/integrations/telegram')}>
+          <Button variant="ghost" size="icon" onClick={() => navigate('/admin/club-members')}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
@@ -1163,19 +1167,21 @@ export default function TelegramClubMembers() {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSync}
-                  disabled={syncMembers.isPending || checkingStatuses}
-                >
-                  {syncMembers.isPending || checkingStatuses ? (
-                    <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4 sm:mr-2" />
-                  )}
-                  <span className="hidden sm:inline">{checkingStatuses ? 'Проверка...' : 'Обновить'}</span>
-                </Button>
+                {canEditClubMembers && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSync}
+                    disabled={syncMembers.isPending || checkingStatuses}
+                  >
+                    {syncMembers.isPending || checkingStatuses ? (
+                      <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4 sm:mr-2" />
+                    )}
+                    <span className="hidden sm:inline">{checkingStatuses ? 'Проверка...' : 'Обновить'}</span>
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -1199,7 +1205,7 @@ export default function TelegramClubMembers() {
                     })()}
                   </Button>
                 )}
-                {counts.violators > 0 && (
+                {canManageClubMembers && counts.violators > 0 && (
                   <Button
                     variant="destructive"
                     size="sm"
@@ -1211,7 +1217,7 @@ export default function TelegramClubMembers() {
                     <span className="hidden sm:inline ml-1">({counts.violators})</span>
                   </Button>
                 )}
-                {activeTab === 'bought_not_joined' && counts.bought_not_joined > 0 && (
+                {canEditClubMembers && activeTab === 'bought_not_joined' && counts.bought_not_joined > 0 && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -1231,7 +1237,7 @@ export default function TelegramClubMembers() {
             </div>
             
             {/* Mass selection toolbar */}
-            {selectedIds.size > 0 && (
+            {canEditClubMembers && selectedIds.size > 0 && (
               <div className="flex flex-wrap items-center gap-3 p-3 bg-muted rounded-lg mt-4">
                 <span className="text-sm font-medium">
                   Выбрано: {selectedIds.size} 
@@ -1268,8 +1274,8 @@ export default function TelegramClubMembers() {
                 </Button>
                 {selectedLinkedMembers.length > 0 && (
                   <>
-                    <Button 
-                      size="sm" 
+                    <Button
+                      size="sm"
                       onClick={() => setShowMassGrantDialog(true)}
                     >
                       <Plus className="h-4 w-4 mr-1" />
@@ -1278,32 +1284,36 @@ export default function TelegramClubMembers() {
                   </>
                 )}
                 {/* Revoke works for any selected */}
-                <Button 
-                  size="sm" 
-                  variant="destructive"
-                  onClick={() => setShowMassRevokeDialog(true)}
-                >
-                  <MinusCircle className="h-4 w-4 mr-1" />
-                  Отозвать доступ ({selectedIds.size})
-                </Button>
-                <Button 
-                  size="sm" 
-                  variant="secondary"
-                  onClick={() => setShowMassMarkRemovedDialog(true)}
-                >
-                  <Trash2 className="h-4 w-4 mr-1" />
-                  Пометить удалёнными
-                </Button>
-                {selectedPresentMembers.length > 0 && (
-                  <Button 
-                    size="sm" 
-                    variant="destructive"
-                    disabled={kickPresentDryRunLoading}
-                    onClick={handleMassKickPresentPreview}
-                  >
-                    {kickPresentDryRunLoading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Ban className="h-4 w-4 mr-1" />}
-                    Кикнуть из Telegram ({selectedPresentMembers.length})
-                  </Button>
+                {canManageClubMembers && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => setShowMassRevokeDialog(true)}
+                    >
+                      <MinusCircle className="h-4 w-4 mr-1" />
+                      Отозвать доступ ({selectedIds.size})
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setShowMassMarkRemovedDialog(true)}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Пометить удалёнными
+                    </Button>
+                    {selectedPresentMembers.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={kickPresentDryRunLoading}
+                        onClick={handleMassKickPresentPreview}
+                      >
+                        {kickPresentDryRunLoading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Ban className="h-4 w-4 mr-1" />}
+                        Кикнуть из Telegram ({selectedPresentMembers.length})
+                      </Button>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -1322,6 +1332,7 @@ export default function TelegramClubMembers() {
                       <Checkbox 
                         checked={selectedIds.size > 0 && selectedIds.size === filteredMembers.length}
                         onCheckedChange={toggleSelectAll}
+                        disabled={!canEditClubMembers}
                       />
                     </TableHead>
                     <TableHead>
@@ -1408,6 +1419,7 @@ export default function TelegramClubMembers() {
                         <Checkbox 
                           checked={selectedIds.has(member.id)}
                           onCheckedChange={() => toggleSelect(member.id)}
+                          disabled={!canEditClubMembers}
                         />
                       </TableCell>
                       <TableCell>
@@ -1494,22 +1506,24 @@ export default function TelegramClubMembers() {
                               <Eye className="h-4 w-4 mr-2" />
                               Подробнее
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => {
-                              setMessageTarget(member);
-                              setShowSendMessageDialog(true);
-                            }}>
-                              <Send className="h-4 w-4 mr-2" />
-                              Написать в Telegram
-                            </DropdownMenuItem>
+                            {canEditClubMembers && (
+                              <DropdownMenuItem onClick={() => {
+                                setMessageTarget(member);
+                                setShowSendMessageDialog(true);
+                              }}>
+                                <Send className="h-4 w-4 mr-2" />
+                                Написать в Telegram
+                              </DropdownMenuItem>
+                            )}
                             {/* Show grant option if no active access */}
-                            {member.profiles && !member.has_active_access && (
+                            {canEditClubMembers && member.profiles && !member.has_active_access && (
                               <DropdownMenuItem onClick={() => setSelectedMember(member)}>
                                 <Plus className="h-4 w-4 mr-2" />
                                 Выдать доступ
                               </DropdownMenuItem>
                             )}
                             {/* Show extend option if has active access */}
-                            {member.profiles && member.has_active_access && (
+                            {canEditClubMembers && member.profiles && member.has_active_access && (
                               <DropdownMenuItem onClick={() => setSelectedMember(member)}>
                                 <Clock className="h-4 w-4 mr-2" />
                                 Продлить доступ
@@ -1517,7 +1531,7 @@ export default function TelegramClubMembers() {
                             )}
                             <DropdownMenuSeparator />
                             {/* Для пользователей с доступом (A) - отозвать и удалить */}
-                            {member.has_active_access && (
+                            {canManageClubMembers && member.has_active_access && (
                               <DropdownMenuItem 
                                 onClick={() => {
                                   revokeAccess.mutate({
@@ -1537,7 +1551,7 @@ export default function TelegramClubMembers() {
                               </DropdownMenuItem>
                             )}
                             {/* Для нарушителей (E: is_violator) - удалить из Telegram */}
-                            {member.is_violator && (
+                            {canManageClubMembers && member.is_violator && (
                               <DropdownMenuItem 
                                 onClick={() => handleKickSingleMember(member)}
                                 className="text-destructive"
@@ -1547,7 +1561,7 @@ export default function TelegramClubMembers() {
                               </DropdownMenuItem>
                             )}
                             {/* Для не в клубе без active access - пометить удалённым */}
-                            {!member.has_active_access && !member.in_any && member.access_status !== 'removed' && (
+                            {canManageClubMembers && !member.has_active_access && !member.in_any && member.access_status !== 'removed' && (
                               <DropdownMenuItem 
                                 onClick={() => handleMarkSingleRemoved(member)}
                                 className="text-muted-foreground"
@@ -1557,7 +1571,7 @@ export default function TelegramClubMembers() {
                               </DropdownMenuItem>
                             )}
                             {/* Reinvite for bought_not_joined */}
-                            {!member.in_any && member.link_status === 'linked' && member.has_active_access && (
+                            {canEditClubMembers && !member.in_any && member.link_status === 'linked' && member.has_active_access && (
                               <DropdownMenuItem onClick={() => handleReinviteSingle(member)}>
                                 <Send className="h-4 w-4 mr-2" />
                                 Переотправить ссылку
@@ -1925,6 +1939,8 @@ export default function TelegramClubMembers() {
           clubId={clubId || null}
           onClose={() => setSelectedMember(null)}
           onRefresh={() => refetch()}
+          canEdit={canEditClubMembers}
+          canManage={canManageClubMembers}
         />
 
         {/* Contact detail sheet */}

@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   AccessLevel,
+  CATEGORY_TO_ADMIN_SECTION,
   permissionGrantedByAdminSections,
 } from "@/lib/rbacPermissionFallback";
 
@@ -33,23 +34,6 @@ const LEVEL_RANK: Record<AccessLevel, number> = { none: 0, view: 1, edit: 2, man
  * Used so legacy callers like canWrite('deals') resolve via section access
  * for custom roles that don't carry legacy permission codes.
  */
-const CATEGORY_TO_SECTION: Record<string, string> = {
-  deals: "deals",
-  users: "contacts",
-  contacts: "contacts",
-  companies: "companies",
-  payments: "payments",
-  entitlements: "payments",
-  support: "support",
-  telegram: "communication",
-  communication: "communication",
-  news: "editorial",
-  editorial: "editorial",
-  content: "editorial",
-  roles: "roles",
-  admins: "roles",
-};
-
 /**
  * usePermissions — canonical permissions hook.
  *
@@ -179,7 +163,7 @@ export function usePermissions() {
       hasPermission(`${category}.create`)
     ) return true;
     // RBAC v3 fallback: category → section, require edit or higher
-    const section = CATEGORY_TO_SECTION[category];
+    const section = CATEGORY_TO_ADMIN_SECTION[category];
     if (section && sectionMeets(section, "edit")) return true;
     return false;
   }, [hasRole, isViewOnlyRole, hasPermission, sectionMeets]);

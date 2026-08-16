@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText, FolderTree, CornerDownRight, Link, Eye, EyeOff, Archive, CircleCheck, AlertTriangle } from "lucide-react";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { useProductsV2, useCreateProductV2, useUpdateProductV2, useDeleteProductV2 } from "@/hooks/useProductsV2";
@@ -68,6 +68,8 @@ function ProductCard({
   onDelete,
   onCopyLink,
   onDuplicate,
+  canEdit,
+  canManage,
   innerRef,
 }: {
   product: any;
@@ -81,6 +83,8 @@ function ProductCard({
   onDelete: () => void;
   onCopyLink: () => void;
   onDuplicate: () => void;
+  canEdit: boolean;
+  canManage: boolean;
   innerRef?: (el: HTMLElement | null) => void;
 }) {
   const statusKind: StatusBadgeKind = product.status === "active" ? "active" : product.status === "archived" ? "archived" : product.status === "hidden" ? "hidden" : "inactive";
@@ -100,7 +104,7 @@ function ProductCard({
           e.preventDefault();
           return;
         }
-        if (e.ctrlKey || e.metaKey) {
+        if (canEdit && (e.ctrlKey || e.metaKey)) {
           e.preventDefault();
           onToggleSelect();
           return;
@@ -113,6 +117,7 @@ function ProductCard({
         checked={isSelected}
         onCheckedChange={onToggleSelect}
         onClick={(e) => e.stopPropagation()}
+        disabled={!canEdit}
         className="shrink-0"
       />
 
@@ -196,12 +201,12 @@ function ProductCard({
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onEdit(); }}>
+        {canEdit && <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onEdit(); }}>
           <Pencil className="h-3.5 w-3.5" />
-        </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
+        </Button>}
+        {canManage && <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
           <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        </Button>}
         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
       </div>
     </div>
@@ -218,7 +223,10 @@ const defaultFormData: ProductFormData = {
 
 export default function AdminProductsV2() {
   const navigate = useNavigate();
-  const { isSuperAdmin, loading: permLoading } = usePermissions();
+  const access = useAdminAccess();
+  const permLoading = access.isLoading;
+  const canEdit = access.canAccessSection("products", "edit");
+  const canManage = access.canAccessSection("products", "manage");
   const { data: products, isLoading } = useProductsV2();
   const { data: relationCounts } = useProductRelationCounts();
   const { data: readinessMap } = useProductReadiness(
@@ -523,7 +531,7 @@ export default function AdminProductsV2() {
               className="pl-8 h-8 text-xs"
             />
           </div>
-          {!permLoading && isSuperAdmin() && (
+          {!permLoading && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -540,11 +548,11 @@ export default function AdminProductsV2() {
               </Tooltip>
             </TooltipProvider>
           )}
-          <Button size="sm" className="h-8" onClick={() => handleOpenDialog()}>
+          {canEdit && <Button size="sm" className="h-8" onClick={() => handleOpenDialog()}>
             <Plus className="h-3.5 w-3.5 mr-1.5" />
             <span className="hidden sm:inline">Добавить продукт</span>
             <span className="sm:hidden">Добавить</span>
-          </Button>
+          </Button>}
         </div>
 
         {/* Loading / Empty */}
@@ -597,6 +605,8 @@ export default function AdminProductsV2() {
                     isParent={isParent}
                     isChild={isChild}
                     readiness={readiness}
+                    canEdit={canEdit}
+                    canManage={canManage}
                     innerRef={(el) => registerItemRef(product.id, el)}
                     onToggleSelect={() => toggleSelection(product.id, true)}
                     onNavigate={() => navigate(`/admin/products-v2/${product.id}`)}
@@ -632,7 +642,7 @@ export default function AdminProductsV2() {
         )}
 
         {/* Bulk Actions Bar */}
-        {hasSelection && (
+        {hasSelection && canEdit && (
           <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4">
           <div className="bg-background border rounded-xl shadow-lg px-3 sm:px-4 py-2.5 sm:py-3 flex flex-wrap items-center gap-2 sm:gap-3 max-w-[calc(100vw-2rem)]">
               <div className="flex items-center gap-2 text-xs sm:text-sm font-medium">
@@ -665,10 +675,12 @@ export default function AdminProductsV2() {
                 <Link className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Ссылка</span>
               </Button>
-              <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-destructive hover:text-destructive" onClick={handleBulkDeleteStart}>
-                <Trash2 className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Удалить</span>
-              </Button>
+              {canManage && (
+                <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-destructive hover:text-destructive" onClick={handleBulkDeleteStart}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Удалить</span>
+                </Button>
+              )}
               <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={clearSelection}>
                 <span className="text-xs">✕</span>
               </Button>

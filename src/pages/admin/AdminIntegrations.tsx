@@ -31,7 +31,7 @@ import { PaymentsIntegrationsPanel } from "@/components/admin/integrations/Payme
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
@@ -47,10 +47,7 @@ export default function AdminIntegrations() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
-  const { canWrite, isSuperAdmin } = usePermissions();
-  
-  // Permission check - can user edit integrations?
-  const canEdit = canWrite("integrations") || isSuperAdmin();
+  const access = useAdminAccess();
 
   // State
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -78,6 +75,12 @@ export default function AdminIntegrations() {
   };
 
   const activeTab = getActiveTab();
+  const visibleCategories = CATEGORIES.filter((category) =>
+    access.canAccessResource("integrations", category.id),
+  );
+  const canEdit = access.canAccessResource("integrations", activeTab, "edit");
+  const canManage = access.canAccessResource("integrations", activeTab, "manage");
+  const canViewClubMembers = access.canAccessSection("club-members", "view");
 
   // Fetch integrations
   const { data: instances, isLoading } = useIntegrations(activeTab);
@@ -163,7 +166,7 @@ export default function AdminIntegrations() {
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
         <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
           <TabsList className="inline-flex w-auto min-w-max sm:grid sm:grid-cols-6 sm:max-w-3xl">
-            {CATEGORIES.map((cat) => {
+            {visibleCategories.map((cat) => {
               const Icon = CATEGORY_ICONS[cat.id] || Link2;
               const count = cat.id === "telegram" ? 0 : (instances || []).filter(
                 (i) => i.category === cat.id
@@ -200,13 +203,13 @@ export default function AdminIntegrations() {
                 <TabsList className="w-full sm:w-auto">
                   <TabsTrigger value="bots">Боты</TabsTrigger>
                   <TabsTrigger value="business">Личные аккаунты</TabsTrigger>
-                  <TabsTrigger value="clubs">Клубы</TabsTrigger>
+                  {canViewClubMembers && <TabsTrigger value="clubs">Клубы</TabsTrigger>}
                   <TabsTrigger value="logs">Логи</TabsTrigger>
                 </TabsList>
-                <Button size="sm" onClick={() => setMassBroadcastOpen(true)}>
+                {canManage && <Button size="sm" onClick={() => setMassBroadcastOpen(true)}>
                   <Users className="h-4 w-4 sm:mr-2" />
                   <span className="hidden sm:inline">Массовая рассылка</span>
-                </Button>
+                </Button>}
               </div>
               <TabsContent value="bots" className="mt-4">
                 <TelegramBotsTab />
@@ -214,9 +217,11 @@ export default function AdminIntegrations() {
                 <TabsContent value="business" className="mt-4">
                   <TelegramBusinessAccountsTab />
                 </TabsContent>
-                <TabsContent value="clubs" className="mt-4">
-                  <TelegramClubsTab />
-                </TabsContent>
+                {canViewClubMembers && (
+                  <TabsContent value="clubs" className="mt-4">
+                    <TelegramClubsTab />
+                  </TabsContent>
+                )}
                 <TabsContent value="logs" className="mt-4">
                   <TelegramLogsTab />
                 </TabsContent>

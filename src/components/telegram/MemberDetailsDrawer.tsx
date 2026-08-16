@@ -68,9 +68,18 @@ interface MemberDetailsDrawerProps {
   clubId: string | null;
   onClose: () => void;
   onRefresh?: () => void;
+  canEdit?: boolean;
+  canManage?: boolean;
 }
 
-export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: MemberDetailsDrawerProps) {
+export function MemberDetailsDrawer({
+  member,
+  clubId,
+  onClose,
+  onRefresh,
+  canEdit = false,
+  canManage = false,
+}: MemberDetailsDrawerProps) {
   const userId = member?.profiles?.user_id;
   const { user: currentUser } = useAuth();
   const queryClient = useQueryClient();
@@ -464,27 +473,31 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
                 </CardHeader>
                 <CardContent className="space-y-2">
                   <div className="flex flex-wrap gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => checkLink.mutate()}
-                      disabled={checkLink.isPending}
-                    >
-                      {checkLink.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      ) : (
-                        <ShieldCheck className="h-4 w-4 mr-2" />
-                      )}
-                      Проверить статус
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => setShowMessageDialog(true)}
-                    >
-                      <Send className="h-4 w-4 mr-2" />
-                      Написать
-                    </Button>
+                    {canEdit && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => checkLink.mutate()}
+                          disabled={checkLink.isPending}
+                        >
+                          {checkLink.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          ) : (
+                            <ShieldCheck className="h-4 w-4 mr-2" />
+                          )}
+                          Проверить статус
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowMessageDialog(true)}
+                        >
+                          <Send className="h-4 w-4 mr-2" />
+                          Написать
+                        </Button>
+                      </>
+                    )}
                     <Button 
                       variant="ghost" 
                       size="sm"
@@ -498,7 +511,7 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
                     </Button>
                     
                     {/* PATCH 8: Re-grant button when access OK but not in TG */}
-                    {member.access_status === 'ok' && (member.in_chat === false || member.in_channel === false) && userId && (
+                    {canEdit && member.access_status === 'ok' && (member.in_chat === false || member.in_channel === false) && userId && (
                       <Button 
                         variant="outline" 
                         size="sm"
@@ -538,7 +551,7 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
 
                   <Separator className="my-3" />
 
-                  {member.profiles ? (
+                  {canEdit && member.profiles ? (
                     member.access_status !== 'ok' ? (
                       <Button 
                         className="w-full" 
@@ -557,17 +570,19 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
                           <Clock className="h-4 w-4 mr-2" />
                           Продлить доступ
                         </Button>
-                        <Button 
-                          variant="destructive"
-                          className="w-full" 
-                          onClick={() => setShowRevokeDialog(true)}
-                        >
-                          <MinusCircle className="h-4 w-4 mr-2" />
-                          Отозвать доступ
-                        </Button>
+                        {canManage && (
+                          <Button
+                            variant="destructive"
+                            className="w-full"
+                            onClick={() => setShowRevokeDialog(true)}
+                          >
+                            <MinusCircle className="h-4 w-4 mr-2" />
+                            Отозвать доступ
+                          </Button>
+                        )}
                       </>
                     )
-                  ) : (
+                  ) : canManage && !member.profiles ? (
                     <Button 
                       variant="destructive"
                       className="w-full" 
@@ -576,7 +591,7 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
                       <Ban className="h-4 w-4 mr-2" />
                       Удалить из чата/канала
                     </Button>
-                  )}
+                  ) : null}
                 </CardContent>
               </Card>
 
