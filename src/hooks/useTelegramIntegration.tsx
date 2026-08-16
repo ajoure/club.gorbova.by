@@ -38,7 +38,8 @@ export interface TelegramClub {
   violators_count?: number;
   created_at: string;
   updated_at: string;
-  telegram_bots?: TelegramBot;
+  /** Encrypted credentials are never selected for club rows. */
+  telegram_bots?: Omit<TelegramBot, "bot_token_encrypted">;
 }
 
 export interface TelegramAccess {
