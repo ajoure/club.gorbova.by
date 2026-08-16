@@ -115,20 +115,38 @@ function assertTemplateResolved(value: string): string {
   return value;
 }
 
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let difference = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    difference |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return handleCorsPreflightRequest();
 
-  const authHeader = req.headers.get("Authorization") ?? "";
   const workerSecret = Deno.env.get("CRM_AUTOMATION_WORKER_SECRET") ?? "";
-  const providedSecret = req.headers.get("X-Worker-Secret") ?? "";
-  const serviceOk = authHeader === `Bearer ${serviceRoleKey}`;
-  const secretOk = workerSecret.length > 0 && providedSecret === workerSecret;
-  if (!serviceOk && !secretOk) {
+  const providedSecret = req.headers.get("x-worker-secret") ?? "";
+  const secretOk =
+    workerSecret.length > 0 &&
+    providedSecret.length > 0 &&
+    timingSafeEqual(workerSecret, providedSecret);
+  if (!secretOk) {
+    console.warn(
+      JSON.stringify({
+        evt: "crm-automation-worker.auth_denied",
+        has_configured_secret: workerSecret.length > 0,
+        has_provided_secret: providedSecret.length > 0,
+      }),
+    );
     return new Response(JSON.stringify({ ok: false, error: "forbidden" }), {
       status: 403,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+  console.info(JSON.stringify({ evt: "crm-automation-worker.auth_ok" }));
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
