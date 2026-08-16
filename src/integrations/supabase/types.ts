@@ -23517,6 +23517,10 @@ export type Database = {
         Args: { p_club_id: string; p_period_days?: number }
         Returns: Json
       }
+      get_club_business_stats_rbac_impl: {
+        Args: { p_club_id: string; p_period_days?: number }
+        Returns: Json
+      }
       get_club_member_summary: { Args: { p_club_id: string }; Returns: Json }
       get_club_members_enriched: {
         Args: { p_club_id: string; p_scope?: string }
@@ -24041,6 +24045,15 @@ export type Database = {
           section_label: string
           section_route: string
         }[]
+      }
+      has_admin_resource_access: {
+        Args: {
+          _min_level?: string
+          _resource_code: string
+          _section_code: string
+          _user_id: string
+        }
+        Returns: boolean
       }
       has_admin_section_access: {
         Args: { _min_level?: string; _section_code: string; _user_id: string }
