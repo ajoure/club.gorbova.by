@@ -137,6 +137,13 @@ BEGIN
     ELSE NULL
   END;
 
+  -- Club administration is an independent section. Keep generic Telegram
+  -- communication permissions intact, but route the legacy club action codes
+  -- through the explicit club-members grant used by the page and Edge Function.
+  IF _permission_code LIKE 'telegram.clubs.%' THEN
+    v_section := 'club-members';
+  END IF;
+
   v_level := CASE
     WHEN _permission_code = 'support.manage' THEN 'edit'
     WHEN v_action IN ('view', 'read') THEN 'view'
@@ -393,8 +400,14 @@ CREATE POLICY "RBAC v3: view telegram bots" ON public.telegram_bots
 DROP POLICY IF EXISTS "RBAC v3: manage telegram bots" ON public.telegram_bots;
 CREATE POLICY "RBAC v3: manage telegram bots" ON public.telegram_bots
   FOR ALL TO authenticated
-  USING (public.has_admin_resource_access(auth.uid(), 'integrations', 'telegram', 'edit'))
-  WITH CHECK (public.has_admin_resource_access(auth.uid(), 'integrations', 'telegram', 'edit'));
+  USING (
+    public.has_admin_resource_access(auth.uid(), 'integrations', 'telegram', 'edit')
+    OR public.has_admin_section_access(auth.uid(), 'club-members', 'edit')
+  )
+  WITH CHECK (
+    public.has_admin_resource_access(auth.uid(), 'integrations', 'telegram', 'edit')
+    OR public.has_admin_section_access(auth.uid(), 'club-members', 'edit')
+  );
 
 DROP POLICY IF EXISTS "RBAC v3: view telegram clubs" ON public.telegram_clubs;
 CREATE POLICY "RBAC v3: view telegram clubs" ON public.telegram_clubs
@@ -481,15 +494,26 @@ END;
 $club_rpc_guards$;
 
 -- Keep the existing business-statistics implementation intact behind an
--- access-checked wrapper instead of duplicating its accounting query.
-ALTER FUNCTION public.get_club_business_stats(uuid, integer)
-  RENAME TO get_club_business_stats_rbac_impl;
+-- access-checked wrapper instead of duplicating its accounting query. The
+-- catalog guard makes a managed retry safe after the implementation rename.
+DO $club_stats_wrapper$
+BEGIN
+  IF to_regprocedure('public.get_club_business_stats_rbac_impl(uuid,integer)') IS NULL THEN
+    IF to_regprocedure('public.get_club_business_stats(uuid,integer)') IS NULL THEN
+      RAISE EXCEPTION 'get_club_business_stats_missing';
+    END IF;
+    ALTER FUNCTION public.get_club_business_stats(uuid, integer)
+      RENAME TO get_club_business_stats_rbac_impl;
+  END IF;
+END;
+$club_stats_wrapper$;
+
 REVOKE ALL ON FUNCTION public.get_club_business_stats_rbac_impl(uuid, integer)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_club_business_stats_rbac_impl(uuid, integer)
   TO service_role;
 
-CREATE FUNCTION public.get_club_business_stats(
+CREATE OR REPLACE FUNCTION public.get_club_business_stats(
   p_club_id uuid,
   p_period_days integer DEFAULT 30
 ) RETURNS jsonb

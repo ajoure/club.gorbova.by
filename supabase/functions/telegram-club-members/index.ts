@@ -260,6 +260,15 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get('Authorization') ?? '';
     const isServiceInvocation = authHeader === `Bearer ${supabaseServiceKey}`;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Authenticate missing-header calls before parsing JSON so the safe
+    // anonymous runtime probe is a deterministic 401 even without a body.
+    if (!isServiceInvocation && !authHeader) {
+      return new Response(JSON.stringify({ error: 'Authorization required' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const body = await req.json();
     const { action, club_id, member_ids, profile_id, telegram_user_id } = body;
 
@@ -267,12 +276,6 @@ Deno.serve(async (req) => {
     let requesterId: string | undefined;
 
     if (!isServiceInvocation) {
-      if (!authHeader) {
-        return new Response(JSON.stringify({ error: 'Authorization required' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
       const userClient = createClient(supabaseUrl, supabaseAnonKey, {
         global: { headers: { Authorization: authHeader } },
       });

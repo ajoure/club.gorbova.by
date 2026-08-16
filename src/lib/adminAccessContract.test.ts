@@ -14,6 +14,7 @@ import paymentsHubSource from "../pages/admin/AdminPaymentsHub.tsx?raw";
 import formsHubSource from "../pages/admin/AdminFormsHub.tsx?raw";
 import communicationSource from "../pages/admin/AdminCommunication.tsx?raw";
 import appSource from "../App.tsx?raw";
+import clubMembersFunctionSource from "../../supabase/functions/telegram-club-members/index.ts?raw";
 
 describe("complete admin access contract", () => {
   it("assigns every declared admin route to a section or an explicit open path", () => {
@@ -74,6 +75,17 @@ describe("complete admin access contract", () => {
     expect(permissionGrantedByAdminSections("subscriptions.edit", viewOnly)).toBe(false);
   });
 
+  it("keeps Telegram club actions on the dedicated club-members grant", () => {
+    const communicationOnly = new Map<string, AccessLevel>([["communication", "manage"]]);
+    const clubManagers = new Map<string, AccessLevel>([["club-members", "manage"]]);
+
+    expect(permissionGrantedByAdminSections("telegram.clubs.view", communicationOnly)).toBe(false);
+    expect(permissionGrantedByAdminSections("telegram.clubs.manage", communicationOnly)).toBe(false);
+    expect(permissionGrantedByAdminSections("telegram.clubs.view", clubManagers)).toBe(true);
+    expect(permissionGrantedByAdminSections("telegram.clubs.manage", clubManagers)).toBe(true);
+    expect(migrationSource).toContain("_permission_code LIKE 'telegram.clubs.%'");
+  });
+
   it("filters page tabs with the same resource grants as the route guard", () => {
     expect(communicationSource).toContain('canAccessResource("communication", tab.id)');
     expect(paymentsHubSource).toContain('canAccessResource("payments", tab.resource)');
@@ -104,5 +116,19 @@ describe("complete admin access contract", () => {
     }
     expect(migrationSource).toContain("club_members_rpc_guard_not_found");
     expect(migrationSource).toContain("has_admin_resource_access");
+    expect(migrationSource).toContain(
+      "OR public.has_admin_section_access(auth.uid(), 'club-members', 'edit')",
+    );
+  });
+
+  it("keeps the club statistics wrapper retry-safe and auth probes deterministic", () => {
+    expect(migrationSource).toContain(
+      "to_regprocedure('public.get_club_business_stats_rbac_impl(uuid,integer)') IS NULL",
+    );
+    expect(migrationSource).toContain(
+      "CREATE OR REPLACE FUNCTION public.get_club_business_stats(",
+    );
+    expect(clubMembersFunctionSource.indexOf("if (!isServiceInvocation && !authHeader)"))
+      .toBeLessThan(clubMembersFunctionSource.indexOf("const body = await req.json()"));
   });
 });
