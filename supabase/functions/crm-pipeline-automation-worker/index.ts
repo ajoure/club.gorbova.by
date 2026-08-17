@@ -89,18 +89,32 @@ function conditionsMatch(
   return group.logic === "or" ? results.some(Boolean) : results.every(Boolean);
 }
 
+function resolveCustomerName(deal: Record<string, unknown>): string {
+  const profile = deal.profiles;
+  if (
+    profile &&
+    typeof profile === "object" &&
+    "full_name" in profile &&
+    typeof profile.full_name === "string"
+  ) {
+    return profile.full_name;
+  }
+  return "";
+}
+
 function renderTemplate(
   template: string,
   deal: Record<string, unknown>,
 ): string {
+  const customerName = resolveCustomerName(deal);
   const values: Record<string, string> = {
     deal_id: String(deal.id ?? ""),
     deal_number: String(deal.order_number ?? ""),
     customer_email: String(deal.customer_email ?? ""),
-    customer_name: String(deal.customer_name ?? ""),
+    customer_name: customerName,
     orderId: String(deal.order_number ?? ""),
     email: String(deal.customer_email ?? ""),
-    name: String(deal.customer_name ?? ""),
+    name: customerName,
     appName: "Gorbova.by",
   };
   return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (token, key) =>
@@ -230,7 +244,7 @@ Deno.serve(async (req: Request) => {
         supabase
           .from("orders_v2")
           .select(
-            "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name,user_id,status,currency,is_trial,paid_amount,final_price",
+            "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,user_id,status,currency,is_trial,paid_amount,final_price,profiles:profile_id(full_name)",
           )
           .eq("id", job.deal_id)
           .single(),
@@ -560,7 +574,7 @@ Deno.serve(async (req: Request) => {
             supabase
               .from("orders_v2")
               .select(
-                "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,product_id,customer_email,customer_name,user_id",
+                "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,product_id,customer_email,user_id,profiles:profile_id(full_name)",
               )
               .eq("id", job.deal_id)
               .single(),
@@ -727,7 +741,7 @@ Deno.serve(async (req: Request) => {
             supabase
               .from("orders_v2")
               .select(
-                "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,customer_name",
+                "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,profiles:profile_id(full_name)",
               )
               .eq("id", job.deal_id)
               .single(),
