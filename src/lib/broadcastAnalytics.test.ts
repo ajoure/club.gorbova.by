@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import migrationSource from "../../supabase/migrations/20260817143430_broadcast_analytics.sql?raw";
+import migrationSource from "../../supabase/migrations/20260817201724_83ce32a7-f560-498b-91ab-df70a973838e.sql?raw";
 import quickComposerSource from "../components/admin/communication/BroadcastsTabContent.tsx?raw";
 import analyticsUiSource from "../components/admin/communication/BroadcastAnalyticsSection.tsx?raw";
 import dispatcherSource from "../../supabase/functions/process-scheduled-broadcasts/index.ts?raw";
