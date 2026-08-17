@@ -20,15 +20,33 @@
 Да. Workspace уже байт-в-байт на этом SHA и чист, поэтому шаг sync — это подтверждение
 parity, а не перенос изменений. Риск потери локальных правок отсутствует (их нет).
 
-### 3. Почему GitHub build помечен как unsuccessful / out of date
+### 3. Почему GitHub build помечен как unsuccessful / out of date — BLOCKER
 
-- Опубликованный frontend соответствует прошлому релизу (`616bf9ed…`), а не `158c72af`.
-  Метка «out of date» отражает именно отсутствие Publish для нового SHA.
-- Изменённые файлы содержат ранее существовавший ESLint-backlog
-  (`@typescript-eslint/no-explicit-any`, 10 ошибок в `TokenizedRichInput.tsx`), из-за чего
-  общий lint-прогон на репозитории красный. Release-gate CI линтит только
-  `e2e/release-safety-gate.spec.ts`, unit-контракты и production build, поэтому это
-  фон, а не новый дефект PR #329. Правки этого backlog вне scope.
+Найдена конкретная причина красной сборки на этом SHA:
+
+```
+src/lib/contactCenterMessagePlaceholders.ts(30,12): error TS2550:
+Property 'hasOwn' does not exist on type 'ObjectConstructor'.
+```
+
+`Object.hasOwn` — ES2022, а `tsconfig.app.json` задаёт `target: ES2020` и
+`lib: ["ES2020","DOM","DOM.Iterable"]`. Файл добавлен в PR #329, поэтому
+typecheck/production build падает именно на этом SHA. Unit-тесты при этом
+проходят (vitest не типизирует).
+
+Дополнительный фон, не являющийся причиной: в `TokenizedRichInput.tsx` 10
+ранее существовавших ESLint-ошибок `@typescript-eslint/no-explicit-any`;
+release-gate CI линтит только `e2e/release-safety-gate.spec.ts`.
+
+Также метка «out of date» отражает, что опубликованный frontend соответствует
+прошлому релизу (`616bf9ed…`), а не `158c72af`.
+
+**Следствие:** по действующему правилу «любая новая правка исходника — блокер»,
+я останавливаюсь. Deploy воркера технически возможен (backend-часть не зависит
+от этого файла), но **Publish frontend на этом SHA выполнять нельзя**, пока
+build красный. Требуется отдельное решение: либо микро-фикс в GitHub
+(`Object.prototype.hasOwnProperty.call(values, key)` или подъём `lib` до ES2022)
+новым PR, либо явное разрешение сделать эту правку в managed-репозитории.
 
 ## 4. EXECUTE-план (после отдельного одобрения)
 
