@@ -623,7 +623,10 @@ Deno.serve(async (req) => {
  *               If returned null (past ends_at) → status='sent', next_run_at=null
  */
 async function advanceTemplate(
-  supabase: ReturnType<typeof createClient>,
+  // Supabase JS 2.45 loses the concrete public schema through ReturnType unless
+  // the generic database parameter is fixed; the runtime client remains typed.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: ReturnType<typeof createClient<any>>,
   tpl: BroadcastTemplate,
   dryRun: boolean,
   sent = 0,
