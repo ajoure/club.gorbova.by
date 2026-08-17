@@ -383,6 +383,28 @@ export function setDecisionFieldsCache(fields: TokenDef[]) {
  */
 let _registryRefsCache: Array<{ token_key: string; ui_label: string }> = [];
 
+// Computed CRM tokens are not rows in fields_registry: they are resolved from
+// the deal context by the automation worker. Keep their display labels here so
+// an editor can render saved/default chips immediately, before an async
+// registry request has returned.
+const BUILT_IN_TOKEN_LABELS: Record<string, string> = {
+  deal_number: "Сделка · номер",
+  deal_id: "Сделка · ID",
+  deal_status: "Сделка · статус",
+  deal_currency: "Сделка · валюта",
+  paid_amount: "Сделка · оплаченная сумма",
+  final_price: "Сделка · итоговая цена",
+  is_trial: "Сделка · пробная",
+  customer_name: "Клиент · полное имя",
+  customer_email: "Клиент · email",
+  customer_phone: "Клиент · телефон",
+  product_name: "Продукт · название",
+  tariff_name: "Тариф · название",
+  responsible_name: "Ответственный · имя",
+  responsible_email: "Ответственный · email",
+  appName: "Система · название приложения",
+};
+
 export function setRegistryRefsCache(refs: Array<{ token_key: string; ui_label: string }>): void {
   _registryRefsCache = refs ?? [];
 }
@@ -393,6 +415,12 @@ export function setRegistryRefsCache(refs: Array<{ token_key: string; ui_label: 
  * Returns null if token is unknown (UNMAPPED).
  */
 export function tokenStringToLabel(tokenString: string): string | null {
+  const inner = tokenString.replace(/^\{\{/, "").replace(/\}\}$/, "").trim();
+  const tokenKey = inner.split("|")[0].trim();
+  if (tokenKey && BUILT_IN_TOKEN_LABELS[tokenKey]) {
+    return BUILT_IN_TOKEN_LABELS[tokenKey];
+  }
+
   const allCaches: TokenDef[][] = [
     CONTACT_TOKENS,
     DATETIME_TOKENS,
@@ -416,8 +444,6 @@ export function tokenStringToLabel(tokenString: string): string | null {
 
   // Fallback: registry refs from document_token_registry.
   // Strip optional modifiers like {{key|format=…|case=…}} before matching.
-  const inner = tokenString.replace(/^\{\{/, "").replace(/\}\}$/, "").trim();
-  const tokenKey = inner.split("|")[0].trim();
   if (tokenKey && _registryRefsCache.length > 0) {
     const ref = _registryRefsCache.find((r) => r.token_key === tokenKey);
     if (ref) return ref.ui_label;
