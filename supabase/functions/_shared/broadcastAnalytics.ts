@@ -1,6 +1,11 @@
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+// Structural client type: avoids pulling Deno-only `npm:` type declarations
+// into the repo-wide TypeScript check while keeping runtime behaviour identical.
+type ServiceClient = {
+  rpc: (fn: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>;
+};
 
-type ServiceClient = SupabaseClient;
+declare const Deno: { env: { get(key: string): string | undefined } };
+
 
 export interface BroadcastAnalyticsContextInput {
   campaignId: string;
