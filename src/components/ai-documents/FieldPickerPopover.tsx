@@ -192,7 +192,7 @@ export function FieldPickerPopover({
                                   }
                                 }}
                                 className={cn(
-                                  "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 focus:outline-none",
+                                  "w-full min-w-0 text-left px-3 py-1.5 text-xs flex items-center gap-2 focus:outline-none",
                                   isUnsupported
                                     ? "opacity-50 cursor-not-allowed"
                                     : "hover:bg-accent/50 focus:bg-accent",
@@ -200,10 +200,13 @@ export function FieldPickerPopover({
                                 )}
                               >
                                 <Check className={cn("h-3.5 w-3.5 shrink-0", isSelected && !isUnsupported ? "opacity-100 text-primary" : "opacity-0")} />
-                                <span className="font-mono text-[10px] text-muted-foreground shrink-0 w-[88px]">
+                                <span
+                                  className="font-mono text-[10px] text-muted-foreground shrink-0 w-28 min-w-0 truncate sm:w-36"
+                                  title={r.field_public_id}
+                                >
                                   {r.field_public_id}
                                 </span>
-                                <span className="flex-1 truncate">{r.ui_label}</span>
+                                <span className="min-w-0 flex-1 truncate" title={r.ui_label}>{r.ui_label}</span>
                                 {isUnsupported ? (
                                   <span className="text-[9px] uppercase tracking-wide text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
                                     {unsupportedLabel}
