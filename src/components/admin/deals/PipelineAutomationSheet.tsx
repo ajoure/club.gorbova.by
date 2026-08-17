@@ -980,7 +980,7 @@ export function PipelineAutomationSheet({
 
         <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <ScrollArea className="h-full">
-            <div className="min-w-0 p-3 sm:min-w-max sm:p-5">
+            <div className="min-w-0 p-3 lg:min-w-max sm:p-5">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold text-foreground/85">
@@ -1078,11 +1078,11 @@ export function PipelineAutomationSheet({
                 </div>
               )}
 
-              <div className="flex flex-col gap-3 sm:flex-row">
+              <div className="flex flex-col gap-3 lg:flex-row">
                 {stages.map((stage) => (
                   <section
                     key={stage.id}
-                    className="w-full shrink-0 overflow-hidden rounded-[22px] border border-white/35 bg-white/35 shadow-[0_18px_50px_rgba(15,23,42,0.05)] backdrop-blur-2xl dark:border-white/10 dark:bg-slate-950/30 sm:w-[286px]"
+                    className="w-full shrink-0 overflow-hidden rounded-[22px] border border-white/35 bg-white/35 shadow-[0_18px_50px_rgba(15,23,42,0.05)] backdrop-blur-2xl dark:border-white/10 dark:bg-slate-950/30 lg:w-[286px]"
                   >
                     <div
                       className="h-1"
