@@ -43,6 +43,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import {
   Popover,
   PopoverContent,
@@ -62,6 +63,8 @@ import {
 import { CrmPipeline, CrmPipelineStage } from "@/services/pipelineService";
 import { useCrmTaskTypes } from "@/hooks/useCrmTasks";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
+import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
+import { ORDER_STATUS_RU } from "@/lib/orderStatusLabel";
 import {
   PipelineAutomationCondition,
   PipelineAutomationConditionField,
@@ -100,6 +103,7 @@ const WEEKDAYS = [
   { value: 6, label: "Сб" },
   { value: 7, label: "Вс" },
 ];
+const DEAL_CURRENCIES = ["BYN", "USD", "EUR", "RUB"] as const;
 
 const CONDITION_FIELDS: Array<{
   value: PipelineAutomationConditionField;
@@ -166,6 +170,85 @@ function operatorsForField(field: PipelineAutomationConditionField) {
 
 function conditionFieldLabel(field: string | null) {
   return CONDITION_FIELDS.find((item) => item.value === field)?.label ?? "поле сделки";
+}
+
+function ConditionValuePicker({
+  condition,
+  products,
+  tariffs,
+  staff,
+  onChange,
+}: {
+  condition: PipelineAutomationCondition;
+  products: Array<{ id: string; name: string; is_active?: boolean | null }>;
+  tariffs: Array<{ id: string; name: string; product_id?: string | null }>;
+  staff: Array<{ user_id: string; label: string }>;
+  onChange: (value: string | number | boolean) => void;
+}) {
+  const disabled = ["is_empty", "is_not_empty"].includes(condition.operator);
+  if (disabled) return null;
+
+  const value = String(condition.value ?? "");
+  const selectClassName = "h-8 w-full rounded-lg bg-background/80 text-[10px]";
+  const renderSelect = (placeholder: string, items: Array<{ value: string; label: string }>) => (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className={selectClassName}>
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent className="max-h-[min(320px,var(--radix-select-content-available-height))]">
+        {items.map((item) => (
+          <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+
+  switch (condition.field) {
+    case "product_id":
+      return renderSelect("Выберите продукт", products.map((product) => ({
+        value: product.id,
+        label: product.is_active === false ? `${product.name} · архив` : product.name,
+      })));
+    case "tariff_id":
+      return renderSelect("Выберите тариф", tariffs.map((tariff) => ({ value: tariff.id, label: tariff.name })));
+    case "responsible_user_id":
+      return renderSelect("Выберите ответственного", staff.map((person) => ({ value: person.user_id, label: person.label })));
+    case "status":
+      return renderSelect("Выберите статус", Object.entries(ORDER_STATUS_RU).map(([status, label]) => ({ value: status, label })));
+    case "currency":
+      return renderSelect("Выберите валюту", DEAL_CURRENCIES.map((currency) => ({ value: currency, label: currency })));
+    case "is_trial":
+      return renderSelect("Выберите значение", [
+        { value: "true", label: "Да, пробная" },
+        { value: "false", label: "Нет, обычная" },
+      ]);
+    case "paid_amount":
+    case "final_price":
+      return (
+        <Input
+          type="number"
+          min="0"
+          step="0.01"
+          inputMode="decimal"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Сумма"
+          className="h-8 rounded-lg bg-background/80 text-[10px]"
+        />
+      );
+    case "customer_email":
+      return (
+        <Input
+          type="email"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Email клиента"
+          className="h-8 rounded-lg bg-background/80 text-[10px]"
+        />
+      );
+    default:
+      return null;
+  }
 }
 
 function statusLabel(status: PipelineAutomationRule["status"]) {
@@ -534,6 +617,8 @@ export function PipelineAutomationSheet({
   const { data: taskTypes = [] } = useCrmTaskTypes();
   const { data: emailTemplates = [] } = usePipelineEmailTemplates();
   const { data: staff = [] } = useStaffOptions();
+  const { data: products = [] } = useProductsV2();
+  const { data: tariffs = [] } = useTariffs();
   const createRule = useCreatePipelineAutomationRule();
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -874,7 +959,8 @@ export function PipelineAutomationSheet({
     >
       <SheetContent
         side="right"
-        className="h-[100dvh] w-full max-w-none border-l border-white/30 bg-background/82 p-0 backdrop-blur-3xl sm:w-[92vw] sm:max-w-[1180px]"
+        overlayClassName="!bg-slate-950/45 backdrop-blur-[2px]"
+        className="flex h-[100dvh] w-full max-w-none flex-col border-l border-border/45 bg-background/95 p-0 shadow-[-24px_0_70px_rgba(15,23,42,0.16)] backdrop-blur-3xl sm:w-[92vw] sm:max-w-[1180px]"
       >
         <SheetHeader className="shrink-0 border-b border-border/25 bg-background/45 px-4 py-3 text-left sm:px-5 sm:py-4">
           <div className="flex items-center gap-2">
@@ -892,7 +978,7 @@ export function PipelineAutomationSheet({
           </div>
         </SheetHeader>
 
-        <div className="h-[calc(100dvh-69px)] overflow-hidden sm:h-[calc(100dvh-77px)]">
+        <div className="min-h-0 flex-1 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="min-w-max p-4 sm:p-5">
               <div className="mb-4 flex items-center justify-between">
@@ -1062,8 +1148,8 @@ export function PipelineAutomationSheet({
         </div>
 
         {editing && (
-          <div className="absolute inset-y-0 right-0 z-20 flex h-[100dvh] w-full min-h-0 flex-col border-l border-white/30 bg-background/95 shadow-[-24px_0_70px_rgba(15,23,42,0.12)] backdrop-blur-3xl sm:w-[410px]">
-            <div className="flex shrink-0 items-start gap-3 border-b border-border/25 px-4 py-3 sm:px-5 sm:py-4">
+          <div className="absolute inset-y-0 right-0 z-20 flex h-[100dvh] w-full min-h-0 flex-col border-l border-border/45 bg-background/[0.98] shadow-[-24px_0_70px_rgba(15,23,42,0.16)] backdrop-blur-3xl sm:w-[440px]">
+            <div className="flex shrink-0 items-start gap-3 border-b border-border/35 bg-card/60 px-4 py-3 sm:px-5 sm:py-4">
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">
                   {actionType === "create_task"
@@ -1317,17 +1403,15 @@ export function PipelineAutomationSheet({
               {actionType === "send_telegram" && (
                 <div className="space-y-1.5">
                   <Label className="text-[11px]">Текст сообщения</Label>
-                  <Textarea
+                  <TokenizedRichInput
                     value={telegramMessage}
-                    onChange={(event) => setTelegramMessage(event.target.value)}
-                    maxLength={4096}
+                    onChange={setTelegramMessage}
+                    rows={5}
+                    tokenContext="crm_automation"
                     className="min-h-28 rounded-xl text-xs"
                   />
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                    <span>
-                      Доступно: {"{{customer_name}}"}, {"{{deal_number}}"},{" "}
-                      {"{{customer_email}}"}
-                    </span>
+                    <span>Нажмите [ — выберите данные сделки или клиента</span>
                     <span>{telegramMessage.length}/4096</span>
                   </div>
                   <p className="text-[10px] leading-4 text-muted-foreground">
@@ -1383,12 +1467,11 @@ export function PipelineAutomationSheet({
                       <Label className="text-[11px]">
                         Резервное сообщение Telegram
                       </Label>
-                      <Textarea
+                      <TokenizedRichInput
                         value={fallbackTelegramMessage}
-                        onChange={(event) =>
-                          setFallbackTelegramMessage(event.target.value)
-                        }
-                        maxLength={4096}
+                        onChange={setFallbackTelegramMessage}
+                        rows={4}
+                        tokenContext="crm_automation"
                         className="min-h-24 rounded-xl text-xs"
                       />
                       <p className="text-right text-[10px] text-muted-foreground">
@@ -1417,20 +1500,21 @@ export function PipelineAutomationSheet({
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px]">Заголовок задачи</Label>
-                    <Input
+                    <TokenizedRichInput
                       value={title}
-                      onChange={(event) => setTitle(event.target.value)}
-                      className="h-9 rounded-xl text-xs"
+                      onChange={setTitle}
+                      singleLine
+                      tokenContext="crm_automation"
+                      className="h-9 min-h-0 rounded-xl text-xs"
                     />
-                    <p className="text-[10px] text-muted-foreground">
-                      Доступно: {"{{deal_number}}"}
-                    </p>
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px]">Описание</Label>
-                    <Textarea
+                    <TokenizedRichInput
                       value={description}
-                      onChange={(event) => setDescription(event.target.value)}
+                      onChange={setDescription}
+                      tokenContext="crm_automation"
+                      rows={4}
                       className="min-h-20 rounded-xl text-xs"
                     />
                   </div>
@@ -1500,7 +1584,7 @@ export function PipelineAutomationSheet({
                             setConditions((current) =>
                               current.map((item, itemIndex) =>
                                 itemIndex === index
-                                  ? { ...item, field: value, operator: "eq" }
+                                  ? { ...item, field: value, operator: "eq", value: "" }
                                   : item,
                               ),
                             )
@@ -1563,25 +1647,18 @@ export function PipelineAutomationSheet({
                         </button>
                       </div>
                       {needsValue && (
-                        <Input
-                          type={
-                            condition.field === "paid_amount" ||
-                            condition.field === "final_price"
-                              ? "number"
-                              : "text"
-                          }
-                          value={String(condition.value ?? "")}
-                          onChange={(event) =>
+                        <ConditionValuePicker
+                          condition={condition}
+                          products={products}
+                          tariffs={tariffs}
+                          staff={staff}
+                          onChange={(value) =>
                             setConditions((current) =>
                               current.map((item, itemIndex) =>
-                                itemIndex === index
-                                  ? { ...item, value: event.target.value }
-                                  : item,
+                                itemIndex === index ? { ...item, value } : item,
                               ),
                             )
                           }
-                          placeholder="Значение"
-                          className="h-8 rounded-lg text-[10px]"
                         />
                       )}
                       <label className="flex items-center gap-2 text-[10px] text-muted-foreground">
@@ -1660,21 +1737,21 @@ export function PipelineAutomationSheet({
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-[11px]">Заголовок задачи</Label>
-                        <Input
+                        <TokenizedRichInput
                           value={noBranchTitle}
-                          onChange={(event) =>
-                            setNoBranchTitle(event.target.value)
-                          }
-                          className="h-8 rounded-lg text-[10px]"
+                          onChange={setNoBranchTitle}
+                          singleLine
+                          tokenContext="crm_automation"
+                          className="h-8 min-h-0 rounded-lg text-[10px]"
                         />
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-[11px]">Описание</Label>
-                        <Textarea
+                        <TokenizedRichInput
                           value={noBranchDescription}
-                          onChange={(event) =>
-                            setNoBranchDescription(event.target.value)
-                          }
+                          onChange={setNoBranchDescription}
+                          tokenContext="crm_automation"
+                          rows={3}
                           className="min-h-16 rounded-lg text-[10px]"
                         />
                       </div>
@@ -1762,21 +1839,21 @@ export function PipelineAutomationSheet({
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-[11px]">Заголовок задачи</Label>
-                      <Input
+                      <TokenizedRichInput
                         value={errorBranchTitle}
-                        onChange={(event) =>
-                          setErrorBranchTitle(event.target.value)
-                        }
-                        className="h-8 rounded-lg text-[10px]"
+                        onChange={setErrorBranchTitle}
+                        singleLine
+                        tokenContext="crm_automation"
+                        className="h-8 min-h-0 rounded-lg text-[10px]"
                       />
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-[11px]">Описание</Label>
-                      <Textarea
+                      <TokenizedRichInput
                         value={errorBranchDescription}
-                        onChange={(event) =>
-                          setErrorBranchDescription(event.target.value)
-                        }
+                        onChange={setErrorBranchDescription}
+                        tokenContext="crm_automation"
+                        rows={3}
                         className="min-h-16 rounded-lg text-[10px]"
                       />
                     </div>

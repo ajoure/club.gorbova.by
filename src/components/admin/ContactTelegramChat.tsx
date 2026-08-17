@@ -7,6 +7,7 @@ import { format, isToday, isYesterday, isSameDay } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -105,6 +106,7 @@ import {
   getTelegramMessageIdentityLabel,
   type TelegramBusinessIdentity,
 } from "@/lib/telegramBusinessIdentity";
+import { renderContactCenterMessagePlaceholders } from "@/lib/contactCenterMessagePlaceholders";
 
 interface ContactTelegramChatProps {
   userId: string;
@@ -336,7 +338,7 @@ export function ContactTelegramChat({
   const SEND_DEBOUNCE_MS = 500;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputFocusRef = useRef<(() => void) | null>(null);
 
   const prevMessageCountRef = useRef<number>(0);
   // Observed boundary, зафиксированная в onMutate ДО отправки (corrective S2).
@@ -1589,7 +1591,7 @@ export function ContactTelegramChat({
       if (!data.success) throw new Error(data.error || "Не удалось отправить сообщение");
       return data;
     },
-    onMutate: () => {
+    onMutate: ({ text }) => {
       // === Observed boundary capture BEFORE send ===
       // Фиксируем границу до фактической отправки, чтобы incoming, пришедший
       // во время отправки, НЕ попал в эту boundary, даже если realtime уже
@@ -1621,7 +1623,7 @@ export function ContactTelegramChat({
         id: `temp-${Date.now()}`,
         type: "message",
         direction: "outgoing",
-        message_text: message.trim() || null,
+        message_text: text?.trim() || null,
         message_id: null,
         status: "pending",
         created_at: new Date().toISOString(),
@@ -1935,13 +1937,16 @@ export function ContactTelegramChat({
     if (replyingTo) {
       // rAF чтобы дождаться mount блока reply-preview и не словить scroll-jump.
       requestAnimationFrame(() => {
-        inputRef.current?.focus();
+        inputFocusRef.current?.();
       });
     }
   }, [replyingTo]);
 
   const handleSend = () => {
-    const trimmed = message.trim();
+    const trimmed = renderContactCenterMessagePlaceholders(message, {
+      fullName: clientName,
+      telegramUsername,
+    }).trim();
     if (!trimmed && !selectedFile) return;
     sendMutation.mutate({
       text: trimmed,
@@ -1949,13 +1954,6 @@ export function ContactTelegramChat({
       fileType: selectedFileType || undefined,
       replyToMessageId: replyingTo?.message_id ?? undefined,
     });
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
   };
 
   const acceptSelectedFile = (
@@ -1981,7 +1979,7 @@ export function ContactTelegramChat({
     }
   };
 
-  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const handlePaste = (e: React.ClipboardEvent<HTMLElement>) => {
     const file = getClipboardFile(e.clipboardData);
     if (!file) return;
     e.preventDefault();
@@ -2417,14 +2415,16 @@ export function ContactTelegramChat({
             />
           </div>
           
-          <Textarea
-            ref={inputRef}
+          <TokenizedRichInput
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={handleKeyPress}
+            onChange={setMessage}
+            onSubmit={handleSend}
             onPaste={handlePaste}
+            onFocusReady={(focus) => { inputFocusRef.current = focus; }}
+            tokenContext="contact_center"
+            rows={2}
             placeholder="Введите сообщение..."
-            className="min-h-[56px] max-h-[112px] resize-none flex-1 overflow-y-auto leading-snug"
+            className="min-h-[56px] max-h-[112px] flex-1 overflow-y-auto leading-snug"
             disabled={sendMutation.isPending || isUploading}
           />
           <div className="flex shrink-0 flex-col gap-1 items-end">

@@ -543,7 +543,13 @@ export type ArrayTokenResolverContract = {
  * 
  * New integrations MUST use tokenContext. Do NOT use extraTokenGroups for new features.
  */
-export type TokenContext = "messages" | "documents" | "documents:annual_meeting" | "documents:act";
+export type TokenContext =
+  | "messages"
+  | "contact_center"
+  | "crm_automation"
+  | "documents"
+  | "documents:annual_meeting"
+  | "documents:act";
 
 /**
  * Load and cache all token groups required by a given context.
@@ -555,7 +561,7 @@ export async function loadTokensForContext(context: TokenContext): Promise<void>
   // "messages" context: product fields only (contact/datetime are static)
   const productPromise = loadProductFields().then(setProductFieldsCache);
   
-  if (context === "messages") {
+  if (context === "messages" || context === "contact_center" || context === "crm_automation") {
     await productPromise;
     return;
   }
@@ -605,7 +611,7 @@ export function getTokenGroupsForContext(context: TokenContext): Array<{ heading
     groups.push({ heading: "Продукт", tokens: _productFieldsCache });
   }
 
-  if (context === "messages") return groups;
+  if (context === "messages" || context === "contact_center" || context === "crm_automation") return groups;
 
   // "documents" and "documents:annual_meeting"
   if (_legalDetailsFieldsCache.length > 0) {

@@ -16,7 +16,7 @@
  * - Floating dropdown positioned at caret (coordsAtPos)
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ClipboardEvent as ReactClipboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useEditor, EditorContent, Editor } from "@tiptap/react";
 import { Node, mergeAttributes, Extension } from "@tiptap/core";
@@ -45,6 +45,45 @@ import { cn } from "@/lib/utils";
 import { FieldPickerPopover, type FieldPickerResult } from "@/components/ai-documents/FieldPickerPopover";
 import { loadRegistryRefs, type RegistryFieldRef } from "@/utils/templateAutoSuggest";
 
+const MESSAGE_PLACEHOLDER_REFS: RegistryFieldRef[] = [
+  { field_public_id: "MSG-CONTACT-NAME", token_key: "full_name", ui_label: "Клиент · полное имя", category: "client", data_type: "string" },
+  { field_public_id: "MSG-CONTACT-FIRST-NAME", token_key: "first_name", ui_label: "Клиент · имя", category: "client", data_type: "string" },
+  { field_public_id: "MSG-CONTACT-LAST-NAME", token_key: "last_name", ui_label: "Клиент · фамилия", category: "client", data_type: "string" },
+  { field_public_id: "MSG-CONTACT-EMAIL", token_key: "email", ui_label: "Клиент · email", category: "client", data_type: "email" },
+  { field_public_id: "MSG-CONTACT-PHONE", token_key: "phone", ui_label: "Клиент · телефон", category: "client", data_type: "phone" },
+  { field_public_id: "MSG-CONTACT-TELEGRAM", token_key: "telegram_username", ui_label: "Клиент · Telegram", category: "client", data_type: "string" },
+  { field_public_id: "MSG-SYSTEM-TODAY", token_key: "today", ui_label: "Система · сегодня", category: "system", data_type: "date" },
+  { field_public_id: "MSG-SYSTEM-TOMORROW", token_key: "tomorrow", ui_label: "Система · завтра", category: "system", data_type: "date" },
+  { field_public_id: "MSG-SYSTEM-NOW", token_key: "now", ui_label: "Система · текущие дата и время", category: "system", data_type: "datetime" },
+];
+
+const CRM_AUTOMATION_PLACEHOLDER_REFS: RegistryFieldRef[] = [
+  { field_public_id: "CRM-DEAL-NUMBER", token_key: "deal_number", ui_label: "Сделка · номер", category: "deal", data_type: "string" },
+  { field_public_id: "CRM-DEAL-ID", token_key: "deal_id", ui_label: "Сделка · ID", category: "deal", data_type: "string" },
+  { field_public_id: "CRM-DEAL-STATUS", token_key: "deal_status", ui_label: "Сделка · статус", category: "deal", data_type: "string" },
+  { field_public_id: "CRM-DEAL-CURRENCY", token_key: "deal_currency", ui_label: "Сделка · валюта", category: "deal", data_type: "string" },
+  { field_public_id: "CRM-DEAL-PAID-AMOUNT", token_key: "paid_amount", ui_label: "Сделка · оплаченная сумма", category: "deal", data_type: "number" },
+  { field_public_id: "CRM-DEAL-FINAL-PRICE", token_key: "final_price", ui_label: "Сделка · итоговая цена", category: "deal", data_type: "number" },
+  { field_public_id: "CRM-DEAL-IS-TRIAL", token_key: "is_trial", ui_label: "Сделка · пробная", category: "deal", data_type: "boolean" },
+  { field_public_id: "CRM-CUSTOMER-NAME", token_key: "customer_name", ui_label: "Клиент · полное имя", category: "client", data_type: "string" },
+  { field_public_id: "CRM-CUSTOMER-EMAIL", token_key: "customer_email", ui_label: "Клиент · email", category: "client", data_type: "email" },
+  { field_public_id: "CRM-CUSTOMER-PHONE", token_key: "customer_phone", ui_label: "Клиент · телефон", category: "client", data_type: "string" },
+  { field_public_id: "CRM-PRODUCT-NAME", token_key: "product_name", ui_label: "Продукт · название", category: "product", data_type: "string" },
+  { field_public_id: "CRM-TARIFF-NAME", token_key: "tariff_name", ui_label: "Тариф · название", category: "product", data_type: "string" },
+  { field_public_id: "CRM-RESPONSIBLE-NAME", token_key: "responsible_name", ui_label: "Ответственный · имя", category: "responsible", data_type: "string" },
+  { field_public_id: "CRM-RESPONSIBLE-EMAIL", token_key: "responsible_email", ui_label: "Ответственный · email", category: "responsible", data_type: "email" },
+  { field_public_id: "CRM-APP-NAME", token_key: "appName", ui_label: "Система · название приложения", category: "system", data_type: "string" },
+];
+
+const CONTACT_CENTER_PLACEHOLDER_REFS: RegistryFieldRef[] = [
+  { field_public_id: "CHAT-CONTACT-NAME", token_key: "full_name", ui_label: "Клиент · полное имя", category: "client", data_type: "string" },
+  { field_public_id: "CHAT-CONTACT-FIRST-NAME", token_key: "first_name", ui_label: "Клиент · имя", category: "client", data_type: "string" },
+  { field_public_id: "CHAT-CONTACT-LAST-NAME", token_key: "last_name", ui_label: "Клиент · фамилия", category: "client", data_type: "string" },
+  { field_public_id: "CHAT-CONTACT-TELEGRAM", token_key: "telegram_username", ui_label: "Клиент · Telegram", category: "client", data_type: "string" },
+  { field_public_id: "CHAT-SYSTEM-TODAY", token_key: "today", ui_label: "Система · сегодня", category: "system", data_type: "date" },
+  { field_public_id: "CHAT-SYSTEM-TOMORROW", token_key: "tomorrow", ui_label: "Система · завтра", category: "system", data_type: "date" },
+];
+
 /**
  * Набор token_key, поддерживаемых резолверами рассылок (email-mass-broadcast,
  * telegram-mass-broadcast, telegram-send-test) — синхронизирован с
@@ -67,6 +106,13 @@ const MESSAGES_SUPPORTED_TOKEN_KEYS: Set<string> = new Set([
   "system.month_name", "system.month", "system.year", "system.day", "system.weekday",
   "system.today_long", "system.today_ru",
 ]);
+
+const CRM_AUTOMATION_SUPPORTED_TOKEN_KEYS = new Set(
+  CRM_AUTOMATION_PLACEHOLDER_REFS.map((ref) => ref.token_key),
+);
+const CONTACT_CENTER_SUPPORTED_TOKEN_KEYS = new Set(
+  CONTACT_CENTER_PLACEHOLDER_REFS.map((ref) => ref.token_key),
+);
 
 const TokenNode = Node.create({
   name: "token",
@@ -117,6 +163,7 @@ function createBracketPlugin(
   onInsertBracket: () => void,
   isPickerOpenRef: React.RefObject<boolean>,
   closePicker: () => void,
+  onSubmit?: () => void,
 ) {
   let pending = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -134,6 +181,12 @@ function createBracketPlugin(
         if (event.key === "Escape") {
           clearPending();
           return false;
+        }
+
+        if (onSubmit && event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+          event.preventDefault();
+          onSubmit();
+          return true;
         }
 
         if (
@@ -341,6 +394,12 @@ interface TokenizedRichInputProps {
     heading: string;
     tokens: import("@/lib/tokens/tokenRegistry").TokenDef[];
   }>;
+  /** Отправить форму по Enter (Shift+Enter оставляет новую строку). */
+  onSubmit?: () => void;
+  /** Нативная вставка: нужна чатам, которые принимают файлы из буфера. */
+  onPaste?: (event: ReactClipboardEvent<HTMLDivElement>) => void;
+  /** Даёт родителю безопасный focus callback, не раскрывая TipTap API. */
+  onFocusReady?: (focus: () => void) => void;
 }
 
 export function TokenizedRichInput({
@@ -354,6 +413,9 @@ export function TokenizedRichInput({
   allowAlign = false,
   tokenContext,
   extraTokenGroups,
+  onSubmit,
+  onPaste,
+  onFocusReady,
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerOpenRef = useRef(false);
@@ -390,6 +452,23 @@ export function TokenizedRichInput({
     queryFn: loadRegistryRefs,
     staleTime: 60_000,
   });
+
+  const pickerRefs = useMemo(() => {
+    const staticRefs = effectiveContext === "crm_automation"
+      ? CRM_AUTOMATION_PLACEHOLDER_REFS
+      : effectiveContext === "contact_center"
+        ? CONTACT_CENTER_PLACEHOLDER_REFS
+        : MESSAGE_PLACEHOLDER_REFS;
+    const staticKeys = new Set(staticRefs.map((ref) => ref.token_key));
+    return [...staticRefs, ...registryRefs.filter((ref) => !staticKeys.has(ref.token_key))];
+  }, [effectiveContext, registryRefs]);
+
+  const supportedTokenKeys =
+    effectiveContext === "crm_automation"
+      ? CRM_AUTOMATION_SUPPORTED_TOKEN_KEYS
+      : effectiveContext === "contact_center"
+        ? CONTACT_CENTER_SUPPORTED_TOKEN_KEYS
+        : MESSAGES_SUPPORTED_TOKEN_KEYS;
 
   // Sync registry refs into tokenStringToLabel fallback cache so canonical
   // system.*/customer.*/etc. tokens render proper UI labels (no UNMAPPED).
@@ -436,6 +515,11 @@ export function TokenizedRichInput({
         style: singleLine ? "min-height: 2.25rem" : `min-height: ${Math.max(rows * 1.5, 3)}rem`,
         "data-placeholder": placeholder,
       },
+      handlePaste: (_view, event) => {
+        if (!onPaste) return false;
+        onPaste(event as unknown as ReactClipboardEvent<HTMLDivElement>);
+        return event.defaultPrevented;
+      },
     },
     onUpdate: ({ editor: ed }) => {
       isInternalUpdate.current = true;
@@ -453,6 +537,10 @@ export function TokenizedRichInput({
 
   // Keep editorRef in sync
   useEffect(() => { editorRef.current = editor ?? null; }, [editor]);
+  useEffect(() => {
+    if (!editor || !onFocusReady) return;
+    onFocusReady(() => editor.commands.focus());
+  }, [editor, onFocusReady]);
 
   // ── SSR-safe visual viewport helper ──
   function getViewportOffsets() {
@@ -558,6 +646,7 @@ export function TokenizedRichInput({
       },
       pickerOpenRef,
       closePicker,
+      onSubmit,
     );
 
     const newState = editor.state.reconfigure({
@@ -577,7 +666,7 @@ export function TokenizedRichInput({
         // editor may be destroyed
       }
     };
-  }, [editor, closePicker, updateCaretCoords]);
+  }, [editor, closePicker, onSubmit, updateCaretCoords]);
 
   // Sync external value changes
   useEffect(() => {
@@ -600,7 +689,7 @@ export function TokenizedRichInput({
   const handleFieldPick = useCallback(
     (result: FieldPickerResult) => {
       if (!editor) return;
-      const ref = registryRefs.find((r) => r.field_public_id === result.fld);
+      const ref = pickerRefs.find((r) => r.field_public_id === result.fld);
       // Серилизуем в legacy {{token_key}} — резолверы (resolveContactTokens / resolveSystemTokens / product / document)
       // продолжают понимать существующий формат. Format/case modifiers пока не применяются для messages-контекста
       // (расширим в следующем спринте вместе с edge-функциями рассылок).
@@ -615,7 +704,7 @@ export function TokenizedRichInput({
         .run();
       setPickerOpen(false);
     },
-    [editor, registryRefs]
+    [editor, pickerRefs]
   );
 
   // Закрытие picker по фокусу/клику вне обрабатывает Radix Popover внутри FieldPickerPopover.
@@ -843,11 +932,11 @@ export function TokenizedRichInput({
         }}
         anchor={caretCoords ? { x: caretCoords.left, y: caretCoords.top } : null}
         contextLabel="Вставка плейсхолдера"
-        refs={registryRefs}
+        refs={pickerRefs}
         onPick={handleFieldPick}
         simple
-        supportedTokenKeys={MESSAGES_SUPPORTED_TOKEN_KEYS}
-        unsupportedLabel="Недоступно для сообщений"
+        supportedTokenKeys={supportedTokenKeys}
+        unsupportedLabel={effectiveContext === "crm_automation" ? "Недоступно для автоматизации" : "Недоступно для сообщения"}
       />
 
 
