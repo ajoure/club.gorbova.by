@@ -39,7 +39,8 @@ export const CANONICAL_FEATURE_FLAG_KEY = 'documents_canonical_generation_enable
 export type CanonicalContextType = 'order' | 'manual' | 'product' | null;
 
 export interface CanonicalRenderInput {
-  template_id: string;
+  /** Optional for a data-only consumer such as CRM automation. */
+  template_id?: string | null;
   template_version_id?: string | null;
   context_type?: CanonicalContextType;
   context_id?: string | null;
@@ -61,7 +62,7 @@ export interface ResolvedPayload {
   unmapped_template_tokens: string[];
   warnings: string[];
   snapshot: Record<string, unknown>;
-  template: { id: string; name: string; version_id: string | null; version_number: number | null };
+  template: { id: string | null; name: string | null; version_id: string | null; version_number: number | null };
   template_tokens: string[];
   token_manifest: TokenManifestEntry[];
   source_trace: Record<string, { source: string; resolver_key?: string; field_id?: string | null; status: 'resolved' | 'missing' | 'unmapped'; required: boolean }>;
@@ -175,23 +176,27 @@ export async function resolveCanonicalPayload(
   const warnings: string[] = [];
 
   // 1. Template + current version
-  const { data: tpl } = await supabase
-    .from('document_templates')
-    .select('id, name, code, template_path, current_version_id')
-    .eq('id', input.template_id).maybeSingle();
-  if (!tpl) throw new Error('Template not found');
+  let tpl: any = null;
+  if (input.template_id) {
+    const { data } = await supabase
+      .from('document_templates')
+      .select('id, name, code, template_path, current_version_id')
+      .eq('id', input.template_id).maybeSingle();
+    tpl = data;
+    if (!tpl) throw new Error('Template not found');
+  }
 
   let version: any = null;
   if (input.template_version_id) {
     const { data } = await supabase.from('document_template_versions').select('*').eq('id', input.template_version_id).maybeSingle();
     version = data;
-  } else if (tpl.current_version_id) {
+  } else if (tpl?.current_version_id) {
     const { data } = await supabase.from('document_template_versions').select('*').eq('id', tpl.current_version_id).maybeSingle();
     version = data;
   }
   const storageBucket = version?.storage_bucket || 'documents-templates';
-  const storagePath = version?.storage_path || tpl.template_path;
-  if (!storagePath) throw new Error('Template has no storage path');
+  const storagePath = version?.storage_path || tpl?.template_path;
+  if (tpl && !storagePath) throw new Error('Template has no storage path');
 
   // 2. Detect tokens used in DOCX (prefer manifest from saved version, else live extract)
   let templateTokens: string[] = Array.isArray(version?.detected_tokens) && version.detected_tokens.length
@@ -200,7 +205,7 @@ export async function resolveCanonicalPayload(
   let tokenManifest: TokenManifestEntry[] = Array.isArray(version?.token_manifest) && version.token_manifest.length
     ? version.token_manifest as TokenManifestEntry[]
     : [];
-  if (templateTokens.length === 0 || tokenManifest.length === 0) {
+  if (storagePath && (templateTokens.length === 0 || tokenManifest.length === 0)) {
     const { data: file } = await supabase.storage.from(storageBucket).download(storagePath);
     if (file) {
       const buf = new Uint8Array(await file.arrayBuffer());
@@ -222,7 +227,7 @@ export async function resolveCanonicalPayload(
   try {
     let q = supabase.from('document_token_aliases')
       .select('alias_token, canonical_token_key, template_id, template_version_id')
-      .or(`template_id.is.null,template_id.eq.${tpl.id}`);
+      .or(tpl ? `template_id.is.null,template_id.eq.${tpl.id}` : 'template_id.is.null');
     const { data: aliasRows } = await q;
     for (const a of (aliasRows || [])) {
       // version-specific overrides template-specific overrides global
@@ -377,6 +382,8 @@ export async function resolveCanonicalPayload(
     ? formatStructuredAddress(executor.legal_address_structured, executor.legal_address, 'executor')
     : { rendered: '', source: 'missing' };
   const customerAddress: FormatAddressResult = buildCustomerAddressResolved(customer);
+  const customerName = buildCustomerName(customer);
+  const customerNameParts = customerName.trim().split(/\s+/).filter(Boolean);
   if (executor && executorAddress.source === 'missing') warnings.push('executor_address_missing');
   else if (executor && executorAddress.source === 'raw') warnings.push('executor_address_unstructured_fallback');
   if (customer && customerAddress.source === 'missing') warnings.push('customer_address_missing');
@@ -401,7 +408,7 @@ export async function resolveCanonicalPayload(
     'executor.director_short':  executor?.director_short_name || fullNameToInitials(executor?.director_full_name),
     'executor.acts_on_basis':   executor?.acts_on_basis || '',
 
-    'customer.name':            buildCustomerName(customer),
+    'customer.name':            customerName,
     'customer.short_name':      customer?.client_type === 'individual'
                                   ? fullNameToInitials(customer?.ind_full_name)
                                   : buildCustomerName(customer),
@@ -415,6 +422,16 @@ export async function resolveCanonicalPayload(
     'customer.account':         customer?.bank_account || '',
     'customer.passport':        customer?.ind_passport_series && customer?.ind_passport_number
                                   ? `${customer.ind_passport_series} ${customer.ind_passport_number}` : '',
+
+    // The contact namespace is canonical too. A document order has the same
+    // recipient context as its customer; keeping this mapping here means CRM
+    // messages and generated documents receive identical values.
+    'contact.full_name':         customerName,
+    'contact.first_name':        customerNameParts[1] || customerNameParts[0] || '',
+    'contact.last_name':         customerNameParts.length > 1 ? customerNameParts[0] : '',
+    'contact.email':             customer?.email || order?.customer_email || '',
+    'contact.phone':             customer?.phone || order?.customer_phone || '',
+    'contact.telegram_username': '',
 
     'company.full_name':         company?.full_name || '',
     'company.short_name':        company?.short_name || company?.full_name || '',
@@ -436,6 +453,22 @@ export async function resolveCanonicalPayload(
     'deal.currency':      order?.currency ? (normalizeCurrency(order.currency) === 'UNKNOWN' ? order.currency : normalizeCurrency(order.currency)) : '',
     'deal.paid_at':       order?.created_at ? new Date(order.created_at).toLocaleDateString('ru-RU') : '',
     'deal.access_days':   tariff?.access_days != null ? String(tariff.access_days) : '',
+
+    // Registry aliases used by the message composer. Values remain resolved
+    // from the same order/product/tariff records as their document variants.
+    'order.id':            order?.id || '',
+    'order.number':        order?.order_number || '',
+    'order.status':        order?.status || '',
+    'order.created_at':    order?.created_at ? new Date(order.created_at).toLocaleDateString('ru-RU') : '',
+    'order.amount':        order?.final_price != null ? String(order.final_price) : '',
+    'order.currency':      order?.currency || '',
+    'order.customer_email':order?.customer_email || '',
+    'order.customer_phone':order?.customer_phone || '',
+    'product.id':          product?.id || '',
+    'product.name':        product?.name || '',
+    'tariff.id':           tariff?.id || '',
+    'tariff.name':         tariff?.name || '',
+    'tariff.access_days':  tariff?.access_days != null ? String(tariff.access_days) : '',
 
     // Sprint A — payment.* defaults (empty strings; overlay below from snapshot or live).
     'payment.method':                  '',
@@ -655,7 +688,7 @@ export async function resolveCanonicalPayload(
   const snapshot: Record<string, unknown> = {
     generated_at: now.toISOString(),
     resolver_version: CANONICAL_RESOLVER_VERSION,
-    template: { id: tpl.id, name: tpl.name, code: tpl.code, version_id: version?.id || null, version_number: version?.version_number || null },
+    template: { id: tpl?.id || null, name: tpl?.name || null, code: tpl?.code || null, version_id: version?.id || null, version_number: version?.version_number || null },
     executor: executor ? {
       id: executor.id, name: executor.full_name, unp: executor.unp,
       address: { rendered: executorAddress.rendered, source: executorAddress.source,
@@ -696,7 +729,7 @@ export async function resolveCanonicalPayload(
     unmapped_template_tokens: unmapped,
     warnings,
     snapshot,
-    template: { id: tpl.id, name: tpl.name, version_id: version?.id || null, version_number: version?.version_number || null },
+    template: { id: tpl?.id || null, name: tpl?.name || null, version_id: version?.id || null, version_number: version?.version_number || null },
     template_tokens: templateTokens,
     token_manifest: tokenManifest,
     source_trace: sourceTrace,
@@ -737,6 +770,9 @@ export async function generateCanonicalDocument(
   }
 
   const payload = await resolveCanonicalPayload(supabase, input);
+  if (!payload.template.id || !payload.template.name) {
+    return { success: false, payload, error: 'template_required_for_generation' };
+  }
   const resolvedCompanyId = ((payload.snapshot as any)?.company_resolution?.company_id || input.company_id || null) as string | null;
 
   if (payload.missing_tokens.length > 0) {

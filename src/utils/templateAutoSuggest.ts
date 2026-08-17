@@ -42,6 +42,7 @@ export interface MarkupSuggestion {
 }
 
 let _registryCache: RegistryFieldRef[] | null = null;
+let _canonicalTokenCache: RegistryFieldRef[] | null = null;
 
 export async function loadRegistryRefs(): Promise<RegistryFieldRef[]> {
   if (_registryCache) return _registryCache;
@@ -63,6 +64,32 @@ export async function loadRegistryRefs(): Promise<RegistryFieldRef[]> {
   }
   _registryCache = refs;
   return refs;
+}
+
+/**
+ * Полный канонический каталог токенов для контекстов, где есть конкретная
+ * сделка/заказ. В отличие от loadRegistryRefs(), сюда входят и computed
+ * document tokens без записи в fields_registry. Источник один и тот же —
+ * document_token_registry; локальных MSG-/CRM-списков здесь нет.
+ */
+export async function loadCanonicalTokenRefs(): Promise<RegistryFieldRef[]> {
+  if (_canonicalTokenCache) return _canonicalTokenCache;
+  const { data } = await supabase
+    .from("document_token_registry")
+    .select("token_key, ui_label, category, data_type, display_order")
+    .is("archived_at", null)
+    .order("display_order", { ascending: true });
+
+  _canonicalTokenCache = ((data ?? []) as any[]).map((row) => ({
+    // FieldPickerPopover requires a stable ID. For computed document tokens
+    // the canonical token key itself is that ID; it is not a new field ID.
+    field_public_id: row.token_key,
+    token_key: row.token_key,
+    ui_label: row.ui_label,
+    category: row.category,
+    data_type: row.data_type ?? "string",
+  }));
+  return _canonicalTokenCache;
 }
 
 // ───────────── helpers ─────────────

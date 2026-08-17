@@ -43,7 +43,7 @@ import { Button } from "@/components/ui/button";
 import { Bold as BoldIcon, Italic as ItalicIcon, Code as CodeIcon, Link as LinkIcon, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FieldPickerPopover, type FieldPickerResult } from "@/components/ai-documents/FieldPickerPopover";
-import { loadRegistryRefs, type RegistryFieldRef } from "@/utils/templateAutoSuggest";
+import { loadCanonicalTokenRefs, loadRegistryRefs, type RegistryFieldRef } from "@/utils/templateAutoSuggest";
 
 const MESSAGE_PLACEHOLDER_REFS: RegistryFieldRef[] = [
   { field_public_id: "MSG-CONTACT-NAME", token_key: "full_name", ui_label: "Клиент · полное имя", category: "client", data_type: "string" },
@@ -55,24 +55,6 @@ const MESSAGE_PLACEHOLDER_REFS: RegistryFieldRef[] = [
   { field_public_id: "MSG-SYSTEM-TODAY", token_key: "today", ui_label: "Система · сегодня", category: "system", data_type: "date" },
   { field_public_id: "MSG-SYSTEM-TOMORROW", token_key: "tomorrow", ui_label: "Система · завтра", category: "system", data_type: "date" },
   { field_public_id: "MSG-SYSTEM-NOW", token_key: "now", ui_label: "Система · текущие дата и время", category: "system", data_type: "datetime" },
-];
-
-const CRM_AUTOMATION_PLACEHOLDER_REFS: RegistryFieldRef[] = [
-  { field_public_id: "CRM-DEAL-NUMBER", token_key: "deal_number", ui_label: "Сделка · номер", category: "deal", data_type: "string" },
-  { field_public_id: "CRM-DEAL-ID", token_key: "deal_id", ui_label: "Сделка · ID", category: "deal", data_type: "string" },
-  { field_public_id: "CRM-DEAL-STATUS", token_key: "deal_status", ui_label: "Сделка · статус", category: "deal", data_type: "string" },
-  { field_public_id: "CRM-DEAL-CURRENCY", token_key: "deal_currency", ui_label: "Сделка · валюта", category: "deal", data_type: "string" },
-  { field_public_id: "CRM-DEAL-PAID-AMOUNT", token_key: "paid_amount", ui_label: "Сделка · оплаченная сумма", category: "deal", data_type: "number" },
-  { field_public_id: "CRM-DEAL-FINAL-PRICE", token_key: "final_price", ui_label: "Сделка · итоговая цена", category: "deal", data_type: "number" },
-  { field_public_id: "CRM-DEAL-IS-TRIAL", token_key: "is_trial", ui_label: "Сделка · пробная", category: "deal", data_type: "boolean" },
-  { field_public_id: "CRM-CUSTOMER-NAME", token_key: "customer_name", ui_label: "Клиент · полное имя", category: "client", data_type: "string" },
-  { field_public_id: "CRM-CUSTOMER-EMAIL", token_key: "customer_email", ui_label: "Клиент · email", category: "client", data_type: "email" },
-  { field_public_id: "CRM-CUSTOMER-PHONE", token_key: "customer_phone", ui_label: "Клиент · телефон", category: "client", data_type: "string" },
-  { field_public_id: "CRM-PRODUCT-NAME", token_key: "product_name", ui_label: "Продукт · название", category: "product", data_type: "string" },
-  { field_public_id: "CRM-TARIFF-NAME", token_key: "tariff_name", ui_label: "Тариф · название", category: "product", data_type: "string" },
-  { field_public_id: "CRM-RESPONSIBLE-NAME", token_key: "responsible_name", ui_label: "Ответственный · имя", category: "responsible", data_type: "string" },
-  { field_public_id: "CRM-RESPONSIBLE-EMAIL", token_key: "responsible_email", ui_label: "Ответственный · email", category: "responsible", data_type: "email" },
-  { field_public_id: "CRM-APP-NAME", token_key: "appName", ui_label: "Система · название приложения", category: "system", data_type: "string" },
 ];
 
 const CONTACT_CENTER_PLACEHOLDER_REFS: RegistryFieldRef[] = [
@@ -107,9 +89,6 @@ const MESSAGES_SUPPORTED_TOKEN_KEYS: Set<string> = new Set([
   "system.today_long", "system.today_ru",
 ]);
 
-const CRM_AUTOMATION_SUPPORTED_TOKEN_KEYS = new Set(
-  CRM_AUTOMATION_PLACEHOLDER_REFS.map((ref) => ref.token_key),
-);
 const CONTACT_CENTER_SUPPORTED_TOKEN_KEYS = new Set(
   CONTACT_CENTER_PLACEHOLDER_REFS.map((ref) => ref.token_key),
 );
@@ -454,20 +433,24 @@ export function TokenizedRichInput({
     queryFn: loadRegistryRefs,
     staleTime: 60_000,
   });
+  const { data: canonicalTokenRefs = [] } = useQuery<RegistryFieldRef[]>({
+    queryKey: ["canonical-document-token-refs"],
+    queryFn: loadCanonicalTokenRefs,
+    staleTime: 60_000,
+  });
 
   const pickerRefs = useMemo(() => {
-    const staticRefs = effectiveContext === "crm_automation"
-      ? CRM_AUTOMATION_PLACEHOLDER_REFS
-      : effectiveContext === "contact_center"
-        ? CONTACT_CENTER_PLACEHOLDER_REFS
-        : MESSAGE_PLACEHOLDER_REFS;
+    if (effectiveContext === "crm_automation") return canonicalTokenRefs;
+    const staticRefs = effectiveContext === "contact_center"
+      ? CONTACT_CENTER_PLACEHOLDER_REFS
+      : MESSAGE_PLACEHOLDER_REFS;
     const staticKeys = new Set(staticRefs.map((ref) => ref.token_key));
     return [...staticRefs, ...registryRefs.filter((ref) => !staticKeys.has(ref.token_key))];
-  }, [effectiveContext, registryRefs]);
+  }, [canonicalTokenRefs, effectiveContext, registryRefs]);
 
   const supportedTokenKeys =
     effectiveContext === "crm_automation"
-      ? CRM_AUTOMATION_SUPPORTED_TOKEN_KEYS
+      ? null
       : effectiveContext === "contact_center"
         ? CONTACT_CENTER_SUPPORTED_TOKEN_KEYS
         : MESSAGES_SUPPORTED_TOKEN_KEYS;
