@@ -960,7 +960,7 @@ export function PipelineAutomationSheet({
       <SheetContent
         side="right"
         overlayClassName="!bg-slate-950/45 backdrop-blur-[2px]"
-        className="flex h-[100dvh] w-full max-w-none flex-col border-l border-border/45 bg-background/95 p-0 shadow-[-24px_0_70px_rgba(15,23,42,0.16)] backdrop-blur-3xl sm:w-[92vw] sm:max-w-[1180px]"
+        className="flex h-[100dvh] w-full min-w-0 max-w-none flex-col border-l border-border/45 bg-background/95 p-0 shadow-[-24px_0_70px_rgba(15,23,42,0.16)] backdrop-blur-3xl sm:w-[92vw] sm:max-w-[1180px]"
       >
         <SheetHeader className="shrink-0 border-b border-border/25 bg-background/45 px-4 py-3 text-left sm:px-5 sm:py-4">
           <div className="flex items-center gap-2">
@@ -978,9 +978,9 @@ export function PipelineAutomationSheet({
           </div>
         </SheetHeader>
 
-        <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <ScrollArea className="h-full">
-            <div className="min-w-max p-4 sm:p-5">
+            <div className="min-w-0 p-3 sm:min-w-max sm:p-5">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold text-foreground/85">
@@ -1078,11 +1078,11 @@ export function PipelineAutomationSheet({
                 </div>
               )}
 
-              <div className="flex gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row">
                 {stages.map((stage) => (
                   <section
                     key={stage.id}
-                    className="w-[286px] shrink-0 overflow-hidden rounded-[22px] border border-white/35 bg-white/35 shadow-[0_18px_50px_rgba(15,23,42,0.05)] backdrop-blur-2xl dark:border-white/10 dark:bg-slate-950/30"
+                    className="w-full shrink-0 overflow-hidden rounded-[22px] border border-white/35 bg-white/35 shadow-[0_18px_50px_rgba(15,23,42,0.05)] backdrop-blur-2xl dark:border-white/10 dark:bg-slate-950/30 sm:w-[286px]"
                   >
                     <div
                       className="h-1"
