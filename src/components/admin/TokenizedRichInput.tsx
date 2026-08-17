@@ -5,7 +5,7 @@
  * UI: renders {{token}} as visual chips with labels from tokenRegistry.
  * 
  * Features:
- * - [ trigger (300ms) opens token picker
+ * - [ trigger (short delay) opens token picker
  * - [[ inserts literal [
  * - Bubble toolbar on text selection with Bold/Italic/Code/Link + Align L/C/R (multi-line only)
  * - Bubble toolbar on text selection (multi-line only)
@@ -217,7 +217,9 @@ function createBracketPlugin(
               pending = false;
               timer = undefined;
               onOpen();
-            }, 300);
+            // A short delay preserves [[ as a literal bracket while keeping
+            // the canonical picker feeling immediate in message editors.
+            }, 150);
           }
           return true;
         }
