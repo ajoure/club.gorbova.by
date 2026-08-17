@@ -2985,6 +2985,263 @@ export type Database = {
           },
         ]
       }
+      broadcast_campaigns: {
+        Row: {
+          attribution_window_days: number
+          audience_filters: Json
+          audience_snapshot: Json
+          channels: string[]
+          content_snapshot: Json
+          created_at: string
+          created_by: string | null
+          finished_at: string | null
+          id: string
+          name: string
+          send_mode: string
+          source: string
+          started_at: string
+          status: string
+          template_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          attribution_window_days?: number
+          audience_filters?: Json
+          audience_snapshot?: Json
+          channels?: string[]
+          content_snapshot?: Json
+          created_at?: string
+          created_by?: string | null
+          finished_at?: string | null
+          id?: string
+          name: string
+          send_mode?: string
+          source?: string
+          started_at?: string
+          status?: string
+          template_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          attribution_window_days?: number
+          audience_filters?: Json
+          audience_snapshot?: Json
+          channels?: string[]
+          content_snapshot?: Json
+          created_at?: string
+          created_by?: string | null
+          finished_at?: string | null
+          id?: string
+          name?: string
+          send_mode?: string
+          source?: string
+          started_at?: string
+          status?: string
+          template_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_campaigns_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      broadcast_deliveries: {
+        Row: {
+          accepted_at: string | null
+          bot_id: string | null
+          campaign_id: string
+          channel: string
+          click_count: number
+          created_at: string
+          delivered_at: string | null
+          email_log_id: string | null
+          error_code: string | null
+          error_message: string | null
+          failed_at: string | null
+          first_clicked_at: string | null
+          first_opened_at: string | null
+          first_replied_at: string | null
+          id: string
+          metadata: Json
+          open_count: number
+          profile_id: string | null
+          provider: string | null
+          provider_message_id: string | null
+          queued_at: string
+          recipient_key: string
+          run_id: string
+          status: string
+          telegram_message_id: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          accepted_at?: string | null
+          bot_id?: string | null
+          campaign_id: string
+          channel: string
+          click_count?: number
+          created_at?: string
+          delivered_at?: string | null
+          email_log_id?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          failed_at?: string | null
+          first_clicked_at?: string | null
+          first_opened_at?: string | null
+          first_replied_at?: string | null
+          id?: string
+          metadata?: Json
+          open_count?: number
+          profile_id?: string | null
+          provider?: string | null
+          provider_message_id?: string | null
+          queued_at?: string
+          recipient_key: string
+          run_id: string
+          status?: string
+          telegram_message_id?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          accepted_at?: string | null
+          bot_id?: string | null
+          campaign_id?: string
+          channel?: string
+          click_count?: number
+          created_at?: string
+          delivered_at?: string | null
+          email_log_id?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          failed_at?: string | null
+          first_clicked_at?: string | null
+          first_opened_at?: string | null
+          first_replied_at?: string | null
+          id?: string
+          metadata?: Json
+          open_count?: number
+          profile_id?: string | null
+          provider?: string | null
+          provider_message_id?: string | null
+          queued_at?: string
+          recipient_key?: string
+          run_id?: string
+          status?: string
+          telegram_message_id?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_deliveries_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_deliveries_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_deliveries_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_deliveries_email_log_id_fkey"
+            columns: ["email_log_id"]
+            isOneToOne: false
+            referencedRelation: "email_logs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_deliveries_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_deliveries_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_deliveries_telegram_message_id_fkey"
+            columns: ["telegram_message_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      broadcast_delivery_segments: {
+        Row: {
+          access_mode: string
+          created_at: string
+          delivery_id: string
+          id: string
+          product_id: string | null
+          source_ref: string | null
+          tariff_id: string | null
+        }
+        Insert: {
+          access_mode: string
+          created_at?: string
+          delivery_id: string
+          id?: string
+          product_id?: string | null
+          source_ref?: string | null
+          tariff_id?: string | null
+        }
+        Update: {
+          access_mode?: string
+          created_at?: string
+          delivery_id?: string
+          id?: string
+          product_id?: string | null
+          source_ref?: string | null
+          tariff_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_delivery_segments_delivery_id_fkey"
+            columns: ["delivery_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_deliveries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_delivery_segments_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_delivery_segments_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       broadcast_dispatcher_config: {
         Row: {
           enabled: boolean
@@ -3009,12 +3266,121 @@ export type Database = {
         }
         Relationships: []
       }
-      broadcast_runs: {
+      broadcast_events: {
         Row: {
-          audience_count: number | null
-          audience_snapshot: Json | null
+          campaign_id: string
+          created_at: string
+          delivery_id: string
+          event_key: string
+          event_type: string
+          id: string
+          is_machine: boolean
+          link_id: string | null
+          metadata: Json
+          occurred_at: string
+          provider_event_id: string | null
+          source: string
+        }
+        Insert: {
+          campaign_id: string
+          created_at?: string
+          delivery_id: string
+          event_key: string
+          event_type: string
+          id?: string
+          is_machine?: boolean
+          link_id?: string | null
+          metadata?: Json
+          occurred_at?: string
+          provider_event_id?: string | null
+          source?: string
+        }
+        Update: {
+          campaign_id?: string
+          created_at?: string
+          delivery_id?: string
+          event_key?: string
+          event_type?: string
+          id?: string
+          is_machine?: boolean
+          link_id?: string | null
+          metadata?: Json
+          occurred_at?: string
+          provider_event_id?: string | null
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_events_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_events_delivery_id_fkey"
+            columns: ["delivery_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_deliveries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_events_link_id_fkey"
+            columns: ["link_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_links"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      broadcast_links: {
+        Row: {
+          campaign_id: string
           channel: string
           created_at: string
+          id: string
+          label: string | null
+          original_url: string
+          position: number
+        }
+        Insert: {
+          campaign_id: string
+          channel: string
+          created_at?: string
+          id?: string
+          label?: string | null
+          original_url: string
+          position?: number
+        }
+        Update: {
+          campaign_id?: string
+          channel?: string
+          created_at?: string
+          id?: string
+          label?: string | null
+          original_url?: string
+          position?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_links_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      broadcast_runs: {
+        Row: {
+          accepted_count: number
+          audience_count: number | null
+          audience_snapshot: Json | null
+          campaign_id: string | null
+          channel: string
+          clicked_count: number
+          created_at: string
+          delivered_count: number
           dispatch_mode: string
           dry_run: boolean
           error: string | null
@@ -3022,17 +3388,23 @@ export type Database = {
           finished_at: string | null
           id: string
           idempotency_key: string
+          opened_count: number
+          reply_count: number
           sent_count: number
           skipped_count: number
           started_at: string
-          template_id: string
+          template_id: string | null
           triggered_by: string
         }
         Insert: {
+          accepted_count?: number
           audience_count?: number | null
           audience_snapshot?: Json | null
+          campaign_id?: string | null
           channel: string
+          clicked_count?: number
           created_at?: string
+          delivered_count?: number
           dispatch_mode?: string
           dry_run?: boolean
           error?: string | null
@@ -3040,17 +3412,23 @@ export type Database = {
           finished_at?: string | null
           id?: string
           idempotency_key: string
+          opened_count?: number
+          reply_count?: number
           sent_count?: number
           skipped_count?: number
           started_at?: string
-          template_id: string
+          template_id?: string | null
           triggered_by: string
         }
         Update: {
+          accepted_count?: number
           audience_count?: number | null
           audience_snapshot?: Json | null
+          campaign_id?: string | null
           channel?: string
+          clicked_count?: number
           created_at?: string
+          delivered_count?: number
           dispatch_mode?: string
           dry_run?: boolean
           error?: string | null
@@ -3058,13 +3436,22 @@ export type Database = {
           finished_at?: string | null
           id?: string
           idempotency_key?: string
+          opened_count?: number
+          reply_count?: number
           sent_count?: number
           skipped_count?: number
           started_at?: string
-          template_id?: string
+          template_id?: string | null
           triggered_by?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "broadcast_runs_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_campaigns"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "broadcast_runs_template_id_fkey"
             columns: ["template_id"]
@@ -3205,6 +3592,48 @@ export type Database = {
             columns: ["targeting_tariff_id"]
             isOneToOne: false
             referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      broadcast_tracking_tokens: {
+        Row: {
+          created_at: string
+          delivery_id: string
+          expires_at: string
+          link_id: string | null
+          purpose: string
+          token: string
+        }
+        Insert: {
+          created_at?: string
+          delivery_id: string
+          expires_at?: string
+          link_id?: string | null
+          purpose: string
+          token?: string
+        }
+        Update: {
+          created_at?: string
+          delivery_id?: string
+          expires_at?: string
+          link_id?: string | null
+          purpose?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_tracking_tokens_delivery_id_fkey"
+            columns: ["delivery_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_deliveries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_tracking_tokens_link_id_fkey"
+            columns: ["link_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_links"
             referencedColumns: ["id"]
           },
         ]
@@ -22046,6 +22475,32 @@ export type Database = {
         Args: { p_connection_id: string }
         Returns: Json
       }
+      admin_get_broadcast_analytics: {
+        Args: {
+          _channel?: string
+          _from: string
+          _limit?: number
+          _offset?: number
+          _product_id?: string
+          _tariff_id?: string
+          _to: string
+        }
+        Returns: Json
+      }
+      admin_get_broadcast_analytics_filters: { Args: never; Returns: Json }
+      admin_get_broadcast_campaign_links: {
+        Args: { _campaign_id: string }
+        Returns: Json
+      }
+      admin_get_broadcast_campaign_recipients: {
+        Args: {
+          _campaign_id: string
+          _limit?: number
+          _offset?: number
+          _status?: string
+        }
+        Returns: Json
+      }
       admin_get_club_membership: {
         Args: { p_profile_id: string }
         Returns: {
@@ -22347,6 +22802,40 @@ export type Database = {
           document_seq: number
           document_timezone: string
         }[]
+      }
+      analytics_apply_delivery_outcomes: {
+        Args: { _outcomes: Json }
+        Returns: Json
+      }
+      analytics_ensure_broadcast_run: {
+        Args: {
+          _audience_filters?: Json
+          _audience_snapshot?: Json
+          _campaign_id: string
+          _channel: string
+          _content_snapshot?: Json
+          _created_by?: string
+          _name: string
+          _run_id?: string
+          _send_mode?: string
+          _source?: string
+          _template_id?: string
+        }
+        Returns: Json
+      }
+      analytics_record_tracking_event: {
+        Args: {
+          _event_key: string
+          _event_type: string
+          _is_machine?: boolean
+          _metadata?: Json
+          _token: string
+        }
+        Returns: Json
+      }
+      analytics_snapshot_delivery_segments: {
+        Args: { _delivery_ids: string[] }
+        Returns: number
       }
       apply_rev_7101ed3c: { Args: { _batch_id: string }; Returns: Json }
       approve_broadcast_template: {
