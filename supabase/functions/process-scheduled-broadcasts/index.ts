@@ -232,6 +232,7 @@ Deno.serve(async (req) => {
           };
           let sent = 0;
           let failed = 0;
+          const analyticsCampaignId = crypto.randomUUID();
           for (const channel of eventChannels) {
             const directFilters = {
               ...(eventTemplate.audience_filters || {}),
@@ -249,6 +250,10 @@ Deno.serve(async (req) => {
                   media_storage_path: eventTemplate.media_storage_path || undefined,
                   media_type: eventTemplate.media_type || undefined,
                   media_file_name: eventTemplate.media_file_name || undefined,
+                  analytics_campaign_id: analyticsCampaignId,
+                  analytics_campaign_name: eventTemplate.name,
+                  analytics_template_id: eventTemplate.id,
+                  analytics_send_mode: 'event',
                 },
               });
               if (error) throw new Error(error.message);
@@ -261,6 +266,10 @@ Deno.serve(async (req) => {
                   subject: eventTemplate.email_subject || '',
                   html: eventTemplate.email_body_html || '',
                   filters: directFilters,
+                  analytics_campaign_id: analyticsCampaignId,
+                  analytics_campaign_name: eventTemplate.name,
+                  analytics_template_id: eventTemplate.id,
+                  analytics_send_mode: 'event',
                 },
               });
               if (error) throw new Error(error.message);
@@ -419,6 +428,9 @@ Deno.serve(async (req) => {
 
     // Per-channel send
     let templateSent = 0, templateFailed = 0;
+    // Telegram and Email executions of one scheduled template share one
+    // campaign id, while retaining their existing per-channel run ids.
+    const analyticsCampaignId = crypto.randomUUID();
 
     for (const channel of channels) {
       const idemKey = `tpl:${tpl.id}:${channel}:${slotKey}:${triggeredBy}`;
@@ -495,6 +507,11 @@ Deno.serve(async (req) => {
               media_file_name: tpl.media_file_name || undefined,
               template_type: tpl.template_type || undefined,
               live_event_id: tpl.live_event_id || undefined,
+              analytics_campaign_id: analyticsCampaignId,
+              analytics_campaign_name: tpl.name,
+              analytics_template_id: tpl.id,
+              analytics_run_id: runId,
+              analytics_send_mode: tpl.send_mode === 'recurring' ? 'recurring' : 'scheduled',
             },
           });
           if (error) throw new Error(error.message);
@@ -511,6 +528,11 @@ Deno.serve(async (req) => {
               subject: tpl.email_subject || '',
               html: tpl.email_body_html || '',
               filters: emailFilters,
+              analytics_campaign_id: analyticsCampaignId,
+              analytics_campaign_name: tpl.name,
+              analytics_template_id: tpl.id,
+              analytics_run_id: runId,
+              analytics_send_mode: tpl.send_mode === 'recurring' ? 'recurring' : 'scheduled',
             },
           });
           if (error) throw new Error(error.message);

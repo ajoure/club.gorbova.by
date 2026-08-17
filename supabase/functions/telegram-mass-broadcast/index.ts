@@ -3,6 +3,17 @@ import { resolveSystemTokens, extractUsedTokens } from '../_shared/systemTokens.
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from '../_shared/customFieldTokens.ts';
 import { evaluateBroadcastGuards, auditBlockedAttempt } from '../_shared/broadcast-guards.ts';
 import { filterUsersByEducationCondition } from '../_shared/broadcastEducation.ts';
+import {
+  applyAnalyticsOutcomes,
+  ensureAnalyticsLinks,
+  ensureBroadcastAnalyticsContext,
+  extractTelegramLinks,
+  instrumentTelegramText,
+  prepareAnalyticsDeliveries,
+  prepareAnalyticsTracking,
+  trackedTelegramButtonUrl,
+  type AnalyticsOutcome,
+} from '../_shared/broadcastAnalytics.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -203,6 +214,11 @@ Deno.serve(async (req) => {
     let isTestSelf = false;
     let allowFullAudience = false;
     let confirmFullAudienceText: string | null = null;
+    let analyticsCampaignIdInput: string | null = null;
+    let analyticsCampaignName: string | null = null;
+    let analyticsTemplateId: string | null = null;
+    let analyticsRunId: string | null = null;
+    let analyticsSendMode: string | null = null;
 
     const contentType = req.headers.get('content-type') || '';
     
@@ -237,6 +253,11 @@ Deno.serve(async (req) => {
       allowFullAudience = formData.get('allow_full_audience') === 'true';
       const cfat = formData.get('confirm_full_audience_text');
       confirmFullAudienceText = typeof cfat === 'string' ? cfat : null;
+      analyticsCampaignIdInput = formData.get('analytics_campaign_id') as string || null;
+      analyticsCampaignName = formData.get('analytics_campaign_name') as string || null;
+      analyticsTemplateId = formData.get('analytics_template_id') as string || null;
+      analyticsRunId = formData.get('analytics_run_id') as string || null;
+      analyticsSendMode = formData.get('analytics_send_mode') as string || null;
     } else {
       const body = await req.json();
       message = body.message || '';
@@ -252,6 +273,11 @@ Deno.serve(async (req) => {
       isTestSelf = body.test_self === true;
       allowFullAudience = body.allow_full_audience === true;
       confirmFullAudienceText = typeof body.confirm_full_audience_text === 'string' ? body.confirm_full_audience_text : null;
+      analyticsCampaignIdInput = typeof body.analytics_campaign_id === 'string' ? body.analytics_campaign_id : null;
+      analyticsCampaignName = typeof body.analytics_campaign_name === 'string' ? body.analytics_campaign_name : null;
+      analyticsTemplateId = typeof body.analytics_template_id === 'string' ? body.analytics_template_id : null;
+      analyticsRunId = typeof body.analytics_run_id === 'string' ? body.analytics_run_id : null;
+      analyticsSendMode = typeof body.analytics_send_mode === 'string' ? body.analytics_send_mode : null;
 
       // ===== add-only: support media_url (signed/public URL or storage path) =====
       // Used by scheduled/recurring dispatcher (process-scheduled-broadcasts)
@@ -444,7 +470,7 @@ Deno.serve(async (req) => {
     // Build user query (include telegram_link_bot_id for per-bot segmentation)
     const { data: allProfiles } = await supabase
       .from('profiles')
-      .select('user_id, telegram_user_id, telegram_link_bot_id, full_name, first_name, last_name, email, phone, telegram_username')
+      .select('id, user_id, telegram_user_id, telegram_link_bot_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null)
       .limit(10000);
 
@@ -525,7 +551,7 @@ Deno.serve(async (req) => {
     
     const { data: adminProfiles } = await supabase
       .from('profiles')
-      .select('user_id, telegram_user_id, telegram_link_bot_id, full_name, first_name, last_name, email, phone, telegram_username')
+      .select('id, user_id, telegram_user_id, telegram_link_bot_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null)
       .in('user_id', [...adminUserIds]);
     
@@ -535,6 +561,19 @@ Deno.serve(async (req) => {
         profiles.push(adminProfile);
         existingUserIds.add(adminProfile.user_id);
       }
+    }
+
+    if (profiles.length === 0) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          sent: 0,
+          failed: 0,
+          skipped: true,
+          reason: 'В выбранной аудитории нет получателей с доступным Telegram',
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
     }
 
     console.log(`Found ${profiles.length} matching profiles (including admins)`);
@@ -613,6 +652,7 @@ Deno.serve(async (req) => {
     const sentToUserIds = new Set<string>();
 
     const messageLogBatch: Array<{
+      id: string;
       user_id: string;
       telegram_user_id: number;
       bot_id: string | null;
@@ -623,12 +663,6 @@ Deno.serve(async (req) => {
       status: string;
       meta: Record<string, unknown>;
     }> = [];
-
-    const baseKeyboard = includeButton && !isWebinarInvite ? {
-      inline_keyboard: [[
-        { text: buttonText || 'Открыть платформу', url: appUrl }
-      ]]
-    } : undefined;
 
     // For webinar_invite, determine origin for personal links
     const appOrigin = Deno.env.get('APP_URL') || Deno.env.get('SUPABASE_URL')?.replace('.supabase.co', '') || 'https://gorbova.lovable.app';
@@ -682,6 +716,7 @@ Deno.serve(async (req) => {
     // Map: bot_id -> profiles[] that should receive via THIS bot
     const profilesByBot: Record<string, typeof profiles> = {};
     for (const b of targetBots) profilesByBot[b.id] = [];
+    const unroutedProfiles: typeof profiles = [];
 
     // Secondary SoT: telegram_messages.bot_id — реальные взаимодействия пользователя с ботом.
     // Profile считается «подписчиком» бота, если: telegram_link_bot_id = bot.id ИЛИ есть
@@ -726,6 +761,7 @@ Deno.serve(async (req) => {
       }
       // 4) Иначе — пропускаем
       totalSkippedNoMatchingBot++;
+      unroutedProfiles.push(p);
     }
 
     for (const b of targetBots) {
@@ -737,6 +773,118 @@ Deno.serve(async (req) => {
       skipped_no_matching_bot: totalSkippedNoMatchingBot,
     });
 
+    // The delivery journal is prepared before the first Telegram API call.
+    // This guarantees that a partial provider outage cannot create an
+    // untracked broadcast. Skipped recipients are recorded explicitly too.
+    const campaignId = analyticsCampaignIdInput
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(analyticsCampaignIdInput)
+      ? analyticsCampaignIdInput
+      : crypto.randomUUID();
+    const analyticsContext = await ensureBroadcastAnalyticsContext(supabase, {
+      campaignId,
+      channel: 'telegram',
+      name: analyticsCampaignName?.trim() || message.slice(0, 80).trim() || 'Telegram-рассылка',
+      source: analyticsSendMode === 'event'
+        ? 'automation'
+        : isSystemActor ? 'scheduled_dispatcher' : 'contact_center',
+      sendMode: analyticsSendMode === 'scheduled' || analyticsSendMode === 'recurring' || analyticsSendMode === 'event'
+        ? analyticsSendMode
+        : isTestSelf ? 'test' : 'manual',
+      templateId: analyticsTemplateId,
+      runId: analyticsRunId,
+      createdBy: isSystemActor ? null : user?.id ?? null,
+      audienceFilters: filters as unknown as Record<string, unknown>,
+      audienceSnapshot: {
+        telegram_count: profiles.length,
+        routed_count: profiles.length - unroutedProfiles.length,
+        skipped_no_matching_bot: unroutedProfiles.length,
+      },
+      contentSnapshot: {
+        has_text: Boolean(message),
+        message_preview: message.replace(/\s+/g, ' ').trim().slice(0, 500),
+        has_media: Boolean(mediaBuffer),
+        media_type: mediaType,
+        include_button: includeButton,
+      },
+    });
+
+    const routedRecipients = targetBots.flatMap((bot) =>
+      profilesByBot[bot.id].map((profile) => ({ profile, botId: bot.id }))
+    );
+    const analyticsDeliveries = await prepareAnalyticsDeliveries(
+      supabase,
+      analyticsContext,
+      [
+        ...routedRecipients.map(({ profile, botId }) => ({
+          profileId: profile.id,
+          userId: profile.user_id,
+          recipientKey: `profile:${profile.id}:bot:${botId}`,
+          botId,
+          provider: 'telegram_bot_api',
+        })),
+        ...unroutedProfiles.map((profile) => ({
+          profileId: profile.id,
+          userId: profile.user_id,
+          recipientKey: `profile:${profile.id}:unrouted`,
+          provider: 'telegram_bot_api',
+          metadata: { routing: 'no_matching_bot' },
+        })),
+      ],
+    );
+    const analyticsLinks = await ensureAnalyticsLinks(
+      supabase,
+      analyticsContext,
+      extractTelegramLinks(messageAfterCf, includeButton && !isWebinarInvite ? appUrl : null),
+    );
+    const analyticsTracking = await prepareAnalyticsTracking(
+      supabase,
+      analyticsDeliveries,
+      analyticsLinks,
+      false,
+    );
+    const deliveryByRecipientKey = new Map(
+      analyticsDeliveries.map((delivery) => [delivery.recipientKey, delivery]),
+    );
+    const analyticsOutcomes: AnalyticsOutcome[] = unroutedProfiles.flatMap((profile) => {
+      const delivery = deliveryByRecipientKey.get(`profile:${profile.id}:unrouted`);
+      return delivery ? [{
+        id: delivery.id,
+        status: 'skipped' as const,
+        provider: 'telegram_bot_api',
+        error_code: 'no_matching_bot',
+        error_message: 'Нет подходящего Telegram-бота для получателя',
+      }] : [];
+    });
+
+    async function flushMessageLogs() {
+      if (messageLogBatch.length === 0) return;
+      const rows = messageLogBatch.splice(0, messageLogBatch.length);
+      const { error } = await supabase.from('telegram_messages').insert(rows);
+      if (!error) return;
+
+      // Telegram may already have accepted the messages, so a secondary CRM
+      // journal failure must not erase the analytics outcome. Keep the
+      // delivery, but detach the unavailable FK and expose a warning in its
+      // metadata for the audit trail.
+      console.error('[telegram-broadcast] telegram_messages insert failed:', error.message);
+      const missingMessageIds = new Set(rows.map((row) => row.id));
+      for (const outcome of analyticsOutcomes) {
+        if (outcome.telegram_message_id && missingMessageIds.has(outcome.telegram_message_id)) {
+          outcome.telegram_message_id = null;
+          outcome.metadata = {
+            ...(outcome.metadata || {}),
+            journal_warning: 'telegram_message_insert_failed',
+          };
+        }
+      }
+    }
+
+    async function flushAnalyticsOutcomes() {
+      if (analyticsOutcomes.length === 0) return;
+      const batch = analyticsOutcomes.splice(0, analyticsOutcomes.length);
+      await applyAnalyticsOutcomes(supabase, batch);
+    }
+
     // ===== Outer loop: bots; inner loop: profiles =====
     for (const bot of targetBots) {
       const botToken = bot.bot_token_encrypted;
@@ -744,17 +892,36 @@ Deno.serve(async (req) => {
       const botProfiles = profilesByBot[botId];
 
       for (const profile of botProfiles) {
+        const analyticsDelivery = deliveryByRecipientKey.get(`profile:${profile.id}:bot:${botId}`);
+        if (!analyticsDelivery) {
+          throw new Error(`analytics_delivery_missing:${profile.id}:${botId}`);
+        }
+        const tracking = analyticsTracking.get(analyticsDelivery.id) ?? { clickTokens: new Map() };
         // Dedup guard
         if (sentToUserIds.has(profile.user_id)) {
           perBotStats[botId].skipped_duplicate++;
           totalSkippedDuplicate++;
+          analyticsOutcomes.push({
+            id: analyticsDelivery.id,
+            status: 'skipped',
+            provider: 'telegram_bot_api',
+            error_code: 'duplicate_recipient',
+            error_message: 'Получатель уже обработан в этой рассылке',
+          });
           continue;
         }
 
         const afterContact = resolveContactTokens(messageAfterCf, profile);
         const personalizedMessage = resolveSystemTokens(afterContact, broadcastNow);
         try {
-          let keyboard = baseKeyboard;
+          let keyboard = includeButton && !isWebinarInvite ? {
+            inline_keyboard: [[
+              {
+                text: buttonText || 'Открыть платформу',
+                url: trackedTelegramButtonUrl(appUrl, tracking) || appUrl,
+              }
+            ]]
+          } : undefined;
           let inviteLinkId: string | null = null;
 
           if (isWebinarInvite && liveEventId) {
@@ -771,9 +938,18 @@ Deno.serve(async (req) => {
               perBotStats[botId].failed++;
               totalFailed++;
               console.error(`[broadcast] Skipping ${profile.user_id}: token generation failed`);
+              analyticsOutcomes.push({
+                id: analyticsDelivery.id,
+                status: 'failed',
+                provider: 'telegram_bot_api',
+                error_code: 'invite_token_failed',
+                error_message: 'Не удалось создать персональную ссылку на эфир',
+              });
               continue;
             }
           }
+
+          const trackedMessage = instrumentTelegramText(personalizedMessage, tracking);
 
           let result;
 
@@ -791,7 +967,7 @@ Deno.serve(async (req) => {
             }
 
             const shouldSplit = Boolean(
-              personalizedMessage && (mediaType === 'video_note' || personalizedMessage.length > 1024)
+              trackedMessage && (mediaType === 'video_note' || trackedMessage.length > 1024)
             );
 
             result = await telegramUploadMedia(
@@ -801,13 +977,13 @@ Deno.serve(async (req) => {
               mediaField,
               mediaBuffer,
               mediaFileName,
-              shouldSplit ? undefined : personalizedMessage || undefined,
+              shouldSplit ? undefined : trackedMessage || undefined,
               shouldSplit ? undefined : keyboard
             );
             if (result.ok && shouldSplit) {
               result = await telegramRequest(botToken, 'sendMessage', {
                 chat_id: profile.telegram_user_id,
-                text: personalizedMessage,
+                text: trackedMessage,
                 parse_mode: 'Markdown',
                 reply_markup: keyboard,
               });
@@ -815,7 +991,7 @@ Deno.serve(async (req) => {
           } else {
             result = await telegramRequest(botToken, 'sendMessage', {
               chat_id: profile.telegram_user_id,
-              text: personalizedMessage,
+              text: trackedMessage,
               parse_mode: 'Markdown',
               reply_markup: keyboard,
             });
@@ -826,7 +1002,13 @@ Deno.serve(async (req) => {
             totalSent++;
             sentToUserIds.add(profile.user_id);
             const telegramMsgId = result.result?.message_id || null;
-            const msgMeta: Record<string, unknown> = { broadcast: true, bot_username: bot.bot_username };
+            const internalMessageId = crypto.randomUUID();
+            const msgMeta: Record<string, unknown> = {
+              broadcast: true,
+              bot_username: bot.bot_username,
+              analytics_campaign_id: analyticsContext.campaignId,
+              analytics_delivery_id: analyticsDelivery.id,
+            };
             if (inviteLinkId) {
               msgMeta.link_id = inviteLinkId;
               msgMeta.live_event_id = liveEventId;
@@ -842,6 +1024,7 @@ Deno.serve(async (req) => {
               });
             }
             messageLogBatch.push({
+              id: internalMessageId,
               user_id: profile.user_id,
               telegram_user_id: profile.telegram_user_id,
               bot_id: botId,
@@ -852,13 +1035,27 @@ Deno.serve(async (req) => {
               status: 'sent',
               meta: msgMeta,
             });
+            analyticsOutcomes.push({
+              id: analyticsDelivery.id,
+              status: 'accepted',
+              provider: 'telegram_bot_api',
+              provider_message_id: telegramMsgId === null ? null : String(telegramMsgId),
+              telegram_message_id: internalMessageId,
+            });
             if (messageLogBatch.length >= 50) {
-              await supabase.from('telegram_messages').insert(messageLogBatch.splice(0, 50));
+              await flushMessageLogs();
             }
           } else {
             perBotStats[botId].failed++;
             totalFailed++;
             console.error(`Failed to send to ${profile.user_id} via ${bot.bot_username}:`, result.description);
+            analyticsOutcomes.push({
+              id: analyticsDelivery.id,
+              status: 'failed',
+              provider: 'telegram_bot_api',
+              error_code: result.error_code ? String(result.error_code) : 'telegram_api_error',
+              error_message: result.description || 'Telegram API отклонил сообщение',
+            });
           }
 
           await new Promise((resolve) => setTimeout(resolve, 50));
@@ -866,14 +1063,26 @@ Deno.serve(async (req) => {
           perBotStats[botId].failed++;
           totalFailed++;
           console.error(`Error sending to ${profile.user_id} via ${bot.bot_username}:`, error);
+          analyticsOutcomes.push({
+            id: analyticsDelivery.id,
+            status: 'failed',
+            provider: 'telegram_bot_api',
+            error_code: 'telegram_request_failed',
+            error_message: error instanceof Error ? error.message : 'Ошибка отправки в Telegram',
+          });
+        }
+
+        if (analyticsOutcomes.length >= 100) {
+          await flushMessageLogs();
+          await flushAnalyticsOutcomes();
         }
       }
     }
 
     // Flush remaining message logs
-    if (messageLogBatch.length > 0) {
-      await supabase.from('telegram_messages').insert(messageLogBatch);
-    }
+    await flushMessageLogs();
+
+    await flushAnalyticsOutcomes();
 
     const perBotArr = Object.values(perBotStats);
     const totalSkipped = totalSkippedNoMatchingBot + totalSkippedDuplicate;
@@ -896,6 +1105,8 @@ Deno.serve(async (req) => {
         per_bot: perBotArr,
         primary_bot_id: primaryBotId,
         selected_bot_ids: selectedBotIds,
+        analytics_campaign_id: analyticsContext.campaignId,
+        analytics_run_id: analyticsContext.runId,
       },
     });
 
@@ -938,6 +1149,8 @@ Deno.serve(async (req) => {
         tokens_used_cf_ids: cfFieldIds,
         cf_product_id: productContextId,
         cf_tokens_ignored: cfTokensIgnored,
+        analytics_campaign_id: analyticsContext.campaignId,
+        analytics_run_id: analyticsContext.runId,
       },
     });
 
@@ -954,6 +1167,7 @@ Deno.serve(async (req) => {
         per_bot: perBotArr,
         primary_bot_id: primaryBotId,
         selected_bot_ids: selectedBotIds,
+        analytics_campaign_id: analyticsContext.campaignId,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
