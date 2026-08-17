@@ -27,6 +27,6 @@ export function renderContactCenterMessagePlaceholders(
   };
 
   return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (token, key) =>
-    Object.hasOwn(values, key) ? values[key] : token,
+    Object.prototype.hasOwnProperty.call(values, key) ? values[key] : token,
   );
 }
