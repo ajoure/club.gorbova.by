@@ -1,8 +1,8 @@
 // Structural client type: avoids pulling Deno-only `npm:` type declarations
 // into the repo-wide TypeScript check while keeping runtime behaviour identical.
-type ServiceClient = {
-  rpc: (fn: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>;
-};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ServiceClient = any;
+
 
 declare const Deno: { env: { get(key: string): string | undefined } };
 
