@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import { lazy, Suspense, useState, useRef, useCallback, useMemo, useEffect } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -94,6 +94,10 @@ import { TelegramMessagePreview } from "./TelegramMessagePreview";
 
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { RuleListEditor } from "./RuleListEditor";
+
+const BroadcastAnalyticsSection = lazy(() =>
+  import("./BroadcastAnalyticsSection").then((module) => ({ default: module.BroadcastAnalyticsSection }))
+);
 
 type AudienceMode = "purchased" | "active_access";
 
@@ -216,7 +220,7 @@ async function readableFunctionInvokeError(value: unknown): Promise<string> {
 
 export function BroadcastsTabContent() {
   const queryClient = useQueryClient();
-  const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled">("templates");
+  const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled" | "analytics">("templates");
   // Sprint B rev3 — фаза 2: id шаблона в режиме редактирования (открывается из «Запланированные»)
   const [editTemplateId, setEditTemplateId] = useState<string | null>(null);
   const openTemplateForSendRef = useRef(false);
@@ -564,7 +568,7 @@ export function BroadcastsTabContent() {
 
   // Send Telegram broadcast
   const sendTelegramMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ analyticsCampaignId, campaignName }: { analyticsCampaignId: string; campaignName: string }) => {
       // Полная база (нет include/exclude/club_ids/bot_ids) → требуем явное подтверждение,
       // иначе backend-guard блокирует запрос как broadcast_blocked_empty_audience_filters.
       const isFullBase =
@@ -597,6 +601,9 @@ export function BroadcastsTabContent() {
         formData.append("media_type", mediaFile.type || "");
         formData.append("media", mediaFile.file);
         if (productContextId) formData.append("product_context_id", productContextId);
+        formData.append("analytics_campaign_id", analyticsCampaignId);
+        formData.append("analytics_campaign_name", campaignName);
+        formData.append("analytics_send_mode", "manual");
         if (allowFullAudience) {
           formData.append("allow_full_audience", "true");
           formData.append("confirm_full_audience_text", "SEND TO ALL");
@@ -630,6 +637,9 @@ export function BroadcastsTabContent() {
         button_url: includeButton ? buttonUrl : undefined,
         filters,
         product_context_id: productContextId,
+        analytics_campaign_id: analyticsCampaignId,
+        analytics_campaign_name: campaignName,
+        analytics_send_mode: "manual",
       };
       if (mediaFile?.storagePath) {
         body.media_storage_path = mediaFile.storagePath;
@@ -661,7 +671,7 @@ export function BroadcastsTabContent() {
 
   // Send Email broadcast
   const sendEmailMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ analyticsCampaignId, campaignName }: { analyticsCampaignId: string; campaignName: string }) => {
       // Полная база (нет ни include/exclude/club_ids) → требуем явное подтверждение.
       const isFullBase =
         (filters.include?.length ?? 0) === 0 &&
@@ -674,6 +684,9 @@ export function BroadcastsTabContent() {
         filters,
         product_context_id: productContextId,
         include_archived: includeArchived,
+        analytics_campaign_id: analyticsCampaignId,
+        analytics_campaign_name: campaignName,
+        analytics_send_mode: "manual",
       };
       if (isFullBase) {
         const phrase = `ОТПРАВИТЬ ВСЕМ ${audience?.emailCount ?? 0}`;
@@ -1084,9 +1097,15 @@ export function BroadcastsTabContent() {
     }
 
     if (sendMode === "now") {
-      // Принцип Фазы 2: НЕ переписываем quick-send mutations, оборачиваем режимом send_now.
-      if (sendToTelegram) sendTelegramMutation.mutate();
-      if (sendToEmail) sendEmailMutation.mutate();
+      const analyticsCampaignId = crypto.randomUUID();
+      const campaignName = scheduledName.trim()
+        || emailSubject.trim()
+        || message.trim().replace(/\s+/g, " ").slice(0, 80)
+        || `Рассылка ${format(new Date(), "dd.MM.yyyy HH:mm")}`;
+      // Both channels use the same campaign id so the report remains one
+      // administrator action rather than two unrelated rows.
+      if (sendToTelegram) sendTelegramMutation.mutate({ analyticsCampaignId, campaignName });
+      if (sendToEmail) sendEmailMutation.mutate({ analyticsCampaignId, campaignName });
       return;
     }
 
@@ -1115,11 +1134,12 @@ export function BroadcastsTabContent() {
   return (
     <div className="w-full max-w-[1680px] mx-auto px-4 md:px-6 xl:px-8 py-6 space-y-6 overflow-auto h-full">
       {/* Main Tabs: Templates vs Quick Send */}
-      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick" | "scheduled")}>
-        <TabsList>
-          <TabsTrigger value="templates">📋 Шаблоны</TabsTrigger>
-          <TabsTrigger value="quick">⚡ Быстрая рассылка</TabsTrigger>
-          <TabsTrigger value="scheduled">📅 Запланированные</TabsTrigger>
+      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick" | "scheduled" | "analytics")}>
+        <TabsList className="max-w-full justify-start overflow-x-auto">
+          <TabsTrigger className="shrink-0" value="templates">📋 Шаблоны</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="quick">⚡ Быстрая рассылка</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="scheduled">📅 Запланированные</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="analytics">📊 Аналитика</TabsTrigger>
         </TabsList>
 
         <TabsContent value="templates" className="mt-6">
@@ -1152,6 +1172,12 @@ export function BroadcastsTabContent() {
               setMainTab("quick");
             }}
           />
+        </TabsContent>
+
+        <TabsContent value="analytics" className="mt-6">
+          <Suspense fallback={<div className="flex min-h-64 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-primary" /></div>}>
+            <BroadcastAnalyticsSection />
+          </Suspense>
         </TabsContent>
 
         <TabsContent value="quick" className="mt-6">

@@ -237,3 +237,7 @@ verify_jwt = false
 [functions.l]
 # Public short-link landing page with document-specific social metadata.
 verify_jwt = false
+
+[functions.broadcast-track]
+# Public opaque tracking endpoint. It never accepts profile ids or arbitrary redirects.
+verify_jwt = false

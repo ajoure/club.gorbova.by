@@ -52,6 +52,7 @@ public-product
 public-product-by-slug
 send-email
 email-mass-broadcast
+broadcast-track
 getcourse-sync
 import-contacts-gc
 amocrm-sync

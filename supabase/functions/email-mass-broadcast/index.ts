@@ -3,6 +3,16 @@ import { resolveSystemTokens, extractUsedTokens } from "../_shared/systemTokens.
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from "../_shared/customFieldTokens.ts";
 import { evaluateBroadcastGuards, auditBlockedAttempt } from "../_shared/broadcast-guards.ts";
 import { filterUsersByEducationCondition } from "../_shared/broadcastEducation.ts";
+import {
+  applyAnalyticsOutcomes,
+  ensureAnalyticsLinks,
+  ensureBroadcastAnalyticsContext,
+  extractHtmlLinks,
+  instrumentEmailHtml,
+  prepareAnalyticsDeliveries,
+  prepareAnalyticsTracking,
+  type AnalyticsOutcome,
+} from "../_shared/broadcastAnalytics.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -349,6 +359,11 @@ Deno.serve(async (req) => {
       test_self,
       allow_full_audience,
       confirm_full_audience_text,
+      analytics_campaign_id,
+      analytics_campaign_name,
+      analytics_template_id,
+      analytics_run_id,
+      analytics_send_mode,
     } = reqBody;
 
     // Normalize product_context_id
@@ -594,7 +609,6 @@ Deno.serve(async (req) => {
       missingCount = Math.max(0, allowedCount - (foundCount + invalidEmailCount + duplicateCount));
 
       console.log(`[email-broadcast] diagnostic: allowed=${allowedCount} found=${foundCount} archived_included=${archivedIncludedCount} duplicates=${duplicateCount} invalid_emails=${invalidEmailCount} dry_run=${isDryRun}`);
-      if (invalidSample.length > 0) console.log('[email-broadcast] invalid emails (first 10):', invalidSample);
     } else {
       // ===== Legacy path: full email base via batch loading (no 10000 cap) =====
       const PAGE = 1000;
@@ -676,6 +690,19 @@ Deno.serve(async (req) => {
       );
     }
 
+    if (filteredProfiles.length === 0) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          sent: 0,
+          failed: 0,
+          skipped: true,
+          reason: 'В выбранной аудитории нет получателей с доступным email',
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
 
     // Extract token usage from original templates
     const combinedTemplate = subject + ' ' + sanitizedHtml;
@@ -696,6 +723,73 @@ Deno.serve(async (req) => {
       cfTokensIgnored = cfSubject.cfTokensIgnored || cfHtml.cfTokensIgnored;
     }
 
+    // Analytics is fail-closed before the first external send: if the journal
+    // cannot be prepared, the broadcast is not started and cannot become an
+    // untracked partial send.
+    const campaignId = typeof analytics_campaign_id === 'string'
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(analytics_campaign_id)
+      ? analytics_campaign_id
+      : crypto.randomUUID();
+    const analyticsContext = await ensureBroadcastAnalyticsContext(supabase, {
+      campaignId,
+      channel: 'email',
+      name: typeof analytics_campaign_name === 'string' && analytics_campaign_name.trim()
+        ? analytics_campaign_name.trim()
+        : subject,
+      source: analytics_send_mode === 'event'
+        ? 'automation'
+        : isSystemActor ? 'scheduled_dispatcher' : 'contact_center',
+      sendMode: analytics_send_mode === 'scheduled' || analytics_send_mode === 'recurring' || analytics_send_mode === 'event'
+        ? analytics_send_mode
+        : isTestSelf ? 'test' : 'manual',
+      templateId: typeof analytics_template_id === 'string' ? analytics_template_id : null,
+      runId: typeof analytics_run_id === 'string' ? analytics_run_id : null,
+      createdBy: isSystemActor ? null : user?.id ?? null,
+      audienceFilters: filters ?? {},
+      audienceSnapshot: {
+        email_count: filteredProfiles.length,
+        allowed_count: allowedCount,
+        archived_included: archivedIncludedCount,
+      },
+      contentSnapshot: {
+        subject,
+        has_html: Boolean(sanitizedHtml),
+        link_count: extractHtmlLinks(htmlAfterCf).length,
+        body_preview: sanitizedHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500),
+      },
+    });
+    const analyticsDeliveries = await prepareAnalyticsDeliveries(
+      supabase,
+      analyticsContext,
+      filteredProfiles.map((profile) => ({
+        profileId: profile.profile_id,
+        userId: profile.user_id,
+        recipientKey: `profile:${profile.profile_id}`,
+        provider: 'smtp',
+      })),
+    );
+    const analyticsLinks = await ensureAnalyticsLinks(
+      supabase,
+      analyticsContext,
+      extractHtmlLinks(htmlAfterCf),
+    );
+    const analyticsTracking = await prepareAnalyticsTracking(
+      supabase,
+      analyticsDeliveries,
+      analyticsLinks,
+      true,
+    );
+    const deliveryByProfileId = new Map(
+      analyticsDeliveries.map((delivery) => [delivery.profileId, delivery]),
+    );
+    const analyticsOutcomes: AnalyticsOutcome[] = [];
+
+    async function flushAnalyticsOutcomes() {
+      if (analyticsOutcomes.length === 0) return;
+      const batch = analyticsOutcomes.splice(0, analyticsOutcomes.length);
+      await applyAnalyticsOutcomes(supabase, batch);
+    }
+
     let sent = 0;
     let failed = 0;
 
@@ -705,34 +799,59 @@ Deno.serve(async (req) => {
       // Resolve chain: Contact → System (cf already resolved)
       const personalizedSubject = resolveSystemTokens(resolveContactTokens(subjectAfterCf, profile), broadcastNow);
       const personalizedHtml = resolveSystemTokens(resolveContactTokens(htmlAfterCf, profile), broadcastNow);
+      const analyticsDelivery = deliveryByProfileId.get(profile.profile_id);
+      if (!analyticsDelivery) {
+        throw new Error(`analytics_delivery_missing:${profile.profile_id}`);
+      }
+      const trackedHtml = instrumentEmailHtml(
+        personalizedHtml,
+        analyticsTracking.get(analyticsDelivery.id) ?? { clickTokens: new Map() },
+      );
 
       try {
         await sendEmailViaSMTP({
           to: profile.email,
           subject: personalizedSubject,
-          html: personalizedHtml,
+          html: trackedHtml,
           account: emailAccount,
         });
         sent++;
-        console.log(`Email sent to ${profile.email}`);
+        console.log(`Email accepted by SMTP for profile ${profile.profile_id}`);
 
-        await supabase.from('email_logs').insert({
+        const { data: emailLog, error: emailLogError } = await supabase.from('email_logs').insert({
           direction: 'outgoing',
           from_email: emailAccount.from_email || emailAccount.email,
           to_email: profile.email,
           subject,
           body_html: sanitizedHtml,
           status: 'sent',
-          profile_id: profile.user_id,
+          profile_id: profile.profile_id,
+          user_id: profile.user_id,
+          provider: 'smtp',
           template_code: 'mass_broadcast',
+          meta: {
+            broadcast: true,
+            analytics_campaign_id: analyticsContext.campaignId,
+            analytics_delivery_id: analyticsDelivery.id,
+          },
+        }).select('id').maybeSingle();
+        if (emailLogError) {
+          console.error('[email-broadcast] email_logs insert failed:', emailLogError.message);
+        }
+        analyticsOutcomes.push({
+          id: analyticsDelivery.id,
+          status: 'accepted',
+          provider: 'smtp',
+          email_log_id: emailLog?.id ?? null,
+          metadata: emailLogError ? { journal_warning: 'email_log_insert_failed' } : {},
         });
 
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
         failed++;
-        console.error(`Failed to send to ${profile.email}:`, error);
+        console.error(`Failed to send to profile ${profile.profile_id}:`, error);
 
-        await supabase.from('email_logs').insert({
+        const { data: emailLog } = await supabase.from('email_logs').insert({
           direction: 'outgoing',
           from_email: emailAccount.from_email || emailAccount.email,
           to_email: profile.email,
@@ -740,11 +859,32 @@ Deno.serve(async (req) => {
           body_html: sanitizedHtml,
           status: 'failed',
           error_message: (error as Error).message,
-          profile_id: profile.user_id,
+          profile_id: profile.profile_id,
+          user_id: profile.user_id,
+          provider: 'smtp',
           template_code: 'mass_broadcast',
+          meta: {
+            broadcast: true,
+            analytics_campaign_id: analyticsContext.campaignId,
+            analytics_delivery_id: analyticsDelivery.id,
+          },
+        }).select('id').maybeSingle();
+        analyticsOutcomes.push({
+          id: analyticsDelivery.id,
+          status: 'failed',
+          provider: 'smtp',
+          email_log_id: emailLog?.id ?? null,
+          error_code: 'smtp_send_failed',
+          error_message: (error as Error).message,
         });
       }
+
+      if (analyticsOutcomes.length >= 100) {
+        await flushAnalyticsOutcomes();
+      }
     }
+
+    await flushAnalyticsOutcomes();
 
     // Log to audit_logs
     await supabase.from('audit_logs').insert({
@@ -766,6 +906,8 @@ Deno.serve(async (req) => {
         tokens_used_cf_ids: cfFieldIds,
         cf_product_id: productContextId,
         cf_tokens_ignored: cfTokensIgnored,
+        analytics_campaign_id: analyticsContext.campaignId,
+        analytics_run_id: analyticsContext.runId,
         diagnostic: {
           allowed: allowedCount,
           found: foundCount,
@@ -791,6 +933,7 @@ Deno.serve(async (req) => {
           duplicates: duplicateCount,
           invalid_emails: invalidEmailCount,
         },
+        analytics_campaign_id: analyticsContext.campaignId,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
