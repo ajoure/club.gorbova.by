@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.108.2";
 import { corsHeaders, handleCorsPreflightRequest } from "../_shared/cors.ts";
+import { resolveCanonicalPayload } from "../_shared/document-render.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -137,7 +138,24 @@ async function buildAutomationTemplateValues(
         .maybeSingle()
     : { data: null };
 
+  const canonical = await resolveCanonicalPayload(supabase, {
+    context_type: "order",
+    context_id: typeof deal.id === "string" ? deal.id : null,
+    company_id: typeof deal.company_id === "string" ? deal.company_id : null,
+  });
+  const canonicalValues = canonical.resolved_tokens;
+  const customerName = resolveCustomerName(deal);
+  const customerEmail = String(deal.customer_email ?? "");
+  const customerPhone = resolveRelatedString(deal, "profiles", "phone");
+
+  // Existing saved rules may still contain pre-canonical keys. Keep those
+  // aliases readable, but all newly selected values come only from
+  // document_token_registry and use its canonical dot notation.
   return {
+    ...canonicalValues,
+    "customer.name": canonicalValues["customer.name"] || customerName,
+    "customer.email": canonicalValues["customer.email"] || customerEmail,
+    "customer.phone": canonicalValues["customer.phone"] || customerPhone,
     customer_phone: resolveRelatedString(deal, "profiles", "phone"),
     product_name: resolveRelatedString(deal, "products_v2", "name"),
     tariff_name: resolveRelatedString(deal, "tariffs", "name"),
@@ -168,15 +186,16 @@ function renderTemplate(
     appName: "Gorbova.by",
     ...additionalValues,
   };
-  return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (token, key) =>
-    Object.hasOwn(values, key) ? values[key] : token,
-  );
+  return template.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (token, rawKey) => {
+    const key = String(rawKey).trim();
+    return Object.hasOwn(values, key) ? values[key] : token;
+  });
 }
 
 function assertTemplateResolved(value: string): string {
-  const unresolved = value.match(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/);
+  const unresolved = value.match(/\{\{\s*([^{}]+?)\s*\}\}/);
   if (unresolved)
-    throw new Error(`email_template_variable_unresolved:${unresolved[1]}`);
+    throw new Error(`email_template_variable_unresolved:${String(unresolved[1]).trim()}`);
   return value;
 }
 
