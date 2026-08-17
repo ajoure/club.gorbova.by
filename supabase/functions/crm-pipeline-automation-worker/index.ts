@@ -4,6 +4,8 @@ import { corsHeaders, handleCorsPreflightRequest } from "../_shared/cors.ts";
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const workerId = `crm-automation-${crypto.randomUUID()}`;
+const automationDealSelect =
+  "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,user_id,status,currency,is_trial,paid_amount,final_price,profiles:profile_id(full_name,phone),products_v2:product_id(name),tariffs:tariff_id(name)";
 
 type AutomationJob = {
   id: string;
@@ -102,9 +104,57 @@ function resolveCustomerName(deal: Record<string, unknown>): string {
   return "";
 }
 
+function resolveRelatedString(
+  deal: Record<string, unknown>,
+  relation: string,
+  field: string,
+): string {
+  const value = deal[relation];
+  if (
+    value &&
+    typeof value === "object" &&
+    field in value &&
+    typeof value[field] === "string"
+  ) {
+    return value[field];
+  }
+  return "";
+}
+
+async function buildAutomationTemplateValues(
+  supabase: ReturnType<typeof createClient>,
+  deal: Record<string, unknown>,
+): Promise<Record<string, string>> {
+  const responsibleUserId =
+    typeof deal.responsible_user_id === "string"
+      ? deal.responsible_user_id
+      : null;
+  const { data: responsible } = responsibleUserId
+    ? await supabase
+        .from("profiles")
+        .select("full_name,email")
+        .eq("user_id", responsibleUserId)
+        .maybeSingle()
+    : { data: null };
+
+  return {
+    customer_phone: resolveRelatedString(deal, "profiles", "phone"),
+    product_name: resolveRelatedString(deal, "products_v2", "name"),
+    tariff_name: resolveRelatedString(deal, "tariffs", "name"),
+    responsible_name: responsible?.full_name ?? "",
+    responsible_email: responsible?.email ?? "",
+    deal_status: String(deal.status ?? ""),
+    deal_currency: String(deal.currency ?? ""),
+    paid_amount: String(deal.paid_amount ?? ""),
+    final_price: String(deal.final_price ?? ""),
+    is_trial: deal.is_trial === true ? "Да" : deal.is_trial === false ? "Нет" : "",
+  };
+}
+
 function renderTemplate(
   template: string,
   deal: Record<string, unknown>,
+  additionalValues: Record<string, string> = {},
 ): string {
   const customerName = resolveCustomerName(deal);
   const values: Record<string, string> = {
@@ -116,6 +166,7 @@ function renderTemplate(
     email: String(deal.customer_email ?? ""),
     name: customerName,
     appName: "Gorbova.by",
+    ...additionalValues,
   };
   return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (token, key) =>
     Object.hasOwn(values, key) ? values[key] : token,
@@ -243,9 +294,7 @@ Deno.serve(async (req: Request) => {
           .single(),
         supabase
           .from("orders_v2")
-          .select(
-            "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,user_id,status,currency,is_trial,paid_amount,final_price,profiles:profile_id(full_name)",
-          )
+          .select(automationDealSelect)
           .eq("id", job.deal_id)
           .single(),
       ]);
@@ -253,6 +302,7 @@ Deno.serve(async (req: Request) => {
         throw new Error(`rule_not_found:${ruleError?.message ?? job.rule_id}`);
       if (dealError || !deal)
         throw new Error(`deal_not_found:${dealError?.message ?? job.deal_id}`);
+      const templateValues = await buildAutomationTemplateValues(supabase, deal);
       if (
         !["create_task", "send_email", "send_telegram"].includes(
           rule.action_type,
@@ -341,9 +391,17 @@ Deno.serve(async (req: Request) => {
               {
                 payload: {
                   task_type_id: rule.no_branch_task_type_id,
-                  title: renderTemplate(rule.no_branch_title_template, deal),
+                  title: renderTemplate(
+                    rule.no_branch_title_template,
+                    deal,
+                    templateValues,
+                  ),
                   description: rule.no_branch_description_template
-                    ? renderTemplate(rule.no_branch_description_template, deal)
+                    ? renderTemplate(
+                        rule.no_branch_description_template,
+                        deal,
+                        templateValues,
+                      )
                     : null,
                   assignee_user_id: assigneeUserId,
                   due_at: dueAt.toISOString(),
@@ -405,14 +463,14 @@ Deno.serve(async (req: Request) => {
             body: {
               to: deal.customer_email,
               subject: assertTemplateResolved(
-                renderTemplate(rule.email_subject_template, deal),
+                renderTemplate(rule.email_subject_template, deal, templateValues),
               ),
               html: assertTemplateResolved(
-                renderTemplate(rule.email_html_template, deal),
+                renderTemplate(rule.email_html_template, deal, templateValues),
               ),
               text: rule.email_text_template
                 ? assertTemplateResolved(
-                    renderTemplate(rule.email_text_template, deal),
+                    renderTemplate(rule.email_text_template, deal, templateValues),
                   )
                 : undefined,
               account_id: rule.email_account_id ?? undefined,
@@ -456,7 +514,7 @@ Deno.serve(async (req: Request) => {
       if (rule.action_type === "send_telegram") {
         if (!deal.user_id) throw new Error("deal_user_id_missing");
         const message = assertTemplateResolved(
-          renderTemplate(rule.telegram_message_template, deal),
+          renderTemplate(rule.telegram_message_template, deal, templateValues),
         );
         const idempotencyKey = `crm-pipeline:${job.id}`;
         const { data: telegramResult, error: telegramError } =
@@ -518,9 +576,9 @@ Deno.serve(async (req: Request) => {
         {
           payload: {
             task_type_id: rule.task_type_id,
-            title: renderTemplate(rule.title_template, deal),
+            title: renderTemplate(rule.title_template, deal, templateValues),
             description: rule.description_template
-              ? renderTemplate(rule.description_template, deal)
+              ? renderTemplate(rule.description_template, deal, templateValues)
               : null,
             assignee_user_id: assigneeUserId,
             due_at: dueAt.toISOString(),
@@ -573,9 +631,7 @@ Deno.serve(async (req: Request) => {
               .single(),
             supabase
               .from("orders_v2")
-              .select(
-                "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,product_id,customer_email,user_id,profiles:profile_id(full_name)",
-              )
+              .select(automationDealSelect)
               .eq("id", job.deal_id)
               .single(),
           ]);
@@ -589,6 +645,10 @@ Deno.serve(async (req: Request) => {
               `fallback_deal_not_found:${fallbackDealError?.message ?? job.deal_id}`,
             );
           }
+          const fallbackTemplateValues = await buildAutomationTemplateValues(
+            supabase,
+            fallbackDeal,
+          );
 
           if (fallbackRule.fallback_action_type === "send_email") {
             if (!fallbackDeal.customer_email)
@@ -601,12 +661,14 @@ Deno.serve(async (req: Request) => {
                     renderTemplate(
                       fallbackRule.fallback_email_subject_template,
                       fallbackDeal,
+                      fallbackTemplateValues,
                     ),
                   ),
                   html: assertTemplateResolved(
                     renderTemplate(
                       fallbackRule.fallback_email_html_template,
                       fallbackDeal,
+                      fallbackTemplateValues,
                     ),
                   ),
                   text: fallbackRule.fallback_email_text_template
@@ -614,6 +676,7 @@ Deno.serve(async (req: Request) => {
                         renderTemplate(
                           fallbackRule.fallback_email_text_template,
                           fallbackDeal,
+                          fallbackTemplateValues,
                         ),
                       )
                     : undefined,
@@ -672,6 +735,7 @@ Deno.serve(async (req: Request) => {
               renderTemplate(
                 fallbackRule.fallback_telegram_message_template,
                 fallbackDeal,
+                fallbackTemplateValues,
               ),
             );
             const { data: telegramResult, error: telegramError } =
@@ -740,9 +804,7 @@ Deno.serve(async (req: Request) => {
               .single(),
             supabase
               .from("orders_v2")
-              .select(
-                "id,order_number,profile_id,company_id,pipeline_id,pipeline_stage_id,offer_id,product_id,tariff_id,responsible_user_id,customer_email,profiles:profile_id(full_name)",
-              )
+              .select(automationDealSelect)
               .eq("id", job.deal_id)
               .single(),
           ]);
@@ -756,6 +818,10 @@ Deno.serve(async (req: Request) => {
               `error_branch_deal_not_found:${errorDealError?.message ?? job.deal_id}`,
             );
           }
+          const errorTemplateValues = await buildAutomationTemplateValues(
+            supabase,
+            errorDeal,
+          );
           if (errorRule.error_branch_task_type_id) {
             const { data: existingErrorTask, error: existingErrorTaskError } =
               await supabase
@@ -785,11 +851,13 @@ Deno.serve(async (req: Request) => {
                     title: renderTemplate(
                       errorRule.error_branch_title_template,
                       errorDeal,
+                      errorTemplateValues,
                     ),
                     description: errorRule.error_branch_description_template
                       ? renderTemplate(
                           errorRule.error_branch_description_template,
                           errorDeal,
+                          errorTemplateValues,
                         )
                       : null,
                     assignee_user_id: assigneeUserId,
