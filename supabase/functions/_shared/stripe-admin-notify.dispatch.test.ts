@@ -19,7 +19,13 @@ function makeMockSupabase() {
   };
   const handlers: Record<string, unknown> = {
     orders_v2: { user_id: 'u1', profile_id: null, product_id: 'p1', tariff_id: 't1', customer_email: 'x@y.z' },
-    profiles: { full_name: 'Test', email: 'x@y.z', telegram_username: null },
+    profiles: {
+      full_name: 'Вероника',
+      first_name: 'Вероника',
+      last_name: 'Ракитская',
+      email: 'x@y.z',
+      telegram_username: null,
+    },
     products: { name: 'Прод' },
     tariffs: { name: 'Тариф' },
   };
@@ -80,6 +86,10 @@ Deno.test('dispatch: success → exactly one POST to telegram-notify-admins', as
   assertEquals(body.order_id, 'o-1');
   assertEquals(body.parse_mode, 'HTML');
   assert(typeof body.message === 'string' && (body.message as string).length > 0);
+  assert(
+    (body.message as string).includes('Ракитская Вероника'),
+    'admin payment notification must contain the canonical full client name',
+  );
 });
 
 Deno.test('dispatch: HTTP 500 → swallowed, no throw, lifecycle unaffected', async () => {

@@ -1,7 +1,11 @@
-import { format } from "date-fns";
+import { resolveSystemTokens } from "@/lib/system-token-resolver";
 
 export type ContactCenterPlaceholderContext = {
   fullName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  phone?: string | null;
   telegramUsername?: string | null;
   now?: Date;
 };
@@ -12,21 +16,39 @@ export type ContactCenterPlaceholderContext = {
  */
 export function renderContactCenterMessagePlaceholders(
   template: string,
-  { fullName, telegramUsername, now = new Date() }: ContactCenterPlaceholderContext,
+  {
+    fullName,
+    firstName,
+    lastName,
+    email,
+    phone,
+    telegramUsername,
+    now = new Date(),
+  }: ContactCenterPlaceholderContext,
 ): string {
   const nameParts = (fullName ?? "").trim().split(/\s+/).filter(Boolean);
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  const resolvedFirstName = firstName?.trim() || nameParts[0] || "";
+  const resolvedLastName = lastName?.trim() || nameParts.slice(1).join(" ");
+  const resolvedFullName = fullName?.trim() || [resolvedLastName, resolvedFirstName].filter(Boolean).join(" ");
+  const resolvedTelegramUsername = telegramUsername?.replace(/^@/, "") ?? "";
   const values: Record<string, string> = {
-    full_name: fullName?.trim() ?? "",
-    first_name: nameParts[0] ?? "",
-    last_name: nameParts.slice(1).join(" "),
-    telegram_username: telegramUsername?.replace(/^@/, "") ?? "",
-    today: format(now, "dd.MM.yyyy"),
-    tomorrow: format(tomorrow, "dd.MM.yyyy"),
+    full_name: resolvedFullName,
+    first_name: resolvedFirstName,
+    last_name: resolvedLastName,
+    name: resolvedFullName,
+    email: email?.trim() ?? "",
+    phone: phone?.trim() ?? "",
+    telegram_username: resolvedTelegramUsername,
+    "contact.full_name": resolvedFullName,
+    "contact.first_name": resolvedFirstName,
+    "contact.last_name": resolvedLastName,
+    "contact.email": email?.trim() ?? "",
+    "contact.phone": phone?.trim() ?? "",
+    "contact.telegram_username": resolvedTelegramUsername,
   };
 
-  return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (token, key) =>
+  const withContactValues = template.replace(/\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g, (token, key) =>
     Object.prototype.hasOwnProperty.call(values, key) ? values[key] : token,
   );
+  return resolveSystemTokens(withContactValues, now);
 }

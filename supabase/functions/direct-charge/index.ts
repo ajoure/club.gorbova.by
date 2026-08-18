@@ -2,6 +2,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
+import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 import { resolveUserIds } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
@@ -718,7 +719,7 @@ Deno.serve(async (req) => {
       // Notify admins about new trial purchase
       const { data: buyerProfile } = await supabase
         .from('profiles')
-        .select('email, full_name')
+        .select('email, full_name, first_name, last_name')
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -726,7 +727,7 @@ Deno.serve(async (req) => {
         body: {
           message: buildAdminNotifyMessage({
             operation_type: 'trial',
-            client_name: buyerProfile?.full_name,
+            client_name: resolveAdminProfileName(buyerProfile),
             email: buyerProfile?.email,
             product_name: product.name,
             tariff_name: tariff.name,
@@ -1212,7 +1213,7 @@ Deno.serve(async (req) => {
       // Notify admins about new purchase
       const { data: buyerProfile } = await supabase
         .from('profiles')
-        .select('email, full_name')
+        .select('email, full_name, first_name, last_name')
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -1220,7 +1221,7 @@ Deno.serve(async (req) => {
         body: {
           message: buildAdminNotifyMessage({
             operation_type: isTrial ? 'trial' : 'payment',
-            client_name: buyerProfile?.full_name,
+            client_name: resolveAdminProfileName(buyerProfile),
             email: buyerProfile?.email,
             product_name: product.name,
             tariff_name: tariff.name,

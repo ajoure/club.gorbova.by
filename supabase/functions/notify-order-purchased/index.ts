@@ -13,6 +13,7 @@
 //   - Параметры `force` и `force_purchase_dm` могут указывать только service-role вызовы (внешний пользователь не имеет доступа к функции вовсе).
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -171,6 +172,7 @@ Deno.serve(async (req) => {
   let recipientEmail: string | null = order.customer_email || null
   let telegramUserId: number | null = null
   let recipientName: string | null = null
+  let recipientFullName: string | null = null
   let mirrorUserId: string | null = (order as any).user_id || null
   let mirrorProfileId: string | null = (order as any).profile_id || null
 
@@ -180,6 +182,7 @@ Deno.serve(async (req) => {
     mirrorUserId = mirrorUserId || profile.user_id || null
     recipientEmail = recipientEmail || profile.email || null
     recipientName = recipientName || profile.first_name || profile.full_name || null
+    recipientFullName = recipientFullName || resolveAdminProfileName(profile)
     if (!telegramUserId) {
       const tuid = profile.telegram_user_id
       if (tuid) telegramUserId = typeof tuid === 'string' ? Number(tuid) : Number(tuid)
@@ -189,26 +192,26 @@ Deno.serve(async (req) => {
   if (order.user_id) {
     const { data: profileByUserId } = await supabase
       .from('profiles')
-      .select('id, user_id, email, full_name, first_name, telegram_user_id')
+      .select('id, user_id, email, full_name, first_name, last_name, telegram_user_id')
       .eq('user_id', order.user_id)
       .limit(1)
       .maybeSingle()
     applyProfile(profileByUserId)
   }
 
-  if ((order as any).profile_id && (!telegramUserId || !recipientEmail || !recipientName || !mirrorUserId)) {
+  if ((order as any).profile_id && (!telegramUserId || !recipientEmail || !recipientName || !recipientFullName || !mirrorUserId)) {
     const { data: profileById } = await supabase
       .from('profiles')
-      .select('id, user_id, email, full_name, first_name, telegram_user_id')
+      .select('id, user_id, email, full_name, first_name, last_name, telegram_user_id')
       .eq('id', (order as any).profile_id)
       .maybeSingle()
     applyProfile(profileById)
   }
 
-  if ((!telegramUserId || !recipientName || !mirrorUserId) && recipientEmail) {
+  if ((!telegramUserId || !recipientName || !recipientFullName || !mirrorUserId) && recipientEmail) {
     const { data: profileByEmail } = await supabase
       .from('profiles')
-      .select('id, user_id, email, full_name, first_name, telegram_user_id')
+      .select('id, user_id, email, full_name, first_name, last_name, telegram_user_id')
       .ilike('email', recipientEmail)
       .limit(1)
       .maybeSingle()
@@ -514,7 +517,8 @@ Deno.serve(async (req) => {
       const priceStr = priceRaw > 0
         ? `${priceRaw.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${order.currency || 'BYN'}`
         : '—'
-      const buyerLine = recipientName ? escapeHtml(recipientName) : '—'
+      const adminRecipientName = recipientFullName || recipientName
+      const buyerLine = adminRecipientName ? escapeHtml(adminRecipientName) : '—'
       const emailLine = recipientEmail ? `📧 <b>Email:</b> ${escapeHtml(recipientEmail)}\n` : ''
       const phoneRaw = (order as any).customer_phone || null
       const phoneLine = phoneRaw ? `📱 <b>Телефон:</b> ${escapeHtml(phoneRaw)}\n` : ''

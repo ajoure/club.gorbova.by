@@ -68,15 +68,38 @@ export function resolveSystemTokens(text: string, now: Date = new Date()): strin
 
   const monthIdx = parseInt(mm, 10) - 1;
   const weekdayIdx = new Date(Date.UTC(parseInt(yyyy), monthIdx, parseInt(dd))).getUTCDay();
+  const RU_MONTHS_GEN = [
+    'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+    'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+  ];
+  const todayDot = dateKeyToDot(todayKey);
+  const tomorrowDot = dateKeyToDot(tomorrowKey);
+  const yesterdayDot = dateKeyToDot(yesterdayKey);
+  const nowValue = `${todayDot} ${timeInTz(now)}`;
+  const monthName = RU_MONTHS[monthIdx] || '';
+  const weekdayName = RU_WEEKDAYS[weekdayIdx] || '';
+  const todayLong = `${dd} ${RU_MONTHS_GEN[monthIdx] || ''} ${yyyy} г.`;
+  const todayRu = `${dd} ${RU_MONTHS_GEN[monthIdx] || ''} ${yyyy} года`;
 
   return text
-    .replace(/\{\{today\}\}/g, dateKeyToDot(todayKey))
-    .replace(/\{\{tomorrow\}\}/g, dateKeyToDot(tomorrowKey))
-    .replace(/\{\{yesterday\}\}/g, dateKeyToDot(yesterdayKey))
-    .replace(/\{\{now\}\}/g, `${dateKeyToDot(todayKey)} ${timeInTz(now)}`)
-    .replace(/\{\{month_name\}\}/g, RU_MONTHS[monthIdx] || '')
+    .replace(/\{\{today\}\}/g, todayDot)
+    .replace(/\{\{tomorrow\}\}/g, tomorrowDot)
+    .replace(/\{\{yesterday\}\}/g, yesterdayDot)
+    .replace(/\{\{now\}\}/g, nowValue)
+    .replace(/\{\{month_name\}\}/g, monthName)
     .replace(/\{\{month\}\}/g, mm)
     .replace(/\{\{year\}\}/g, yyyy)
     .replace(/\{\{day\}\}/g, dd)
-    .replace(/\{\{weekday\}\}/g, RU_WEEKDAYS[weekdayIdx] || '');
+    .replace(/\{\{weekday\}\}/g, weekdayName)
+    .replace(/\{\{system\.today\}\}/g, todayDot)
+    .replace(/\{\{system\.tomorrow\}\}/g, tomorrowDot)
+    .replace(/\{\{system\.yesterday\}\}/g, yesterdayDot)
+    .replace(/\{\{system\.now\}\}/g, nowValue)
+    .replace(/\{\{system\.month_name\}\}/g, monthName)
+    .replace(/\{\{system\.month\}\}/g, mm)
+    .replace(/\{\{system\.year\}\}/g, yyyy)
+    .replace(/\{\{system\.day\}\}/g, dd)
+    .replace(/\{\{system\.weekday\}\}/g, weekdayName)
+    .replace(/\{\{system\.today_long\}\}/g, todayLong)
+    .replace(/\{\{system\.today_ru\}\}/g, todayRu);
 }

@@ -1712,6 +1712,7 @@ export function BroadcastsTabContent() {
                   <TokenizedRichInput
                     value={message}
                     onChange={setMessage}
+                    tokenContext="messages"
                     placeholder="Введите текст сообщения для рассылки..."
                     rows={6}
                   />
@@ -1798,6 +1799,7 @@ export function BroadcastsTabContent() {
                   <TokenizedRichInput
                     value={emailSubject}
                     onChange={setEmailSubject}
+                    tokenContext="messages"
                     placeholder="Тема письма..."
                     singleLine
                   />
@@ -1807,6 +1809,7 @@ export function BroadcastsTabContent() {
                   <TokenizedRichInput
                     value={emailBody}
                     onChange={setEmailBody}
+                    tokenContext="messages"
                     placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
                     rows={8}
                     allowAlign

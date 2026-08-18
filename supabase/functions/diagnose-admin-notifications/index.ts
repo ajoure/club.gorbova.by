@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -109,14 +110,14 @@ Deno.serve(async (req) => {
     if (order.user_id) {
       const { data } = await supabase
         .from('profiles')
-        .select('id, full_name, email, phone, telegram_username')
+        .select('id, full_name, first_name, last_name, email, phone, telegram_username')
         .eq('user_id', order.user_id)
         .single();
       customerProfile = data;
     } else if (order.profile_id) {
       const { data } = await supabase
         .from('profiles')
-        .select('id, full_name, email, phone, telegram_username')
+        .select('id, full_name, first_name, last_name, email, phone, telegram_username')
         .eq('id', order.profile_id)
         .single();
       customerProfile = data;
@@ -188,7 +189,7 @@ Deno.serve(async (req) => {
     const tariffName = (order.tariffs as any)?.name || 'N/A';
 
     const notifyMessage = `${paymentType}\n\n` +
-      `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
+      `👤 <b>Клиент:</b> ${resolveAdminProfileName(customerProfile) || 'Не указано'}\n` +
       `📧 Email: ${customerProfile?.email || order.customer_email || 'Не указан'}\n` +
       `📱 Телефон: ${customerProfile?.phone || order.customer_phone || 'Не указан'}\n` +
       (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +

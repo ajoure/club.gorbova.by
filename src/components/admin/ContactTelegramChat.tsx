@@ -113,6 +113,10 @@ interface ContactTelegramChatProps {
   telegramUserId: number | null;
   telegramUsername: string | null;
   clientName?: string | null;
+  clientFirstName?: string | null;
+  clientLastName?: string | null;
+  clientEmail?: string | null;
+  clientPhone?: string | null;
   avatarUrl?: string | null;
   onAvatarUpdated?: (url: string) => void;
   hidePhotoButton?: boolean;
@@ -193,6 +197,10 @@ export function ContactTelegramChat({
   telegramUserId,
   telegramUsername,
   clientName,
+  clientFirstName,
+  clientLastName,
+  clientEmail,
+  clientPhone,
   avatarUrl,
   onAvatarUpdated,
   hidePhotoButton = false,
@@ -1943,8 +1951,17 @@ export function ContactTelegramChat({
   }, [replyingTo]);
 
   const handleSend = () => {
+    if (
+      sendMutation.isPending ||
+      isUploading ||
+      (!selectedBotId && !selectedBusinessAccountId)
+    ) return;
     const trimmed = renderContactCenterMessagePlaceholders(message, {
       fullName: clientName,
+      firstName: clientFirstName,
+      lastName: clientLastName,
+      email: clientEmail,
+      phone: clientPhone,
       telegramUsername,
     }).trim();
     if (!trimmed && !selectedFile) return;
@@ -2270,7 +2287,7 @@ export function ContactTelegramChat({
               </button>
             </div>
           )}
-          <div className="flex items-end gap-2">
+          <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-2">
           <div className="flex shrink-0 flex-col gap-1">
             <Popover>
               <PopoverTrigger asChild>
@@ -2415,18 +2432,20 @@ export function ContactTelegramChat({
             />
           </div>
           
-          <TokenizedRichInput
-            value={message}
-            onChange={setMessage}
-            onSubmit={handleSend}
-            onPaste={handlePaste}
-            onFocusReady={(focus) => { inputFocusRef.current = focus; }}
-            tokenContext="contact_center"
-            rows={2}
-            placeholder="Введите сообщение..."
-            className="min-h-[56px] max-h-[112px] flex-1 overflow-y-auto leading-snug"
-            disabled={sendMutation.isPending || isUploading}
-          />
+          <div className="min-w-0 w-full">
+            <TokenizedRichInput
+              value={message}
+              onChange={setMessage}
+              onSubmit={handleSend}
+              onPaste={handlePaste}
+              onFocusReady={(focus) => { inputFocusRef.current = focus; }}
+              tokenContext="contact_center"
+              rows={2}
+              placeholder="Введите сообщение..."
+              className="min-h-[56px] max-h-[112px] w-full overflow-y-auto leading-snug"
+              disabled={sendMutation.isPending || isUploading}
+            />
+          </div>
           <div className="flex shrink-0 flex-col gap-1 items-end">
             <Button
               onClick={handleSend}
