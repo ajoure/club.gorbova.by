@@ -81,15 +81,47 @@ async function ensureCanonicalPayment(
     },
   };
 
-  const { error: writeError } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("payments_v2")
-    .upsert(paymentRow, {
-      onConflict: "provider,provider_payment_id",
-      ignoreDuplicates: true,
-    });
+    .select("id,order_id")
+    .eq("provider", "bepaid")
+    .eq("provider_payment_id", item.bepaid_uid)
+    .maybeSingle();
 
-  if (writeError) {
-    throw new Error(`payments_v2 write failed: ${writeError.message}`);
+  if (existingError) {
+    throw new Error(`payments_v2 lookup failed: ${existingError.message}`);
+  }
+
+  let repairedOrphan = false;
+  if (existing?.order_id && existing.order_id !== order.id) {
+    throw new Error(
+      `payments_v2 conflict: payment ${existing.id} is already linked to order ${existing.order_id}`,
+    );
+  }
+
+  if (existing && !existing.order_id) {
+    const { data: repaired, error: repairError } = await supabase
+      .from("payments_v2")
+      .update(paymentRow)
+      .eq("id", existing.id)
+      .is("order_id", null)
+      .select("id,order_id")
+      .maybeSingle();
+
+    if (repairError || !repaired) {
+      throw new Error(
+        `payments_v2 orphan repair failed: ${repairError?.message || "row changed concurrently"}`,
+      );
+    }
+    repairedOrphan = true;
+  } else if (!existing) {
+    const { error: writeError } = await supabase
+      .from("payments_v2")
+      .insert(paymentRow);
+
+    if (writeError) {
+      throw new Error(`payments_v2 write failed: ${writeError.message}`);
+    }
   }
 
   const { data: persisted, error: verifyError } = await supabase
@@ -103,7 +135,43 @@ async function ensureCanonicalPayment(
     throw new Error(`payments_v2 verification failed: ${verifyError?.message || "row missing"}`);
   }
 
-  return persisted;
+  if (persisted.order_id !== order.id) {
+    throw new Error(
+      `payments_v2 verification failed: expected order ${order.id}, got ${persisted.order_id || "null"}`,
+    );
+  }
+
+  return { ...persisted, repaired_orphan: repairedOrphan };
+}
+
+async function grantCanonicalAccess(
+  supabase: any,
+  orderId: string,
+  customAccessDays?: number,
+) {
+  const body: Record<string, unknown> = {
+    orderId,
+    grantTelegram: true,
+    grantGetcourse: false,
+  };
+  if (customAccessDays && customAccessDays > 0) {
+    body.customAccessDays = customAccessDays;
+  }
+
+  const { data, error } = await supabase.functions.invoke("grant-access-for-order", {
+    body,
+  });
+
+  if (error) {
+    throw new Error(`grant-access-for-order failed for order ${orderId}: ${error.message}`);
+  }
+  if (!data || data.success !== true) {
+    throw new Error(
+      `grant-access-for-order failed for order ${orderId}: ${data?.error || "invalid response"}`,
+    );
+  }
+
+  return data;
 }
 
 // Transliterate Latin name to Cyrillic for matching
@@ -252,6 +320,11 @@ Deno.serve(async (req) => {
       profiles_created: 0,
       refunds_linked: 0,
       skipped: 0,
+      already_materialized: 0,
+      orders_reconciled: 0,
+      repaired_payments: 0,
+      access_granted: 0,
+      needs_review: 0,
       errors: [] as string[],
     };
 
@@ -748,14 +821,17 @@ Deno.serve(async (req) => {
           const { data: existingPayment } = await supabase
             .from('payments_v2')
             .select('id, order_id, orders_v2:order_id(order_number)')
+            .eq('provider', 'bepaid')
             .eq('provider_payment_id', item.bepaid_uid)
             .maybeSingle();
           
-          if (existingPayment) {
+          if (existingPayment?.order_id) {
             const existingOrderNumber = (existingPayment as any).orders_v2?.order_number || 'N/A';
-            console.warn(`[BEPAID-AUTO-PROCESS] SKIP: Payment with bepaid_uid=${item.bepaid_uid} already exists (payment_id=${existingPayment.id}, order_id=${existingPayment.order_id}, order_number=${existingOrderNumber})`);
+            console.warn(`[BEPAID-AUTO-PROCESS] RECONCILE: Payment with bepaid_uid=${item.bepaid_uid} already exists (payment_id=${existingPayment.id}, order_id=${existingPayment.order_id}, order_number=${existingOrderNumber})`);
             
             if (!dryRun) {
+              await grantCanonicalAccess(supabase, existingPayment.order_id);
+              results.access_granted++;
               await supabase
                 .from('payment_reconcile_queue')
                 .update({ 
@@ -768,6 +844,8 @@ Deno.serve(async (req) => {
             }
             
             results.skipped++;
+            results.already_materialized++;
+            results.orders_reconciled++;
             (results as any).skipReasons = (results as any).skipReasons || [];
             (results as any).skipReasons.push({
               bepaid_uid: item.bepaid_uid,
@@ -777,6 +855,8 @@ Deno.serve(async (req) => {
               existing_order_number: existingOrderNumber,
             });
             continue;
+          } else if (existingPayment) {
+            console.warn(`[BEPAID-AUTO-PROCESS] REPAIR: Payment ${existingPayment.id} exists without order; continuing canonical reconciliation`);
           }
         }
 
@@ -805,13 +885,16 @@ Deno.serve(async (req) => {
           
           if (!dryRun) {
             const existingPaidAt = item.paid_at || item.created_at_bepaid || item.created_at;
-            await ensureCanonicalPayment(
+            const persistedPayment = await ensureCanonicalPayment(
               supabase,
               item,
               existingOrder,
               profileId,
               existingPaidAt,
             );
+            if (persistedPayment.repaired_orphan) results.repaired_payments++;
+            await grantCanonicalAccess(supabase, existingOrder.id);
+            results.access_granted++;
             await supabase
               .from('payment_reconcile_queue')
               .update({ 
@@ -823,6 +906,8 @@ Deno.serve(async (req) => {
           }
           
           results.skipped++;
+          results.already_materialized++;
+          results.orders_reconciled++;
           continue;
         }
 
@@ -923,7 +1008,8 @@ Deno.serve(async (req) => {
           console.log(`[BEPAID-AUTO-PROCESS] Created order: ${newOrder.order_number}`);
 
           // Persist and verify the canonical payment before any queue success.
-          await ensureCanonicalPayment(supabase, item, newOrder, profileId, paidAt);
+          const persistedPayment = await ensureCanonicalPayment(supabase, item, newOrder, profileId, paidAt);
+          if (persistedPayment.repaired_orphan) results.repaired_payments++;
 
           // Calculate access period (used for both subscription and entitlement)
           let trialDays = 0;
@@ -953,28 +1039,9 @@ Deno.serve(async (req) => {
           // 2. Direct entitlement INSERT/UPDATE by product_code (was for ALL cases)
           // 3. Direct entitlement_orders INSERT (now handled by canonical flow)
           // Post-grant direct writes are PROHIBITED — they overwrite canonical access_rule_id
-          if (profileUserId) {
-            try {
-              const { data: grantResult, error: grantError } = await supabase.functions.invoke('grant-access-for-order', {
-                body: {
-                  orderId: newOrder.id,
-                  customAccessDays: accessDays,
-                  grantTelegram: true,
-                  grantGetcourse: false, // GC sync handled separately below
-                },
-              });
-
-              if (grantError) {
-                console.error(`[BEPAID-AUTO-PROCESS] grant-access-for-order error for order ${newOrder.id}:`, grantError);
-              } else {
-                console.log(`[BEPAID-AUTO-PROCESS] grant-access-for-order success for order ${newOrder.id}:`, grantResult);
-              }
-            } catch (grantErr) {
-              console.error(`[BEPAID-AUTO-PROCESS] grant-access-for-order exception for order ${newOrder.id}:`, grantErr);
-            }
-          } else {
-            console.warn(`[BEPAID-AUTO-PROCESS] No user_id for profile ${profileId}, skipping grant-access-for-order (ghost profile)`);
-          }
+          const grantResult = await grantCanonicalAccess(supabase, newOrder.id, accessDays);
+          results.access_granted++;
+          console.log(`[BEPAID-AUTO-PROCESS] grant-access-for-order success for order ${newOrder.id}:`, grantResult);
 
           // === NOTIFY ADMINS ABOUT NEW ORDER ===
           try {
@@ -1081,6 +1148,7 @@ Deno.serve(async (req) => {
               .eq('id', item.id);
           }
           results.skipped++;
+          results.needs_review++;
         }
 
         results.processed++;

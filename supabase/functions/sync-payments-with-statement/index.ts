@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { ensureExistingBepaidPaymentQueued } from "../_shared/bepaid-reconcile-queue.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -66,6 +67,9 @@ interface SyncStats {
   applied: number;
   skipped: number;
   errors: number;
+  queued_for_processing: number;
+  orphan_payments_requeued: number;
+  queue_skipped: number;
   error_details?: ErrorDetail[];
   statement_stats?: DetailedStats;
   payments_stats?: DetailedStats;
@@ -756,6 +760,9 @@ Deno.serve(async (req) => {
       applied: 0,
       skipped: 0,
       errors: 0,
+      queued_for_processing: 0,
+      orphan_payments_requeued: 0,
+      queue_skipped: 0,
       statement_stats: statementStats,
       payments_stats: paymentsStats,
       projected_stats: projectedStats,
@@ -856,6 +863,14 @@ Deno.serve(async (req) => {
                 });
               } else {
                 stats.applied++;
+                const queueResult = await ensureExistingBepaidPaymentQueued(
+                  supabaseAdmin,
+                  stmtByUid.get(change.uid) || { ...stmt, uid: change.uid },
+                  "statement_sync_existing_payment",
+                );
+                if (queueResult.action === "inserted") stats.queued_for_processing++;
+                else if (queueResult.action === "reactivated") stats.orphan_payments_requeued++;
+                else stats.queue_skipped++;
               }
             } else {
               // New record - INSERT
@@ -934,6 +949,15 @@ Deno.serve(async (req) => {
                     }
                   }
                 }
+
+                const queueResult = await ensureExistingBepaidPaymentQueued(
+                  supabaseAdmin,
+                  stmtByUid.get(change.uid) || { ...stmt, uid: change.uid },
+                  "statement_sync_new_payment",
+                );
+                if (queueResult.action === "inserted") stats.queued_for_processing++;
+                else if (queueResult.action === "reactivated") stats.orphan_payments_requeued++;
+                else stats.queue_skipped++;
               }
             }
           }
@@ -989,6 +1013,15 @@ Deno.serve(async (req) => {
               });
               continue; // Skip cascade if main update failed
             }
+
+            const queueResult = await ensureExistingBepaidPaymentQueued(
+              supabaseAdmin,
+              stmtByUid.get(change.uid) || { ...stmt, uid: change.uid },
+              "statement_sync_updated_payment",
+            );
+            if (queueResult.action === "inserted") stats.queued_for_processing++;
+            else if (queueResult.action === "reactivated") stats.orphan_payments_requeued++;
+            else stats.queue_skipped++;
             
             // Apply cascade: update order amount if needed
             const amountDiff = change.differences?.find(d => d.field === 'amount');

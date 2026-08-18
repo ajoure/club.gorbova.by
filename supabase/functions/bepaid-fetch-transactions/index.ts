@@ -121,6 +121,102 @@ function determineTransactionType(tx: any): { type: string; isRefund: boolean } 
   return { type: 'payment', isRefund: false };
 }
 
+async function ensureReconcileQueueItem(
+  supabase: any,
+  tx: any,
+  uid: string,
+  normalizedStatus: string,
+  txType: string,
+  source: string,
+) {
+  const { data: existing, error: lookupError } = await supabase
+    .from("payment_reconcile_queue")
+    .select("id,status,matched_order_id,last_error")
+    .eq("provider", "bepaid")
+    .eq("bepaid_uid", uid)
+    .maybeSingle();
+
+  if (lookupError) {
+    throw new Error(`queue lookup failed for ${uid}: ${lookupError.message}`);
+  }
+
+  if (existing?.matched_order_id) {
+    return { action: "already_matched", id: existing.id };
+  }
+
+  const isSoftCancelled =
+    existing?.status === "cancelled" ||
+    existing?.status === "canceled" ||
+    String(existing?.last_error || "").startsWith("SOFT_CANCELLED") ||
+    String(existing?.last_error || "").startsWith("CANCELLED_BY_ADMIN");
+  if (isSoftCancelled) {
+    return { action: "soft_cancelled", id: existing.id };
+  }
+
+  // Do not steal a row that the cron worker is materialising right now.
+  if (existing?.status === "processing") {
+    return { action: "already_processing", id: existing.id };
+  }
+
+  if (existing) {
+    const { error: reactivateError } = await supabase
+      .from("payment_reconcile_queue")
+      .update({
+        status: "pending",
+        attempts: 0,
+        last_error: null,
+        next_retry_at: null,
+        processed_at: null,
+        source,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id)
+      .is("matched_order_id", null);
+
+    if (reactivateError) {
+      throw new Error(`queue reactivation failed for ${uid}: ${reactivateError.message}`);
+    }
+    return { action: "reactivated", id: existing.id };
+  }
+
+  const customerName = tx.customer?.first_name || tx.customer?.firstName || null;
+  const customerSurname = tx.customer?.last_name || tx.customer?.lastName || null;
+  const { data: inserted, error: insertError } = await supabase
+    .from("payment_reconcile_queue")
+    .insert({
+      provider: "bepaid",
+      bepaid_uid: uid,
+      tracking_id: tx.tracking_id || null,
+      amount: tx.amount ? Math.abs(Number(tx.amount)) / 100 : null,
+      currency: tx.currency || "BYN",
+      customer_email: tx.customer?.email || null,
+      customer_name: customerName,
+      customer_surname: customerSurname,
+      customer_phone: tx.customer?.phone || null,
+      card_holder: tx.credit_card?.holder || null,
+      card_last4: tx.credit_card?.last_4 || null,
+      card_brand: tx.credit_card?.brand || null,
+      product_name: tx.description || null,
+      description: tx.description || null,
+      receipt_url: tx.receipt_url || null,
+      raw_payload: tx,
+      source,
+      status: "pending",
+      status_normalized: normalizedStatus,
+      transaction_type: txType,
+      paid_at: tx.paid_at || tx.created_at || null,
+      created_at_bepaid: tx.created_at || null,
+      reference_transaction_uid: tx.parent_uid || tx.parent_transaction_uid || null,
+    })
+    .select("id")
+    .single();
+
+  if (insertError || !inserted) {
+    throw new Error(`queue insert failed for ${uid}: ${insertError?.message || "row missing"}`);
+  }
+  return { action: "inserted", id: inserted.id };
+}
+
 interface ProbeResult {
   success: boolean;
   endpoint: string;
@@ -422,6 +518,8 @@ serve(async (req) => {
       refunds_found: 0,
       already_exists: 0,
       queued_for_review: 0,
+      queued_for_processing: 0,
+      orphan_payments_requeued: 0,
       upserted: 0,
       recovered: 0,
       errors: 0,
@@ -706,12 +804,34 @@ serve(async (req) => {
           // Check if already exists
           const { data: existingPayment } = await supabase
             .from("payments_v2")
-            .select("id")
+            .select("id,order_id")
+            .eq("provider", "bepaid")
             .eq("provider_payment_id", uid)
             .maybeSingle();
             
           if (existingPayment) {
             results.already_exists++;
+            if (normalizedStatus === 'successful' && !isRefund && !existingPayment.order_id) {
+              if (mode === 'dry-run') {
+                results.dry_run_items.push({
+                  uid,
+                  type: txType,
+                  status: normalizedStatus,
+                  amount: tx.amount ? tx.amount / 100 : null,
+                  source: 'reports_api',
+                  would_create: 'reconcile_queue',
+                  reason: 'existing_payment_without_order',
+                });
+              } else if (mode === 'execute') {
+                const queued = await ensureReconcileQueueItem(
+                  supabase, tx, uid, normalizedStatus, txType, 'reports_api',
+                );
+                if (queued.action === 'inserted' || queued.action === 'reactivated') {
+                  results.orphan_payments_requeued++;
+                  results.queued_for_processing++;
+                }
+              }
+            }
             continue;
           }
           
@@ -784,6 +904,12 @@ serve(async (req) => {
                 
               if (!upsertError) {
                 results.upserted++;
+                if (normalizedStatus === 'successful' && !isRefund) {
+                  await ensureReconcileQueueItem(
+                    supabase, tx, uid, normalizedStatus, txType, 'reports_api',
+                  );
+                  results.queued_for_processing++;
+                }
               } else {
                 console.error(`[bepaid-fetch] Reports API upsert error:`, upsertError);
                 results.errors++;
@@ -793,28 +919,12 @@ serve(async (req) => {
           }
           
           // Queue for manual review if no order found
-          const queueData: any = {
-            provider: "bepaid",
-            bepaid_uid: uid,
-            tracking_id: tx.tracking_id,
-            amount: tx.amount ? tx.amount / 100 : null,
-            currency: tx.currency || "BYN",
-            customer_email: tx.customer?.email,
-            raw_payload: tx,
-            source: "reports_api",
-            status: "pending",
-            status_normalized: normalizedStatus,
-            transaction_type: txType,
-            paid_at: tx.paid_at,
-            created_at_bepaid: tx.created_at,
-          };
-          
-          const { error: queueError } = await supabase
-            .from("payment_reconcile_queue")
-            .upsert(queueData, { onConflict: "provider,bepaid_uid", ignoreDuplicates: true });
-            
-          if (!queueError) {
+          if (normalizedStatus === 'successful' && !isRefund) {
+            await ensureReconcileQueueItem(
+              supabase, tx, uid, normalizedStatus, txType, 'reports_api',
+            );
             results.queued_for_review++;
+            results.queued_for_processing++;
           }
         }
         
@@ -1017,10 +1127,13 @@ serve(async (req) => {
         const uids = transactions.map((t: any) => t.uid).filter(Boolean);
         const { data: existingPayments } = await supabase
           .from("payments_v2")
-          .select("provider_payment_id")
+          .select("provider_payment_id,order_id")
+          .eq("provider", "bepaid")
           .in("provider_payment_id", uids);
 
-        const existingUids = new Set((existingPayments || []).map((p) => p.provider_payment_id));
+        const existingPaymentsByUid = new Map(
+          (existingPayments || []).map((p) => [p.provider_payment_id, p]),
+        );
 
         // Also check queue
         const { data: existingQueue } = await supabase
@@ -1053,8 +1166,30 @@ serve(async (req) => {
           }
 
           // Check for duplicates
-          if (existingUids.has(uid)) {
+          const existingPayment = existingPaymentsByUid.get(uid);
+          if (existingPayment) {
             results.already_exists++;
+            if (normalizedStatus === 'successful' && !isRefund && !existingPayment.order_id) {
+              if (mode === 'dry-run') {
+                results.dry_run_items.push({
+                  uid,
+                  type: txType,
+                  status: normalizedStatus,
+                  amount: tx.amount ? tx.amount / 100 : null,
+                  source: 'bulk_sync',
+                  would_create: 'reconcile_queue',
+                  reason: 'existing_payment_without_order',
+                });
+              } else if (mode === 'execute') {
+                const queued = await ensureReconcileQueueItem(
+                  supabase, tx, uid, normalizedStatus, txType, 'bulk_sync',
+                );
+                if (queued.action === 'inserted' || queued.action === 'reactivated') {
+                  results.orphan_payments_requeued++;
+                  results.queued_for_processing++;
+                }
+              }
+            }
             continue;
           }
 
@@ -1287,6 +1422,12 @@ serve(async (req) => {
               results.upsert_errors.push({ uid, error: upsertError.message });
             } else {
               results.upserted++;
+              if (normalizedStatus === 'successful' && !isRefund) {
+                await ensureReconcileQueueItem(
+                  supabase, tx, uid, normalizedStatus, txType, 'bulk_sync',
+                );
+                results.queued_for_processing++;
+              }
             }
             continue;
           }

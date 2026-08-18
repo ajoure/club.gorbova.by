@@ -197,24 +197,38 @@ serve(async (req) => {
           results.failed++;
           if (shouldRetry) results.retried++;
           results.errors.push(`${item.id}: ${processError.message}`);
-        } else if (processResult?.results?.skipped > 0) {
-          // Item was skipped (e.g., already processed)
+        } else if ((processResult?.results?.errors?.length || 0) > 0) {
+          const message = processResult.results.errors.join('; ');
+          const newAttempts = (item.attempts || 0) + 1;
+          const shouldRetry = newAttempts < maxAttempts;
           await supabase
             .from("payment_reconcile_queue")
-            .update({ status: "completed" })
-            .eq("id", item.id);
-          results.skipped++;
-        } else if (processResult?.results?.orders_created > 0) {
-          // Success!
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({ 
-              status: "completed",
-              processed_at: now,
+            .update({
+              status: shouldRetry ? "pending" : "error",
+              attempts: newAttempts,
+              last_error: message,
+              next_retry_at: shouldRetry
+                ? new Date(Date.now() + calculateBackoffDelay(newAttempts)).toISOString()
+                : null,
             })
+            .eq("id", item.id);
+          results.failed++;
+          if (shouldRetry) results.retried++;
+          results.errors.push(`${item.id}: ${message}`);
+        } else if (processResult?.results?.orders_created > 0 || processResult?.results?.orders_reconciled > 0) {
+          // Canonical payment, order and access were verified.
+          await supabase
+            .from("payment_reconcile_queue")
+            .update({ status: "completed", processed_at: now })
             .eq("id", item.id);
           results.success++;
           if (item.source === 'webhook') results.webhook_processed++;
+        } else if (processResult?.results?.already_materialized > 0) {
+          await supabase
+            .from("payment_reconcile_queue")
+            .update({ status: "completed", processed_at: now })
+            .eq("id", item.id);
+          results.skipped++;
         } else {
           // No orders created but no error - might need retry
           const newAttempts = (item.attempts || 0) + 1;

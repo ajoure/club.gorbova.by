@@ -8,7 +8,7 @@ import { BepaidStatementTable } from "./BepaidStatementTable";
 import { BepaidStatementSummary, StatementFilterType } from "./BepaidStatementSummary";
 import { BepaidStatementImportDialog } from "./BepaidStatementImportDialog";
 import { useBepaidStatementPaginated, useBepaidStatementStats } from "@/hooks/useBepaidStatement";
-import { format, startOfMonth, endOfMonth } from "date-fns";
+import { format, startOfYear, endOfYear } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
 
 // PATCH-2: Always use Europe/Minsk timezone for period boundaries
@@ -27,11 +27,12 @@ const PAGE_SIZE_OPTIONS = [
 ];
 
 export function BepaidStatementTabContent() {
-  // PATCH-2: Default to current month in Europe/Minsk timezone
+  // The statement is an annual operational register. Defaulting to one month
+  // made already imported rows look deleted whenever the calendar changed.
   const nowMinsk = toZonedTime(new Date(), MINSK_TZ);
   const [dateFilter, setDateFilter] = useState<DateFilter>({
-    from: format(startOfMonth(nowMinsk), 'yyyy-MM-dd'),
-    to: format(endOfMonth(nowMinsk), 'yyyy-MM-dd'),
+    from: format(startOfYear(nowMinsk), 'yyyy-MM-dd'),
+    to: format(endOfYear(nowMinsk), 'yyyy-MM-dd'),
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
