@@ -2,6 +2,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
+import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
@@ -2036,7 +2037,7 @@ async function chargeSubscription(
       try {
         const { data: profile } = await supabase
           .from('profiles')
-          .select('full_name, email, telegram_username')
+          .select('full_name, first_name, last_name, email, telegram_username')
           .eq('user_id', user_id)
           .single();
 
@@ -2053,7 +2054,7 @@ async function chargeSubscription(
 
         const adminMessage = buildAdminNotifyMessage({
           operation_type: 'subscription_renewal',
-          client_name: profile?.full_name,
+          client_name: resolveAdminProfileName(profile),
           email: profile?.email,
           telegram_username: profile?.telegram_username,
           product_name: subProductName,

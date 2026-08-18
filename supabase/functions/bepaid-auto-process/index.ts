@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
+import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
 
@@ -981,7 +982,7 @@ Deno.serve(async (req) => {
             // Get customer profile for notification
             const { data: customerProfile } = await supabase
               .from('profiles')
-              .select('full_name, email, telegram_username')
+              .select('full_name, first_name, last_name, email, telegram_username')
               .eq('id', profileId)
               .single();
 
@@ -1001,7 +1002,7 @@ Deno.serve(async (req) => {
 
             const notifyMessage = buildAdminNotifyMessage({
               operation_type: 'auto_payment',
-              client_name: customerProfile?.full_name || item.card_holder,
+              client_name: resolveAdminProfileName(customerProfile) || item.card_holder,
               email: customerProfile?.email || item.customer_email,
               telegram_username: customerProfile?.telegram_username,
               product_name: productInfo?.name,

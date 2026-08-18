@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { parseBepaidTrackingId } from "../_shared/bepaid-tracking-id.ts";
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
+import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
@@ -562,7 +563,7 @@ async function fixOrderAndCreateSubscription(
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("full_name, email, telegram_username")
+        .select("full_name, first_name, last_name, email, telegram_username")
         .eq("user_id", order.user_id)
         .single();
 
@@ -574,7 +575,7 @@ async function fixOrderAndCreateSubscription(
 
       const adminMessage = buildAdminNotifyMessage({
         operation_type: 'reconciled_payment',
-        client_name: profile?.full_name,
+        client_name: resolveAdminProfileName(profile),
         email: profile?.email || order.customer_email,
         telegram_username: profile?.telegram_username,
         product_name: product?.name,

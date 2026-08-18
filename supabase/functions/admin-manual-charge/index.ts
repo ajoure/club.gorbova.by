@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
+import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 import { getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
@@ -463,13 +464,13 @@ Deno.serve(async (req) => {
         try {
           const { data: customerProfile } = await supabase
             .from('profiles')
-            .select('full_name, email, telegram_username')
+            .select('full_name, first_name, last_name, email, telegram_username')
             .eq('user_id', user_id)
             .single();
 
           const notifyMessage = buildAdminNotifyMessage({
             operation_type: 'manual_charge',
-            client_name: customerProfile?.full_name,
+            client_name: resolveAdminProfileName(customerProfile),
             email: customerProfile?.email,
             telegram_username: customerProfile?.telegram_username,
             product_name: product?.name,

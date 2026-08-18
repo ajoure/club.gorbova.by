@@ -46,6 +46,7 @@ import {
   buildAdminNotifyMessage,
   type OperationType,
 } from './admin-notify-message.ts';
+import { resolveAdminProfileName } from './admin-profile-name.ts';
 
 export type StripeAdminNotifyOp =
   | 'payment_succeeded'
@@ -177,7 +178,7 @@ async function resolveContext(
 
   const [profileRes, productRes, tariffRes] = await Promise.all([
     order.user_id
-      ? supabase.from('profiles').select('full_name, email, telegram_username').eq('user_id', order.user_id).maybeSingle()
+      ? supabase.from('profiles').select('full_name, first_name, last_name, email, telegram_username').eq('user_id', order.user_id).maybeSingle()
       : Promise.resolve({ data: null }),
     order.product_id
       ? supabase.from('products').select('name').eq('id', order.product_id).maybeSingle()
@@ -187,12 +188,12 @@ async function resolveContext(
       : Promise.resolve({ data: null }),
   ]);
 
-  const profile = (profileRes as { data: { full_name?: string | null; email?: string | null; telegram_username?: string | null } | null }).data;
+  const profile = (profileRes as { data: { full_name?: string | null; first_name?: string | null; last_name?: string | null; email?: string | null; telegram_username?: string | null } | null }).data;
   const product = (productRes as { data: { name?: string | null } | null }).data;
   const tariff = (tariffRes as { data: { name?: string | null } | null }).data;
 
   return {
-    client_name: profile?.full_name ?? null,
+    client_name: resolveAdminProfileName(profile),
     email: profile?.email ?? order.customer_email ?? null,
     telegram_username: profile?.telegram_username ?? null,
     product_name: product?.name ?? null,
