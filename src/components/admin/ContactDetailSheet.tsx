@@ -2254,7 +2254,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                 userId={resolvedUserId || ""}
                 telegramUserId={resolvedTelegramUserId}
                 telegramUsername={resolvedTelegramUsername}
-                clientName={contact.full_name}
+                clientName={formatContactName(contact)}
+                clientFirstName={contact.first_name}
+                clientLastName={contact.last_name}
+                clientEmail={contact.email}
+                clientPhone={contact.phone}
                 hidePhotoButton
                 isActive={activeTab === "telegram"}
               />

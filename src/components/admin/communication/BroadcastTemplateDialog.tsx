@@ -173,6 +173,7 @@ export function BroadcastTemplateDialog({
                 <TokenizedRichInput
                   value={messageText}
                   onChange={setMessageText}
+                  tokenContext="messages"
                   placeholder="Введите текст сообщения..."
                   rows={8}
                 />
@@ -227,6 +228,7 @@ export function BroadcastTemplateDialog({
                 <TokenizedRichInput
                   value={emailSubject}
                   onChange={setEmailSubject}
+                  tokenContext="messages"
                   placeholder="Тема письма..."
                   singleLine
                 />
@@ -237,6 +239,7 @@ export function BroadcastTemplateDialog({
                 <TokenizedRichInput
                   value={emailBodyHtml}
                   onChange={setEmailBodyHtml}
+                  tokenContext="messages"
                   placeholder="Содержимое письма..."
                   rows={12}
                   allowAlign

@@ -46,25 +46,26 @@ import { FieldPickerPopover, type FieldPickerResult } from "@/components/ai-docu
 import { loadCanonicalTokenRefs, loadRegistryRefs, type RegistryFieldRef } from "@/utils/templateAutoSuggest";
 
 const MESSAGE_PLACEHOLDER_REFS: RegistryFieldRef[] = [
-  { field_public_id: "MSG-CONTACT-NAME", token_key: "full_name", ui_label: "Клиент · полное имя", category: "client", data_type: "string" },
-  { field_public_id: "MSG-CONTACT-FIRST-NAME", token_key: "first_name", ui_label: "Клиент · имя", category: "client", data_type: "string" },
-  { field_public_id: "MSG-CONTACT-LAST-NAME", token_key: "last_name", ui_label: "Клиент · фамилия", category: "client", data_type: "string" },
-  { field_public_id: "MSG-CONTACT-EMAIL", token_key: "email", ui_label: "Клиент · email", category: "client", data_type: "email" },
-  { field_public_id: "MSG-CONTACT-PHONE", token_key: "phone", ui_label: "Клиент · телефон", category: "client", data_type: "phone" },
-  { field_public_id: "MSG-CONTACT-TELEGRAM", token_key: "telegram_username", ui_label: "Клиент · Telegram", category: "client", data_type: "string" },
-  { field_public_id: "MSG-SYSTEM-TODAY", token_key: "today", ui_label: "Система · сегодня", category: "system", data_type: "date" },
-  { field_public_id: "MSG-SYSTEM-TOMORROW", token_key: "tomorrow", ui_label: "Система · завтра", category: "system", data_type: "date" },
-  { field_public_id: "MSG-SYSTEM-NOW", token_key: "now", ui_label: "Система · текущие дата и время", category: "system", data_type: "datetime" },
+  { field_public_id: "MSG-CONTACT-NAME", token_key: "contact.full_name", ui_label: "Контакт · полное имя", category: "client", data_type: "string" },
+  { field_public_id: "MSG-CONTACT-FIRST-NAME", token_key: "contact.first_name", ui_label: "Контакт · имя", category: "client", data_type: "string" },
+  { field_public_id: "MSG-CONTACT-LAST-NAME", token_key: "contact.last_name", ui_label: "Контакт · фамилия", category: "client", data_type: "string" },
+  { field_public_id: "MSG-CONTACT-EMAIL", token_key: "contact.email", ui_label: "Контакт · email", category: "client", data_type: "email" },
+  { field_public_id: "MSG-CONTACT-PHONE", token_key: "contact.phone", ui_label: "Контакт · телефон", category: "client", data_type: "phone" },
+  { field_public_id: "MSG-CONTACT-TELEGRAM", token_key: "contact.telegram_username", ui_label: "Контакт · Telegram", category: "client", data_type: "string" },
+  { field_public_id: "MSG-SYSTEM-TODAY", token_key: "system.today", ui_label: "Система · сегодня", category: "system", data_type: "date" },
+  { field_public_id: "MSG-SYSTEM-TOMORROW", token_key: "system.tomorrow", ui_label: "Система · завтра", category: "system", data_type: "date" },
+  { field_public_id: "MSG-SYSTEM-YESTERDAY", token_key: "system.yesterday", ui_label: "Система · вчера", category: "system", data_type: "date" },
+  { field_public_id: "MSG-SYSTEM-NOW", token_key: "system.now", ui_label: "Система · текущие дата и время", category: "system", data_type: "datetime" },
+  { field_public_id: "MSG-SYSTEM-MONTH-NAME", token_key: "system.month_name", ui_label: "Система · название месяца", category: "system", data_type: "string" },
+  { field_public_id: "MSG-SYSTEM-MONTH", token_key: "system.month", ui_label: "Система · номер месяца", category: "system", data_type: "string" },
+  { field_public_id: "MSG-SYSTEM-YEAR", token_key: "system.year", ui_label: "Система · текущий год", category: "system", data_type: "string" },
+  { field_public_id: "MSG-SYSTEM-DAY", token_key: "system.day", ui_label: "Система · день месяца", category: "system", data_type: "string" },
+  { field_public_id: "MSG-SYSTEM-WEEKDAY", token_key: "system.weekday", ui_label: "Система · день недели", category: "system", data_type: "string" },
+  { field_public_id: "MSG-SYSTEM-TODAY-LONG", token_key: "system.today_long", ui_label: "Система · дата словами (кратко)", category: "system", data_type: "string" },
+  { field_public_id: "MSG-SYSTEM-TODAY-RU", token_key: "system.today_ru", ui_label: "Система · дата словами", category: "system", data_type: "string" },
 ];
 
-const CONTACT_CENTER_PLACEHOLDER_REFS: RegistryFieldRef[] = [
-  { field_public_id: "CHAT-CONTACT-NAME", token_key: "full_name", ui_label: "Клиент · полное имя", category: "client", data_type: "string" },
-  { field_public_id: "CHAT-CONTACT-FIRST-NAME", token_key: "first_name", ui_label: "Клиент · имя", category: "client", data_type: "string" },
-  { field_public_id: "CHAT-CONTACT-LAST-NAME", token_key: "last_name", ui_label: "Клиент · фамилия", category: "client", data_type: "string" },
-  { field_public_id: "CHAT-CONTACT-TELEGRAM", token_key: "telegram_username", ui_label: "Клиент · Telegram", category: "client", data_type: "string" },
-  { field_public_id: "CHAT-SYSTEM-TODAY", token_key: "today", ui_label: "Система · сегодня", category: "system", data_type: "date" },
-  { field_public_id: "CHAT-SYSTEM-TOMORROW", token_key: "tomorrow", ui_label: "Система · завтра", category: "system", data_type: "date" },
-];
+const CONTACT_CENTER_PLACEHOLDER_REFS = MESSAGE_PLACEHOLDER_REFS;
 
 /**
  * Набор token_key, поддерживаемых резолверами рассылок (email-mass-broadcast,
@@ -89,9 +90,7 @@ const MESSAGES_SUPPORTED_TOKEN_KEYS: Set<string> = new Set([
   "system.today_long", "system.today_ru",
 ]);
 
-const CONTACT_CENTER_SUPPORTED_TOKEN_KEYS = new Set(
-  CONTACT_CENTER_PLACEHOLDER_REFS.map((ref) => ref.token_key),
-);
+const CONTACT_CENTER_SUPPORTED_TOKEN_KEYS = new Set(MESSAGES_SUPPORTED_TOKEN_KEYS);
 
 const TokenNode = Node.create({
   name: "token",
@@ -403,6 +402,8 @@ export function TokenizedRichInput({
   const isInternalUpdate = useRef(false);
   const [caretCoords, setCaretCoords] = useState<{ top: number; left: number } | null>(null);
   const editorRef = useRef<Editor | null>(null);
+  const onSubmitRef = useRef(onSubmit);
+  onSubmitRef.current = onSubmit;
 
   // ── Bubble toolbar state (P0.1) ──
   const [bubbleOpen, setBubbleOpen] = useState(false);
@@ -416,13 +417,9 @@ export function TokenizedRichInput({
 
   // Hydrate legacy label caches so existing chips render labels via tokenStringToLabel().
   const effectiveContext = tokenContext ?? "messages";
-  useEffect(() => { void loadTokensForContext(effectiveContext); }, [effectiveContext]);
   useEffect(() => {
-    if (tokenContext) return;
-    let cancelled = false;
-    loadProductFields().then((fields) => { if (!cancelled) setProductFieldsCache(fields); });
-    return () => { cancelled = true; };
-  }, [tokenContext]);
+    if (effectiveContext !== "messages") void loadTokensForContext(effectiveContext);
+  }, [effectiveContext]);
 
   // Suppress @deprecated extraTokenGroups (kept for API compat with existing call sites).
   void extraTokenGroups;
@@ -438,22 +435,47 @@ export function TokenizedRichInput({
     queryFn: loadCanonicalTokenRefs,
     staleTime: 60_000,
   });
+  const { data: productFields = [] } = useQuery({
+    queryKey: ["message-product-token-refs"],
+    queryFn: loadProductFields,
+    staleTime: 60_000,
+    enabled: effectiveContext === "messages",
+  });
+  useEffect(() => {
+    if (productFields.length > 0) setProductFieldsCache(productFields);
+  }, [productFields]);
+
+  const productTokenRefs = useMemo<RegistryFieldRef[]>(() => productFields.map((field) => ({
+    field_public_id: `PRODUCT-${field.key}`,
+    token_key: field.tokenString.replace(/^\{\{|\}\}$/g, ""),
+    ui_label: `Продукт · ${field.label}`,
+    category: "product",
+    data_type: "string",
+  })), [productFields]);
+
+  const supportedTokenKeys = useMemo(() => {
+    if (effectiveContext === "crm_automation") return null;
+    if (effectiveContext === "contact_center") return CONTACT_CENTER_SUPPORTED_TOKEN_KEYS;
+    return new Set([
+      ...MESSAGES_SUPPORTED_TOKEN_KEYS,
+      ...productTokenRefs.map((ref) => ref.token_key),
+    ]);
+  }, [effectiveContext, productTokenRefs]);
 
   const pickerRefs = useMemo(() => {
     if (effectiveContext === "crm_automation") return canonicalTokenRefs;
     const staticRefs = effectiveContext === "contact_center"
       ? CONTACT_CENTER_PLACEHOLDER_REFS
       : MESSAGE_PLACEHOLDER_REFS;
-    const staticKeys = new Set(staticRefs.map((ref) => ref.token_key));
-    return [...staticRefs, ...registryRefs.filter((ref) => !staticKeys.has(ref.token_key))];
-  }, [canonicalTokenRefs, effectiveContext, registryRefs]);
-
-  const supportedTokenKeys =
-    effectiveContext === "crm_automation"
-      ? null
-      : effectiveContext === "contact_center"
-        ? CONTACT_CENTER_SUPPORTED_TOKEN_KEYS
-        : MESSAGES_SUPPORTED_TOKEN_KEYS;
+    const seen = new Set<string>();
+    return [...registryRefs, ...staticRefs, ...(effectiveContext === "messages" ? productTokenRefs : [])]
+      .filter((ref) => supportedTokenKeys?.has(ref.token_key))
+      .filter((ref) => {
+        if (seen.has(ref.token_key)) return false;
+        seen.add(ref.token_key);
+        return true;
+      });
+  }, [canonicalTokenRefs, effectiveContext, productTokenRefs, registryRefs, supportedTokenKeys]);
 
   // Sync registry refs into tokenStringToLabel fallback cache so canonical
   // system.*/customer.*/etc. tokens render proper UI labels (no UNMAPPED).
@@ -504,6 +526,22 @@ export function TokenizedRichInput({
         if (!onPaste) return false;
         onPaste(event as unknown as ReactClipboardEvent<HTMLDivElement>);
         return event.defaultPrevented;
+      },
+      handleKeyDown: (_view, event) => {
+        if (
+          onSubmitRef.current &&
+          event.key === "Enter" &&
+          !event.shiftKey &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          !event.isComposing
+        ) {
+          event.preventDefault();
+          onSubmitRef.current();
+          return true;
+        }
+        return false;
       },
     },
     onUpdate: ({ editor: ed }) => {
@@ -802,7 +840,7 @@ export function TokenizedRichInput({
   if (!editor) return null;
 
   return (
-    <div className="space-y-1">
+    <div className="min-w-0 w-full space-y-1">
       <div className="relative">
         <EditorContent editor={editor} />
       </div>
@@ -905,10 +943,8 @@ export function TokenizedRichInput({
         document.body
       )}
 
-      {/* Канонический picker — единый компонент со страницы DOCX-разметки.
-          Для messages-контекста ограничиваем набор поддерживаемых токенов резолверами рассылок:
-          contact.* (+ legacy unprefixed) и system.* (+ legacy datetime).
-          Остальные показываются disabled с подписью «Недоступно для сообщений». */}
+      {/* В сообщениях показываем только токены, которые реально разрешаются
+          текущим каналом. Документные поля не попадают в меню как ложные disabled-опции. */}
       <FieldPickerPopover
         open={pickerOpen}
         onOpenChange={(o) => {

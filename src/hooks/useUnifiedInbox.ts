@@ -14,6 +14,7 @@ import {
   mergeTelegramWorkQueue,
   type TelegramUnansweredSummary,
 } from "@/lib/contactCenterTelegramQueue";
+import { formatContactName } from "@/lib/nameUtils";
 
 /**
  * useUnifiedInbox — фронтенд-нормализация трёх источников
@@ -69,6 +70,10 @@ export interface UnifiedDialog {
     /** profiles.telegram_user_id (числовой Telegram ID) — обязателен для ContactTelegramChat, иначе он показывает «Telegram не привязан». */
     telegramNumericId?: number | null;
     telegramUsername?: string | null;
+    profileFirstName?: string | null;
+    profileLastName?: string | null;
+    profileEmail?: string | null;
+    profilePhone?: string | null;
     telegramBotId?: string | null;
     telegramBotUsername?: string | null;
     telegramBotName?: string | null;
@@ -353,11 +358,11 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
         batches.flatMap((ids) => [
           supabase
             .from("profiles")
-            .select("id, user_id, full_name, email, avatar_url, telegram_user_id, telegram_username")
+            .select("id, user_id, first_name, last_name, full_name, email, phone, avatar_url, telegram_user_id, telegram_username")
             .in("user_id", ids),
           supabase
             .from("profiles")
-            .select("id, user_id, full_name, email, avatar_url, telegram_user_id, telegram_username")
+            .select("id, user_id, first_name, last_name, full_name, email, phone, avatar_url, telegram_user_id, telegram_username")
             .in("id", ids),
         ]),
       );
@@ -600,6 +605,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
       const businessAccount = latestIdentity?.business_account_id
         ? tgBusinessAccountMap.get(latestIdentity.business_account_id) ?? null
         : null;
+      const canonicalName = p ? formatContactName(p) : "—";
       // Until the identity read completes, prefer a neutral Telegram badge
       // over briefly showing the connected bot for a personal conversation.
       const sourceLabel = !latestIdentity
@@ -612,7 +618,7 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
         source: "telegram",
         sourceId: userId,
         sourceLabel,
-        displayName: p?.full_name || p?.email || "Без имени",
+        displayName: canonicalName !== "—" ? canonicalName : p?.email || "Без имени",
         avatarUrl: p?.avatar_url || null,
         lastMessage:
           d?.last_message_text ||
@@ -630,6 +636,10 @@ export function useUnifiedInbox({ enabled, perSourceLimit = 75, search = "" }: O
           telegramUserId: userId,
           telegramNumericId: p?.telegram_user_id ?? null,
           telegramUsername: p?.telegram_username ?? null,
+          profileFirstName: p?.first_name ?? null,
+          profileLastName: p?.last_name ?? null,
+          profileEmail: p?.email ?? null,
+          profilePhone: p?.phone ?? null,
           telegramBotId: d?.last_bot_id || null,
           telegramBotUsername: d?.last_bot_username || null,
           telegramBotName: d?.last_bot_name || null,

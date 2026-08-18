@@ -1036,6 +1036,10 @@ function ChatPanel({ channel, onBack }: { channel: SourceChannelRef; onBack?: ()
         telegramUserId={row.meta.telegramNumericId ?? null}
         telegramUsername={row.meta.telegramUsername ?? null}
         clientName={row.displayName}
+        clientFirstName={row.meta.profileFirstName ?? null}
+        clientLastName={row.meta.profileLastName ?? null}
+        clientEmail={row.meta.profileEmail ?? null}
+        clientPhone={row.meta.profilePhone ?? null}
         avatarUrl={row.avatarUrl}
         isActive
       />

@@ -99,6 +99,8 @@ interface Dialog {
   user_id: string;
   profile: {
     id: string;
+    first_name: string | null;
+    last_name: string | null;
     full_name: string | null;
     email: string | null;
     phone: string | null;
@@ -294,11 +296,11 @@ export function InboxTabContent({
       const [profilesByUserIdRes, profilesByIdRes, ordersRes, subsRes] = await Promise.all([
         supabase
           .from("profiles")
-          .select("id, user_id, full_name, email, phone, telegram_username, telegram_user_id, avatar_url, source")
+          .select("id, user_id, first_name, last_name, full_name, email, phone, telegram_username, telegram_user_id, avatar_url, source")
           .in("user_id", userIds),
         supabase
           .from("profiles")
-          .select("id, user_id, full_name, email, phone, telegram_username, telegram_user_id, avatar_url, source")
+          .select("id, user_id, first_name, last_name, full_name, email, phone, telegram_username, telegram_user_id, avatar_url, source")
           .in("id", userIds),
         supabase
           .from("orders_v2")
@@ -1085,8 +1087,8 @@ export function InboxTabContent({
                     <div className="flex-1 min-w-0 overflow-hidden">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-xs font-semibold truncate flex-1 min-w-0 whitespace-nowrap">
-                          {dialog.profile?.full_name 
-                            ? formatContactName({ full_name: dialog.profile.full_name }) 
+                          {dialog.profile?.full_name || dialog.profile?.first_name || dialog.profile?.last_name
+                            ? formatContactName(dialog.profile)
                             : dialog.profile?.email || "Неизвестный"}
                         </span>
                         {(dialog.profile && !(dialog.profile as any).user_id) && (
@@ -1224,7 +1226,13 @@ export function InboxTabContent({
           className="flex-1 min-w-0 text-left hover:opacity-80 transition-opacity cursor-pointer"
         >
           <p className="font-semibold truncate">
-            {selectedDialog?.profile?.full_name || selectedDialog?.profile?.email || "Контакт"}
+            {selectedDialog?.profile && (
+              selectedDialog.profile.full_name ||
+              selectedDialog.profile.first_name ||
+              selectedDialog.profile.last_name
+            )
+              ? formatContactName(selectedDialog.profile)
+              : selectedDialog?.profile?.email || "Контакт"}
           </p>
           <p className="text-xs text-muted-foreground truncate">
             {selectedDialog?.profile?.telegram_username 
@@ -1238,7 +1246,15 @@ export function InboxTabContent({
           userId={selectedUserId}
           telegramUserId={selectedDialog?.profile?.telegram_user_id || null}
           telegramUsername={selectedDialog?.profile?.telegram_username || null}
-          clientName={selectedDialog?.profile?.full_name}
+          clientName={selectedDialog?.profile && (
+            selectedDialog.profile.full_name ||
+            selectedDialog.profile.first_name ||
+            selectedDialog.profile.last_name
+          ) ? formatContactName(selectedDialog.profile) : selectedDialog?.profile?.email}
+          clientFirstName={selectedDialog?.profile?.first_name}
+          clientLastName={selectedDialog?.profile?.last_name}
+          clientEmail={selectedDialog?.profile?.email}
+          clientPhone={selectedDialog?.profile?.phone}
           avatarUrl={selectedDialog?.profile?.avatar_url}
           onAvatarUpdated={() => refetch()}
           hidePhotoButton
