@@ -171,6 +171,20 @@ function mapKnown(raw: string): string | null {
   if (s.includes('document_template_not_configured')) return 'Для этого сценария не настроен шаблон документа.';
   if (s.includes('document_not_enabled_for_offer')) return 'Документы не включены для этого сценария оплаты.';
 
+  if (s === "forbidden" || s.includes('"forbidden"')) {
+    return "Недостаточно прав для этого действия. Обратитесь к администратору ролей.";
+  }
+  if (s.includes("rbac_check_failed")) {
+    return "Не удалось проверить права доступа. Обновите страницу и попробуйте снова.";
+  }
+  if (s.includes("invalid_amount")) return "Укажите корректную сумму платежа больше нуля.";
+  if (s.includes("invalid_currency")) return "Выберите поддерживаемую валюту платежа.";
+  if (s.includes("invalid_provider")) return "Выберите поддерживаемого платёжного провайдера.";
+  if (s.includes("invalid_paid_at")) return "Укажите корректную дату платежа.";
+  if (s.includes("missing_idempotency_key")) {
+    return "Не удалось подготовить безопасный ключ платежа. Обновите форму и попробуйте снова.";
+  }
+
   if (s.includes('resume_blocked_no_payment_method')) {
     return 'Нужно заново привязать карту или оформить новую подписку.';
   }
