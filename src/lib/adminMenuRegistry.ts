@@ -108,6 +108,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionDef[] = [
       { code: "bepaid-subscriptions", label: "bePaid подписки",    route: "/admin/payments/bepaid-subscriptions" },
       { code: "payment-issues",       label: "Проблемы платежей",  route: "/admin/payments/payment-issues" },
       { code: "diagnostics",          label: "Диагностика",        route: "/admin/payments/diagnostics" },
+      { code: "manual-payment",       label: "Ручной платёж",      route: "/admin/payments?action=manual-payment" },
     ],
   },
   {

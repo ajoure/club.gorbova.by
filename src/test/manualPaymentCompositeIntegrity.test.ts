@@ -29,6 +29,42 @@ describe("manual payment retry integrity", () => {
     expect(source).not.toMatch(/\.from\(["']payments_v2["']\)\s*\.insert/);
   });
 
+  it("uses the least-privilege manual-payment edit contract for creation and retry", () => {
+    for (const file of [
+      "supabase/functions/admin-create-manual-payment/index.ts",
+      "supabase/functions/admin-retry-manual-payment-downstream/index.ts",
+    ]) {
+      const source = readFileSync(resolve(process.cwd(), file), "utf8");
+      expect(source).toContain('"has_admin_resource_access"');
+      expect(source).toContain('_section_code: "payments"');
+      expect(source).toContain('_resource_code: "manual-payment"');
+      expect(source).toContain('_min_level: "edit"');
+      expect(source).not.toContain('"has_admin_section_access"');
+    }
+  });
+
+  it("shows the manual payment action only with payments edit access", () => {
+    const source = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/components/admin/payments/PaymentsTabContent.tsx",
+      ),
+      "utf8",
+    );
+    expect(source).toContain('canAccessResource(');
+    expect(source).toContain('"manual-payment"');
+    expect(source).toContain("canCreateManualPayment &&");
+  });
+
+  it("keeps the manual payment resource in the canonical menu registry", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/lib/adminMenuRegistry.ts"),
+      "utf8",
+    );
+    expect(source).toContain('code: "manual-payment"');
+    expect(source).toContain('route: "/admin/payments?action=manual-payment"');
+  });
+
   it("guards a fully paid order against a new manual payment key", () => {
     const source = readFileSync(
       resolve(

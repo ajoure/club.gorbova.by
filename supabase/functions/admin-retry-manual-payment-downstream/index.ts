@@ -51,11 +51,12 @@ Deno.serve(async (req) => {
   }
 
   const { data: hasAccess, error: rbacError } = await admin.rpc(
-    "has_admin_section_access",
+    "has_admin_resource_access",
     {
       _user_id: actorUserId,
       _section_code: "payments",
-      _min_level: "manage",
+      _resource_code: "manual-payment",
+      _min_level: "edit",
     },
   );
   if (rbacError) {

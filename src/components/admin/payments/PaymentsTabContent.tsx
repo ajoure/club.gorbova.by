@@ -30,7 +30,7 @@ import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
 import SyncRunDialog from "@/components/admin/payments/SyncRunDialog";
 import SyncWithStatementDialog from "@/components/admin/payments/SyncWithStatementDialog";
 import { TimezoneSelector, usePersistedTimezone } from "./TimezoneSelector";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { matchSearchIndex } from "@/lib/multiTermSearch";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { UnifiedPayment as UnifiedPaymentType } from "@/hooks/useUnifiedPayments";
@@ -96,7 +96,12 @@ const COLUMNS_STORAGE_KEY = 'admin_payments_columns_v1';
 export function PaymentsTabContent() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { role } = useAuth();
+  const access = useAdminAccess();
+  const canCreateManualPayment = access.canAccessResource(
+    "payments",
+    "manual-payment",
+    "edit",
+  );
   
   // Date filter - default to current month in Europe/Minsk
   const MINSK_TZ = 'Europe/Minsk';
@@ -481,15 +486,17 @@ export function PaymentsTabContent() {
         />
         
         {/* Stage 3 — Ручное добавление платежа */}
-        <Button
-          variant="default"
-          size="sm"
-          className="h-8 gap-1.5 px-3 text-xs font-medium"
-          onClick={() => setManualPaymentOpen(true)}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Ручной платёж</span>
-        </Button>
+        {canCreateManualPayment && (
+          <Button
+            variant="default"
+            size="sm"
+            className="h-8 gap-1.5 px-3 text-xs font-medium"
+            onClick={() => setManualPaymentOpen(true)}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Ручной платёж</span>
+          </Button>
+        )}
 
         {/* Sync dropdown */}
         <DropdownMenu>
@@ -696,11 +703,13 @@ export function PaymentsTabContent() {
       />
 
       {/* Stage 3 — ручной платёж */}
-      <ManualPaymentDialog
-        open={manualPaymentOpen}
-        onOpenChange={setManualPaymentOpen}
-        onSuccess={refetch}
-      />
+      {canCreateManualPayment && (
+        <ManualPaymentDialog
+          open={manualPaymentOpen}
+          onOpenChange={setManualPaymentOpen}
+          onSuccess={refetch}
+        />
+      )}
     </div>
   );
 }

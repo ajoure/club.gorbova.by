@@ -68,11 +68,12 @@ Deno.serve(async (req) => {
   if (!actorUserId) return bad(401, "invalid_jwt");
 
   const { data: hasAccess, error: rbacErr } = await admin.rpc(
-    "has_admin_section_access",
+    "has_admin_resource_access",
     {
       _user_id: actorUserId,
       _section_code: "payments",
-      _min_level: "manage",
+      _resource_code: "manual-payment",
+      _min_level: "edit",
     },
   );
   if (rbacErr) {

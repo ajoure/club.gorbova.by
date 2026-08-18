@@ -47,7 +47,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { CreateDealFromPaymentDialog } from "./CreateDealFromPaymentDialog";
-import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 import { invokeAuthenticatedFunction } from "@/utils/invokeAuthenticatedFunction";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
 import {
@@ -283,9 +283,15 @@ export function ManualPaymentDialog({
           order_already_fully_paid:
             "Эта сделка уже полностью оплачена. Новый платёж не создан.",
         };
+        const normalized = await normalizeEdgeFunctionErrorAsync(
+          error ?? data,
+          data ?? undefined,
+        );
         const msg =
           localized[code] ??
-          normalizeEdgeFunctionError(error ?? data, "Не удалось создать ручной платёж");
+          (normalized && normalized !== "null" && normalized !== "undefined"
+            ? normalized
+            : "Не удалось создать ручной платёж");
         toast.error(msg);
         return;
       }
@@ -366,11 +372,14 @@ export function ManualPaymentDialog({
         { paymentId: retryPaymentId },
       );
       if (error || !data?.ok) {
+        const normalized = await normalizeEdgeFunctionErrorAsync(
+          error ?? data,
+          data ?? undefined,
+        );
         toast.error(
-          normalizeEdgeFunctionError(
-            error ?? data,
-            "Не удалось завершить обработку уже созданного платежа",
-          ),
+          normalized && normalized !== "null" && normalized !== "undefined"
+            ? normalized
+            : "Не удалось завершить обработку уже созданного платежа",
         );
         return;
       }
