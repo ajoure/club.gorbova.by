@@ -48,6 +48,14 @@ type ReconcileSource = {
   source_kind: 'subscription' | 'entitlement_source';
 };
 
+// Only canonical Club bonus sources may drive downstream product_access rules.
+// The second origin is the controlled CB20 backfill created before the shared
+// upsert helper started stamping the current canonical origin.
+const CLUB_BONUS_SOURCE_ORIGINS = [
+  'upsert_club_bonus_entitlement_source',
+  'controlled_cb20_bonus_backfill_20260810',
+] as const;
+
 interface OutcomeBuckets {
   granted: number;
   extended: number;
@@ -153,7 +161,7 @@ Deno.serve(async (req) => {
         .from('entitlement_sources')
         .select('id, user_id, profile_id, product_id, tariff_id, expires_at')
         .eq('source_type', 'bonus')
-        .eq('meta->>origin', 'upsert_club_bonus_entitlement_source')
+        .in('meta->>origin', [...CLUB_BONUS_SOURCE_ORIGINS])
         .eq('status', 'active')
         .gt('expires_at', nowIso)
         .limit(remainingSourceCapacity);
