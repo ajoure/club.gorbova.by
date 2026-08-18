@@ -1,45 +1,54 @@
-# Ревизия патча: least-privilege для ручного платежа
+# PLAN-ONLY REVIEW PR #340 — PASS
 
-**VERDICT: PASS с 3 обязательными правками** (без них релиз даст ложный успех).
+Проверка выполнена строго read-only на merged SHA `f983ef86870b26b8438f41f299361ca0bc74b365`. Изменений не вносилось.
 
-Ничего не изменено: код, БД, функции, данные не трогались, Publish не выполнялся.
+## 1. HEAD и чистота дерева — PASS
+- managed HEAD = `f983ef86870b26b8438f41f299361ca0bc74b365` (точное совпадение).
+- `git status --porcelain` пуст — дерево чистое.
 
-## Факты production/schema (read-only)
+## 2. Область diff — PASS
+Коммит `f983ef86` («fix: include controlled CB20 club bonus sources (#340)»), 2 файла / +12 −6:
+- `supabase/functions/access-rules-nightly-reconcile/index.ts` (+10 −1)
+- `supabase/functions/access-rules-nightly-reconcile/bonus_source_cohort_test.ts` (+8 −5)
 
-- `roles`: `admin`, `super_admin`, `menedzher`, `support`, `editor`, `admin_gost`, `user` — коды `support` и `menedzher` существуют.
-- `role_admin_section_access` для секции `payments`: `admin = manage`, `menedzher = view`, `support = view`. Другие роли доступа к секции не имеют.
-- `admin_resource`: UNIQUE `(section_id, code)`, `route NOT NULL`, `is_active` default true, FK на `admin_section` (RESTRICT), `public_id` генерится триггером/дефолтом. Идемпотентный upsert по `(section_id, code)` возможен.
-- `role_admin_resource_access`: UNIQUE `(role_id, resource_id)`, CHECK `access_level in (none,view,edit,manage)`. Upsert безопасен.
-- Существующие ресурсы секции `payments`: `overview (/admin/payments)`, `auto-renewals`, `statement`, `links`, `invoices`, `bepaid-subscriptions`, `payment-issues`, `diagnostics`. Кода `manual-payment` нет — конфликта имени нет.
-- `has_admin_resource_access(user, section, resource, min)` = max уровня строк `get_admin_access` с этим `section_code` **и** `resource_code`. Внутри `get_admin_access` есть явный bypass: `admin`/`super_admin` получают `manage` на все активные секции и ресурсы (`source='admin_full'`). Bypass сохраняется, отдельная выдача им не нужна.
-- Наследование: ресурс без явного override наследует уровень секции. Значит без явного `edit` новый ресурс дал бы `support`/`menedzher` только `view` — патч корректен. Обратная сторона: любая роль, которой позже дадут `payments = edit/manage` section-wide, автоматически получит право на ручной платёж.
-- Текущий гейт обеих функций идентичен: `has_admin_section_access(payments, manage)` — `admin-create-manual-payment/index.ts` (~строки 70-81) и `admin-retry-manual-payment-downstream/index.ts` (~строки 52-67). 403 возвращается до чтения body и до writer RPC — side effects отсутствуют, диагноз инцидента подтверждён.
+Других файлов, миграций, конфигов и frontend-кода нет.
 
-## Обязательные правки к предложенному патчу
+## 3. Фильтр entitlement_sources — PASS
+Введена константа `CLUB_BONUS_SOURCE_ORIGINS = ['upsert_club_bonus_entitlement_source', 'controlled_cb20_bonus_backfill_20260810']`, запрос:
+`.eq('source_type','bonus')` → `.in('meta->>origin', [...CLUB_BONUS_SOURCE_ORIGINS])` → `.eq('status','active')` → `.gt('expires_at', nowIso)` плюс опциональные фильтры product_ids/tariff_ids/user_ids.
+Произвольные и manual-источники исключены: allow-list закрытый, никаких wildcard/`or`. Тест `bonus_source_cohort_test.ts` закрепляет все четыре условия.
 
-1. **Реестр меню (блокирующее).** `sync_admin_menu_registry` деактивирует (`is_active=false`) ресурсы, которых нет в payload, а payload строится из `src/lib/adminMenuRegistry.ts` (`buildSyncRegistryPayload`) и вызывается из `RoleAccessEditor`. Если ресурс создан только миграцией, первый же синк из UI ролей его выключит → `get_admin_access` перестанет его отдавать → тихий возврат 403. Ресурс `manual-payment` обязан быть добавлен в `ADMIN_SECTIONS` секции `payments` в том же PR.
-2. **Route.** `/admin/payments` уже занят ресурсом `overview`. Совпадение не ломает `resolveAdminSectionForPath` (при равном score побеждает первый, т.е. `overview`), но делает `manual-payment` неразрешимым по пути и путает синк. Использовать нерезолвимый по пути маршрут, например `/admin/payments?action=manual-payment`, и не давать ему `altPrefixes`.
-3. **Пункт 5 (ошибки).** `normalizeEdgeFunctionError` уже читает `error.context.body`, но у `FunctionsHttpError` `context` — это `Response`, тело доступно только через `await context.json()`. Синхронного чтения недостаточно: нужен async-разбор тела в `invokeAuthenticatedFunction` до передачи в normalize, иначе останется generic «non-2xx». Плюс словарь кодов: `forbidden`, `invalid_amount`, `invalid_currency`, `invalid_provider`, `invalid_paid_at`, `missing_idempotency_key`, `rbac_check_failed`.
+## 4. Production counts (read-only, Gorbova Club `11c9f1b8-0355-4753-bd74-40b42aa53616`)
+Активные bonus-источники продукта (status=active, expires_at>now):
+- `controlled_cb20_bonus_backfill_20260810`: 23 источника, 23 уникальных пользователя, expires_at все = 2026-09-09 21:59:59+00
+- `upsert_club_bonus_entitlement_source`: 0
+- Итого в когорту войдут 23 источника / 23 пользователя.
+- Bonus-источников с иным origin, которые фильтр отсекает: 0 (по всей таблице).
 
-## Замечания (не блокирующие)
+Разрез по тарифу источника:
+- `7c748940` (канонический): 15 источников → 2 активных tariff-scoped правила `grant_target_type=product_access`, суммарно 10 target-продуктов → 150 оценок.
+- `b276d8a5`: 8 источников → активных product_access правил нет ни на тарифе, ни на product-level → 0 оценок, эти источники пропускаются (`rules.length === 0 → continue`).
 
-- Гейт должен быть симметричным: обе функции переводятся на `has_admin_resource_access(payments, manual-payment, edit)`; иначе создание пройдёт, а retry downstream отдаст 403.
-- UI-гейт: и кнопка (`PaymentsTabContent.tsx`, ~строка 488), и рендер `ManualPaymentDialog` (~строка 699) — оба под `canAccessResource('payments','manual-payment','edit')`, без замены на `canWrite`.
-- Безопасность выдачи: право узкое — создание платежа `origin='manual_admin'` с идемпотентностью и audit-записью; повышения на удаление/возвраты/выписку не даёт. Приемлемо для `support`/`menedzher`.
-- Миграция: upsert только `edit`, с `GREATEST`-семантикой (не понижать существующие `manage`), + строка в `audit_logs`. Никаких изменений writer RPC и downstream.
+Ожидаемые downstream outcomes dry-run (по фактическим данным, без PII):
+- evaluations: 150
+- condition_not_met (нет paid-заказа на required product): 144
+- condition met: 6 (4 уникальных пользователя)
+  - без строки entitlement → ожидаемо `granted`: 3
+  - есть неактивная строка → ожидаемо `reactivated`: 3
+  - `already_satisfied` / `extended`: 0
+- Фактическая раскладка granted/reactivated/metadata_backfilled уточняется ответом dry-run; расхождение с этими counts = STOP.
 
-## Безопасный runtime-план после merge (только после EXECUTE APPROVED)
+## 5. Отсутствие побочных эффектов — PASS
+Патч трогает только выборку когорты в nightly-reconcile. Не изменяются: тарифы и их конфигурация, месячные вебинары, Telegram-гранты/ревокации, платежи и заказы, сделки CRM, а также сами сроки Club bonus (`entitlement_sources.expires_at` не пишется; nightly работает только по downstream product_access и никогда не выполняет destructive-действий).
 
-1. Sync точного merged SHA, подтвердить чистое дерево и паритет.
-2. Применить ровно одну именованную миграцию (resource + 2 upsert access + audit).
-3. Read-back: 1 строка `admin_resource(payments, manual-payment, is_active=true)`; 2 строки `role_admin_resource_access = edit`; `has_admin_resource_access` = true для support/menedzher и admin, false для роли без доступа.
-4. Deploy ровно 2 функции: `admin-create-manual-payment`, `admin-retry-manual-payment-downstream`. Больше ничего.
-5. Anon smoke: POST без JWT → 401 (реальный платёж не создаётся).
-6. Authorized smoke: пользователь с ресурсным `edit`, тело с `amount = 0` → ожидается 400 `invalid_amount` (гейт пройден, запись не создаётся).
-7. Row-count readback до/после: `count(*) from payments_v2 where origin='manual_admin'` и `orders_v2` — без изменений. Никаких писем, отмен и реальных платежей.
-8. Frontend Publish — только после всех PASS; далее UI-проверка desktop+mobile.
-
-## BLOCKERS
-
-- До внесения правок 1-3 патч считать неготовым к merge.
-- Точный merged SHA пока не назван — EXECUTE не начинается.
+## 6. EXECUTE plan (после отдельного одобрения)
+1. Синхронизировать managed код точно на SHA `f983ef86870b26b8438f41f299361ca0bc74b365` (уже соответствует).
+2. Deploy ровно одной функции: `access-rules-nightly-reconcile`. Никаких миграций, никаких других функций, без Publish.
+3. Targeted dry-run:
+   `POST /functions/v1/access-rules-nightly-reconcile` c телом
+   `{"dry_run": true, "product_ids": ["11c9f1b8-0355-4753-bd74-40b42aa53616"]}`
+4. STOP и read-back:
+   - counts по `entitlement_sources` (23 / 23 пользователя, origin-разрез) до и после — без изменений;
+   - `max(updated_at)` и `count(*)` по `entitlements` и `access_grant_ledger` — без изменений;
+   - сверка ответа dry-run с ожидаемыми counts из п.4.
+5. Любой mismatch, неясный rowcount или новый critical finding → немедленная остановка и отчёт. Никаких data writes на этой стадии.
