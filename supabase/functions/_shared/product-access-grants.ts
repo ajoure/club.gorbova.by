@@ -46,6 +46,8 @@ export interface SecondaryGrantAction {
   source_product_id: string;
   source_tariff_id: string | null;
   source_subscription_id: string | null;
+  source_entitlement_source_id?: string | null;
+  source_access_kind?: 'subscription' | 'entitlement_source' | null;
   source_access_end_at: string | null;
   rule_id: string;
   target_product_id: string;
@@ -74,6 +76,11 @@ export interface SecondaryGrantContext {
   /** When true, helper will NOT mutate, only classify (preview/dry-run). */
   dryRun?: boolean;
 }
+
+export type SecondaryEntitlementSourceWindow = {
+  id: string;
+  access_end_at: string | null;
+};
 
 interface InternalRule {
   id: string;
@@ -378,6 +385,13 @@ export async function syncSecondaryProductAccessForUser(
     sourceProductId: string;
     sourceTariffId: string | null;
     sourceSubscription: { id: string; access_end_at: string | null } | null;
+    /**
+     * An independently expiring entitlement source (for example a finite Club
+     * bonus). It is deliberately kept separate from subscriptions_v2 so the
+     * secondary grant expires with the bonus and never masquerades as a paid
+     * recurring subscription.
+     */
+    sourceEntitlementSource?: SecondaryEntitlementSourceWindow | null;
     rules: InternalRule[];
     excludeOrderId?: string;
     /**
@@ -389,7 +403,25 @@ export async function syncSecondaryProductAccessForUser(
     ctx: SecondaryGrantContext;
   },
 ): Promise<SecondaryGrantAction[]> {
-  const { userId, profileId, sourceProductId, sourceTariffId, sourceSubscription, rules, ctx, priorPurchaseCache } = params;
+  const {
+    userId,
+    profileId,
+    sourceProductId,
+    sourceTariffId,
+    sourceSubscription,
+    sourceEntitlementSource = null,
+    rules,
+    ctx,
+    priorPurchaseCache,
+  } = params;
+  const sourceAccessKind = sourceEntitlementSource
+    ? 'entitlement_source'
+    : sourceSubscription
+      ? 'subscription'
+      : null;
+  const sourceAccessEndAt = sourceEntitlementSource?.access_end_at
+    || sourceSubscription?.access_end_at
+    || null;
   const excludeOrderId = params.excludeOrderId || '00000000-0000-0000-0000-000000000000';
   const userPaidMap = priorPurchaseCache?.get(userId) ?? null;
 
@@ -429,7 +461,9 @@ export async function syncSecondaryProductAccessForUser(
         source_product_id: sourceProductId,
         source_tariff_id: sourceTariffId,
         source_subscription_id: sourceSubscription?.id || null,
-        source_access_end_at: sourceSubscription?.access_end_at || null,
+        source_entitlement_source_id: sourceEntitlementSource?.id || null,
+        source_access_kind: sourceAccessKind,
+        source_access_end_at: sourceAccessEndAt,
         rule_id: rule.id,
         target_product_id: targetProdId,
         target_product_code: productCodeMap.get(targetProdId) || null,
@@ -517,8 +551,8 @@ export async function syncSecondaryProductAccessForUser(
       let planned: string | null = null;
       if (rule.duration_days) {
         planned = new Date(Date.now() + rule.duration_days * 86400000).toISOString();
-      } else if (sourceSubscription?.access_end_at) {
-        planned = sourceSubscription.access_end_at;
+      } else if (sourceAccessEndAt) {
+        planned = sourceAccessEndAt;
       }
       action.planned_expires_at = planned;
 
@@ -555,8 +589,10 @@ export async function syncSecondaryProductAccessForUser(
         rule_id: rule.id,
         order_id: ctx.orderId || null,
         source_subscription_id: sourceSubscription?.id || null,
+        source_entitlement_source_id: sourceEntitlementSource?.id || null,
+        source_access_kind: sourceAccessKind,
         source_tariff_id: sourceTariffId,
-        source_access_end_at: sourceSubscription?.access_end_at || null,
+        source_access_end_at: sourceAccessEndAt,
         source_window_rule: rule.duration_days ? 'rule_duration' : 'align_with_source',
         prior_purchase: priorInfo,
         target_product_id: targetProdId,
@@ -732,6 +768,8 @@ function buildEnrichedMeta(p: {
   rule_id: string;
   order_id: string | null;
   source_subscription_id: string | null;
+  source_entitlement_source_id: string | null;
+  source_access_kind: 'subscription' | 'entitlement_source' | null;
   source_tariff_id: string | null;
   source_access_end_at: string | null;
   source_window_rule: 'rule_duration' | 'align_with_source';
@@ -744,6 +782,8 @@ function buildEnrichedMeta(p: {
     source_rule_id: p.rule_id,
     source_order_id: p.order_id,
     business_subscription_id: p.source_subscription_id,
+    source_entitlement_source_id: p.source_entitlement_source_id,
+    source_access_kind: p.source_access_kind,
     business_tariff_id: p.source_tariff_id,
     source_access_end_at: p.source_access_end_at,
     source_window_rule: p.source_window_rule,
@@ -810,7 +850,11 @@ async function writeGrantLedger(
       source_event_type: ctx.sourceEventType,
       source_event_key: eventKey,
       source_subject_type: ctx.sourceSubjectType,
-      source_subject_ref: action.source_subscription_id || ctx.orderId || null,
+      source_subject_ref:
+        action.source_entitlement_source_id ||
+        action.source_subscription_id ||
+        ctx.orderId ||
+        null,
       source_subscription_id: action.source_subscription_id,
       source_order_id: ctx.orderId || null,
       action_type: actionType as any,
@@ -827,7 +871,7 @@ async function writeGrantLedger(
         target_product_id: action.target_product_id,
         previous_expires_at: action.current_expires_at,
         new_expires_at: action.planned_expires_at,
-        source_window_rule: action.source_subscription_id ? 'align_with_source' : 'rule_duration',
+        source_window_rule: action.source_access_end_at ? 'align_with_source' : 'rule_duration',
       },
       parent_event_key: ctx.parentEventKey || null,
       parent_execution_key: ctx.parentExecutionKey || null,
@@ -852,7 +896,11 @@ async function writeSkipLedger(
       source_event_type: ctx.sourceEventType,
       source_event_key: eventKey,
       source_subject_type: ctx.sourceSubjectType,
-      source_subject_ref: action.source_subscription_id || ctx.orderId || null,
+      source_subject_ref:
+        action.source_entitlement_source_id ||
+        action.source_subscription_id ||
+        ctx.orderId ||
+        null,
       source_subscription_id: action.source_subscription_id,
       source_order_id: ctx.orderId || null,
       action_type: 'skip',
@@ -891,7 +939,11 @@ async function writeFailedLedger(
       source_event_type: ctx.sourceEventType,
       source_event_key: eventKey,
       source_subject_type: ctx.sourceSubjectType,
-      source_subject_ref: action.source_subscription_id || ctx.orderId || null,
+      source_subject_ref:
+        action.source_entitlement_source_id ||
+        action.source_subscription_id ||
+        ctx.orderId ||
+        null,
       source_subscription_id: action.source_subscription_id,
       source_order_id: ctx.orderId || null,
       action_type: 'grant',
@@ -971,7 +1023,11 @@ async function writeMetadataBackfillLedger(
       source_event_type: ctx.sourceEventType,
       source_event_key: eventKey,
       source_subject_type: ctx.sourceSubjectType,
-      source_subject_ref: action.source_subscription_id || ctx.orderId || null,
+      source_subject_ref:
+        action.source_entitlement_source_id ||
+        action.source_subscription_id ||
+        ctx.orderId ||
+        null,
       source_subscription_id: action.source_subscription_id,
       source_order_id: ctx.orderId || null,
       action_type: 'skip',

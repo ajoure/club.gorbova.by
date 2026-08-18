@@ -22,7 +22,7 @@ import {
 } from './caller_auth.ts';
 import { resolveStaleAccessPolicy } from './stale_access_policy.ts';
 import { evaluateGrantEligibility, type Branch as EligibilityBranch, type CallerType as EligibilityCallerType } from '../_shared/grant-eligibility.ts';
-import { syncConfiguredClubBonusSource } from '../_shared/club-bonus-entitlement-source.ts';
+import { syncConfiguredClubBonusCascade } from '../_shared/club-bonus-entitlement-source.ts';
 
 
 
@@ -746,11 +746,13 @@ Deno.serve(async (req) => {
       // A finite Club bonus is a separate entitlement source.  It must also be
       // repaired on the idempotent path because an earlier attempt could have
       // committed the primary product and failed before creating the bonus.
-      const clubBonusSource = await syncConfiguredClubBonusSource(supabase, {
+      const clubBonusSource = await syncConfiguredClubBonusCascade(supabase, {
         orderId,
         userId,
+        profileId: order.profile_id || null,
         productId,
         tariffId: order.tariff_id || null,
+        sourceEventKeyPrefix: `gafo:idempotent_club_bonus_product_access:${orderId}`,
       });
 
       await supabase.from("audit_logs").insert({
@@ -777,6 +779,7 @@ Deno.serve(async (req) => {
           expected_min_end: expectedMinEndForSkipGuard.toISOString(),
           club_bonus_source_status: clubBonusSource.status,
           club_bonus_access_rule_id: clubBonusSource.access_rule_id || null,
+          club_bonus_product_access_count: clubBonusSource.product_access.length,
         },
       });
 
@@ -2083,11 +2086,13 @@ Deno.serve(async (req) => {
     // The Club bonus has its own finite source and does not replace a paid
     // CHAT/FULL subscription.  Rules without grant_tariff_id remain legacy
     // Telegram-only rules and produce a safe not_configured no-op.
-    const clubBonusSource = await syncConfiguredClubBonusSource(supabase, {
+    const clubBonusSource = await syncConfiguredClubBonusCascade(supabase, {
       orderId,
       userId,
+      profileId: profileId || null,
       productId,
       tariffId: tariffId || null,
+      sourceEventKeyPrefix: `gafo:club_bonus_product_access:${orderId}`,
     });
     results.club_bonus_source = clubBonusSource;
 
