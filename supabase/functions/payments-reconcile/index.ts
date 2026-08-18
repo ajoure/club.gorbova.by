@@ -431,7 +431,7 @@ async function checkBepaidTransaction(
       {
         method: "GET",
         headers: {
-          Authorization: `Basic ${auth}`,
+          Authorization: auth,
           "Content-Type": "application/json",
         },
       }
@@ -476,12 +476,53 @@ async function processQueueItem(supabase: any, item: any, order: any) {
     },
   };
 
-  const { error: paymentError } = await supabase
+  const { data: existingPayment, error: existingPaymentError } = await supabase
     .from("payments_v2")
-    .upsert(paymentRow, { onConflict: "provider,provider_payment_id", ignoreDuplicates: true });
+    .select("id,order_id")
+    .eq("provider", "bepaid")
+    .eq("provider_payment_id", item.bepaid_uid)
+    .maybeSingle();
 
-  if (paymentError) {
-    throw new Error(`payments_v2 write failed: ${paymentError.message}`);
+  if (existingPaymentError) {
+    throw new Error(`payments_v2 lookup failed: ${existingPaymentError.message}`);
+  }
+
+  if (existingPayment?.order_id && existingPayment.order_id !== order.id) {
+    throw new Error(
+      `payments_v2 conflict: transaction ${item.bepaid_uid} already belongs to order ${existingPayment.order_id}`,
+    );
+  }
+
+  if (existingPayment) {
+    let updateQuery = supabase
+      .from("payments_v2")
+      .update(paymentRow)
+      .eq("id", existingPayment.id);
+    updateQuery = existingPayment.order_id
+      ? updateQuery.eq("order_id", order.id)
+      : updateQuery.is("order_id", null);
+
+    const { data: updatedPayment, error: paymentUpdateError } = await updateQuery
+      .select("id,order_id")
+      .maybeSingle();
+
+    if (paymentUpdateError || !updatedPayment) {
+      throw new Error(
+        `payments_v2 update failed: ${paymentUpdateError?.message || "row changed concurrently"}`,
+      );
+    }
+  } else {
+    const { error: paymentInsertError } = await supabase
+      .from("payments_v2")
+      .insert(paymentRow);
+
+    // Another worker may have inserted the same provider transaction between
+    // our lookup and insert. The strict read-back below decides whether that
+    // race is safe; the partial unique index cannot be used via PostgREST
+    // ON CONFLICT, so never rely on an upsert here.
+    if (paymentInsertError && paymentInsertError.code !== "23505") {
+      throw new Error(`payments_v2 insert failed: ${paymentInsertError.message}`);
+    }
   }
 
   const { data: persistedPayment, error: verifyError } = await supabase
@@ -491,8 +532,13 @@ async function processQueueItem(supabase: any, item: any, order: any) {
     .eq("provider_payment_id", item.bepaid_uid)
     .maybeSingle();
 
-  if (verifyError || !persistedPayment) {
-    throw new Error(`payments_v2 verification failed: ${verifyError?.message || "row missing"}`);
+  if (verifyError || !persistedPayment || persistedPayment.order_id !== order.id) {
+    throw new Error(
+      `payments_v2 verification failed: ${
+        verifyError?.message ||
+        (!persistedPayment ? "row missing" : `unexpected order ${persistedPayment.order_id || "null"}`)
+      }`,
+    );
   }
 
   // Fix order and create subscription
@@ -501,14 +547,28 @@ async function processQueueItem(supabase: any, item: any, order: any) {
   });
 
   // Mark queue item as completed
-  await supabase
+  const { data: completedQueueItem, error: queueCompletionError } = await supabase
     .from("payment_reconcile_queue")
     .update({
       status: "completed",
       processed_at: now.toISOString(),
       processed_order_id: order.id,
     })
-    .eq("id", item.id);
+    .eq("id", item.id)
+    .select("id,status,processed_order_id")
+    .maybeSingle();
+
+  if (
+    queueCompletionError ||
+    completedQueueItem?.status !== "completed" ||
+    completedQueueItem?.processed_order_id !== order.id
+  ) {
+    throw new Error(
+      `payment_reconcile_queue completion failed: ${
+        queueCompletionError?.message || "completion read-back mismatch"
+      }`,
+    );
+  }
 }
 
 async function fixOrderAndCreateSubscription(
@@ -516,8 +576,15 @@ async function fixOrderAndCreateSubscription(
   order: any,
   payment: any
 ) {
-  // Update order status to paid
-  await supabase
+  if (!order.user_id || !order.product_id) {
+    throw new Error(
+      `Order ${order.id} cannot be fulfilled without user_id and product_id`,
+    );
+  }
+
+  // Update order status to paid and require an exact read-back before granting
+  // access. A failed update must never be hidden behind a completed queue row.
+  const { data: paidOrder, error: orderUpdateError } = await supabase
     .from("orders_v2")
     .update({
       status: "paid",
@@ -528,32 +595,50 @@ async function fixOrderAndCreateSubscription(
         reconciled_payment_id: payment.provider_payment_id,
       },
     })
-    .eq("id", order.id);
+    .eq("id", order.id)
+    .select("id,status,user_id,product_id")
+    .maybeSingle();
+
+  if (
+    orderUpdateError ||
+    paidOrder?.status !== "paid" ||
+    paidOrder?.user_id !== order.user_id ||
+    paidOrder?.product_id !== order.product_id
+  ) {
+    throw new Error(
+      `orders_v2 paid transition failed for order ${order.id}: ${
+        orderUpdateError?.message || "paid order read-back mismatch"
+      }`,
+    );
+  }
 
   // CANONICAL FULFILLMENT: delegate ALL access grants to grant-access-for-order
   // This replaces direct INSERT subscriptions_v2 + UPSERT entitlements + telegram-grant-access
   // which previously bypassed access_rules resolution and created partial access chains
-  if (order.user_id && order.product_id) {
-    try {
-      const { data: grantResult, error: grantError } = await supabase.functions.invoke('grant-access-for-order', {
-        body: {
-          orderId: order.id,
-          grantTelegram: true,
-          grantGetcourse: false,
-        },
-      });
+  const { data: grantResult, error: grantError } = await supabase.functions.invoke('grant-access-for-order', {
+    body: {
+      orderId: order.id,
+      grantTelegram: true,
+      grantGetcourse: false,
+    },
+  });
 
-      if (grantError) {
-        console.error(`[payments-reconcile] grant-access-for-order error for order ${order.id}:`, grantError);
-      } else {
-        console.log(`[payments-reconcile] grant-access-for-order success for order ${order.id}:`, grantResult);
-      }
-    } catch (grantErr) {
-      console.error(`[payments-reconcile] grant-access-for-order exception for order ${order.id}:`, grantErr);
-    }
+  if (grantError) {
+    throw new Error(
+      `grant-access-for-order failed for order ${order.id}: ${grantError.message}`,
+    );
+  }
 
-    // Notify admins about reconciled payment (preserved side-effect)
-    try {
+  if (grantResult?.success !== true) {
+    throw new Error(
+      `grant-access-for-order returned an unverified result for order ${order.id}: ${JSON.stringify(grantResult)}`,
+    );
+  }
+
+  console.log(`[payments-reconcile] grant-access-for-order success for order ${order.id}:`, grantResult);
+
+  // Notify admins about reconciled payment (preserved side-effect)
+  try {
       const { data: product } = await supabase
         .from("products_v2")
         .select("code, name")
@@ -600,9 +685,8 @@ async function fixOrderAndCreateSubscription(
       } else {
         console.log("Reconcile fix admin notification sent:", notifyData);
       }
-    } catch (adminNotifyError) {
-      console.error("Admin notification error (non-critical):", adminNotifyError);
-    }
+  } catch (adminNotifyError) {
+    console.error("Admin notification error (non-critical):", adminNotifyError);
   }
 
   console.info(`Fixed order ${order.order_number || order.id}`);

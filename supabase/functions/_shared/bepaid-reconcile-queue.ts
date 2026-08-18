@@ -33,7 +33,10 @@ export interface QueueEnsureResult {
 
 function normalizeStatus(rawStatus: string | null | undefined): string {
   const status = String(rawStatus || "").trim().toLowerCase();
-  if (!status || status.includes("неуспеш") || status.includes("failed") || status.includes("declin")) {
+  if (
+    !status || status.includes("неуспеш") || status.includes("failed") ||
+    status.includes("declin")
+  ) {
     return "failed";
   }
   if (["successful", "успешный", "succeeded", "success"].includes(status)) {
@@ -51,7 +54,9 @@ function extractLast4(cardMasked: string | null | undefined): string | null {
   return match?.[1] || null;
 }
 
-function extractCardBrand(cardMasked: string | null | undefined): string | null {
+function extractCardBrand(
+  cardMasked: string | null | undefined,
+): string | null {
   const card = String(cardMasked || "").toLowerCase();
   if (card.includes("visa")) return "visa";
   if (card.includes("master")) return "mastercard";
@@ -67,7 +72,7 @@ function extractCardBrand(cardMasked: string | null | undefined): string | null 
  * historical statement import from materialising unrelated old rows.
  */
 export async function ensureExistingBepaidPaymentQueued(
-  supabase: any,
+  supabase: SupabaseClient,
   row: QueueStatementRow,
   source: string,
 ): Promise<QueueEnsureResult> {
@@ -97,7 +102,9 @@ export async function ensureExistingBepaidPaymentQueued(
     .maybeSingle();
 
   if (paymentError) {
-    throw new Error(`payment lookup failed for ${uid}: ${paymentError.message}`);
+    throw new Error(
+      `payment lookup failed for ${uid}: ${paymentError.message}`,
+    );
   }
   if (!payment) return { action: "payment_missing" };
   if (payment.order_id) return { action: "payment_already_linked" };
@@ -116,8 +123,9 @@ export async function ensureExistingBepaidPaymentQueued(
     return { action: "already_matched", id: existing.id };
   }
 
-  const isSoftCancelled =
-    ["cancelled", "canceled"].includes(String(existing?.status || "").toLowerCase()) ||
+  const isSoftCancelled = ["cancelled", "canceled"].includes(
+    String(existing?.status || "").toLowerCase(),
+  ) ||
     String(existing?.last_error || "").startsWith("SOFT_CANCELLED") ||
     String(existing?.last_error || "").startsWith("CANCELLED_BY_ADMIN");
   if (isSoftCancelled) {
@@ -162,7 +170,9 @@ export async function ensureExistingBepaidPaymentQueued(
       .eq("id", existing.id)
       .is("matched_order_id", null);
     if (updateError) {
-      throw new Error(`queue reactivation failed for ${uid}: ${updateError.message}`);
+      throw new Error(
+        `queue reactivation failed for ${uid}: ${updateError.message}`,
+      );
     }
     return { action: "reactivated", id: existing.id };
   }
@@ -173,7 +183,12 @@ export async function ensureExistingBepaidPaymentQueued(
     .select("id")
     .single();
   if (insertError || !inserted) {
-    throw new Error(`queue insert failed for ${uid}: ${insertError?.message || "row missing"}`);
+    throw new Error(
+      `queue insert failed for ${uid}: ${
+        insertError?.message || "row missing"
+      }`,
+    );
   }
   return { action: "inserted", id: inserted.id };
 }
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
