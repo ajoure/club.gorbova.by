@@ -38,6 +38,16 @@ interface ReconcilePayload {
   max_subscriptions?: number;
 }
 
+type ReconcileSource = {
+  id: string;
+  user_id: string;
+  profile_id: string | null;
+  product_id: string;
+  tariff_id: string | null;
+  access_end_at: string | null;
+  source_kind: 'subscription' | 'entitlement_source';
+};
+
 interface OutcomeBuckets {
   granted: number;
   extended: number;
@@ -107,11 +117,14 @@ Deno.serve(async (req) => {
     const dryRun = body.dry_run !== false; // default true for safety
     const maxSubs = body.max_subscriptions ?? 5000;
 
-    // 1. Pull active subscriptions cohort.
+    // 1. Pull paid recurring sources plus independently expiring bonus sources.
+    // A Club bonus created by a course purchase intentionally has no row in
+    // subscriptions_v2. Excluding entitlement_sources here left its downstream
+    // prior_purchase product grants unrepaired by the nightly job.
     let subQ = supabase
       .from('subscriptions_v2')
       .select('id, user_id, profile_id, product_id, tariff_id, access_end_at, status')
-      .eq('status', 'active')
+      .in('status', ['active', 'past_due'])
       .limit(maxSubs);
 
     if (body.tariff_ids?.length) subQ = subQ.in('tariff_id', body.tariff_ids);
@@ -120,12 +133,64 @@ Deno.serve(async (req) => {
 
     const { data: subs, error: subErr } = await subQ;
     if (subErr) throw subErr;
-    const subscriptions = subs || [];
+    const nowIso = new Date().toISOString();
+    const subscriptions = (subs || []).filter((s) =>
+      s.status === 'active'
+      || (s.status === 'past_due' && !!s.access_end_at && s.access_end_at > nowIso)
+    );
+
+    const remainingSourceCapacity = Math.max(0, maxSubs - subscriptions.length);
+    let bonusSources: Array<{
+      id: string;
+      user_id: string;
+      profile_id: string | null;
+      product_id: string;
+      tariff_id: string | null;
+      expires_at: string | null;
+    }> = [];
+    if (remainingSourceCapacity > 0) {
+      let bonusQ = supabase
+        .from('entitlement_sources')
+        .select('id, user_id, profile_id, product_id, tariff_id, expires_at')
+        .eq('source_type', 'bonus')
+        .eq('meta->>origin', 'upsert_club_bonus_entitlement_source')
+        .eq('status', 'active')
+        .gt('expires_at', nowIso)
+        .limit(remainingSourceCapacity);
+      if (body.tariff_ids?.length) bonusQ = bonusQ.in('tariff_id', body.tariff_ids);
+      if (body.product_ids?.length) bonusQ = bonusQ.in('product_id', body.product_ids);
+      if (body.user_ids?.length) bonusQ = bonusQ.in('user_id', body.user_ids);
+
+      const { data: bonusRows, error: bonusErr } = await bonusQ;
+      if (bonusErr) throw bonusErr;
+      bonusSources = (bonusRows || []) as typeof bonusSources;
+    }
+
+    const sources: ReconcileSource[] = [
+      ...subscriptions.map((s) => ({
+        id: s.id,
+        user_id: s.user_id,
+        profile_id: s.profile_id,
+        product_id: s.product_id,
+        tariff_id: s.tariff_id,
+        access_end_at: s.access_end_at,
+        source_kind: 'subscription' as const,
+      })),
+      ...bonusSources.map((s) => ({
+        id: s.id,
+        user_id: s.user_id,
+        profile_id: s.profile_id,
+        product_id: s.product_id,
+        tariff_id: s.tariff_id,
+        access_end_at: s.expires_at,
+        source_kind: 'entitlement_source' as const,
+      })),
+    ];
 
     // 2. For each unique (product_id, tariff_id) — resolve rules once, cache.
     const ruleCacheKey = (pid: string, tid: string | null) => `${pid}::${tid || 'null'}`;
     const rulesByKey = new Map<string, Awaited<ReturnType<typeof resolveProductAccessRules>>>();
-    for (const s of subscriptions) {
+    for (const s of sources) {
       const key = ruleCacheKey(s.product_id, s.tariff_id);
       if (rulesByKey.has(key)) continue;
       const rules = await resolveProductAccessRules(supabase, s.product_id, s.tariff_id);
@@ -134,7 +199,7 @@ Deno.serve(async (req) => {
 
     // 3. Build batch prior_purchase cache for the WHOLE cohort.
     //    SOT: orders_v2.status='paid' only.
-    const allUserIds = [...new Set(subscriptions.map((s) => s.user_id).filter(Boolean) as string[])];
+    const allUserIds = [...new Set(sources.map((s) => s.user_id).filter(Boolean) as string[])];
     const allRules = [...rulesByKey.values()].flat();
     const allRequiredProductIds = collectPriorPurchaseProductIds(allRules);
     const priorPurchaseCache = await buildPriorPurchaseCache(
@@ -157,7 +222,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    for (const s of subscriptions) {
+    let processedSubscriptions = 0;
+    let processedEntitlementSources = 0;
+    for (const s of sources) {
       const rules = rulesByKey.get(ruleCacheKey(s.product_id, s.tariff_id)) || [];
       if (rules.length === 0) continue;
 
@@ -166,13 +233,18 @@ Deno.serve(async (req) => {
         profileId: s.profile_id,
         sourceProductId: s.product_id,
         sourceTariffId: s.tariff_id,
-        sourceSubscription: { id: s.id, access_end_at: s.access_end_at },
+        sourceSubscription: s.source_kind === 'subscription'
+          ? { id: s.id, access_end_at: s.access_end_at }
+          : null,
+        sourceEntitlementSource: s.source_kind === 'entitlement_source'
+          ? { id: s.id, access_end_at: s.access_end_at }
+          : null,
         rules,
         priorPurchaseCache,
         ctx: {
           sourceEventType: 'cron',
           sourceSubjectType: 'cron_job',
-          sourceEventKeyPrefix: `nightly_reconcile:${new Date().toISOString().slice(0, 10)}:${s.id}`,
+          sourceEventKeyPrefix: `nightly_reconcile:${new Date().toISOString().slice(0, 10)}:${s.source_kind}:${s.id}`,
           orderId: null,
           dryRun,
         },
@@ -190,6 +262,8 @@ Deno.serve(async (req) => {
         }
       }
       processed++;
+      if (s.source_kind === 'subscription') processedSubscriptions++;
+      else processedEntitlementSources++;
     }
 
     const elapsedMs = Date.now() - startedAt;
@@ -215,8 +289,8 @@ Deno.serve(async (req) => {
     let extraAccessCounts: Record<string, number> = {};
     let extraAccessError: string | null = null;
     try {
-      const distinctProductIds = [...new Set(subscriptions.map((s) => s.product_id).filter(Boolean))];
-      const distinctTariffIds = [...new Set(subscriptions.map((s) => s.tariff_id).filter(Boolean))];
+      const distinctProductIds = [...new Set(sources.map((s) => s.product_id).filter(Boolean))];
+      const distinctTariffIds = [...new Set(sources.map((s) => s.tariff_id).filter(Boolean))];
 
       const previewBody: Record<string, unknown> = {
         mode: 'preview',
@@ -281,8 +355,13 @@ Deno.serve(async (req) => {
           filter_product_ids: body.product_ids || null,
           filter_user_ids: body.user_ids || null,
           max_subscriptions: maxSubs,
-          cohort_size: subscriptions.length,
-          processed_subscriptions: processed,
+          cohort_size: sources.length,
+          subscription_sources: subscriptions.length,
+          entitlement_sources: bonusSources.length,
+          processed_sources: processed,
+          processed_subscriptions: processedSubscriptions,
+          processed_subscription_sources: processedSubscriptions,
+          processed_entitlement_sources: processedEntitlementSources,
           rule_pairs_evaluated: totalEvaluated,
           condition_met: conditionMet,
           condition_not_met_prior_purchase: buckets.condition_not_met_prior_purchase,
@@ -314,8 +393,12 @@ Deno.serve(async (req) => {
         ok: true,
         run_id: runId,
         dry_run: dryRun,
+        sources_total: sources.length,
+        subscription_sources_total: subscriptions.length,
+        entitlement_sources_total: bonusSources.length,
         subscriptions_total: subscriptions.length,
-        subscriptions_processed: processed,
+        subscriptions_processed: processedSubscriptions,
+        entitlement_sources_processed: processedEntitlementSources,
         rule_pairs_evaluated: totalEvaluated,
         counts: {
           condition_met: conditionMet,

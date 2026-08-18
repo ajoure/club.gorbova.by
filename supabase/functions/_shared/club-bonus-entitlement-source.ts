@@ -1,4 +1,10 @@
 import { checkPriorPurchase } from './check-prior-purchase.ts';
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import {
+  resolveProductAccessRules,
+  syncSecondaryProductAccessForUser,
+  type SecondaryGrantAction,
+} from './product-access-grants.ts';
 
 type SupabaseQueryClient = {
   from: (relation: string) => any;
@@ -18,6 +24,7 @@ type ClubRule = {
 export type ClubBonusSourceSyncResult = {
   status: 'not_configured' | 'condition_not_met' | 'inserted' | 'exists';
   access_rule_id?: string;
+  source_id?: string;
   source_ref?: string;
   product_id?: string;
   tariff_id?: string;
@@ -137,6 +144,9 @@ export async function syncConfiguredClubBonusSource(
     return {
       status,
       access_rule_id: rule.id,
+      source_id: typeof result.source_id === 'string'
+        ? result.source_id
+        : undefined,
       source_ref: typeof result.source_ref === 'string' ? result.source_ref : undefined,
       product_id: typeof result.product_id === 'string' ? result.product_id : undefined,
       tariff_id: typeof result.tariff_id === 'string' ? result.tariff_id : undefined,
@@ -146,4 +156,67 @@ export async function syncConfiguredClubBonusSource(
   }
 
   return { status: 'condition_not_met' };
+}
+
+export type ClubBonusCascadeSyncResult = ClubBonusSourceSyncResult & {
+  product_access: SecondaryGrantAction[];
+};
+
+/**
+ * Create/repair the finite Club bonus and immediately apply the access rules
+ * of the granted Club tariff. This closes the gap where a course purchase
+ * created a valid Club entitlement but never restored the buyer's historical
+ * products that BUSINESS/IDEOLOGY explicitly unlock through prior_purchase.
+ */
+export async function syncConfiguredClubBonusCascade(
+  supabase: SupabaseClient,
+  params: {
+    orderId: string;
+    userId: string;
+    profileId?: string | null;
+    productId: string;
+    tariffId: string | null;
+    sourceEventKeyPrefix: string;
+  },
+): Promise<ClubBonusCascadeSyncResult> {
+  const source = await syncConfiguredClubBonusSource(supabase, params);
+  if (
+    (source.status !== 'inserted' && source.status !== 'exists')
+    || !source.source_id
+    || !source.product_id
+    || !source.tariff_id
+    || !source.expires_at
+  ) {
+    return { ...source, product_access: [] };
+  }
+
+  const rules = await resolveProductAccessRules(
+    supabase,
+    source.product_id,
+    source.tariff_id,
+  );
+  if (rules.length === 0) return { ...source, product_access: [] };
+
+  const productAccess = await syncSecondaryProductAccessForUser(supabase, {
+    userId: params.userId,
+    profileId: params.profileId || null,
+    sourceProductId: source.product_id,
+    sourceTariffId: source.tariff_id,
+    sourceSubscription: null,
+    sourceEntitlementSource: {
+      id: source.source_id,
+      access_end_at: source.expires_at,
+    },
+    rules,
+    excludeOrderId: params.orderId,
+    ctx: {
+      sourceEventType: 'webhook',
+      sourceSubjectType: 'order',
+      sourceEventKeyPrefix: params.sourceEventKeyPrefix,
+      orderId: params.orderId,
+      allowReduceAccess: false,
+    },
+  });
+
+  return { ...source, product_access: productAccess };
 }
