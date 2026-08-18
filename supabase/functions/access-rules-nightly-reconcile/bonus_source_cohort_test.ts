@@ -5,11 +5,9 @@ const source = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
 Deno.test("nightly reconcile includes only live independent bonus sources", () => {
   assert(source.includes(".from('entitlement_sources')"));
   assert(source.includes(".eq('source_type', 'bonus')"));
-  assert(
-    source.includes(
-      ".eq('meta->>origin', 'upsert_club_bonus_entitlement_source')",
-    ),
-  );
+  assert(source.includes(".in('meta->>origin', [...CLUB_BONUS_SOURCE_ORIGINS])"));
+  assert(source.includes("'upsert_club_bonus_entitlement_source'"));
+  assert(source.includes("'controlled_cb20_bonus_backfill_20260810'"));
   assert(source.includes(".eq('status', 'active')"));
   assert(source.includes(".gt('expires_at', nowIso)"));
 });

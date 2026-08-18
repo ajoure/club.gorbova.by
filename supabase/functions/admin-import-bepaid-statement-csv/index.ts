@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { parse as csvParse } from "https://deno.land/std@0.168.0/encoding/csv.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { ensureExistingBepaidPaymentQueued } from "../_shared/bepaid-reconcile-queue.ts";
 
 const BUILD_ID = "2026-02-02T21:30:00Z-csv-import-multifile-v3";
 
@@ -545,6 +546,9 @@ serve(async (req) => {
     const BATCH_SIZE = 200;
     let upserted = 0;
     let errors = 0;
+    let queuedForProcessing = 0;
+    let orphanPaymentsRequeued = 0;
+    let queueSkipped = 0;
     const errorDetails: string[] = [];
 
     for (let i = 0; i < finalRows.length; i += BATCH_SIZE) {
@@ -626,6 +630,26 @@ serve(async (req) => {
         errors += batch.length;
       } else {
         upserted += batch.length;
+
+        // CSV rows alone never create a deal. Queue only provider UIDs that
+        // already exist in payments_v2 and still have no order_id.
+        for (const row of batch) {
+          try {
+            const queueResult = await ensureExistingBepaidPaymentQueued(
+              supabase,
+              row,
+              "bepaid_csv_existing_payment",
+            );
+            if (queueResult.action === "inserted") queuedForProcessing++;
+            else if (queueResult.action === "reactivated") orphanPaymentsRequeued++;
+            else queueSkipped++;
+          } catch (queueError) {
+            errors++;
+            errorDetails.push(
+              `Queue ${row.uid}: ${queueError instanceof Error ? queueError.message : String(queueError)}`,
+            );
+          }
+        }
       }
     }
 
@@ -644,6 +668,9 @@ serve(async (req) => {
         duplicates_merged: stats.duplicates_merged,
         upserted,
         errors,
+        queued_for_processing: queuedForProcessing,
+        orphan_payments_requeued: orphanPaymentsRequeued,
+        queue_skipped: queueSkipped,
       },
     });
 
@@ -657,6 +684,9 @@ serve(async (req) => {
       totals_expected: totalsExpected,
       upserted,
       errors,
+      queued_for_processing: queuedForProcessing,
+      orphan_payments_requeued: orphanPaymentsRequeued,
+      queue_skipped: queueSkipped,
       error_details: errorDetails.slice(0, 5),
       sample_errors: allInvalidRows.slice(0, 5),
     }), {
