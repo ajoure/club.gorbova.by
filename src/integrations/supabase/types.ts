@@ -19587,8 +19587,8 @@ export type Database = {
           getcourse_offer_id: number | null
           id: string
           is_active: boolean
-          is_public: boolean
           is_popular: boolean | null
+          is_public: boolean
           meta: Json | null
           name: string
           original_price: number | null
@@ -19621,8 +19621,8 @@ export type Database = {
           getcourse_offer_id?: number | null
           id?: string
           is_active?: boolean
-          is_public?: boolean
           is_popular?: boolean | null
+          is_public?: boolean
           meta?: Json | null
           name: string
           original_price?: number | null
@@ -19655,8 +19655,8 @@ export type Database = {
           getcourse_offer_id?: number | null
           id?: string
           is_active?: boolean
-          is_public?: boolean
           is_popular?: boolean | null
+          is_public?: boolean
           meta?: Json | null
           name?: string
           original_price?: number | null
