@@ -201,6 +201,7 @@ export function UniversalPricingSection({
           offerId={selectedOffer.offer.id}
           productName={product.public_title || product.name}
           tariffName={selectedOffer.tariff.name}
+          paymentMethodLabel={selectedOffer.offer.button_label}
           onContinue={setCheckoutSelection}
         />
       ) : selectedOffer && (selectedOffer.offer.offer_type === "lead" || selectedOffer.offer.offer_type === "bank_installment") ? (

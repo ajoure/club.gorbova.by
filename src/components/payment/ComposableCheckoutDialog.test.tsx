@@ -19,6 +19,7 @@ function CheckoutHarness({ onContinue }: { onContinue: ReturnType<typeof vi.fn> 
       offerId="offer-club"
       productName="Gorbova Club"
       tariffName="FULL"
+      paymentMethodLabel="Оплатить 100% картой"
       onContinue={(selection) => {
         onContinue(selection);
         setContinued(true);
@@ -69,7 +70,13 @@ describe("ComposableCheckoutDialog", () => {
         subtotal: 250,
         adjustment_amount: 0,
         total: 250,
-        items: [],
+        items: [{
+          role: "primary",
+          product_name: "Ценный бухгалтер",
+          tariff_name: "Программа",
+          list_amount: 250,
+          final_amount: 250,
+        }],
         available_addons: [{
           addon_offer_id: "addon-1",
           addon_product_name: "Модуль",
@@ -93,10 +100,12 @@ describe("ComposableCheckoutDialog", () => {
         offerId="offer-composable"
         productName="Ценный бухгалтер"
         tariffName="Программа"
+        paymentMethodLabel="Оплатить в 2 платежа"
         onContinue={vi.fn()}
       />,
     );
 
     expect(await screen.findByText("Соберите свою программу")).toBeInTheDocument();
+    expect(await screen.findByText("Оплатить в 2 платежа")).toBeInTheDocument();
   });
 });
