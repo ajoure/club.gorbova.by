@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
         period_label, access_days, features, is_popular, public_id,
         discount_enabled, discount_percent, original_price,
         trial_enabled, trial_days, trial_price, trial_auto_charge,
-        sort_order, product_id, is_active,
+        sort_order, product_id, is_active, is_public,
         visible_from, visible_to, meta
       `)
       .eq("public_id", tariffPublicId)
@@ -51,10 +51,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check tariff is active and visible
-    if (!tariff.is_active) {
+    // Internal/manual tariffs must not be recoverable through a guessed direct
+    // public_id either. They remain available to authenticated admin tooling.
+    if (!tariff.is_active || !tariff.is_public) {
       return new Response(
-        JSON.stringify({ error: "Tariff is not active" }),
+        JSON.stringify({ error: "Tariff is not publicly available" }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

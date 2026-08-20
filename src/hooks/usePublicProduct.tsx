@@ -67,6 +67,7 @@ export interface PublicTariff {
   access_days: number;
   features: TariffFeature[];
   offers: TariffOffer[];
+  is_public?: boolean;
   is_popular: boolean | null;
   current_price?: number | null;
   base_price?: number | null;

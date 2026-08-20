@@ -11,11 +11,12 @@
  *    flow share the same configurable product source rather than stale Tilda
  *    copy.
  *  - CTA labels come from backend offers (usePublicProduct → tariff.offers),
- *    forced into the canonical Tilda order:
- *      1) pay_now              → ОПЛАТИТЬ ОБУЧЕНИЕ
- *      2) preregistration      → ВНЕСТИ БРОНЬ 100BYN
- *      3) bank_installment     → ЗАЯВКА НА РАССРОЧКУ
- *      4) invoice              → ОПЛАТИТЬ ОТ ЮРЛИЦА
+ *    forced into the canonical administrator-configured order:
+ *      1) full card payment
+ *      2) internal installment
+ *      3) Resource Development bank installment application
+ *      4) ordinary manager application
+ *      5) legal-entity invoice
  *    Uppercase is CSS, not a hardcoded literal — real labels remain whatever
  *    backend returns; we only sort + text-transform.
  *  - Fonts: 'PT Sans' + 'Sf-pro-display' (live Tilda tariff block), NOT Comfortaa.
@@ -23,24 +24,11 @@
 import { Button } from "@/components/ui/button";
 import type { PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 import { rec, CB_PALETTE } from "../manifest";
-
-const ACTIONABLE_TYPES = new Set([
-  "pay_now",
-  "trial",
-  "preregistration",
-  "lead",
-  "bank_installment",
-  "invoice",
-]);
-
-// Fixed Tilda CTA order.
-const CTA_ORDER: Record<string, number> = {
-  pay_now: 0,
-  preregistration: 1,
-  lead: 2, // some deployments use `lead` for bank rassrochka
-  bank_installment: 2,
-  invoice: 3,
-};
+import {
+  normalizeCbTariffIdentity,
+  resolveCbTariffCardIndex,
+  selectAndSortCbOffers,
+} from "../tariffPublicContract";
 
 const TARIFF_FONT =
   "'PT Sans','Sf-pro-display','Segoe UI',Arial,sans-serif";
@@ -215,6 +203,20 @@ const resolveVisualPricing = (tariff: PublicTariff) => {
 // ── CTA appearance mirrors live Tilda ─────────────────────────
 const buttonStyle = (offer: TariffOffer, index: number) => {
   const label = (offer.button_label ?? "").toLowerCase();
+  if (
+    offer.offer_type === "invoice" ||
+    offer.payment_method === "bank_transfer" ||
+    label.includes("юрлиц")
+  ) {
+    return { background: "#eb3d7f", color: "#ffffff", borderColor: "#eb3d7f" };
+  }
+  if (offer.payment_method === "internal_installment") {
+    return {
+      background: "#ffffff",
+      color: CB_PALETTE.accent,
+      borderColor: CB_PALETTE.accent,
+    };
+  }
   if (offer.offer_type === "pay_now" || label.includes("оплатить обучение")) {
     return { background: CB_PALETTE.accent, color: "#ffffff", borderColor: CB_PALETTE.accent };
   }
@@ -231,9 +233,6 @@ const buttonStyle = (offer: TariffOffer, index: number) => {
     label.includes("рассроч")
   ) {
     return { background: "#343434", color: "#ffffff", borderColor: "#343434" };
-  }
-  if (offer.offer_type === "invoice" || label.includes("юрлиц")) {
-    return { background: "#eb3d7f", color: "#ffffff", borderColor: "#eb3d7f" };
   }
   return index === 0
     ? { background: CB_PALETTE.accent, color: "#ffffff", borderColor: CB_PALETTE.accent }
@@ -319,21 +318,13 @@ interface CbNativeTariffCardProps {
 }
 
 export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTariffCardProps) {
-  const card = CARDS[index] ?? CARDS[0];
+  const card = CARDS[resolveCbTariffCardIndex(tariff, index)] ?? CARDS[0];
   const pricing = resolveVisualPricing(tariff);
-
-  const offers = (tariff.offers ?? [])
-    .filter((o) => o.is_active !== false && ACTIONABLE_TYPES.has(o.offer_type))
-    .slice()
-    .sort((a, b) => {
-      const oa = CTA_ORDER[a.offer_type] ?? 99;
-      const ob = CTA_ORDER[b.offer_type] ?? 99;
-      if (oa !== ob) return oa - ob;
-      return (a.sort_order ?? 0) - (b.sort_order ?? 0);
-    });
+  const offers = selectAndSortCbOffers(tariff.offers ?? []);
 
   return (
     <article
+      data-cb-native-tariff={normalizeCbTariffIdentity(tariff.name)}
       className="flex h-full min-w-0 flex-col overflow-hidden rounded-[25px] border-2 shadow-none"
       style={{
         background: "#ffffff",
