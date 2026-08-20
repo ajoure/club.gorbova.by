@@ -195,15 +195,6 @@ BEGIN
          ON parent_offer.id = addons.parent_offer_id
        WHERE parent_offer.tariff_id = mapping.source_tariff_id
          AND addons.is_active IS TRUE
-         AND addons.access_delivery_mode <> 'immediate'
-     ) <> 0
-     OR (
-       SELECT count(*)
-       FROM public.offer_addons addons
-       JOIN public.tariff_offers parent_offer
-         ON parent_offer.id = addons.parent_offer_id
-       WHERE parent_offer.tariff_id = mapping.source_tariff_id
-         AND addons.is_active IS TRUE
          AND (
            CASE
              WHEN mapping.discounted THEN
@@ -215,6 +206,10 @@ BEGIN
            END
          )
      ) <> 0;
+
+  -- Delivery settings are administrator-configured and must be copied from
+  -- the verified source matrix verbatim. CB20 currently uses `manual`; do not
+  -- hard-code a different mode here or mutate the working source product.
 
   IF bad_source IS NOT NULL THEN
     RAISE EXCEPTION
@@ -344,6 +339,23 @@ BEGIN
                addons.pricing_mode <> 'offer_price'
                OR addons.discount_percent IS NOT NULL
            END
+         )
+     ) <> 0
+     OR (
+       SELECT count(*)
+       FROM _cb21_offer_map offer_map
+       JOIN public.offer_addons source_addon
+         ON source_addon.parent_offer_id = offer_map.source_offer_id
+        AND source_addon.is_active IS TRUE
+       JOIN public.offer_addons target_addon
+         ON target_addon.parent_offer_id = offer_map.target_offer_id
+        AND target_addon.addon_offer_id = source_addon.addon_offer_id
+        AND target_addon.is_active IS TRUE
+       WHERE offer_map.target_tariff_id = mapping.target_tariff_id
+         AND (
+           target_addon.access_delivery_mode IS DISTINCT FROM source_addon.access_delivery_mode
+           OR target_addon.access_opens_at IS DISTINCT FROM source_addon.access_opens_at
+           OR target_addon.access_duration_days IS DISTINCT FROM source_addon.access_duration_days
          )
      ) <> 0;
 
