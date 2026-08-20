@@ -19588,6 +19588,7 @@ export type Database = {
           id: string
           is_active: boolean
           is_popular: boolean | null
+          is_public: boolean
           meta: Json | null
           name: string
           original_price: number | null
@@ -19621,6 +19622,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           is_popular?: boolean | null
+          is_public?: boolean
           meta?: Json | null
           name: string
           original_price?: number | null
@@ -19654,6 +19656,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           is_popular?: boolean | null
+          is_public?: boolean
           meta?: Json | null
           name?: string
           original_price?: number | null
