@@ -10,25 +10,27 @@ const ACTIONABLE_TYPES = new Set([
 ]);
 
 // Public placement is configured by administrators in offer.meta.slot_role.
-// The slot name is intentionally decoupled from the visual order: changing a
-// database sort_order must not turn an invoice into the first card-payment CTA.
+// The payment contract determines the canonical visual order; slot names are
+// only a fallback because historical records use both button_3 and button_4
+// for the same two-payment action.
 const SLOT_CTA_ORDER: Record<string, number> = {
   button_1: 0, // 100% card payment
-  button_4: 1, // internal installment
-  button_5: 2, // Resource Development / bank installment application
-  button_3: 3, // ordinary manager application
-  button_2: 4, // legal-entity invoice
+  button_5: 1, // Resource Development / bank installment application
+  button_4: 2, // internal installment (two payments)
+  button_2: 3, // legal-entity invoice
+  button_3: 4, // ordinary manager application
 };
 
 const offerSemanticOrder = (offer: TariffOffer) => {
+  if (offer.offer_type === "bank_installment") return 1;
+  if (offer.payment_method === "internal_installment") return 2;
+  if (offer.offer_type === "invoice") return 3;
+  if (offer.offer_type === "lead" || offer.offer_type === "preregistration") return 4;
+  if (offer.offer_type === "pay_now" || offer.offer_type === "trial") return 0;
+
   const slot = offer.meta?.slot_role?.trim();
   if (slot && slot in SLOT_CTA_ORDER) return SLOT_CTA_ORDER[slot];
-  if (offer.offer_type === "invoice" || offer.payment_method === "bank_transfer") return 4;
-  if (offer.offer_type === "bank_installment") return 2;
-  if (offer.offer_type === "lead") return 3;
-  if (offer.payment_method === "internal_installment") return 1;
-  if (offer.offer_type === "preregistration") return 1;
-  if (offer.offer_type === "pay_now" || offer.offer_type === "trial") return 0;
+  if (offer.payment_method === "bank_transfer") return 3;
   return 99;
 };
 
@@ -51,6 +53,18 @@ export const resolveCbTariffCardIndex = (tariff: PublicTariff, fallbackIndex = 0
   if (/(^|_)(buh|accountant|бухгалтер)(_|$)/.test(identity)) return 0;
   return Math.min(Math.max(fallbackIndex, 0), 2);
 };
+
+export const sortCbTariffsForDisplay = (tariffs: PublicTariff[]) =>
+  tariffs
+    .map((tariff, originalIndex) => ({ tariff, originalIndex }))
+    .sort((a, b) => {
+      const semantic =
+        resolveCbTariffCardIndex(a.tariff, a.originalIndex) -
+        resolveCbTariffCardIndex(b.tariff, b.originalIndex);
+      if (semantic !== 0) return semantic;
+      return a.originalIndex - b.originalIndex;
+    })
+    .map(({ tariff }) => tariff);
 
 export const selectAndSortCbOffers = (allOffers: TariffOffer[]) => {
   const active = allOffers.filter(

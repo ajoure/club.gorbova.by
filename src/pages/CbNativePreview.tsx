@@ -32,6 +32,7 @@ import { AdvantagesSection } from "./cb-native/sections/AdvantagesSection";
 import { PostTariffSection } from "./cb-native/sections/PostTariffSection";
 import { FaqSection } from "./cb-native/sections/FaqSection";
 import { CbNativeTariffCard } from "./cb-native/sections/CbNativeTariffCard";
+import { sortCbTariffsForDisplay } from "./cb-native/tariffPublicContract";
 import { BrandHeaderSection } from "./cb-native/sections/BrandHeaderSection";
 import { UnifiedFooter } from "@/components/layout/UnifiedFooter";
 
@@ -144,7 +145,7 @@ export default function CbNativePreview() {
         ) : (
           <UniversalPricingSection
             product={data.product}
-            tariffs={data.tariffs}
+            tariffs={sortCbTariffsForDisplay(data.tariffs)}
             sectionTitle="ТАРИФЫ И СТОИМОСТЬ ОБУЧЕНИЯ"
             sectionSubtitle=""
             composableCheckoutMode="always"
