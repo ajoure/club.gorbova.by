@@ -25,6 +25,7 @@ import { LeadRequestDialog } from "@/components/lead/LeadRequestDialog";
 import { LeadTariffPickerDialog, type LeadPickerOption } from "@/components/lead/LeadTariffPickerDialog";
 import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
+import { hasConfiguredCheckoutAddons } from "@/lib/composableCheckoutGate";
 import { buildSlotManifest, pageHasDynamicSlots } from "@/lib/siteSlotManifest";
 import { SiteSlotManifestContext } from "@/contexts/SiteSlotManifestContext";
 import type { SiteBlock, SitePage } from "@/services/sitePages/types";
@@ -536,9 +537,7 @@ export default function SitePageBySlug({ resolvedPage = null }: SitePageBySlugPr
         };
         if (
           !checkoutSelection &&
-          resolved.offer.has_available_addons === true &&
-          resolved.offer.offer_type !== "lead" &&
-          resolved.offer.offer_type !== "bank_installment"
+          hasConfiguredCheckoutAddons(resolved.offer)
         ) {
           return (
             <ComposableCheckoutDialog
