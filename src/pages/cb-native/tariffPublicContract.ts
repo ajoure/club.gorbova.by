@@ -36,7 +36,7 @@ export const normalizeCbTariffIdentity = (value: unknown) =>
   String(value ?? "")
     .trim()
     .toLocaleLowerCase("ru-RU")
-    .replaceAll("ё", "е")
+    .replace(/ё/g, "е")
     .replace(/[^a-zа-я0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 
