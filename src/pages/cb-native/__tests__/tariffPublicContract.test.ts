@@ -3,6 +3,7 @@ import type { PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 import {
   resolveCbTariffCardIndex,
   selectAndSortCbOffers,
+  sortCbTariffsForDisplay,
 } from "../tariffPublicContract";
 
 const tariff = (name: string, code = name): PublicTariff => ({
@@ -58,6 +59,20 @@ describe("/cb public tariff contract", () => {
     ).toBe(1);
   });
 
+  it("renders tariffs in the canonical public order regardless of database order", () => {
+    const result = sortCbTariffsForDisplay([
+      tariff("Главный бухгалтер"),
+      tariff("Бизнес-леди"),
+      tariff("Бухгалтер"),
+    ]);
+
+    expect(result.map((item) => item.name)).toEqual([
+      "Бухгалтер",
+      "Главный бухгалтер",
+      "Бизнес-леди",
+    ]);
+  });
+
   it("shows only site-placed offers once placement is configured", () => {
     const result = selectAndSortCbOffers([
       offer("pay", "pay_now", "full_payment", "button_1"),
@@ -68,21 +83,22 @@ describe("/cb public tariff contract", () => {
     expect(result.map((item) => item.id)).toEqual(["pay", "invoice"]);
   });
 
-  it("keeps the five configured actions in their canonical order", () => {
+  it("keeps the configured actions in their canonical public order", () => {
     const result = selectAndSortCbOffers([
       offer("invoice", "invoice", "bank_transfer", "button_2"),
       offer("lead", "lead", "full_payment", "button_3"),
       offer("bank", "bank_installment", "full_payment", "button_5"),
-      offer("installment", "pay_now", "internal_installment", "button_4"),
+      // Production contains this same action under both button_3 and button_4.
+      offer("installment", "pay_now", "internal_installment", "button_3"),
       offer("pay", "pay_now", "full_payment", "button_1"),
     ]);
 
     expect(result.map((item) => item.id)).toEqual([
       "pay",
-      "installment",
       "bank",
-      "lead",
+      "installment",
       "invoice",
+      "lead",
     ]);
   });
 });

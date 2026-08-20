@@ -13,10 +13,10 @@
  *  - CTA labels come from backend offers (usePublicProduct → tariff.offers),
  *    forced into the canonical administrator-configured order:
  *      1) full card payment
- *      2) internal installment
- *      3) Resource Development bank installment application
- *      4) ordinary manager application
- *      5) legal-entity invoice
+ *      2) Resource Development bank installment application
+ *      3) internal installment (two payments)
+ *      4) legal-entity invoice
+ *      5) ordinary manager application
  *    Uppercase is CSS, not a hardcoded literal — real labels remain whatever
  *    backend returns; we only sort + text-transform.
  *  - Fonts: 'PT Sans' + 'Sf-pro-display' (live Tilda tariff block), NOT Comfortaa.
@@ -200,43 +200,58 @@ const resolveVisualPricing = (tariff: PublicTariff) => {
   };
 };
 
-// ── CTA appearance mirrors live Tilda ─────────────────────────
-const buttonStyle = (offer: TariffOffer, index: number) => {
+// ── CTA appearance is controlled by the saved offer setting ────────
+const BUTTON_VARIANT_STYLE = {
+  primary: {
+    background: CB_PALETTE.accent,
+    color: "#ffffff",
+    borderColor: CB_PALETTE.accent,
+  },
+  outline: {
+    background: "#ffffff",
+    color: CB_PALETTE.accent,
+    borderColor: CB_PALETTE.accent,
+  },
+  installment: {
+    background: "#f97316",
+    color: "#ffffff",
+    borderColor: "#f97316",
+  },
+  legal_entity: {
+    background: "#059669",
+    color: "#ffffff",
+    borderColor: "#059669",
+  },
+  lead: {
+    background: "#64748b",
+    color: "#ffffff",
+    borderColor: "#64748b",
+  },
+} as const;
+
+type ButtonVariant = keyof typeof BUTTON_VARIANT_STYLE;
+
+const legacyButtonVariant = (offer: TariffOffer): ButtonVariant => {
   const label = (offer.button_label ?? "").toLowerCase();
   if (
     offer.offer_type === "invoice" ||
     offer.payment_method === "bank_transfer" ||
     label.includes("юрлиц")
   ) {
-    return { background: "#eb3d7f", color: "#ffffff", borderColor: "#eb3d7f" };
+    return "legal_entity";
   }
-  if (offer.payment_method === "internal_installment") {
-    return {
-      background: "#ffffff",
-      color: CB_PALETTE.accent,
-      borderColor: CB_PALETTE.accent,
-    };
+  if (offer.payment_method === "internal_installment") return "outline";
+  if (offer.offer_type === "bank_installment" || label.includes("рассроч")) {
+    return "installment";
   }
-  if (offer.offer_type === "pay_now" || label.includes("оплатить обучение")) {
-    return { background: CB_PALETTE.accent, color: "#ffffff", borderColor: CB_PALETTE.accent };
-  }
-  if (offer.offer_type === "preregistration" || label.includes("бронь")) {
-    return {
-      background: "#ffffff",
-      color: CB_PALETTE.accent,
-      borderColor: CB_PALETTE.accent,
-    };
-  }
-  if (
-    offer.offer_type === "bank_installment" ||
-    offer.offer_type === "lead" ||
-    label.includes("рассроч")
-  ) {
-    return { background: "#343434", color: "#ffffff", borderColor: "#343434" };
-  }
-  return index === 0
-    ? { background: CB_PALETTE.accent, color: "#ffffff", borderColor: CB_PALETTE.accent }
-    : { background: "#ffffff", color: CB_PALETTE.accent, borderColor: CB_PALETTE.accent };
+  if (offer.offer_type === "lead" || offer.offer_type === "preregistration") return "lead";
+  return "primary";
+};
+
+const buttonStyle = (offer: TariffOffer) => {
+  const configured = (offer.meta?.site_button_variant ?? "").trim() as ButtonVariant;
+  const variant = configured in BUTTON_VARIANT_STYLE ? configured : legacyButtonVariant(offer);
+  return BUTTON_VARIANT_STYLE[variant];
 };
 
 const BADGE_STYLES: Record<Badge, { label: string; minWidth: number }> = {
@@ -412,13 +427,13 @@ export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTar
         </div>
 
         <div className="mt-7 space-y-[10px]">
-          {offers.map((offer, offerIndex) => (
+          {offers.map((offer) => (
             <Button
               key={offer.id}
               type="button"
               onClick={() => onSelectOffer(offer, tariff)}
               className="h-[62px] w-full whitespace-normal rounded-full border-2 px-4 text-[14px] font-bold uppercase leading-tight tracking-[0.01em] shadow-none hover:opacity-90"
-              style={{ ...buttonStyle(offer, offerIndex), fontFamily: PRICE_FONT }}
+              style={{ ...buttonStyle(offer), fontFamily: PRICE_FONT }}
             >
               {offer.button_label}
             </Button>

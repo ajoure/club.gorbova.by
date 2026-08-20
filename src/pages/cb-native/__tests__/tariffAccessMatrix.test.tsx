@@ -31,7 +31,122 @@ const lockedCount = (index: number) => {
   return count;
 };
 
+const paymentOffers = [
+  {
+    id: "invoice",
+    tariff_id: tariff.id,
+    offer_type: "invoice" as const,
+    button_label: "Оплатить от юрлица",
+    amount: 1,
+    trial_days: null,
+    auto_charge_after_trial: false,
+    auto_charge_amount: null,
+    auto_charge_delay_days: null,
+    requires_card_tokenization: false,
+    sort_order: 0,
+    is_active: true,
+    payment_method: "bank_transfer",
+    meta: { slot_role: "button_2", site_button_variant: "legal_entity" },
+  },
+  {
+    id: "installment",
+    tariff_id: tariff.id,
+    offer_type: "pay_now" as const,
+    button_label: "Оплатить в 2 платежа",
+    amount: 1,
+    trial_days: null,
+    auto_charge_after_trial: false,
+    auto_charge_amount: null,
+    auto_charge_delay_days: null,
+    requires_card_tokenization: false,
+    sort_order: 0,
+    is_active: true,
+    payment_method: "internal_installment",
+    meta: { slot_role: "button_4", site_button_variant: "installment" },
+  },
+  {
+    id: "bank",
+    tariff_id: tariff.id,
+    offer_type: "bank_installment" as const,
+    button_label: "Рассрочка от банка",
+    amount: 1,
+    trial_days: null,
+    auto_charge_after_trial: false,
+    auto_charge_amount: null,
+    auto_charge_delay_days: null,
+    requires_card_tokenization: false,
+    sort_order: 0,
+    is_active: true,
+    payment_method: "full_payment",
+    meta: { slot_role: "button_5", site_button_variant: "installment" },
+  },
+  {
+    id: "full",
+    tariff_id: tariff.id,
+    offer_type: "pay_now" as const,
+    button_label: "Оплатить 100% картой",
+    amount: 1,
+    trial_days: null,
+    auto_charge_after_trial: false,
+    auto_charge_amount: null,
+    auto_charge_delay_days: null,
+    requires_card_tokenization: false,
+    sort_order: 0,
+    is_active: true,
+    payment_method: "full_payment",
+    meta: { slot_role: "button_1", site_button_variant: "primary" },
+  },
+];
+
 describe("CbNative tariff access matrix", () => {
+  it("keeps payment actions in the same order and uses their saved visual settings", () => {
+    const expectedLabels = [
+      "Оплатить 100% картой",
+      "Рассрочка от банка",
+      "Оплатить в 2 платежа",
+      "Оплатить от юрлица",
+    ];
+    const expectedBackgrounds = [
+      "rgb(228, 34, 194)",
+      "rgb(249, 115, 22)",
+      "rgb(249, 115, 22)",
+      "rgb(5, 150, 105)",
+    ];
+
+    for (const index of [0, 1, 2]) {
+      const { container, unmount } = render(
+        <CbNativeTariffCard
+          tariff={{ ...tariff, id: `tariff-${index}`, offers: paymentOffers }}
+          index={index}
+          onSelectOffer={() => undefined}
+        />,
+      );
+      const buttons = Array.from(container.querySelectorAll("button"));
+
+      expect(buttons.map((button) => button.textContent)).toEqual(expectedLabels);
+      expect(buttons.map((button) => button.style.background)).toEqual(expectedBackgrounds);
+      unmount();
+    }
+  });
+
+  it("changes a button appearance through site_button_variant without changing its purpose", () => {
+    const configurableOffer = {
+      ...paymentOffers.find((offer) => offer.id === "full")!,
+      meta: { slot_role: "button_1", site_button_variant: "lead" },
+    };
+    const { getByRole } = render(
+      <CbNativeTariffCard
+        tariff={{ ...tariff, offers: [configurableOffer] }}
+        index={0}
+        onSelectOffer={() => undefined}
+      />,
+    );
+
+    expect(getByRole("button", { name: "Оплатить 100% картой" }).style.background).toBe(
+      "rgb(100, 116, 139)",
+    );
+  });
+
   it("keeps the original locked feature rules for all three tariffs", () => {
     expect(lockedCount(0)).toBe(9);
     expect(lockedCount(1)).toBe(5);
