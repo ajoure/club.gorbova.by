@@ -153,10 +153,11 @@ Deno.serve(async (req) => {
         id, code, name, description, badge, subtitle,
         price_monthly, period_label, access_days, features, is_popular,
         discount_enabled, discount_percent, original_price,
-        trial_enabled, trial_days, trial_price, trial_auto_charge, sort_order, meta
+        trial_enabled, trial_days, trial_price, trial_auto_charge, sort_order, meta, is_public
       `)
       .eq("product_id", product.id)
       .eq("is_active", true)
+      .eq("is_public", true)
       .or(`visible_from.is.null,visible_from.lte.${now}`)
       .or(`visible_to.is.null,visible_to.gte.${now}`)
       .order("sort_order", { ascending: true });

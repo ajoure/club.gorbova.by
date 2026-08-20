@@ -289,6 +289,7 @@ export default function AdminProductDetailV2() {
     badge: "",
     access_days: 30,
     is_active: true,
+    is_public: true,
     meta: {} as TariffMetaConfig,
     // card_config fields (stored in meta.card_config)
     cc_price_display: null as number | null,
@@ -421,6 +422,7 @@ export default function AdminProductDetailV2() {
         badge: tariff.badge || "",
         access_days: tariff.access_days,
         is_active: tariff.is_active,
+        is_public: tariff.is_public !== false,
         meta,
         cc_price_display: cc?.price_display ?? null,
         cc_old_price: cc?.old_price ?? tariff.original_price ?? null,
@@ -440,6 +442,7 @@ export default function AdminProductDetailV2() {
         badge: "",
         access_days: 30,
         is_active: true,
+        is_public: true,
         meta: {},
         cc_price_display: null,
         cc_old_price: null,
@@ -1631,7 +1634,9 @@ export default function AdminProductDetailV2() {
                       // Layout берётся автоматически из product.landing_config.tariffs_layout (SoT).
                       <div className={cn("mx-auto transition-all", sectionPreviewMode === "mobile" ? "max-w-[360px]" : "")}>
                         {(() => {
-                          const activeTariffs = (tariffs ?? []).filter((t: any) => t.is_active);
+                          const activeTariffs = (tariffs ?? []).filter(
+                            (t: any) => t.is_active && t.is_public !== false,
+                          );
                           const previewTariffs = activeTariffs.map((t: any) => ({
                             ...t,
                             features: getFeaturesForTariff(t.id),
@@ -1717,18 +1722,38 @@ export default function AdminProductDetailV2() {
                   />
                 )}
               </DialogTitle>
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={tariffForm.is_active}
-                  onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
-                />
-                <Label className={tariffForm.is_active ? "text-primary" : "text-muted-foreground"}>
-                  {tariffForm.is_active ? "Активен" : "Неактивен"}
-                </Label>
+              <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="tariff-is-public"
+                    checked={tariffForm.is_public}
+                    onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_public: checked })}
+                  />
+                  <Label
+                    htmlFor="tariff-is-public"
+                    className={tariffForm.is_public ? "text-primary" : "text-muted-foreground"}
+                  >
+                    {tariffForm.is_public ? "На сайте" : "Скрыт с сайта"}
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="tariff-is-active"
+                    checked={tariffForm.is_active}
+                    onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
+                  />
+                  <Label
+                    htmlFor="tariff-is-active"
+                    className={tariffForm.is_active ? "text-primary" : "text-muted-foreground"}
+                  >
+                    {tariffForm.is_active ? "Активен" : "Неактивен"}
+                  </Label>
+                </div>
               </div>
             </div>
             <DialogDescription>
               Конструктор карточки тарифа. Цены задаются отдельно в кнопках оплаты.
+              Скрытый с сайта тариф остаётся доступен администраторам и CRM.
             </DialogDescription>
           </DialogHeader>
 

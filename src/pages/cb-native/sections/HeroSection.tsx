@@ -40,7 +40,7 @@ export function HeroSection({ onCta }: { onCta: () => void }) {
 
   // Canonical order per manifest: [start, format, duration, conferences, npa]
   const infoItems = [
-    { icon: r.images[1], label: r.text[9] ?? "Старт потока:", value: "1 августа 2026 года" },
+    { icon: r.images[1], label: r.text[9] ?? "Старт потока:", value: "октябрь 2026 года" },
     { icon: r.images[2], label: r.text[11] ?? "Формат:", value: r.text[12] ?? "онлайн" },
     { icon: r.images[3], label: r.text[13] ?? "Продолжительность:", value: r.text[14] ?? "7 недель" },
     { icon: r.images[4], label: r.text[15] ?? "Практические", value: r.text[16] ?? "конференции" },

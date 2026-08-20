@@ -10,7 +10,7 @@ describe("CbNativePreview hero acceptance slice", () => {
     const heading = screen.getByRole("heading", { level: 1 });
     expect(heading).toHaveTextContent("ЦЕННЫЙ БУХГАЛТЕР");
     expect(heading).not.toHaveTextContent("Как быстро освоить правильную методологию");
-    expect(screen.getAllByText("1 августа 2026 года")).toHaveLength(2);
+    expect(screen.getAllByText("октябрь 2026 года")).toHaveLength(2);
   });
 
   it("uses the crown asset, not the format-video pictogram, above the headline", () => {

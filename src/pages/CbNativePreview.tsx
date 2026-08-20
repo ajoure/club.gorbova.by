@@ -36,7 +36,9 @@ import { BrandHeaderSection } from "./cb-native/sections/BrandHeaderSection";
 import { UnifiedFooter } from "@/components/layout/UnifiedFooter";
 
 // Same product bound to live /cb (site_pages slug='cb'). NO hardcoded prices.
-const CB_PRODUCT_ID = "3e43fb28-8322-41bc-bfee-714731bdc630";
+// «Ценный бухгалтер | 1 ступень 2.0 | 21 поток» is the only product rendered
+// by /cb. The previous value pointed at the already completed 20th flow.
+const CB_PRODUCT_ID = "2b7bf6d4-ad8d-46ad-9399-7f96c307c596";
 
 const scrollToTariffs = () => {
   const el = document.getElementById("tariffs");
