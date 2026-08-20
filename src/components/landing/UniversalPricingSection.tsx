@@ -9,6 +9,7 @@ import { InvoiceCheckoutDialog } from "@/components/payment/InvoiceCheckoutDialo
 import { ComposableCheckoutDialog } from "@/components/payment/ComposableCheckoutDialog";
 import { detectInvoiceOnlyOffer } from "@/lib/invoiceCheckout";
 import { readBankInstallmentMeta } from "@/lib/bankInstallment";
+import { hasConfiguredCheckoutAddons } from "@/lib/composableCheckoutGate";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TariffCarouselGrid } from "./TariffCarouselGrid";
 import { AlertTriangle } from "lucide-react";
@@ -182,7 +183,8 @@ export function UniversalPricingSection({
 
       {/* Composable checkout gate.
           - "auto": SitePageBySlug parity — only for offers the server marks
-            with has_available_addons=true, and only for direct-pay flows.
+            with has_available_addons=true. This includes bank installments:
+            their canonical backend accepts the selected addon_offer_ids.
           - "always": try the composable dialog for every non-preregistration
             offer (incl. lead / bank_installment). ComposableCheckoutDialog
             auto-continues without UI when the quote returns 0 add-ons, so
@@ -192,9 +194,7 @@ export function UniversalPricingSection({
         selectedOffer.offer.offer_type !== "preregistration" &&
         (composableCheckoutMode === "always"
           ? true
-          : selectedOffer.offer.has_available_addons === true &&
-            selectedOffer.offer.offer_type !== "lead" &&
-            selectedOffer.offer.offer_type !== "bank_installment") ? (
+          : hasConfiguredCheckoutAddons(selectedOffer.offer)) ? (
         <ComposableCheckoutDialog
           open={paymentOpen}
           onOpenChange={handleDialogOpenChange}
