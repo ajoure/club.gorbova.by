@@ -1,79 +1,83 @@
-# PLAN-ONLY / STRICT READ-ONLY — GitHub main SHA b8021c0c (PR #345, CB21 module matrix copy)
+# PLAN-ONLY / STRICT READ-ONLY — merged SHA cc5aeb89 (PR #346, CB21 module matrix)
 
-Изменений не вносилось: код не редактировался, коммиты/миграции не создавались, SQL-записи, RLS, данные, секреты, cron, деплой функций и Publish не выполнялись.
+Изменений не вносилось: код не редактировался, коммиты не создавались, миграции не применялись, SQL-записи, RLS, данные, секреты, cron, deploy функций и Publish не выполнялись.
 
-## VERDICT: STOP BLOCKED — миграция невыполнима в текущем виде
+## VERDICT: PASS — блокер PR #345 устранён, миграция готова к EXECUTE
 
-## 1) Managed HEAD и паритет
+## 1) SHA и паритет
 
-- Managed HEAD = `b8021c0c0670343e3de4f9f73f7541b1750f5556` — «feat(cb21): copy composable module matrix from CB20 to CB21 (#345)». Точное совпадение с указанным GitHub main SHA.
-- `git status --porcelain` пусто, дерево чистое → паритет всех non-`.lovable` исходников с этим SHA полный (byte-identical).
+- Managed HEAD = `cc5aeb89aa1f45dea44df2d02f65f26e96f49889` — «fix(cb21): preserve add-on delivery settings (#346)». Точное совпадение с указанным merged SHA.
+- `git status --porcelain` пусто → полный byte-identical паритет.
+- Миграция `20260820154000_cb21_copy_composable_module_matrix.sql` присутствует в дереве.
 
-## 2) Состав PR #345
+## 2) Миграция ещё НЕ применена
 
-- **Миграция:** `supabase/migrations/20260820154000_cb21_copy_composable_module_matrix.sql` — копирование активной матрицы `offer_addons` из CB20 (PRD-000039) в CB21 (PRD-000044) для 3 публичных тарифов.
-- **Frontend:** `src/lib/composableCheckoutGate.ts` + `src/components/landing/UniversalPricingSection.tsx` + `src/pages/SitePageBySlug.tsx` — автоматическое открытие `ComposableCheckoutDialog` при `offer.has_available_addons === true`.
-- **Edge Functions:** нет. Все 4 checkout-пути (`PaymentDialog`, `InvoiceCheckoutDialog`, `ComposableCheckoutDialog`, `startBankInstallment`) уже принимают `addon_offer_ids` и передают их в backend без дополнительного deploy.
+`supabase_migrations.schema_migrations` за 20260820 содержит только: `110414`, `110603`, `111005`, `111202`, `111541`. Версии `20260820154000` нет → **не применена**.
 
-## 3) Production data (read-only)
+## 3) Что изменил PR #346
 
-- **Source:** `PRD-000039` — «Ценный бухгалтер | 1 ступень 2.0 | 20 поток».
-- **Target:** `PRD-000044` — «Ценный бухгалтер | 1 ступень 2.0 | 21 поток».
-- **Source/target tariff map:** T-000076 → T-000085, T-000077 → T-000089, T-000078 → T-000086.
-- **Active source links:** ровно 36 на каждом из 3 публичных тарифов = 108 активных связей.
-- **Distinct addon products:** ровно 9 уникальных на каждом тарифе.
-- **Business Lady 50% discount:** подтверждено — все 36 связей тарифа T-000078 имеют `pricing_mode = 'percent_discount'` и `discount_percent = 50`.
-- **Target active links:** 0 на всех тарифах CB21.
-- **Orders / payments / contacts:** не затронуты миграцией и frontend-кодом. 0 изменений.
+Удалён жёсткий preflight `access_delivery_mode <> 'immediate'` (бывшие строки 191–199), заблокировавший PR #345. Вместо hard-code добавлен комментарий (строки 210–212) и **read-back-проверка равенства source ↔ target** (строки 344–360) по трём полям: `access_delivery_mode`, `access_opens_at`, `access_duration_days`. INSERT/UPDATE копируют эти поля из source verbatim (строки 276–278, 298–300).
 
-## 4) CRITICAL FINDING — миграция не применится к production
+## 4) Preflight против live-данных — все проверки проходят
 
-Миграция `20260820154000_cb21_copy_composable_module_matrix.sql` (строки 191–199) содержит строгий preflight:
+| Проверка миграции | Требование | Факт | Итог |
+|---|---|---|---|
+| tariff map | 3 | T-000076→085, T-000077→089, T-000078→086 | PASS |
+| active offers на тариф (source и target, все 6) | 4 | 4 (`card`, `two_payments`, `invoice`, `bank_installment`) | PASS |
+| distinct offer_key на тариф | 4 | 4 | PASS |
+| `_cb21_offer_map` | 12 | 12 (3 тарифа × 4 семантических ключа) | PASS |
+| source active offer_addons на тариф | 36 | 36 / 36 / 36 | PASS |
+| source distinct addon products на тариф | 9 | 9 / 9 / 9 | PASS |
+| T-000076 / T-000077 pricing | `offer_price`, discount NULL | 36 / 36 | PASS |
+| T-000078 pricing | `percent_discount`, 50 | 36 | PASS |
+| delivery-mode hard-check | **удалён в #346** | source = `manual` (108) — больше не блокирует | PASS |
 
-```sql
-AND addons.access_delivery_mode <> 'immediate'
-```
+## 5) Target CB21 сейчас
 
-Требование: все 108 активных source-связей CB20 должны иметь `access_delivery_mode = 'immediate'`.
+`offer_addons` для T-000085 / T-000089 / T-000086 — **0 строк вообще** (ни активных, ни неактивных). Deactivate-шаг (строки 224–238) затронет 0 строк; `ON CONFLICT` не сработает — только чистые INSERT.
 
-Фактическое состояние production:
+## 6) Dry-run проекция (read-only, ничего не записано)
 
-| source_tariff | active_links | access_delivery_mode |
-|---|---|---|
-| T-000076 (Бухгалтер) | 36 | `manual` |
-| T-000077 (Главный бухгалтер) | 36 | `manual` |
-| T-000078 (Бизнес-леди) | 36 | `manual` |
+| target | projected links | distinct products | distinct conflict keys | pct 50% | offer_price | delivery_mode | opens_at set | duration set |
+|---|---|---|---|---|---|---|---|---|
+| T-000085 Бухгалтер | 36 | 9 | 36 | 0 | 36 | `manual` | 0 | 0 |
+| T-000089 Главный бухгалтер | 36 | 9 | 36 | 0 | 36 | `manual` | 0 | 0 |
+| T-000086 Бизнес-леди | 36 | 9 | 36 | **36** | 0 | `manual` | 0 | 0 |
+| **Итого** | **108** | 9 уникальных | 108 | | | | | |
 
-При применении миграция гарантированно выбросит:
+- `distinct conflict keys` = 36 на тариф → коллизий по `offer_addons_unique_offer (parent_offer_id, addon_offer_id)` внутри INSERT нет.
+- `access_delivery_mode` = `manual`, `access_opens_at` = NULL, `access_duration_days` = NULL — копируются 1-в-1, read-back §5 миграции пройдёт.
+- 9 addon-продуктов: PRD-000005 Производство, PRD-000011 Общепит, PRD-000012 ПВТ, PRD-000015 Розничная торговля, PRD-000016 Маркетплейсы, PRD-000017 Учёт у ИП, PRD-000018 Строительство, PRD-000022 Грузо-/пассажироперевозки, PRD-000043 Посредничество. Все addon product/tariff/offer активны → `public-product` выставит `has_available_addons=true`.
 
-```
-EXCEPTION 'CB21 add-ons preflight failed: verified CB20 matrix drifted for <tariff>'
-```
+## 7) Orders / payments / contacts / entitlements
 
-и откатится. **Это hard stop для любого EXECUTE в текущем виде.**
+Миграция обращается ровно к 4 объектам: `offer_addons` (UPDATE is_active + INSERT/UPSERT), `tariff_offers` (только чтение), `tariffs` (только чтение), `products_v2` (только чтение) + 2 temp-таблицы `ON COMMIT DROP`. Ни `orders`, ни `payments_v2`, ни `contacts`/`profiles`, ни `entitlements`/`access_grant_ledger` не упоминаются. **0 изменений.**
 
-## 5) Gates (read-only)
+## 8) Gates
 
-- `npx tsgo --noEmit` — PASS, ошибок нет.
-- `bunx vitest run src/lib/composableCheckoutGate.test.ts` — PASS, 5/5 тестов.
-- `npm run build` — PASS, production-сборка успешна.
-- Security scan — 0 новых активных критических находок в scope. Существующий `error` `PRIVILEGE_ESCALATION` (`entitlements_manage_permission_overreach`) в статусе `ignored_by_user`, не связан с PR #345.
+- `npx tsgo --noEmit` — PASS.
+- `bunx vitest run src/lib/composableCheckoutGate.test.ts` — PASS 5/5.
+- `npm run build` — PASS.
+- Security scan — новых critical findings в scope нет. Единственный `error` (`entitlements_manage_permission_overreach`) в статусе `ignored_by_user`, к PR #346 не относится.
 
-## 6) Execute-план (условный — только после фикса миграции)
+## 9) EXACT EXECUTE PLAN
 
-1. **Preflight.** Read-back managed HEAD = `b8021c0c0670343e3de4f9f73f7541b1750f5556`, дерево чистое. Любое расхождение — STOP.
-2. **Fix decision.** Разрешить mismatch `access_delivery_mode`: либо изменить миграцию так, чтобы она копировала фактическое значение `manual` (или устанавливала `immediate` в CB21 независимо от source), либо обновить 108 source-ссылок до `immediate` в отдельной предварительной миграции/операции.
-3. **Migration.** Применить исправленную миграцию `20260820154000_cb21_copy_composable_module_matrix.sql` (или её замену) к production.
-4. **Read-back.** Подтвердить, что target (PRD-000044, тарифы T-000085, T-000089, T-000086) получили по 36 активных связей, 9 уникальных addon-продуктов, Business Lady сохранил 50% скидку, и `access_delivery_mode` соответствует ожидаемому.
-5. **Frontend Publish.** Опубликовать frontend ровно на SHA `b8021c0c…` (или на fixed SHA, если миграция изменится). После Publish — отчёт с публичным URL и effective SHA.
-6. **Acceptance.** Проверить на /cb: карточки с аддонами открывают ComposableCheckoutDialog; карточки без аддонов идут в прямой поток. Кнопки «100% картой / банк / 2 платежа / счёт ЮЛ» сохраняют канонический порядок.
+1. **Preflight.** Read-back HEAD = `cc5aeb89aa1f45dea44df2d02f65f26e96f49889`, дерево чистое (допустимы только `.lovable/` plan-markdown). Подтвердить, что `20260820154000` отсутствует в `schema_migrations`. Любое расхождение — STOP.
+2. **Migration.** Применить ровно один файл, байт-в-байт: `supabase/migrations/20260820154000_cb21_copy_composable_module_matrix.sql`. Он транзакционен и самопроверяем: при дрейфе source выбросит `CB21 add-ons preflight failed`, при неточном target — `CB21 add-ons read-back failed`, и откатится целиком.
+3. **Read-back (SQL, read-only).** Подтвердить для T-000085 / T-000089 / T-000086: 36 active links, 9 distinct addon products, T-000086 = 36 × `percent_discount` 50%, остальные = 36 × `offer_price` с `discount_percent IS NULL`; `access_delivery_mode`/`access_opens_at`/`access_duration_days` идентичны source; source CB20 остался 36/9 на тариф без изменений.
+4. **Invariants.** Подтвердить неизменность counts по `orders`, `payments_v2`, `entitlements`, `contacts` до/после.
+5. **Frontend Publish.** Опубликовать frontend ровно на этом SHA. Отчёт: публичный URL + effective SHA.
+6. **Acceptance (без транзакций).** `/cb`, desktop 1280 и mobile 390: порядок карточек Бухгалтер → Главный бухгалтер → Бизнес-леди; в каждой 4 кнопки 100% картой → банк → 2 платежа → счёт ЮЛ; кнопка открывает `ComposableCheckoutDialog` со списком 9 модулей; в Бизнес-леди модули со скидкой 50%. Проверка останавливается до submit — реальные payment/order/contact/message не создаются.
+
+Не выполняются: другие миграции, изменения RLS/GRANT, правки orders/payments/entitlements, секреты, cron, deploy Edge Functions, Storage, отправка писем/Telegram.
 
 ## Hard stop conditions
 
-- HEAD ≠ `b8021c0c…` или дерево грязное (кроме `.lovable/` plan-markdown) — STOP.
-- Миграция в текущем виде (`access_delivery_mode = 'immediate'` preflight) — STOP до исправления.
-- Ошибка typecheck/build/tests — STOP без Publish.
+- HEAD ≠ `cc5aeb89…` или грязное дерево (кроме `.lovable`) — STOP.
+- `20260820154000` уже присутствует в `schema_migrations` — STOP (повторное применение не требуется).
+- Любой `RAISE EXCEPTION` из миграции — STOP, откат автоматический, Publish не выполняется.
+- Read-back ≠ 108/36/9 или расхождение delivery-полей — STOP.
+- Ненулевая дельта по orders/payments/entitlements/contacts — STOP.
 - Новый critical security finding — STOP.
-- Любое изменение orders/payments/contacts внутри этого scope — STOP.
 
-## ИТОГ: PLAN BLOCKED — требуется решение по mismatch `access_delivery_mode`
+## ИТОГ: PLAN PASS — ожидаю «EXECUTE APPROVED».
