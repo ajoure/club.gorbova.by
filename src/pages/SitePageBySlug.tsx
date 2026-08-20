@@ -552,6 +552,7 @@ export default function SitePageBySlug({ resolvedPage = null }: SitePageBySlugPr
               offerId={resolved.offer.id}
               productName={resolved.product.public_title || resolved.product.name}
               tariffName={resolved.tariff.name}
+              paymentMethodLabel={resolved.offer.button_label}
               onContinue={setCheckoutSelection}
             />
           );

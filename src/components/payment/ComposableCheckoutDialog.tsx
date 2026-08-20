@@ -45,6 +45,7 @@ interface Props {
   offerId: string;
   productName: string;
   tariffName: string;
+  paymentMethodLabel: string;
   onContinue: (selection: { addonOfferIds: string[]; total: number; currency: string }) => void;
 }
 
@@ -54,6 +55,7 @@ export function ComposableCheckoutDialog({
   offerId,
   productName,
   tariffName,
+  paymentMethodLabel,
   onContinue,
 }: Props) {
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -174,7 +176,7 @@ export function ComposableCheckoutDialog({
                   total={quote.total}
                   subtotal={quote.subtotal}
                   adjustmentAmount={quote.adjustment_amount}
-                  paymentMethodLabel="Одной оплатой"
+                  paymentMethodLabel={paymentMethodLabel}
                 />
               )}
 
