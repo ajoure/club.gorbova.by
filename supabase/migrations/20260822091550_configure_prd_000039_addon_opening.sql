@@ -18,7 +18,7 @@ BEGIN
   JOIN public.tariff_offers parent_offer ON parent_offer.id = oa.parent_offer_id
   JOIN public.tariffs t ON t.id = parent_offer.tariff_id
   WHERE t.product_id = v_product_id
-    AND t.code IN ('T-000076', 'T-000077', 'T-000078')
+    AND t.public_id IN ('T-000076', 'T-000077', 'T-000078')
     AND oa.is_active;
 
   IF (v_offer_addons, v_parent_offers, v_modules, v_tariffs) IS DISTINCT FROM
@@ -36,7 +36,7 @@ BEGIN
   JOIN public.tariffs t ON t.id = parent_offer.tariff_id
   WHERE oa.parent_offer_id = parent_offer.id
     AND t.product_id = v_product_id
-    AND t.code IN ('T-000076', 'T-000077', 'T-000078')
+    AND t.public_id IN ('T-000076', 'T-000077', 'T-000078')
     AND oa.is_active;
 
   GET DIAGNOSTICS v_offer_addons = ROW_COUNT;
@@ -65,7 +65,7 @@ BEGIN
   WHERE spa.order_group_item_id = addon_item.id
     AND addon_item.role = 'addon'
     AND primary_tariff.product_id = v_product_id
-    AND primary_tariff.code IN ('T-000076', 'T-000077', 'T-000078')
+    AND primary_tariff.public_id IN ('T-000076', 'T-000077', 'T-000078')
     AND spa.status = 'scheduled';
 
   GET DIAGNOSTICS v_scheduled = ROW_COUNT;
