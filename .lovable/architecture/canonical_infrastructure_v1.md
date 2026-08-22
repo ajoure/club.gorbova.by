@@ -15,6 +15,11 @@ Last updated: 2026-06-06 (v2 — Lovable-only Deploy Model)
 | Lovable project ID | `796a93b9-74cc-403c-8ec5-cafdb2a5beaa` |
 
 **Legacy ref (forbidden, must never reappear):** `ypwsuumurrtkxatoyqhk`.
+В Supabase Dashboard он может отображаться под вводящим в заблуждение именем
+`club.gorbova.by`, но это **INACTIVE / UNFINISHED TRANSFER / NOT PRODUCTION**:
+незавершённая база попытки переноса из Lovable, не подключённая к текущему
+приложению. Её advisors (включая предупреждения RLS), таблицы и данные не
+описывают состояние Lovable production и не должны запускать production-задачи.
 CI guard: `.github/workflows/verify-no-legacy-ref.yml`.
 
 ## 2. Canonical deploy paths
@@ -79,8 +84,16 @@ Supabase`. Full reproduction, proof, and copy-paste issue text live in:
 
 ## 6. Legacy Supabase project (`ypwsuumurrtkxatoyqhk`)
 
+- **Status:** `INACTIVE / UNFINISHED TRANSFER / NOT PRODUCTION`.
+- Dashboard name `club.gorbova.by` is historical and must not be treated as
+  evidence that the project serves the live `gorbova.by` application.
+- It was created for an unfinished attempt to copy data out of Lovable Cloud;
+  the transfer was not completed and the database is not operational.
 - Not used by any workflow, code, env, or config in this repo.
-- Must not be deployed to. Must not be referenced.
+- Must not be deployed to, migrated, repaired, linked, queried as production,
+  or configured as a generic `supabase_gorbova` MCP target.
+- Security advisors for this ref belong only to the inactive legacy database
+  and are not findings against canonical ref `hdjgkjceownmmnrqqtuz`.
 - Physical deletion is out of scope.
 
 ## 7. GitHub secrets policy
@@ -152,4 +165,3 @@ Lovable webhook deploy   = CONDITIONAL CONTROLLED DEPLOYMENT (per-function gate)
 Canary baseline          = D-STABLE-CANDIDATE (probe v1, 2026-06-12)
 Phase 3.4 Runtime        = unfrozen on a per-function basis after individual gate
 ```
-
