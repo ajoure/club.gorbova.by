@@ -9,6 +9,7 @@ import { CreditCard, ShoppingBag, History, ClipboardList, FileText, MessageCircl
 import { Button } from "@/components/ui/button";
 import { OrderDocuments } from "@/components/purchases/OrderDocuments";
 import { format } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
 import { generateOrderReceipt, generateSubscriptionReceipt } from "@/utils/receiptGenerator";
@@ -533,7 +534,7 @@ export default function Purchases() {
                     const isFixedDate = access.access_delivery_mode === "fixed_date";
                     const opensAt = access.opens_at ? new Date(access.opens_at) : null;
                     const notice = isFixedDate && opensAt
-                      ? `Доступ откроется ${format(opensAt, "d MMMM yyyy 'в' HH:mm", { locale: ru })}.`
+                      ? `Доступ откроется ${formatInTimeZone(opensAt, "Europe/Minsk", "d MMMM yyyy 'в' HH:mm", { locale: ru })} по Минску.`
                       : "Доступ откроет администратор. Мы сообщим вам сразу после открытия.";
                     return (
                       <div key={access.id} className="flex items-start justify-between gap-3 rounded-xl border border-border/60 bg-card p-4 sm:p-5">
