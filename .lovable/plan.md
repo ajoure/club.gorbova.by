@@ -1,95 +1,99 @@
-# План: отложенный доступ к докупаемым модулям продукта PRD-000039
+# План: RLS-фикс ответов на комментарии в эфире (PR #350)
 
-Продукт: **«Ценный бухгалтер. Первая ступень. 20 поток»**, `PRD-000039`,
-id `3e43fb28-8322-41bc-bfee-714731bdc630`. Тарифы `T-000076`, `T-000077`, `T-000078`.
-Целевая дата открытия докупаемых модулей: **2026-10-01 00:00 Europe/Minsk = 2026-09-30T21:00:00Z**,
-хранится только в БД на конкретной связи `offer_addons.access_opens_at`, без хардкода в коде.
+Режим текущего сообщения: **PLAN-ONLY / STRICT READ-ONLY**. Ничего не изменено: 0 code edits, 0 commits, 0 migrations, 0 SQL writes, 0 deploy, 0 Publish. Ожидающая публикация предыдущей задачи не продолжена.
 
-## Вердикт preflight: PASS с одним конфигурационным дефектом
+## 1. Проект и effective SHA
 
-Изменений на этом шаге не вносил: 0 code edits, 0 commits, 0 migrations, 0 data writes, 0 deploy, 0 Publish.
+- Проект: текущий production (Lovable Cloud) — PASS.
+- Managed HEAD: `8b47b92753d33852d0823d756047f68249d61389`, дерево чистое.
+- Разбор дельты относительно `origin/main` `5a7365967d59d2d26985136ce99d7207ff050679`: два managed-коммита (`9301c0596`, merge `8b47b9275`) добавляют **ровно один файл** — зеркало уже применённой миграции `...094336_6fd6fb5f-....sql` (87 строк, продукт PRD-000039). Это managed migration mirror, **не** code mismatch: файлов `src/**` и `supabase/functions/**` в дельте нет.
+- Коммит `639d62cd9af75acbe242c1d1e9f8482a60d4af4e` (head PR #350) в managed-зеркале **отсутствует**; файла `supabase/migrations/20260822093925_allow_staff_live_event_replies.sql` в дереве нет.
+- **Вывод: EXECUTE BLOCKED** — PR #350 не merged в `main` (или merge ещё не доехал в managed-зеркало). Нужен exact merged SHA.
 
-### 1. HEAD и дерево
-- managed HEAD = `origin/main` = `fb38de60f98eb17ce7efe4bb102b7967e6457af7`; `git status --porcelain` пусто.
-- Это же SHA — текущий production effective SHA (последний Publish). Mismatch нет.
+## 2. Фактические production policies/grants (без PII)
 
-### 2. Существующий UI настройки кнопок — новое поле НЕ требуется
-- `src/components/products/OfferAddonsEditor.tsx` уже умеет всё нужное:
-  - режимы `immediate | fixed_date | manual` (строка 17, `accessModeLabel` 27-31);
-  - поле даты и запись `access_opens_at` при добавлении связи (строки 96-115);
-  - массовое применение режима/даты ко всем модулям одной кнопки (строки 138-152);
-  - редактирование существующей связи (строки 327-345).
-- Таблица `public.offer_addons` уже содержит `access_delivery_mode`, `access_opens_at`, `access_duration_days` на уровне «родительская кнопка (`parent_offer_id`) + модуль (`addon_product_id`/`addon_offer_id`)», то есть настройка индивидуальна для продукт+тариф/кнопка+модуль. Схему менять не нужно.
-- Минимальное UI-дополнение (по желанию, не обязательное для цели): валидация «fixed_date без даты» уже есть; добавим только отображение даты в списке правил и подпись таймзоны Europe/Minsk.
+`public.live_event_replies`, RLS включён, 2 политики:
 
-### 3. Фактическая конфигурация PRD-000039 (read-back)
-| метрика | значение |
-|---|---|
-| активных `offer_addons` | **108** |
-| родительских кнопок | 12 |
-| уникальных модулей | 9 |
-| `access_delivery_mode='manual'` | **108** |
-| `access_delivery_mode='fixed_date'` | 0 |
-| `access_opens_at IS NOT NULL` | **0** |
+| Политика | cmd | roles | USING | WITH CHECK |
+|---|---|---|---|---|
+| Admins can manage replies | ALL | authenticated | `has_role_v2(auth.uid(),'admin')` | `has_role_v2(auth.uid(),'admin')` |
+| Users can read visible replies | SELECT | authenticated | `visibility_scope='public' OR target_user_id=auth.uid()` | — |
 
-Модули: PRD-000005, 011, 012, 015, 016, 017, 018, 022, 043.
+Grants (`relacl`): `anon`, `authenticated`, `service_role` — полный набор; то есть отказ идёт именно от RLS (42501), а не от привилегий.
 
-### 4. Purchase flows и фактическое состояние покупок
-- **Composable (order_group)**: `supabase/functions/_shared/finalize-composable-purchase.ts`.
-  Оплаченных addon-позиций с lineage к PRD-000039 — **4**, для всех создан `scheduled_product_access` (`status='scheduled'`), активных entitlements по ним — **0**. Всего строк в `scheduled_product_access` — 4, все `scheduled`.
-- **Standalone module order**: модуль покупается как `role='primary'` собственной кнопкой. В `finalize-composable-purchase.ts:188` primary всегда получает доступ немедленно — это законное поведение standalone-продажи, по канону не меняем.
-- Классификация активных module-entitlements с 2026-07-15: 22 — `standalone_other_offer` (собственные офферы модулей, не addon-связи PRD-000039), 4 — `ent_without_order` (ручные выдачи). **Ни одной строки с доказанным lineage к addon-кнопкам PRD-000039.** Два таких entitlement существуют, но уже `revoked` (rollback 2026-08-02).
+Колонки: `live_event_id`, `reply_text`, `visibility_scope`, `created_by` — NOT NULL; `source_comment_id`, `source_question_id`, `target_user_id`, `target_display_name`, `metadata` — nullable.
 
-### 5. Root cause (точный)
-1. **Конфигурация**: все 108 активных `offer_addons` PRD-000039 стоят в `manual` с `access_opens_at = NULL`. Открытие зависит от ручного действия администратора — детерминированной даты нет.
-2. **Fail-open в коде**: `supabase/functions/_shared/finalize-composable-purchase.ts:182`
-   `const configuredMode = String(snapshot.access_delivery_mode ?? "immediate");`
-   При отсутствии ключа в `item_snapshot` покупка трактуется как немедленная. В `order_group_items` реально встречаются строки с `item_snapshot->>'access_delivery_mode' = NULL` (подтверждено выборкой) — то есть дефект достижим, а не теоретический.
-3. **Активатор узкий**: `supabase/functions/activate-scheduled-product-access/index.ts:72` выбирает только `access_delivery_mode='fixed_date'`; `manual`-строки не откроются никогда автоматически, даже после наступления даты.
-4. Снимок `resolve-composable-checkout.ts:112-115,152-155` тоже подставляет `"immediate"` по умолчанию — вторая точка fail-open.
+Функции:
+- `public.has_role_v2(uuid, text)` — SQL, STABLE, SECURITY DEFINER, `search_path=public`. Особенность: код `'employee'` — виртуальный umbrella (любая роль в `user_roles_v2`, кроме `user`); `'superadmin'`/`'super-admin'` нормализуются в `super_admin`.
+- `public.user_has_live_event_access(uuid, uuid)` — SQL, STABLE, SECURITY DEFINER, `search_path=public`; true для admin/super_admin, для правил `any_authenticated` и для правил по продукту при наличии подписки/доступа.
 
-## Что делаем
+## 3. Проверка гипотезы — ПОДТВЕРЖДЕНА
 
-### Этап A — код (GitHub-first, ветка `codex/addon-access-guard`)
-1. `finalize-composable-purchase.ts`: убрать дефолт `"immediate"`. Если в `item_snapshot` режима нет — **перечитать** связь `offer_addons` по `parent_offer_id + addon_offer_id/addon_product_id` этой позиции; если связь найдена — использовать её `access_delivery_mode`/`access_opens_at`/`access_duration_days`; если связь не найдена — **не выдавать доступ**, создать `scheduled_product_access` со статусом `scheduled` и `access_delivery_mode='manual'` (fail-closed), без расширения на другие продукты.
-2. Единый guard-хелпер `_shared/resolve-effective-access-opening.ts`: одна функция «выдавать сейчас или планировать», подключается во всех fulfilment/replay/reconcile путях (`finalize-composable-purchase`, `activate-scheduled-product-access`, `payments-reconcile`, `bepaid-auto-process`, `grant-access-for-order` для addon-заказов). Правило: active entitlement создаётся только при `now >= access_opens_at`; иначе idempotent upsert `scheduled_product_access` по `order_group_item_id`.
-3. `activate-scheduled-product-access`: активировать любые строки с `opens_at IS NOT NULL AND opens_at <= now()` независимо от `access_delivery_mode`; `manual` без даты остаётся ручным.
-4. `resolve-composable-checkout.ts`: снимок обязан содержать режим/дату явно; отсутствие правила — ошибка резолва, а не `immediate`.
-5. Frontend: `src/pages/Purchases.tsx` (блок «Куплен», строки 520-555) уже показывает покупку без доступа; добавляем показ даты открытия и для строк, у которых `opens_at` задан при `manual`. Учебный контент продолжает использовать только effective entitlement — новых путей открытия не вводим.
-6. Тесты (vitest + SQL-контракт): immediate / fixed_date до даты / fixed_date после даты / manual / NULL snapshot → fail-closed / replay-идемпотентность / standalone primary остаётся immediate / старый законный доступ не трогается / граница ровно 2026-09-30T21:00:00Z (00:00 Europe/Minsk).
-7. CI зелёный → PR → merge → фиксируем merge SHA.
+- UI: `src/pages/LiveEvent.tsx:134` и `src/components/live/LiveEventQuestions.tsx:82` открывают ответ при `role === 'admin' || 'superadmin' || 'employee'`.
+- INSERT: `src/components/live/LiveEventReplies.tsx:51`, payload с `created_by: user.id`.
+- БД: единственная разрешающая INSERT политика требует ровно `has_role_v2(auth.uid(),'admin')`.
+- Следствие: `super_admin` и любой сотрудник вне роли `admin` проходят UI-гейт, но получают 42501. Соседние таблицы (`live_event_comments`, `live_event_questions`) уже используют более широкий staff-набор — предлагаемая правка выравнивает `live_event_replies` с этим каноном.
 
-### Этап B — миграция конфигурации (только после отдельного подтверждения)
-Одна миграция, строго ограниченная:
-```sql
-UPDATE public.offer_addons oa
-SET access_delivery_mode = 'fixed_date',
-    access_opens_at = timestamptz '2026-09-30T21:00:00Z',
-    updated_at = now()
-FROM public.tariff_offers o
-JOIN public.tariffs t ON t.id = o.tariff_id
-WHERE oa.parent_offer_id = o.id
-  AND t.product_id = '3e43fb28-8322-41bc-bfee-714731bdc630'
-  AND oa.is_active;
+## 4. Ревизия миграции PR #350 (по описанию; файл в зеркале недоступен)
+
+Требования к миграции, которые я обязан проверить построчно после merge:
+
+1. Новая политика только `FOR INSERT TO authenticated`, существующая «Admins can manage replies» **сохраняется** (не DROP, не REPLACE).
+2. `WITH CHECK` содержит все четыре условия:
+   - `created_by = auth.uid()`;
+   - staff umbrella: `has_role_v2(auth.uid(),'admin') OR has_role_v2(auth.uid(),'super_admin') OR has_role_v2(auth.uid(),'employee')` (учесть, что `'employee'` уже покрывает первые два — дубли безопасны, но не должны заменяться на `'superadmin'`-строку без нормализации);
+   - доступ к эфиру: `user_has_live_event_access(auth.uid(), live_event_id)`;
+   - источник из того же эфира: `source_comment_id`/`source_question_id`, если заданы, ссылаются на строку с тем же `live_event_id` (EXISTS-подзапросы), и допускается случай, когда оба NULL — только если это осознанно.
+3. Никаких `ALTER TABLE`, `GRANT`, изменений функций, данных, индексов; идемпотентность через `DROP POLICY IF EXISTS <new_name>` + `CREATE POLICY`.
+4. Никаких изменений `live_event_comments`, `live_event_questions`, `live_events`.
+
+Любое отклонение → STOP без применения.
+
+## 5. Безопасный dry-run / read-back (без INSERT в текущий эфир)
+
+До применения:
+- снимок `pg_policies` по `live_event_replies` (2 строки), `relrowsecurity`, `relacl`;
+- контрольные счётчики: `count(*) live_event_replies`, `max(created_at)`;
+- определения `has_role_v2`, `user_has_live_event_access` (хэш `pg_get_functiondef`).
+
+После применения (read-back):
+- ровно 3 политики: две прежние без изменений + одна новая INSERT;
+- `count(*)` и `max(created_at)` в `live_event_replies` не изменились;
+- 0 изменений в `live_event_comments`, `live_event_questions`, `live_events`, `entitlements`, `orders`, `payments_v2`;
+- определения функций не изменились.
+
+Runtime proof без сохранения строки (эквивалент impersonation, транзакция с ROLLBACK, вне текущего эфира):
 ```
-Ожидаемо: **ровно 108 строк**, 12 кнопок, 9 модулей, 3 тарифа. Ни одна строка другого продукта (включая 21 поток) не затрагивается — read-back проверяет `count = 108` и `count(*) FROM offer_addons WHERE access_opens_at = ... AND parent_offer_id NOT IN (...) = 0`.
+BEGIN;
+SET LOCAL role authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"<staff_uuid>","role":"authenticated"}';
+INSERT INTO public.live_event_replies (...)  -- тестовый эфир/строка
+RETURNING id;
+ROLLBACK;
+```
+и негативный кейс: тот же INSERT под не-staff `sub` должен падать 42501. Обе проверки — только с ROLLBACK, ни одной сохранённой строки; при невозможности сделать это без касания текущего эфира — использовать завершённый/тестовый `live_event_id`, иначе пометить runtime proof как UNVERIFIED, а не имитировать его.
 
-### Этап C — remediation (dry-run сначала, без PII)
-Критерий lineage: entitlement → `orders_v2.id` → `order_group_items(role<>'primary')` → `order_groups` с primary-позицией на тарифе PRD-000039 → соответствующая `offer_addons`-связь.
-Ожидаемые счётчики по текущим данным:
-- entitlements к revoke/convert: **0** (единственные 2 строки с lineage уже `revoked`);
-- существующие законные доступы (22 standalone + 4 ручных): **delta = 0**, не трогаем;
-- `scheduled_product_access`: 4 существующие строки с lineage к PRD-000039 обновляются с `manual` на `fixed_date` + `opens_at = 2026-09-30T21:00:00Z` (ожидаемо ровно 4 строки);
-- новые scheduled-строки: 0 (все оплаченные addon-позиции уже имеют строку).
-Любая строка без доказанного lineage — STOP, никаких массовых действий по `product_id`.
+## 6. Stop-guards, rollback, DoD, вне scope
 
-### Этап D — production
-Отдельным подтверждением: применить миграцию Этапа B → deploy ровно перечисленных Edge Functions → live read-back (108/12/9, 4 scheduled с датой, 0 изменённых entitlements) → Publish frontend → проверка страницы «Покупки»: покупка видна, содержимое закрыто, дата открытия отображается.
-Rollback: обратный `UPDATE` возвращает `manual`/`NULL` для тех же 108 строк; функции откатываются деплоем предыдущего SHA; entitlements не трогаются, поэтому откат безопасен.
+Stop-guards:
+- нет exact merged SHA PR #350 → STOP (текущее состояние);
+- миграция не байт-в-байт с файлом PR → STOP;
+- миграция трогает что-то кроме политики INSERT на `live_event_replies` → STOP;
+- read-back даёт ≠3 политики или изменившиеся счётчики → STOP + rollback;
+- любой новый critical security finding → STOP.
 
-## Execute gates
-- HEAD == утверждённый merge SHA, чистое дерево;
-- typecheck + новые тесты + production build PASS;
-- dry-run миграции даёт ровно 108 строк и 0 посторонних;
-- 0 записей в orders/payments/contacts/messages;
-- любой mismatch или новый critical finding — STOP.
+Rollback: `DROP POLICY IF EXISTS "<новое имя>" ON public.live_event_replies;` — возвращает ровно исходные 2 политики, данные не затрагиваются.
+
+DoD:
+- exact merged SHA подтверждён, дерево чистое;
+- применена ровно одна миграция `20260822093925_allow_staff_live_event_replies.sql`;
+- 3 политики, старые не изменены;
+- positive/negative runtime proof с ROLLBACK, 0 сохранённых строк;
+- 0 изменений данных эфира, комментариев, вопросов, доступов, заказов, платежей;
+- линтер без новых critical findings.
+
+Вне scope: любые изменения UI, Edge Functions, текущего эфира и его данных, ретро-исправление уже не отправленных ответов, расширение прав на SELECT/UPDATE/DELETE, изменение `has_role_v2`/`user_has_live_event_access`.
+
+## 7. Publish
+
+Publish не требуется: изменение только на уровне RLS, UI не менялся, скриншоты ПК/мобайл неприменимы. Доказательство — policy read-back и impersonation-проверка с ROLLBACK. Отдельно отмечу: ожидающая публикация предыдущей задачи (PRD-000039) остаётся невыполненной и требует отдельного решения.
