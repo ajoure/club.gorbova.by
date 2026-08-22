@@ -3,6 +3,7 @@ export type AccessDeliveryMode = "immediate" | "fixed_date" | "manual";
 
 export interface QuoteSourceItem {
   role: "primary" | "addon";
+  parent_offer_id?: string;
   product_id: string;
   product_name: string;
   tariff_id: string;

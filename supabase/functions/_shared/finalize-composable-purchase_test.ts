@@ -1,8 +1,37 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import {
   GrantAccessInvokeError,
+  normalizeAccessOpening,
   readGrantInvokeFailure,
 } from "./finalize-composable-purchase.ts";
+
+Deno.test("missing add-on delivery configuration fails closed", () => {
+  assertEquals(normalizeAccessOpening({}), {
+    mode: "manual",
+    opensAt: null,
+    durationDays: null,
+  });
+});
+
+Deno.test("fixed-date access preserves its configured opening instant", () => {
+  assertEquals(normalizeAccessOpening({
+    access_delivery_mode: "fixed_date",
+    access_opens_at: "2026-09-30T21:00:00.000Z",
+    access_duration_days: 30,
+  }), {
+    mode: "fixed_date",
+    opensAt: "2026-09-30T21:00:00.000Z",
+    durationDays: 30,
+  });
+});
+
+Deno.test("fixed-date access without a date fails closed", () => {
+  assertEquals(normalizeAccessOpening({ access_delivery_mode: "fixed_date" }), {
+    mode: "manual",
+    opensAt: null,
+    durationDays: null,
+  });
+});
 
 Deno.test("grant invocation keeps gateway status and a safe response code", async () => {
   const error = {

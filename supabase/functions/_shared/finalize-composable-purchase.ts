@@ -17,6 +17,57 @@ const asObject = (value: unknown): Record<string, unknown> =>
     ? value as Record<string, unknown>
     : {};
 
+type AccessOpening = {
+  mode: "immediate" | "fixed_date" | "manual";
+  opensAt: string | null;
+  durationDays: number | null;
+};
+
+export function normalizeAccessOpening(value: Record<string, unknown>): AccessOpening {
+  const rawMode = typeof value.access_delivery_mode === "string"
+    ? value.access_delivery_mode
+    : null;
+  const opensAt = typeof value.access_opens_at === "string"
+    ? value.access_opens_at
+    : null;
+  const duration = value.access_duration_days == null
+    ? null
+    : Number(value.access_duration_days);
+  const durationDays = Number.isFinite(duration) ? duration : null;
+
+  if (rawMode === "immediate") return { mode: rawMode, opensAt: null, durationDays };
+  if (rawMode === "fixed_date" && opensAt && Number.isFinite(Date.parse(opensAt))) {
+    return { mode: rawMode, opensAt, durationDays };
+  }
+  if (rawMode === "manual") return { mode: rawMode, opensAt, durationDays };
+
+  // Missing or inconsistent configuration must never unlock paid content.
+  return { mode: "manual", opensAt: null, durationDays };
+}
+
+async function resolveAddonAccessOpening(
+  admin: any,
+  item: any,
+  snapshot: Record<string, unknown>,
+  primaryOfferId: string | null,
+): Promise<AccessOpening> {
+  if (typeof snapshot.access_delivery_mode === "string") {
+    return normalizeAccessOpening(snapshot);
+  }
+  if (!primaryOfferId) return normalizeAccessOpening({});
+
+  const { data, error } = await admin
+    .from("offer_addons")
+    .select("access_delivery_mode,access_opens_at,access_duration_days")
+    .eq("parent_offer_id", primaryOfferId)
+    .eq("addon_offer_id", item.offer_id)
+    .eq("addon_product_id", item.product_id)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (error) throw new Error(`addon_access_configuration_lookup_failed:${error.message}`);
+  return normalizeAccessOpening(asObject(data));
+}
+
 const grantFailed = (data: unknown, error: unknown) => {
   const payload = asObject(data);
   return !!error || payload.success === false || !!payload.error ||
@@ -176,13 +227,16 @@ export async function finalizeComposablePurchase(
   if (itemsError) throw new Error(`order_group_items_lookup_failed:${itemsError.message}`);
 
   const results: FinalizedPurchaseItem[] = [];
+  const primaryOfferId = (groupItems ?? []).find((item: any) => item.role === "primary")
+    ?.offer_id ?? null;
   for (const item of groupItems ?? []) {
     if (!item.order_id) throw new Error(`order_group_item_order_missing:${item.id}`);
     const snapshot = asObject(item.item_snapshot);
-    const configuredMode = String(snapshot.access_delivery_mode ?? "immediate");
-    const opensAt = typeof snapshot.access_opens_at === "string"
-      ? snapshot.access_opens_at
-      : null;
+    const opening = item.role === "primary"
+      ? normalizeAccessOpening({ access_delivery_mode: "immediate" })
+      : await resolveAddonAccessOpening(admin, item, snapshot, primaryOfferId);
+    const configuredMode = opening.mode;
+    const opensAt = opening.opensAt;
     const fixedDateAlreadyReached = configuredMode === "fixed_date" &&
       !!opensAt && Date.parse(opensAt) <= Date.now();
     const shouldGrantNow = item.role === "primary" ||
@@ -202,9 +256,7 @@ export async function finalizeComposablePurchase(
     if (configuredMode !== "fixed_date" && configuredMode !== "manual") {
       throw new Error(`unsupported_access_delivery_mode:${configuredMode}`);
     }
-    const durationDays = snapshot.access_duration_days == null
-      ? null
-      : Number(snapshot.access_duration_days);
+    const durationDays = opening.durationDays;
     const payload = {
       order_group_id: group.id,
       order_group_item_id: item.id,
@@ -215,8 +267,8 @@ export async function finalizeComposablePurchase(
       tariff_id: item.tariff_id,
       offer_id: item.offer_id,
       access_delivery_mode: configuredMode,
-      opens_at: configuredMode === "fixed_date" ? opensAt : null,
-      access_duration_days: Number.isFinite(durationDays) ? durationDays : null,
+      opens_at: opensAt,
+      access_duration_days: durationDays,
       status: "scheduled",
       purchase_confirmed_at: refreshedGroup.paid_at ?? new Date().toISOString(),
       access_snapshot: snapshot,

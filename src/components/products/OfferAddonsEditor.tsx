@@ -11,16 +11,18 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/badge";
 import { CalendarClock, Check, Clock3, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 
 type PricingMode = "offer_price" | "fixed_price" | "percent_discount" | "free";
 type AccessDeliveryMode = "immediate" | "fixed_date" | "manual";
 
-const toIso = (value: string) => value ? new Date(value).toISOString() : null;
+const ACCESS_TIME_ZONE = "Europe/Minsk";
+const toIso = (value: string) => value
+  ? fromZonedTime(value, ACCESS_TIME_ZONE).toISOString()
+  : null;
 const toLocalDateTime = (value: string | null | undefined) => {
   if (!value) return "";
-  const date = new Date(value);
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+  return formatInTimeZone(value, ACCESS_TIME_ZONE, "yyyy-MM-dd'T'HH:mm");
 };
 
 const accessModeLabel: Record<AccessDeliveryMode, string> = {
@@ -233,9 +235,10 @@ export function OfferAddonsEditor({ productId }: { productId: string }) {
         </div>
         {accessMode === "fixed_date" && (
           <div className="space-y-2">
-            <Label>Дата и время открытия</Label>
+            <Label>Дата и время открытия (Минск)</Label>
             <Input
               type="datetime-local"
+              aria-label="Дата и время открытия по Минску"
               value={accessOpensAt}
               onChange={(event) => setAccessOpensAt(event.target.value)}
             />
@@ -286,6 +289,7 @@ export function OfferAddonsEditor({ productId }: { productId: string }) {
           {bulkAccessMode === "fixed_date" ? (
             <Input
               type="datetime-local"
+              aria-label="Общая дата и время открытия по Минску"
               value={bulkAccessOpensAt}
               onChange={(event) => setBulkAccessOpensAt(event.target.value)}
             />
@@ -396,6 +400,7 @@ function AddonAccessRuleRow({
           <Input
             className="h-9"
             type="datetime-local"
+            aria-label="Дата и время открытия по Минску"
             value={opensAt}
             onChange={(event) => setOpensAt(event.target.value)}
           />

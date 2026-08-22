@@ -78,6 +78,14 @@ export async function resolveComposableCheckout(
   const selected = available.filter((rule: any) =>
     rule.is_required || requested.has(rule.addon_offer_id)
   );
+  for (const rule of selected) {
+    if (!["immediate", "fixed_date", "manual"].includes(rule.access_delivery_mode)) {
+      throw new ComposableCheckoutError("addon_access_delivery_mode_missing", 500);
+    }
+    if (rule.access_delivery_mode === "fixed_date" && !rule.access_opens_at) {
+      throw new ComposableCheckoutError("addon_access_opening_date_missing", 500);
+    }
+  }
   const parentTariff: any = parentOffer.tariff;
   const currency = String(parentTariff.product.currency ?? "BYN").toUpperCase();
   if (
@@ -99,6 +107,7 @@ export async function resolveComposableCheckout(
     sort_order: 0,
   }, ...selected.map((rule: any) => ({
     role: "addon" as const,
+    parent_offer_id: parentOffer.id,
     product_id: rule.addon_product_id,
     product_name: rule.addon_product.name,
     tariff_id: rule.addon_tariff_id,
@@ -109,7 +118,7 @@ export async function resolveComposableCheckout(
     fixed_amount: rule.fixed_amount == null ? null : Number(rule.fixed_amount),
     discount_percent:
       rule.discount_percent == null ? null : Number(rule.discount_percent),
-    access_delivery_mode: rule.access_delivery_mode ?? "immediate",
+    access_delivery_mode: rule.access_delivery_mode,
     access_opens_at: rule.access_opens_at ?? null,
     access_duration_days:
       rule.access_duration_days == null ? null : Number(rule.access_duration_days),
@@ -149,7 +158,7 @@ export async function resolveComposableCheckout(
       is_required: rule.is_required,
       is_default_selected: rule.is_default_selected,
       allow_repurchase_after_expiry: rule.allow_repurchase_after_expiry,
-      access_delivery_mode: rule.access_delivery_mode ?? "immediate",
+      access_delivery_mode: rule.access_delivery_mode,
       access_opens_at: rule.access_opens_at ?? null,
       access_duration_days:
         rule.access_duration_days == null ? null : Number(rule.access_duration_days),

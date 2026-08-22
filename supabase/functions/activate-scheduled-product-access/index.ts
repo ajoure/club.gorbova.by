@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
   } else {
     query = query
       .eq("status", "scheduled")
-      .eq("access_delivery_mode", "fixed_date")
+      .not("opens_at", "is", null)
       .lte("opens_at", new Date().toISOString())
       .order("opens_at")
       .limit(limit);
