@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Loader2, Send, CheckCircle2, Lock, ArrowDown } from "lucide-react";
+import { Loader2, Send, CheckCircle2, Lock, ArrowDown, Reply } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
@@ -13,7 +13,7 @@ import {
   resolveMessageHighlight,
   type AuthorRole,
 } from "./LiveRoleBadge";
-import { LiveEventReplyForm, LiveEventRepliesList } from "./LiveEventReplies";
+import { LiveEventReplyActivity, LiveEventReplyForm, useLiveEventReplies } from "./LiveEventReplies";
 import { LiveInlineModeration } from "./LiveInlineModeration";
 import { LiveAutoGrowTextarea } from "./LiveAutoGrowTextarea";
 import { LiveModerationBanner } from "./LiveModerationBanner";
@@ -82,6 +82,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
     const isStaff = role === "admin" || role === "superadmin" || role === "employee";
     const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
     const staffNameMap = useStaffNameMap(liveEventId, isStaff);
+    const { data: liveReplies = [] } = useLiveEventReplies(liveEventId);
 
     // Live (текущий автовеб).
     const { data: liveQuestions, isLoading } = useQuery({
@@ -180,6 +181,14 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
       () => new Set((historyQuestions ?? []).map((question) => question.id)),
       [historyQuestions],
     );
+    const questionTextById = useMemo(
+      () => new Map(questions.map((question) => [question.id, question.content])),
+      [questions],
+    );
+    const questionReplies = useMemo(
+      () => liveReplies.filter((reply) => !!reply.source_question_id && questionTextById.has(reply.source_question_id)),
+      [liveReplies, questionTextById],
+    );
 
 
     // Realtime
@@ -227,7 +236,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
     }, [isNearBottom]);
 
     useEffect(() => {
-      const count = questions?.length ?? 0;
+      const count = (questions?.length ?? 0) + questionReplies.length;
       const prev = lastCountRef.current;
       if (count === 0) {
         lastCountRef.current = 0;
@@ -243,7 +252,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
         }
       }
       lastCountRef.current = count;
-    }, [questions, scrollToBottom]);
+    }, [questions, questionReplies.length, scrollToBottom]);
 
     const { isMuted, isRemoved } = useRoomModerationState(liveEventId, user?.id);
     const isBlocked = isMuted || isRemoved;
@@ -363,12 +372,28 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
                 {staffSourceIndicator && isHistorical && <Badge variant="outline" className="text-[9px] px-1 py-0">История</Badge>}
                 <span className="text-[10px] room-meta-text">{format(new Date(q.created_at), "HH:mm", { locale: ru })}</span>
                 {q.is_answered && <CheckCircle2 className="h-3 w-3 text-primary inline" />}
+                {!isHistorical && (
+                  <button
+                    type="button"
+                    className="ml-auto inline-flex items-center gap-1 text-[10px] room-meta-text hover:text-primary"
+                    onClick={() => {
+                      if (isBlocked) {
+                        toast.error(isRemoved ? "Вы удалены из комнаты модератором" : "Вы заглушены модератором");
+                        return;
+                      }
+                      setReplyingTo({ id: q.id, userId: q.user_id, name: displayName });
+                    }}
+                    aria-label={`Ответить ${displayName}`}
+                  >
+                    <Reply className="h-3 w-3" />
+                    Ответить
+                  </button>
+                )}
                 {!isHistorical && <LiveInlineModeration
                     liveEventId={liveEventId}
                     messageId={q.id}
                     messageUserId={q.user_id}
                     messageTable="live_event_questions"
-                    onReply={() => setReplyingTo({ id: q.id, userId: q.user_id, name: displayName })}
                     onOpenProfile={onOpenProfile}
                   />}
               </div>
@@ -383,7 +408,6 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
               )}
             </div>
           </div>
-          {!isHistorical && <LiveEventRepliesList liveEventId={liveEventId} sourceQuestionId={q.id} />}
           {!isHistorical && replyingTo?.id === q.id && (
             <div className="ml-6 mt-1">
               <LiveEventReplyForm
@@ -442,6 +466,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
           ) : (
             questions.map(renderQuestion)
           )}
+          <LiveEventReplyActivity replies={questionReplies} sourceTextById={questionTextById} />
         </div>
 
         {/* M1.1: «Новые вопросы» pill — only when user scrolled away from bottom and new arrived. */}

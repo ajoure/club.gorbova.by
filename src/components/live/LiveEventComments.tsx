@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Loader2, Send, ArrowDown, SmilePlus } from "lucide-react";
+import { Loader2, Send, ArrowDown, SmilePlus, Reply } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
@@ -13,7 +13,7 @@ import {
   resolveMessageHighlight,
   type AuthorRole,
 } from "./LiveRoleBadge";
-import { LiveEventReplyForm, LiveEventRepliesList } from "./LiveEventReplies";
+import { LiveEventReplyActivity, LiveEventReplyForm, useLiveEventReplies } from "./LiveEventReplies";
 import { LiveInlineModeration } from "./LiveInlineModeration";
 import { LiveAutoGrowTextarea } from "./LiveAutoGrowTextarea";
 import { LiveModerationBanner } from "./LiveModerationBanner";
@@ -87,6 +87,7 @@ export function LiveEventComments({
   const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
   const isStaffViewer = !!onOpenProfile;
   const staffNameMap = useStaffNameMap(liveEventId, isStaffViewer);
+  const { data: liveReplies = [] } = useLiveEventReplies(liveEventId);
 
   // Live (текущий автовеб) — новые комментарии зрителей идут сюда.
   const { data: liveComments, isLoading } = useQuery({
@@ -192,6 +193,14 @@ export function LiveEventComments({
     () => new Set((historyComments ?? []).map((comment) => comment.id)),
     [historyComments],
   );
+  const commentTextById = useMemo(
+    () => new Map(comments.map((comment) => [comment.id, comment.content])),
+    [comments],
+  );
+  const commentReplies = useMemo(
+    () => liveReplies.filter((reply) => !!reply.source_comment_id && commentTextById.has(reply.source_comment_id)),
+    [liveReplies, commentTextById],
+  );
 
   // Reactions are available only for the actual room messages. Source history
   // is deliberately read-only in an autowebinar and must never be mutated.
@@ -259,7 +268,7 @@ export function LiveEventComments({
 
   // First load — jump to bottom; new messages — follow only if near bottom, else show pill.
   useEffect(() => {
-    const count = comments?.length ?? 0;
+    const count = (comments?.length ?? 0) + commentReplies.length;
     const prev = lastCountRef.current;
     if (count === 0) {
       lastCountRef.current = 0;
@@ -276,7 +285,7 @@ export function LiveEventComments({
       }
     }
     lastCountRef.current = count;
-  }, [comments, scrollToBottom]);
+  }, [comments, commentReplies.length, scrollToBottom]);
 
   const { isMuted, isRemoved } = useRoomModerationState(liveEventId, user?.id);
   const isBlocked = isMuted || isRemoved;
@@ -414,12 +423,28 @@ export function LiveEventComments({
                       <LiveRoleBadge role={displayRole} />
                       {staffSourceIndicator && isHistorical && <Badge variant="outline" className="text-[9px] px-1 py-0">История</Badge>}
                       <span className="text-[10px] room-meta-text">{format(new Date(comment.created_at), "HH:mm", { locale: ru })}</span>
+                      {!isHistorical && (
+                        <button
+                          type="button"
+                          className="ml-auto inline-flex items-center gap-1 text-[10px] room-meta-text hover:text-primary"
+                          onClick={() => {
+                            if (isBlocked) {
+                              toast.error(isRemoved ? "Вы удалены из комнаты модератором" : "Вы заглушены модератором");
+                              return;
+                            }
+                            setReplyingTo({ id: comment.id, userId: comment.user_id, name: displayName });
+                          }}
+                          aria-label={`Ответить ${displayName}`}
+                        >
+                          <Reply className="h-3 w-3" />
+                          Ответить
+                        </button>
+                      )}
                       {!isHistorical && <LiveInlineModeration
                           liveEventId={liveEventId}
                           messageId={comment.id}
                           messageUserId={comment.user_id}
                           messageTable="live_event_comments"
-                          onReply={() => setReplyingTo({ id: comment.id, userId: comment.user_id, name: displayName })}
                           onOpenProfile={onOpenProfile}
                         />}
                     </div>
@@ -433,11 +458,6 @@ export function LiveEventComments({
                     onToggle={(emoji) => handleToggleCommentReaction(comment.id, emoji)}
                   />
                 )}
-                {/* Threaded replies */}
-                {!isHistorical && <LiveEventRepliesList
-                    liveEventId={liveEventId}
-                    sourceCommentId={comment.id}
-                  />}
                 {/* Inline reply form */}
                 {!isHistorical && replyingTo?.id === comment.id && (
                   <div className="ml-6 mt-1">
@@ -454,6 +474,7 @@ export function LiveEventComments({
             );
           })
         )}
+        <LiveEventReplyActivity replies={commentReplies} sourceTextById={commentTextById} />
       </div>
 
       {/* M1.1: «Новые сообщения» pill — only when user scrolled away from bottom and new arrived. */}
