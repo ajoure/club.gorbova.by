@@ -1,99 +1,132 @@
-# План: RLS-фикс ответов на комментарии в эфире (PR #350)
+# План: read-only ревизия PR #352 (ответы участников в эфире)
 
-Режим текущего сообщения: **PLAN-ONLY / STRICT READ-ONLY**. Ничего не изменено: 0 code edits, 0 commits, 0 migrations, 0 SQL writes, 0 deploy, 0 Publish. Ожидающая публикация предыдущей задачи не продолжена.
+## Итог: BLOCKED — ревизия diff невозможна, execute запрещён
 
-## 1. Проект и effective SHA
+Головной SHA PR #352 `63543a3264ae24bafb262bbeeed0c5562f0fa8f0` недоступен из managed-зеркала:
 
-- Проект: текущий production (Lovable Cloud) — PASS.
-- Managed HEAD: `8b47b92753d33852d0823d756047f68249d61389`, дерево чистое.
-- Разбор дельты относительно `origin/main` `5a7365967d59d2d26985136ce99d7207ff050679`: два managed-коммита (`9301c0596`, merge `8b47b9275`) добавляют **ровно один файл** — зеркало уже применённой миграции `...094336_6fd6fb5f-....sql` (87 строк, продукт PRD-000039). Это managed migration mirror, **не** code mismatch: файлов `src/**` и `supabase/functions/**` в дельте нет.
-- Коммит `639d62cd9af75acbe242c1d1e9f8482a60d4af4e` (head PR #350) в managed-зеркале **отсутствует**; файла `supabase/migrations/20260822093925_allow_staff_live_event_replies.sql` в дереве нет.
-- **Вывод: EXECUTE BLOCKED** — PR #350 не merged в `main` (или merge ещё не доехал в managed-зеркало). Нужен exact merged SHA.
+- `git ls-remote origin` — HEAD зеркала ровно `c06306bed7afe42a0d2be3656202ff2022bd39a0` (совпадает с указанным production SHA);
+- `git cat-file -t 63543a32...` — объект отсутствует; ветки PR #352 в зеркале нет;
+- файл `supabase/migrations/20260823094017_participant_live_event_replies.sql` в дереве отсутствует (последняя миграция реплаев — `20260822093925_allow_staff_live_event_replies.sql`).
 
-## 2. Фактические production policies/grants (без PII)
+Поэтому ни миграцию из PR, ни UI-дельту `LiveEventReplies/Comments/Questions` подтвердить нельзя. Любое утверждение о содержимом PR было бы догадкой. Execute запрещён до того, как содержимое SHA станет доступно (merge в main зеркала либо предоставление diff/файла миграции в чат).
 
-`public.live_event_replies`, RLS включён, 2 политики:
+## Что подтверждено на текущем production (baseline, read-only)
 
-| Политика | cmd | roles | USING | WITH CHECK |
-|---|---|---|---|---|
-| Admins can manage replies | ALL | authenticated | `has_role_v2(auth.uid(),'admin')` | `has_role_v2(auth.uid(),'admin')` |
-| Users can read visible replies | SELECT | authenticated | `visibility_scope='public' OR target_user_id=auth.uid()` | — |
+Политики `public.live_event_replies` сейчас ровно 3:
 
-Grants (`relacl`): `anon`, `authenticated`, `service_role` — полный набор; то есть отказ идёт именно от RLS (42501), а не от привилегий.
+1. `Admins can manage replies` — ALL, `has_role_v2(auth.uid(),'admin')` (qual и with_check).
+2. `Staff can create live event replies` — INSERT, требует `created_by = auth.uid()`, роль `employee`, `user_has_live_event_access`, и что `source_comment_id`/`source_question_id` принадлежит тому же `live_event_id`.
+3. `Users can read visible replies` — SELECT, `visibility_scope = 'public' OR target_user_id = auth.uid()`.
 
-Колонки: `live_event_id`, `reply_text`, `visibility_scope`, `created_by` — NOT NULL; `source_comment_id`, `source_question_id`, `target_user_id`, `target_display_name`, `metadata` — nullable.
+Колонки: `source_comment_id`, `source_question_id`, `target_user_id`, `target_display_name` — все NULLable; `visibility_scope`, `created_by`, `live_event_id` — NOT NULL.
 
-Функции:
-- `public.has_role_v2(uuid, text)` — SQL, STABLE, SECURITY DEFINER, `search_path=public`. Особенность: код `'employee'` — виртуальный umbrella (любая роль в `user_roles_v2`, кроме `user`); `'superadmin'`/`'super-admin'` нормализуются в `super_admin`.
-- `public.user_has_live_event_access(uuid, uuid)` — SQL, STABLE, SECURITY DEFINER, `search_path=public`; true для admin/super_admin, для правил `any_authenticated` и для правил по продукту при наличии подписки/доступа.
+Realtime-публикация `supabase_realtime` содержит `live_event_comments`, `live_event_questions`, `live_event_room_blocks`, `live_event_cta_runtime_events`, `live_event_reactions`, `live_event_comment_reactions` — **`live_event_replies` в публикации нет**.
 
-## 3. Проверка гипотезы — ПОДТВЕРЖДЕНА
+## Findings на baseline (их PR обязан закрыть)
 
-- UI: `src/pages/LiveEvent.tsx:134` и `src/components/live/LiveEventQuestions.tsx:82` открывают ответ при `role === 'admin' || 'superadmin' || 'employee'`.
-- INSERT: `src/components/live/LiveEventReplies.tsx:51`, payload с `created_by: user.id`.
-- БД: единственная разрешающая INSERT политика требует ровно `has_role_v2(auth.uid(),'admin')`.
-- Следствие: `super_admin` и любой сотрудник вне роли `admin` проходят UI-гейт, но получают 42501. Соседние таблицы (`live_event_comments`, `live_event_questions`) уже используют более широкий staff-набор — предлагаемая правка выравнивает `live_event_replies` с этим каноном.
+### CRITICAL-1 — SELECT-политика реплаев не проверяет доступ к эфиру
+`Users can read visible replies` разрешает читать любой публичный reply любому авторизованному пользователю, вне зависимости от `user_has_live_event_access(auth.uid(), live_event_id)` и от `is_user_removed_from_room`. Это кросс-эфирная утечка контента. Требование «публичный ответ видят все участники **с доступом к эфиру**» сейчас не выполняется.
 
-## 4. Ревизия миграции PR #350 (по описанию; файл в зеркале недоступен)
+### CRITICAL-2 — приватный ответ не виден его автору и не виден staff
+Условие `target_user_id = auth.uid()` не покрывает ни `created_by = auth.uid()`, ни роли `employee`/`super_admin`. Приватный ответ видит только адресат и `admin` (через политику ALL). Требование «private видят автор, адресат и весь staff/admin» не выполняется.
 
-Требования к миграции, которые я обязан проверить построчно после merge:
+### HIGH-1 — участник не может ответить
+INSERT разрешён только роли `employee` (и `admin` через ALL). Обычный участник получает 42501. Требование PR — INSERT для любого участника с доступом; при этом обязательны проверки `NOT is_user_removed_from_room` и `NOT is_user_muted_in_room` (в политиках comments/questions они есть, в reply-INSERT — отсутствуют, см. HIGH-2).
 
-1. Новая политика только `FOR INSERT TO authenticated`, существующая «Admins can manage replies» **сохраняется** (не DROP, не REPLACE).
-2. `WITH CHECK` содержит все четыре условия:
-   - `created_by = auth.uid()`;
-   - staff umbrella: `has_role_v2(auth.uid(),'admin') OR has_role_v2(auth.uid(),'super_admin') OR has_role_v2(auth.uid(),'employee')` (учесть, что `'employee'` уже покрывает первые два — дубли безопасны, но не должны заменяться на `'superadmin'`-строку без нормализации);
-   - доступ к эфиру: `user_has_live_event_access(auth.uid(), live_event_id)`;
-   - источник из того же эфира: `source_comment_id`/`source_question_id`, если заданы, ссылаются на строку с тем же `live_event_id` (EXISTS-подзапросы), и допускается случай, когда оба NULL — только если это осознанно.
-3. Никаких `ALTER TABLE`, `GRANT`, изменений функций, данных, индексов; идемпотентность через `DROP POLICY IF EXISTS <new_name>` + `CREATE POLICY`.
-4. Никаких изменений `live_event_comments`, `live_event_questions`, `live_events`.
+### HIGH-2 — в INSERT реплаев нет проверок remove/mute
+Существующая INSERT-политика реплаев не содержит `NOT is_user_removed_from_room(...)` и `NOT is_user_muted_in_room(...)`, в отличие от `live_event_comments`/`live_event_questions`. Замьюченный/удалённый участник (или staff) сможет отвечать.
 
-Любое отклонение → STOP без применения.
+### HIGH-3 — приватность target_user_id не ограничена
+Нет CHECK/политики, требующей `visibility_scope='private' ⇒ target_user_id IS NOT NULL` и что `target_user_id` — автор исходного comment/question. Иначе приватный ответ может быть адресован произвольному пользователю или «повиснуть» невидимым.
 
-## 5. Безопасный dry-run / read-back (без INSERT в текущий эфир)
+### MEDIUM-1 — Realtime для реплаев отсутствует
+Без `ALTER PUBLICATION supabase_realtime ADD TABLE public.live_event_replies` новые ответы не приезжают в ленту в реальном времени; UI (`LiveEventRepliesList`) сейчас работает только на react-query без подписки и без инвалидции от чужих вставок. Даже после добавления в публикацию Realtime отдаёт строки только в пределах SELECT-RLS — то есть private-ответы корректно не утекут, но потребуется `REPLICA IDENTITY FULL` для корректной работы фильтров/DELETE.
 
-До применения:
-- снимок `pg_policies` по `live_event_replies` (2 строки), `relrowsecurity`, `relacl`;
-- контрольные счётчики: `count(*) live_event_replies`, `max(created_at)`;
-- определения `has_role_v2`, `user_has_live_event_access` (хэш `pg_get_functiondef`).
+### MEDIUM-2 — UI не даёт участнику отвечать и не гарантирует автоскролл ответов
+- `LiveEventQuestions.tsx`: форма ответа рендерится под `isStaff` (строка ~376), участнику недоступна.
+- `LiveEventComments.tsx`: `onReply` приходит из `LiveInlineModeration`, которая целиком возвращает `null` для не-staff — значит кнопки «Ответить» у участника нет.
+- `LiveEventReplies.tsx`: `LiveEventRepliesList` рендерит ответы вложенным блоком `ml-6` под сообщением, а не «новой карточкой внизу ленты с цитатой». Автоскролл в обоих списках завязан на массив `comments`/`questions`, появление нового reply скролл не триггерит.
+- `LiveEventReplyForm` жёстко ставит `created_by: user.id` и позволяет выбрать `private` без `target_user_id` (если он не передан) — сочетается с HIGH-3.
 
-После применения (read-back):
-- ровно 3 политики: две прежние без изменений + одна новая INSERT;
-- `count(*)` и `max(created_at)` в `live_event_replies` не изменились;
-- 0 изменений в `live_event_comments`, `live_event_questions`, `live_events`, `entitlements`, `orders`, `payments_v2`;
-- определения функций не изменились.
+Итого: **critical/high присутствуют на baseline ⇒ execute запрещён**, пока PR не будет прочитан и не подтверждено, что каждый пункт закрыт.
 
-Runtime proof без сохранения строки (эквивалент impersonation, транзакция с ROLLBACK, вне текущего эфира):
+## Как разблокировать ревизию
+
+1. Смержить PR #352 в main зеркала (или дать доступ к SHA `63543a32`), либо прислать в чат содержимое `supabase/migrations/20260823094017_participant_live_event_replies.sql` и diff трёх UI-файлов.
+2. После этого — повторная plan-only ревизия: проверка порядка политик (в PostgreSQL политики одного командного типа объединяются через OR, поэтому старая `Users can read visible replies` обязана быть **DROP**, иначе новая, более строгая SELECT-политика её не ограничит — это ключевая проверка миграции), наличие DROP старых политик, CHECK-констрейнтов и публикации Realtime.
+
+## Безопасный execute-план (только после разблокировки и полного PASS)
+
+1. Подтвердить чистое дерево и exact managed HEAD, содержащий merge PR #352; убедиться, что после merge-коммита нет дельты в `src/**`, `supabase/functions/**`, `supabase/migrations/**`.
+2. Байт-сверка `20260823094017_participant_live_event_replies.sql` с версией из PR.
+3. Baseline-снимок (см. read-back ниже) до применения: список политик, `count(*)`, `max(created_at)` по `live_event_replies`, `live_event_comments`, `live_event_questions`.
+4. Применить ровно эту миграцию через Lovable Cloud. Никаких других SQL/DDL/DML, никаких Edge Functions.
+5. Read-back: набор политик соответствует ожидаемому (старая SELECT-политика удалена), счётчики и `max(created_at)` неизменны.
+6. Тестовая матрица (см. ниже) — только в транзакциях с обязательным `ROLLBACK`, на завершённом/тестовом эфире. Если безопасных principals нет — статус UNVERIFIED, не угадывать.
+7. Publish frontend только если в PR есть дельта в `src/**`, с двумя скриншотами (ПК и мобильный) опубликованной комнаты.
+8. Повторный прогон security advisors.
+
+## SQL read-back (без изменения данных)
+
+```sql
+-- 1. Политики целевых таблиц
+select tablename, policyname, cmd, roles, qual, with_check
+from pg_policies
+where tablename in ('live_event_replies','live_event_comments','live_event_questions')
+order by tablename, policyname;
+
+-- 2. RLS включён
+select relname, relrowsecurity, relforcerowsecurity, relreplident
+from pg_class where relname = 'live_event_replies';
+
+-- 3. Инварианты данных
+select 'replies' t, count(*), max(created_at) from live_event_replies
+union all select 'comments', count(*), max(created_at) from live_event_comments
+union all select 'questions', count(*), max(created_at) from live_event_questions;
+
+-- 4. Целостность ссылок и приватности
+select count(*) filter (where source_comment_id is null and source_question_id is null) as orphan_source,
+       count(*) filter (where source_comment_id is not null and source_question_id is not null) as double_source,
+       count(*) filter (where visibility_scope = 'private' and target_user_id is null) as private_without_target
+from live_event_replies;
+
+-- 5. Realtime
+select tablename from pg_publication_tables
+where pubname = 'supabase_realtime' and tablename like 'live_event%';
+
+-- 6. Грантов и функций не меняли
+select grantee, privilege_type from information_schema.role_table_grants
+where table_name = 'live_event_replies';
+select md5(pg_get_functiondef(p.oid)) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+where n.nspname='public' and p.proname in
+ ('has_role_v2','user_has_live_event_access','is_user_removed_from_room','is_user_muted_in_room');
 ```
-BEGIN;
-SET LOCAL role authenticated;
-SET LOCAL request.jwt.claims = '{"sub":"<staff_uuid>","role":"authenticated"}';
-INSERT INTO public.live_event_replies (...)  -- тестовый эфир/строка
-RETURNING id;
-ROLLBACK;
-```
-и негативный кейс: тот же INSERT под не-staff `sub` должен падать 42501. Обе проверки — только с ROLLBACK, ни одной сохранённой строки; при невозможности сделать это без касания текущего эфира — использовать завершённый/тестовый `live_event_id`, иначе пометить runtime proof как UNVERIFIED, а не имитировать его.
 
-## 6. Stop-guards, rollback, DoD, вне scope
+## Тестовая матрица (в транзакции, финал — ROLLBACK)
 
-Stop-guards:
-- нет exact merged SHA PR #350 → STOP (текущее состояние);
-- миграция не байт-в-байт с файлом PR → STOP;
-- миграция трогает что-то кроме политики INSERT на `live_event_replies` → STOP;
-- read-back даёт ≠3 политики или изменившиеся счётчики → STOP + rollback;
-- любой новый critical security finding → STOP.
+| # | Актор | Действие | Ожидание |
+|---|-------|----------|----------|
+| 1 | Participant A (с доступом) | INSERT public reply к комментарию своего эфира | OK |
+| 2 | Participant A | INSERT reply с `source_comment_id` из **другого** эфира | 42501 |
+| 3 | Participant A (removed) | INSERT reply | 42501 |
+| 4 | Participant A (muted) | INSERT reply | 42501 |
+| 5 | Participant A | INSERT private reply без `target_user_id` | отказ (CHECK/RLS) |
+| 6 | Participant B (с доступом) | SELECT public reply от A | видит |
+| 7 | Participant B | SELECT private reply A→C | не видит |
+| 8 | Participant C (адресат) | SELECT private reply A→C | видит |
+| 9 | Participant A (автор) | SELECT собственного private reply | видит |
+| 10 | Пользователь без доступа к эфиру | SELECT любого reply этого эфира | 0 строк |
+| 11 | Staff (employee) | SELECT всех public+private реплаев эфира | видит все |
+| 12 | Staff (muted/removed) | INSERT reply | 42501 |
+| 13 | Admin | SELECT/INSERT/UPDATE/DELETE | полный доступ |
+| 14 | Любой | UPDATE/DELETE чужого reply | отказ |
 
-Rollback: `DROP POLICY IF EXISTS "<новое имя>" ON public.live_event_replies;` — возвращает ровно исходные 2 политики, данные не затрагиваются.
+Проверки выполняются через `set local role authenticated` + `set local request.jwt.claims`; при отказе прав роли — фиксировать UNVERIFIED, а не подменять проверку.
 
-DoD:
-- exact merged SHA подтверждён, дерево чистое;
-- применена ровно одна миграция `20260822093925_allow_staff_live_event_replies.sql`;
-- 3 политики, старые не изменены;
-- positive/negative runtime proof с ROLLBACK, 0 сохранённых строк;
-- 0 изменений данных эфира, комментариев, вопросов, доступов, заказов, платежей;
-- линтер без новых critical findings.
+## Rollback-план
 
-Вне scope: любые изменения UI, Edge Functions, текущего эфира и его данных, ретро-исправление уже не отправленных ответов, расширение прав на SELECT/UPDATE/DELETE, изменение `has_role_v2`/`user_has_live_event_access`.
-
-## 7. Publish
-
-Publish не требуется: изменение только на уровне RLS, UI не менялся, скриншоты ПК/мобайл неприменимы. Доказательство — policy read-back и impersonation-проверка с ROLLBACK. Отдельно отмечу: ожидающая публикация предыдущей задачи (PRD-000039) остаётся невыполненной и требует отдельного решения.
+- Откат миграции: `DROP POLICY` для всех политик, созданных `20260823094017`, и восстановление прежних трёх политик в точных исходных определениях (зафиксированы в baseline-снимке шага 3, тексты приведены выше в разделе «baseline»).
+- Если миграция добавляла таблицу в Realtime: `ALTER PUBLICATION supabase_realtime DROP TABLE public.live_event_replies`.
+- Если добавлялись CHECK-констрейнты: `ALTER TABLE public.live_event_replies DROP CONSTRAINT <name>`.
+- Данные не изменяются ни при применении, ни при откате; DML в rollback отсутствует.
+- Frontend-откат: Publish предыдущего SHA `c06306be`.
