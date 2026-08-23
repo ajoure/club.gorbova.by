@@ -19,6 +19,14 @@ describe("participant webinar replies", () => {
     expect(migration).toContain("created_by = (SELECT auth.uid())");
     expect(migration).toContain("live_event_replies.target_user_id = comment.user_id");
     expect(migration).toContain("live_event_replies.target_user_id = question.user_id");
+    expect(migration).toContain("live_event_replies.target_user_id IS NULL");
+    expect(migration).toContain("live_event_replies.visibility_scope = 'private'");
+  });
+
+  it("publishes replies to Realtime without duplicating publication membership", () => {
+    expect(migration).toContain("pg_publication_tables");
+    expect(migration).toContain("ALTER PUBLICATION supabase_realtime ADD TABLE public.live_event_replies");
+    expect(migration).toContain("ALTER TABLE public.live_event_replies REPLICA IDENTITY FULL");
   });
 
   it("shows participant reply controls and a realtime answer activity feed", () => {

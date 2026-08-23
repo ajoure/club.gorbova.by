@@ -7,6 +7,25 @@ DROP POLICY IF EXISTS "Staff can create live event replies" ON public.live_event
 DROP POLICY IF EXISTS "Participants can create live event replies" ON public.live_event_replies;
 DROP POLICY IF EXISTS "Users can read visible replies" ON public.live_event_replies;
 
+-- Reply cards must arrive for every connected attendee without refreshing.
+-- The guard keeps the migration safe if a managed environment already added
+-- the table to the publication independently.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'live_event_replies'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.live_event_replies;
+  END IF;
+END
+$$;
+
+ALTER TABLE public.live_event_replies REPLICA IDENTITY FULL;
+
 CREATE POLICY "Participants can create live event replies"
 ON public.live_event_replies
 FOR INSERT
@@ -25,8 +44,14 @@ WITH CHECK (
         WHERE comment.id = source_comment_id
           AND comment.live_event_id = live_event_replies.live_event_id
           AND (
-            live_event_replies.visibility_scope = 'public'
-            OR live_event_replies.target_user_id = comment.user_id
+            (
+              live_event_replies.visibility_scope = 'public'
+              AND live_event_replies.target_user_id IS NULL
+            )
+            OR (
+              live_event_replies.visibility_scope = 'private'
+              AND live_event_replies.target_user_id = comment.user_id
+            )
           )
       )
     )
@@ -38,8 +63,14 @@ WITH CHECK (
         WHERE question.id = source_question_id
           AND question.live_event_id = live_event_replies.live_event_id
           AND (
-            live_event_replies.visibility_scope = 'public'
-            OR live_event_replies.target_user_id = question.user_id
+            (
+              live_event_replies.visibility_scope = 'public'
+              AND live_event_replies.target_user_id IS NULL
+            )
+            OR (
+              live_event_replies.visibility_scope = 'private'
+              AND live_event_replies.target_user_id = question.user_id
+            )
           )
       )
     )
