@@ -67,7 +67,8 @@ export function snapshotProvesRuleAccess(
 
   if (rule.tariff_id) {
     const hasExactTariffAccess = snapshot.allSources.some((source) =>
-      source.type === 'subscription' && source.tariffId === rule.tariff_id
+      (source.type === 'subscription' || source.type === 'entitlement_source') &&
+      source.tariffId === rule.tariff_id
     );
     if (!hasExactTariffAccess) return 'no_matching_tariff_access';
   }
@@ -78,8 +79,9 @@ export function snapshotProvesRuleAccess(
  * Canonical evaluator for one live-event rule.
  *
  * A tariff-scoped rule is fail-closed: the effective product access must be
- * backed by an access-bearing subscription for that exact tariff. A generic
- * entitlement may satisfy a product-only rule, but can never prove a tariff.
+ * backed by an access-bearing subscription or an active tier-aware
+ * entitlement source for that exact tariff. A generic aggregate entitlement
+ * may satisfy a product-only rule, but can never prove a tariff.
  */
 export async function evaluateLiveAccessRule(
   supabase: SupabaseClient,
