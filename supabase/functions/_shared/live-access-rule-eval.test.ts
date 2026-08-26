@@ -50,6 +50,36 @@ Deno.test('tariff rule rejects entitlement-only access', () => {
   assertEquals(result, 'no_matching_tariff_access');
 });
 
+Deno.test('tariff rule accepts an exact tier-aware entitlement source', () => {
+  const result = snapshotProvesRuleAccess(
+    snapshot([{
+      type: 'entitlement_source',
+      id: 'club-bonus-source',
+      endAt: new Date('2026-08-20T00:00:00.000Z'),
+      productId: 'club',
+      tariffId: 'business',
+    }]),
+    { product_id: 'club', tariff_id: 'business' },
+    NOW,
+  );
+  assertEquals(result, null);
+});
+
+Deno.test('tariff rule rejects a tier-aware source for another tariff', () => {
+  const result = snapshotProvesRuleAccess(
+    snapshot([{
+      type: 'entitlement_source',
+      id: 'club-bonus-source',
+      endAt: new Date('2026-08-20T00:00:00.000Z'),
+      productId: 'club',
+      tariffId: 'full',
+    }]),
+    { product_id: 'club', tariff_id: 'business' },
+    NOW,
+  );
+  assertEquals(result, 'no_matching_tariff_access');
+});
+
 Deno.test('product-only rule accepts a current entitlement', () => {
   const result = snapshotProvesRuleAccess(
     snapshot([{

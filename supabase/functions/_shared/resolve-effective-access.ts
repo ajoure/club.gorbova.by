@@ -27,7 +27,12 @@ import {
 const GRACE_PERIOD_MS = 72 * 60 * 60 * 1000;
 
 export interface AccessSource {
-  type: 'subscription' | 'entitlement' | 'manual_access' | 'paid_order_rule';
+  type:
+    | 'subscription'
+    | 'entitlement'
+    | 'entitlement_source'
+    | 'manual_access'
+    | 'paid_order_rule';
   id: string;
   endAt: Date | null; // null = unlimited
   productId: string | null;
@@ -43,7 +48,14 @@ export interface EffectiveAccessSnapshot {
   /** True if billing-day protection is currently active */
   isProtectedByBillingDay: boolean;
   /** The source that provides the latest (or unlimited) access */
-  sourceType: 'subscription' | 'entitlement' | 'manual_access' | 'paid_order_rule' | 'billing_day_protection' | null;
+  sourceType:
+    | 'subscription'
+    | 'entitlement'
+    | 'entitlement_source'
+    | 'manual_access'
+    | 'paid_order_rule'
+    | 'billing_day_protection'
+    | null;
   sourceId: string | null;
   /** All valid sources found */
   allSources: AccessSource[];
@@ -151,7 +163,35 @@ export async function resolveEffectiveProductAccess(
     });
   }
 
-  // 3. Billing-day protection
+  // 3. Tier-aware entitlement sources
+  //
+  // The aggregate entitlement intentionally keeps only the widest product
+  // window. Exact tariff identity lives on entitlement_sources. In
+  // particular, a paid course can grant a finite Gorbova Club BUSINESS bonus
+  // without creating a Club subscription. Live-event tariff rules must be
+  // able to prove that configured target tariff without trusting a generic
+  // product entitlement.
+  const { data: entitlementSources } = await supabase
+    .from('entitlement_sources')
+    .select('id, expires_at, product_id, tariff_id, status')
+    .eq('user_id', userId)
+    .eq('product_id', productId)
+    .eq('status', 'active')
+    .lte('starts_at', nowStr)
+    .or(`expires_at.is.null,expires_at.gt.${nowStr}`);
+
+  for (const source of entitlementSources || []) {
+    allSources.push({
+      type: 'entitlement_source',
+      id: source.id,
+      endAt: source.expires_at ? new Date(source.expires_at) : null,
+      productId: source.product_id,
+      tariffId: source.tariff_id,
+      status: source.status,
+    });
+  }
+
+  // 4. Billing-day protection
   const todayKey = toTzDateKey(nowStr, APP_TZ);
   const { start: todayStart, end: todayEnd } = dayWindowUtc(APP_TZ, todayKey);
 
