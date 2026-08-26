@@ -21,6 +21,7 @@ import { useRoomModerationState } from "@/hooks/useRoomModerationState";
 import { toast } from "sonner";
 import { resolveParticipantDisplay } from "@/lib/participantDisplay";
 import { normalizeEmoji } from "@/lib/normalizeEmoji";
+import { groupLiveEventRepliesBySource } from "@/lib/groupLiveEventRepliesBySource";
 import { useStaffNameMap } from "@/hooks/useStaffNameMap";
 
 interface Question {
@@ -188,6 +189,10 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
     const questionReplies = useMemo(
       () => liveReplies.filter((reply) => !!reply.source_question_id && questionTextById.has(reply.source_question_id)),
       [liveReplies, questionTextById],
+    );
+    const questionRepliesBySource = useMemo(
+      () => groupLiveEventRepliesBySource(questionReplies, "question"),
+      [questionReplies],
     );
 
 
@@ -419,6 +424,10 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
               />
             </div>
           )}
+          <LiveEventReplyActivity
+            replies={questionRepliesBySource.get(q.id) ?? []}
+            sourceTextById={questionTextById}
+          />
         </div>
       );
     };
@@ -466,7 +475,6 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
           ) : (
             questions.map(renderQuestion)
           )}
-          <LiveEventReplyActivity replies={questionReplies} sourceTextById={questionTextById} />
         </div>
 
         {/* M1.1: «Новые вопросы» pill — only when user scrolled away from bottom and new arrived. */}

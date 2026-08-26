@@ -29,11 +29,13 @@ describe("participant webinar replies", () => {
     expect(migration).toContain("ALTER TABLE public.live_event_replies REPLICA IDENTITY FULL");
   });
 
-  it("shows participant reply controls and a realtime answer activity feed", () => {
+  it("shows participant reply controls and keeps each answer with its source message", () => {
     expect(comments).toContain("aria-label={`Ответить ${displayName}`}");
     expect(questions).toContain("aria-label={`Ответить ${displayName}`}");
-    expect(comments).toContain("<LiveEventReplyActivity replies={commentReplies}");
-    expect(questions).toContain("<LiveEventReplyActivity replies={questionReplies}");
+    expect(comments).toContain("replies={commentRepliesBySource.get(comment.id) ?? []}");
+    expect(questions).toContain("replies={questionRepliesBySource.get(q.id) ?? []}");
+    expect(comments).not.toContain("<LiveEventReplyActivity replies={commentReplies}");
+    expect(questions).not.toContain("<LiveEventReplyActivity replies={questionReplies}");
     expect(replies).toContain('table: "live_event_replies"');
     expect(replies).toContain('data-testid="live-reply-activity"');
     expect(replies).toContain("Для всех");
