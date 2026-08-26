@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { getFieldDisplayLabel } from "@/lib/formFieldLabel";
 import { USER_PASSWORD_MIN_LENGTH } from "@/lib/passwordPolicy";
 import { getAccessAwareUrl } from "@/utils/accessAlias";
@@ -337,8 +338,8 @@ function LegacyFormSection({ content, pageId, blockId, isPreview }: FormSectionP
       <div className="max-w-xl mx-auto space-y-5">
         {(title || subtitle) && (
           <div className="text-center space-y-2">
-            {title && <h3 className="text-2xl font-bold text-foreground">{title}</h3>}
-            {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
+            {title && <SafeHtml html={title} as="h3" className="text-2xl font-bold text-foreground" />}
+            {subtitle && <SafeHtml html={subtitle} as="p" className="text-sm text-muted-foreground" />}
           </div>
         )}
 
@@ -367,7 +368,7 @@ function LegacyFormSection({ content, pageId, blockId, isPreview }: FormSectionP
                 Отправка...
               </>
             ) : (
-              buttonText
+              <SafeHtml html={buttonText} />
             )}
           </Button>
         </form>
@@ -1026,8 +1027,8 @@ function AuthFormSection({
             Предпросмотр формы — действия не выполняются
           </div>
         )}
-        {title && <h3 className="text-2xl font-bold text-foreground text-center">{title}</h3>}
-        {subtitle && <p className="text-muted-foreground text-center">{subtitle}</p>}
+        {title && <SafeHtml html={title} as="h3" className="text-2xl font-bold text-foreground text-center" />}
+        {subtitle && <SafeHtml html={subtitle} as="p" className="text-muted-foreground text-center" />}
         {stepLabel && (
           <p className="text-xs text-muted-foreground text-center uppercase tracking-wide">{stepLabel}</p>
         )}
@@ -1407,7 +1408,7 @@ function AuthFormSection({
           disabled={loading}
           className="w-full rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {loading ? "Отправка..." : buttonText}
+          {loading ? "Отправка..." : <SafeHtml html={buttonText} />}
         </button>
       </div>
     );
