@@ -26,6 +26,7 @@ import { useLiveEventCommentReactions, useToggleLiveEventCommentReaction } from 
 import { LiveEventCommentReactions } from "./LiveEventCommentReactions";
 import { TELEGRAM_REACTION_EMOJIS } from "@/lib/telegramReactionEmojis";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { groupLiveEventRepliesBySource } from "@/lib/groupLiveEventRepliesBySource";
 
 interface Comment {
   id: string;
@@ -200,6 +201,10 @@ export function LiveEventComments({
   const commentReplies = useMemo(
     () => liveReplies.filter((reply) => !!reply.source_comment_id && commentTextById.has(reply.source_comment_id)),
     [liveReplies, commentTextById],
+  );
+  const commentRepliesBySource = useMemo(
+    () => groupLiveEventRepliesBySource(commentReplies, "comment"),
+    [commentReplies],
   );
 
   // Reactions are available only for the actual room messages. Source history
@@ -470,11 +475,14 @@ export function LiveEventComments({
                     />
                   </div>
                 )}
+                <LiveEventReplyActivity
+                  replies={commentRepliesBySource.get(comment.id) ?? []}
+                  sourceTextById={commentTextById}
+                />
               </div>
             );
           })
         )}
-        <LiveEventReplyActivity replies={commentReplies} sourceTextById={commentTextById} />
       </div>
 
       {/* M1.1: «Новые сообщения» pill — only when user scrolled away from bottom and new arrived. */}
