@@ -1,6 +1,7 @@
 /**
  * public-checkout — Public payment checkout by url_token.
- * No JWT required. Validates payment_link, creates order + bePaid checkout.
+ * JWT is required for new unassigned admin links (meta.auth_policy='required').
+ * Legacy and recipient-prebound links retain their historical behaviour.
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -66,6 +67,7 @@ Deno.serve(async (req) => {
       const tariff = (link as any).tariffs;
       const linkMetaGet = (link as any).meta || {};
       const installment = linkMetaGet.installment ?? null;
+      const requiresAuth = !link.user_id && linkMetaGet.auth_policy === 'required';
 
       // Phase 5-C: surface allowed providers + provider_mode для UI выбора.
       // Источник истины: payment_links.meta.allowed_payment_providers (зеркалит offer.meta.acquiring
@@ -101,6 +103,7 @@ Deno.serve(async (req) => {
         // UI uses these flags to decide whether to ask for email / show inline auth.
         has_target_user: !!link.user_id,
         requires_identity_input: !link.user_id,
+        requires_auth: requiresAuth,
         // Saved-card flow ownership hint (PAY-C):
         //   null → public link, any authenticated user can pay with their own saved card.
         //   uuid → personal link, only owner sees the saved-card button.
@@ -263,8 +266,10 @@ Deno.serve(async (req) => {
     //   2) link.user_id absent + Authorization Bearer token → use auth.uid() (trusted).
     //      This covers inline-login on /pay/:token and already-authenticated users.
     //      If both Authorization and email are provided and disagree, JWT WINS.
-    //   3) link.user_id absent + email only → lookup via admin API (paginated).
-    //   4) Otherwise → 400 with identity-input hint (UI keeps inline-auth open).
+    //   3) New unassigned admin link with meta.auth_policy='required' and no
+    //      valid Bearer JWT → 401. Email-only must never bypass this boundary.
+    //   4) Legacy unassigned link + email only → lookup via admin API (paginated).
+    //   5) Otherwise → 400 with identity-input hint (UI keeps inline-auth open).
     let userId: string | null = link.user_id || null;
     let resolvedVia: 'link' | 'jwt' | 'email' | null = userId ? 'link' : null;
 
@@ -283,7 +288,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (!userId && email) {
+    const requiresAuth = !link.user_id && (link.meta as Record<string, unknown> | null)?.auth_policy === 'required';
+    if (requiresAuth && !userId) {
+      return errorResponse('authentication_required', 401);
+    }
+
+    if (!userId && !requiresAuth && email) {
       // Paginated lookup — admin.listUsers() returns max 50 per page by default
       const normalizedEmail = email.trim().toLowerCase();
       let page = 1;

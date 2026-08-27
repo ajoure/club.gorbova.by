@@ -12,11 +12,17 @@ describe("contact payment-link RBAC and RR regression contract", () => {
   const auth = read("supabase/functions/_shared/admin-section-auth.ts");
   const direct = read("supabase/functions/admin-create-payment-link/index.ts");
   const publicLink = read("supabase/functions/admin-create-public-link/index.ts");
+  const updateLink = read("supabase/functions/admin-update-payment-link/index.ts");
+  const invalidateLink = read("supabase/functions/admin-invalidate-payment-link/index.ts");
+  const publicCheckout = read("supabase/functions/public-checkout/index.ts");
   const invoice = read("supabase/functions/admin-invoice-checkout-issue/index.ts");
   const quote = read("supabase/functions/composable-checkout-quote/index.ts");
   const telegram = read("supabase/functions/telegram-send-notification/index.ts");
   const rr = read("supabase/functions/public-rr-installment-initiate/index.ts");
   const registry = read("supabase/functions.registry.txt");
+  const managerAccessMigration = read(
+    "supabase/migrations/20260827153330_fix_payment_links_manager_access.sql",
+  );
 
   it("uses payments:edit as the shared write boundary", () => {
     expect(auth).toContain('admin.auth.getUser(token)');
@@ -25,12 +31,14 @@ describe("contact payment-link RBAC and RR regression contract", () => {
     expect(auth).toContain('_min_level: minLevel');
     expect(auth).toContain('return await requireAdminSectionAccess(req, admin, "payments", "edit")');
 
-    for (const writer of [direct, publicLink, invoice, quote, rr]) {
+    for (const writer of [direct, publicLink, updateLink, invalidateLink, invoice, quote, rr]) {
       expect(writer).toContain("requirePaymentsEdit");
     }
     expect(direct).not.toContain("entitlements.manage");
     expect(invoice).not.toContain('["admin", "super_admin", "menedzher", "manager"]');
     expect(quote).not.toContain('["manager", "menedzher", "admin", "super_admin"]');
+    expect(updateLink).not.toContain('has_role');
+    expect(invalidateLink).not.toContain('has_role');
   });
 
   it("shows payment-link creation only with payments:edit", () => {
@@ -38,6 +46,28 @@ describe("contact payment-link RBAC and RR regression contract", () => {
     expect(contact).toContain('{canEditPayments && (');
     expect(links).toContain('canAccessSection("payments", "edit")');
     expect(links).toContain('{canEditPayments && (');
+  });
+
+  it("grants managers payment-link edit access while preserving section RBAC", () => {
+    expect(managerAccessMigration).toContain("WHERE code = 'menedzher'");
+    expect(managerAccessMigration).toContain("WHERE code = 'payments'");
+    expect(managerAccessMigration).toContain("resource.code = 'links'");
+    expect(managerAccessMigration).toContain("'edit'");
+    expect(managerAccessMigration).toContain(
+      "has_admin_section_access(auth.uid(), 'payments', 'view')",
+    );
+    expect(managerAccessMigration).toContain(
+      "has_admin_section_access(auth.uid(), 'payments', 'edit')",
+    );
+    expect(managerAccessMigration).toContain(
+      "has_admin_section_access(auth.uid(), 'payments', 'manage')",
+    );
+  });
+
+  it("requires login for every new unassigned public payment link", () => {
+    expect(publicLink).toContain("auth_policy: user_id ? 'recipient_prebound' : 'required'");
+    expect(publicCheckout).toContain("return errorResponse('authentication_required', 401)");
+    expect(publicCheckout).toContain("if (!userId && !requiresAuth && email)");
   });
 
   it("sends the RR contract expected by the Edge Function and reads its response", () => {
@@ -89,8 +119,10 @@ describe("contact payment-link RBAC and RR regression contract", () => {
     expect(telegram).not.toContain("entitlements.manage");
   });
 
-  it("registers both payment helper functions for managed deployment", () => {
+  it("registers all payment-link helper functions for managed deployment", () => {
     expect(registry).toMatch(/^composable-checkout-quote$/m);
     expect(registry).toMatch(/^public-rr-installment-initiate$/m);
+    expect(registry).toMatch(/^admin-update-payment-link$/m);
+    expect(registry).toMatch(/^admin-invalidate-payment-link$/m);
   });
 });
