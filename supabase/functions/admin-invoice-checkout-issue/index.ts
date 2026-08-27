@@ -2,7 +2,7 @@
  * admin-invoice-checkout-issue
  * ────────────────────────────────────────────────────────────────────────────
  * Админский аналог `invoice-checkout-issue`. Отличия:
- *  • auth = admin/manager JWT (role guard через has_role_v2);
+ *  • auth = JWT с каноническим доступом payments:edit;
  *  • целевой профиль передаётся полем `target_user_id`;
  *  • `legal_details_id` проверяется на принадлежность целевому профилю
  *    (не JWT-пользователю);
@@ -17,15 +17,17 @@
 import {
   createClient,
   SupabaseClient,
-} from "https://esm.sh/@supabase/supabase-js@2.45.0";
+} from "npm:@supabase/supabase-js@2";
 import { resolveOfferRouting } from "../_shared/crm-routing.ts";
 import {
   ComposableCheckoutError,
   resolveComposableCheckout,
+  type ResolvedComposableCheckout,
 } from "../_shared/resolve-composable-checkout.ts";
 import { allocateComposablePayableTotal } from "../_shared/composable-checkout.ts";
 import { materializeComposableOrderGroup } from "../_shared/materialize-composable-order-group.ts";
 import { buildPurchaseCompositionTitle } from "../_shared/purchase-composition-title.ts";
+import { requirePaymentsEdit } from "../_shared/admin-section-auth.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -74,27 +76,11 @@ Deno.serve(async (req) => {
   const url = Deno.env.get("SUPABASE_URL")!;
   const anon = Deno.env.get("SUPABASE_ANON_KEY")!;
   const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
   const authHeader = req.headers.get("Authorization") ?? "";
-  if (!authHeader.startsWith("Bearer ")) return json({ error: "unauthorized" }, 401);
-
-  const userClient: SupabaseClient = createClient(url, anon, {
-    global: { headers: { Authorization: authHeader } },
-  });
   const admin: SupabaseClient = createClient(url, service);
-
-  const { data: authData } = await userClient.auth.getUser();
-  const actor = authData?.user;
-  if (!actor) return json({ error: "unauthorized" }, 401);
-
-  // Role guard — admin/super_admin/menedzher/manager.
-  const roleResults = await Promise.all(
-    ["admin", "super_admin", "menedzher", "manager"].map(async (role) => {
-      const r = await admin.rpc("has_role_v2", { _user_id: actor.id, _role_code: role });
-      return r.data === true;
-    }),
-  );
-  if (!roleResults.some(Boolean)) return json({ error: "forbidden" }, 403);
+  const access = await requirePaymentsEdit(req, admin);
+  if (!access.ok) return json({ error: access.error }, access.status);
+  const actor = access.actor;
 
   let body: IssueBody;
   try {
@@ -148,7 +134,7 @@ Deno.serve(async (req) => {
     return json({ error: "adjustment_reason_required" }, 400);
   }
 
-  let composableQuote;
+  let composableQuote: ResolvedComposableCheckout;
   try {
     const baseQuote = await resolveComposableCheckout(admin, {
       parentOfferId: body.offer_id,
@@ -156,13 +142,20 @@ Deno.serve(async (req) => {
     });
     const requestedTotal = Math.round((baseQuote.subtotal + requestedAdjustment) * 100) / 100;
     if (requestedTotal <= 0) return json({ error: "invalid_adjustment_amount" }, 400);
-    composableQuote = requestedAdjustment === 0
-      ? baseQuote
-      : allocateComposablePayableTotal(
-          baseQuote,
-          requestedTotal,
-          requestedReason,
-        );
+    if (requestedAdjustment === 0) {
+      composableQuote = baseQuote;
+    } else {
+      const allocated = allocateComposablePayableTotal(
+        baseQuote,
+        requestedTotal,
+        requestedReason,
+      );
+      composableQuote = {
+        ...baseQuote,
+        ...allocated,
+        adjustment_reason: requestedReason,
+      };
+    }
   } catch (error) {
     if (error instanceof ComposableCheckoutError) return json({ error: error.code }, error.status);
     return json({ error: "quote_failed" }, 500);

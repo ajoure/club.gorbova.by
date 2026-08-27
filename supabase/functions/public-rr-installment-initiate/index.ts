@@ -35,7 +35,6 @@
  *      upstream_rejected → rr_finalize_order_rejected (retry) → 502 или 500
  *      upstream_outcome_unknown → rr_mark_upstream_unknown (retry) → 504 или 500
  */
-import { createClient } from "npm:@supabase/supabase-js@2";
 import {
   handleCorsPreflightRequest,
   jsonResponse,
@@ -57,6 +56,7 @@ import { materializeComposableOrderGroup } from "../_shared/materialize-composab
 import { allocateComposablePayableTotal } from "../_shared/composable-checkout.ts";
 import { referralDiscountMeta, resolveReferralCheckoutDiscount } from "../_shared/referral-checkout-discount.ts";
 import { reserveReferralCustomerCredit } from "../_shared/referral-customer-credit.ts";
+import { requirePaymentsEdit } from "../_shared/admin-section-auth.ts";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -65,6 +65,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 interface InitiatePayload {
   tariff_offer_id?: string;
   addon_offer_ids?: string[];
+  target_user_id?: string;
+  adjustment_amount?: number;
+  adjustment_reason?: string | null;
   name?: string;
   phone?: string;
   email?: string;
@@ -251,10 +254,6 @@ Deno.serve(async (req: Request) => {
   }
 
   const offerId = String(body.tariff_offer_id ?? "").trim();
-  const nameRaw = String(body.name ?? "").trim().slice(0, 200);
-  const phoneRaw = String(body.phone ?? "").trim().slice(0, 64);
-  const emailRaw = String(body.email ?? "").trim();
-  const email = emailRaw.toLowerCase();
   const commentRaw = body.comment == null ? null : String(body.comment);
   const comment = commentRaw == null ? null : stripHtml(commentRaw);
   const addonOfferIds = Array.isArray(body.addon_offer_ids)
@@ -265,6 +264,51 @@ Deno.serve(async (req: Request) => {
   if (addonOfferIds.some((id) => !UUID_RE.test(id))) {
     return errorResponse("addon_offer_id_invalid", 400);
   }
+  const supabaseAdmin = createServiceClient();
+  const ip = getClientIp(req);
+  const hasTargetUserField = Object.prototype.hasOwnProperty.call(body, "target_user_id");
+  const hasAdjustmentAmountField = Object.prototype.hasOwnProperty.call(body, "adjustment_amount");
+  const hasAdjustmentReasonField = Object.prototype.hasOwnProperty.call(body, "adjustment_reason");
+  const adminMode = hasTargetUserField || hasAdjustmentAmountField || hasAdjustmentReasonField;
+
+  let adminActorId: string | null = null;
+  let userId: string | null = null;
+  let nameRaw = String(body.name ?? "").trim().slice(0, 200);
+  let phoneRaw = String(body.phone ?? "").trim().slice(0, 64);
+  let email = String(body.email ?? "").trim().toLowerCase();
+
+  if (adminMode) {
+    const access = await requirePaymentsEdit(req, supabaseAdmin);
+    if (!access.ok) {
+      return access.status === 500
+        ? errorResponse(access.error, 500)
+        : errorResponse("admin_fields_forbidden", 403);
+    }
+    adminActorId = access.actor.id;
+    const targetUserId = String(body.target_user_id ?? "").trim();
+    if (!UUID_RE.test(targetUserId)) return errorResponse("target_user_id_invalid", 400);
+
+    const { data: targetProfile, error: targetProfileError } = await supabaseAdmin
+      .from("profiles")
+      .select("user_id, full_name, email, phone")
+      .eq("user_id", targetUserId)
+      .maybeSingle();
+    if (targetProfileError) return errorResponse("target_profile_lookup_failed", 500);
+    if (!targetProfile) return errorResponse("target_profile_not_found", 404);
+
+    userId = targetUserId;
+    nameRaw = String(targetProfile.full_name ?? "").trim().slice(0, 200);
+    phoneRaw = String(targetProfile.phone ?? "").trim().slice(0, 64);
+    email = String(targetProfile.email ?? "").trim().toLowerCase();
+  } else {
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (tokenMatch?.[1]) {
+      const { data, error } = await supabaseAdmin.auth.getUser(tokenMatch[1]);
+      if (!error) userId = data.user?.id ?? null;
+    }
+  }
+
   if (nameRaw.length < 1) return errorResponse("name_invalid", 400);
   const phoneNorm = normalizePhone(phoneRaw);
   if (phoneNorm.length < 9 || phoneNorm.length > 15) {
@@ -272,26 +316,6 @@ Deno.serve(async (req: Request) => {
   }
   if (!EMAIL_RE.test(email) || email.length > 200) {
     return errorResponse("email_invalid", 400);
-  }
-
-  const supabaseAdmin = createServiceClient();
-  const ip = getClientIp(req);
-
-  let userId: string | null = null;
-  const authHeader = req.headers.get("Authorization") ?? "";
-  if (authHeader.startsWith("Bearer ")) {
-    try {
-      const jwt = authHeader.slice("Bearer ".length);
-      const userClient = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_ANON_KEY")!,
-        { global: { headers: { Authorization: authHeader } } },
-      );
-      const { data: claimsData } = await userClient.auth.getClaims(jwt);
-      userId = (claimsData?.claims?.sub as string) ?? null;
-    } catch {
-      userId = null;
-    }
   }
 
   const contactHash = await sha256Hex(`${phoneNorm}|${email}`);
@@ -352,7 +376,32 @@ Deno.serve(async (req: Request) => {
   const currency = composableQuote.currency;
   let amountMinor = Math.round(amountNumeric * 100);
   let referralCreditMeta: Record<string, unknown> = {};
-  if (userId) {
+  let allocationReason = "referral_discount_or_customer_credit";
+  if (adminMode) {
+    const requestedAdjustment = Number(body.adjustment_amount ?? 0);
+    const requestedReason = String(body.adjustment_reason ?? "").trim();
+    if (
+      !Number.isFinite(requestedAdjustment) ||
+      Math.abs(Math.round(requestedAdjustment * 100) - requestedAdjustment * 100) > 1e-7
+    ) {
+      return errorResponse("invalid_adjustment_amount", 400);
+    }
+    if (requestedAdjustment !== 0 && !requestedReason) {
+      return errorResponse("adjustment_reason_required", 400);
+    }
+    amountNumeric = Math.round((Number(composableQuote.subtotal) + requestedAdjustment) * 100) / 100;
+    if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
+      return errorResponse("adjusted_total_invalid", 400);
+    }
+    amountMinor = Math.round(amountNumeric * 100);
+    allocationReason = "admin_adjustment";
+    referralCreditMeta = {
+      payment_type: "one_time",
+      admin_adjustment_amount: requestedAdjustment,
+      admin_adjustment_reason: requestedAdjustment === 0 ? null : requestedReason,
+      admin_actor_id: adminActorId,
+    };
+  } else if (userId) {
     const referralQuote = await resolveReferralCheckoutDiscount({
       supabase: supabaseAdmin, userId, productId: product.id, amountMinor, allowImmediateDiscount: true,
     });
@@ -384,6 +433,7 @@ Deno.serve(async (req: Request) => {
     if (bonusReservation.error) return errorResponse('partner_bonus_reservation_failed', 400);
     const bonusAppliedMinor = Math.max(0, Math.round(Number(bonusReservation.data?.applied_minor ?? 0)));
     amountMinor = Math.max(100, amountMinor - bonusAppliedMinor);
+    amountNumeric = amountMinor / 100;
     if (bonusAppliedMinor > 0) {
       referralCreditMeta.referral_partner_bonus_applied_minor = bonusAppliedMinor;
       referralCreditMeta.referral_partner_bonus_reservation_id = bonusReservation.data?.reservation_id;
@@ -393,6 +443,7 @@ Deno.serve(async (req: Request) => {
     return errorResponse("amount_fully_covered_or_invalid", 400);
   }
   const checkoutFingerprint = await sha256Hex(JSON.stringify({
+    request_mode: adminMode ? "admin" : "public",
     parent_offer_id: offerId,
     selected_addon_offer_ids: composableQuote.selected_addon_offer_ids.slice().sort(),
     quoted_total: composableQuote.total,
@@ -402,7 +453,7 @@ Deno.serve(async (req: Request) => {
   const materializationQuote = allocateComposablePayableTotal(
     composableQuote,
     amountNumeric,
-    "referral_discount_or_customer_credit",
+    allocationReason,
   );
 
   let cfg;
@@ -488,6 +539,10 @@ Deno.serve(async (req: Request) => {
 
   const initialMeta = {
     flow: "rr_installment",
+    ...(adminMode ? {
+      admin_actor_id: adminActorId,
+      admin_target_user_id: userId,
+    } : {}),
     grant_access_skip: true,
     notification_skip: true,
     crm_success_skip: true,
@@ -502,6 +557,7 @@ Deno.serve(async (req: Request) => {
       initiation_status: "pending",
       upstream_call_state: "not_started",
       correlation_id: correlationId,
+      ...(adminMode ? { admin_actor_id: adminActorId } : {}),
       contact: { name: nameRaw, phone: phoneRaw, email, phone_norm: phoneNorm },
       applicant: {
         name: nameRaw,
@@ -544,6 +600,29 @@ Deno.serve(async (req: Request) => {
     );
   }
   const { order_id: externalId, was_reused: wasReused } = rpcData[0] as any;
+  if (adminMode) {
+    const { error: adminAuditError } = await supabaseAdmin.from("audit_logs").insert({
+      action: "rr.admin_payment_link_initiated",
+      actor_type: "user",
+      actor_user_id: adminActorId,
+      target_user_id: userId,
+      entity_type: "orders_v2",
+      entity_id: externalId,
+      meta: {
+        offer_id: offerId,
+        checkout_fingerprint: checkoutFingerprint,
+        adjustment_amount: Number(body.adjustment_amount ?? 0),
+        adjustment_reason: String(body.adjustment_reason ?? "").trim() || null,
+        was_reused: wasReused,
+      },
+    });
+    if (adminAuditError) {
+      console.error(JSON.stringify({
+        stage: "admin_audit", order_id: externalId, error: adminAuditError.message,
+      }));
+      return errorResponse("admin_audit_failed", 500);
+    }
+  }
   try {
     await materializeComposableOrderGroup(supabaseAdmin, {
       primaryOrderId: externalId,

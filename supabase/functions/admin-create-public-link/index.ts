@@ -13,15 +13,18 @@
  *   /pay/:token → public-checkout (POST) → _shared/create-payment-checkout.ts
  * Это тот же canonical downstream-path. Второй payment-path не вводится.
  *
- * AUTH: JWT обязателен. Требуется роль manager/menedzher, admin или super_admin.
+ * AUTH: JWT обязателен. Требуется доступ payments:edit; admin/super_admin
+ * получают его через канонический RBAC bypass.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import {
   ComposableCheckoutError,
   resolveComposableCheckout,
+  type ResolvedComposableCheckout,
 } from '../_shared/resolve-composable-checkout.ts';
 import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
+import { requirePaymentsEdit } from '../_shared/admin-section-auth.ts';
 import {
   resolveInstallmentRetryPolicy,
   resolveBepaidAttemptsValue,
@@ -97,21 +100,14 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    // ── AUTH: JWT + role admin/super_admin ──
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return errorResponse('Not authorized', 401);
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
-    if (userErr || !user) return errorResponse('Invalid token', 401);
-
-    const roleChecks = await Promise.all(
-      ['manager', 'menedzher', 'admin', 'super_admin'].map(async (role) =>
-        (await supabase.rpc('has_role_v2', { _user_id: user.id, _role_code: role })).data === true
-      ),
-    );
-    if (!roleChecks.some(Boolean)) {
-      return errorResponse('Access denied: staff role required', 403);
-    }
+    const access = await requirePaymentsEdit(req, supabase);
+    if (!access.ok) return errorResponse(access.error, access.status);
+    const user = access.actor;
+    const { data: isSuperRole } = await supabase.rpc('has_role_v2', {
+      _user_id: user.id,
+      _role_code: 'super_admin',
+    });
+    const isSuper = isSuperRole === true;
 
     const body: CreatePublicLinkRequest = await req.json();
     const {
@@ -703,19 +699,19 @@ Deno.serve(async (req) => {
     const public_url = `${canonicalOrigin}/pay/${url_token}`;
 
     // Для installment ссылка хранит per_payment в amount; полная сумма — в meta.installment.
-    let canonicalComposableQuote: Record<string, unknown> | null = null;
+    let canonicalComposableQuote: ResolvedComposableCheckout | null = null;
     if (rawComposableQuote && typeof rawComposableQuote === 'object') {
       const selectedAddonOfferIds = Array.isArray(rawComposableQuote.selected_addon_offer_ids)
         ? rawComposableQuote.selected_addon_offer_ids.map((id) => String(id))
         : [];
       try {
         const baseQuote = await resolveComposableCheckout(supabase, {
-          parentOfferId: offer_id,
+          parentOfferId: resolvedOffer.id,
           addonOfferIds: selectedAddonOfferIds,
         });
         const requestedTotal = amount / 100;
         canonicalComposableQuote = await resolveComposableCheckout(supabase, {
-          parentOfferId: offer_id,
+          parentOfferId: resolvedOffer.id,
           addonOfferIds: selectedAddonOfferIds,
           adjustmentAmount: Math.round((requestedTotal - baseQuote.subtotal) * 100) / 100,
           adjustmentReason: typeof rawComposableQuote.adjustment_reason === 'string'

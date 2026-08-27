@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { greetPrefix, greetSuffix } from '../_shared/recipient-name.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
+import { hasAdminSectionAccess } from '../_shared/admin-section-auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -77,15 +78,18 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Check permissions for user calls
-      const { data: hasPermission } = await supabase.rpc('has_permission', {
-        _user_id: user.id,
-        _permission_code: 'entitlements.manage',
-      });
-
-      if (!hasPermission) {
+      // Пользовательский вызов разрешён редакторам коммуникаций и сотрудникам,
+      // которые создают/отправляют платёжную ссылку из карточки контакта.
+      const [communicationAccess, paymentsAccess] = await Promise.all([
+        hasAdminSectionAccess(supabase, user.id, 'communication', 'edit'),
+        hasAdminSectionAccess(supabase, user.id, 'payments', 'edit'),
+      ]);
+      const communicationAllowed = communicationAccess.ok && communicationAccess.allowed;
+      const paymentsAllowed = paymentsAccess.ok && paymentsAccess.allowed;
+      if (!communicationAllowed && !paymentsAllowed) {
+        const rbacFailed = !communicationAccess.ok || !paymentsAccess.ok;
         return new Response(JSON.stringify({ error: 'Forbidden' }), {
-          status: 403,
+          status: rbacFailed ? 500 : 403,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }

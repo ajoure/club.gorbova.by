@@ -4,6 +4,7 @@ import {
   ComposableCheckoutError,
   resolveComposableCheckout,
 } from "../_shared/resolve-composable-checkout.ts";
+import { requirePaymentsEdit } from "../_shared/admin-section-auth.ts";
 
 interface RequestBody {
   parent_offer_id?: string;
@@ -23,20 +24,11 @@ Deno.serve(async (req) => {
   const body = await req.json() as RequestBody;
   if (!body.parent_offer_id) return errorResponse("parent_offer_id_required", 400);
 
-  let actorId: string | null = null;
-  const authHeader = req.headers.get("Authorization") ?? "";
-  if (authHeader.startsWith("Bearer ")) {
-    const { data } = await admin.auth.getUser(authHeader.slice(7));
-    actorId = data.user?.id ?? null;
-  }
-  const roleChecks = actorId
-    ? await Promise.all(["manager", "menedzher", "admin", "super_admin"].map(async (role) =>
-        (await admin.rpc("has_role_v2", { _user_id: actorId, _role_code: role })).data === true
-      ))
-    : [];
-  const isStaff = roleChecks.some(Boolean);
   const adjustment = Number(body.adjustment_amount ?? 0);
-  if (adjustment !== 0 && !isStaff) return errorResponse("staff_adjustment_forbidden", 403);
+  if (adjustment !== 0) {
+    const access = await requirePaymentsEdit(req, admin);
+    if (!access.ok) return errorResponse(access.error, access.status);
+  }
   if (adjustment !== 0 && !String(body.adjustment_reason ?? "").trim()) {
     return errorResponse("adjustment_reason_required", 400);
   }

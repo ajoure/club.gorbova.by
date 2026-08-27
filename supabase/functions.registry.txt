@@ -96,7 +96,9 @@ manychat-inbound
 manychat-discover-pages
 erip-reconcile-pending
 grp-lookup
+composable-checkout-quote
 public-checkout
+public-rr-installment-initiate
 invoice-checkout-issue
 ai-generate-corporate-package
 gorbova-ai-chat
