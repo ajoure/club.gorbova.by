@@ -54,6 +54,8 @@ send-email
 email-mass-broadcast
 broadcast-track
 getcourse-sync
+getcourse-grant-access
+test-getcourse-sync
 import-contacts-gc
 amocrm-sync
 subscription-actions

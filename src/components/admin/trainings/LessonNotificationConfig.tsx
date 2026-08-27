@@ -249,6 +249,16 @@ export function LessonNotificationConfig({
 
       {config.enabled && (
         <div className="space-y-4 animate-in fade-in-50 duration-200">
+          {selectedTariffIds.length === 0 && (
+            <Alert className="border-amber-500/50 bg-amber-500/10">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              <AlertDescription className="text-sm">
+                Тарифная аудитория не определена. Урок можно создать, но Telegram-уведомление
+                не будет отправлено, чтобы исключить рассылку пользователям без доступа.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Bot selector */}
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">Telegram-бот</Label>

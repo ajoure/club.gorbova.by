@@ -73,8 +73,20 @@ describe("Edge Function integration contracts", () => {
 
     expect(source).toContain('"telegram-mass-broadcast"');
     expect(source).toContain("bot_ids: [wizardData.notification.botId]");
-    expect(source).toContain("tariffIds: wizardData.tariffIds");
+    expect(source).toContain("wizardData.tariffIds.length === 0");
+    expect(source).toContain("include: [{ tariff_ids: wizardData.tariffIds }]");
+    expect(source).not.toContain("tariffIds: wizardData.tariffIds");
     expect(source).not.toContain(["/functions/v1", "telegram-broadcast"].join("/"));
+  });
+
+  it("keeps repaired GetCourse routes in the managed deployment registry", () => {
+    const registry = readFileSync(
+      resolve(process.cwd(), "supabase/functions.registry.txt"),
+      "utf8",
+    );
+
+    expect(registry).toMatch(/^getcourse-grant-access$/m);
+    expect(registry).toMatch(/^test-getcourse-sync$/m);
   });
 
   it("keeps the GetCourse compatibility route order-only", () => {
