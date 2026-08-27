@@ -111,30 +111,46 @@ jobs:
 
           func="$1"
 
+          OPT_HEADERS_FILE="$(mktemp)"
+          OPT_BODY_FILE="$(mktemp)"
+          OPT_ERROR_FILE="$(mktemp)"
+          cleanup() {
+            rm -f "$OPT_HEADERS_FILE" "$OPT_BODY_FILE" "$OPT_ERROR_FILE"
+          }
+          trap cleanup EXIT
+
           # --- OPTIONS preflight ---
-          OPT_RAW="$(curl -s -i -m 10 -X OPTIONS \
+          set +e
+          OPT_HTTP="$(curl -sS -m 10 -X OPTIONS \
+            -D "$OPT_HEADERS_FILE" \
+            -o "$OPT_BODY_FILE" \
+            -w "%{http_code}" \
             -H "Origin: ${AUDIT_ORIGIN}" \
             -H "Access-Control-Request-Method: POST" \
             -H "Access-Control-Request-Headers: content-type,authorization,apikey,x-client-info" \
-            "${SUPABASE_URL}/functions/v1/${func}" 2>&1 || true)"
+            "${SUPABASE_URL}/functions/v1/${func}" \
+            2>"$OPT_ERROR_FILE")"
+          CURL_EXIT=$?
+          set -e
 
-          OPT_HTTP="$(echo "$OPT_RAW" | head -n 1 | awk '{print $2}' | tr -d '\r')"
-          OPT_ALLOW_HEADERS="$(echo "$OPT_RAW" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^access-control-allow-headers:/{sub(/^access-control-allow-headers:[ ]*/,""); print; exit}')"
-          OPT_ALLOW_METHODS="$(echo "$OPT_RAW" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^access-control-allow-methods:/{sub(/^access-control-allow-methods:[ ]*/,""); print; exit}')"
+          OPT_HTTP="$(printf '%s' "$OPT_HTTP" | tr -d '\r')"
+          OPT_ALLOW_HEADERS="$(tr -d '\r' < "$OPT_HEADERS_FILE" | awk 'BEGIN{IGNORECASE=1} /^access-control-allow-headers:/{sub(/^access-control-allow-headers:[ ]*/,""); print; exit}')"
+          OPT_ALLOW_METHODS="$(tr -d '\r' < "$OPT_HEADERS_FILE" | awk 'BEGIN{IGNORECASE=1} /^access-control-allow-methods:/{sub(/^access-control-allow-methods:[ ]*/,""); print; exit}')"
 
           # --- classify ---
           status="OK"
 
           # connection failure
-          if [ "${OPT_HTTP}" = "000" ] || echo "$OPT_RAW" | grep -qiE "connection.*failed|timed out|Could not resolve|TLS"; then
+          if [ "$CURL_EXIT" -ne 0 ] || [ "${OPT_HTTP}" = "000" ]; then
             status="CONNECTION_FAILED"
           # not deployed
-          elif [ "${OPT_HTTP}" = "404" ] || echo "$OPT_RAW" | grep -q '"code":"NOT_FOUND"'; then
+          elif [ "${OPT_HTTP}" = "404" ] || grep -q '"code":"NOT_FOUND"' "$OPT_BODY_FILE"; then
             status="NOT_DEPLOYED"
           else
             # OPTIONS can still surface a module boot error without executing
             # a potentially side-effectful POST request.
-            if echo "$OPT_RAW" | grep -qiE "BOOT_ERROR|Module not found|SyntaxError"; then
+            if grep -qiE "^sb-error-code:[[:space:]]*BOOT_ERROR|BOOT_ERROR|Module not found|SyntaxError" \
+              "$OPT_HEADERS_FILE" "$OPT_BODY_FILE"; then
               status="BOOT_ERROR"
             fi
 
@@ -195,6 +211,9 @@ jobs:
           # xargs will call subshell, so call script directly
           mapfile -t lines < <(cat "$LIST" | xargs -I{} -P "$C_LIMIT" bash audit_out/_audit_one.sh "{}")
 
+          expected_total="$(wc -l < "$LIST" | tr -d '[:space:]')"
+          actual_total="${#lines[@]}"
+
           # Summaries
           not_deployed=0
           boot_error=0
@@ -240,6 +259,8 @@ jobs:
           echo "CORS_WARNING=$cors_warn" | tee -a "$LOG"
           echo "CORS_404=$cors_404" | tee -a "$LOG"
           echo "CONNECTION_FAILED=$conn_failed" | tee -a "$LOG"
+          echo "EXPECTED_TOTAL=$expected_total" | tee -a "$LOG"
+          echo "ACCOUNTED_TOTAL=$actual_total" | tee -a "$LOG"
           echo "JSON=$JSON" | tee -a "$LOG"
 
           echo "AUDIT_JSON=$JSON" >> $GITHUB_ENV
@@ -253,6 +274,11 @@ jobs:
 
           if [ "${FAIL_ON_BOOT}" = "true" ] && [ "$boot_error" -gt 0 ]; then
             echo "::error::Full audit found BOOT_ERROR functions: $boot_error"
+            exit 1
+          fi
+
+          if [ "$actual_total" -ne "$expected_total" ]; then
+            echo "::error::Full audit accounting mismatch: expected $expected_total, recorded $actual_total"
             exit 1
           fi
 
