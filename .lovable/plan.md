@@ -1,71 +1,95 @@
-# Отчет о выполнении: PLAN-ONLY DIAGNOSIS — платёжные ссылки для менеджеров. Ноль изменений
+# План: безопасный production-тест создания платёжных ссылок по ролям (PLAN-ONLY)
 
-Read-only. Не выполнялось: код/файлы/коммиты, SQL/миграции/RLS/Auth/Storage/config/secrets, deploy, Build/Publish, любые записи данных. PII, токены, платёжные URL не выводятся.
+Read-only discovery выполнен. Ничего не изменено: код, файлы, SQL, миграции, RLS, Auth, Storage, secrets, deploy, Publish, бизнес-записи — не трогались. PII, email, ФИО, JWT, полные UUID и платёжные URL не выводятся.
 
 ## 0. SHA-гейт
 
-Managed mirror содержит целевой `21b4e4d9e` (merge PR #377) как предпоследний коммит; поверх — один служебный коммит бота `9ac925cbd`. Дельта до целевого SHA — только автогенерируемые mirror-файлы (`src/integrations/supabase/client.ts`, `previewAuthStorage.ts`, `types.ts`). Прикладной код и `supabase/functions/**` байт-идентичны целевому SHA.
+Managed mirror HEAD = `6cab9e03a98ba9131cae2fbcb36ccb151f852660` (merge PR #379) — совпадает с указанным origin/main. Рабочее дерево чистое. PASS.
 
-## 1. Deployed source/version/status и логи
+## 1. Фактические grants (production, read-only)
 
-- Логи Edge Functions за окно ретенции недоступны ни для одной из девяти функций (`admin-create-payment-link`, `admin-create-public-link`, `composable-checkout-quote`, `admin-invoice-checkout-issue`, `public-rr-installment-initiate`, `telegram-send-notification`, `admin-update-payment-link`, `admin-invalidate-payment-link`, `public-checkout`) — источник вернул пусто. Фактические deployed version/status через доступные read-only инструменты также не читаются → **UNKNOWN** по версиям и по HTTP-статусам конкретных попыток.
-- Реестр управляемого деплоя `supabase/functions.registry.txt` содержит 7 из 9: **отсутствуют `admin-update-payment-link` и `admin-invalidate-payment-link`** (в GitHub исходники есть). Их фактическая доступность в production — UNKNOWN, вероятен never-deployed/stale.
-- Отсутствующих shared-импортов в целевом SHA не обнаружено; `requirePaymentsEdit` присутствует во всех writer-функциях PR #364.
+Секция `payments` (`role_admin_section_access`):
 
-## 2. Неуспешные RR-вызовы менеджеров
+| Роль | Секция payments | Ресурс `links` | Прочие ресурсы |
+|---|---|---|---|
+| admin | manage | manage | manage на всех 7 ресурсах |
+| menedzher | edit | edit | edit на `manual-payment` |
+| support | view | нет override | edit на `manual-payment` |
+| user (обычный) | нет строки → none | нет | нет |
 
-Точный HTTP status, internal error code/step и correlation id по сегодняшним попыткам — **UNKNOWN** (логов нет). По состоянию данных: новых `orders_v2`/provider events по этим попыткам не найдено, то есть отказ происходит **до** создания заказа и провайдерского события — на стадии авторизации writer-функции.
+Соответствие требуемой матрице:
+- (A) admin/manage — есть.
+- (B) menedzher с `payments:edit` + `links:edit` — есть.
+- (C) `payments:view` без edit — роль `support` (единственная).
+- (D) без доступа к payments — роль `user`.
 
-## 3. RPC и section-доступ (production, read-only)
+Гейт функций: все writer-функции используют `requirePaymentsEdit` → `has_admin_section_access(uid,'payments','edit')`; 401 при отсутствии/битом Bearer, 403 при недостатке прав. `admin-invalidate-payment-link` — тот же гейт, делает только `UPDATE status='invalidated'`, без DELETE.
 
-- `public.get_admin_payment_links_v1` — SECURITY DEFINER, гейт **hardcoded**: `has_role(admin)` OR `user_roles_v2.code IN ('admin','super_admin')`. `payments:view/edit` **не допускается** → менеджер получает `42501 forbidden` при загрузке вкладки «Ссылки».
-- `public.has_admin_section_access` — корректна: admin/super_admin bypass, иначе ранги view/edit/manage через `get_admin_access`.
-- RLS `payment_links`: все 4 политики — только `has_role(admin)`/`is_super_admin` (legacy `app_role`), без `payments:edit`.
-- `admin-update-payment-link` и `admin-invalidate-payment-link` в коде тоже проверяют legacy `has_role('admin'/'superadmin')`, а не `payments:edit` → 403 для менеджеров.
+## 2. Обезличенные QA-акторы и сущности: чего НЕТ
 
-## 4. Section grant роли `menedzher` (без PII)
+- Носители ролей: admin — 7, super_admin — 2, menedzher — 5, support — 1, user — 233. Среди аккаунтов с признаками `qa/test/example/+alias` **ни один не имеет ролей admin/menedzher/support** (только `user` либо роли отсутствуют).
+- Отдельных QA-аккаунтов под роли B и C **не существует**. Использовать реальных сотрудников для runtime-теста нельзя без отдельного разрешения.
+- QA-продукты: два продукта с именем «тестовый» активны, но **у них нет ни одного тарифа**. `admin-create-public-link` требует `product_id` + `tariff_id` + `amount` → создать ссылку на этих продуктах технически невозможно. Тарифов/офферов с именем test/qa нет.
 
-- Секция `payments`: роль `menedzher` — **`view`**; `support` — `view`; `admin` — `manage`.
-- Ресурсные override в `payments`: `menedzher`/`support` — `edit` только на `manual-payment`; остальные ресурсы (в т.ч. `links`) — только `admin: manage`.
-- Флаг гейтинга `section_gating_enabled = true` (bypass не активен).
+Вывод: **BLOCKED** для настоящего Edge runtime по акторам B, C, D (нет безопасных сессий) и дополнительно BLOCKED по данным (нет QA-оффера с тарифом). Подменять service-role ключом не будем — это не проверяет RBAC-путь.
 
-## 5. Registry
+## 3. Что можно выполнить без новых аккаунтов и без записей
 
-Подтверждено: `admin-update-payment-link` и `admin-invalidate-payment-link` в реестре отсутствуют — редактирование и инвалидация ссылок не покрыты управляемым деплоем.
+Разрешённый безопасный набор (все шаги без записи бизнес-данных):
 
-## 6. Контракт `public-checkout`
+1. **Contract probes по Edge** (без валидных сессий):
+   - OPTIONS на `admin-create-public-link`, `admin-invalidate-payment-link` → ожидание 2xx + CORS.
+   - POST без Authorization и POST с заведомо невалидным Bearer → ожидание **401 `unauthorized`** до любой бизнес-валидации.
+2. **Read-only SQL-матрица прав** (без записи): для одного носителя каждой роли (в отчёте — только хэш uid, роль и результат)
+   - `has_admin_section_access(uid,'payments','edit')`, `...,'view')`, `...,'manage')`
+   - `has_admin_resource_access(uid,'payments','links','edit')`
+   - ожидание: A = true/true/true/true; B = true/true/false/true; C = false/true/false/false; D = false/false/false/false.
+3. **Read-only проверка RPC/RLS-контракта**: `get_admin_payment_links_v1` гейтится `has_admin_section_access(...,'payments','view')`; политики `payment_links`: SELECT=view, INSERT/UPDATE=edit, DELETE=manage.
+4. **Транзакционный RLS/RPC-тест с ROLLBACK** (см. §5) — отдельно от Edge runtime.
 
-Текущий контракт: `verify_jwt` не требуется, порядок резолва получателя — (1) `link.user_id`, (2) Bearer JWT (`auth.uid()`), (3) **email-only без JWT** через admin API lookup. То есть для unassigned-ссылки **email-only оплата без логина допускается**; серверного требования login сейчас нет.
+## 4. Полный runtime-тест `admin-create-public-link` → `admin-invalidate-payment-link` (только после отдельного EXECUTE и снятия блокеров)
 
-## 7. Консолидированный root cause
+Предусловия, которые должен подтвердить пользователь:
+- Разрешение выполнить один вызов от актора A (admin) и один от актора B (menedzher) с их реальными сессиями, **или** явное решение по QA-аккаунтам.
+- Наличие QA-оффера: у продукта «тестовый» должен быть активный тариф. Сейчас его нет; создание тарифа — это запись, поэтому в текущем scope запрещено.
 
-Основная причина красного toast «Edge Function returned a non-2xx status code» и «Ошибка RR» у менеджеров — **не баг кода PR #364/#376, а отсутствие фактического гранта `payments:edit`**: writer-функции корректно требуют `payments:edit`, а роль `menedzher` в production имеет по секции `payments` только `view` (edit есть лишь на ресурсе `manual-payment`). Итог — 403 до создания order/provider event.
+Тестовый сценарий (на каждого актора A и B):
+1. POST `admin-create-public-link` с QA product_id + tariff_id, `amount = 100` (минимум по коду: `< 100` → 400), `payment_type` = разовый, `max_uses = 1`, `expires_at = now + 15 минут`, `description = "TEST-RBAC-20260827"`, без `user_id` (unassigned → `auth_policy='required'`).
+   - Ожидание A и B: **200**, создана 1 строка `payment_links` со `status='active'`, `current_uses=0`.
+2. Немедленно POST `admin-invalidate-payment-link` с полученным `payment_link_id`.
+   - Ожидание: **200**, `status='invalidated'`.
+3. Read-back (SQL, по хэшу id): `payment_links.status='invalidated'`, `current_uses=0`; `orders_v2` = 0 строк по ссылке; `provider_events` = 0; `payments` = 0; `invoices` = 0. Публичный URL не открывается и не выводится в отчёт.
+4. Акторы C и D: тот же POST `admin-create-public-link` с заведомо валидным телом → ожидание **403 `forbidden`**, 0 новых строк. Это негативный тест — мусора не создаёт.
+5. Не тестируем: `admin-invoice-checkout-issue`, `public-rr-installment-initiate`, RR create-order, любые оплаты и уведомления — они создают downstream-записи.
 
-Сопутствующие блокеры того же сценария:
-1. `get_admin_payment_links_v1` — hardcoded admin/super_admin → список ссылок недоступен носителям `payments:view/edit`.
-2. RLS `payment_links` — только legacy admin → любые прямые чтения/записи вне service-role функций закрыты.
-3. `admin-update-payment-link` / `admin-invalidate-payment-link` — legacy role-gate + отсутствие в registry.
-4. `public-checkout` допускает email-only без логина — расходится с требованием «серверно требовать login».
+Остаточный след после теста: 2 строки `payment_links` в статусе `invalidated` с маркером `TEST-RBAC-20260827` (удаление — это DELETE, требует отдельного разрешения; функция инвалидации намеренно не удаляет).
 
-## Минимальный план исправления (к согласованию, ничего не выполнено)
+## 5. Транзакционный RLS/RPC тест с ROLLBACK (не заменяет Edge runtime)
 
-Managed migrations (через Lovable Cloud):
-1. Поднять section grant `menedzher → payments = edit` (и решение по `support` — оставить `view`), плюс явные ресурсные override для `links` = `edit`.
-2. Переписать `get_admin_payment_links_v1`: гейт `has_admin_section_access(auth.uid(),'payments','view')`.
-3. Переписать RLS-политики `payment_links` на `has_admin_section_access(...,'payments','view'/'edit')`, сохранив admin/super_admin.
+Отдельный, явно помеченный как **не-runtime** тест: в одной транзакции
+`BEGIN; SET LOCAL role authenticated; SET LOCAL request.jwt.claims = '{"sub":"<uid актора>","role":"authenticated"}'; ... ; ROLLBACK;`
+внутри:
+- `SELECT has_admin_section_access(...)`, `has_admin_resource_access(...)` для 4 акторов;
+- `SELECT * FROM get_admin_payment_links_v1(...)` — ожидание: A/B/C → строки, D → `42501`/пусто;
+- пробный `INSERT INTO payment_links (...)` от каждой роли — ожидание: A/B → успех, C/D → `42501`;
+- пробный `UPDATE ... SET status='invalidated'` — A/B успех, C/D `42501`;
+- `DELETE` — только A успех, B/C/D `42501`.
+Финальный `ROLLBACK` не оставляет строк; после транзакции — контрольный `count(*)` по `payment_links` до/после (должен совпасть).
 
-GitHub-файлы (отдельный PR, Codex):
-4. `supabase/functions/admin-update-payment-link/index.ts` и `admin-invalidate-payment-link/index.ts` — перевести на общий `requirePaymentsEdit` (`_shared/admin-section-auth.ts`).
-5. `supabase/functions.registry.txt` — добавить обе функции.
-6. `supabase/functions/public-checkout/index.ts` — для unassigned-ссылки требовать Bearer JWT, email-only ветку отключить (или ограничить флагом) + фронтовый inline-login на `/pay/:token`.
-7. Контрактные тесты в `src/test/*` под новые гейты.
+Важное ограничение: это проверяет **только RLS и RPC**, а не JWT-путь Edge Functions (`requirePaymentsEdit`, CORS, service-role writes). Отдельно докладывается как «RLS-proof», не как runtime-proof.
 
-Deploy ровно этих функций после merge: `admin-update-payment-link`, `admin-invalidate-payment-link`, `public-checkout` (при изменении — также ничего лишнего).
+## 6. Stop / cleanup условия
 
-Безопасные negative-probes без создания данных:
-- OPTIONS-preflight по каждой функции (200 + CORS).
-- POST с невалидным Bearer → ожидание 401.
-- POST от аккаунта без `payments:edit` с заведомо несуществующим `payment_link_id` → ожидание 403 (до валидации тела).
-- Read-only проверка `has_admin_section_access` и `get_admin_payment_links_v1` SQL-селектом без записи.
+STOP немедленно, если:
+- любой актор получает 5xx или `rbac_check_failed`;
+- после шага 1 появляется хотя бы одна строка в `orders_v2`/`provider_events`/`payments`/`invoices`;
+- `current_uses > 0` на тестовой ссылке (значит ссылка была открыта/оплачена);
+- C или D получают 200 вместо 403 (critical finding, эскалация без продолжения);
+- SHA mirror перестаёт совпадать с `6cab9e03a`.
 
-Вердикт: **BLOCKED к EXECUTE** до отдельного одобрения; диагноз — PASS.
+Cleanup: сразу после теста — инвалидация ссылки (шаг 2) в том же прогоне; при обрыве прогона — инвалидация всех `payment_links` с `description = 'TEST-RBAC-20260827'` и `status='active'` (UPDATE, не DELETE). Публичные URL и токены не выводятся и не пересылаются.
+
+## Вердикт
+
+- Матрица прав, contract-probes и ROLLBACK-тест — **готовы к EXECUTE**.
+- Настоящий Edge runtime `admin-create-public-link` → **BLOCKED**: нет обезличенных QA-сессий для ролей B/C/D и нет QA-тарифа/оффера. Требуется отдельное решение пользователя; создавать аккаунты, тарифы или подменять service-role я не буду.
