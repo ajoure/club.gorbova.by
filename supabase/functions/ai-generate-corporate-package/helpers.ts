@@ -76,7 +76,7 @@ export function sanitizeFileName(name: string, defaultExtension = ""): string {
 
     let safe = base.toLowerCase();
     for (const [cyrillic, latin] of Object.entries(CYRILLIC_TRANSLITERATION)) {
-      safe = safe.split(cyrillic).join(latin);
+      safe = safe.replaceAll(cyrillic, latin);
     }
     safe = safe
       .replace(/\s+/g, "_")

@@ -1,93 +1,71 @@
-# План: завершающая production-проверка платежных ссылок всеми ролями (PLAN-ONLY)
+# Отчет о выполнении: PLAN-ONLY DIAGNOSIS — платёжные ссылки для менеджеров. Ноль изменений
 
-run_id: QA-RBAC-MOBILE-MTBNEXOL. Origin UI: https://gorbova.by. Актор — только синтетические пользователи (admin / menedzher / support / user), синтетический контакт, QA-тариф/оффер. Реальные сотрудники и клиенты не используются. В отчете не выводятся email, пароли, JWT, полные UUID и платежные URL — только sha256(id).slice(0,8).
+Read-only. Не выполнялось: код/файлы/коммиты, SQL/миграции/RLS/Auth/Storage/config/secrets, deploy, Build/Publish, любые записи данных. PII, токены, платёжные URL не выводятся.
 
-Текущее состояние (read-only, уже проверено): 4 payment_links с маркером run_id существуют — они входят в финальную очистку (F).
+## 0. SHA-гейт
 
-## Pre-flight gates (до любого действия)
+Managed mirror содержит целевой `21b4e4d9e` (merge PR #377) как предпоследний коммит; поверх — один служебный коммит бота `9ac925cbd`. Дельта до целевого SHA — только автогенерируемые mirror-файлы (`src/integrations/supabase/client.ts`, `previewAuthStorage.ts`, `types.ts`). Прикладной код и `supabase/functions/**` байт-идентичны целевому SHA.
 
-1. Actor gate: единая функция `sha256(user.id).slice(0,8)` во всех шагах; перед каждым сценарием фиксируется хэш актора и сверяется с ожидаемым для роли. Несовпадение → STOP.
-2. Origin gate: `location.origin === 'https://gorbova.by'`; вход только по паролю синтетического пользователя (без magiclink, без hash-фрагмента). Иной origin → STOP.
-3. Baseline counts (read-only, до всего): `payment_links` (run_id), `orders_v2`, `payments_v2`, `provider_events`, `installment_payments`, `access_grant_ledger` — счетчики и max(created_at) фиксируются как baseline.
-4. Roles gate: read-only проверка эффективных прав каждого синтетического актора через RBAC v3 (`payments` view/edit/manage, `payments/links`). Ожидание: admin=manage; menedzher=edit(payments)+edit(links); support=view; user=нет доступа. Отклонение → STOP до сценариев.
+## 1. Deployed source/version/status и логи
 
-## A) Карточка контакта — видимость и границы
+- Логи Edge Functions за окно ретенции недоступны ни для одной из девяти функций (`admin-create-payment-link`, `admin-create-public-link`, `composable-checkout-quote`, `admin-invoice-checkout-issue`, `public-rr-installment-initiate`, `telegram-send-notification`, `admin-update-payment-link`, `admin-invalidate-payment-link`, `public-checkout`) — источник вернул пусто. Фактические deployed version/status через доступные read-only инструменты также не читаются → **UNKNOWN** по версиям и по HTTP-статусам конкретных попыток.
+- Реестр управляемого деплоя `supabase/functions.registry.txt` содержит 7 из 9: **отсутствуют `admin-update-payment-link` и `admin-invalidate-payment-link`** (в GitHub исходники есть). Их фактическая доступность в production — UNKNOWN, вероятен never-deployed/stale.
+- Отсутствующих shared-импортов в целевом SHA не обнаружено; `requirePaymentsEdit` присутствует во всех writer-функциях PR #364.
 
-Для каждого актора: mobile 390×844 и desktop 1280×800, маршрут карточки QA-контакта.
+## 2. Неуспешные RR-вызовы менеджеров
 
-| Актор | UI-кнопка «Ссылка на оплату» | Диалог | Прямой Edge `admin-create-payment-link` без UI |
-|---|---|---|---|
-| admin | видна | открывается | 2xx (в сценарии B) |
-| menedzher | видна | открывается | 2xx (в сценарии B) |
-| support | отсутствует | — | 403 |
-| user | нет доступа к /admin (редирект) | — | 403 |
+Точный HTTP status, internal error code/step и correlation id по сегодняшним попыткам — **UNKNOWN** (логов нет). По состоянию данных: новых `orders_v2`/provider events по этим попыткам не найдено, то есть отказ происходит **до** создания заказа и провайдерского события — на стадии авторизации writer-функции.
 
-Фиксируется: скриншот (mobile+desktop, обезличенный), маршрут без query/token, хэш user/session до и после клика, console-ошибки, non-2xx запросы. Клик не создает ссылку — только открытие диалога.
+## 3. RPC и section-доступ (production, read-only)
 
-## B) Скидка/корректировка
+- `public.get_admin_payment_links_v1` — SECURITY DEFINER, гейт **hardcoded**: `has_role(admin)` OR `user_roles_v2.code IN ('admin','super_admin')`. `payments:view/edit` **не допускается** → менеджер получает `42501 forbidden` при загрузке вкладки «Ссылки».
+- `public.has_admin_section_access` — корректна: admin/super_admin bypass, иначе ранги view/edit/manage через `get_admin_access`.
+- RLS `payment_links`: все 4 политики — только `has_role(admin)`/`is_super_admin` (legacy `app_role`), без `payments:edit`.
+- `admin-update-payment-link` и `admin-invalidate-payment-link` в коде тоже проверяют legacy `has_role('admin'/'superadmin')`, а не `payments:edit` → 403 для менеджеров.
 
-Отдельный QA-тариф 10 BYN с маркером run_id (существующий QA-тариф 1 BYN не меняется — так безопаснее и не влияет на прошлые прогоны).
+## 4. Section grant роли `menedzher` (без PII)
 
-Шаги: admin создает одну ссылку на 7 BYN, reason «QA discount»; menedzher — одну такую же.
+- Секция `payments`: роль `menedzher` — **`view`**; `support` — `view`; `admin` — `manage`.
+- Ресурсные override в `payments`: `menedzher`/`support` — `edit` только на `manual-payment`; остальные ресурсы (в т.ч. `links`) — только `admin: manage`.
+- Флаг гейтинга `section_gating_enabled = true` (bypass не активен).
 
-Ожидаемый read-back по каждой строке: `amount = 700` (minor), `adjustment_amount = -300`, `adjustment_reason = 'QA discount'`, `created_by` = соответствующий актор, `current_uses = 0`. Далее — немедленный `admin-invalidate-payment-link`, read-back `status != active`, `current_uses = 0`, delta orders_v2/payments_v2/provider_events = 0.
+## 5. Registry
 
-Stop guard: если `adjustment_amount` не -300 или автор не совпадает — STOP, без исправления кода.
+Подтверждено: `admin-update-payment-link` и `admin-invalidate-payment-link` в реестре отсутствуют — редактирование и инвалидация ссылок не покрыты управляемым деплоем.
 
-## C) /admin/payments/links — публичные unassigned ссылки
+## 6. Контракт `public-checkout`
 
-admin и menedzher: открыть страницу, режим public, создать по одной unassigned ссылке.
+Текущий контракт: `verify_jwt` не требуется, порядок резолва получателя — (1) `link.user_id`, (2) Bearer JWT (`auth.uid()`), (3) **email-only без JWT** через admin API lookup. То есть для unassigned-ссылки **email-only оплата без логина допускается**; серверного требования login сейчас нет.
 
-Ожидания:
-- read-back: `meta.auth_policy = 'required'`, `user_id IS NULL`, `current_uses = 0`;
-- GET публичной страницы ссылки: отображается требование входа;
-- POST `public-checkout` без JWT → 401 `authentication_required`;
-- после входа синтетического user страница доступна, оплата НЕ инициируется (никаких кликов по кнопке оплаты, provider не вызывается);
-- support: страница view-only, кнопки создания нет, прямой Edge-вызов → 403;
-- user: страницы `/admin/payments/links` нет — редирект.
+## 7. Консолидированный root cause
 
-Затем обе ссылки invalidate, read-back current_uses = 0, downstream delta = 0.
+Основная причина красного toast «Edge Function returned a non-2xx status code» и «Ошибка RR» у менеджеров — **не баг кода PR #364/#376, а отсутствие фактического гранта `payments:edit`**: writer-функции корректно требуют `payments:edit`, а роль `menedzher` в production имеет по секции `payments` только `view` (edit есть лишь на ресурсе `manual-payment`). Итог — 403 до создания order/provider event.
 
-## D) «Ресурс развития» (RR) — SKIP с non-persistent proof
+Сопутствующие блокеры того же сценария:
+1. `get_admin_payment_links_v1` — hardcoded admin/super_admin → список ссылок недоступен носителям `payments:view/edit`.
+2. RLS `payment_links` — только legacy admin → любые прямые чтения/записи вне service-role функций закрыты.
+3. `admin-update-payment-link` / `admin-invalidate-payment-link` — legacy role-gate + отсутствие в registry.
+4. `public-checkout` допускает email-only без логина — расходится с требованием «серверно требовать login».
 
-Причина SKIP (по коду `public-rr-installment-initiate`): функция при успехе обращается к внешнему провайдеру рассрочки (`rrCreateOrder`), а до этого durable пишет `orders_v2`-группу композитного заказа, `provider_events`, `audit_logs` и marker-состояния RPC (`rr_mark_call_started`, `rr_finalize_created_order`). `audit_logs` и `provider_events` спроектированы как append-only журнал, а заказ уже зарегистрирован у внешнего провайдера — идемпотентная полная очистка без следа в внешней системе невозможна. Условие пользователя «если функция затрагивает внешнего провайдера — SKIP» выполняется.
+## Минимальный план исправления (к согласованию, ничего не выполнено)
 
-Non-persistent proof вместо исполнения:
-1. Read-only контрактная проверка: `requirePaymentsEdit` в функции → под support/user ожидаемо 403 (проверяется отправкой заведомо некорректного/недостаточного актора — до RBAC-гейта записи не создаются).
-2. Негативный вызов под menedzher с невалидным `tariff_offer_id` (несуществующий QA-оффер): ожидается 4xx на этапе валидации, до `rr_mark_call_started` — доказывает доступность и авторизацию актора без создания заказа.
-3. Read-back: delta `orders_v2` / `provider_events` / `installment_payments` / `audit_logs`(rr.*) = 0.
-4. UI-часть: в карточке QA-контакта под menedzher открыть «Ресурс развития», зафиксировать корректный расчет и доступность кнопки, но не отправлять.
+Managed migrations (через Lovable Cloud):
+1. Поднять section grant `menedzher → payments = edit` (и решение по `support` — оставить `view`), плюс явные ресурсные override для `links` = `edit`.
+2. Переписать `get_admin_payment_links_v1`: гейт `has_admin_section_access(auth.uid(),'payments','view')`.
+3. Переписать RLS-политики `payment_links` на `has_admin_section_access(...,'payments','view'/'edit')`, сохранив admin/super_admin.
 
-Если пользователь захочет полноценный RR-прогон — это отдельная задача с sandbox-режимом провайдера.
+GitHub-файлы (отдельный PR, Codex):
+4. `supabase/functions/admin-update-payment-link/index.ts` и `admin-invalidate-payment-link/index.ts` — перевести на общий `requirePaymentsEdit` (`_shared/admin-section-auth.ts`).
+5. `supabase/functions.registry.txt` — добавить обе функции.
+6. `supabase/functions/public-checkout/index.ts` — для unassigned-ссылки требовать Bearer JWT, email-only ветку отключить (или ограничить флагом) + фронтовый inline-login на `/pay/:token`.
+7. Контрактные тесты в `src/test/*` под новые гейты.
 
-## E) Slow network / background restore (menedzher, mobile)
+Deploy ровно этих функций после merge: `admin-update-payment-link`, `admin-invalidate-payment-link`, `public-checkout` (при изменении — также ничего лишнего).
 
-390×844, CDP-throttling (Slow 3G) + уход вкладки в background и возврат. Фиксируется хэш actor/session до и после клика «Ссылка на оплату». Ожидание: хэши идентичны, маршрут остается на карточке контакта, редиректа на `/auth` нет, диалог открывается. Любой переход на `/auth` фиксируется с полным console/network-логом (без секретов) как воспроизведение инцидента.
+Безопасные negative-probes без создания данных:
+- OPTIONS-preflight по каждой функции (200 + CORS).
+- POST с невалидным Bearer → ожидание 401.
+- POST от аккаунта без `payments:edit` с заведомо несуществующим `payment_link_id` → ожидание 403 (до валидации тела).
+- Read-only проверка `has_admin_section_access` и `get_admin_payment_links_v1` SQL-селектом без записи.
 
-## F) Финальная очистка (FK-safe)
-
-Предварительно — список и counts всех сущностей run_id. Порядок удаления:
-
-1. invalidate + delete `payment_links` с маркером run_id (включая 4 уже существующие);
-2. QA-оффер(ы) и QA-тарифы run_id (1 BYN и новый 10 BYN) — только созданные под run_id; **существующий продукт не удаляется**;
-3. `user_roles_v2` / профильные строки 4 синтетических пользователей;
-4. auth-пользователи 4 синтетических аккаунтов (`auth.admin.deleteUser`).
-
-Post-cleanup: counts run_id = 0 по каждой таблице; `orders_v2` / `payments_v2` / `provider_events` / `installment_payments` — равны baseline (delta = 0); реальные данные не затронуты.
-
-## Stop guards
-
-- Любое несовпадение actor/origin gate → STOP.
-- Любой неожиданный 2xx там, где ожидался 403/401 → STOP и отчет (без правки кода).
-- Появление любой downstream-строки вне ожидаемого списка → STOP, откат создания и отчет.
-- Ошибка в коде обнаружена → не чинить, вернуть runtime-причину, логи без секретов и минимальный patch plan.
-
-## Необратимые риски
-
-- Удаление auth-пользователей (F) необратимо; ограничено 4 синтетическими аккаунтами run_id.
-- `audit_logs` записи о QA-действиях останутся навсегда (append-only) — это ожидаемый и безопасный след.
-- Любой реальный вызов RR создал бы заказ у внешнего провайдера — поэтому D переведен в SKIP.
-
-## Границы PLAN-ONLY
-
-На этом этапе не выполнено: изменений кода/файлов/коммитов, миграций, RLS, Auth config, secrets, deploy, Build, Publish, входов и создания ссылок.
+Вердикт: **BLOCKED к EXECUTE** до отдельного одобрения; диагноз — PASS.
