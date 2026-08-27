@@ -6,6 +6,7 @@ const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8"
 
 describe("contact payment-link RBAC and RR regression contract", () => {
   const dialog = read("src/components/admin/AdminPaymentLinkDialog.tsx");
+  const siblingAddonMapper = read("src/utils/mapSiblingAddonOfferIds.ts");
   const contact = read("src/components/admin/ContactDetailSheet.tsx");
   const links = read("src/components/admin/payments/links/LinksTabContent.tsx");
   const auth = read("supabase/functions/_shared/admin-section-auth.ts");
@@ -42,10 +43,22 @@ describe("contact payment-link RBAC and RR regression contract", () => {
   it("sends the RR contract expected by the Edge Function and reads its response", () => {
     expect(dialog).toContain("tariff_offer_id: rrSiblingOffer.id");
     expect(dialog).toContain("target_user_id: userId");
-    expect(dialog).toContain("adjustment_amount: composableAdjustment");
-    expect(dialog).toContain("adjustment_reason: composableAdjustment === 0 ? null : adjustmentReason.trim()");
+    expect(dialog).toContain("addon_offer_ids: siblingAddonMapping.addonOfferIds");
+    expect(dialog).toContain("adjustment_amount: siblingComposableAdjustment");
+    expect(dialog).toContain("adjustment_reason: siblingComposableAdjustment === 0 ? null : adjustmentReason.trim()");
+    expect(dialog).toContain("mapSiblingAddonOfferIds(");
     expect(dialog).toContain("?.payment_url ??");
     expect(dialog).not.toMatch(/\n\s*offer_id:\s*rrSiblingOffer\.id/);
+  });
+
+  it("maps addon offer ids separately for invoice and RR sibling offers", () => {
+    // One occurrence builds the validated sibling quote; the other two are the
+    // invoice and RR writers that consume the same validated mapping.
+    expect(dialog.match(/addon_offer_ids: siblingAddonMapping\.addonOfferIds/g)).toHaveLength(3);
+    expect(dialog).toContain('"composable-checkout-sibling-catalog"');
+    expect(dialog).toContain('"composable-checkout-sibling-quote"');
+    expect(siblingAddonMapper).toContain("addon_product_id");
+    expect(siblingAddonMapper).toContain("siblingByProductId");
   });
 
   it("binds admin RR orders to the target contact and keeps the actor in audit metadata", () => {

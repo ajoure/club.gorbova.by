@@ -177,6 +177,44 @@ function mapKnown(raw: string): string | null {
   if (s.includes("rbac_check_failed")) {
     return "Не удалось проверить права доступа. Обновите страницу и попробуйте снова.";
   }
+  if (s.includes("admin_fields_forbidden")) {
+    return "Недостаточно прав на редактирование платежей.";
+  }
+  if (s.includes("addon_not_allowed")) {
+    return "Один из выбранных дополнительных продуктов недоступен для этого способа оплаты.";
+  }
+  if (s.includes("target_profile_not_found")) {
+    return "Контакт не связан с действующим профилем. Обновите карточку контакта.";
+  }
+  if (s.includes("name_invalid")) {
+    return "В карточке контакта не заполнено имя.";
+  }
+  if (s.includes("phone_invalid")) {
+    return "В карточке контакта не заполнен корректный телефон.";
+  }
+  if (s.includes("email_invalid")) {
+    return "В карточке контакта не заполнен корректный email.";
+  }
+  if (s.includes("adjustment_reason_required")) {
+    return "Укажите причину скидки или наценки.";
+  }
+  if (s.includes("adjusted_total_invalid")) {
+    return "Итоговая сумма после корректировки должна быть больше нуля.";
+  }
+  if (s.includes("rr_battle_credentials_incomplete") || s.includes("rr_instance_not_configured")) {
+    return "Интеграция Ресурса развития не настроена. Обратитесь к администратору.";
+  }
+  if (
+    s.includes("rr_upstream_unknown") ||
+    s.includes("rr_reconciliation_pending") ||
+    s.includes("rr_call_in_flight") ||
+    s.includes("rr_recovery_pending")
+  ) {
+    return "Ресурс развития ещё обрабатывает запрос. Не создавайте повторную заявку и попробуйте проверить ссылку позже.";
+  }
+  if (s.includes("rr_create_order_rejected") || s.includes("rr_create_order_failed_upstream")) {
+    return "Ресурс развития отклонил создание ссылки. Проверьте данные контакта или обратитесь к администратору интеграции.";
+  }
   if (s.includes("invalid_amount")) return "Укажите корректную сумму платежа больше нуля.";
   if (s.includes("invalid_currency")) return "Выберите поддерживаемую валюту платежа.";
   if (s.includes("invalid_provider")) return "Выберите поддерживаемого платёжного провайдера.";
