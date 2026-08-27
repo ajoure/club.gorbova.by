@@ -29,7 +29,7 @@ import {
   buildAddress,
   entityName,
   sanitizeFileName,
-} from '../_shared/docx-helpers.ts';
+} from './helpers.ts';
 import { calculateServerManifest, type ManifestItem, type TemplateRuntimeStatus } from '../_shared/corporate-manifest.ts';
 
 // ─── Types ────────────────────────────────────────────────────────
