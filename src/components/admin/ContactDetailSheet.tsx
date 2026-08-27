@@ -160,6 +160,7 @@ import { SmsHistorySection } from "./sms/SmsHistorySection";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
 
 import { usePermissions } from "@/hooks/usePermissions";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { WebinarActivitySection } from "./contact/WebinarActivitySection";
 import { isStaffRole } from "@/lib/liveRoomRoles";
@@ -215,6 +216,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { hasPermission, isSuperAdmin, isAdmin, canWrite } = usePermissions();
+  const adminAccess = useAdminAccess();
+  const canEditPayments = adminAccess.canAccessSection("payments", "edit");
   const { role: authRole } = useAuth();
   const { startImpersonation, resetPassword } = useAdminUsers();
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
@@ -2577,7 +2580,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                         <p className="text-sm">Нет привязанных карт</p>
                       </div>
                     )}
-                    {/* Charge button — super_admin only; Payment link — any admin */}
+                    {/* Charge button — super_admin only; payment links — payments:edit. */}
                     <div className="flex gap-2 mt-2">
                       {isSuperAdmin() && (
                         <Button
@@ -2589,7 +2592,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                           Списать деньги
                         </Button>
                       )}
-                      {isAdmin() && (
+                      {canEditPayments && (
                         <Button
                           variant="outline"
                           className="flex-1 gap-2"
@@ -4256,7 +4259,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         )}
 
         {/* Admin Payment Link Dialog */}
-        {contact.user_id && (
+        {contact.user_id && canEditPayments && (
           <AdminPaymentLinkDialog
             open={paymentLinkDialogOpen}
             onOpenChange={setPaymentLinkDialogOpen}

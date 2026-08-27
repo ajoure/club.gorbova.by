@@ -27,6 +27,7 @@ import { LinkStatusBadge } from "./LinkStatusBadge";
 import { LinkDetailsDrawer } from "./LinkDetailsDrawer";
 import { AdminPaymentLinkDialog } from "@/components/admin/AdminPaymentLinkDialog";
 import { EditPaymentLinkDialog } from "./EditPaymentLinkDialog";
+import { useAdminAccess } from "@/hooks/useAdminAccess";
 
 type StatusFilter = "all" | "active" | "invalidated" | "expired" | "exhausted";
 type TypeFilter = "all" | "one_time" | "subscription";
@@ -37,6 +38,8 @@ type ProviderFilter = "all" | "bepaid" | "stripe";
 
 export function LinksTabContent() {
   const qc = useQueryClient();
+  const access = useAdminAccess();
+  const canEditPayments = access.canAccessSection("payments", "edit");
   const { data: links, isLoading, refetch, isFetching } = usePaymentLinks();
 
   const [search, setSearch] = useState("");
@@ -180,9 +183,11 @@ export function LinksTabContent() {
           Обновить
         </Button>
 
-        <Button size="sm" onClick={() => setCreateOpen(true)} className="ml-auto">
-          <Plus className="h-4 w-4 mr-1.5" /> Создать ссылку
-        </Button>
+        {canEditPayments && (
+          <Button size="sm" onClick={() => setCreateOpen(true)} className="ml-auto">
+            <Plus className="h-4 w-4 mr-1.5" /> Создать ссылку
+          </Button>
+        )}
       </div>
 
       <div className="text-xs text-muted-foreground px-1">
@@ -301,7 +306,9 @@ export function LinksTabContent() {
       </div>
 
       {/* Dialogs */}
-      <AdminPaymentLinkDialog open={createOpen} onOpenChange={setCreateOpen} mode="public" />
+      {canEditPayments && (
+        <AdminPaymentLinkDialog open={createOpen} onOpenChange={setCreateOpen} mode="public" />
+      )}
       <LinkDetailsDrawer link={detailsLink} onOpenChange={(o) => !o && setDetailsLink(null)} />
       <EditPaymentLinkDialog
         link={editLink}

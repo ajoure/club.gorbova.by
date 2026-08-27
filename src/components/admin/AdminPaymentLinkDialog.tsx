@@ -749,6 +749,8 @@ ${amountLine}
             tariff_id: selectedTariffId,
             offer_id: effectiveOffer?.id,
             amount: Math.round(amount * 100),
+            adjustment_amount: composableAdjustment,
+            adjustment_reason: composableAdjustment === 0 ? null : adjustmentReason.trim(),
             payment_type: effectivePaymentType,
             description:
               description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
@@ -934,6 +936,8 @@ ${amountLine}
             // по recurring-flag offer'а.
             offer_id: effectiveOffer.id,
             amount: Math.round(amount * 100),
+            adjustment_amount: composableAdjustment,
+            adjustment_reason: composableAdjustment === 0 ? null : adjustmentReason.trim(),
             payment_type: effectivePaymentType,
             description:
               description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
@@ -1122,43 +1126,31 @@ ${amountLine}
     }
   };
 
-  // Sprint «Составные продажи ЦБ» — Resource Development админ-flow
-  // (переиспользует public-rr-installment-initiate: принимает PII контакта).
+  // Sprint «Составные продажи ЦБ» — Resource Development админ-flow.
+  // Контакт и права проверяются сервером: UI передаёт только target_user_id.
   const handleInitiateRr = async () => {
+    if (!userId) { toast.error("Только для карточки контакта"); return; }
     if (!rrSiblingOffer) { toast.error("У тарифа нет RR-оффера"); return; }
     if (!selectedProductId) { toast.error("Выберите продукт"); return; }
+    if (amount <= 0) { toast.error("Введите корректную сумму"); return; }
+    if (composableAdjustment !== 0 && !adjustmentReason.trim()) {
+      toast.error("Укажите причину скидки или наценки");
+      return;
+    }
     setRrPending(true);
     try {
-      // Тянем PII целевого профиля из БД (SoT — profiles).
-      let name = userName || "";
-      let email = userEmail || "";
-      let phone = "";
-      if (userId) {
-        const { data: p } = await supabase
-          .from("profiles")
-          .select("full_name, email, phone")
-          .eq("user_id", userId)
-          .maybeSingle();
-        if (p) {
-          name = name || (p as any).full_name || "";
-          email = email || (p as any).email || "";
-          phone = (p as any).phone || "";
-        }
-      }
-      if (!name || !email || !phone) {
-        toast.error("Для RR требуется имя, email и телефон контакта");
-        return;
-      }
       const { data, error } = await supabase.functions.invoke("public-rr-installment-initiate", {
         body: {
-          offer_id: rrSiblingOffer.id,
+          tariff_offer_id: rrSiblingOffer.id,
           addon_offer_ids: selectedAddonOfferIds,
-          name, email, phone,
+          target_user_id: userId,
+          adjustment_amount: composableAdjustment,
+          adjustment_reason: composableAdjustment === 0 ? null : adjustmentReason.trim(),
         },
       });
       if (error) throw error;
-      const redirect = (data as any)?.redirect_url ?? (data as any)?.url ?? null;
-      if (!redirect) throw new Error((data as any)?.error || "RR не вернул redirect_url");
+      const redirect = (data as any)?.payment_url ?? (data as any)?.redirect_url ?? (data as any)?.url ?? null;
+      if (!redirect) throw new Error((data as any)?.error || "RR не вернул ссылку на оплату");
       setGeneratedUrl(redirect);
       queryClient.invalidateQueries({ queryKey: ["contact-orders"] });
       toast.success("Ссылка RR сформирована");
