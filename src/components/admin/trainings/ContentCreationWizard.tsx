@@ -709,7 +709,10 @@ export function ContentCreationWizard({
           ? finalLessonUrl 
           : (wizardData.notification.buttonUrl || finalLessonUrl);
 
-        if (shouldSendNow) {
+        if (shouldSendNow && wizardData.tariffIds.length === 0) {
+          console.warn("[lesson-notification] Telegram broadcast skipped: no tariff audience selected");
+          toast.info("Урок создан, но уведомление не отправлено: не выбрана тарифная аудитория");
+        } else if (shouldSendNow) {
           try {
             const { data: broadcastResult, error: broadcastError } = await supabase.functions.invoke(
               "telegram-mass-broadcast",
@@ -721,7 +724,7 @@ export function ContentCreationWizard({
                   button_url: buttonUrl,
                   filters: {
                     bot_ids: [wizardData.notification.botId],
-                    tariffIds: wizardData.tariffIds,
+                    include: [{ tariff_ids: wizardData.tariffIds }],
                   },
                   template_type: "lesson_release",
                 },
