@@ -1,8 +1,10 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { requestHasServiceRoleKey } from '../_shared/service-request-auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
 interface GrantAccessRequest {
@@ -150,7 +152,64 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // This function performs privileged order reads/writes and an external
+    // GetCourse mutation. Accept only the exact internal key or a signed-in
+    // operator with the matching admin-section permission.
+    const isServiceRoleCall = requestHasServiceRoleKey(req, supabaseServiceKey);
+    if (!isServiceRoleCall) {
+      const authHeader = req.headers.get('Authorization') || req.headers.get('authorization') || '';
+      if (!authHeader.toLowerCase().startsWith('bearer ')) {
+        return new Response(
+          JSON.stringify({ ok: false, error: 'Unauthorized', error_type: 'auth' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+
+      const token = authHeader.slice(7).trim();
+      const authClient = createClient(supabaseUrl, supabaseAnonKey);
+      const { data: { user }, error: authError } = await authClient.auth.getUser(token);
+      if (authError || !user) {
+        return new Response(
+          JSON.stringify({ ok: false, error: 'Invalid token', error_type: 'auth' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+
+      const [paymentsAccess, integrationsAccess, adminRole, superAdminRole] = await Promise.all([
+        supabase.rpc('has_admin_section_access', {
+          _user_id: user.id,
+          _section_code: 'payments',
+          _min_level: 'edit',
+        }),
+        supabase.rpc('has_admin_section_access', {
+          _user_id: user.id,
+          _section_code: 'integrations',
+          _min_level: 'edit',
+        }),
+        supabase.rpc('has_role_v2', { _user_id: user.id, _role_code: 'admin' }),
+        supabase.rpc('has_role_v2', { _user_id: user.id, _role_code: 'super_admin' }),
+      ]);
+
+      const rbacError = paymentsAccess.error || integrationsAccess.error ||
+        adminRole.error || superAdminRole.error;
+      if (rbacError) {
+        console.error('[GC-GRANT] RBAC check failed:', rbacError.message);
+        return new Response(
+          JSON.stringify({ ok: false, error: 'RBAC check failed', error_type: 'auth' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (!paymentsAccess.data && !integrationsAccess.data && !adminRole.data && !superAdminRole.data) {
+        return new Response(
+          JSON.stringify({ ok: false, error: 'Forbidden', error_type: 'auth' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+    }
 
     const body: GrantAccessRequest = await req.json();
     const { order_id, force = false, dry_run = false } = body;

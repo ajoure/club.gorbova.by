@@ -199,14 +199,14 @@ Deno.serve(async (req) => {
       });
 
       if (!hasPermission && !canManageClubMembers) {
-        // Fallback: check admin/superadmin role
-        const { data: isAdmin } = await supabase.rpc('has_role', {
+        // Fallback: check canonical admin role codes.
+        const { data: isAdmin } = await supabase.rpc('has_role_v2', {
           _user_id: user.id,
-          _role: 'admin',
+          _role_code: 'admin',
         });
-        const { data: isSuperAdmin } = await supabase.rpc('has_role', {
+        const { data: isSuperAdmin } = await supabase.rpc('has_role_v2', {
           _user_id: user.id,
-          _role: 'superadmin',
+          _role_code: 'super_admin',
         });
 
         if (!isAdmin && !isSuperAdmin) {

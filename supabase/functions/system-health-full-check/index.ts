@@ -83,40 +83,29 @@ interface FullCheckReport {
   timestamp: string;
 }
 
-// Check single function availability based on registry settings
-// Optimized: OPTIONS timeout reduced to 5s, POST uses registry timeout
+// Check single function availability without executing business logic.
+// A generic POST { ping: true } is not a safe healthcheck: many functions do
+// not implement a ping branch and can mutate real data before rejecting it.
 async function checkFunctionAvailability(
   entry: RegistryEntry,
   projectRef: string
 ): Promise<FunctionCheckResult> {
   const url = `https://${projectRef}.supabase.co/functions/v1/${entry.name}`;
-  const timeout = entry.healthcheck_method === "OPTIONS"
-    ? Math.min(entry.timeout_ms, 8000)
-    : Math.min(entry.timeout_ms, 15000);
+  const timeout = Math.min(entry.timeout_ms, 8000);
   
   try {
     const controller = new AbortController();
-    // PATCH P0.9.4: Respect registry timeout_ms, with reasonable caps
-    // OPTIONS: max 8s (preflight should be fast)
-    // POST: max 15s (allows cold start)
+    // Respect registry timeout_ms with an 8s cap for preflight.
     const timeoutId = setTimeout(() => controller.abort(), timeout);
-    
-    const method = entry.healthcheck_method === "POST" ? "POST" : "OPTIONS";
-    
-    const headers: Record<string, string> = method === "OPTIONS" 
-      ? {
-          "Origin": "https://lovable.app",
-          "Access-Control-Request-Method": "POST",
-          "Access-Control-Request-Headers": "authorization,content-type,apikey",
-        }
-      : {
-          "Content-Type": "application/json",
-        };
+    const headers: Record<string, string> = {
+      "Origin": "https://gorbova.by",
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "authorization,content-type,apikey,x-client-info",
+    };
     
     const response = await fetch(url, {
-      method,
+      method: "OPTIONS",
       headers,
-      body: method === "POST" ? JSON.stringify({ ping: true }) : undefined,
       signal: controller.signal,
     });
     
@@ -140,9 +129,10 @@ async function checkFunctionAvailability(
     
     // Check CORS headers for browser functions
     let corsOk = true;
-    if (entry.category === "browser" && method === "OPTIONS") {
-      const allowHeaders = response.headers.get("Access-Control-Allow-Headers") || "";
-      corsOk = allowHeaders.includes("x-supabase-client-platform");
+    if (entry.category === "browser") {
+      const allowHeaders = (response.headers.get("Access-Control-Allow-Headers") || "").toLowerCase();
+      corsOk = ["authorization", "content-type", "apikey", "x-client-info"]
+        .every((requiredHeader) => allowHeaders.includes(requiredHeader));
     }
     
     // Check if status is in expected list
@@ -158,7 +148,7 @@ async function checkFunctionAvailability(
         category: entry.category,
         auto_fix_policy: entry.auto_fix_policy,
         cors_ok: false,
-        error: "Missing x-supabase-client-* in CORS headers",
+        error: "Missing one or more supabase-js invocation headers in CORS allowlist",
       };
     }
     

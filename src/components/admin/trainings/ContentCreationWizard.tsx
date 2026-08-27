@@ -711,32 +711,27 @@ export function ContentCreationWizard({
 
         if (shouldSendNow) {
           try {
-            // Call edge function to send notification
-            const { data: session } = await supabase.auth.getSession();
-            const response = await fetch(
-              `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-broadcast`,
+            const { data: broadcastResult, error: broadcastError } = await supabase.functions.invoke(
+              "telegram-mass-broadcast",
               {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${session?.session?.access_token}`,
-                  "Content-Type": "application/json",
+                body: {
+                  message: wizardData.notification.messageText,
+                  include_button: true,
+                  button_text: wizardData.notification.buttonText || "Смотреть",
+                  button_url: buttonUrl,
+                  filters: {
+                    bot_ids: [wizardData.notification.botId],
+                    tariffIds: wizardData.tariffIds,
+                  },
+                  template_type: "lesson_release",
                 },
-                body: JSON.stringify({
-                  botId: wizardData.notification.botId,
-                  messageText: wizardData.notification.messageText,
-                  buttonText: wizardData.notification.buttonText || "Смотреть",
-                  buttonUrl: buttonUrl,
-                  targetTariffIds: wizardData.tariffIds.length > 0 ? wizardData.tariffIds : null,
-                  notificationType: "lesson_release",
-                  lessonId: newLesson.id,
-                }),
-              }
+              },
             );
 
-            if (response.ok) {
+            if (!broadcastError && !broadcastResult?.error) {
               toast.success("Уведомление отправляется...");
             } else {
-              console.error("Notification response:", await response.text());
+              console.error("Notification response:", broadcastError || broadcastResult);
               toast.info("Урок создан, уведомление будет отправлено позже");
             }
           } catch (e) {

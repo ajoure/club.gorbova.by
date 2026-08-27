@@ -10,12 +10,12 @@ import { toast } from "sonner";
  * 1. Cancel GetCourse for paid orders
  * 2. Delete installment_schedules
  * 3. Delete subscriptions_v2
- * 4. Revoke TG access (only if no other active deals)
+ * 4. Resolve TG revoke targets (only if no other active deals)
  * 5. Delete access_grant_ledger
  * 6. Delete entitlements
  * 7. Delete payments_v2
  * 8. Delete orders_v2
- * 9. Send revoked notifications
+ * 9. Revoke TG access through the canonical function
  */
 export function useDealsBulkDelete(opts?: { onSuccess?: () => void }) {
   const queryClient = useQueryClient();
@@ -63,8 +63,6 @@ export function useDealsBulkDelete(opts?: { onSuccess?: () => void }) {
       const subscriptionIds = subscriptions?.map(s => s.id) || [];
       console.log(`[BulkDelete] Found ${subscriptionIds.length} subscriptions to delete`);
 
-      const uniqueUserIds = [...new Set(ordersToDelete.filter(o => o.user_id).map(o => o.user_id!))];
-
       if (subscriptionIds.length > 0) {
         const { error: installmentsError } = await (supabase as any)
           .from("installment_schedules")
@@ -85,7 +83,10 @@ export function useDealsBulkDelete(opts?: { onSuccess?: () => void }) {
         console.log(`[BulkDelete] Deleted ${subscriptionIds.length} subscriptions`);
       }
 
-      // Revoke TG access for users with no other active deals
+      // Resolve revoke targets now, but invoke only after the orders are gone.
+      // Otherwise the canonical remaining-access guard still sees the paid
+      // order being deleted and correctly blocks the revoke.
+      const revokeTargets = new Map<string, { userId: string; clubId: string; orderNumber: string }>();
       for (const order of ordersToDelete) {
         const product = order.products_v2 as any;
         if (product?.telegram_club_id && order.user_id) {
@@ -103,22 +104,12 @@ export function useDealsBulkDelete(opts?: { onSuccess?: () => void }) {
             .eq("status", "active");
 
           if ((otherActiveDeals || 0) === 0 && (activeSubscriptions || 0) === 0) {
-            const { data: prof } = await supabase
-              .from("profiles")
-              .select("telegram_user_id")
-              .eq("user_id", order.user_id)
-              .single();
-
-            if (prof?.telegram_user_id) {
-              supabase.functions.invoke("telegram-club-access", {
-                body: {
-                  action: "revoke",
-                  telegram_user_id: prof.telegram_user_id,
-                  telegram_club_id: product.telegram_club_id,
-                  reason: "deal_deleted",
-                },
-              }).catch(console.error);
-            }
+            const targetKey = `${order.user_id}:${product.telegram_club_id}`;
+            revokeTargets.set(targetKey, {
+              userId: order.user_id,
+              clubId: product.telegram_club_id,
+              orderNumber: order.order_number,
+            });
           } else {
             console.log(`[BulkDelete] Skipping TG revoke for ${order.order_number}: user has ${otherActiveDeals} other deals, ${activeSubscriptions} active subs`);
           }
@@ -195,17 +186,46 @@ export function useDealsBulkDelete(opts?: { onSuccess?: () => void }) {
 
       console.log(`[BulkDelete] Successfully deleted orders, count:`, count);
 
-      // Send notifications
-      for (const userId of uniqueUserIds) {
-        supabase.functions.invoke("send-access-revoked-notification", {
-          body: { user_id: userId, reason: "deal_deleted" },
-        }).catch(console.error);
+      // Canonical revoke also sends the customer notification. Re-check
+      // remaining commercial access inside the function to protect against a
+      // concurrent purchase between target resolution and this invocation.
+      let revokeFailures = 0;
+      for (const target of revokeTargets.values()) {
+        const { data: revokeResult, error: revokeError } = await supabase.functions.invoke(
+          "telegram-revoke-access",
+          {
+            body: {
+              user_id: target.userId,
+              club_id: target.clubId,
+              reason: "deal_deleted",
+              is_manual: true,
+              respect_remaining_access: true,
+            },
+          },
+        );
+
+        if (revokeError || revokeResult?.error) {
+          revokeFailures += 1;
+          console.warn(
+            `[BulkDelete] Telegram revoke failed for ${target.orderNumber}:`,
+            revokeError || revokeResult,
+          );
+        } else if (revokeResult?.blocked) {
+          console.info(
+            `[BulkDelete] Telegram revoke safely blocked for ${target.orderNumber}: remaining access exists`,
+          );
+        }
       }
 
-      return { deleted: ids.length };
+      return { deleted: ids.length, revokeFailures };
     },
     onSuccess: (result) => {
       toast.success(`Удалено ${result.deleted} сделок`);
+      if (result.revokeFailures > 0) {
+        toast.warning(
+          `Удаление завершено, но Telegram-доступ не удалось закрыть для ${result.revokeFailures} записей`,
+        );
+      }
       // Invalidate all relevant queries
       queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
       queryClient.invalidateQueries({ queryKey: ["admin-deals-tab-counts"] });
