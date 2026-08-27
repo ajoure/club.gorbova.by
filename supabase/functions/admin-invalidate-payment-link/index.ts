@@ -4,11 +4,12 @@
  * НАЗНАЧЕНИЕ: безопасно сделать публичную ссылку недействительной (soft).
  *   • UPDATE payment_links.status='invalidated' (никакого DELETE).
  *   • НЕ трогает orders_v2 / current_uses / downstream.
- *   • AUTH: JWT + admin/super_admin.
+ *   • AUTH: JWT + payments:edit (admin/super_admin bypass through canonical RBAC).
  *   • Audit: payment_link.invalidated.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
+import { requirePaymentsEdit } from '../_shared/admin-section-auth.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflightRequest();
@@ -19,15 +20,9 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return errorResponse('Not authorized', 401);
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
-    if (userErr || !user) return errorResponse('Invalid token', 401);
-
-    const { data: isAdmin } = await supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' });
-    const { data: isSuper } = await supabase.rpc('has_role', { _user_id: user.id, _role: 'superadmin' });
-    if (!isAdmin && !isSuper) return errorResponse('Access denied: admin role required', 403);
+    const access = await requirePaymentsEdit(req, supabase);
+    if (!access.ok) return errorResponse(access.error, access.status);
+    const user = access.actor;
 
     const { payment_link_id, reason } = await req.json();
     if (!payment_link_id || typeof payment_link_id !== 'string') {

@@ -180,6 +180,9 @@ function mapKnown(raw: string): string | null {
   if (s.includes("admin_fields_forbidden")) {
     return "Недостаточно прав на редактирование платежей.";
   }
+  if (s.includes("authentication_required")) {
+    return "Войдите в аккаунт, чтобы продолжить оплату.";
+  }
   if (s.includes("addon_not_allowed")) {
     return "Один из выбранных дополнительных продуктов недоступен для этого способа оплаты.";
   }

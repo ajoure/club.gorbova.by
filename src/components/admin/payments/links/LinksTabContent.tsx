@@ -284,17 +284,21 @@ export function LinksTabContent() {
                       <DropdownMenuItem onClick={() => setDetailsLink(l)}>
                         <Eye className="h-4 w-4 mr-2" /> Подробности
                       </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => setEditLink(l)} disabled={l.status !== "active"}>
-                        <Edit className="h-4 w-4 mr-2" /> Изменить ссылку
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => setInvalidateLink(l)}
-                        disabled={l.status !== "active"}
-                        className="text-destructive focus:text-destructive"
-                      >
-                        <Ban className="h-4 w-4 mr-2" /> Сделать недействительной
-                      </DropdownMenuItem>
+                      {canEditPayments && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => setEditLink(l)} disabled={l.status !== "active"}>
+                            <Edit className="h-4 w-4 mr-2" /> Изменить ссылку
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => setInvalidateLink(l)}
+                            disabled={l.status !== "active"}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Ban className="h-4 w-4 mr-2" /> Сделать недействительной
+                          </DropdownMenuItem>
+                        </>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>

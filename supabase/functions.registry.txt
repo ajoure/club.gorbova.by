@@ -29,6 +29,8 @@ autoweb-room-state
 admin-manual-charge
 admin-create-payment-link
 admin-create-public-link
+admin-update-payment-link
+admin-invalidate-payment-link
 admin-payments-diagnostics
 admin-create-deal-from-payment
 admin-create-manual-payment

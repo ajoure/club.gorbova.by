@@ -71,6 +71,7 @@ interface PaymentLinkInfo {
   payment_type: string;
   has_target_user: boolean;
   requires_identity_input: boolean;
+  requires_auth: boolean;
   link_user_id: string | null;
   installment?: InstallmentInfo | null;
   // Phase 5-C — provider routing surface
@@ -263,6 +264,11 @@ export default function PublicPayPage() {
         return;
       }
       if (!res.ok || !data.redirect_url) {
+        if (res.status === 401 && data.error === 'authentication_required') {
+          setIdentityError('Сессия истекла. Войдите снова, чтобы продолжить оплату.');
+          setIsProcessing(false);
+          return;
+        }
         // Identity-resolution error → keep inline auth open, surface inside form
         if (res.status === 400 && data.error === 'identity_required') {
           setIdentityError('Не удалось подтвердить аккаунт. Войдите или завершите регистрацию ниже.');

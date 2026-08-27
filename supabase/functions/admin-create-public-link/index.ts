@@ -728,7 +728,11 @@ Deno.serve(async (req) => {
 
     const linkAmountKopecks =
       installmentLinkAmountKopecks !== null ? installmentLinkAmountKopecks : amount;
-    const linkMeta: Record<string, unknown> = {};
+    const linkMeta: Record<string, unknown> = {
+      // New unassigned links are for any authenticated customer. Existing links
+      // without this marker retain their legacy identity fallback.
+      auth_policy: user_id ? 'recipient_prebound' : 'required',
+    };
     if (canonicalComposableQuote) {
       linkMeta.composable_checkout = canonicalComposableQuote;
     }
