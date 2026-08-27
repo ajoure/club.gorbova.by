@@ -55,6 +55,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify checked-in invocation contracts
+        run: node scripts/verify-edge-function-contracts.mjs
+
       - name: Guard - required env
         run: |
           set -euo pipefail
@@ -71,12 +78,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p audit_out
-          find supabase/functions -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort > audit_out/functions.list
+          find supabase/functions -mindepth 1 -maxdepth 1 -type d ! -name _shared -printf "%f\n" | sort > audit_out/functions.list
           echo "TOTAL_FUNCTIONS=$(wc -l < audit_out/functions.list)" | tee audit_out/summary.txt
           echo "Total functions in repo: $(wc -l < audit_out/functions.list)"
           head -n 50 audit_out/functions.list > audit_out/functions.list.head50 || true
 
-      - name: Run full audit (OPTIONS + POST)
+      - name: Run safe full audit (OPTIONS only)
         env:
           FAIL_ON_404: ${{ inputs.fail_on_404 }}
           FAIL_ON_BOOT: ${{ inputs.fail_on_boot }}
@@ -108,38 +115,27 @@ jobs:
           OPT_RAW="$(curl -s -i -m 10 -X OPTIONS \
             -H "Origin: ${AUDIT_ORIGIN}" \
             -H "Access-Control-Request-Method: POST" \
-            -H "Access-Control-Request-Headers: content-type,authorization,x-supabase-client-platform" \
+            -H "Access-Control-Request-Headers: content-type,authorization,apikey,x-client-info" \
             "${SUPABASE_URL}/functions/v1/${func}" 2>&1 || true)"
 
           OPT_HTTP="$(echo "$OPT_RAW" | head -n 1 | awk '{print $2}' | tr -d '\r')"
           OPT_ALLOW_HEADERS="$(echo "$OPT_RAW" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^access-control-allow-headers:/{sub(/^access-control-allow-headers:[ ]*/,""); print; exit}')"
           OPT_ALLOW_METHODS="$(echo "$OPT_RAW" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^access-control-allow-methods:/{sub(/^access-control-allow-methods:[ ]*/,""); print; exit}')"
 
-          # --- POST ping existence ---
-          POST_RAW="$(curl -s -w "\n%{http_code}" -m 15 \
-            -X POST -H "Content-Type: application/json" \
-            -d '{"ping":true}' \
-            "${SUPABASE_URL}/functions/v1/${func}" 2>&1 || true)"
-
-          POST_HTTP="$(echo "$POST_RAW" | tail -1 | tr -d '\r')"
-          POST_BODY="$(echo "$POST_RAW" | sed '$d' | head -c 1200 | tr '\n' ' ')"
-
           # --- classify ---
           status="OK"
 
           # connection failure
-          if [ "${POST_HTTP}" = "000" ] || echo "$POST_BODY" | grep -qiE "connection.*failed|timed out|Could not resolve|TLS"; then
+          if [ "${OPT_HTTP}" = "000" ] || echo "$OPT_RAW" | grep -qiE "connection.*failed|timed out|Could not resolve|TLS"; then
             status="CONNECTION_FAILED"
           # not deployed
-          elif [ "${POST_HTTP}" = "404" ] || echo "$POST_BODY" | grep -q '"code":"NOT_FOUND"'; then
+          elif [ "${OPT_HTTP}" = "404" ] || echo "$OPT_RAW" | grep -q '"code":"NOT_FOUND"'; then
             status="NOT_DEPLOYED"
           else
-            # possible boot error (heuristic)
-            if echo "$POST_BODY" | grep -qiE "BOOT_ERROR|Uncaught|Module not found|Cannot find module|SyntaxError|TypeError|ReferenceError|Internal Server Error"; then
-              # Only mark BOOT_ERROR if server responded 500-ish or body looks like runtime crash
-              if [ "${POST_HTTP}" = "500" ] || echo "$POST_BODY" | grep -qiE "BOOT_ERROR|Module not found|SyntaxError"; then
-                status="BOOT_ERROR"
-              fi
+            # OPTIONS can still surface a module boot error without executing
+            # a potentially side-effectful POST request.
+            if echo "$OPT_RAW" | grep -qiE "BOOT_ERROR|Module not found|SyntaxError"; then
+              status="BOOT_ERROR"
             fi
 
             # CORS check (warning only if function exists)
@@ -149,19 +145,26 @@ jobs:
                 status="CORS_404"
               fi
             else
-              # If allow-headers is missing x-supabase-client-* => warning
+              # Match the headers actually sent by the locked supabase-js
+              # Functions client. Optional platform/runtime headers are not a
+              # release blocker when the client does not send them.
               if [ "$status" = "OK" ]; then
                 if [ -z "$OPT_ALLOW_HEADERS" ]; then
                   status="CORS_WARNING"
-                elif ! echo "$OPT_ALLOW_HEADERS" | grep -qi "x-supabase-client-platform"; then
-                  status="CORS_WARNING"
+                else
+                  for required_header in authorization x-client-info apikey content-type; do
+                    if ! echo "$OPT_ALLOW_HEADERS" | grep -qi "$required_header"; then
+                      status="CORS_WARNING"
+                      break
+                    fi
+                  done
                 fi
               fi
             fi
           fi
 
           # Print compact line for log consumption
-          echo "${func}|${OPT_HTTP:-}|${POST_HTTP:-}|${status}|${OPT_ALLOW_METHODS:-}|${OPT_ALLOW_HEADERS:-}|${POST_BODY}"
+          echo "${func}|${OPT_HTTP:-}|${status}|${OPT_ALLOW_METHODS:-}|${OPT_ALLOW_HEADERS:-}"
           SH
           chmod +x audit_out/_audit_one.sh
 
@@ -201,10 +204,10 @@ jobs:
           ok=0
 
           for line in "${lines[@]}"; do
-            IFS='|' read -r name opt_http post_http st allow_methods allow_headers snippet <<<"$line"
+            IFS='|' read -r name opt_http st allow_methods allow_headers <<<"$line"
 
             # log line
-            printf "%-40s OPT:%-4s POST:%-4s %-16s\n" "$name" "${opt_http:-}" "${post_http:-}" "$st" | tee -a "$LOG"
+            printf "%-40s OPT:%-4s %-16s\n" "$name" "${opt_http:-}" "$st" | tee -a "$LOG"
 
             # counters
             case "$st" in
@@ -218,11 +221,10 @@ jobs:
             esac
 
             # JSON entry
-            esc_snippet="$(echo "${snippet:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
             esc_hdrs="$(echo "${allow_headers:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
             esc_meth="$(echo "${allow_methods:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 
-            entry="{\"name\":\"$name\",\"options_http\":\"${opt_http:-}\",\"post_http\":\"${post_http:-}\",\"status\":\"$st\",\"allow_methods\":\"$esc_meth\",\"allow_headers\":\"$esc_hdrs\",\"post_body_snippet\":\"$esc_snippet\"}"
+            entry="{\"name\":\"$name\",\"options_http\":\"${opt_http:-}\",\"status\":\"$st\",\"allow_methods\":\"$esc_meth\",\"allow_headers\":\"$esc_hdrs\"}"
 
             if [ $first -eq 1 ]; then first=0; else echo "," >> "$JSON"; fi
             echo "$entry" >> "$JSON"

@@ -73,6 +73,14 @@ verify_jwt = true
 [functions.grant-access-for-order]
 verify_jwt = false
 
+# Privileged GetCourse writers own authentication in-function so both current
+# non-JWT service keys and signed-in operators can be authorized with RBAC.
+[functions.getcourse-grant-access]
+verify_jwt = false
+
+[functions.test-getcourse-sync]
+verify_jwt = false
+
 # Telegram access functions accept either an authenticated administrator or the
 # exact managed service key in `apikey`/Bearer. Gateway JWT verification would
 # reject the current `sb_secret_*` key before this stricter in-function policy

@@ -28,6 +28,8 @@ jobs:
       # suite and production build below.
       - name: Lint release-gate code
         run: npx eslint e2e/release-safety-gate.spec.ts
+      - name: Verify Edge Function references
+        run: npm run verify:edge-functions
       - name: Unit and integration contracts
         run: npx vitest run
       - name: Production build

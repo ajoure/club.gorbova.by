@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
+    "verify:edge-functions": "node scripts/verify-edge-function-contracts.mjs",
     "test:release-gate": "playwright test e2e/release-safety-gate.spec.ts --project=chromium",
     "companies:benchmark": "node scripts/companies-runtime-benchmark.mjs",
     "preview": "vite preview"
