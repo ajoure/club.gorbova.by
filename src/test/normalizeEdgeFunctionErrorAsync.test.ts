@@ -29,6 +29,18 @@ describe("normalizeEdgeFunctionErrorAsync", () => {
       "rbac_check_failed",
       "Не удалось проверить права доступа. Обновите страницу и попробуйте снова.",
     ],
+    [
+      "addon_not_allowed",
+      "Один из выбранных дополнительных продуктов недоступен для этого способа оплаты.",
+    ],
+    [
+      "admin_fields_forbidden",
+      "Недостаточно прав на редактирование платежей.",
+    ],
+    [
+      "rr_battle_credentials_incomplete",
+      "Интеграция Ресурса развития не настроена. Обратитесь к администратору.",
+    ],
   ])("maps %s from a FunctionsHttpError response", async (code, expected) => {
     const error = {
       message: "Edge Function returned a non-2xx status code",

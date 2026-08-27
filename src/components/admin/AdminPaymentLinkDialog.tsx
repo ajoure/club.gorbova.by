@@ -50,6 +50,11 @@ import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { cn } from "@/lib/utils";
 import { resolveAvailableProviders } from "@/utils/currencyProviderResolver";
+import { normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
+import {
+  mapSiblingAddonOfferIds,
+  type ComposableAddonRef,
+} from "@/utils/mapSiblingAddonOfferIds";
 /**
  * mode:
  *   - "contact" (default) — текущее поведение: ссылка привязывается к контакту,
@@ -426,7 +431,7 @@ export function AdminPaymentLinkDialog({
       const { data, error } = await supabase.functions.invoke("composable-checkout-quote", {
         body: { parent_offer_id: parentOfferId, addon_offer_ids: selectedAddonOfferIds },
       });
-      if (error) throw error;
+      if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
       if (!data?.success) throw new Error(data?.error || "Не удалось рассчитать комплект");
       // Тегируем ответ id-оффера, чтобы UI мог отбросить stale-квоты, пришедшие для
       // предыдущего продукта/тарифа (защита от race при быстром переключении).
@@ -438,6 +443,105 @@ export function AdminPaymentLinkDialog({
   // Считаем quote «свежей» только если она относится к текущему effectiveOffer.
   const quoteMatchesCurrentOffer =
     !!effectiveOffer?.id && composableQuote?.__parentOfferId === effectiveOffer.id;
+
+  const sourceAvailableAddons = useMemo<ComposableAddonRef[]>(
+    () =>
+      Array.isArray(composableQuote?.available_addons)
+        ? composableQuote.available_addons
+        : [],
+    [composableQuote?.available_addons],
+  );
+
+  // Invoice и RR используют sibling-offer того же тарифа. Их offer_addons могут
+  // ссылаться на другие offer_id тех же дополнительных продуктов, поэтому
+  // нельзя отправлять выбранные pay_now IDs напрямую.
+  const siblingOfferForQuote = rrPanelOpen
+    ? rrSiblingOffer
+    : invoicePanelOpen
+      ? invoiceSiblingOffer
+      : null;
+
+  const {
+    data: siblingCatalogQuote,
+    isFetching: siblingCatalogLoading,
+    error: siblingCatalogError,
+  } = useQuery({
+    queryKey: ["composable-checkout-sibling-catalog", siblingOfferForQuote?.id],
+    enabled: !!siblingOfferForQuote?.id,
+    queryFn: async () => {
+      const parentOfferId = siblingOfferForQuote!.id;
+      const { data, error } = await supabase.functions.invoke("composable-checkout-quote", {
+        body: { parent_offer_id: parentOfferId, addon_offer_ids: [] },
+      });
+      if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
+      if (!data?.success) throw new Error(data?.error || "Не удалось загрузить состав сценария оплаты");
+      return { ...(data as any), __parentOfferId: parentOfferId };
+    },
+    staleTime: 0,
+  });
+
+  const siblingAvailableAddons = useMemo<ComposableAddonRef[]>(
+    () =>
+      Array.isArray(siblingCatalogQuote?.available_addons)
+        ? siblingCatalogQuote.available_addons
+        : [],
+    [siblingCatalogQuote?.available_addons],
+  );
+  const siblingAddonMapping = useMemo(
+    () =>
+      mapSiblingAddonOfferIds(
+        sourceAvailableAddons,
+        siblingAvailableAddons,
+        selectedAddonOfferIds,
+      ),
+    [sourceAvailableAddons, siblingAvailableAddons, selectedAddonOfferIds],
+  );
+
+  const {
+    data: siblingComposableQuote,
+    isFetching: siblingQuoteLoading,
+    error: siblingQuoteError,
+  } = useQuery({
+    queryKey: [
+      "composable-checkout-sibling-quote",
+      siblingOfferForQuote?.id,
+      siblingAddonMapping.addonOfferIds,
+    ],
+    enabled:
+      !!siblingOfferForQuote?.id &&
+      siblingCatalogQuote?.__parentOfferId === siblingOfferForQuote.id &&
+      siblingAddonMapping.missingAddonNames.length === 0,
+    queryFn: async () => {
+      const parentOfferId = siblingOfferForQuote!.id;
+      const { data, error } = await supabase.functions.invoke("composable-checkout-quote", {
+        body: {
+          parent_offer_id: parentOfferId,
+          addon_offer_ids: siblingAddonMapping.addonOfferIds,
+        },
+      });
+      if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
+      if (!data?.success) throw new Error(data?.error || "Не удалось рассчитать состав сценария оплаты");
+      return { ...(data as any), __parentOfferId: parentOfferId };
+    },
+    staleTime: 0,
+  });
+
+  const siblingQuoteMatchesCurrentOffer =
+    !!siblingOfferForQuote?.id &&
+    siblingComposableQuote?.__parentOfferId === siblingOfferForQuote.id;
+  const siblingCompositionError =
+    siblingAddonMapping.missingAddonNames.length > 0
+      ? `Для этого способа оплаты не настроены: ${siblingAddonMapping.missingAddonNames.join(", ")}`
+      : siblingCatalogError instanceof Error
+        ? siblingCatalogError.message
+        : siblingQuoteError instanceof Error
+          ? siblingQuoteError.message
+          : null;
+  const siblingCompositionPending =
+    !siblingCompositionError &&
+    (siblingCatalogLoading ||
+      siblingQuoteLoading ||
+      (!!siblingOfferForQuote && !siblingQuoteMatchesCurrentOffer));
 
 
   useEffect(() => {
@@ -884,6 +988,24 @@ ${amountLine}
   const composableAdjustment = composableQuote
     ? Math.round((amount - composableSubtotal) * 100) / 100
     : 0;
+  const siblingComposableSubtotal = Number(siblingComposableQuote?.subtotal ?? 0);
+  const siblingComposableCurrency = siblingComposableQuote?.currency ?? composableCurrency;
+  const siblingComposableAdjustment = siblingQuoteMatchesCurrentOffer
+    ? Math.round((amount - siblingComposableSubtotal) * 100) / 100
+    : 0;
+  const displayComposableQuote =
+    (invoicePanelOpen || rrPanelOpen) && siblingQuoteMatchesCurrentOffer
+      ? siblingComposableQuote
+      : composableQuote;
+  const displayComposableItems = Array.isArray(displayComposableQuote?.items)
+    ? displayComposableQuote.items
+    : [];
+  const displayComposableSubtotal = Number(displayComposableQuote?.subtotal ?? 0);
+  const displayComposableCurrency = displayComposableQuote?.currency ?? composableCurrency;
+  const displayComposableAdjustment =
+    (invoicePanelOpen || rrPanelOpen) && siblingQuoteMatchesCurrentOffer
+      ? siblingComposableAdjustment
+      : composableAdjustment;
   const composableSnapshot = composableQuote ? {
     version: 1,
     currency: composableCurrency,
@@ -1083,7 +1205,15 @@ ${amountLine}
       toast.error("Введите корректную сумму");
       return;
     }
-    if (composableAdjustment !== 0 && !adjustmentReason.trim()) {
+    if (siblingCompositionPending) {
+      toast.error("Подождите, состав счёта ещё рассчитывается");
+      return;
+    }
+    if (siblingCompositionError || !siblingQuoteMatchesCurrentOffer) {
+      toast.error(siblingCompositionError || "Не удалось сопоставить состав счёта");
+      return;
+    }
+    if (siblingComposableAdjustment !== 0 && !adjustmentReason.trim()) {
       toast.error("Укажите причину скидки или наценки");
       return;
     }
@@ -1094,16 +1224,16 @@ ${amountLine}
           target_user_id: userId,
           product_id: selectedProductId,
           offer_id: invoiceSiblingOffer.id,
-          addon_offer_ids: selectedAddonOfferIds,
+          addon_offer_ids: siblingAddonMapping.addonOfferIds,
           payer_type: invoicePayerType,
           legal_details_id: invoicePayerType === "individual" ? null : invoiceLegalDetailsId,
           // Сервер вычисляет исходную цену только из offer'ов, а эта разница —
           // контролируемая администратором корректировка итоговой суммы.
-          adjustment_amount: composableAdjustment,
+          adjustment_amount: siblingComposableAdjustment,
           adjustment_reason: adjustmentReason.trim() || null,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
       if ((data as any)?.error) throw new Error((data as any).error);
       const payload = data as any;
       // Не заявляем «отправлено» — реальные статусы покажет InvoiceDeliverySuccess.
@@ -1133,7 +1263,15 @@ ${amountLine}
     if (!rrSiblingOffer) { toast.error("У тарифа нет RR-оффера"); return; }
     if (!selectedProductId) { toast.error("Выберите продукт"); return; }
     if (amount <= 0) { toast.error("Введите корректную сумму"); return; }
-    if (composableAdjustment !== 0 && !adjustmentReason.trim()) {
+    if (siblingCompositionPending) {
+      toast.error("Подождите, состав RR ещё рассчитывается");
+      return;
+    }
+    if (siblingCompositionError || !siblingQuoteMatchesCurrentOffer) {
+      toast.error(siblingCompositionError || "Не удалось сопоставить состав RR");
+      return;
+    }
+    if (siblingComposableAdjustment !== 0 && !adjustmentReason.trim()) {
       toast.error("Укажите причину скидки или наценки");
       return;
     }
@@ -1142,13 +1280,13 @@ ${amountLine}
       const { data, error } = await supabase.functions.invoke("public-rr-installment-initiate", {
         body: {
           tariff_offer_id: rrSiblingOffer.id,
-          addon_offer_ids: selectedAddonOfferIds,
+          addon_offer_ids: siblingAddonMapping.addonOfferIds,
           target_user_id: userId,
-          adjustment_amount: composableAdjustment,
-          adjustment_reason: composableAdjustment === 0 ? null : adjustmentReason.trim(),
+          adjustment_amount: siblingComposableAdjustment,
+          adjustment_reason: siblingComposableAdjustment === 0 ? null : adjustmentReason.trim(),
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
       const redirect = (data as any)?.payment_url ?? (data as any)?.redirect_url ?? (data as any)?.url ?? null;
       if (!redirect) throw new Error((data as any)?.error || "RR не вернул ссылку на оплату");
       setGeneratedUrl(redirect);
@@ -1989,9 +2127,9 @@ ${amountLine}
                 </div>
               )}
 
-              {selectedProductId && selectedTariffId && effectiveOffer && quoteMatchesCurrentOffer && composableItems.length > 0 && (
+              {selectedProductId && selectedTariffId && effectiveOffer && quoteMatchesCurrentOffer && displayComposableItems.length > 0 && (
                 <OrderSummary
-                  items={composableItems.map((it: any) => ({
+                  items={displayComposableItems.map((it: any) => ({
                     role: it.role,
                     product_name: it.product_name,
                     tariff_name: it.tariff_name ?? null,
@@ -2001,10 +2139,10 @@ ${amountLine}
                     discount_percent: it.discount_percent ?? null,
                     pricing_mode: it.pricing_mode,
                   })) as OrderSummaryLine[]}
-                  currency={composableCurrency}
+                  currency={displayComposableCurrency}
                   total={amount}
-                  subtotal={composableSubtotal}
-                  adjustmentAmount={composableAdjustment}
+                  subtotal={displayComposableSubtotal}
+                  adjustmentAmount={displayComposableAdjustment}
                   adjustmentReason={adjustmentReason.trim() || null}
                   paymentMethodLabel={
                     invoicePanelOpen
@@ -2047,10 +2185,10 @@ ${amountLine}
                       Это полная стоимость продукта. Сумма каждого платежа рассчитывается автоматически по выбранному сроку рассрочки ниже.
                     </p>
                   )}
-                  {composableQuote && composableAdjustment !== 0 && (
+                  {displayComposableQuote && displayComposableAdjustment !== 0 && (
                     <div className="space-y-2 pt-2">
                       <Label htmlFor="adjustment-reason">
-                        Причина {composableAdjustment < 0 ? "скидки" : "наценки"}
+                        Причина {displayComposableAdjustment < 0 ? "скидки" : "наценки"}
                       </Label>
                       <Input
                         id="adjustment-reason"
@@ -2060,7 +2198,7 @@ ${amountLine}
                         required
                       />
                       <p className="text-xs text-muted-foreground">
-                        Корректировка: {composableAdjustment > 0 ? "+" : ""}{composableAdjustment} {previewCurrency}.
+                        Корректировка: {displayComposableAdjustment > 0 ? "+" : ""}{displayComposableAdjustment} {displayComposableCurrency}.
                         Она применяется к общей сумме комплекта.
                       </p>
                     </div>
@@ -2287,6 +2425,18 @@ ${amountLine}
 
                   {invoicePanelOpen && invoiceSiblingOffer && (
                     <div className="space-y-3 pt-2 border-t">
+                      {siblingCompositionPending && (
+                        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Сопоставляем модули и рассчитываем сумму счёта…
+                        </p>
+                      )}
+                      {siblingCompositionError && (
+                        <p className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          {siblingCompositionError}
+                        </p>
+                      )}
                       <div className="space-y-1.5">
                         <Label>Плательщик</Label>
                         <div className="grid grid-cols-3 gap-2">
@@ -2339,7 +2489,13 @@ ${amountLine}
                         type="button"
                         size="sm"
                         className="w-full"
-                        disabled={invoicePending || !selectedProductId}
+                        disabled={
+                          invoicePending ||
+                          !selectedProductId ||
+                          siblingCompositionPending ||
+                          !!siblingCompositionError ||
+                          !siblingQuoteMatchesCurrentOffer
+                        }
                         onClick={handleIssueInvoice}
                       >
                         {invoicePending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
@@ -2353,11 +2509,36 @@ ${amountLine}
                       <p className="text-xs text-muted-foreground">
                         Будет создана ссылка через Ресурс развития на общую сумму состава.
                       </p>
+                      {siblingCompositionPending && (
+                        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Сопоставляем модули RR и рассчитываем сумму…
+                        </p>
+                      )}
+                      {siblingQuoteMatchesCurrentOffer && !siblingCompositionError && (
+                        <p className="text-xs text-muted-foreground">
+                          Состав RR до ручной корректировки: {siblingComposableSubtotal}{" "}
+                          {siblingComposableCurrency}. Итог ссылки: {amount}{" "}
+                          {siblingComposableCurrency}.
+                        </p>
+                      )}
+                      {siblingCompositionError && (
+                        <p className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          {siblingCompositionError}
+                        </p>
+                      )}
                       <Button
                         type="button"
                         size="sm"
                         className="w-full"
-                        disabled={rrPending || !selectedProductId}
+                        disabled={
+                          rrPending ||
+                          !selectedProductId ||
+                          siblingCompositionPending ||
+                          !!siblingCompositionError ||
+                          !siblingQuoteMatchesCurrentOffer
+                        }
                         onClick={handleInitiateRr}
                       >
                         {rrPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
