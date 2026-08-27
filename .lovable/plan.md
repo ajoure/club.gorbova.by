@@ -1,56 +1,93 @@
-# План: диагностика мобильного сброса сессии у менеджера (PLAN-ONLY, изменений не сделано)
+# План: завершающая production-проверка платежных ссылок всеми ролями (PLAN-ONLY)
 
-## 1. Учетная запись Карины (read-only)
+run_id: QA-RBAC-MOBILE-MTBNEXOL. Origin UI: https://gorbova.by. Актор — только синтетические пользователи (admin / menedzher / support / user), синтетический контакт, QA-тариф/оффер. Реальные сотрудники и клиенты не используются. В отчете не выводятся email, пароли, JWT, полные UUID и платежные URL — только sha256(id).slice(0,8).
 
-- Найдена ровно одна привилегированная учетная запись с именем «Карин…»: короткий хэш `f15d527e`.
-- Роль (RBAC v3, `user_roles_v2` → `roles`): **admin** (единственная роль; `menedzher`/`support` не назначены).
-- Эффективные права: роль `admin` в `useAdminAccess` идет по ветке **bypass** → `manage` для всех секций и ресурсов, включая `payments`, `payments/links`, `payments/manual-payment`.
-- Для сравнения, роль `menedzher` в production имеет: `payments = edit`, `payments/links = edit`, `payments/manual-payment = edit`.
+Текущее состояние (read-only, уже проверено): 4 payment_links с маркером run_id существуют — они входят в финальную очистку (F).
 
-Вывод: сценарий Карины **не является RBAC-отказом** — прав достаточно (manage). Значит, симптом «сброс сессии на мобильном» лежит вне слоя прав.
+## Pre-flight gates (до любого действия)
 
-## 2. Разбор кода: может ли клик вызвать выход
+1. Actor gate: единая функция `sha256(user.id).slice(0,8)` во всех шагах; перед каждым сценарием фиксируется хэш актора и сверяется с ожидаемым для роли. Несовпадение → STOP.
+2. Origin gate: `location.origin === 'https://gorbova.by'`; вход только по паролю синтетического пользователя (без magiclink, без hash-фрагмента). Иной origin → STOP.
+3. Baseline counts (read-only, до всего): `payment_links` (run_id), `orders_v2`, `payments_v2`, `provider_events`, `installment_payments`, `access_grant_ledger` — счетчики и max(created_at) фиксируются как baseline.
+4. Roles gate: read-only проверка эффективных прав каждого синтетического актора через RBAC v3 (`payments` view/edit/manage, `payments/links`). Ожидание: admin=manage; menedzher=edit(payments)+edit(links); support=view; user=нет доступа. Отклонение → STOP до сценариев.
 
-Проверено: `AdminPaymentLinkDialog.tsx`, `useAdminAccess.ts`, `AdminRouteGuard.tsx`, `ProtectedRoute.tsx`, `AuthContext.tsx`, `ContactDetailSheet.tsx`.
+## A) Карточка контакта — видимость и границы
 
-- `signOut()` **не вызывается** ни в диалоге ссылки на оплату, ни в `useAdminAccess`, ни в route guard, ни в каком-либо обработчике 401. Единственные вызовы `signOut`: кнопка выхода в сайдбарах, `ConsentUpdateModal`, страница `/banned`, `ImpersonationBar`, inline-OTP хук.
-- `navigate('/auth')` из кода админки идет только из сайдбара, `/banned` и `ImpersonationBar`.
+Для каждого актора: mobile 390×844 и desktop 1280×800, маршрут карточки QA-контакта.
 
-Три реальных кандидата на «сброс» без вызова signOut:
+| Актор | UI-кнопка «Ссылка на оплату» | Диалог | Прямой Edge `admin-create-payment-link` без UI |
+|---|---|---|---|
+| admin | видна | открывается | 2xx (в сценарии B) |
+| menedzher | видна | открывается | 2xx (в сценарии B) |
+| support | отсутствует | — | 403 |
+| user | нет доступа к /admin (редирект) | — | 403 |
 
-1. **Гонка загрузки сессии.** `AuthContext` имеет safety-timeout (5 с без токена / 8 с с токеном), который принудительно ставит `loading=false`. `ProtectedRoute` после этого ждет всего 1500 мс (`settled`) и при `user === null` редиректит на `/auth?redirectTo=…`. На медленной мобильной сети или при возврате из фонового таба восстановление сессии может не успеть → выглядит как разлогин.
-2. **Вытеснение хранилища на iOS.** Клиент хранит сессию в `localStorage` (`persistSession: true`). Safari/iOS при нехватке места или ITP может очистить `sb-*-auth-token`, а `autoRefreshToken` при протухшем refresh-токене отдаст `null`-сессию.
-3. **Соседняя кнопка импersonation.** В `ContactDetailSheet` рядом расположены действия карточки; `handleImpersonate` делает `supabase.auth.verifyOtp({ type: 'magiclink' })`, что **заменяет текущую сессию** и делает `window.location.href = …`. На мобильном промах по кнопке дает ровно эффект «сессия сменилась/сбросилась».
+Фиксируется: скриншот (mobile+desktop, обезличенный), маршрут без query/token, хэш user/session до и после клика, console-ошибки, non-2xx запросы. Клик не создает ссылку — только открытие диалога.
 
-## 3. Возможна ли изолированная QA-сессия без изменения ее аккаунта
+## B) Скидка/корректировка
 
-Технически возможна: серверный `auth.admin.generateLink({ type: 'magiclink' })` выдает одноразовый `token_hash` **без отправки письма**, без смены пароля/email/metadata/ролей и без инвалидации ее текущих сессий; завершение — `signOut({ scope: 'local' })`, который не трогает ее телефон.
+Отдельный QA-тариф 10 BYN с маркером run_id (существующий QA-тариф 1 BYN не меняется — так безопаснее и не влияет на прошлые прогоны).
 
-Ограничение, о котором нужно решение пользователя: генерация ссылки временно записывает одноразовый токен в строку `auth.users`, то есть это **не полностью нулевое касание Auth**. Поэтому по умолчанию предлагается непрямой метод (п. 5), а прямой вход — только по явному отдельному одобрению.
+Шаги: admin создает одну ссылку на 7 BYN, reason «QA discount»; menedzher — одну такую же.
 
-## 4. Предлагаемый сценарий production UI (мобильный viewport)
+Ожидаемый read-back по каждой строке: `amount = 700` (minor), `adjustment_amount = -300`, `adjustment_reason = 'QA discount'`, `created_by` = соответствующий актор, `current_uses = 0`. Далее — немедленный `admin-invalidate-payment-link`, read-back `status != active`, `current_uses = 0`, delta orders_v2/payments_v2/provider_events = 0.
 
-Для актора: **admin-аккаунт из синтетического набора QA-RBAC-MOBILE-MTBNEXOL** (эффективные права идентичны Карине — обе роли `admin` → `manage`), контакт — синтетический QA-контакт, тариф — QA 1 BYN.
+Stop guard: если `adjustment_amount` не -300 или автор не совпадает — STOP, без исправления кода.
 
-Шаги (headless Chromium, viewport 390×844, реальный production URL):
+## C) /admin/payments/links — публичные unassigned ссылки
 
-1. Вход QA-admin по паролю; фиксация хэшей `user.id` и `session.access_token` (только первые 8 символов хэша, без JWT).
-2. Открыть карточку QA-контакта, дождаться готовности, зафиксировать маршрут без query.
-3. Клик «Ссылка на оплату»; сразу после — повторная фиксация хэшей user/session, факт видимости диалога, полный список console-ошибок и non-2xx запросов.
-4. Создать одну ссылку на QA-тариф 1 BYN с маркером `run_id` в описании, затем немедленно `admin-invalidate-payment-link`.
-5. Read-back: `current_uses = 0`, ноль новых строк в `orders_v2` / `payments_v2` / `provider_events` за окно теста.
-6. Дополнительно — воспроизведение кандидата №1: тот же клик при эмуляции медленной сети (throttling) и при возврате вкладки из фона.
-7. Завершение: `signOut({ scope: 'local' })` только в изолированном браузерном контексте.
+admin и menedzher: открыть страницу, режим public, создать по одной unassigned ссылке.
 
-Артефакты: 2 скриншота (мобильный + ПК) без PII, полных UUID, JWT и платежных URL.
+Ожидания:
+- read-back: `meta.auth_policy = 'required'`, `user_id IS NULL`, `current_uses = 0`;
+- GET публичной страницы ссылки: отображается требование входа;
+- POST `public-checkout` без JWT → 401 `authentication_required`;
+- после входа синтетического user страница доступна, оплата НЕ инициируется (никаких кликов по кнопке оплаты, provider не вызывается);
+- support: страница view-only, кнопки создания нет, прямой Edge-вызов → 403;
+- user: страницы `/admin/payments/links` нет — редирект.
 
-## 5. Если прямая сессия Карины не разрешена
+Затем обе ссылки invalidate, read-back current_uses = 0, downstream delta = 0.
 
-Непрямой метод, не меняющий ее аккаунт:
-- прогон п. 4 на синтетическом admin-акторе (права идентичны);
-- анализ серверных логов Edge Functions и `auth` за окно ее инцидента по короткому хэшу `f15d527e`: наличие/отсутствие `token_refresh` failure, 401 на `admin-create-public-link`, время между последним успешным refresh и повторным логином;
-- сверка user-agent/платформы ее последних сессий, чтобы отличить вытеснение хранилища iOS от гонки загрузки.
+## D) «Ресурс развития» (RR) — SKIP с non-persistent proof
 
-## Границы
+Причина SKIP (по коду `public-rr-installment-initiate`): функция при успехе обращается к внешнему провайдеру рассрочки (`rrCreateOrder`), а до этого durable пишет `orders_v2`-группу композитного заказа, `provider_events`, `audit_logs` и marker-состояния RPC (`rr_mark_call_started`, `rr_finalize_created_order`). `audit_logs` и `provider_events` спроектированы как append-only журнал, а заказ уже зарегистрирован у внешнего провайдера — идемпотентная полная очистка без следа в внешней системе невозможна. Условие пользователя «если функция затрагивает внешнего провайдера — SKIP» выполняется.
 
-На этапе PLAN-ONLY не выполнено: изменений кода/файлов/коммитов, миграций, изменений Auth, deploy, Publish, входа под кем-либо и генерации платежных ссылок.
+Non-persistent proof вместо исполнения:
+1. Read-only контрактная проверка: `requirePaymentsEdit` в функции → под support/user ожидаемо 403 (проверяется отправкой заведомо некорректного/недостаточного актора — до RBAC-гейта записи не создаются).
+2. Негативный вызов под menedzher с невалидным `tariff_offer_id` (несуществующий QA-оффер): ожидается 4xx на этапе валидации, до `rr_mark_call_started` — доказывает доступность и авторизацию актора без создания заказа.
+3. Read-back: delta `orders_v2` / `provider_events` / `installment_payments` / `audit_logs`(rr.*) = 0.
+4. UI-часть: в карточке QA-контакта под menedzher открыть «Ресурс развития», зафиксировать корректный расчет и доступность кнопки, но не отправлять.
+
+Если пользователь захочет полноценный RR-прогон — это отдельная задача с sandbox-режимом провайдера.
+
+## E) Slow network / background restore (menedzher, mobile)
+
+390×844, CDP-throttling (Slow 3G) + уход вкладки в background и возврат. Фиксируется хэш actor/session до и после клика «Ссылка на оплату». Ожидание: хэши идентичны, маршрут остается на карточке контакта, редиректа на `/auth` нет, диалог открывается. Любой переход на `/auth` фиксируется с полным console/network-логом (без секретов) как воспроизведение инцидента.
+
+## F) Финальная очистка (FK-safe)
+
+Предварительно — список и counts всех сущностей run_id. Порядок удаления:
+
+1. invalidate + delete `payment_links` с маркером run_id (включая 4 уже существующие);
+2. QA-оффер(ы) и QA-тарифы run_id (1 BYN и новый 10 BYN) — только созданные под run_id; **существующий продукт не удаляется**;
+3. `user_roles_v2` / профильные строки 4 синтетических пользователей;
+4. auth-пользователи 4 синтетических аккаунтов (`auth.admin.deleteUser`).
+
+Post-cleanup: counts run_id = 0 по каждой таблице; `orders_v2` / `payments_v2` / `provider_events` / `installment_payments` — равны baseline (delta = 0); реальные данные не затронуты.
+
+## Stop guards
+
+- Любое несовпадение actor/origin gate → STOP.
+- Любой неожиданный 2xx там, где ожидался 403/401 → STOP и отчет (без правки кода).
+- Появление любой downstream-строки вне ожидаемого списка → STOP, откат создания и отчет.
+- Ошибка в коде обнаружена → не чинить, вернуть runtime-причину, логи без секретов и минимальный patch plan.
+
+## Необратимые риски
+
+- Удаление auth-пользователей (F) необратимо; ограничено 4 синтетическими аккаунтами run_id.
+- `audit_logs` записи о QA-действиях останутся навсегда (append-only) — это ожидаемый и безопасный след.
+- Любой реальный вызов RR создал бы заказ у внешнего провайдера — поэтому D переведен в SKIP.
+
+## Границы PLAN-ONLY
+
+На этом этапе не выполнено: изменений кода/файлов/коммитов, миграций, RLS, Auth config, secrets, deploy, Build, Publish, входов и создания ссылок.
