@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { isClosedLiveRoom } from '../_shared/live-room-gate.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -14,8 +15,9 @@ const corsHeaders = {
  *     — verify access via user_has_live_event_access, UPSERT into live_active_sessions
  *     keyed by (user_id, live_event_id) WHERE revoked_at IS NULL, return new session_key.
  *
- * Scope guard: soft-join is allowed only when the caller has access — это серверная проверка,
- * UI само решает, в каких режимах (live / room_open_waiting) вызывать; ended/replay сюда не приходят.
+ * Scope guard: soft-join is allowed only when the caller has access and the
+ * explicit live room lifecycle is not closed. Both checks are authoritative
+ * on the server; the UI only decides when to request a join.
  */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -89,6 +91,25 @@ Deno.serve(async (req) => {
     // ---- Soft-join mode (no session_key OR session_key not found, requires live_event_id) ----
     if (!live_event_id || typeof live_event_id !== 'string') {
       return jsonResponse({ status: 'error', message: 'session_key or live_event_id required' }, 400);
+    }
+
+    // Defense in depth: never create/resume a soft-join session while the
+    // explicit live room lifecycle is still closed. The UI has the same gate,
+    // but session creation must not rely on client behavior.
+    const { data: event, error: eventErr } = await supabase
+      .from('live_events')
+      .select('id, event_type, room_state, platform_status, status')
+      .eq('id', live_event_id)
+      .maybeSingle();
+    if (eventErr) {
+      console.error('[live-session-heartbeat] room state check error', eventErr);
+      return jsonResponse({ status: 'error', message: 'room_state_check_failed' }, 500);
+    }
+    if (!event) {
+      return jsonResponse({ status: 'event_not_found' }, 404);
+    }
+    if (isClosedLiveRoom(event)) {
+      return jsonResponse({ status: 'room_closed' }, 403);
     }
 
     // Server-side access check (authoritative).

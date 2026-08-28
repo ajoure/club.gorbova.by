@@ -4,6 +4,11 @@ import {
   evaluateLiveAccessRule,
   resolveAllowedPurchaseMonths,
 } from '../_shared/live-access-rule-eval.ts';
+import {
+  getLiveRoomPhase,
+  isClosedLiveRoom,
+  normalizeLiveRoomState,
+} from '../_shared/live-room-gate.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -280,6 +285,32 @@ Deno.serve(async (req) => {
       return jsonRes({ status: 'replay_disabled', reason: 'replay_disabled', replay_enabled: false }, 410);
     }
 
+    // The explicit room lifecycle is authoritative for live streams. A
+    // published/scheduled event may expose its title and date, but never its
+    // room, event id or provider source before open_room. This applies to
+    // staff as well: previewing a closed room must not create a real session.
+    const roomState = normalizeLiveRoomState(event.room_state);
+    const roomPhase = getLiveRoomPhase(roomState);
+    if (isClosedLiveRoom(event)) {
+      await logAudit(supabase, 'live_access_room_closed', userId, slug, event.id, {
+        product_id: event.product_id,
+        room_state: roomState,
+        room_phase: roomPhase,
+      });
+      return jsonRes({
+        status: 'room_closed',
+        title: event.title,
+        description: event.description,
+        event_status: event.platform_status,
+        scheduled_at: event.scheduled_at,
+        event_type: event.event_type,
+        event_timezone: event.event_timezone,
+        platform_status: event.platform_status,
+        room_state: roomState,
+        room_phase: roomPhase,
+      });
+    }
+
     // 5b. Moderation overlay — check if user is removed/banned from room
     const { data: isRemoved } = await supabase.rpc('is_user_removed_from_room', {
       _user_id: userId,
@@ -300,16 +331,6 @@ Deno.serve(async (req) => {
 
     // 6. Resolve video source — unified server-side resolver
     const resolvedSource = resolveVideoSource(event);
-
-    // Sprint 2 PATCH 2.5: room phase derived from room_state (explicit, не косвенно через platform_status)
-    const roomState = (event.room_state ?? 'closed') as 'closed' | 'opened' | 'live' | 'completed';
-    let roomPhase: 'closed' | 'waiting' | 'live' | 'completed';
-    switch (roomState) {
-      case 'opened': roomPhase = 'waiting'; break;
-      case 'live': roomPhase = 'live'; break;
-      case 'completed': roomPhase = 'completed'; break;
-      default: roomPhase = 'closed';
-    }
 
     // Количество участников — служебная метрика комнаты. Не вычисляем и не
     // возвращаем её обычному зрителю: доступ только у admin/super_admin либо

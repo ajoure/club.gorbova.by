@@ -46,7 +46,7 @@ interface ResolvedSource {
 }
 
 interface LiveResolveResult {
-  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "source_unavailable" | "removed_from_room" | "error";
+  status: "ok" | "room_closed" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "source_unavailable" | "removed_from_room" | "error";
   title?: string;
   description?: string;
   kinescope_video_id?: string;
@@ -364,6 +364,8 @@ function LiveEventLegacy() {
             nextState = "source_unavailable"; break;
           case "removed_from_room":
             nextState = "removed_from_room"; break;
+          case "room_closed":
+            nextState = "scheduled"; break;
           case "ok": {
             const ps = json.platform_status;
             const es = json.event_status;
@@ -372,7 +374,12 @@ function LiveEventLegacy() {
             // Если комната открыта но эфир ещё не начат → waiting (вход разрешён, чат активен).
             const roomPhase = json.room_phase;
 
-            if (roomPhase === "waiting") {
+            // Backwards-compatible client guard: even while an older
+            // live-resolve deployment still returns status=ok, a closed live
+            // room must render only the scheduled screen and never heartbeat.
+            if (json.event_type === "live_stream" && roomPhase === "closed") {
+              nextState = "scheduled";
+            } else if (roomPhase === "waiting") {
               nextState = "room_open_waiting";
               startHeartbeat({ liveEventId: json.event_id });
             } else if (ps === "scheduled" || es === "scheduled") {
