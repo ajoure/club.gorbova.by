@@ -1,98 +1,71 @@
-# План: закрытая live-комната (PR #381) — read-only discovery и порядок execute
+# Отчет о выполнении: PLAN-ONLY DIAGNOSIS — платёжные ссылки для менеджеров. Ноль изменений
 
-## 1. SHA репозитория и статус сборки
+Read-only. Не выполнялось: код/файлы/коммиты, SQL/миграции/RLS/Auth/Storage/config/secrets, deploy, Build/Publish, любые записи данных. PII, токены, платёжные URL не выводятся.
 
-- Lovable-репозиторий видит ровно `a436ccefbc8eef03b2eb09fef13b4a38f1f2409e`
-  (`Merge pull request #381 from ajoure/codex/block-closed-live-room`,
-  2026-08-28 16:35 +0200). Рабочее дерево чистое, незакоммиченных правок нет.
-- Состав PR (коммит `60e7f9b8e`, 5 файлов): `supabase/functions/_shared/live-room-gate.ts` (новый),
-  `live-resolve/index.ts`, `live-session-heartbeat/index.ts`, `src/pages/LiveEvent.tsx`,
-  `src/lib/liveClosedRoomGate.test.ts`. Миграций, RLS и изменений данных в PR нет.
-- Причина «Build unsuccessful / Preview is out of date»: фронтовая сборка сама по себе проходит
-  (`vite build` — успешно, ошибок нет). Проблема в шаге проверки типов: единственная ошибка —
-  `supabase/functions/ai-generate-corporate-package/helpers.ts:79 — TS2550 replaceAll ... target lib`.
-  Файл относится к Deno-функции и попадает в общий typecheck, хотя `tsconfig.app.json` включает только `src`.
-  Ошибка досталась в наследство от коммита `50eebc664` и к PR #381 отношения не имеет.
-  Ничего не исправлял. Возможные варианты фикса (на отдельную задачу, не сейчас):
-  поднять `lib`/`target` до ES2021 для функций или заменить `replaceAll` на `split/join`.
+## 0. SHA-гейт
 
-## 2. Состояние целевого эфира (production, обезличено)
+Managed mirror содержит целевой `21b4e4d9e` (merge PR #377) как предпоследний коммит; поверх — один служебный коммит бота `9ac925cbd`. Дельта до целевого SHA — только автогенерируемые mirror-файлы (`src/integrations/supabase/client.ts`, `previewAuthStorage.ts`, `types.ts`). Прикладной код и `supabase/functions/**` байт-идентичны целевому SHA.
 
-| поле | значение |
-|---|---|
-| id | `a340647f-15fd-4756-ac67-79025549fd0c` |
-| slug | `cb-20-20-potok-konferentsiya-4` |
-| event_type | `live_stream` |
-| room_state | `closed` |
-| platform_status | `draft` |
-| status | `draft` |
-| is_published | `true` |
-| scheduled_at | 2026-08-29 07:00:00+00 |
-| event_timezone | `Europe/Minsk` |
-| replay_enabled | `false` |
+## 1. Deployed source/version/status и логи
 
-Дополнительно (для проверки эффекта фикса): по этому эфиру сейчас существует
-**1 активная сессия** в `live_active_sessions` (`revoked_at is null`, `expires_at > now()`) —
-подтверждение исходного инцидента.
+- Логи Edge Functions за окно ретенции недоступны ни для одной из девяти функций (`admin-create-payment-link`, `admin-create-public-link`, `composable-checkout-quote`, `admin-invoice-checkout-issue`, `public-rr-installment-initiate`, `telegram-send-notification`, `admin-update-payment-link`, `admin-invalidate-payment-link`, `public-checkout`) — источник вернул пусто. Фактические deployed version/status через доступные read-only инструменты также не читаются → **UNKNOWN** по версиям и по HTTP-статусам конкретных попыток.
+- Реестр управляемого деплоя `supabase/functions.registry.txt` содержит 7 из 9: **отсутствуют `admin-update-payment-link` и `admin-invalidate-payment-link`** (в GitHub исходники есть). Их фактическая доступность в production — UNKNOWN, вероятен never-deployed/stale.
+- Отсутствующих shared-импортов в целевом SHA не обнаружено; `requirePaymentsEdit` присутствует во всех writer-функциях PR #364.
 
-## 3. Production-очередь live_stream
+## 2. Неуспешные RR-вызовы менеджеров
 
-- `room_state IN ('opened','live')`: **count = 1**
-  - id `3f91de6a-3d78-4796-a995-f73afdb4256d`, slug `testiruem-kartinku-do-veba`,
-    status `scheduled`, platform_status `scheduled`, room_state `opened`,
-    room_opened_at 2026-04-23, live_started_at пуст.
-- не-terminal `room_state='closed'` и `platform_status='live'`: **count = 0**.
+Точный HTTP status, internal error code/step и correlation id по сегодняшним попыткам — **UNKNOWN** (логов нет). По состоянию данных: новых `orders_v2`/provider events по этим попыткам не найдено, то есть отказ происходит **до** создания заказа и провайдерского события — на стадии авторизации writer-функции.
 
-> **STOP-условие сработало формально.** По правилу из запроса любой `opened/live` эфир
-> блокирует deploy/Publish. Фактически это старый тестовый эфир, открытый ещё 23.04.2026
-> и ни разу не переведённый в `live`; реального идущего эфира в очереди нет.
-> Решение — за пользователем: либо явное подтверждение, что это не боевой эфир и можно
-> продолжать, либо закрытие/завершение этой комнаты отдельной задачей до execute.
+## 3. RPC и section-доступ (production, read-only)
 
-## 4. Что реально нужно задеплоить
+- `public.get_admin_payment_links_v1` — SECURITY DEFINER, гейт **hardcoded**: `has_role(admin)` OR `user_roles_v2.code IN ('admin','super_admin')`. `payments:view/edit` **не допускается** → менеджер получает `42501 forbidden` при загрузке вкладки «Ссылки».
+- `public.has_admin_section_access` — корректна: admin/super_admin bypass, иначе ранги view/edit/manage через `get_admin_access`.
+- RLS `payment_links`: все 4 политики — только `has_role(admin)`/`is_super_admin` (legacy `app_role`), без `payments:edit`.
+- `admin-update-payment-link` и `admin-invalidate-payment-link` в коде тоже проверяют legacy `has_role('admin'/'superadmin')`, а не `payments:edit` → 403 для менеджеров.
 
-Изменения затрагивают только две Edge Functions плюс общий модуль, который они импортируют:
+## 4. Section grant роли `menedzher` (без PII)
 
-- `live-resolve` — при `isClosedLiveRoom(event)` возвращает `status: 'room_closed'`
-  и только безопасные поля (title, description, scheduled_at, event_type, event_timezone,
-  platform_status, room_state, room_phase); без `event_id`, `resolved_source`, provider URL.
-  Гейт применяется в том числе к админам (превью закрытой комнаты не создаёт сессию).
-- `live-session-heartbeat` — в soft-join ветке до создания/возобновления сессии читает
-  `live_events` и при закрытой комнате возвращает `403 room_closed`, не трогая `live_active_sessions`.
-- `supabase/functions/_shared/live-room-gate.ts` — общий гейт, «fail closed»: неизвестный/пустой
-  `room_state` у не-terminal `live_stream` трактуется как closed; terminal-события (ended/archived) не задеваются.
+- Секция `payments`: роль `menedzher` — **`view`**; `support` — `view`; `admin` — `manage`.
+- Ресурсные override в `payments`: `menedzher`/`support` — `edit` только на `manual-payment`; остальные ресурсы (в т.ч. `links`) — только `admin: manage`.
+- Флаг гейтинга `section_gating_enabled = true` (bypass не активен).
 
-Миграций, изменений RLS, GRANT'ов, cron и данных **не требуется**. Клиентская часть
-(`LiveEvent.tsx`) едет обычным Publish фронтенда.
+## 5. Registry
 
-## 5. План execute (после снятия STOP)
+Подтверждено: `admin-update-payment-link` и `admin-invalidate-payment-link` в реестре отсутствуют — редактирование и инвалидация ссылок не покрыты управляемым деплоем.
 
-1. Повторно сверить SHA репозитория = `a436ccef…`, дерево чистое, новых коммитов нет.
-2. Deploy ровно двух функций одним шагом: `live-resolve`, `live-session-heartbeat`
-   (порядок: сначала `live-session-heartbeat` — сервер перестаёт создавать сессии,
-   затем `live-resolve` — перестаёт отдавать комнату).
-3. Read-back деплоя: обе функции в статусе успешного деплоя, без ошибок в логах за окно деплоя.
-4. Безопасные негативные проверки (без PII, без реальных пользователей):
-   - `OPTIONS` на обе функции → CORS 200/204;
-   - `POST` с невалидным JWT → 401, тело без внутренних деталей.
-5. Проверка закрытого slug `cb-20-20-potok-konferentsiya-4` под тестовой сессией с доступом:
-   - `live-resolve` → `status=room_closed`, в ответе **нет** `event_id`, `resolved_source`,
-     kinescope/provider URL, токенов;
-   - `live-session-heartbeat` soft-join по этому эфиру → `403 room_closed`;
-   - SQL read-back: количество строк `live_active_sessions` по этому эфиру **не выросло**.
-6. Baseline-регресс на открытой комнате: один эфир с `room_state='opened'` продолжает
-   резолвиться `status=ok` / `room_phase=waiting` (проверка, что гейт не пережат).
-7. Publish exact SHA `a436ccefbc8eef03b2eb09fef13b4a38f1f2409e` — только после всех PASS
-   и после устранения причины «Build unsuccessful».
-8. Визуальная проверка опубликованного URL по прямой ссылке на закрытый эфир:
-   скриншот desktop и скриншот mobile 390x844 — виден экран «Запланирован», плеер/чат отсутствуют,
-   в консоли нет запросов heartbeat.
+## 6. Контракт `public-checkout`
 
-## 6. Stop-guards (остановка без execute/Publish)
+Текущий контракт: `verify_jwt` не требуется, порядок резолва получателя — (1) `link.user_id`, (2) Bearer JWT (`auth.uid()`), (3) **email-only без JWT** через admin API lookup. То есть для unassigned-ссылки **email-only оплата без логина допускается**; серверного требования login сейчас нет.
 
-- SHA в Lovable ≠ `a436ccefbc8eef03b2eb09fef13b4a38f1f2409e`;
-- сборка не проходит (сейчас именно это состояние — TS2550 в `helpers.ts`);
-- любой реально идущий `opened/live` эфир в очереди;
-- новый critical security finding в scope;
-- неожиданный diff, коммит или миграция в изменяемом периметре;
-- ошибка деплоя любой из двух функций, ошибка read-back или ненулевой прирост активных сессий на закрытом эфире.
+## 7. Консолидированный root cause
+
+Основная причина красного toast «Edge Function returned a non-2xx status code» и «Ошибка RR» у менеджеров — **не баг кода PR #364/#376, а отсутствие фактического гранта `payments:edit`**: writer-функции корректно требуют `payments:edit`, а роль `menedzher` в production имеет по секции `payments` только `view` (edit есть лишь на ресурсе `manual-payment`). Итог — 403 до создания order/provider event.
+
+Сопутствующие блокеры того же сценария:
+1. `get_admin_payment_links_v1` — hardcoded admin/super_admin → список ссылок недоступен носителям `payments:view/edit`.
+2. RLS `payment_links` — только legacy admin → любые прямые чтения/записи вне service-role функций закрыты.
+3. `admin-update-payment-link` / `admin-invalidate-payment-link` — legacy role-gate + отсутствие в registry.
+4. `public-checkout` допускает email-only без логина — расходится с требованием «серверно требовать login».
+
+## Минимальный план исправления (к согласованию, ничего не выполнено)
+
+Managed migrations (через Lovable Cloud):
+1. Поднять section grant `menedzher → payments = edit` (и решение по `support` — оставить `view`), плюс явные ресурсные override для `links` = `edit`.
+2. Переписать `get_admin_payment_links_v1`: гейт `has_admin_section_access(auth.uid(),'payments','view')`.
+3. Переписать RLS-политики `payment_links` на `has_admin_section_access(...,'payments','view'/'edit')`, сохранив admin/super_admin.
+
+GitHub-файлы (отдельный PR, Codex):
+4. `supabase/functions/admin-update-payment-link/index.ts` и `admin-invalidate-payment-link/index.ts` — перевести на общий `requirePaymentsEdit` (`_shared/admin-section-auth.ts`).
+5. `supabase/functions.registry.txt` — добавить обе функции.
+6. `supabase/functions/public-checkout/index.ts` — для unassigned-ссылки требовать Bearer JWT, email-only ветку отключить (или ограничить флагом) + фронтовый inline-login на `/pay/:token`.
+7. Контрактные тесты в `src/test/*` под новые гейты.
+
+Deploy ровно этих функций после merge: `admin-update-payment-link`, `admin-invalidate-payment-link`, `public-checkout` (при изменении — также ничего лишнего).
+
+Безопасные negative-probes без создания данных:
+- OPTIONS-preflight по каждой функции (200 + CORS).
+- POST с невалидным Bearer → ожидание 401.
+- POST от аккаунта без `payments:edit` с заведомо несуществующим `payment_link_id` → ожидание 403 (до валидации тела).
+- Read-only проверка `has_admin_section_access` и `get_admin_payment_links_v1` SQL-селектом без записи.
+
+Вердикт: **BLOCKED к EXECUTE** до отдельного одобрения; диагноз — PASS.
