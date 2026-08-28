@@ -12,8 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { format } from "date-fns";
-import { ru } from "date-fns/locale";
+import { formatLiveEventDate } from "@/lib/formatLiveEventDate";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
@@ -565,7 +564,7 @@ function LiveEventLegacy() {
         )}
         {data?.scheduled_at && (
           <div className="bg-primary/10 rounded-lg px-6 py-3 text-primary font-medium">
-            Начало: {format(new Date(data.scheduled_at), "dd MMMM yyyy, HH:mm", { locale: ru })}
+            Начало: {formatLiveEventDate(data.scheduled_at, data.event_timezone)}
             {data.event_timezone && (
               <span className="text-xs ml-2 opacity-70">({data.event_timezone})</span>
             )}
