@@ -108,8 +108,13 @@ export function RoomEntryDialog({
   }, [trimmedName, profileFullName]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+    <Dialog open={open} onOpenChange={() => undefined}>
+      <DialogContent
+        className="max-w-md"
+        showCloseButton={false}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+        onPointerDownOutside={(event) => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>Вход в комнату</DialogTitle>
         </DialogHeader>

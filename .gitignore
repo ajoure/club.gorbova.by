@@ -26,5 +26,6 @@ dist-ssr
 # Stage 4 Playwright — never commit admin JWTs or storage state
 playwright-auth-state*
 /tmp/browser/
+/supabase/.temp/
 test-results/
 playwright-report/
