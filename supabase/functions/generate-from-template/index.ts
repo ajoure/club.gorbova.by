@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Docxtemplater from "npm:docxtemplater@3.47.1";
 import PizZip from "npm:pizzip@3.1.6";
+import { formatAmountWithWordsByRublesAndKopecks } from "../_shared/amount-with-words.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -15,47 +16,6 @@ interface GenerateFromTemplateRequest {
   send_telegram?: boolean;
   executor_id?: string;
   client_details_id?: string;
-}
-
-// Helper to convert number to Russian words
-function numberToWordsRu(num: number): string {
-  const ones = ['', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'];
-  const teens = ['десять', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 'пятнадцать', 'шестнадцать', 'семнадцать', 'восемнадцать', 'девятнадцать'];
-  const tens = ['', '', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
-  const hundreds = ['', 'сто', 'двести', 'триста', 'четыреста', 'пятьсот', 'шестьсот', 'семьсот', 'восемьсот', 'девятьсот'];
-  
-  if (num === 0) return 'ноль';
-  if (num < 0) return 'минус ' + numberToWordsRu(-num);
-  
-  let result = '';
-  
-  if (num >= 1000) {
-    const thousands = Math.floor(num / 1000);
-    if (thousands === 1) result += 'одна тысяча ';
-    else if (thousands === 2) result += 'две тысячи ';
-    else if (thousands >= 3 && thousands <= 4) result += ones[thousands] + ' тысячи ';
-    else result += ones[thousands] + ' тысяч ';
-    num %= 1000;
-  }
-  
-  if (num >= 100) {
-    result += hundreds[Math.floor(num / 100)] + ' ';
-    num %= 100;
-  }
-  
-  if (num >= 10 && num < 20) {
-    result += teens[num - 10] + ' ';
-  } else {
-    if (num >= 20) {
-      result += tens[Math.floor(num / 10)] + ' ';
-      num %= 10;
-    }
-    if (num > 0) {
-      result += ones[num] + ' ';
-    }
-  }
-  
-  return result.trim();
 }
 
 function dateToRussianFormat(date: Date): string {
@@ -308,7 +268,7 @@ serve(async (req) => {
       
       // Amounts
       amount: priceAmount.toFixed(2),
-      amount_words: `${numberToWordsRu(Math.floor(priceAmount))} рублей ${String(Math.round((priceAmount % 1) * 100)).padStart(2, '0')} копеек`,
+      amount_words: formatAmountWithWordsByRublesAndKopecks(priceAmount, order.currency || 'BYN'),
       currency: order.currency === 'BYN' ? 'белорусских рублей' : order.currency,
       
       // Service description

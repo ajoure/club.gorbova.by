@@ -22,12 +22,12 @@
 import Docxtemplater from 'npm:docxtemplater@3.47.1';
 import PizZip from 'npm:pizzip@3.1.6';
 import {
-  numberToWordsRu,
   formatMoney,
   normalizeCurrency,
   extractDocxTokensWithLocations,
   type TokenManifestEntry,
 } from './docx-helpers.ts';
+import { formatAmountWithWordsByRublesAndKopecks } from './amount-with-words.ts';
 import { ALLOWED_DATE_FORMATS, applyDateFormat } from './dateFormatModifiers.ts';
 import { formatStructuredAddress, type FormatAddressResult } from './address-format.ts';
 import { applyCaseModifier, isCaseModifier } from './case-format.ts';
@@ -447,8 +447,8 @@ export async function resolveCanonicalPayload(
     'deal.product_name':  product?.name || '',
     'deal.tariff_name':   tariff?.name || '',
     'deal.amount':        order?.final_price != null ? String(order.final_price) : '',
-    'deal.amount_words':  order?.final_price != null ? numberToWordsRu(order.final_price, order?.currency) : '',
-    'deal.amount_in_words': order?.final_price != null ? numberToWordsRu(order.final_price, order?.currency) : '',
+    'deal.amount_words':  order?.final_price != null ? formatAmountWithWordsByRublesAndKopecks(order.final_price, order?.currency) : '',
+    'deal.amount_in_words': order?.final_price != null ? formatAmountWithWordsByRublesAndKopecks(order.final_price, order?.currency) : '',
     'deal.amount_formatted': order?.final_price != null ? formatMoney(order.final_price, order?.currency) : '',
     'deal.currency':      order?.currency ? (normalizeCurrency(order.currency) === 'UNKNOWN' ? order.currency : normalizeCurrency(order.currency)) : '',
     'deal.paid_at':       order?.created_at ? new Date(order.created_at).toLocaleDateString('ru-RU') : '',
