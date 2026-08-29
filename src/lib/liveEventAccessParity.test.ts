@@ -56,4 +56,28 @@ describe("live event access parity", () => {
     expect(migration).toContain("p.user_id = _user_id");
     expect(migration).toContain("COALESCE(o.meta->>'source', '') <> 'rule_engine'");
   });
+
+  it("keeps database RLS guards aligned with tariff and month rules", () => {
+    const migration = readRepoFile(
+      "supabase/migrations/20260829105213_harden_live_event_access.sql",
+    );
+
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.user_has_live_event_access");
+    expect(migration).toContain("es.tariff_id = _rule.tariff_id");
+    expect(migration).toContain("public.has_month_purchase(");
+    expect(migration).toContain("cardinality(_purchase_months) = 0");
+    expect(migration).toContain("RETURN false;");
+    expect(migration).not.toContain("FROM public.live_access_proofs");
+    expect(migration).toContain("REVOKE ALL ON FUNCTION public.user_has_live_event_access(uuid, uuid) FROM PUBLIC");
+    expect(migration).toContain("TO authenticated, service_role");
+  });
+
+  it("fails closed when the resolver cannot load modern access rules", () => {
+    const resolveSource = readRepoFile("supabase/functions/live-resolve/index.ts");
+
+    expect(resolveSource).toContain("if (accessRulesError)");
+    expect(resolveSource).toContain("reason: 'access_rules_lookup_failed'");
+    expect(resolveSource).toContain("return jsonRes({ status: 'error', message: 'Internal error' }, 500)");
+    expect(resolveSource).toContain("...accessDecision");
+  });
 });

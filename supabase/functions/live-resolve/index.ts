@@ -154,6 +154,7 @@ Deno.serve(async (req) => {
 
     // 5. Canonical access check — admin bypass + multi-rule model with legacy fallback
     let accessValid = false;
+    let accessDecision: Record<string, unknown> = { reason: 'not_evaluated' };
 
     // Admin bypass — admins and super_admins get unconditional access
     const { data: isAdmin } = await supabase.rpc('has_role_v2', {
@@ -166,19 +167,34 @@ Deno.serve(async (req) => {
     });
     if (isAdmin === true || isSuperAdmin === true) {
       accessValid = true;
+      accessDecision = { reason: 'admin_bypass' };
     }
 
     if (!accessValid) {
       // Try new multi-rule table first
-      const { data: accessRules } = await supabase
+      const { data: accessRules, error: accessRulesError } = await supabase
         .from('live_event_access_rules')
         .select('id, product_id, tariff_id, conditions, rule_kind')
         .eq('live_event_id', event.id);
 
+      // A failed rules lookup must never fall back to the broader legacy rule.
+      if (accessRulesError) {
+        console.error('[live-resolve] access rules lookup failed:', accessRulesError.message);
+        await logAudit(supabase, 'live_access_error', userId, slug, event.id, {
+          reason: 'access_rules_lookup_failed',
+        });
+        return jsonRes({ status: 'error', message: 'Internal error' }, 500);
+      }
+
       // Fast path: any_authenticated grants access to any signed-in user
       // (auth was already verified above; anonymous callers never reach this point).
-      if (accessRules && accessRules.some((r: any) => r.rule_kind === 'any_authenticated')) {
+      if (accessRules && accessRules.some((r) => r.rule_kind === 'any_authenticated')) {
         accessValid = true;
+        const matchedRule = accessRules.find((r) => r.rule_kind === 'any_authenticated');
+        accessDecision = {
+          reason: 'any_authenticated',
+          rule_id: matchedRule?.id ?? null,
+        };
       }
 
       // Month-gate context: an explicit multi-month allowlist with the legacy
@@ -226,8 +242,8 @@ Deno.serve(async (req) => {
           const monthGateEnabled = rule.conditions?.match_purchase_month === true;
           if (monthGateEnabled) {
             if (eventAllowedPurchaseMonths.length === 0) {
-              await auditMonthGate(true, rule.id, {
-                skip_reason: 'event_has_no_purchase_months',
+              await auditMonthGate(false, rule.id, {
+                reason: 'invalid_month_format',
               });
             } else if (evaluation.reason === 'month_gate_failed') {
               await auditMonthGate(false, rule.id, {
@@ -243,8 +259,19 @@ Deno.serve(async (req) => {
 
           if (evaluation.allowed) {
             accessValid = true;
+            accessDecision = {
+              reason: evaluation.reason,
+              rule_id: evaluation.ruleId,
+              tariff_id: rule.tariff_id ?? null,
+            };
             break;
           }
+          accessDecision = {
+            reason: evaluation.reason,
+            rule_id: evaluation.ruleId,
+            tariff_id: rule.tariff_id ?? null,
+            month_gate_reason: evaluation.monthGateReason ?? null,
+          };
         }
       } else if (!accessValid && (!accessRules || accessRules.length === 0)) {
         // Legacy fallback: use access_rule from event
@@ -252,6 +279,7 @@ Deno.serve(async (req) => {
 
         if (accessRule.mode === 'all') {
           accessValid = true;
+          accessDecision = { reason: 'legacy_all' };
         } else {
           const productId = accessRule.product_id || event.product_id;
           if (productId) {
@@ -261,6 +289,10 @@ Deno.serve(async (req) => {
               tariff_id: accessRule.mode === 'tariff' ? accessRule.tariff_id : null,
             });
             accessValid = evaluation.allowed;
+            accessDecision = {
+              reason: `legacy_${evaluation.reason}`,
+              tariff_id: accessRule.mode === 'tariff' ? accessRule.tariff_id : null,
+            };
           }
         }
       }
@@ -269,6 +301,7 @@ Deno.serve(async (req) => {
     if (!accessValid) {
       await logAudit(supabase, 'live_access_denied', userId, slug, event.id, {
         product_id: event.product_id,
+        ...accessDecision,
       });
       return jsonRes({
         status: 'access_denied',
@@ -360,6 +393,7 @@ Deno.serve(async (req) => {
       product_id: event.product_id,
       room_state: roomState,
       room_phase: roomPhase,
+      ...accessDecision,
     });
 
     return jsonRes({

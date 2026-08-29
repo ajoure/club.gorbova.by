@@ -34,6 +34,7 @@ import { useScreenWakeLock } from "@/hooks/useScreenWakeLock";
 import { useVisualViewportInset } from "@/hooks/useVisualViewportInset";
 import { useUnansweredQuestionsCount } from "@/hooks/useUnansweredQuestionsCount";
 import { isAdminRole } from "@/lib/liveRoomRoles";
+import { decideRoomEntryIdentity } from "@/lib/roomEntryIdentity";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
@@ -173,6 +174,13 @@ function LiveEventLegacy() {
     useRoomEntryPrefs(data?.event_id);
   const [entryDialogOpen, setEntryDialogOpen] = useState(false);
   const [entrySatisfied, setEntrySatisfied] = useState(false);
+  const hadRoomSessionOnLoadRef = useRef(
+    typeof window !== "undefined" && !!slug && !!window.sessionStorage.getItem(`live_session_${slug}`),
+  );
+  const isReloadRef = useRef(
+    typeof window !== "undefined" &&
+      (window.performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type === "reload",
+  );
 
   // Wake Lock: держим экран активным ТОЛЬКО в live / room_open_waiting.
   // Для всех остальных state (loading/ended/session_revoked/session_expired/
@@ -185,19 +193,26 @@ function LiveEventLegacy() {
   // Хук безопасен на desktop (offset = 0). См. useVisualViewportInset.ts.
   useVisualViewportInset();
 
-  // Reconnect contract: prefs already exist → silent mirror to session, skip dialog.
+  // A saved display name is a prefill, not consent to silently enter every new
+  // room session. Reuse it only when this tab already had a valid room session
+  // on load (reload/reconnect); a fresh direct link must confirm the identity.
   useEffect(() => {
     if (!data?.event_id || prefsLoading) return;
     if (entrySatisfied) return;
-    const nameRequired = roomSettings.entry.name_required;
-    if (!nameRequired) {
+    const decision = decideRoomEntryIdentity({
+      nameRequired: roomSettings.entry.name_required,
+      savedDisplayName: prefs?.display_name,
+      hadSessionOnLoad: hadRoomSessionOnLoadRef.current,
+      isReload: isReloadRef.current,
+      roomActive: state === "live" || state === "room_open_waiting",
+    });
+    if (decision === "skip" && !roomSettings.entry.name_required) {
       setEntrySatisfied(true);
       return;
     }
-    if (prefs?.display_name) {
-      // silent resync runtime mirror, then proceed
+    if (decision === "reuse" && prefs) {
       void syncSessionMirror(prefs).finally(() => setEntrySatisfied(true));
-    } else if (state === "live" || state === "room_open_waiting") {
+    } else if (decision === "prompt") {
       setEntryDialogOpen(true);
     }
   }, [data?.event_id, prefs, prefsLoading, roomSettings.entry.name_required, state, entrySatisfied, syncSessionMirror]);
@@ -273,6 +288,11 @@ function LiveEventLegacy() {
         } else if (json.status === "session_expired") {
           stopHeartbeat();
           setState("session_expired");
+        } else if (json.status === "session_not_found") {
+          stopHeartbeat();
+          sessionStorage.removeItem(`live_session_${slug}`);
+          hadRoomSessionOnLoadRef.current = false;
+          setEntrySatisfied(false);
         } else if (json.status === "access_denied") {
           // Soft-join отклонён сервером (нет доступа) — ничего не делаем, не флапаем UI.
           stopHeartbeat();
@@ -380,7 +400,6 @@ function LiveEventLegacy() {
               nextState = "scheduled";
             } else if (roomPhase === "waiting") {
               nextState = "room_open_waiting";
-              startHeartbeat({ liveEventId: json.event_id });
             } else if (ps === "scheduled" || es === "scheduled") {
               // Fallback: если комната ещё closed — старый scheduled-экран.
               nextState = "scheduled";
@@ -392,7 +411,6 @@ function LiveEventLegacy() {
               nextState = "ended_no_replay";
             } else {
               nextState = "live";
-              startHeartbeat({ liveEventId: json.event_id });
             }
             break;
           }
@@ -426,8 +444,19 @@ function LiveEventLegacy() {
       stopPolling();
       abortController.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, hasAccessToken]);
+
+  // Do not create or refresh a participant session before the required room
+  // identity has been confirmed. This prevents a transient anonymous/"Гость"
+  // participant from appearing behind the entry dialog.
+  useEffect(() => {
+    const roomActive = state === "live" || state === "room_open_waiting";
+    if (roomActive && entrySatisfied && data?.event_id) {
+      startHeartbeat({ liveEventId: data.event_id });
+      return;
+    }
+    stopHeartbeat();
+  }, [data?.event_id, entrySatisfied, startHeartbeat, state, stopHeartbeat]);
 
   if (state === "loading") {
     return (
