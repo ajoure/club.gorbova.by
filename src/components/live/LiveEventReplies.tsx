@@ -10,6 +10,7 @@ import { Loader2, Reply, Lock, Globe } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
+import { LiveRoleBadge } from "@/components/live/LiveRoleBadge";
 
 interface ReplyFormProps {
   liveEventId: string;
@@ -100,6 +101,9 @@ export interface LiveEventReply {
   target_display_name: string | null;
   created_at: string;
   created_by: string;
+  author_display_name: string;
+  author_role: string;
+  author_nickname_color: string | null;
 }
 
 export function useLiveEventReplies(liveEventId: string) {
@@ -109,7 +113,7 @@ export function useLiveEventReplies(liveEventId: string) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("live_event_replies")
-        .select("id, source_comment_id, source_question_id, reply_text, visibility_scope, target_display_name, created_at, created_by")
+        .select("id, source_comment_id, source_question_id, reply_text, visibility_scope, target_display_name, created_at, created_by, author_display_name, author_role, author_nickname_color")
         .eq("live_event_id", liveEventId)
         .order("created_at", { ascending: true });
       if (error) throw error;
@@ -154,17 +158,27 @@ export function LiveEventReplyActivity({
         const sourceText = sourceId ? sourceTextById.get(sourceId) : null;
         return (
           <div key={reply.id} className="rounded-lg border border-primary/20 bg-primary/5 p-2.5">
-            <div className="mb-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
               <Reply className="h-3 w-3" />
-              <span>Новый ответ</span>
-              <Badge variant="outline" className="px-1 py-0 text-[9px]">
-                {reply.visibility_scope === "private" ? (
-                  <><Lock className="mr-0.5 h-2.5 w-2.5" />Лично</>
-                ) : (
-                  <><Globe className="mr-0.5 h-2.5 w-2.5" />Для всех</>
-                )}
-              </Badge>
-              <span className="ml-auto">{format(new Date(reply.created_at), "HH:mm", { locale: ru })}</span>
+              <span>Ответ от:</span>
+              <span
+                className="font-semibold text-foreground break-words"
+                style={reply.author_nickname_color ? { color: reply.author_nickname_color } : undefined}
+                data-testid="live-reply-author"
+              >
+                {reply.author_display_name}
+              </span>
+              <LiveRoleBadge role={reply.author_role} />
+              <span className="ml-auto flex items-center gap-1.5">
+                <Badge variant="outline" className="px-1 py-0 text-[9px]">
+                  {reply.visibility_scope === "private" ? (
+                    <><Lock className="mr-0.5 h-2.5 w-2.5" />Лично</>
+                  ) : (
+                    <><Globe className="mr-0.5 h-2.5 w-2.5" />Для всех</>
+                  )}
+                </Badge>
+                <span>{format(new Date(reply.created_at), "HH:mm", { locale: ru })}</span>
+              </span>
             </div>
             {sourceText && (
               <blockquote className="mb-1.5 border-l-2 border-primary/30 pl-2 text-xs text-muted-foreground line-clamp-3">
@@ -199,14 +213,26 @@ export function LiveEventRepliesList({ liveEventId, sourceCommentId, sourceQuest
     <div className="ml-6 mt-1 space-y-1">
       {replies.map((r) => (
         <div key={r.id} className={`room-reply-quote text-xs p-2 rounded ${r.visibility_scope === 'private' ? 'bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'}`}>
-          <div className="flex items-center gap-1.5 mb-0.5">
-            <Badge variant="outline" className="text-[9px] px-1 py-0">
-              {r.visibility_scope === 'private' ? <><Lock className="h-2.5 w-2.5 mr-0.5" />Приватный</> : <><Globe className="h-2.5 w-2.5 mr-0.5" />Публичный</>}
-            </Badge>
+          <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
+            <Reply className="h-3 w-3 text-muted-foreground" />
+            <span className="text-muted-foreground">Ответ от:</span>
+            <span
+              className="font-semibold text-foreground break-words"
+              style={r.author_nickname_color ? { color: r.author_nickname_color } : undefined}
+              data-testid="live-reply-author"
+            >
+              {r.author_display_name}
+            </span>
+            <LiveRoleBadge role={r.author_role} />
             {r.target_display_name && (
               <span className="text-muted-foreground">→ {r.target_display_name}</span>
             )}
-            <span className="text-muted-foreground ml-auto">{format(new Date(r.created_at), "HH:mm", { locale: ru })}</span>
+            <span className="ml-auto flex items-center gap-1.5 text-muted-foreground">
+              <Badge variant="outline" className="text-[9px] px-1 py-0">
+                {r.visibility_scope === 'private' ? <><Lock className="h-2.5 w-2.5 mr-0.5" />Приватный</> : <><Globe className="h-2.5 w-2.5 mr-0.5" />Публичный</>}
+              </Badge>
+              <span>{format(new Date(r.created_at), "HH:mm", { locale: ru })}</span>
+            </span>
           </div>
           <p className="text-foreground">{r.reply_text}</p>
         </div>
