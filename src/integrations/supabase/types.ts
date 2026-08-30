@@ -15072,6 +15072,69 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_sales_attribution: {
+        Row: {
+          assigned_by: string | null
+          assigned_by_name_snapshot: string | null
+          assignment_source: string
+          batch_id: string | null
+          created_at: string
+          effective_from: string
+          effective_to: string | null
+          id: string
+          order_id: string
+          payment_id: string
+          reason: string | null
+          responsible_name_snapshot: string | null
+          responsible_user_id: string | null
+        }
+        Insert: {
+          assigned_by?: string | null
+          assigned_by_name_snapshot?: string | null
+          assignment_source: string
+          batch_id?: string | null
+          created_at?: string
+          effective_from?: string
+          effective_to?: string | null
+          id?: string
+          order_id: string
+          payment_id: string
+          reason?: string | null
+          responsible_name_snapshot?: string | null
+          responsible_user_id?: string | null
+        }
+        Update: {
+          assigned_by?: string | null
+          assigned_by_name_snapshot?: string | null
+          assignment_source?: string
+          batch_id?: string | null
+          created_at?: string
+          effective_from?: string
+          effective_to?: string | null
+          id?: string
+          order_id?: string
+          payment_id?: string
+          reason?: string | null
+          responsible_name_snapshot?: string | null
+          responsible_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_sales_attribution_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_sales_attribution_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_settings: {
         Row: {
           created_at: string
@@ -15250,69 +15313,6 @@ export type Database = {
           row_checksum?: string
         }
         Relationships: []
-      }
-      payment_sales_attribution: {
-        Row: {
-          assigned_by: string | null
-          assigned_by_name_snapshot: string | null
-          assignment_source: string
-          batch_id: string | null
-          created_at: string
-          effective_from: string
-          effective_to: string | null
-          id: string
-          order_id: string
-          payment_id: string
-          reason: string | null
-          responsible_name_snapshot: string | null
-          responsible_user_id: string | null
-        }
-        Insert: {
-          assigned_by?: string | null
-          assigned_by_name_snapshot?: string | null
-          assignment_source: string
-          batch_id?: string | null
-          created_at?: string
-          effective_from?: string
-          effective_to?: string | null
-          id?: string
-          order_id: string
-          payment_id: string
-          reason?: string | null
-          responsible_name_snapshot?: string | null
-          responsible_user_id?: string | null
-        }
-        Update: {
-          assigned_by?: string | null
-          assigned_by_name_snapshot?: string | null
-          assignment_source?: string
-          batch_id?: string | null
-          created_at?: string
-          effective_from?: string
-          effective_to?: string | null
-          id?: string
-          order_id?: string
-          payment_id?: string
-          reason?: string | null
-          responsible_name_snapshot?: string | null
-          responsible_user_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "payment_sales_attribution_order_id_fkey"
-            columns: ["order_id"]
-            isOneToOne: false
-            referencedRelation: "orders_v2"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "payment_sales_attribution_payment_id_fkey"
-            columns: ["payment_id"]
-            isOneToOne: false
-            referencedRelation: "payments_v2"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       payments_sync_runs: {
         Row: {
@@ -22480,21 +22480,6 @@ export type Database = {
         }
         Returns: string
       }
-      admin_create_deal_v2: {
-        Args: {
-          p_amount?: number
-          p_currency?: string
-          p_notes?: string
-          p_pipeline_id?: string
-          p_pipeline_stage_id?: string
-          p_product_id?: string
-          p_profile_id: string
-          p_responsible_user_id?: string | null
-          p_tariff_id?: string
-          p_title?: string
-        }
-        Returns: string
-      }
       admin_create_deal_from_payment:
         | {
             Args: {
@@ -22535,6 +22520,21 @@ export type Database = {
             }
             Returns: Json
           }
+      admin_create_deal_v2: {
+        Args: {
+          p_amount?: number
+          p_currency?: string
+          p_notes?: string
+          p_pipeline_id?: string
+          p_pipeline_stage_id?: string
+          p_product_id?: string
+          p_profile_id: string
+          p_responsible_user_id?: string
+          p_tariff_id?: string
+          p_title?: string
+        }
+        Returns: string
+      }
       admin_create_manual_payment_v1: {
         Args: {
           p_actor_user_id: string
@@ -24043,6 +24043,9 @@ export type Database = {
           recipient_email: string | null
           recipient_name: string | null
           related_orders_count: number | null
+          responsible_email: string | null
+          responsible_name: string | null
+          responsible_user_id: string | null
           status: string | null
           tariff_id: string | null
           tariff_name: string | null
@@ -25366,6 +25369,34 @@ export type Database = {
         Args: { _package_id: string }
         Returns: Json
       }
+      sales_manager_report_v1: {
+        Args: {
+          p_from: string
+          p_product_id?: string
+          p_responsible_user_id?: string
+          p_tariff_id?: string
+          p_to: string
+          p_unassigned_only?: boolean
+        }
+        Returns: {
+          average_payment: number
+          currency: string
+          gross_amount: number
+          installment_expected: number
+          installment_received: number
+          month_start: string
+          net_amount: number
+          paid_deals: number
+          payment_count: number
+          product_id: string
+          product_name: string
+          refund_amount: number
+          responsible_name: string
+          responsible_user_id: string
+          tariff_id: string
+          tariff_name: string
+        }[]
+      }
       save_session_document_atomic: {
         Args: {
           _expected_template_version_id?: string
@@ -25417,34 +25448,6 @@ export type Database = {
         }[]
       }
       search_companies: { Args: { _filters: Json }; Returns: Json }
-      sales_manager_report_v1: {
-        Args: {
-          p_from: string
-          p_product_id?: string | null
-          p_responsible_user_id?: string | null
-          p_tariff_id?: string | null
-          p_to: string
-          p_unassigned_only?: boolean
-        }
-        Returns: {
-          average_payment: number
-          currency: string
-          gross_amount: number
-          installment_expected: number
-          installment_received: number
-          month_start: string
-          net_amount: number
-          paid_deals: number
-          payment_count: number
-          product_id: string | null
-          product_name: string
-          refund_amount: number
-          responsible_name: string
-          responsible_user_id: string | null
-          tariff_id: string | null
-          tariff_name: string
-        }[]
-      }
       search_deal_rows: {
         Args: {
           p_date_from?: string
@@ -25535,31 +25538,31 @@ export type Database = {
         }
         Returns: Json
       }
-      set_default_individual_requisites: {
-        Args: { p_id: string }
-        Returns: Json
-      }
-      set_default_legal_entity_requisites: {
-        Args: { p_id: string }
-        Returns: Json
-      }
       set_deal_responsible_v1: {
         Args: {
-          p_batch_id?: string | null
+          p_batch_id?: string
           p_deal_id: string
           p_reason: string
-          p_responsible_user_id: string | null
+          p_responsible_user_id: string
           p_source?: string
         }
         Returns: Json
       }
       set_deals_responsible_bulk_v1: {
         Args: {
-          p_batch_id?: string | null
+          p_batch_id?: string
           p_deal_ids: string[]
           p_reason: string
-          p_responsible_user_id: string | null
+          p_responsible_user_id: string
         }
+        Returns: Json
+      }
+      set_default_individual_requisites: {
+        Args: { p_id: string }
+        Returns: Json
+      }
+      set_default_legal_entity_requisites: {
+        Args: { p_id: string }
         Returns: Json
       }
       set_global_document_package_default_access: {
