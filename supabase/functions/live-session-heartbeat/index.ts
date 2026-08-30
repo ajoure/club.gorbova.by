@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { isClosedLiveRoom } from '../_shared/live-room-gate.ts';
+import { verifyLiveBearerClaims } from '../_shared/live-auth-claims.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -40,13 +41,15 @@ Deno.serve(async (req) => {
     const userClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${jwtToken}` } },
     });
-    const { data: claimsData, error: authError } = await userClient.auth.getClaims(jwtToken);
+    const authVerification = await verifyLiveBearerClaims(
+      () => userClient.auth.getClaims(jwtToken),
+    );
 
-    if (authError || !claimsData?.claims?.sub) {
-      console.error('[live-session-heartbeat] Auth error:', authError);
+    if (!authVerification.userId) {
+      console.error('[live-session-heartbeat] Auth error:', authVerification.error);
       return jsonResponse({ status: 'auth_required' }, 401);
     }
-    const user = { id: claimsData.claims.sub as string };
+    const user = { id: authVerification.userId };
 
     const body = await req.json().catch(() => ({}));
     const session_key: string | undefined = body?.session_key;

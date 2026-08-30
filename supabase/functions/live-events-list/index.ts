@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { verifyLiveBearerClaims } from '../_shared/live-auth-claims.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -28,17 +29,19 @@ Deno.serve(async (req) => {
     const userClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
-    const { data: claimsData, error: authError } = await userClient.auth.getClaims(token);
+    const authVerification = await verifyLiveBearerClaims(
+      () => userClient.auth.getClaims(token),
+    );
 
-    if (authError || !claimsData?.claims?.sub) {
-      console.error('[live-events-list] Auth error:', authError);
+    if (!authVerification.userId) {
+      console.error('[live-events-list] Auth error:', authVerification.error);
       return new Response(
         JSON.stringify({ error: 'Неверный токен' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const userId = claimsData.claims.sub;
+    const userId = authVerification.userId;
 
     // Admin bypass: admin/super_admin видят события даже при закрытом replay/архиве.
     // Add-only; обычные пользователи проходят прежний фильтр.
