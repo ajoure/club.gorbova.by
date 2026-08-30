@@ -957,9 +957,9 @@ export default function AdminDeals() {
   const activePipeline = pipelines.find((p) => p.id === activePipelineId);
 
   return (
-    <div className="space-y-2">
-      {/* Compact toolbar — single row */}
-      <div className="flex items-center gap-2 px-1 pt-1 flex-wrap">
+    <div className="min-w-0 max-w-full space-y-2">
+      {/* Wrap controls on narrow screens; no action should sit off-screen. */}
+      <div data-testid="deals-toolbar" className="flex min-w-0 max-w-full flex-wrap items-center gap-2 px-1 pt-1">
         {/* View mode toggle */}
         <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20">
           <button
@@ -1019,7 +1019,7 @@ export default function AdminDeals() {
 
         {/* Preset tabs (list mode only) */}
         {viewMode === "list" && (
-          <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+          <div data-testid="deals-presets" className="inline-flex max-w-full flex-wrap p-0.5 rounded-xl sm:rounded-full bg-muted/40 backdrop-blur-md border border-border/20">
             {DEAL_PRESETS.map((preset) => {
               const isActive = activePreset === preset.id;
               return (
@@ -1045,7 +1045,7 @@ export default function AdminDeals() {
         )}
 
         {/* Search */}
-        <div className="relative flex-1 min-w-[180px] max-w-sm">
+        <div className="relative min-w-0 basis-full sm:flex-1 sm:basis-auto sm:min-w-[180px] sm:max-w-sm">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             placeholder="Поиск по номеру, email..."
@@ -1079,7 +1079,7 @@ export default function AdminDeals() {
               )}
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="start" className="w-72 p-0" sideOffset={6}>
+          <PopoverContent align="start" collisionPadding={12} className="w-72 max-w-[calc(100vw-24px)] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto p-0" sideOffset={6}>
             <div className="p-3 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-foreground">Фильтры</span>
@@ -1183,7 +1183,7 @@ export default function AdminDeals() {
         </Popover>
 
         {/* Period + actions */}
-        <div className="flex items-center gap-1.5 ml-auto">
+        <div data-testid="deals-actions" className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 sm:ml-auto">
           <PeriodSelector value={dateFilter} onChange={setDateFilter} />
           <DealsFiltersBar
             filters={extraFilters}
@@ -1194,7 +1194,7 @@ export default function AdminDeals() {
           />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-7 w-7 p-0" disabled={allDeals.length === 0}>
+              <Button aria-label="Экспорт сделок" variant="outline" size="sm" className="h-7 w-7 p-0" disabled={allDeals.length === 0}>
                 <Download className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
@@ -1217,7 +1217,7 @@ export default function AdminDeals() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => {
+          <Button aria-label="Обновить сделки" variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => {
             queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
             queryClient.invalidateQueries({ queryKey: ["admin-deals-tab-counts"] });
             queryClient.invalidateQueries({ queryKey: ["deals-fallback-profiles"] });
@@ -1232,6 +1232,7 @@ export default function AdminDeals() {
               onClick={() => setShowCreateDealDialog(true)}
               className="h-7 text-xs gap-1 bg-emerald-600 hover:bg-emerald-600/90 text-white"
               title="Создать сделку вручную"
+              aria-label="Создать сделку вручную"
             >
               <Handshake className="h-3 w-3" />
               <span className="hidden sm:inline">Новая сделка</span>
@@ -1242,6 +1243,7 @@ export default function AdminDeals() {
               variant="outline"
               size="sm"
               onClick={() => setShowArchiveCleanupDialog(true)}
+              aria-label="Очистка архива"
               className="text-destructive hover:text-destructive h-7 text-xs gap-1"
             >
               <Trash2 className="h-3 w-3" />
