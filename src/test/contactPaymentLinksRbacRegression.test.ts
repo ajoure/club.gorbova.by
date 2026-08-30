@@ -92,7 +92,8 @@ describe("contact payment-link RBAC and RR regression contract", () => {
   });
 
   it("binds admin RR orders to the target contact and keeps the actor in audit metadata", () => {
-    expect(rr).toContain('const adminMode = hasTargetUserField || hasAdjustmentAmountField || hasAdjustmentReasonField');
+    expect(rr).toContain('const hasResponsibleUserField = Object.prototype.hasOwnProperty.call(body, "responsible_user_id")');
+    expect(rr).toContain('|| hasResponsibleUserField;');
     expect(rr).toContain('errorResponse("admin_fields_forbidden", 403)');
     expect(rr).toContain('.eq("user_id", targetUserId)');
     expect(rr).toContain("userId = targetUserId");
