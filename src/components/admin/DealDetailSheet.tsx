@@ -166,7 +166,9 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       if (!responsibleReason.trim()) throw new Error("Укажите причину изменения");
       const { data, error } = await supabase.rpc("set_deal_responsible_v1", {
         p_deal_id: deal.id,
-        p_responsible_user_id: responsibleId === "__unassigned__" ? null : responsibleId,
+        // Supabase's generated RPC type cannot express a required SQL UUID
+        // argument that intentionally accepts NULL for "Без менеджера".
+        p_responsible_user_id: (responsibleId === "__unassigned__" ? null : responsibleId) as string,
         p_reason: responsibleReason.trim(),
         p_source: "manual_reassignment",
       });

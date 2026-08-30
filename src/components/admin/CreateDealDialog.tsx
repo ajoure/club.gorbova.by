@@ -113,15 +113,15 @@ export function CreateDealDialog({ open, onOpenChange, onCreated }: CreateDealDi
     try {
       const { data, error } = await supabase.rpc("admin_create_deal_v2", {
         p_profile_id: contact.id,
-        p_title: title || null,
-        p_product_id: productId === "__none__" ? null : productId,
-        p_tariff_id: tariffId === "__none__" ? null : tariffId,
-        p_pipeline_id: pipelineId || null,
-        p_pipeline_stage_id: stageId || null,
+        ...(title ? { p_title: title } : {}),
+        ...(productId !== "__none__" ? { p_product_id: productId } : {}),
+        ...(tariffId !== "__none__" ? { p_tariff_id: tariffId } : {}),
+        ...(pipelineId ? { p_pipeline_id: pipelineId } : {}),
+        ...(stageId ? { p_pipeline_stage_id: stageId } : {}),
         p_amount: numericAmount,
         p_currency: currency,
-        p_notes: notes || null,
-        p_responsible_user_id: responsibleId || null,
+        ...(notes ? { p_notes: notes } : {}),
+        ...(responsibleId ? { p_responsible_user_id: responsibleId } : {}),
       });
       if (error) {
         const msg = error.message || "";

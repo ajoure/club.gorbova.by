@@ -99,6 +99,6 @@ describe("sales manager attribution data contract", () => {
   it("publishes generated client types for the table and RPC", () => {
     expect(types).toContain("payment_sales_attribution: {");
     expect(types).toContain("set_deal_responsible_v1: {");
-    expect(types).toContain("p_responsible_user_id: string | null");
+    expect(types).toContain("p_responsible_user_id: string");
   });
 });

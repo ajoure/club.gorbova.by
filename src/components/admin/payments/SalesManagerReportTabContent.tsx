@@ -64,11 +64,12 @@ export function SalesManagerReportTabContent() {
       const { data, error } = await supabase.rpc("sales_manager_report_v1", {
         p_from: dateFrom,
         p_to: dateTo,
-        p_responsible_user_id:
-          manager !== "all" && manager !== "__unassigned__" ? manager : null,
+        ...(manager !== "all" && manager !== "__unassigned__"
+          ? { p_responsible_user_id: manager }
+          : {}),
         p_unassigned_only: manager === "__unassigned__",
-        p_product_id: product === "all" ? null : product,
-        p_tariff_id: tariff === "all" ? null : tariff,
+        ...(product !== "all" ? { p_product_id: product } : {}),
+        ...(tariff !== "all" ? { p_tariff_id: tariff } : {}),
       });
       if (error) throw error;
       return (data || []) as SalesReportRow[];
