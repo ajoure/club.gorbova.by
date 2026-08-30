@@ -108,6 +108,7 @@ import { PipelineAutomationSheet } from "@/components/admin/deals/PipelineAutoma
 import { DealsFiltersBar } from "@/components/admin/deals/DealsFiltersBar";
 import { useDealsFilters, type DealsExtraFilters } from "@/hooks/useDealsFilters";
 import { applyExtraDealFilters } from "@/utils/applyExtraDealFilters";
+import { useStaffOptions } from "@/hooks/useStaffOptions";
 
 const PAGE_SIZE = 100;
 
@@ -201,6 +202,7 @@ function buildDealsQuery(
       product_id,
       tariff_id,
       pipeline_id,
+      responsible_user_id,
       company_id,
       user_id,
       profile_id,
@@ -271,6 +273,11 @@ export default function AdminDeals() {
   const navigate = useNavigate();
   const { canWrite, isAdmin, isSuperAdmin } = usePermissions();
   const canEdit = canWrite("deals") || isSuperAdmin();
+  const { data: staff = [] } = useStaffOptions();
+  const staffNameById = useMemo(
+    () => new Map(staff.map((item) => [item.user_id, item.label])),
+    [staff],
+  );
 
   const [search, setSearch] = useState("");
   const [activePreset, setActivePreset] = useState("all");
@@ -452,6 +459,7 @@ export default function AdminDeals() {
       product_id: r.product_id,
       tariff_id: r.tariff_id,
       pipeline_id: r.pipeline_id,
+      responsible_user_id: r.responsible_user_id ?? null,
       company_id: r.company_id ?? null,
       user_id: r.user_id,
       profile_id: r.profile_id,
@@ -495,6 +503,15 @@ export default function AdminDeals() {
         });
         if (error) throw error;
         const rows = (data || []).map(rpcRowToNested);
+        if (rows.length > 0) {
+          const { data: managerRows, error: managerError } = await supabase
+            .from("orders_v2")
+            .select("id,responsible_user_id")
+            .in("id", rows.map((row: any) => row.id));
+          if (managerError) throw managerError;
+          const managerByDeal = new Map((managerRows || []).map((row) => [row.id, row.responsible_user_id]));
+          rows.forEach((row: any) => { row.responsible_user_id = managerByDeal.get(row.id) ?? null; });
+        }
         // Client-side tariff filter for RPC results
         let filtered = selectedTariffIds.length > 0
           ? rows.filter((r: any) => selectedTariffIds.includes(r.tariff_id))
@@ -524,6 +541,8 @@ export default function AdminDeals() {
         if (extraFilters.source) filtered = filtered.filter((r: any) => r.meta?.source === extraFilters.source);
         if (extraFilters.provider) filtered = filtered.filter((r: any) => r.meta?.payment_provider === extraFilters.provider);
         if (extraFilters.reconcileSource) filtered = filtered.filter((r: any) => r.reconcile_source === extraFilters.reconcileSource);
+        if (extraFilters.salesManager === "__unassigned__") filtered = filtered.filter((r: any) => !r.responsible_user_id);
+        else if (extraFilters.salesManager) filtered = filtered.filter((r: any) => r.responsible_user_id === extraFilters.salesManager);
         if (!extraFilters.includeSynthetic) filtered = filtered.filter((r: any) => r.meta?.source !== "rule_engine");
         // PATCH-PREORDER-DEAL-FLOW Phase B: hide converted preorders in RPC-search results
         if (!extraFilters.includeConvertedPreorders) filtered = filtered.filter((r: any) => !r.meta?.converted_to_order_id);
@@ -686,6 +705,8 @@ export default function AdminDeals() {
         return getDealDisplayName({ productsV2: deal.products_v2 as any, purchaseSnapshot: deal.purchase_snapshot, moduleProduct: moduleMetaMap?.get(deal.id)?.moduleProduct }) || "";
       case "tariff_name":
         return (deal.tariffs as any)?.name || "";
+      case "sales_manager":
+        return staffNameById.get(deal.responsible_user_id) || "Без менеджера";
       case "deal_date":
         return getEffectiveDealDate(deal);
       case "final_price": {
@@ -703,7 +724,7 @@ export default function AdminDeals() {
       default:
         return deal[fieldKey];
     }
-  }, [fallbackProfilesMap, moduleMetaMap, accessMap]);
+  }, [fallbackProfilesMap, moduleMetaMap, accessMap, staffNameById]);
 
   // Export columns
   const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
@@ -724,6 +745,7 @@ export default function AdminDeals() {
       return badge?.label || "";
     } },
     { header: "Тариф", getValue: (d) => (d.tariffs as any)?.name || "" },
+    { header: "Менеджер продажи", getValue: (d) => staffNameById.get(d.responsible_user_id) || "Без менеджера" },
     { header: "Сумма", getValue: (d) => d.final_price ?? "" },
     { header: "Валюта", getValue: (d) => d.currency || "" },
     { header: "Статус", getValue: (d) => getStatusConfig(d.status).label },
@@ -731,7 +753,7 @@ export default function AdminDeals() {
       const accessUntil = accessMap?.get(d.id)?.access_until || d.trial_end_at;
       return accessUntil ? format(new Date(accessUntil), "dd.MM.yyyy") : "";
     } },
-  ], [fallbackProfilesMap, moduleMetaMap, accessMap]);
+  ], [fallbackProfilesMap, moduleMetaMap, accessMap, staffNameById]);
 
   // Sorting on loaded data
   const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
@@ -789,6 +811,7 @@ export default function AdminDeals() {
           product_id,
           tariff_id,
           pipeline_id,
+          responsible_user_id,
           user_id,
           profile_id,
           reconcile_source,
@@ -1381,7 +1404,7 @@ export default function AdminDeals() {
             data-table-scroll-x="true"
             className="table-scroll-x select-none"
           >
-          <Table wrapperClassName="contents" style={{ minWidth: 1100 }}>
+          <Table wrapperClassName="contents" style={{ minWidth: 1260 }}>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
@@ -1398,6 +1421,9 @@ export default function AdminDeals() {
                 </SortableTableHead>
                 <SortableTableHead sortKey="product_name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
                   Продукт / Тариф
+                </SortableTableHead>
+                <SortableTableHead sortKey="sales_manager" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                  Менеджер продажи
                 </SortableTableHead>
                 <SortableTableHead sortKey="final_price" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort} className="text-right">
                   Сумма
@@ -1540,6 +1566,11 @@ export default function AdminDeals() {
                       {deal.is_trial && (
                         <Badge variant="outline" className="text-xs mt-1 text-blue-600 border-blue-500/30">Trial</Badge>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <span className={deal.responsible_user_id ? "text-sm" : "text-sm text-amber-600"}>
+                        {staffNameById.get(deal.responsible_user_id) || "Без менеджера"}
+                      </span>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="font-medium">

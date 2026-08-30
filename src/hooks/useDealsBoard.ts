@@ -23,6 +23,8 @@ export interface BoardDeal {
   contact_avatar: string | null;
   company_id: string | null;
   company_name: string | null;
+  responsible_user_id: string | null;
+  responsible_name: string | null;
   is_trial: boolean;
 }
 
@@ -48,7 +50,7 @@ export function useDealsBoard({ pipelineId, search, productId, tariffIds, dateFr
       let q = supabase
         .from("orders_v2")
         .select(`
-          id, order_number, status, final_price, currency, company_id,
+          id, order_number, status, final_price, currency, company_id, responsible_user_id,
           updated_at, created_at, pipeline_stage_id, pipeline_id,
           is_trial,
           products_v2(name),
@@ -106,6 +108,12 @@ export function useDealsBoard({ pipelineId, search, productId, tariffIds, dateFr
         const { data: companies } = await (supabase as any).from("companies").select("id,full_name").in("id", companyIds);
         (companies ?? []).forEach((company: any) => companyNames.set(company.id, company.full_name));
       }
+      const responsibleIds = Array.from(new Set(allData.map((d: any) => d.responsible_user_id).filter(Boolean)));
+      const responsibleNames = new Map<string, string>();
+      if (responsibleIds.length) {
+        const { data: profiles } = await supabase.from("profiles").select("user_id,full_name,email").in("user_id", responsibleIds);
+        (profiles ?? []).forEach((profile) => responsibleNames.set(profile.user_id!, profile.full_name || profile.email || profile.user_id!));
+      }
       return allData.map((d: any) => ({
         id: d.id,
         order_number: d.order_number,
@@ -123,6 +131,8 @@ export function useDealsBoard({ pipelineId, search, productId, tariffIds, dateFr
         contact_avatar: d.profiles?.avatar_url || null,
         company_id: d.company_id || null,
         company_name: d.company_id ? companyNames.get(d.company_id) || null : null,
+        responsible_user_id: d.responsible_user_id || null,
+        responsible_name: d.responsible_user_id ? responsibleNames.get(d.responsible_user_id) || null : null,
         is_trial: d.is_trial || false,
       }));
     },

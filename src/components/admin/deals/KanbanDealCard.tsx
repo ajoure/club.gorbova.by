@@ -238,6 +238,9 @@ export const KanbanDealCard = memo(function KanbanDealCard({
             <span className="truncate">{deal.company_name}</span>
           </div>
         )}
+        <div className={cn("mb-1 truncate text-[11px]", deal.responsible_user_id ? "text-muted-foreground" : "text-amber-600")}>
+          {deal.responsible_name || "Без менеджера"}
+        </div>
 
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-sm font-semibold text-foreground">

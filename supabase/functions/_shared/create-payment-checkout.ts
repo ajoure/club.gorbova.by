@@ -49,6 +49,8 @@ export interface CreateCheckoutParams {
   origin?: string;
   actor_user_id?: string;
   actor_type?: 'admin' | 'system';
+  /** Fixed sales manager inherited by every order created by this checkout. */
+  responsible_user_id?: string | null;
   /** ID подписки, которую заменяем. Сервер проверит, что она реально отменена, прежде чем создать новую. */
   replacement_of_subscription_v2_id?: string;
   /**
@@ -117,6 +119,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   const {
     supabase, user_id, product_id, tariff_id, amount: requestedAmount,
     payment_type, description, offer_id, origin, actor_user_id, actor_type,
+    responsible_user_id,
     replacement_of_subscription_v2_id,
     meta_extra,
   } = params;
@@ -312,7 +315,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     // PATCH F1: Dedup one_time — strict key: user/product/tariff/amount/flow/currency/3d
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existingOrder } = await (supabase as any)
+    let existingOrderQuery = (supabase as any)
       .from('orders_v2')
       .select('id, meta, created_at')
       .eq('user_id', user_id)
@@ -321,7 +324,11 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       .eq('status', 'pending')
       .eq('currency', 'BYN')
       .eq('final_price', amountByn)
-      .filter('meta->>payment_flow', 'eq', paymentFlow)
+      .filter('meta->>payment_flow', 'eq', paymentFlow);
+    existingOrderQuery = responsible_user_id
+      ? existingOrderQuery.eq('responsible_user_id', responsible_user_id)
+      : existingOrderQuery.is('responsible_user_id', null);
+    const { data: existingOrder } = await existingOrderQuery
       .is('meta->>checkout_expired', null)
       .gte('created_at', new Date(Date.now() - 3 * 86400000).toISOString())
       .order('created_at', { ascending: false })
@@ -428,6 +435,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       .insert({
         order_number: orderNumber,
         user_id,
+        responsible_user_id: responsible_user_id || null,
         profile_id: profileId,
         product_id,
         tariff_id,
@@ -742,7 +750,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     // PATCH F3: Dedup subscription — strict key: user/product/tariff/amount/flow/currency/3d
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existingSubOrder } = await (supabase as any)
+    let existingSubOrderQuery = (supabase as any)
       .from('orders_v2')
       .select('id, meta, created_at')
       .eq('user_id', user_id)
@@ -751,7 +759,11 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       .eq('status', 'pending')
       .eq('currency', 'BYN')
       .eq('final_price', amountByn)
-      .filter('meta->>payment_flow', 'eq', paymentFlow)
+      .filter('meta->>payment_flow', 'eq', paymentFlow);
+    existingSubOrderQuery = responsible_user_id
+      ? existingSubOrderQuery.eq('responsible_user_id', responsible_user_id)
+      : existingSubOrderQuery.is('responsible_user_id', null);
+    const { data: existingSubOrder } = await existingSubOrderQuery
       .is('meta->>checkout_expired', null)
       .gte('created_at', new Date(Date.now() - 3 * 86400000).toISOString())
       .order('created_at', { ascending: false })
@@ -956,6 +968,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       .insert({
         order_number: orderNumber,
         user_id,
+        responsible_user_id: responsible_user_id || null,
         profile_id: profileId,
         product_id,
         tariff_id,

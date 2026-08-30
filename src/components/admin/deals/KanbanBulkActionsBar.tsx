@@ -49,6 +49,7 @@ const EXPORT_COLUMNS: ExportColumn<BoardDeal>[] = [
   { header: "Сумма", getValue: (d) => Number(d.final_price || 0) },
   { header: "Валюта", getValue: (d) => d.currency || "BYN" },
   { header: "Контакт", getValue: (d) => d.contact_name || d.contact_email || "" },
+  { header: "Менеджер продажи", getValue: (d) => d.responsible_name || "Без менеджера" },
   { header: "Дата создания", getValue: (d) => d.created_at },
 ];
 

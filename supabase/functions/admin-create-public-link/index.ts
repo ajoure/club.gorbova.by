@@ -25,6 +25,7 @@ import {
 } from '../_shared/resolve-composable-checkout.ts';
 import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
 import { requirePaymentsEdit } from '../_shared/admin-section-auth.ts';
+import { resolveSalesManagerForCreation, SalesManagerSelectionError } from '../_shared/sales-manager-attribution.ts';
 import {
   resolveInstallmentRetryPolicy,
   resolveBepaidAttemptsValue,
@@ -81,6 +82,7 @@ interface CreatePublicLinkRequest {
   // SOT остаётся offer.meta → product.meta (см. shared resolveBusinessStream).
   business_stream?: string | null;
   composable_quote?: Record<string, unknown> | null;
+  responsible_user_id?: string | null;
 }
 
 // Phase 7-EXEC — Canonical resolver SOT.
@@ -110,6 +112,11 @@ Deno.serve(async (req) => {
     const isSuper = isSuperRole === true;
 
     const body: CreatePublicLinkRequest = await req.json();
+    const responsibleUserId = await resolveSalesManagerForCreation(
+      supabase,
+      user.id,
+      body.responsible_user_id,
+    );
     const {
       product_id, tariff_id, offer_id, amount,
       currency: rawCurrency,
@@ -813,6 +820,7 @@ Deno.serve(async (req) => {
         expires_at,
         user_id,
         created_by: user.id,
+        responsible_user_id: responsibleUserId,
         url_token,
         public_url,
         meta: linkMeta,
@@ -821,7 +829,7 @@ Deno.serve(async (req) => {
         account_code: linkAccountCodeColumn,
         provider_mode: providerMode,
       })
-      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta, provider, account_code, provider_mode')
+      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, responsible_user_id, meta, provider, account_code, provider_mode')
       .single();
 
     if (insertErr || !link) {
@@ -1031,6 +1039,9 @@ Deno.serve(async (req) => {
       row: link,
     });
   } catch (e) {
+    if (e instanceof SalesManagerSelectionError) {
+      return errorResponse(e.code, e.status);
+    }
     console.error('[admin-create-public-link] Unexpected error:', e);
     return errorResponse('Internal server error', 500);
   }

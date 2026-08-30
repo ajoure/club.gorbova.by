@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
@@ -35,6 +35,8 @@ import {
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -79,6 +81,8 @@ import { CallButton } from "./calls/CallButton";
 import { SmsButton } from "./sms/SmsButton";
 import { ComposeEmailDialog } from "./ComposeEmailDialog";
 import { PaymentReceiptButton } from "@/components/payments/PaymentReceiptButton";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useStaffOptions } from "@/hooks/useStaffOptions";
 
 import { InternalInstallmentBlock } from "@/components/installments/InternalInstallmentBlock";
 
@@ -123,6 +127,8 @@ const ACTION_LABELS: Record<string, string> = {
   "admin.revoke_access": "Отзыв доступа",
   "payment.success": "Успешная оплата",
   "payment.failed": "Ошибка оплаты",
+  "deal.sales_manager_changed": "Изменён менеджер продажи",
+  "deal_sales_manager_assigned_on_create": "Назначен менеджер продажи",
   "trial.started": "Начало триала",
   "trial.ended": "Окончание триала",
 };
@@ -133,6 +139,9 @@ const getActionLabel = (action: string): string => {
 
 export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }: DealDetailSheetProps) {
   const queryClient = useQueryClient();
+  const { hasPermission } = usePermissions();
+  const { data: staff = [] } = useStaffOptions();
+  const canReassignSales = hasPermission("deals.reassign");
   const navigate = useNavigate();
   const { selectedContact, contactSheetOpen, setContactSheetOpen, openContactSheet } = useLiveContactSheet();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -143,6 +152,36 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const [grantAccessDialogOpen, setGrantAccessDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("overview");
   const [composeEmailOpen, setComposeEmailOpen] = useState(false);
+  const [responsibleId, setResponsibleId] = useState("__unassigned__");
+  const [responsibleReason, setResponsibleReason] = useState("");
+
+  useEffect(() => {
+    setResponsibleId(deal?.responsible_user_id || "__unassigned__");
+    setResponsibleReason("");
+  }, [deal?.id, deal?.responsible_user_id]);
+
+  const reassignSalesMutation = useMutation({
+    mutationFn: async () => {
+      if (!deal?.id) throw new Error("Сделка не найдена");
+      if (!responsibleReason.trim()) throw new Error("Укажите причину изменения");
+      const { data, error } = await supabase.rpc("set_deal_responsible_v1", {
+        p_deal_id: deal.id,
+        p_responsible_user_id: responsibleId === "__unassigned__" ? null : responsibleId,
+        p_reason: responsibleReason.trim(),
+        p_source: "manual_reassignment",
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Менеджер продажи обновлён");
+      setResponsibleReason("");
+      queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+      queryClient.invalidateQueries({ queryKey: ["deals-board"] });
+      queryClient.invalidateQueries({ queryKey: ["deal-audit", deal?.id] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Не удалось изменить менеджера"),
+  });
 
 
 
@@ -310,7 +349,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       const { data: logs, error } = await supabase
         .from("audit_logs")
         .select("*")
-        .or(`meta->>order_id.eq.${deal.id},meta->>orderId.eq.${deal.id}`)
+        .or(`entity_id.eq.${deal.id},meta->>order_id.eq.${deal.id},meta->>orderId.eq.${deal.id}`)
         .order("created_at", { ascending: false })
         .limit(20);
       if (error) return [];
@@ -903,6 +942,42 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
+                <div className="space-y-2 rounded-lg border border-border/40 bg-muted/20 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm text-muted-foreground">Менеджер продажи</span>
+                    {!canReassignSales && (
+                      <span className="text-sm font-medium">
+                        {staff.find((item) => item.user_id === deal?.responsible_user_id)?.label || "Без менеджера"}
+                      </span>
+                    )}
+                  </div>
+                  {canReassignSales && (
+                    <>
+                      <Select value={responsibleId} onValueChange={setResponsibleId}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__unassigned__">Без менеджера</SelectItem>
+                          {staff.map((item) => (
+                            <SelectItem key={item.user_id} value={item.user_id}>{item.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        value={responsibleReason}
+                        onChange={(event) => setResponsibleReason(event.target.value)}
+                        placeholder="Причина изменения"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => reassignSalesMutation.mutate()}
+                        disabled={reassignSalesMutation.isPending || !responsibleReason.trim()}
+                      >
+                        {reassignSalesMutation.isPending && <RefreshCw className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                        Сохранить менеджера
+                      </Button>
+                    </>
+                  )}
+                </div>
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-sm text-muted-foreground shrink-0">Продукт</span>
                     <div className="text-right space-y-1">
@@ -1474,6 +1549,15 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                               {log.actor_profile.full_name || log.actor_profile.email || "Сотрудник"}
                               <ExternalLink className="w-3 h-3" />
                             </button>
+                          </div>
+                        )}
+                        {log.action === "deal.sales_manager_changed" && (
+                          <div className="text-xs text-muted-foreground">
+                            {(log.meta?.old_responsible_name || "Без менеджера")}
+                            {" → "}
+                            {(log.meta?.new_responsible_name || "Без менеджера")}
+                            {log.meta?.changed_payment_count != null && ` · платежей: ${log.meta.changed_payment_count}`}
+                            {log.meta?.reason && ` · ${log.meta.reason}`}
                           </div>
                         )}
                       </div>

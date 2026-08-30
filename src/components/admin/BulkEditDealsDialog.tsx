@@ -22,6 +22,9 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Edit, Loader2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useStaffOptions } from "@/hooks/useStaffOptions";
 
 interface BulkEditDealsDialogProps {
   open: boolean;
@@ -45,16 +48,22 @@ export function BulkEditDealsDialog({
   onSuccess,
 }: BulkEditDealsDialogProps) {
   const queryClient = useQueryClient();
+  const { hasPermission } = usePermissions();
+  const { data: staff = [] } = useStaffOptions();
+  const canBulkReassign = hasPermission("deals.reassign") && hasPermission("sales_attribution.bulk_edit");
 
   // Which fields to change
   const [changeStatus, setChangeStatus] = useState(false);
   const [changeProduct, setChangeProduct] = useState(false);
   const [changeTrial, setChangeTrial] = useState(false);
+  const [changeResponsible, setChangeResponsible] = useState(false);
 
   // New values
   const [newStatus, setNewStatus] = useState<string>("");
   const [newProductId, setNewProductId] = useState<string>("");
   const [newIsTrial, setNewIsTrial] = useState(false);
+  const [newResponsibleId, setNewResponsibleId] = useState("__unassigned__");
+  const [responsibleReason, setResponsibleReason] = useState("");
 
   // Fetch products for select
   const { data: products } = useQuery({
@@ -84,21 +93,37 @@ export function BulkEditDealsDialog({
         updates.is_trial = newIsTrial;
       }
 
-      if (Object.keys(updates).length === 0) {
+      if (Object.keys(updates).length === 0 && !changeResponsible) {
         throw new Error("Не выбраны поля для изменения");
       }
 
-      const { error } = await supabase
-        .from("orders_v2")
-        .update(updates as any)
-        .in("id", selectedIds);
+      if (changeResponsible) {
+        if (!canBulkReassign) throw new Error("Нет прав на массовое изменение менеджера продажи");
+        if (!responsibleReason.trim()) throw new Error("Укажите причину изменения менеджера");
+        const { error } = await supabase.rpc("set_deals_responsible_bulk_v1", {
+          p_deal_ids: selectedIds,
+          p_responsible_user_id: newResponsibleId === "__unassigned__" ? null : newResponsibleId,
+          p_reason: responsibleReason.trim(),
+          p_batch_id: crypto.randomUUID(),
+        });
+        if (error) throw error;
+      }
 
-      if (error) throw error;
+      if (Object.keys(updates).length > 0) {
+        const { error } = await supabase
+          .from("orders_v2")
+          .update(updates as any)
+          .in("id", selectedIds);
+
+        if (error) throw error;
+      }
       return selectedIds.length;
     },
     onSuccess: (count) => {
       toast.success(`Обновлено ${count} сделок`);
       resetForm();
+      queryClient.invalidateQueries({ queryKey: ["deals-board"] });
+      queryClient.invalidateQueries({ queryKey: ["deal-audit"] });
       onSuccess();
     },
     onError: (error: any) => {
@@ -110,15 +135,19 @@ export function BulkEditDealsDialog({
     setChangeStatus(false);
     setChangeProduct(false);
     setChangeTrial(false);
+    setChangeResponsible(false);
     setNewStatus("");
     setNewProductId("");
     setNewIsTrial(false);
+    setNewResponsibleId("__unassigned__");
+    setResponsibleReason("");
   };
 
   const hasChanges = 
     (changeStatus && newStatus) || 
     (changeProduct && newProductId) || 
-    changeTrial;
+    changeTrial ||
+    (changeResponsible && !!responsibleReason.trim());
 
   return (
     <Dialog open={open} onOpenChange={(v) => {
@@ -227,6 +256,33 @@ export function BulkEditDealsDialog({
                   {newIsTrial ? "Триал" : "Обычная сделка"}
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* Sales manager */}
+          <div className="flex items-start gap-3 p-3 rounded-xl bg-muted/30 border border-border/50">
+            <Checkbox
+              id="change-responsible"
+              checked={changeResponsible}
+              disabled={!canBulkReassign}
+              onCheckedChange={(checked) => setChangeResponsible(!!checked)}
+            />
+            <div className="flex-1 space-y-2">
+              <Label htmlFor="change-responsible" className="cursor-pointer">Менеджер продажи</Label>
+              <Select disabled={!changeResponsible} value={newResponsibleId} onValueChange={setNewResponsibleId}>
+                <SelectTrigger className="bg-background/50"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__unassigned__">Без менеджера</SelectItem>
+                  {staff.map((item) => <SelectItem key={item.user_id} value={item.user_id}>{item.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Input
+                disabled={!changeResponsible}
+                value={responsibleReason}
+                onChange={(event) => setResponsibleReason(event.target.value)}
+                placeholder="Причина переотнесения"
+              />
+              {!canBulkReassign && <p className="text-xs text-muted-foreground">Нет права на пакетное переотнесение.</p>}
             </div>
           </div>
         </div>

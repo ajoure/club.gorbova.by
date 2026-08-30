@@ -82,6 +82,20 @@ vi.mock("@/hooks/useHasRoleV2", () => ({
   useHasRoleV2: () => ({ hasRole: false, loading: false }),
 }));
 
+vi.mock("@/contexts/AuthContext", () => ({
+  useAuth: () => ({ user: { id: "staff-1" } }),
+}));
+
+vi.mock("@/hooks/usePermissions", () => ({
+  usePermissions: () => ({ hasPermission: () => true }),
+}));
+
+vi.mock("@/hooks/useStaffOptions", () => ({
+  useStaffOptions: () => ({
+    data: [{ user_id: "staff-1", label: "Тестовый менеджер", email: null }],
+  }),
+}));
+
 vi.mock("@/integrations/supabase/client", () => {
   const order = vi.fn(async () => ({ data: [], error: null }));
   const eq = vi.fn(() => ({ eq, order, maybeSingle: vi.fn(async () => ({ data: null, error: null })) }));
