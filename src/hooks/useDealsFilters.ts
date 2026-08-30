@@ -17,6 +17,7 @@ export interface DealsExtraFilters {
   stageId?: string | null;            // pipeline_stage_id
   contactProfileId?: string | null;   // exact profile_id
   contactEmail?: string | null;       // exact customer_email
+  salesManager?: string | null;       // user id or __unassigned__
   // advanced
   source?: string | null;             // meta->>source
   provider?: string | null;           // meta->>payment_provider
@@ -37,6 +38,7 @@ const KEYS = {
   stage: "stage",
   contactProfile: "contact_profile",
   contactEmail: "contact_email",
+  salesManager: "sales_manager",
   source: "source",
   provider: "provider",
   reconcileSource: "recon_src",
@@ -61,6 +63,7 @@ export function useDealsFilters() {
       stageId: searchParams.get(KEYS.stage) || null,
       contactProfileId: searchParams.get(KEYS.contactProfile) || null,
       contactEmail: searchParams.get(KEYS.contactEmail) || null,
+      salesManager: searchParams.get(KEYS.salesManager) || null,
       source: searchParams.get(KEYS.source) || null,
       provider: searchParams.get(KEYS.provider) || null,
       reconcileSource: searchParams.get(KEYS.reconcileSource) || null,
@@ -91,6 +94,7 @@ export function useDealsFilters() {
           if ("stageId" in patch) apply(KEYS.stage, patch.stageId);
           if ("contactProfileId" in patch) apply(KEYS.contactProfile, patch.contactProfileId);
           if ("contactEmail" in patch) apply(KEYS.contactEmail, patch.contactEmail);
+          if ("salesManager" in patch) apply(KEYS.salesManager, patch.salesManager);
           if ("source" in patch) apply(KEYS.source, patch.source);
           if ("provider" in patch) apply(KEYS.provider, patch.provider);
           if ("reconcileSource" in patch) apply(KEYS.reconcileSource, patch.reconcileSource);
@@ -129,6 +133,7 @@ export function useDealsFilters() {
     if (filters.priceMin != null || filters.priceMax != null) n++;
     if (filters.stageId) n++;
     if (filters.contactProfileId || filters.contactEmail) n++;
+    if (filters.salesManager) n++;
     if (filters.source) n++;
     if (filters.provider) n++;
     if (filters.reconcileSource) n++;

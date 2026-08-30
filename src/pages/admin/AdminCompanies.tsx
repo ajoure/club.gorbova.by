@@ -50,6 +50,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useLegalDetails, type ClientLegalDetails } from "@/hooks/useLegalDetails";
+import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
 import { BulkCreateDealsDialog } from "@/components/admin/deals/BulkCreateDealsDialog";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
@@ -214,6 +215,7 @@ interface CompanyOrder {
   final_price: number;
   currency: string;
   created_at: string;
+  responsible_user_id: string | null;
 }
 
 interface CompanyDocument {
@@ -1360,6 +1362,8 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
   onOpenCompany?: (companyId: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const { data: staff = [] } = useStaffOptions();
+  const staffNameById = useMemo(() => new Map(staff.map((item) => [item.user_id, item.label])), [staff]);
   const [selectedLinkedContactId, setSelectedLinkedContactId] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("profile");
@@ -1442,7 +1446,7 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
     queryFn: async (): Promise<CompanyOrder[]> => {
       const { data, error } = await supabase
         .from("orders_v2")
-        .select("id, order_number, status, final_price, currency, created_at")
+        .select("id, order_number, status, final_price, currency, created_at, responsible_user_id")
         .in("id", orderIds);
       if (error) throw error;
       return (data ?? []) as CompanyOrder[];
@@ -1865,7 +1869,7 @@ export function CompanyDetailsSheet({ companyId, canEdit: canEditPermission, onC
                 <TabsContent value="deals" className="mt-0 space-y-2">
                   {orderLinksQuery.isLoading && <Skeleton className="h-16 w-full" />}
                   {!orderLinksQuery.isLoading && orderLinksQuery.data?.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Сделок и заказов компании пока нет.</div>}
-                  {(orderLinksQuery.data ?? []).map((link) => { const order = ordersById.get(link.order_id); return <div key={link.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{order?.order_number ?? link.order_id}</span><Badge variant="outline">{link.relationship_role}</Badge></div><div className="mt-1 text-xs text-muted-foreground">{order ? `${order.status} · ${order.final_price} ${order.currency}` : "Заказ недоступен"}</div></div>; })}
+                  {(orderLinksQuery.data ?? []).map((link) => { const order = ordersById.get(link.order_id); const manager = order?.responsible_user_id ? staffNameById.get(order.responsible_user_id) : null; return <div key={link.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><span className="font-medium">{order?.order_number ?? link.order_id}</span><Badge variant="outline">{link.relationship_role}</Badge></div><div className="mt-1 text-xs text-muted-foreground">{order ? `${order.status} · ${order.final_price} ${order.currency}` : "Заказ недоступен"}</div><div className={manager ? "mt-1 text-xs text-muted-foreground" : "mt-1 text-xs text-amber-600"}>Менеджер продажи: {manager || "Без менеджера"}</div></div>; })}
                 </TabsContent>
                 <TabsContent value="tasks" className="mt-0">
                   <CrmTasksSection companyId={company.id} bare />

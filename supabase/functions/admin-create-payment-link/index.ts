@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { requirePaymentsEdit } from '../_shared/admin-section-auth.ts';
+import { resolveSalesManagerForCreation, SalesManagerSelectionError } from '../_shared/sales-manager-attribution.ts';
 
 interface CreatePaymentLinkRequest {
   user_id: string;
@@ -19,6 +20,7 @@ interface CreatePaymentLinkRequest {
   resolved_mode?: 'canonical' | 'override';
   cta_source?: 'admin_manual' | 'reminder' | 'contact_card' | 'telegram_combined' | string;
   cta_contract_version?: number;
+  responsible_user_id?: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -41,6 +43,7 @@ Deno.serve(async (req) => {
       payment_type, description, offer_id,
       replacement_of_subscription_v2_id,
       requested_payment_type, resolved_mode, cta_source, cta_contract_version,
+      responsible_user_id: requestedResponsibleUserId,
     } = body;
 
     if (!user_id || !product_id || !tariff_id || !amount) {
@@ -62,6 +65,12 @@ Deno.serve(async (req) => {
       return errorResponse('Invalid payment_type');
     }
 
+    const responsibleUserId = await resolveSalesManagerForCreation(
+      supabase,
+      user.id,
+      requestedResponsibleUserId,
+    );
+
     // Canonical origin for return URL: ВСЕГДА https://gorbova.by.
     // request origin/referer НЕ используем — админ может работать из Lovable preview.
     const origin = 'https://gorbova.by';
@@ -80,6 +89,7 @@ Deno.serve(async (req) => {
       origin,
       actor_user_id: user.id,
       actor_type: 'admin',
+      responsible_user_id: responsibleUserId,
       replacement_of_subscription_v2_id,
       meta_extra: {
         requested_payment_type: requested_payment_type || payment_type,
@@ -114,6 +124,9 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
+    if (error instanceof SalesManagerSelectionError) {
+      return errorResponse(error.code, error.status);
+    }
     console.error('[create-payment-link] Unexpected error:', error);
     return errorResponse('Internal server error', 500);
   }

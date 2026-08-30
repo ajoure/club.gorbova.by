@@ -9,6 +9,9 @@ import { Handshake, Loader2, User, Package, Coins, ChevronRight, X } from "lucid
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ContactPickerDialog, type PickedContact } from "@/components/admin/shared/pickers/ContactPickerDialog";
+import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useStaffOptions } from "@/hooks/useStaffOptions";
 
 interface CreateDealDialogProps {
   open: boolean;
@@ -24,6 +27,10 @@ interface Tariff { id: string; name: string; product_id: string }
 const CURRENCIES = ["BYN", "USD", "EUR", "RUB"];
 
 export function CreateDealDialog({ open, onOpenChange, onCreated }: CreateDealDialogProps) {
+  const { user } = useAuth();
+  const { hasPermission } = usePermissions();
+  const { data: staff = [] } = useStaffOptions();
+  const canReassign = hasPermission("deals.reassign");
   const [contact, setContact] = useState<PickedContact | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [title, setTitle] = useState("");
@@ -38,10 +45,12 @@ export function CreateDealDialog({ open, onOpenChange, onCreated }: CreateDealDi
   const [stages, setStages] = useState<Stage[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [tariffs, setTariffs] = useState<Tariff[]>([]);
+  const [responsibleId, setResponsibleId] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
+    if (user?.id) setResponsibleId(user.id);
     (async () => {
       const [pipesRes, stagesRes, prodRes, tariffRes] = await Promise.all([
         supabase.from("crm_pipelines").select("id,name").order("name"),
@@ -57,7 +66,7 @@ export function CreateDealDialog({ open, onOpenChange, onCreated }: CreateDealDi
         pipesRes.data?.find((p: Pipeline) => p.name === "Основная") ?? pipesRes.data?.[0];
       if (preferred) setPipelineId(preferred.id);
     })();
-  }, [open]);
+  }, [open, user?.id]);
 
   useEffect(() => {
     if (!pipelineId) return;
@@ -87,6 +96,7 @@ export function CreateDealDialog({ open, onOpenChange, onCreated }: CreateDealDi
     setCurrency("BYN");
     setProductId("__none__");
     setTariffId("__none__");
+    setResponsibleId(user?.id || "");
   };
 
   const submit = async () => {
@@ -101,7 +111,7 @@ export function CreateDealDialog({ open, onOpenChange, onCreated }: CreateDealDi
     }
     setSaving(true);
     try {
-      const { data, error } = await supabase.rpc("admin_create_deal", {
+      const { data, error } = await supabase.rpc("admin_create_deal_v2", {
         p_profile_id: contact.id,
         p_title: title || null,
         p_product_id: productId === "__none__" ? null : productId,
@@ -111,6 +121,7 @@ export function CreateDealDialog({ open, onOpenChange, onCreated }: CreateDealDi
         p_amount: numericAmount,
         p_currency: currency,
         p_notes: notes || null,
+        p_responsible_user_id: responsibleId || null,
       });
       if (error) {
         const msg = error.message || "";
@@ -190,6 +201,19 @@ export function CreateDealDialog({ open, onOpenChange, onCreated }: CreateDealDi
                       <ChevronRight className="h-4 w-4" />
                     </Button>
                   )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Менеджер продажи</Label>
+                  <Select value={responsibleId} onValueChange={setResponsibleId} disabled={!canReassign}>
+                    <SelectTrigger><SelectValue placeholder="Выберите сотрудника" /></SelectTrigger>
+                    <SelectContent>
+                      {staff.map((item) => (
+                        <SelectItem key={item.user_id} value={item.user_id}>{item.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!canReassign && <p className="text-[11px] text-muted-foreground">Новая сделка назначается на вас.</p>}
                 </div>
 
                 {/* Title */}

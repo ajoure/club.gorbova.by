@@ -155,6 +155,7 @@ export function LinkDetailsDrawer({
             label="Кто создал"
             value={`${link.creator_name || ""} ${link.creator_email ? `(${link.creator_email})` : ""}`.trim() || "—"}
           />
+          <DetailRow label="Менеджер продажи" value={link.responsible_name || link.responsible_email || "Без менеджера"} />
           <DetailRow label="Дата создания" value={format(new Date(link.created_at), "dd.MM.yyyy HH:mm")} />
 
           <Separator />

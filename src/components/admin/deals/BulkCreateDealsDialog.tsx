@@ -7,6 +7,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { usePipelines } from "@/hooks/usePipelines";
 import { useCrmTaskTypes } from "@/hooks/useCrmTasks";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
+import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -26,15 +28,16 @@ interface Props {
   onCreated?: (result: { created: number; skipped: number; created_ids: string[] }) => void;
 }
 
-const NONE = "__none__";
-
 export function BulkCreateDealsDialog({ open, onOpenChange, sourceType, sourceIds, defaultPipelineId, defaultStageId, onCreated }: Props) {
+  const { user } = useAuth();
+  const { hasPermission } = usePermissions();
+  const canReassign = hasPermission("deals.reassign");
   const { pipelines } = usePipelines();
   const { data: taskTypes = [] } = useCrmTaskTypes();
   const { data: staff = [] } = useStaffOptions();
   const [pipelineId, setPipelineId] = useState("");
   const [stageId, setStageId] = useState("");
-  const [responsibleId, setResponsibleId] = useState(NONE);
+  const [responsibleId, setResponsibleId] = useState("");
   const [titleTemplate, setTitleTemplate] = useState("{{name}}");
   const [campaignKey, setCampaignKey] = useState("");
   const [createTask, setCreateTask] = useState(true);
@@ -56,9 +59,10 @@ export function BulkCreateDealsDialog({ open, onOpenChange, sourceType, sourceId
 
   useEffect(() => {
     if (!open) return;
+    if (user?.id) setResponsibleId(user.id);
     const preferred = defaultPipelineId ?? pipelines.find((item) => item.is_default)?.id ?? pipelines[0]?.id ?? "";
     setPipelineId(preferred);
-  }, [defaultPipelineId, open, pipelines]);
+  }, [defaultPipelineId, open, pipelines, user?.id]);
 
   useEffect(() => {
     if (!open || stages.length === 0) return;
@@ -84,7 +88,7 @@ export function BulkCreateDealsDialog({ open, onOpenChange, sourceType, sourceId
         _source_ids: sourceIds,
         _pipeline_id: pipelineId,
         _stage_id: stageId,
-        _responsible_user_id: responsibleId === NONE ? null : responsibleId,
+        _responsible_user_id: responsibleId || user?.id || null,
         _title_template: titleTemplate.trim() || "{{name}}",
         _campaign_key: campaignKey.trim() || null,
         _task_type_id: createTask ? taskTypeId : null,
@@ -120,7 +124,7 @@ export function BulkCreateDealsDialog({ open, onOpenChange, sourceType, sourceId
         <div className="grid max-h-[65vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
           <div className="space-y-1.5"><Label className="text-xs text-muted-foreground">Воронка</Label><Select value={pipelineId} onValueChange={(value) => { setPipelineId(value); setStageId(""); }}><SelectTrigger className="h-9"><SelectValue /></SelectTrigger><SelectContent>{pipelines.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></div>
           <div className="space-y-1.5"><Label className="text-xs text-muted-foreground">Стадия</Label><Select value={stageId} onValueChange={setStageId} disabled={stagesLoading}><SelectTrigger className="h-9"><SelectValue placeholder="Выберите стадию" /></SelectTrigger><SelectContent>{stages.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></div>
-          <div className="space-y-1.5"><Label className="text-xs text-muted-foreground">Ответственный</Label><Select value={responsibleId} onValueChange={setResponsibleId}><SelectTrigger className="h-9"><SelectValue /></SelectTrigger><SelectContent><SelectItem value={NONE}>Не назначен</SelectItem>{staff.map((item) => <SelectItem key={item.user_id} value={item.user_id}>{item.label}</SelectItem>)}</SelectContent></Select></div>
+          <div className="space-y-1.5"><Label className="text-xs text-muted-foreground">Менеджер продажи</Label><Select value={responsibleId} onValueChange={setResponsibleId} disabled={!canReassign}><SelectTrigger className="h-9"><SelectValue placeholder="Выберите сотрудника" /></SelectTrigger><SelectContent>{staff.map((item) => <SelectItem key={item.user_id} value={item.user_id}>{item.label}</SelectItem>)}</SelectContent></Select></div>
           <div className="space-y-1.5"><Label className="text-xs text-muted-foreground">Кампания — защита от дублей</Label><Input className="h-9" value={campaignKey} onChange={(event) => setCampaignKey(event.target.value)} placeholder="Например: обзвон-июль-2026" /></div>
           <div className="space-y-1.5 sm:col-span-2"><Label className="text-xs text-muted-foreground">Название сделки</Label><Input className="h-9" value={titleTemplate} onChange={(event) => setTitleTemplate(event.target.value)} placeholder="Первичный звонок — {{name}}" /><p className="text-[11px] text-muted-foreground">Маркер {"{{name}}"} заменится именем контакта или названием компании.</p></div>
 

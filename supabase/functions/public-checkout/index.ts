@@ -370,6 +370,7 @@ Deno.serve(async (req) => {
       offer_id: link.offer_id || undefined,
       origin,
       actor_type: 'system',
+      responsible_user_id: link.responsible_user_id || null,
       replacement_of_subscription_v2_id: replacement_of_subscription_v2_id || undefined,
       meta_extra: {
         payment_link_id: link.id,

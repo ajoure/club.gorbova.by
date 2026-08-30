@@ -22,6 +22,7 @@ import { ru } from "date-fns/locale";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 import { getDealCommercialAmount } from "@/lib/payments/composableDealAmount";
+import { useStaffOptions } from "@/hooks/useStaffOptions";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -327,6 +328,8 @@ function DealRow({
   onEdit: () => void;
   onRefund: () => void;
 }) {
+  const { data: staff = [] } = useStaffOptions();
+  const responsibleName = staff.find((item) => item.user_id === deal.responsible_user_id)?.label;
   const meta = (deal.meta || {}) as Record<string, any>;
   const snapshot = (deal.purchase_snapshot || {}) as Record<string, any>;
   const dealMonth = formatDealMonth(meta.deal_month);
@@ -377,6 +380,9 @@ function DealRow({
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
             <CalendarIcon className="w-2.5 h-2.5" />
             <span>{format(new Date(getEffectiveDealDate(deal)), "dd.MM.yy HH:mm")}</span>
+          </div>
+          <div className={deal.responsible_user_id ? "text-[11px] text-muted-foreground" : "text-[11px] text-amber-600"}>
+            {responsibleName || "Без менеджера"}
           </div>
         </div>
       </div>

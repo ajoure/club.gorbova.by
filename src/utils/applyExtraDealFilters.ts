@@ -37,6 +37,12 @@ export function applyExtraDealFilters<T extends any>(query: T, f: DealsExtraFilt
     q = q.eq("customer_email", f.contactEmail);
   }
 
+  if (f.salesManager === "__unassigned__") {
+    q = q.is("responsible_user_id", null);
+  } else if (f.salesManager) {
+    q = q.eq("responsible_user_id", f.salesManager);
+  }
+
   // Advanced
   if (f.source) {
     q = q.eq("meta->>source", f.source);

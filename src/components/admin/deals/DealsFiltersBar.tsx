@@ -16,6 +16,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import type { DealsExtraFilters } from "@/hooks/useDealsFilters";
+import { useStaffOptions } from "@/hooks/useStaffOptions";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "paid", label: "Оплачен" },
@@ -181,6 +182,7 @@ export function DealsFiltersBar({
   activeCount,
   pipelineStages = [],
 }: DealsFiltersBarProps) {
+  const { data: staff = [] } = useStaffOptions();
   const [open, setOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(filters.includeSynthetic || !!filters.source || !!filters.provider || !!filters.reconcileSource);
 
@@ -329,6 +331,21 @@ export function DealsFiltersBar({
                 </div>
               </>
             )}
+
+            <Separator />
+
+            <div className="space-y-2">
+              <Label className="text-xs">Менеджер продажи</Label>
+              <select
+                value={filters.salesManager || ""}
+                onChange={(event) => onChange({ salesManager: event.target.value || null })}
+                className="w-full h-8 text-xs rounded-md border border-input bg-background px-2"
+              >
+                <option value="">Любой</option>
+                <option value="__unassigned__">Без менеджера</option>
+                {staff.map((item) => <option key={item.user_id} value={item.user_id}>{item.label}</option>)}
+              </select>
+            </div>
 
             <Separator />
 

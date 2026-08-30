@@ -28,6 +28,7 @@ import { LinkDetailsDrawer } from "./LinkDetailsDrawer";
 import { AdminPaymentLinkDialog } from "@/components/admin/AdminPaymentLinkDialog";
 import { EditPaymentLinkDialog } from "./EditPaymentLinkDialog";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
+import { useStaffOptions } from "@/hooks/useStaffOptions";
 
 type StatusFilter = "all" | "active" | "invalidated" | "expired" | "exhausted";
 type TypeFilter = "all" | "one_time" | "subscription";
@@ -41,6 +42,7 @@ export function LinksTabContent() {
   const access = useAdminAccess();
   const canEditPayments = access.canAccessSection("payments", "edit");
   const { data: links, isLoading, refetch, isFetching } = usePaymentLinks();
+  const { data: staff = [] } = useStaffOptions();
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -48,6 +50,7 @@ export function LinksTabContent() {
   const [assignFilter, setAssignFilter] = useState<AssignFilter>("all");
   const [paidFilter, setPaidFilter] = useState<PaidFilter>("all");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
+  const [managerFilter, setManagerFilter] = useState("all");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [detailsLink, setDetailsLink] = useState<PaymentLinkRow | null>(null);
@@ -69,6 +72,8 @@ export function LinksTabContent() {
       if (assignFilter === "unassigned" && l.user_id) return false;
       if (paidFilter === "paid" && (l.paid_orders_count ?? 0) === 0) return false;
       if (paidFilter === "unpaid" && (l.paid_orders_count ?? 0) > 0) return false;
+      if (managerFilter === "unassigned" && l.responsible_user_id) return false;
+      if (managerFilter !== "all" && managerFilter !== "unassigned" && l.responsible_user_id !== managerFilter) return false;
 
       // Phase 1 Stripe Integration — provider filter (All | bePaid | Stripe)
       if (providerFilter !== "all") {
@@ -80,13 +85,14 @@ export function LinksTabContent() {
         const hay = [
           l.url_token, l.product_name, l.tariff_name, l.offer_title,
           l.recipient_email, l.recipient_name, l.creator_email, l.creator_name,
+          l.responsible_name, l.responsible_email,
           l.description,
         ].filter(Boolean).join(" ").toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [links, search, statusFilter, typeFilter, assignFilter, paidFilter, providerFilter]);
+  }, [links, search, statusFilter, typeFilter, assignFilter, paidFilter, providerFilter, managerFilter]);
 
   const invalidateMutation = useMutation({
     mutationFn: async (link: PaymentLinkRow) => {
@@ -168,6 +174,15 @@ export function LinksTabContent() {
           </SelectContent>
         </Select>
 
+        <Select value={managerFilter} onValueChange={setManagerFilter}>
+          <SelectTrigger className="h-9 w-[190px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все менеджеры</SelectItem>
+            <SelectItem value="unassigned">Без менеджера</SelectItem>
+            {staff.map((item) => <SelectItem key={item.user_id} value={item.user_id}>{item.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+
         {/* Phase 1 Stripe Integration — provider filter (All | bePaid | Stripe) */}
         <Select value={providerFilter} onValueChange={(v) => setProviderFilter(v as ProviderFilter)}>
           <SelectTrigger className="h-9 w-[150px]"><SelectValue /></SelectTrigger>
@@ -197,7 +212,7 @@ export function LinksTabContent() {
       {/* Table */}
       <div className="rounded-md border bg-card">
         <div data-table-scroll-x="true" className="table-scroll-x">
-        <Table style={{ minWidth: 1100 }}>
+        <Table style={{ minWidth: 1260 }}>
           <TableHeader>
             <TableRow>
               <TableHead className="w-[140px]">Создана</TableHead>
@@ -207,6 +222,7 @@ export function LinksTabContent() {
               <TableHead className="text-right">Сумма</TableHead>
               <TableHead>Получатель</TableHead>
               <TableHead>Создал</TableHead>
+              <TableHead>Менеджер продажи</TableHead>
               <TableHead className="text-center">Использовано</TableHead>
               <TableHead className="text-center">Оплат</TableHead>
               <TableHead>Истекает</TableHead>
@@ -215,14 +231,14 @@ export function LinksTabContent() {
           </TableHeader>
           <TableBody>
             {isLoading && (
-              <TableRow><TableCell colSpan={11}>
+              <TableRow><TableCell colSpan={12}>
                 <div className="space-y-2 py-2">
                   {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
                 </div>
               </TableCell></TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
-              <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-10">
+              <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground py-10">
                 <Link2 className="h-8 w-8 mx-auto mb-2 opacity-40" />
                 Ссылки не найдены
               </TableCell></TableRow>
@@ -255,6 +271,9 @@ export function LinksTabContent() {
                 </TableCell>
                 <TableCell className="text-xs">
                   <div className="truncate max-w-[140px]">{l.creator_name || l.creator_email || "—"}</div>
+                </TableCell>
+                <TableCell className={l.responsible_user_id ? "text-xs" : "text-xs text-amber-600"}>
+                  <div className="truncate max-w-[160px]">{l.responsible_name || l.responsible_email || "Без менеджера"}</div>
                 </TableCell>
                 <TableCell className="text-center text-xs">
                   {l.current_uses}{l.max_uses != null ? ` / ${l.max_uses}` : ""}

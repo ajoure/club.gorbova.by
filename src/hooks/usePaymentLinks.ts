@@ -40,6 +40,9 @@ export interface PaymentLinkRow {
   account_code: string | null;
   profile_code: string | null;
   business_stream: string | null;
+  responsible_user_id: string | null;
+  responsible_name: string | null;
+  responsible_email: string | null;
 }
 
 const PAYMENT_LINKS_QUERY_KEY = ["payment-links-enriched"] as const;

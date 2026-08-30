@@ -55,6 +55,9 @@ import {
   mapSiblingAddonOfferIds,
   type ComposableAddonRef,
 } from "@/utils/mapSiblingAddonOfferIds";
+import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useStaffOptions } from "@/hooks/useStaffOptions";
 /**
  * mode:
  *   - "contact" (default) — текущее поведение: ссылка привязывается к контакту,
@@ -183,6 +186,10 @@ export function AdminPaymentLinkDialog({
   telegramUserId,
   mode = "contact",
 }: AdminPaymentLinkDialogProps) {
+  const { user } = useAuth();
+  const { hasPermission } = usePermissions();
+  const { data: staff = [] } = useStaffOptions();
+  const canReassignSales = hasPermission("deals.reassign");
   const isPublicMode = mode === "public";
   // В public-режиме Telegram-цепочка и contact-блок не должны рендериться.
   const effectiveTelegramUserId = isPublicMode ? null : telegramUserId;
@@ -202,6 +209,7 @@ export function AdminPaymentLinkDialog({
   const [description, setDescription] = useState("");
   const [paymentType, setPaymentType] = useState<PaymentType>("one_time");
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
+  const [responsibleId, setResponsibleId] = useState("");
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [conflictData, setConflictData] = useState<any>(null);
   const [replaceStep, setReplaceStep] = useState<
@@ -247,6 +255,9 @@ export function AdminPaymentLinkDialog({
   const [providerModeChoice, setProviderModeChoice] = useState<
     "auto" | "customer_choice" | "bepaid" | "stripe"
   >("auto");
+  useEffect(() => {
+    if (open && user?.id) setResponsibleId(user.id);
+  }, [open, user?.id]);
   // Phase 5-D — super_admin может выбрать provider, даже если он не в offer.allowed_payment_providers.
   const { hasRole: isSuperAdmin } = useHasRoleV2("super_admin");
 
@@ -863,6 +874,7 @@ ${amountLine}
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "admin_manual",
             cta_contract_version: 1,
+            responsible_user_id: responsibleId || user?.id,
           },
         }
       );
@@ -1068,6 +1080,7 @@ ${amountLine}
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "admin_manual",
             cta_contract_version: 1,
+            responsible_user_id: responsibleId || user?.id,
           },
         }
       );
@@ -1144,6 +1157,7 @@ ${amountLine}
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "admin_manual",
             cta_contract_version: 1,
+            responsible_user_id: responsibleId || user?.id,
             composable_quote: composableSnapshot,
             // Stage L: installment payload (writer ignore-ит, если поля null/false).
             ...(isInstallmentOffer && selectedInstallmentMonths
@@ -1231,6 +1245,7 @@ ${amountLine}
           // контролируемая администратором корректировка итоговой суммы.
           adjustment_amount: siblingComposableAdjustment,
           adjustment_reason: adjustmentReason.trim() || null,
+          responsible_user_id: responsibleId || user?.id,
         },
       });
       if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
@@ -1284,6 +1299,7 @@ ${amountLine}
           target_user_id: userId,
           adjustment_amount: siblingComposableAdjustment,
           adjustment_reason: siblingComposableAdjustment === 0 ? null : adjustmentReason.trim(),
+          responsible_user_id: responsibleId || user?.id,
         },
       });
       if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
@@ -1372,6 +1388,7 @@ ${amountLine}
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "telegram_combined",
             cta_contract_version: 1,
+            responsible_user_id: responsibleId || user?.id,
             composable_quote: composableSnapshot,
             ...(isInstallmentOffer && selectedInstallmentMonths
               ? {
@@ -1592,6 +1609,21 @@ ${amountLine}
                   <p className="text-sm text-muted-foreground truncate">{userEmail}</p>
                 </div>
               )}
+
+              <div className="rounded-lg border bg-card p-4 space-y-2">
+                <Label>Менеджер продажи</Label>
+                <Select value={responsibleId} onValueChange={setResponsibleId} disabled={!canReassignSales}>
+                  <SelectTrigger><SelectValue placeholder="Выберите сотрудника" /></SelectTrigger>
+                  <SelectContent>
+                    {staff.map((item) => (
+                      <SelectItem key={item.user_id} value={item.user_id}>{item.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Сохранится в ссылке и перейдёт в сделку и связанные платежи.
+                </p>
+              </div>
 
               {/* Product */}
               <div className="rounded-lg border bg-card p-4 space-y-2">

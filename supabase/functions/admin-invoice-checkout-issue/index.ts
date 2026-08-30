@@ -28,6 +28,7 @@ import { allocateComposablePayableTotal } from "../_shared/composable-checkout.t
 import { materializeComposableOrderGroup } from "../_shared/materialize-composable-order-group.ts";
 import { buildPurchaseCompositionTitle } from "../_shared/purchase-composition-title.ts";
 import { requirePaymentsEdit } from "../_shared/admin-section-auth.ts";
+import { resolveSalesManagerForCreation, SalesManagerSelectionError } from "../_shared/sales-manager-attribution.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -52,6 +53,7 @@ interface IssueBody {
   payer_type?: "legal_entity" | "entrepreneur" | "individual";
   adjustment_amount?: number;
   adjustment_reason?: string | null;
+  responsible_user_id?: string | null;
 }
 
 function buildRequisitesSnapshot(row: Record<string, unknown>) {
@@ -91,6 +93,13 @@ Deno.serve(async (req) => {
 
   if (!body?.target_user_id || !body?.product_id || !body?.offer_id) {
     return json({ error: "missing_fields" }, 400);
+  }
+  let responsibleUserId: string;
+  try {
+    responsibleUserId = await resolveSalesManagerForCreation(admin, actor.id, body.responsible_user_id);
+  } catch (error) {
+    if (error instanceof SalesManagerSelectionError) return json({ error: error.code }, error.status);
+    return json({ error: "sales_manager_rbac_check_failed" }, 500);
   }
 
   // Target profile
@@ -253,6 +262,7 @@ Deno.serve(async (req) => {
     order_number: orderNumber,
     profile_id: targetProfile.id,
     user_id: targetProfile.user_id,
+    responsible_user_id: responsibleUserId,
     product_id: product.id,
     tariff_id: tariff.id,
     offer_id: offer.id,

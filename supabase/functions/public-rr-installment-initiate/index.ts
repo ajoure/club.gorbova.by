@@ -57,6 +57,7 @@ import { allocateComposablePayableTotal } from "../_shared/composable-checkout.t
 import { referralDiscountMeta, resolveReferralCheckoutDiscount } from "../_shared/referral-checkout-discount.ts";
 import { reserveReferralCustomerCredit } from "../_shared/referral-customer-credit.ts";
 import { requirePaymentsEdit } from "../_shared/admin-section-auth.ts";
+import { resolveSalesManagerForCreation, SalesManagerSelectionError } from "../_shared/sales-manager-attribution.ts";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -76,6 +77,7 @@ interface InitiatePayload {
   customer_credit_requested_minor?: number;
   partner_bonus_requested_minor?: number;
   partner_bonus_checkout_key?: string;
+  responsible_user_id?: string | null;
 }
 
 function normalizePhone(raw: string): string {
@@ -269,9 +271,14 @@ Deno.serve(async (req: Request) => {
   const hasTargetUserField = Object.prototype.hasOwnProperty.call(body, "target_user_id");
   const hasAdjustmentAmountField = Object.prototype.hasOwnProperty.call(body, "adjustment_amount");
   const hasAdjustmentReasonField = Object.prototype.hasOwnProperty.call(body, "adjustment_reason");
-  const adminMode = hasTargetUserField || hasAdjustmentAmountField || hasAdjustmentReasonField;
+  const hasResponsibleUserField = Object.prototype.hasOwnProperty.call(body, "responsible_user_id");
+  const adminMode = hasTargetUserField
+    || hasAdjustmentAmountField
+    || hasAdjustmentReasonField
+    || hasResponsibleUserField;
 
   let adminActorId: string | null = null;
+  let responsibleUserId: string | null = null;
   let userId: string | null = null;
   let nameRaw = String(body.name ?? "").trim().slice(0, 200);
   let phoneRaw = String(body.phone ?? "").trim().slice(0, 64);
@@ -285,6 +292,16 @@ Deno.serve(async (req: Request) => {
         : errorResponse("admin_fields_forbidden", 403);
     }
     adminActorId = access.actor.id;
+    try {
+      responsibleUserId = await resolveSalesManagerForCreation(
+        supabaseAdmin,
+        access.actor.id,
+        body.responsible_user_id,
+      );
+    } catch (error) {
+      if (error instanceof SalesManagerSelectionError) return errorResponse(error.code, error.status);
+      return errorResponse("sales_manager_rbac_check_failed", 500);
+    }
     const targetUserId = String(body.target_user_id ?? "").trim();
     if (!UUID_RE.test(targetUserId)) return errorResponse("target_user_id_invalid", 400);
 
@@ -449,6 +466,7 @@ Deno.serve(async (req: Request) => {
     quoted_total: composableQuote.total,
     payable_total: amountNumeric,
     currency: composableQuote.currency,
+    responsible_user_id: responsibleUserId,
   }));
   const materializationQuote = allocateComposablePayableTotal(
     composableQuote,
@@ -542,6 +560,7 @@ Deno.serve(async (req: Request) => {
     ...(adminMode ? {
       admin_actor_id: adminActorId,
       admin_target_user_id: userId,
+      responsible_user_id: responsibleUserId,
     } : {}),
     grant_access_skip: true,
     notification_skip: true,
@@ -601,6 +620,17 @@ Deno.serve(async (req: Request) => {
   }
   const { order_id: externalId, was_reused: wasReused } = rpcData[0] as any;
   if (adminMode) {
+    const { error: managerError } = await supabaseAdmin.rpc("set_deal_responsible_v1", {
+      p_deal_id: externalId,
+      p_responsible_user_id: responsibleUserId,
+      p_reason: "Назначено при создании RR-ссылки",
+      p_source: "manual_reassignment",
+      p_batch_id: null,
+    });
+    if (managerError) {
+      console.error(JSON.stringify({ stage: "sales_manager_assignment", order_id: externalId, error: managerError.message }));
+      return errorResponse("sales_manager_assignment_failed", 500);
+    }
     const { error: adminAuditError } = await supabaseAdmin.from("audit_logs").insert({
       action: "rr.admin_payment_link_initiated",
       actor_type: "user",
