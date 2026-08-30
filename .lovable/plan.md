@@ -1,75 +1,71 @@
-# План: production rollout PR #388 (счёт-акт, сумма прописью)
+# План: deploy PR #389 (единый контракт malformed JWT для live-функций)
 
-Режим написания плана: PLAN-ONLY. Ничего не изменено, деплой и Publish не выполнялись.
+Режим: PLAN-ONLY / READ-ONLY. Ничего не изменено, deploy и Publish не выполнялись.
 
-## Факты discovery (read-only)
+## 1. Синхронизация дерева — PASS
 
-- SHA `478d6985fd26870d0ccec53e33715df011fd1200` — текущий HEAD рабочего дерева, дерево чистое, коммит `fix(documents): canonicalize invoice-act kopecks (#388)`.
-- Состав коммита: изменены `_shared/document-render.ts`, `canonical-document-generate-strict/index.ts`, `document-auto-generate/index.ts`, `generate-from-template/index.ts`; удалены целиком `generate-invoice-act/` (index.ts) и `generate-document-pdf/` (index.ts + встроенный `template.docx`); тесты обновлены.
-- Миграций в коммите нет. Изменений фронтенда нет (только тесты в `src/test`).
-- В коде нет ни одного вызова удалённых функций (единственные упоминания — тест-гард и старая миграция).
-- В БД `edge_functions_registry` до сих пор помечены `enabled=true, must_exist=true`: `generate-invoice-act`, `generate-document-pdf`, `generate-from-template`, `document-auto-generate`, `send-invoice`. Это значит, что nightly health-check будет ругаться на отсутствие удалённых функций.
-- Активные шаблоны счёт-акта (`document_type='act'`, `is_active=true`): ФЛ `7caee05d…`, ЮЛ `4fa3160f…`, ИП `bcf5e015…` — у каждого свой `current_version_id`. За 60 дней документы писались только через эти три шаблона (+ «Отчёт об израсходованных денежных средствах»), других генераторов счёт-акта не видно.
-- `canonical-document-generate-strict` поддерживает `mode='preview'`, который резолвит токены и возвращает `resolved_tokens`/`source_trace` **без** вызова `allocate_document_number` (номер резервируется только в `mode='generate'`) и без записи в `ai_generated_documents`. Это и есть безопасная контрольная проверка.
+- HEAD = `f14740a69575514857e493c240e2bd6622b16582` (merge PR #389), родители `a6ccf68f7` / `dc32cc8c1`.
+- `git status --porcelain` пустой — WIP-коммитов и незакоммиченных изменений нет.
+- `git diff --exit-code f14740a69 -- .` → PASS, tree `24d05d43a9e161da5d7183fb63e9ebac4e7737a4`.
+- `src/integrations/supabase/types.ts` содержит `PostgrestVersion: "14.5"` — авто-регенерации types.ts в этот раз не произошло.
 
-## Что деплоить
+## 2. Сверка исходников — PASS
 
-Канонический Lovable deploy ровно четырёх функций из этого SHA (с checked-in shared imports из `supabase/functions/_shared/`):
+Состав коммита `a6ccf68f7` ровно 5 файлов, без миграций и без frontend-логики:
 
-1. `canonical-document-generate-strict` — основной production-путь счёт-акта.
-2. `document-auto-generate` — автогенерация.
-3. `generate-from-template` — legacy-контрактный путь, ещё живой.
-4. Пересборка shared-модуля `_shared/amount-with-words.ts` + `_shared/document-render.ts` происходит вместе с каждой из функций (отдельного деплоя не требует).
+| файл | роль |
+|---|---|
+| `supabase/functions/_shared/live-auth-claims.ts` | новый helper `verifyLiveBearerClaims` |
+| `supabase/functions/live-resolve/index.ts` | переход на helper |
+| `supabase/functions/live-events-list/index.ts` | переход на helper |
+| `supabase/functions/live-session-heartbeat/index.ts` | переход на helper |
+| `src/test/liveResolveAuthContract.test.ts` | контрактный тест (только тест) |
 
-Ничего больше не деплоить: `canonical-document-send`, `document-download`, `invoice-*` не менялись.
+Helper нормализует оба исхода Supabase Auth (возврат `error` и throw при парсинге повреждённого JWT) в `{ userId: null, error }`, поэтому вызывающая сторона отдаёт 401 вместо 500. В `live-resolve` проверка стоит в блоке «3. Auth check» после резолва события; правила доступа, invite-mode и room-gate не менялись.
 
-## Удаление устаревших функций
+## 3. Production queue — PASS
 
-Директории уже удалены из репозитория, но в Supabase они, вероятно, ещё развёрнуты. Порядок:
+Единственная запись с `room_state='opened'` — `testiruem-kartinku-do-veba` (`status='scheduled'`). Второго opened/live эфира и реальных боевых эфиров нет.
 
-1. Проверить логи `generate-invoice-act`, `generate-document-pdf` и `send-invoice` за последние 14 дней. Ноль вызовов — обязательное условие.
-2. Только при нулевых вызовах удалить развёрнутые `generate-invoice-act` и `generate-document-pdf` через канонический delete-инструмент. `send-invoice` в этом SHA не удалялся — оставить как есть.
-3. Синхронизировать `edge_functions_registry`: снять `must_exist`/`enabled` с двух удалённых имён отдельной managed-миграцией (это единственное изменение БД в рамках rollout; выполняется после подтверждения нулевых вызовов). Без этого шага nightly health-check начнёт давать ложные FAIL.
-4. `supabase/functions.registry.txt` уже не содержит удалённых имён — правок не нужно.
+## 4. Baseline текущих deployed-контрактов (безопасные пробы, без записи данных)
 
-## Подтверждение единственного канонического шаблона
+| функция | OPTIONS | без JWT | malformed JWT |
+|---|---|---|---|
+| `live-events-list` | 200 | 401 | 401 |
+| `live-session-heartbeat` | 200 | 401 | 401 |
+| `live-resolve` | 200 | 400 `slug is required` | 400 `slug is required` |
 
-- Read-only: перечислить активные шаблоны `document_type='act'` и убедиться, что счёт-актов ровно три (ФЛ/ЮЛ/ИП) и у каждого ровно один `current_version_id`.
-- Проверить, что за последние 30 дней `ai_generated_documents` для контекста заказов ссылается только на эти `template_id` и на `template_version_id`, равный `current_version_id`.
-- Проверить, что удалённый встроенный DOCX больше не встречается: в `generate-document-pdf` больше нет `template.docx`, а все пути рендера идут через `_shared/document-render.ts`.
+Важно: `live-resolve` читает `slug` из query-string, а аутентификация проверяется **после** резолва события и пишет audit-строку (`live_access_attempt`). Поэтому проба с реальным slug в read-only режиме намеренно не выполнялась — она создала бы запись в audit-логе. Контракт 401 для `live-resolve` фиксируется post-deploy (см. п.6), где одна audit-запись допустима и заранее объявлена.
 
-## Безопасная контрольная генерация (без отправки и без расхода номера)
+## 5. План execute
 
-Возможна и рекомендуется в таком виде:
+1. Гейты перед действием: HEAD ровно `f14740a69`, дерево чистое, `tsgo --noEmit` PASS, `bun run build` PASS, `vitest run src/test/liveResolveAuthContract.test.ts` PASS, очередь без второго opened/live эфира.
+2. Снять baseline-счётчики: `count(live_active_sessions)`, `count(live_event_replies)` (сейчас 1421 / 27), а также число audit-записей `live_access_attempt` за сутки.
+3. Deploy ровно трёх функций: `live-resolve`, `live-events-list`, `live-session-heartbeat`. Shared-модуль `_shared/live-auth-claims.ts` уезжает вместе с каждой из них и отдельного деплоя не требует.
+4. Никаких миграций, никаких изменений RLS/GRANT/данных, Publish фронтенда не выполняется (в PR нет изменений `src/` кроме теста).
 
-1. Выбрать уже оплаченный реальный заказ, у которого счёт-акт **уже сформирован** ранее (номер уже израсходован), с суммой, содержащей копейки (например `…,74`, `…,01`, `…,11`).
-2. Вызвать `canonical-document-generate-strict` с `mode='preview'` под сервисной/админской авторизацией. Ответ содержит `resolved_tokens` — проверить токен суммы прописью на формат «100 (сто) рублей, 74 копейки» с правильным склонением. Номер не выделяется, файл не пишется, `ai_generated_documents` не растёт.
-3. При необходимости полного файлового доказательства — повторный `mode='generate'` с **тем же** `idempotency_key`, что у уже существующего документа: функция возвращает существующую запись и не выделяет новый номер. Новый номер расходовать не требуется.
-4. Отправка клиенту не выполняется ни в одном шаге: `canonical-document-send` не вызывается.
+## 6. Read-back после deploy (доказательство)
 
-## Порядок исполнения
+Для каждой из трёх функций:
 
-1. Гейты: exact SHA `478d6985f`, чистое дерево, `tsgo --noEmit` PASS, `vite build` PASS, `vitest` по `src/test/invoiceActCanonicalAmountWords.test.ts` PASS.
-2. Логи по трём legacy-функциям за 14 дней (read-only).
-3. Deploy четырёх функций.
-4. Read-back деплоя: OPTIONS/CORS 200, вызов без JWT 401 для каждой задеплоенной функции.
-5. Preview-проверка суммы прописью на 3–4 суммах (`,74`, `,01`, `,11`, `,00`).
-6. Удаление двух устаревших функций + миграция синхронизации реестра.
-7. Read-back: реестр не содержит `must_exist` для удалённых, nightly health-check не даёт новых FAIL.
-8. Publish фронтенда не требуется (в SHA нет изменений `src/` кроме тестов) — выполнять только если пользователь явно попросит выровнять фронтенд-SHA.
+- `OPTIONS` → 200 с CORS-заголовками.
+- POST/GET без `Authorization` → 401 (`auth_required`).
+- POST/GET с `Authorization: Bearer not.a.jwt` → **401**, не 500; для `live-resolve` проба идёт с `?slug=testiruem-kartinku-do-veba`.
+- Логи функций не содержат неперехваченных исключений парсинга JWT.
+
+Инвариантность данных:
+
+- `count(live_active_sessions)` = 1421 (delta 0), `count(live_event_replies)` = 27 (delta 0).
+- `live_events` для `testiruem-kartinku-do-veba` не меняет `room_state`, `status`, `room_opened_at`, `live_started_at`.
+- Единственная допустимая новая запись — до двух audit-строк `live_access_attempt` с `reason='invalid_token'`/`no_auth_header` от контрактных проб.
 
 ## Stop conditions
 
-- SHA не совпадает, дерево не чистое, typecheck/build/тесты FAIL.
-- Любой вызов `generate-invoice-act` или `generate-document-pdf` в логах за 14 дней → удаление не выполняется, деплой остальных функций допустим.
-- Ошибка деплоя любой из четырёх функций → откат к предыдущей версии, дальше не идти.
-- Preview показывает пустой/некорректный токен суммы прописью или `can_generate=false` для контрольного заказа.
-- Появление незапланированного DDL/DML, изменение `document_templates`, рост `ai_generated_documents` или `document_number_sequences` во время проверок.
-- Любой critical finding сканера в scope документов.
+- HEAD ≠ `f14740a69`, дерево грязное, платформа снова перегенерировала `types.ts`.
+- Появление второго `opened`/`live` эфира или реального идущего эфира.
+- Ошибка typecheck/build/теста или ошибка деплоя любой из трёх функций → откат к предыдущей версии.
+- Любая из трёх функций после deploy отдаёт 500 на malformed JWT, либо ненулевой прирост `live_active_sessions` / `live_event_replies`.
 
 ## DoD
 
-- Три активных шаблона счёт-акта, один канонический renderer, ноль встроенных DOCX в функциях.
-- Сумма прописью в превью и в существующем документе — с явной корректно склонённой копеечной частью.
-- Удалённые функции отсутствуют и в коде, и в деплое, и в `edge_functions_registry`.
-- Номера документов не израсходованы, клиенту ничего не отправлено, реальные данные не изменены.
+Три функции задеплоены с exact SHA `f14740a69`, у всех трёх OPTIONS=200 / no JWT=401 / malformed JWT=401, миграции и фронтенд не тронуты, счётчики сессий и ответов без изменений, lifecycle тестовой комнаты не изменён.
