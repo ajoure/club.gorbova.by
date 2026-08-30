@@ -1,8 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
-import { Filter, X, ChevronDown, Calendar as CalendarIcon, Search, Check } from "lucide-react";
+import { X, ChevronDown, Calendar as CalendarIcon, Search, Check } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -17,6 +16,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import type { DealsExtraFilters } from "@/hooks/useDealsFilters";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
+import { DealsFilterPanel } from "./DealsFilterPanel";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "paid", label: "Оплачен" },
@@ -183,7 +183,6 @@ export function DealsFiltersBar({
   pipelineStages = [],
 }: DealsFiltersBarProps) {
   const { data: staff = [] } = useStaffOptions();
-  const [open, setOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(filters.includeSynthetic || !!filters.source || !!filters.provider || !!filters.reconcileSource);
 
   const toggleStatus = (val: string) => {
@@ -197,30 +196,7 @@ export function DealsFiltersBar({
   const createdToDate = filters.createdTo ? new Date(filters.createdTo) : undefined;
 
   return (
-    <>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs">
-            <Filter className="h-3.5 w-3.5" />
-            Фильтры
-            {activeCount > 0 && (
-              <Badge variant="secondary" className="h-4 px-1.5 text-[10px] ml-1">
-                {activeCount}
-              </Badge>
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[340px] p-0" align="start">
-          <div className="flex items-center justify-between px-3 py-2 border-b">
-            <span className="text-sm font-semibold">Фильтры сделок</span>
-            {activeCount > 0 && (
-              <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={onReset}>
-                Сбросить
-              </Button>
-            )}
-          </div>
-
-          <div className="max-h-[70vh] overflow-y-auto p-3 space-y-4">
+    <DealsFilterPanel activeCount={activeCount} onReset={onReset}>
             {/* Status */}
             <div className="space-y-2">
               <Label className="text-xs">Статус сделки</Label>
@@ -315,8 +291,9 @@ export function DealsFiltersBar({
               <>
                 <Separator />
                 <div className="space-y-2">
-                  <Label className="text-xs">Стадия воронки</Label>
+                  <Label htmlFor="deals-filter-stage" className="text-xs">Стадия воронки</Label>
                   <select
+                    id="deals-filter-stage"
                     value={filters.stageId || ""}
                     onChange={(e) => onChange({ stageId: e.target.value || null })}
                     className="w-full h-8 text-xs rounded-md border border-input bg-background px-2"
@@ -335,8 +312,9 @@ export function DealsFiltersBar({
             <Separator />
 
             <div className="space-y-2">
-              <Label className="text-xs">Менеджер продажи</Label>
+              <Label htmlFor="deals-filter-manager" className="text-xs">Менеджер продажи</Label>
               <select
+                id="deals-filter-manager"
                 value={filters.salesManager || ""}
                 onChange={(event) => onChange({ salesManager: event.target.value || null })}
                 className="w-full h-8 text-xs rounded-md border border-input bg-background px-2"
@@ -445,9 +423,6 @@ export function DealsFiltersBar({
 
               </CollapsibleContent>
             </Collapsible>
-          </div>
-        </PopoverContent>
-      </Popover>
-    </>
+    </DealsFilterPanel>
   );
 }
