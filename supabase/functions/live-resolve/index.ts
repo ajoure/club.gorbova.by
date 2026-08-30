@@ -9,6 +9,7 @@ import {
   isClosedLiveRoom,
   normalizeLiveRoomState,
 } from '../_shared/live-room-gate.ts';
+import { verifyLiveBearerClaims } from '../_shared/live-auth-claims.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -91,15 +92,17 @@ Deno.serve(async (req) => {
     const userClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
-    const { data: claimsData, error: authError } = await userClient.auth.getClaims(token);
+    const authVerification = await verifyLiveBearerClaims(
+      () => userClient.auth.getClaims(token),
+    );
 
-    if (authError || !claimsData?.claims?.sub) {
-      console.error('[live-resolve] auth error:', authError);
+    if (!authVerification.userId) {
+      console.error('[live-resolve] auth error:', authVerification.error);
       await logAudit(supabase, 'live_access_attempt', null, slug, event.id, { reason: 'invalid_token' });
       return jsonRes({ status: 'auth_required' }, 401);
     }
 
-    const userId = claimsData.claims.sub;
+    const userId = authVerification.userId;
 
     // 4. Invite mode check — require proof for required_one_time
     if (event.invite_mode === 'required_one_time' && !event.direct_access_allowed) {
