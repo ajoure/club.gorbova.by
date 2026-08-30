@@ -7,6 +7,9 @@ import {
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 const migration = read("supabase/migrations/20260830085855_sales_manager_creation_and_ui.sql");
+const securityInvokerMigration = read(
+  "supabase/migrations/20260830130000_restore_payment_links_enriched_security_invoker.sql",
+);
 const checkout = read("supabase/functions/_shared/create-payment-checkout.ts");
 const directWriter = read("supabase/functions/admin-create-payment-link/index.ts");
 const publicWriter = read("supabase/functions/admin-create-public-link/index.ts");
@@ -76,6 +79,13 @@ describe("sales manager creation and UI contract", () => {
     expect(migration).toContain("CREATE OR REPLACE FUNCTION public.set_deals_responsible_bulk_v1");
     expect(migration).toContain("public.set_deal_responsible_v1(");
     expect(migration).toContain("'bulk_reassignment'");
+  });
+
+  it("keeps the enriched payment-link view on invoker rights", () => {
+    expect(securityInvokerMigration).toContain(
+      "ALTER VIEW public.payment_links_enriched_v",
+    );
+    expect(securityInvokerMigration).toContain("SET (security_invoker = true)");
   });
 
   it("exposes the manager and unassigned control in the CRM", () => {

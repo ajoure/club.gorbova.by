@@ -102,7 +102,9 @@ export function BulkEditDealsDialog({
         if (!responsibleReason.trim()) throw new Error("Укажите причину изменения менеджера");
         const { error } = await supabase.rpc("set_deals_responsible_bulk_v1", {
           p_deal_ids: selectedIds,
-          p_responsible_user_id: newResponsibleId === "__unassigned__" ? null : newResponsibleId,
+          // The database accepts NULL here to clear the manager; generated
+          // Supabase RPC argument types do not preserve that nullability.
+          p_responsible_user_id: (newResponsibleId === "__unassigned__" ? null : newResponsibleId) as string,
           p_reason: responsibleReason.trim(),
           p_batch_id: crypto.randomUUID(),
         });
