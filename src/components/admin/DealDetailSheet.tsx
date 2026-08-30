@@ -83,6 +83,7 @@ import { ComposeEmailDialog } from "./ComposeEmailDialog";
 import { PaymentReceiptButton } from "@/components/payments/PaymentReceiptButton";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
+import { getDealAuditErrorCode, useDealAuditLogs } from "@/hooks/useDealAuditLogs";
 
 import { InternalInstallmentBlock } from "@/components/installments/InternalInstallmentBlock";
 
@@ -343,38 +344,14 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
     staleTime: 30000,
   });
 
-  // Fetch audit logs for this deal with actor info
-  const { data: auditLogs, isLoading: auditLoading } = useQuery({
-    queryKey: ["deal-audit", deal?.id],
-    queryFn: async () => {
-      if (!deal?.id) return [];
-      const { data: logs, error } = await supabase
-        .from("audit_logs")
-        .select("*")
-        .or(`entity_id.eq.${deal.id},meta->>order_id.eq.${deal.id},meta->>orderId.eq.${deal.id}`)
-        .order("created_at", { ascending: false })
-        .limit(20);
-      if (error) return [];
-
-      // Fetch actor profiles for the logs
-      const actorIds = [...new Set(logs.map(l => l.actor_user_id).filter(Boolean))];
-      if (actorIds.length > 0) {
-        const { data: profiles } = await supabase
-          .from("profiles")
-          .select("user_id, full_name, email")
-          .in("user_id", actorIds);
-
-        const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
-        return logs.map(log => ({
-          ...log,
-          actor_profile: profileMap.get(log.actor_user_id) || null
-        }));
-      }
-
-      return logs.map(log => ({ ...log, actor_profile: null }));
-    },
-    enabled: !!deal?.id,
-  });
+  // Read on opening the history tab, not from an earlier hidden-card cache.
+  const {
+    data: auditLogs,
+    isLoading: auditLoading,
+    isFetching: auditFetching,
+    error: auditError,
+    refetch: refetchAudit,
+  } = useDealAuditLogs(deal?.id, open && activeTab === "history");
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -1513,15 +1490,27 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           {/* История действий — audit_logs */}
           <TabsContent value="history" className="flex-1 overflow-y-auto p-4 sm:p-6 mt-0 data-[state=inactive]:hidden">
             <Card>
-              <CardHeader className="pb-2">
+              <CardHeader className="pb-2 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
                 <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
                   <Clock className="w-4 h-4" />
                   История действий
                 </CardTitle>
+                <Button type="button" variant="ghost" size="sm" onClick={() => refetchAudit()} disabled={auditFetching}>
+                  <RefreshCw className={`mr-2 h-3.5 w-3.5 ${auditFetching ? "animate-spin" : ""}`} />
+                  Обновить историю
+                </Button>
               </CardHeader>
               <CardContent>
                 {auditLoading ? (
                   <Skeleton className="h-20 w-full" />
+                ) : auditError ? (
+                  <div role="alert" className="space-y-2 py-4 text-sm">
+                    <p>Не удалось загрузить историю действий. Это не означает, что записи отсутствуют.</p>
+                    <p className="text-muted-foreground">Код: {getDealAuditErrorCode(auditError)}</p>
+                    <Button type="button" variant="outline" size="sm" onClick={() => refetchAudit()} disabled={auditFetching}>
+                      Повторить загрузку
+                    </Button>
+                  </div>
                 ) : !auditLogs?.length ? (
                   <div className="text-center py-4 text-muted-foreground text-sm">
                     Нет записей
@@ -1536,7 +1525,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                             {format(new Date(log.created_at), "dd.MM HH:mm")}
                           </span>
                         </div>
-                        {log.actor_profile && (
+                        {(log.actor_profile || log.actor_label) && (
                           <div className="text-xs text-muted-foreground">
                             <span>Выполнил: </span>
                             <button
@@ -1548,7 +1537,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                               }}
                               className="text-primary hover:underline inline-flex items-center gap-1"
                             >
-                              {log.actor_profile.full_name || log.actor_profile.email || "Сотрудник"}
+                              {log.actor_profile?.full_name || log.actor_label || log.actor_profile?.email || "Сотрудник"}
                               <ExternalLink className="w-3 h-3" />
                             </button>
                           </div>
