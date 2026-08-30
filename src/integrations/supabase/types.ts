@@ -15069,6 +15069,69 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_sales_attribution: {
+        Row: {
+          assigned_by: string | null
+          assigned_by_name_snapshot: string | null
+          assignment_source: string
+          batch_id: string | null
+          created_at: string
+          effective_from: string
+          effective_to: string | null
+          id: string
+          order_id: string
+          payment_id: string
+          reason: string | null
+          responsible_name_snapshot: string | null
+          responsible_user_id: string | null
+        }
+        Insert: {
+          assigned_by?: string | null
+          assigned_by_name_snapshot?: string | null
+          assignment_source: string
+          batch_id?: string | null
+          created_at?: string
+          effective_from?: string
+          effective_to?: string | null
+          id?: string
+          order_id: string
+          payment_id: string
+          reason?: string | null
+          responsible_name_snapshot?: string | null
+          responsible_user_id?: string | null
+        }
+        Update: {
+          assigned_by?: string | null
+          assigned_by_name_snapshot?: string | null
+          assignment_source?: string
+          batch_id?: string | null
+          created_at?: string
+          effective_from?: string
+          effective_to?: string | null
+          id?: string
+          order_id?: string
+          payment_id?: string
+          reason?: string | null
+          responsible_name_snapshot?: string | null
+          responsible_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_sales_attribution_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_sales_attribution_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_settings: {
         Row: {
           created_at: string
@@ -25420,6 +25483,16 @@ export type Database = {
           p_is_internal?: boolean
           p_message: string
           p_ticket_id: string
+        }
+        Returns: Json
+      }
+      set_deal_responsible_v1: {
+        Args: {
+          p_batch_id?: string
+          p_deal_id: string
+          p_reason: string
+          p_responsible_user_id: string
+          p_source?: string
         }
         Returns: Json
       }
