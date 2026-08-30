@@ -81,11 +81,20 @@ describe("sales manager creation and UI contract", () => {
     expect(migration).toContain("'bulk_reassignment'");
   });
 
-  it("keeps the enriched payment-link view on invoker rights", () => {
+  it("keeps the enriched payment-link view on invoker rights and least privilege", () => {
     expect(securityInvokerMigration).toContain(
       "ALTER VIEW public.payment_links_enriched_v",
     );
     expect(securityInvokerMigration).toContain("SET (security_invoker = true)");
+    expect(securityInvokerMigration).toContain(
+      "FROM PUBLIC, anon, authenticated, service_role",
+    );
+    expect(securityInvokerMigration).toContain(
+      "GRANT SELECT ON public.payment_links_enriched_v TO service_role",
+    );
+    expect(securityInvokerMigration).not.toContain(
+      "GRANT SELECT ON public.payment_links_enriched_v TO authenticated",
+    );
   });
 
   it("exposes the manager and unassigned control in the CRM", () => {

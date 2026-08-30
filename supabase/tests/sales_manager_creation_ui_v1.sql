@@ -23,6 +23,36 @@ BEGIN
 
   ASSERT EXISTS (
     SELECT 1
+    FROM pg_class relation
+    JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND relation.relname = 'payment_links_enriched_v'
+      AND relation.reloptions @> ARRAY['security_invoker=true']
+  ), 'payment links view must use invoker rights';
+
+  ASSERT NOT has_table_privilege(
+    'anon',
+    'public.payment_links_enriched_v',
+    'SELECT'
+  ), 'anon must not read payment links directly';
+  ASSERT NOT has_table_privilege(
+    'authenticated',
+    'public.payment_links_enriched_v',
+    'SELECT'
+  ), 'authenticated users must use the guarded payment-links RPC';
+  ASSERT has_table_privilege(
+    'service_role',
+    'public.payment_links_enriched_v',
+    'SELECT'
+  ), 'service_role must retain read-only diagnostics access';
+  ASSERT NOT has_table_privilege(
+    'service_role',
+    'public.payment_links_enriched_v',
+    'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+  ), 'service_role must not retain meaningless write-like view privileges';
+
+  ASSERT EXISTS (
+    SELECT 1
     FROM pg_constraint constraint_row
     JOIN pg_class relation ON relation.oid = constraint_row.conrelid
     JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
