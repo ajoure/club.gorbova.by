@@ -116,6 +116,24 @@ function ruIntToWords(num: number, female = false): string {
   if (rest) parts.push(ruTriad(rest, female));
   return (neg ? 'минус ' : '') + parts.filter(Boolean).join(' ').replace(/\s+/g,' ').trim();
 }
+function ruMoneyWords(amount: number, currency = 'BYN'): string {
+  if (!Number.isFinite(amount)) return '';
+  const sign = amount < 0 ? 'минус ' : '';
+  amount = Math.abs(amount);
+  const rub = Math.floor(amount);
+  const cop = Math.round((amount - rub) * 100);
+  const cur = (currency || '').toUpperCase();
+  const rubForms: [string,string,string] =
+    cur === 'BYN' ? ['белорусский рубль','белорусских рубля','белорусских рублей']
+    : cur === 'RUB' ? ['рубль','рубля','рублей']
+    : cur === 'USD' ? ['доллар США','доллара США','долларов США']
+    : cur === 'EUR' ? ['евро','евро','евро']
+    : ['рубль','рубля','рублей'];
+  const copForms: [string,string,string] = ['копейка','копейки','копеек'];
+  const rubWords = ruIntToWords(rub, false);
+  const copStr = String(cop).padStart(2,'0');
+  return `${sign}${rubWords} ${ruPlural(rub, rubForms)} ${copStr} ${ruPlural(cop, copForms)}`.trim();
+}
 function ruOrdinalDay(d: number): string {
   const map: Record<number,string> = {
     1:'первое',2:'второе',3:'третье',4:'четвёртое',5:'пятое',6:'шестое',7:'седьмое',8:'восьмое',
