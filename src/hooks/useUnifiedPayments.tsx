@@ -67,6 +67,8 @@ export interface UnifiedPayment {
   order_id: string | null;
   order_number: string | null;
   order_status: string | null;
+  deal_created_at: string | null;
+  deal_date: string | null;
   
   // F13.ADD: Resolved deal (cross-reference queue → payments_v2)
   effective_order_id: string | null;
@@ -82,6 +84,15 @@ export interface UnifiedPayment {
   product_name: string | null; // Resolved product name
   tariff_name: string | null; // Tariff name from snapshot
   offer_name: string | null; // Offer name from snapshot
+
+  // Current versioned sales attribution. Null means the payment is in the
+  // explicit "Без менеджера" control bucket.
+  responsible_user_id: string | null;
+  responsible_name: string | null;
+  assignment_source: string | null;
+  assignment_effective_from: string | null;
+  assigned_by_user_id: string | null;
+  assigned_by_name: string | null;
   
   // Receipt
   receipt_url: string | null;
@@ -235,7 +246,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             amount, currency, status, transaction_type, provider, origin, payment_classification,
             card_last4, card_brand, paid_at, created_at,
             receipt_url, refunds, refunded_amount, provider_response, meta,
-            orders:order_id(id, order_number, status, product_id, purchase_snapshot, profile_id, company_id, profiles(id, full_name, email, phone, user_id)),
+            orders:order_id(id, order_number, status, product_id, tariff_id, purchase_snapshot, profile_id, company_id, created_at, deal_date, responsible_user_id, profiles(id, full_name, email, phone, user_id)),
+            sales_attribution:payment_sales_attribution(payment_id, responsible_user_id, responsible_name_snapshot, assignment_source, effective_from, effective_to, assigned_by, assigned_by_name_snapshot),
             profiles:profile_id(id, full_name, email, phone, user_id)
           `)
           // PATCH-LIVE-2: грузим и bePaid, и Stripe. UI-фильтр "Провайдер" (PaymentsTabContent)
@@ -527,6 +539,12 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       const transformedPayments: UnifiedPayment[] = paymentsData.map(p => {
         const order = p.orders as any;
         const directProfile = p.profiles as any;
+        const attributionVersions = Array.isArray(p.sales_attribution)
+          ? p.sales_attribution
+          : [];
+        const currentAttribution = attributionVersions.find(
+          (item: any) => item.effective_to == null,
+        ) || null;
 
         
         // A1: Auto-link contact through deal - Priority: payment.profile -> order.profile
@@ -653,6 +671,9 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           manualBankDocumentNo,
           manualDetails?.contact_name_snapshot as string | null | undefined,
           companyName,
+          currentAttribution?.responsible_name_snapshot,
+          currentAttribution?.assigned_by_name_snapshot,
+          currentAttribution?.assignment_source,
         ]);
         
         return {
@@ -687,6 +708,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           order_id: p.order_id,
           order_number: order?.order_number || null,
           order_status: order?.status || null,
+          deal_created_at: order?.created_at || null,
+          deal_date: order?.deal_date || order?.created_at || null,
           // F13.ADD: effective_* via cross-reference queue → payments_v2
           effective_order_id: p.order_id || (pUid ? uidToQueue.get(pUid)?.matched_order_id : null) || null,
           effective_order_number: p.order_id 
@@ -698,11 +721,17 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           effective_deal_source: p.order_id ? 'payment' as const : (pUid && uidToQueue.has(pUid) ? 'queue' as const : 'none' as const),
           bepaid_product: purchaseSnapshot?.product_name || null,
           mapped_product_id: order?.product_id || null,
-          mapped_tariff_id: null,
+          mapped_tariff_id: order?.tariff_id || null,
           mapped_offer_id: null,
           product_name,
           tariff_name,
           offer_name,
+          responsible_user_id: currentAttribution?.responsible_user_id || null,
+          responsible_name: currentAttribution?.responsible_name_snapshot || null,
+          assignment_source: currentAttribution?.assignment_source || null,
+          assignment_effective_from: currentAttribution?.effective_from || null,
+          assigned_by_user_id: currentAttribution?.assigned_by || null,
+          assigned_by_name: currentAttribution?.assigned_by_name_snapshot || null,
           receipt_url: p.receipt_url,
           refunds_count: refunds.length,
           total_refunded: p.refunded_amount || 0,
@@ -817,6 +846,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             order_id: q.matched_order_id || order?.id || null,
             order_number: order?.order_number || null,
             order_status: order?.status || null,
+            deal_created_at: order?.created_at || null,
+            deal_date: order?.deal_date || order?.created_at || null,
             // F13.ADD: effective_* for queue records
             effective_order_id: q.matched_order_id || order?.id || null,
             effective_order_number: order?.order_number || null,
@@ -829,6 +860,12 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             product_name: q.product_name || q.description || null,
             tariff_name: null, // Queue items don't have tariff resolved yet
             offer_name: null, // Queue items don't have offer resolved yet
+            responsible_user_id: null,
+            responsible_name: null,
+            assignment_source: null,
+            assignment_effective_from: null,
+            assigned_by_user_id: null,
+            assigned_by_name: null,
             receipt_url: q.receipt_url,
             refunds_count: 0,
             total_refunded: 0,

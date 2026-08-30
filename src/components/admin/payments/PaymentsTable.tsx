@@ -61,9 +61,10 @@ export const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "contact", label: "Контакт", visible: true, width: 140, order: 8 },
   { key: "deal", label: "Сделка", visible: true, width: 120, order: 9 },
   { key: "product", label: "Продукт", visible: true, width: 130, order: 10 },
-  { key: "bepaid_description", label: "Описание bePaid", visible: false, width: 220, order: 11 },
-  { key: "receipt", label: "Документы", visible: true, width: 120, order: 12 },
-  { key: "actions", label: "", visible: true, width: 50, order: 13 },
+  { key: "sales_manager", label: "Менеджер продажи", visible: true, width: 170, order: 11 },
+  { key: "bepaid_description", label: "Описание bePaid", visible: false, width: 220, order: 12 },
+  { key: "receipt", label: "Документы", visible: true, width: 120, order: 13 },
+  { key: "actions", label: "", visible: true, width: 50, order: 14 },
 ];
 
 interface PaymentsTableProps {
@@ -662,6 +663,48 @@ export default function PaymentsTable({
             )}
           </div>
         );
+
+      case 'sales_manager': {
+        const sourceLabels: Record<string, string> = {
+          payment_link: 'Платёжная ссылка',
+          platform_send: 'Отправка из платформы',
+          manual_reassignment: 'Ручное назначение',
+          bulk_reassignment: 'Массовое назначение',
+          deal_inheritance: 'Из сделки',
+          refund_inheritance: 'Из исходного платежа',
+          import: 'Импорт из сделки',
+          backfill: 'Историческое назначение',
+          unassigned: 'Без менеджера',
+        };
+        const sourceLabel = payment.assignment_source
+          ? sourceLabels[payment.assignment_source] || payment.assignment_source
+          : null;
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex min-w-0 flex-col gap-0.5 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate font-medium">
+                    {payment.responsible_name || 'Без менеджера'}
+                  </span>
+                </div>
+                {sourceLabel && (
+                  <span className="truncate text-[10px] text-muted-foreground">{sourceLabel}</span>
+                )}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs text-xs">
+              <div>{payment.responsible_name || 'Без менеджера'}</div>
+              {sourceLabel && <div>Источник: {sourceLabel}</div>}
+              {payment.assigned_by_name && <div>Назначил: {payment.assigned_by_name}</div>}
+              {payment.assignment_effective_from && (
+                <div>С: {formatPaymentTimeIANA(payment.assignment_effective_from, selectedTimezoneIANA)}</div>
+              )}
+            </TooltipContent>
+          </Tooltip>
+        );
+      }
         
       case 'bepaid_description':
         if (!payment.bepaid_description) {

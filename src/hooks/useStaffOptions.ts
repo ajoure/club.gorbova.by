@@ -18,7 +18,7 @@ export interface StaffOption {
  * telegram_linked = profiles.telegram_link_status === 'active' — отражает,
  * получит ли сотрудник CRM-уведомление о задаче в Telegram.
  */
-export function useStaffOptions() {
+export function useStaffOptions(enabled = true) {
   return useQuery({
     queryKey: ["staff-options", "v2-any-non-user-role"],
     queryFn: async (): Promise<StaffOption[]> => {
@@ -52,5 +52,6 @@ export function useStaffOptions() {
       return (profiles ?? []).map(mapProfile);
     },
     staleTime: 5 * 60 * 1000,
+    enabled,
   });
 }
