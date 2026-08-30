@@ -72,6 +72,14 @@ export type PaymentFilters = {
   origin: string;
   // Phase 1 Stripe Integration — provider filter (All | bePaid | Stripe)
   provider: string;
+  salesManager: string;
+  product: string;
+  tariff: string;
+  company: string;
+  currency: string;
+  dealStatus: string;
+  dealDateFrom: string;
+  dealDateTo: string;
 };
 
 const defaultFilters: PaymentFilters = {
@@ -89,6 +97,14 @@ const defaultFilters: PaymentFilters = {
   source: "all",
   origin: "all",
   provider: "all",
+  salesManager: "all",
+  product: "all",
+  tariff: "all",
+  company: "all",
+  currency: "all",
+  dealStatus: "all",
+  dealDateFrom: "",
+  dealDateTo: "",
 };
 
 const COLUMNS_STORAGE_KEY = 'admin_payments_columns_v1';
@@ -184,6 +200,40 @@ export function PaymentsTabContent() {
 
   // Always use all payments (no more source mode filtering)
   const payments = allPayments;
+
+  const filterOptions = useMemo(() => {
+    const uniqueOptions = (
+      rows: Array<{ value: string | null; label: string | null }>,
+    ) => Array.from(
+      new Map(
+        rows
+          .filter((row): row is { value: string; label: string } => Boolean(row.value && row.label))
+          .map((row) => [row.value, row]),
+      ).values(),
+    ).sort((a, b) => a.label.localeCompare(b.label, "ru"));
+
+    return {
+      managers: uniqueOptions(payments.map((payment) => ({
+        value: payment.responsible_user_id,
+        label: payment.responsible_name,
+      }))),
+      products: uniqueOptions(payments.map((payment) => ({
+        value: payment.mapped_product_id,
+        label: payment.product_name,
+      }))),
+      tariffs: uniqueOptions(payments.map((payment) => ({
+        value: payment.mapped_tariff_id,
+        label: payment.tariff_name,
+      }))),
+      companies: uniqueOptions(payments.map((payment) => ({
+        value: payment.company_id,
+        label: payment.company_name,
+      }))),
+      currencies: Array.from(new Set(payments.map((payment) => payment.currency).filter(Boolean)))
+        .sort()
+        .map((currency) => ({ value: currency, label: currency })),
+    };
+  }, [payments]);
 
   // Helper to normalize transaction type
   const normalizeType = (raw: string | null | undefined) => {
@@ -290,6 +340,19 @@ export function PaymentsTabContent() {
         if ((p.provider ?? null) !== filters.provider) return false;
       }
 
+      if (filters.salesManager === "__unassigned__" && p.responsible_user_id !== null) return false;
+      if (filters.salesManager !== "all" && filters.salesManager !== "__unassigned__"
+        && p.responsible_user_id !== filters.salesManager) return false;
+      if (filters.product !== "all" && p.mapped_product_id !== filters.product) return false;
+      if (filters.tariff !== "all" && p.mapped_tariff_id !== filters.tariff) return false;
+      if (filters.company !== "all" && p.company_id !== filters.company) return false;
+      if (filters.currency !== "all" && p.currency !== filters.currency) return false;
+      if (filters.dealStatus !== "all" && p.order_status !== filters.dealStatus) return false;
+
+      const dealDate = (p.deal_date || p.deal_created_at || "").slice(0, 10);
+      if (filters.dealDateFrom && (!dealDate || dealDate < filters.dealDateFrom)) return false;
+      if (filters.dealDateTo && (!dealDate || dealDate > filters.dealDateTo)) return false;
+
       return true;
     });
   }, [payments, debouncedSearch, filters]);
@@ -335,9 +398,12 @@ export function PaymentsTabContent() {
 
   // Export to CSV
   const handleExport = () => {
+    const csvCell = (value: unknown) =>
+      `"${String(value ?? "").replace(/"/g, '""').replace(/[\n\r]/g, " ")}"`;
+    const csvRow = (values: unknown[]) => values.map(csvCell).join(";");
     const csv = [
-      ["UID", "Провайдер", "Дата", "Тип", "Статус", "Сумма", "Валюта", "Email", "Телефон", "Карта", "Владелец", "Заказ", "Продукт", "Контакт", "Источник", "Банк получателя", "Комментарий", "Чек", "Возвраты"].join(";"),
-      ...filteredPayments.map(p => [
+      csvRow(["UID", "Провайдер", "Дата", "Тип", "Статус", "Сумма", "Валюта", "Email", "Телефон", "Карта", "Владелец", "Заказ", "Продукт", "Тариф", "Компания", "Контакт", "Источник платежа", "Банк получателя", "Комментарий", "Чек", "Возвраты", "Менеджер продажи", "Источник назначения", "Дата назначения", "Кем назначен"]),
+      ...filteredPayments.map(p => csvRow([
         p.uid,
         p.provider || "",
         p.paid_at ? format(new Date(p.paid_at), "dd.MM.yyyy HH:mm") : "",
@@ -351,13 +417,21 @@ export function PaymentsTabContent() {
         p.card_holder || "",
         p.order_number || "",
         p.product_name || "",
+        p.tariff_name || "",
+        p.company_name || "",
         p.profile_name || "",
         p.source,
-        (p.manual_receiving_bank_name || "").replace(/[;\n\r]/g, " "),
-        (p.manual_comment || "").replace(/[;\n\r]/g, " "),
+        p.manual_receiving_bank_name || "",
+        p.manual_comment || "",
         p.receipt_url ? "Да" : "Нет",
         p.refunds_count || 0,
-      ].join(";"))
+        p.responsible_name || "Без менеджера",
+        p.assignment_source || "",
+        p.assignment_effective_from
+          ? format(new Date(p.assignment_effective_from), "dd.MM.yyyy HH:mm")
+          : "",
+        p.assigned_by_name || p.assigned_by_user_id || "Система",
+      ]))
     ].join("\n");
 
     // Add metadata header
@@ -641,7 +715,11 @@ export function PaymentsTabContent() {
       {/* Filters panel */}
       {showFilters && (
         <div className="px-1">
-          <PaymentsFilters filters={filters} setFilters={setFilters} />
+          <PaymentsFilters
+            filters={filters}
+            setFilters={setFilters}
+            options={filterOptions}
+          />
         </div>
       )}
       

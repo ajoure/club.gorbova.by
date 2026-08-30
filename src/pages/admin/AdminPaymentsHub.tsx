@@ -1,10 +1,11 @@
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useLocation, useNavigate } from "react-router-dom";
-import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat, Link2, FileText } from "lucide-react";
+import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat, Link2, FileText, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAutoRenewalAlerts } from "@/hooks/useAutoRenewalAlerts";
 import { usePaymentIssuesCounters } from "@/hooks/admin/usePaymentIssuesCounters";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
+import { usePermissions } from "@/hooks/usePermissions";
 
 // Tab content components
 import { PaymentsTabContent } from "@/components/admin/payments/PaymentsTabContent";
@@ -15,6 +16,7 @@ import { BepaidSubscriptionsTabContent } from "@/components/admin/payments/Bepai
 import { LinksTabContent } from "@/components/admin/payments/links/LinksTabContent";
 import { PaymentIssuesTabContent } from "@/components/admin/payments/PaymentIssuesTabContent";
 import { InvoicesTabContent } from "@/components/admin/payments/InvoicesTabContent";
+import { SalesManagerReportTabContent } from "@/components/admin/payments/SalesManagerReportTabContent";
 
 // PATCH-STRIPE-UI-INTEGRATION-CLEANUP-V1 (PATCH-F): «Проблемы с оплатой» скрыта из nav.
 // Route /admin/payments/payment-issues остаётся доступным напрямую (legacy hidden);
@@ -23,6 +25,7 @@ const tabs = [
   { id: "transactions", resource: "overview", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
   { id: "links", resource: "links", label: "Ссылки", icon: Link2, path: "/admin/payments/links" },
   { id: "invoices", resource: "invoices", label: "Счета", icon: FileText, path: "/admin/payments/invoices" },
+  { id: "sales-report", resource: "overview", label: "Продажи", icon: TrendingUp, path: "/admin/payments/sales-report" },
   { id: "auto-renewals", resource: "auto-renewals", label: "Автопродления", icon: RefreshCw, path: "/admin/payments/auto-renewals" },
   { id: "bepaid-subs", resource: "bepaid-subscriptions", label: "Подписки", icon: Repeat, path: "/admin/payments/bepaid-subscriptions" },
   { id: "diagnostics", resource: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
@@ -33,10 +36,15 @@ export default function AdminPaymentsHub() {
   const location = useLocation();
   const navigate = useNavigate();
   const access = useAdminAccess();
+  const { hasPermission } = usePermissions();
   const { data: renewalAlerts } = useAutoRenewalAlerts();
   const { data: paymentIssues } = usePaymentIssuesCounters();
+  const canViewSalesReport = hasPermission("sales_reports.view_all")
+    || hasPermission("sales_reports.view_own");
   const visibleTabs = tabs.filter((tab) =>
-    access.canAccessResource("payments", tab.resource),
+    tab.id === "sales-report"
+      ? canViewSalesReport
+      : access.canAccessResource("payments", tab.resource),
   );
   
   // Determine active tab from path
@@ -104,6 +112,7 @@ export default function AdminPaymentsHub() {
           {activeTab === "transactions" && <PaymentsTabContent />}
           {activeTab === "links" && <LinksTabContent />}
           {activeTab === "invoices" && <InvoicesTabContent />}
+          {activeTab === "sales-report" && <SalesManagerReportTabContent />}
           {activeTab === "auto-renewals" && <AutoRenewalsTabContent />}
           {activeTab === "bepaid-subs" && <BepaidSubscriptionsTabContent />}
           {activeTab === "payment-issues" && <PaymentIssuesTabContent />}

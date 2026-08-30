@@ -1,4 +1,5 @@
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PaymentFilters } from "@/pages/admin/AdminPayments";
 import { ACTIVE_PAYMENT_PROVIDERS, PAYMENT_PROVIDER_LABELS } from "@/lib/payments/providers";
@@ -6,15 +7,127 @@ import { ACTIVE_PAYMENT_PROVIDERS, PAYMENT_PROVIDER_LABELS } from "@/lib/payment
 interface PaymentsFiltersProps {
   filters: PaymentFilters;
   setFilters: React.Dispatch<React.SetStateAction<PaymentFilters>>;
+  options: {
+    managers: Array<{ value: string; label: string }>;
+    products: Array<{ value: string; label: string }>;
+    tariffs: Array<{ value: string; label: string }>;
+    companies: Array<{ value: string; label: string }>;
+    currencies: Array<{ value: string; label: string }>;
+  };
 }
 
-export default function PaymentsFilters({ filters, setFilters }: PaymentsFiltersProps) {
+export default function PaymentsFilters({ filters, setFilters, options }: PaymentsFiltersProps) {
   const updateFilter = (key: keyof PaymentFilters, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
   };
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4 p-4 bg-muted/30 rounded-lg">
+      <div className="space-y-1">
+        <Label className="text-xs">Менеджер продажи</Label>
+        <Select value={filters.salesManager} onValueChange={(v) => updateFilter("salesManager", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все менеджеры</SelectItem>
+            <SelectItem value="__unassigned__">Без менеджера</SelectItem>
+            {options.managers.map((option) => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">Продукт</Label>
+        <Select value={filters.product} onValueChange={(v) => updateFilter("product", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все продукты</SelectItem>
+            {options.products.map((option) => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">Тариф</Label>
+        <Select value={filters.tariff} onValueChange={(v) => updateFilter("tariff", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все тарифы</SelectItem>
+            {options.tariffs.map((option) => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">Компания</Label>
+        <Select value={filters.company} onValueChange={(v) => updateFilter("company", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все компании</SelectItem>
+            {options.companies.map((option) => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">Валюта</Label>
+        <Select value={filters.currency} onValueChange={(v) => updateFilter("currency", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все валюты</SelectItem>
+            {options.currencies.map((option) => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">Сделка от</Label>
+        <Input
+          type="date"
+          className="h-8"
+          value={filters.dealDateFrom}
+          onChange={(event) => updateFilter("dealDateFrom", event.target.value)}
+        />
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">Статус сделки</Label>
+        <Select value={filters.dealStatus} onValueChange={(v) => updateFilter("dealStatus", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все статусы</SelectItem>
+            <SelectItem value="draft">Черновик</SelectItem>
+            <SelectItem value="pending">Ожидает</SelectItem>
+            <SelectItem value="paid">Оплачена</SelectItem>
+            <SelectItem value="partial">Частично оплачена</SelectItem>
+            <SelectItem value="partial_refund">Частичный возврат</SelectItem>
+            <SelectItem value="refunded">Возврат</SelectItem>
+            <SelectItem value="failed">Ошибка</SelectItem>
+            <SelectItem value="canceled">Отменена</SelectItem>
+            <SelectItem value="lead">Лид</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">Сделка до</Label>
+        <Input
+          type="date"
+          className="h-8"
+          value={filters.dealDateTo}
+          onChange={(event) => updateFilter("dealDateTo", event.target.value)}
+        />
+      </div>
+
       <div className="space-y-1">
         <Label className="text-xs">Провайдер</Label>
         <Select value={filters.provider ?? "all"} onValueChange={(v) => updateFilter("provider", v)}>

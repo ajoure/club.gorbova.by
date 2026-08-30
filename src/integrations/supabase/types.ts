@@ -25417,6 +25417,34 @@ export type Database = {
         }[]
       }
       search_companies: { Args: { _filters: Json }; Returns: Json }
+      sales_manager_report_v1: {
+        Args: {
+          p_from: string
+          p_product_id?: string | null
+          p_responsible_user_id?: string | null
+          p_tariff_id?: string | null
+          p_to: string
+          p_unassigned_only?: boolean
+        }
+        Returns: {
+          average_payment: number
+          currency: string
+          gross_amount: number
+          installment_expected: number
+          installment_received: number
+          month_start: string
+          net_amount: number
+          paid_deals: number
+          payment_count: number
+          product_id: string | null
+          product_name: string
+          refund_amount: number
+          responsible_name: string
+          responsible_user_id: string | null
+          tariff_id: string | null
+          tariff_name: string
+        }[]
+      }
       search_deal_rows: {
         Args: {
           p_date_from?: string
