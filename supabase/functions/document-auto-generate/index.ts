@@ -2,7 +2,6 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import Docxtemplater from "npm:docxtemplater@3.47.1";
 import PizZip from "npm:pizzip@3.1.6";
 import { Resend } from 'npm:resend@2.0.0';
-import { formatAmountWithWordsByRublesAndKopecks } from "../_shared/amount-with-words.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,6 +21,47 @@ interface AutoGenerateRequest {
   executor_id?: string;
   client_details_id?: string;
   field_overrides?: Record<string, unknown>;
+}
+
+// Helper functions
+function numberToWordsRu(num: number): string {
+  const ones = ['', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'];
+  const teens = ['десять', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 'пятнадцать', 'шестнадцать', 'семнадцать', 'восемнадцать', 'девятнадцать'];
+  const tens = ['', '', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
+  const hundreds = ['', 'сто', 'двести', 'триста', 'четыреста', 'пятьсот', 'шестьсот', 'семьсот', 'восемьсот', 'девятьсот'];
+  
+  if (num === 0) return 'ноль';
+  if (num < 0) return 'минус ' + numberToWordsRu(-num);
+  
+  let result = '';
+  
+  if (num >= 1000) {
+    const thousands = Math.floor(num / 1000);
+    if (thousands === 1) result += 'одна тысяча ';
+    else if (thousands === 2) result += 'две тысячи ';
+    else if (thousands >= 3 && thousands <= 4) result += ones[thousands] + ' тысячи ';
+    else result += ones[thousands] + ' тысяч ';
+    num %= 1000;
+  }
+  
+  if (num >= 100) {
+    result += hundreds[Math.floor(num / 100)] + ' ';
+    num %= 100;
+  }
+  
+  if (num >= 10 && num < 20) {
+    result += teens[num - 10] + ' ';
+  } else {
+    if (num >= 20) {
+      result += tens[Math.floor(num / 10)] + ' ';
+      num %= 10;
+    }
+    if (num > 0) {
+      result += ones[num] + ' ';
+    }
+  }
+  
+  return result.trim();
 }
 
 function dateToRussianFormat(date: Date): string {
@@ -438,8 +478,8 @@ async function generateDocument(params: GenerateDocumentParams): Promise<any> {
     amount: paidAmount.toFixed(2),
     paid_amount: paidAmount.toFixed(2),
     contract_total_amount: contractTotalAmount.toFixed(2),
-    amount_words: formatAmountWithWordsByRublesAndKopecks(paidAmount, order.currency || 'BYN'),
-    total_amount_words: formatAmountWithWordsByRublesAndKopecks(contractTotalAmount, order.currency || 'BYN'),
+    amount_words: `${numberToWordsRu(Math.floor(paidAmount))} рублей ${String(Math.round((paidAmount % 1) * 100)).padStart(2, '0')} копеек`,
+    total_amount_words: `${numberToWordsRu(Math.floor(contractTotalAmount))} рублей ${String(Math.round((contractTotalAmount % 1) * 100)).padStart(2, '0')} копеек`,
     currency: order.currency === 'BYN' ? 'белорусских рублей' : order.currency,
     currency_short: order.currency,
     
