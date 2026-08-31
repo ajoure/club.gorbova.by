@@ -245,6 +245,33 @@ describe('canonical provider-verified queue recovery', () => {
     expect(h.writes).toHaveLength(writes);
     expect(h.db.functions.invoke).toHaveBeenCalledTimes(1);
   });
+  it('does not send another payment window to the downstream grant on an unfulfilled retry', async () => {
+    const h = fixture(); await h.run();
+    const laterUid = '33333333-3333-4333-8333-333333333333';
+    h.rows.payments_v2.push({ ...h.rows.payments_v2[1], id: id(23), provider_payment_id: laterUid,
+      paid_at: '2026-09-28T08:15:55.123Z' });
+    Object.assign(h.rows.payment_reconcile_queue[0], { bepaid_uid: laterUid, status: 'pending', attempts: 0 });
+    Object.assign(h.tx, { uid: laterUid, paid_at: '2026-09-28T08:15:55.123Z' });
+    h.sbs.last_transaction.uid = laterUid;
+    h.rows.subscriptions_v2[0].status = 'expired';
+    h.rows.entitlements[0].status = 'expired';
+    const nextNow = new Date('2026-09-28T10:00:00Z');
+    vi.setSystemTime(nextNow);
+    h.db.functions.invoke.mockImplementation(async (_name: string, { body }: any) => {
+      expect(body.customAccessStartAt).toBeUndefined();
+      expect(body.customAccessEndAt).toBeUndefined();
+      const end = '2026-10-29T12:00:00Z';
+      Object.assign(h.rows.subscriptions_v2[0], { status: 'active', access_end_at: end,
+        meta: { extended_by_orders: [body.orderId] } });
+      Object.assign(h.rows.entitlements[0], { status: 'active', expires_at: end,
+        meta: { extended_by_orders: [body.orderId] } });
+      h.rows.access_grant_ledger.push({ source_order_id: body.orderId, status: 'extended' });
+      return { data: { success: true }, error: null };
+    });
+    expect(await h.run({ now: nextNow })).toMatchObject({ success: true, results: { orders_created: 0 } });
+    expect(h.rows.orders_v2).toHaveLength(2);
+    expect(h.rows.payments_v2).toHaveLength(3);
+  });
   it.each([
     { recovery_access_start_at: oldEnd },
     { recovery_access_start_at: oldEnd, recovery_expected_end_at: 'invalid' },

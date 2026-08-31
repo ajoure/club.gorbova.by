@@ -217,7 +217,7 @@ async function executePlan(db: any, plan: any) {
   let orderId = plan.existingPayment?.order_id || plan.parent.id;
   const grant = async (id: string) => {
     const order = await one(db, 'orders_v2', id);
-    const start = order?.meta?.recovery_access_start_at;
+    const start = order?.provider_payment_id === plan.uid ? order?.meta?.recovery_access_start_at : null;
     const result = await db.functions.invoke('grant-access-for-order', { body: { orderId: id,
       grantTelegram: true, grantGetcourse: false, context: 'historical_payment_recovery',
       ...(start ? { customAccessStartAt: start, customAccessEndAt: order.meta.recovery_expected_end_at } : {}) } });
