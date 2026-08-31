@@ -22,7 +22,7 @@ import {
 } from './caller_auth.ts';
 import { resolveStaleAccessPolicy } from './stale_access_policy.ts';
 import { resolveGrantPaymentWindow, accessDateReachesWindow } from './payment_window.ts';
-import { parseExactAccessTarget, exactAccessTargetError } from './exact_access_target.ts';
+import { parseExactAccessTarget, exactAccessTargetError, exactAccessOrderAllowed } from './exact_access_target.ts';
 import { evaluateGrantEligibility, type Branch as EligibilityBranch, type CallerType as EligibilityCallerType } from '../_shared/grant-eligibility.ts';
 import { syncConfiguredClubBonusCascade } from '../_shared/club-bonus-entitlement-source.ts';
 
@@ -316,7 +316,7 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
     const exactTargetConflict = (subscription: Parameters<typeof exactAccessTargetError>[1]) => {
-      const error = exactAccessTargetError(exactAccessTarget, subscription);
+      const error = exactAccessTargetError(exactAccessTarget, subscription, { productId, tariffId: order.tariff_id });
       return error ? new Response(JSON.stringify({ success: false, error }),
         { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }) : null;
     };
@@ -401,7 +401,7 @@ Deno.serve(async (req) => {
       .from("orders_v2")
       .select(`
         *,
-        product:products_v2(id, name, code),
+        product:products_v2(id, name, code, entitlement_mode),
         tariff:tariffs(id, name, access_days)
       `)
       .eq("id", orderId)
@@ -429,6 +429,10 @@ Deno.serve(async (req) => {
     const userId = order.user_id;
     const profileId = order.profile_id;
     const productId = order.product_id;
+    if (exactAccessTarget && !exactAccessOrderAllowed(order.status, (order.product as any)?.entitlement_mode)) {
+      return new Response(JSON.stringify({ success: false, error: 'exact_access_order_not_eligible' }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     // ── PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / ELIG-C1-SHADOW ─────────────
     // Non-blocking shadow eligibility evaluation. READ-ONLY.
@@ -464,6 +468,10 @@ Deno.serve(async (req) => {
       Number(order.paid_amount || 0) === 0 &&
       orderMetaForNcGuard.source === 'trial_no_card';
 
+    if (exactAccessTarget && isNoCardTrial) {
+      return new Response(JSON.stringify({ success: false, error: 'exact_access_order_not_eligible' }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     // Admin manual access edit: exact date correction path.
     // This is intentionally before the idempotency replay guard, because editing an
@@ -684,17 +692,17 @@ Deno.serve(async (req) => {
 
     const { data: existingSubByOrder } = await supabase
       .from("subscriptions_v2")
-      .select("id, status, access_end_at, product_id")
+        .select("id, status, access_end_at, product_id, tariff_id")
       .eq("order_id", orderId)
       .eq("user_id", userId)
       .maybeSingle();
 
     // Also check if any subscription for this user+product was EXTENDED by this orderId
-    let existingSubExtendedByOrder: { id: string; status: string; access_end_at: string | null; product_id: string } | null = null;
+    let existingSubExtendedByOrder: { id: string; status: string; access_end_at: string | null; product_id: string; tariff_id: string | null } | null = null;
     if (!existingSubByOrder && productId) {
       const { data: extendedSubs } = await supabase
         .from("subscriptions_v2")
-        .select("id, status, access_end_at, product_id, meta")
+        .select("id, status, access_end_at, product_id, tariff_id, meta")
         .eq("user_id", userId)
         .eq("product_id", productId);
 
@@ -1757,7 +1765,7 @@ Deno.serve(async (req) => {
         decision: 'snapshot_already_present',
       };
 
-      if (!extendRecurringSnapshot) {
+      if (!exactAccessTarget && !extendRecurringSnapshot) {
         const resolved = await resolveRecurringFromOrderOrTariff(
           supabase,
           order.offer_id,

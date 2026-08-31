@@ -5,6 +5,10 @@ export interface ExactAccessTarget {
   end: Date;
 }
 
+export function exactAccessOrderAllowed(status: unknown, entitlementMode: unknown): boolean {
+  return status === 'paid' && entitlementMode !== 'order_based_only';
+}
+
 export function parseExactAccessTarget(input: {
   expectedExistingSubscriptionId?: unknown;
   customAccessEndAt?: unknown;
@@ -26,10 +30,13 @@ export function exactAccessTargetError(target: ExactAccessTarget | null, subscri
   id?: string;
   status?: string;
   access_end_at?: string | null;
-} | null | undefined): string | null {
+  product_id?: string | null;
+  tariff_id?: string | null;
+} | null | undefined, scope?: { productId: string; tariffId: string | null }): string | null {
   if (!target) return null;
   if (!subscription || subscription.id !== target.subscriptionId
-      || !['active', 'expired'].includes(subscription.status || '')) {
+      || !['active', 'expired'].includes(subscription.status || '')
+      || (scope && (subscription.product_id !== scope.productId || subscription.tariff_id !== scope.tariffId))) {
     return 'exact_access_existing_subscription_changed';
   }
   const previousEnd = subscription.access_end_at ? Date.parse(subscription.access_end_at) : NaN;

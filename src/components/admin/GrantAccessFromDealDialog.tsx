@@ -173,7 +173,7 @@ export function GrantAccessFromDealDialog({
   ) : null;
   const canGrant = isAdmin() && !!deal.user_id && (deal.status === "paid" || deal.status === "partial")
     && !subscriptionLoading && !subscriptionError && productSubscriptions.length <= 1 && !exactError
-    && (useExactEnd || (Number.isInteger(accessDays) && accessDays > 0));
+    && (useExactEnd ? deal.status === "paid" : (Number.isInteger(accessDays) && accessDays > 0));
 
   // Grant access mutation
   const grantAccessMutation = useMutation({
