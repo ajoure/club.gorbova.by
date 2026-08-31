@@ -1,6 +1,7 @@
 export const STALE_PROCESSING_MS = 2 * 60 * 60 * 1000;
 
 export interface QueueRunOptions {
+  dryRun: boolean;
   queueItemId: string | null;
   maxAttempts: number;
   batchSize: number;
@@ -26,12 +27,28 @@ export function normalizeQueueRunOptions(
     : "";
 
   return {
+    dryRun: body.dryRun === true || body.dry_run === true,
     queueItemId: rawQueueItemId || null,
     maxAttempts: boundedInteger(body.maxAttempts, 5, 1, 10),
     batchSize: boundedInteger(body.batchSize, 20, 1, 50),
     excludeFileImport: body.excludeFileImport !== false,
     excludeCancelled: body.excludeCancelled !== false,
   };
+}
+
+export function staleTerminalReason(
+  item: { attempts?: number | null; source?: string | null; last_error?: string | null },
+  options: Pick<QueueRunOptions, "maxAttempts" | "excludeCancelled" | "excludeFileImport" | "queueItemId">,
+): string | null {
+  if (options.excludeCancelled &&
+    (item.last_error?.startsWith("SOFT_CANCELLED") || item.last_error?.startsWith("CANCELLED_BY_ADMIN"))) {
+    return "STALE_PROCESSING_CANCELLED";
+  }
+  if ((item.attempts || 0) >= options.maxAttempts) return "STALE_PROCESSING_MAX_ATTEMPTS";
+  if (options.excludeFileImport && item.source === "file_import" && !options.queueItemId) {
+    return "STALE_PROCESSING_EXCLUDED_IMPORT";
+  }
+  return null;
 }
 
 export function staleProcessingCutoff(now: Date): string {

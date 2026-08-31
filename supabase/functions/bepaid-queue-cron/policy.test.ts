@@ -14,6 +14,7 @@ Deno.test("queue cron bounds caller-controlled batch options", () => {
       excludeFileImport: false,
     }),
     {
+      dryRun: false,
       queueItemId: "row-id",
       maxAttempts: 10,
       batchSize: 50,
@@ -27,6 +28,7 @@ Deno.test("queue cron uses safe defaults for malformed options", () => {
   assertEquals(
     normalizeQueueRunOptions({ maxAttempts: "5", batchSize: 0 }),
     {
+      dryRun: false,
       queueItemId: null,
       maxAttempts: 5,
       batchSize: 1,

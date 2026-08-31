@@ -5,10 +5,12 @@ import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { isStaleProcessingItem, staleProcessingCutoff, staleTerminalReason } from '../bepaid-queue-cron/policy.ts';
+import { authorizePaymentsReconcile } from './auth.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-payments-reconcile-cron-secret",
 };
 
 interface BepaidTransaction {
@@ -41,6 +43,11 @@ serve(async (req) => {
   console.info("Starting payments reconciliation...");
 
   try {
+    if (!await authorizePaymentsReconcile(req, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "", supabase)) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     // PATCH-P0.9.1: Strict creds
     const credsResult = await getBepaidCredsStrict(supabase);
     if (isBepaidCredsError(credsResult)) {
@@ -61,6 +68,9 @@ serve(async (req) => {
       checked: 0,
       fixed: 0,
       queue_processed: 0,
+      stale_recovered: 0,
+      stale_terminal: 0,
+      claim_conflicts: 0,
       errors: 0,
       details: [] as any[],
     };
@@ -214,24 +224,63 @@ serve(async (req) => {
     // =====================================================================
     // LEVEL 3: Process payment_reconcile_queue (rejected webhooks)
     // =====================================================================
-    const { data: queueItems } = await supabase
+    const queueNow = new Date().toISOString();
+    const processingCutoff = staleProcessingCutoff(new Date(queueNow));
+    const { data: queueItems, error: queueFetchError } = await supabase
       .from("payment_reconcile_queue")
       .select("*")
-      .eq("status", "pending")
-      .or(`next_retry_at.is.null,next_retry_at.lte.${new Date().toISOString()}`)
-      .lt("attempts", 5)
+      .or(`and(status.eq.pending,attempts.lt.5,or(next_retry_at.is.null,next_retry_at.lte.${queueNow})),and(status.eq.processing,updated_at.lt.${processingCutoff})`)
       .order("created_at", { ascending: true })
       .limit(50);
+
+    if (queueFetchError) throw new Error(`Queue read failed: ${queueFetchError.message}`);
 
     console.info(`Found ${queueItems?.length || 0} queue items to process`);
 
     for (const item of queueItems || []) {
+      let claimOwned = false;
       try {
-        // Mark as processing
-        await supabase
+        const staleRecovery = isStaleProcessingItem(item, processingCutoff);
+        const terminalReason = staleRecovery ? staleTerminalReason(item, {
+          maxAttempts: 5, excludeCancelled: true, excludeFileImport: true, queueItemId: null,
+        }) : null;
+        if (terminalReason) {
+          const { data: released, error: releaseError } = await supabase
+            .from("payment_reconcile_queue")
+            .update({
+              status: "error",
+              last_error: terminalReason === "STALE_PROCESSING_CANCELLED"
+                ? `${item.last_error}; ${terminalReason}`
+                : `${terminalReason}: ${item.last_error || "worker interrupted"}`,
+              next_retry_at: null,
+            })
+            .eq("id", item.id)
+            .eq("status", item.status)
+            .eq("updated_at", item.updated_at)
+            .select("id").maybeSingle();
+          if (releaseError) throw new Error(`Stale release failed: ${releaseError.message}`);
+          if (released) results.stale_terminal++;
+          else results.claim_conflicts++;
+          continue;
+        }
+        if (item.last_error?.startsWith("SOFT_CANCELLED") || item.last_error?.startsWith("CANCELLED_BY_ADMIN")) continue;
+
+        // Both queue processors use the same CAS lease. A stale row is retried
+        // only after two hours; overlapping runs cannot own the same snapshot.
+        const { data: claimed, error: claimError } = await supabase
           .from("payment_reconcile_queue")
-          .update({ status: "processing", attempts: item.attempts + 1 })
-          .eq("id", item.id);
+          .update({ status: "processing", attempts: (item.attempts || 0) + 1, last_attempt_at: queueNow })
+          .eq("id", item.id)
+          .eq("status", item.status)
+          .eq("updated_at", item.updated_at)
+          .select("id").maybeSingle();
+        if (claimError) throw new Error(`Queue claim failed: ${claimError.message}`);
+        if (!claimed) {
+          results.claim_conflicts++;
+          continue;
+        }
+        claimOwned = true;
+        if (staleRecovery) results.stale_recovered++;
 
         let processed = false;
         const payload = item.raw_payload || {};
@@ -371,23 +420,24 @@ serve(async (req) => {
           await supabase
             .from("payment_reconcile_queue")
             .update({
-              status: "pending",
-              next_retry_at: nextRetry.toISOString(),
+              status: (item.attempts || 0) + 1 < 5 ? "pending" : "error",
+              next_retry_at: (item.attempts || 0) + 1 < 5 ? nextRetry.toISOString() : null,
               last_error: "Could not match to order",
             })
             .eq("id", item.id);
         }
       } catch (queueError) {
         console.error(`Error processing queue item ${item.id}:`, queueError);
+        results.errors++;
+        if (!claimOwned) continue;
         await supabase
           .from("payment_reconcile_queue")
           .update({
-            status: "pending",
+            status: (item.attempts || 0) + 1 < 5 ? "pending" : "error",
             last_error: String(queueError),
-            next_retry_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour
+            next_retry_at: (item.attempts || 0) + 1 < 5 ? new Date(Date.now() + 60 * 60 * 1000).toISOString() : null,
           })
           .eq("id", item.id);
-        results.errors++;
       }
     }
 
@@ -554,6 +604,8 @@ async function processQueueItem(supabase: any, item: any, order: any) {
       status: "completed",
       processed_at: now.toISOString(),
       processed_order_id: order.id,
+      last_error: null,
+      next_retry_at: null,
     })
     .eq("id", item.id)
     .select("id,status,processed_order_id")
