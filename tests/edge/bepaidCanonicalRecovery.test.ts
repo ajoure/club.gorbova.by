@@ -1,3 +1,4 @@
+// Server integration graph: run in Vitest, outside the browser's src typecheck.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { reconcileExactQueuePayment, queueProviderSubscriptionId } from '../../supabase/functions/_shared/bepaid-canonical-recovery';
