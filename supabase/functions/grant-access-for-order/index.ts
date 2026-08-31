@@ -273,7 +273,7 @@ Deno.serve(async (req) => {
     // Audit actor derived from resolved caller. Body-provided source/context
     // are recorded separately as `claimed_*` — never treated as identity.
     const auditActor = {
-      actor_type: caller.actorType,
+      actor_type: caller.actorType === "admin" ? "user" : caller.actorType,
       actor_user_id: caller.actorUserId,
       actor_label: caller.actorLabel,
     };
@@ -604,7 +604,7 @@ Deno.serve(async (req) => {
 
       await supabase.from("audit_logs").insert({
         action: "admin.manual_access_date_edit",
-        actor_type: "admin",
+        actor_type: "user",
         actor_user_id: actor.id,
         actor_label: actor.email || "admin",
         target_user_id: userId,

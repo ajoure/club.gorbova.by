@@ -1,10 +1,15 @@
-// A suppressed duplicate DM still has to converge its existing grant mirror.
-// This helper does not create grants, alter membership, or call Telegram.
+// A suppressed duplicate DM still has to converge the exact grant mirror.
+// It may create the missing mirror for this already-authorized source, but it
+// never alters membership or calls Telegram.
 // deno-lint-ignore-file no-explicit-any
 export async function syncReplayGrant(db: any, input: {
   userId: string;
   clubId: string;
   sourceId?: string | null;
+  source: string;
+  grantedBy?: string | null;
+  accessRuleId?: string | null;
+  comment?: string | null;
   activeUntil: string | null;
   now?: string;
 }) {
@@ -17,9 +22,31 @@ export async function syncReplayGrant(db: any, input: {
     .eq('user_id', input.userId).eq('club_id', input.clubId)
     .eq('source_id', input.sourceId).maybeSingle();
   if (error) throw new Error('telegram_replay_grant_read_failed');
-  // Historical DMs may predate the optional grant mirror. Do not invent a
-  // second grant or reactivate a revoked source while replaying a sent DM.
-  if (!current) return { updated: false, reason: 'not_found' };
+  if (!current) {
+    const now = input.now ?? new Date().toISOString();
+    const inserted = await db.from('telegram_access_grants').insert({
+      user_id: input.userId,
+      club_id: input.clubId,
+      source: input.source,
+      source_id: input.sourceId,
+      granted_by: input.grantedBy ?? null,
+      start_at: now,
+      end_at: input.activeUntil,
+      status: 'active',
+      meta: {
+        replay_without_duplicate_dm: true,
+        access_rule_id: input.accessRuleId ?? null,
+        comment: input.comment ?? null,
+      },
+    }).select('id,end_at,status,source_id').maybeSingle();
+    if (inserted.error) throw new Error('telegram_replay_grant_insert_failed');
+    if (!inserted.data || inserted.data.status !== 'active' ||
+        inserted.data.source_id !== input.sourceId ||
+        endValue(inserted.data.end_at) !== targetEnd) {
+      throw new Error('telegram_replay_grant_insert_readback_failed');
+    }
+    return { updated: true, reason: 'created' };
+  }
   if (current.status !== 'active') throw new Error('telegram_replay_grant_not_active');
   if (Number.isNaN(endValue(current.end_at))) throw new Error('telegram_replay_grant_invalid_end');
   if (endValue(current.end_at) === targetEnd) return { updated: false, reason: 'already_current' };

@@ -624,8 +624,16 @@ Deno.serve(async (req) => {
       if (!is_manual) {
         const { resolveEffectiveClubAccess, effectiveEndAtIso } = await import('../_shared/resolve-effective-access.ts');
         const accessSnapshot = await resolveEffectiveClubAccess(supabase, user_id, club.id);
-        if (accessSnapshot.allSources.length > 0) {
-          activeUntil = effectiveEndAtIso(accessSnapshot);
+        if (accessSnapshot.isUnlimited) {
+          activeUntil = null;
+        } else if (accessSnapshot.allSources.length > 0) {
+          const effectiveUntil = effectiveEndAtIso(accessSnapshot);
+          const requestedEnd = activeUntil ? Date.parse(activeUntil) : Number.NEGATIVE_INFINITY;
+          const effectiveEnd = effectiveUntil ? Date.parse(effectiveUntil) : Number.NEGATIVE_INFINITY;
+          if (Number.isNaN(requestedEnd) || Number.isNaN(effectiveEnd)) {
+            throw new Error('telegram_effective_access_invalid_end');
+          }
+          activeUntil = requestedEnd >= effectiveEnd ? activeUntil : effectiveUntil;
         }
         console.log(`[grant-access] Resolved effectiveEndAt for club ${club.id}: ${activeUntil}, sources: ${accessSnapshot.allSources.length}, unlimited: ${accessSnapshot.isUnlimited}`);
       }
@@ -693,7 +701,14 @@ Deno.serve(async (req) => {
             // DM idempotency must not freeze the second access projection at
             // its previous paid window. Preserve its identity, meta and state.
             await syncReplayGrant(supabase, {
-              userId: user_id, clubId: club.id, sourceId: source_id, activeUntil,
+              userId: user_id,
+              clubId: club.id,
+              sourceId: source_id,
+              source: source || 'system',
+              grantedBy: admin_id || null,
+              accessRuleId: access_rule_id || null,
+              comment: comment || null,
+              activeUntil,
             });
             // Even when the DM is a duplicate, converge the access window. Do
             // not overwrite healthy active/pending membership states.
