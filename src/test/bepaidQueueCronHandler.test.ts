@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { authorizeQueueCronRequest } from "../../supabase/functions/bepaid-queue-cron/auth";
-import * as policy from "../../supabase/functions/bepaid-queue-cron/policy";
-import { authorizePaymentsReconcile } from "../../supabase/functions/payments-reconcile/auth";
+import * as policy from "../../supabase/functions/_shared/bepaid-queue-policy";
+import { authorizePaymentsReconcile } from "../../supabase/functions/_shared/payments-reconcile-auth";
 
 const compiled = ts.transpileModule(
   readFileSync("supabase/functions/bepaid-queue-cron/index.ts", "utf8"),
@@ -59,8 +59,9 @@ function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" 
     require(path: string) {
       if (path.includes("/http/server.ts")) return { serve: (callback: typeof handler) => { handler = callback; } };
       if (path.includes("@supabase/supabase-js")) return { createClient: () => client };
-      if (path === "./auth.ts") return { authorizeQueueCronRequest, authorizePaymentsReconcile };
-      if (path.endsWith("/policy.ts")) return policy;
+      if (path === "./auth.ts") return { authorizeQueueCronRequest };
+      if (path.endsWith("/payments-reconcile-auth.ts")) return { authorizePaymentsReconcile };
+      if (path.endsWith("/bepaid-queue-policy.ts")) return policy;
       if (path.includes("bepaid-credentials")) return {
         getBepaidCredsStrict: async () => ({ shop_id: "test-shop", secret_key: "test-key" }),
         isBepaidCredsError: () => false, createBepaidAuthHeader: () => "Basic test",

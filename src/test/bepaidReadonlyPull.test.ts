@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
-import { authorizePaymentsReconcile } from '../../supabase/functions/payments-reconcile/auth';
+import { authorizePaymentsReconcile } from '../../supabase/functions/_shared/payments-reconcile-auth';
 import { parseBepaidTrackingId } from '../../supabase/functions/_shared/bepaid-tracking-id';
 
 const source = readFileSync('supabase/functions/bepaid-readonly-pull/index.ts', 'utf8');
@@ -30,7 +30,7 @@ function harness(admin = false) {
     require(path: string) {
       if (path.includes('@supabase/supabase-js')) return { createClient: () => client };
       if (path.includes('bepaid-credentials')) return { getBepaidCredsStrict: creds, isBepaidCredsError: () => false, createBepaidAuthHeader: () => 'Basic test-only' };
-      if (path.includes('payments-reconcile/auth')) return { authorizePaymentsReconcile };
+      if (path.includes('payments-reconcile-auth')) return { authorizePaymentsReconcile };
       if (path.includes('bepaid-tracking-id')) return { parseBepaidTrackingId };
       throw new Error(`Unexpected module ${path}`);
     },

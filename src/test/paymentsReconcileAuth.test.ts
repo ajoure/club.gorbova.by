@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { authorizePaymentsReconcile } from '../../supabase/functions/payments-reconcile/auth';
+import { authorizePaymentsReconcile } from '../../supabase/functions/_shared/payments-reconcile-auth';
 
 describe('payments-reconcile authorization', () => {
   it.each([{}, { Authorization: 'Bearer public-anon' }, { Authorization: 'Bearer user-jwt' }])('rejects missing/public/user credentials without secret lookup', async headers => {

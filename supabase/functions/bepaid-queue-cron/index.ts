@@ -6,7 +6,7 @@ import {
   normalizeQueueRunOptions,
   staleProcessingCutoff,
   staleTerminalReason,
-} from "./policy.ts";
+} from "../_shared/bepaid-queue-policy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

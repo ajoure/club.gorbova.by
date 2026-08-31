@@ -3,7 +3,7 @@ import {
   isStaleProcessingItem,
   normalizeQueueRunOptions,
   staleProcessingCutoff,
-} from "./policy.ts";
+} from "../_shared/bepaid-queue-policy.ts";
 
 Deno.test("queue cron bounds caller-controlled batch options", () => {
   assertEquals(

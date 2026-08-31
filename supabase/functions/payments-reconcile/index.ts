@@ -5,8 +5,8 @@ import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
-import { isStaleProcessingItem, staleProcessingCutoff, staleTerminalReason } from '../bepaid-queue-cron/policy.ts';
-import { authorizePaymentsReconcile } from './auth.ts';
+import { isStaleProcessingItem, staleProcessingCutoff, staleTerminalReason } from '../_shared/bepaid-queue-policy.ts';
+import { authorizePaymentsReconcile } from '../_shared/payments-reconcile-auth.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
