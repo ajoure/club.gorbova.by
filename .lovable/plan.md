@@ -2,7 +2,9 @@
 
 Изменений не выполнялось: ни кода, ни данных, ни функций, ни Publish. Ниже — только проверки чтением и утверждённый план на будущий execute.
 
-## 1. UI patch GrantAccessFromDealDialog — APPROVE с одной правкой имени
+## 1. UI patch GrantAccessFromDealDialog — APPROVE (замечания сверены и приняты)
+
+Код пишет только Codex в GitHub; в Lovable код не меняется и общий план здесь не исполняется.
 
 Текущее состояние на рабочем дереве (соответствует базе 886810efa):
 - строка 250: `DialogContent` уже `flex max-h-[calc(100dvh-24px)] flex-col overflow-hidden` — внешний контейнер готов принять скроллящий DIV;
@@ -13,37 +15,44 @@
 Диff одобрен: перенести `min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain py-4 pr-1` на новый внешний DIV, а `fieldset` оставить только с `disabled` и `space-y-4` (плюс `min-w-0`, иначе длинные строки снова растянут ширину на мобиле).
 
 Кнопка «Добавить N дней по тарифу»:
-- обработчик ровно один вызов `setExactEndValue(...)` от `exactCurrentEnd.getTime() + accessDays * 86400000`;
-- **важная правка**: функции `localDateTimeValue` в проекте нет. Канонический форматтер local-datetime — `n()` из `@/lib/grantAccessForm` (он же используется в тестах диалога). Использовать `n(new Date(...))`, иначе typecheck упадёт;
-- `disabled` при: `!exactCurrentEnd` (missing), `productSubscriptions.length > 1` (ambiguous), `subscriptionLoading`, `subscriptionError`, `!!exactError`, `!(Number.isInteger(accessDays) && accessDays > 0)`;
+- обработчик ровно один вызов `setExactEndValue(localDateTimeValue(new Date(exactCurrentEnd.getTime() + accessDays * 86400000)))`;
+- моё прежнее замечание про форматтер ошибочно и снято: `src/lib/grantAccessForm.ts` экспортирует именно `localDateTimeValue`, `n()` — minified alias, а не source API; GitHub app-tsc локально PASS;
+- `disabled` **без** `!!exactError` (пустое поле даёт `exactError`, и кнопка-преfill тогда никогда не заполнится). Только: `!exactCurrentEnd` (missing), `productSubscriptions.length > 1` (ambiguous), `subscriptionLoading`, `subscriptionError`, `!(Number.isInteger(accessDays) && accessDays > 0)` — `access_days` в `tariffs` integer;
 - кнопка только внутри ветки `useExactEnd`, `type="button"`, `variant="outline"`, рядом с полем даты.
 
 Границы: body запроса (`buildGrantAccessBody`), RBAC (`isAdmin()`), `canGrant`, серверные функции и данные не меняются. Патч чисто презентационный + один `setState`.
 
 Production dependency / critical finding: **нет**. Компонент не читает и не пишет ни одной таблицы напрямую, изменение не затрагивает Edge Functions, миграции, RLS и очереди. Незакрытых critical findings в этом scope нет; действующая блокировка Publish — историческая (сбой run 2773 от 06.06.2026), к патчу отношения не имеет. Требование к PR: `tests/typecheck/build PASS` + два скриншота опубликованного результата (ПК и мобильный).
 
-## 2. Скрытые кнопки: финальный SQL-план 2+6+2 = 10
+## 2. Скрытые кнопки: проверенный SQL-план — ровно 8 изменений, addons 0
 
-Принятые правки цен зафиксированы: цены **не меняются**.
+Принятые правки цен зафиксированы: цены **не меняются**. Execute здесь **не разрешён** — сначала завершается предыдущий recovery (cde/ef grants + очереди).
 
-| target tariff | offer | amount сейчас | amount после | все новые sibling amounts |
+| target tariff | offer | amount сейчас | amount после | новые sibling amounts |
 |---|---|---|---|---|
 | 98539e5d (ранее учились) | 379f9ce6 pay_now | 1325.00 | 1325.00 | 1325.00 |
 | 04e6c302 (доступ подарок) | 158112c1 pay_now | 1.00 | 1.00 | 1.00 |
 
-`card_config.price_display` (1325 / 0) — только витрина, источником amount не является. `document_defaults.amount`/`unit_price` берутся из собственного amount тарифа (1325 / 1), не 2650.
+`card_config.price_display` (1325 / 0) — только витрина, источником amount не является. `document_defaults.amount`/`unit_price` берутся из собственного amount тарифа (1325 / 1), не 2650. Gift display=0 и commercial offer=1 — разные значения; без полномочий цену не меняем.
 
-### Ровно 10 операций
+### Ровно 8 операций
 
-1. **UPDATE 2** existing pay_now (`379f9ce6`, `158112c1`): `is_active=true`, `is_primary=true`, `sort_order=2`, meta ← эталон `02750b7d` с заменой `slot_role='button_1'`, `site_button_variant='primary'`, `acquiring` (bepaid/33524; у `158112c1` отсутствует — добавить), `crm_routing` как в эталоне, `document_defaults` с собственным amount/unit_price, `document_scenarios` — новые UUID сценариев, `executor_id`/`template_id` эталона, `service_period_from=2026-08-01`, `service_period_to=2027-02-28`, `execution_days=300`. **`lead_form` у `158112c1` сохраняется** (merge, не replace). amount не трогаем.
-2. **INSERT 6** недостающих sibling-офферов (по 3 на тариф), точная копия настроек эталонов с собственным amount:
+**Тариф 98539e5d «ранее учились» — 5 изменений:**
+1. **UPDATE 1** existing pay_now `379f9ce6`: `is_active=true`, `is_primary=true`, `sort_order=2`, meta ← эталон `02750b7d` точь-в-точь, с собственным `amount/document_defaults.amount/unit_price` (1325), `slot_role='button_1'`, `site_button_variant='primary'`, `acquiring` (bepaid/33524), `crm_routing`, `document_scenarios` — новые UUID сценариев с remap внутренних offer-ссылок, `executor_id`/`template_id` эталона, `service_period_from=2026-08-01`, `service_period_to=2027-02-28`, `execution_days=300`. amount не трогаем.
+2. **INSERT 3** sibling-офферов, копия настроек эталонов с собственным amount:
    - `pay_now/internal_installment` ← `c7f5221e` (slot_role `button_3`, `meta.installment`: 2 цикла, interval 30, `first_payment_delay_days=0`);
    - `invoice/bank_transfer` ← `4c6d6110` (slot_role `button_2`, legal_entity);
-   - `bank_installment/bank_transfer` ← `fdb8bffc` (slot_role `button_5`, `meta.bank_installment.rr_runtime.enabled=true`, provider `rr`, mode `initiate_only`).
-   Внутренние offer-ссылки (`document_scenarios[].id`, любые `*_offer_id` внутри meta) ремапятся на новые UUID; StripePrice/product_id переносить нечего — их в исходных meta нет.
-3. **UPDATE 2** tariffs `98539e5d`, `04e6c302`: `is_public=false`, `is_active` остаётся `true`.
+   - `bank_installment/bank_transfer` ← `fdb8bffc` (slot_role `button_5`, `rr_runtime.enabled=true`, provider `rr`, mode `initiate_only`).
+3. **UPDATE 1** tariff `98539e5d`: `is_public=false`, `is_active` остаётся `true`.
 
-Три основных тарифа (`38ee08c4`, `a18df7a7`, `767bb895`) и их офферы не затрагиваются. Существующие orders/subscriptions/entitlements не затрагиваются. Суммы Ксении (1326/442/884) — отдельный исходный договор, из тарифа не выводятся и не пересчитываются.
+**Тариф 04e6c302 «доступ подарок» — 3 изменения:**
+4. **UPDATE 1** existing pay_now `158112c1`: те же настройки эталона с собственным amount=1.00; **`lead_form` сохраняется** (merge, не replace); добавить отсутствующий `acquiring` (bepaid/33524).
+5. **INSERT 1** `invoice/bank_transfer` ← `4c6d6110` (slot_role `button_2`).
+6. **UPDATE 1** tariff `04e6c302`: `is_public=false`, `is_active` остаётся `true`.
+
+**Pending (не входит в 8):** gift `internal_installment` и gift `bank_installment/RR` остаются в ожидании явного решения по смыслу ручного amount override (списание 0.50/итого 2.00 BYN при ceil; RR на 1.00 BYN банк не примет). Это не блокирует тариф 98539e5d — его 5 изменений самодостаточны.
+
+StripePrice/product_id не переносятся (в исходных meta их нет). Три основных тарифа (`38ee08c4`, `a18df7a7`, `767bb895`) и их офферы не затрагиваются. Существующие orders/subscriptions/entitlements не затрагиваются. Суммы Ксении (1326/442/884) — отдельный исходный договор, из тарифа не выводятся и не пересчитываются.
 
 ### Dry-run и защита
 - одна транзакция, `lock_timeout=3s`, `statement_timeout=15s`, стабильный порядок ID;
