@@ -24864,6 +24864,7 @@ export type Database = {
         Args: { _package_template_id?: string; _template_id: string }
         Returns: number
       }
+      payments_reconcile_cron_secret: { Args: never; Returns: string }
       products_bulk_delete_dryrun: {
         Args: { product_ids: string[] }
         Returns: {
