@@ -291,9 +291,10 @@ Deno.serve(async (req) => {
       const staleProcessingCutoff = new Date(
         Date.now() - 2 * 60 * 60 * 1000,
       ).toISOString();
+      const queueNow = new Date().toISOString();
       query = query
         .or(
-          `status.in.(pending,error),and(status.eq.processing,updated_at.lt.${staleProcessingCutoff})`,
+          `and(status.in.(pending,error),or(next_retry_at.is.null,next_retry_at.lte.${queueNow})),and(status.eq.processing,updated_at.lt.${staleProcessingCutoff})`,
         )
         .is('matched_order_id', null) // Skip already linked payments
         .lt('attempts', 5)
@@ -336,7 +337,7 @@ Deno.serve(async (req) => {
         // before any legacy/fuzzy profile or order matching below.
         if (queueProviderSubscriptionId(item) || item.tracking_id?.startsWith("subv2:")) {
           const { data: recovered, error } = await supabase.functions.invoke("payments-reconcile", {
-            body: { queueItemId: item.id, expectedUpdatedAt: item.updated_at, dryRun },
+            body: { queueItemId: item.id, expectedUpdatedAt: item.updated_at, dryRun, recordPreflightFailure: !queueItemId },
           });
           if (error || recovered?.success !== true) {
             results.needs_review++;

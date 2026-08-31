@@ -93,6 +93,119 @@ function fixture() {
 }
 afterEach(() => vi.useRealTimers());
 
+describe('automatic preflight failure backoff', () => {
+  const auto = (h: ReturnType<typeof fixture>, options: any = {}) => h.run({
+    recordPreflightFailure: true, expectedUpdatedAt: h.rows.payment_reconcile_queue[0].updated_at, ...options,
+  });
+  function declined() {
+    const h = fixture(); h.tx.status = 'failed';
+    Object.assign(h.rows.payment_reconcile_queue[0], { status: 'error', attempts: 0, next_retry_at: null });
+    return h;
+  }
+  it.each(['pending', 'error', 'processing'])('defers a failed %s preflight using only one queue update', async status => {
+    const h = declined(); h.rows.payment_reconcile_queue[0].status = status;
+    const businessBefore = structuredClone(Object.fromEntries(Object.entries(h.rows).filter(([key]) => key !== 'payment_reconcile_queue')));
+    await expect(auto(h)).rejects.toThrow('recovery_provider_payment_mismatch');
+    expect(h.rows.payment_reconcile_queue[0]).toMatchObject({ status: 'error', attempts: 1,
+      last_attempt_at: now.toISOString(), last_error: 'recovery_provider_payment_mismatch', next_retry_at: '2026-08-31T09:00:00.000Z' });
+    expect(h.writes).toHaveLength(1); expect(h.writes[0].table).toBe('payment_reconcile_queue');
+    expect(Object.fromEntries(Object.entries(h.rows).filter(([key]) => key !== 'payment_reconcile_queue'))).toEqual(businessBefore);
+    expect(h.db.functions.invoke).not.toHaveBeenCalled();
+  });
+  it('never writes on a dry-run failure even with the automatic flag', async () => {
+    const h = declined(); const before = structuredClone(h.rows);
+    await expect(auto(h, { dryRun: true })).rejects.toThrow('recovery_provider_payment_mismatch');
+    expect(h.rows).toEqual(before); expect(h.writes).toEqual([]);
+  });
+  it('requires an exact snapshot before automatic accounting', async () => {
+    const h = declined();
+    await expect(h.run({ recordPreflightFailure: true })).rejects.toThrow('recovery_preflight_snapshot_required');
+    expect(h.writes).toEqual([]); expect(h.fetcher).not.toHaveBeenCalled();
+  });
+  it('does not mutate or fetch after a snapshot conflict', async () => {
+    const h = declined();
+    await expect(auto(h, { expectedUpdatedAt: 'different' })).rejects.toThrow('recovery_queue_snapshot_changed');
+    expect(h.writes).toEqual([]); expect(h.fetcher).not.toHaveBeenCalled();
+  });
+  it('keeps manual and explicit-argument preflight guards zero-write', async () => {
+    const h = declined();
+    await expect(h.run()).rejects.toThrow('recovery_provider_payment_mismatch');
+    h.tx.status = 'successful';
+    await expect(auto(h, { providerSubscriptionId: 'sbs_wrong' })).rejects.toThrow('recovery_explicit_subscription_mismatch');
+    expect(h.writes).toEqual([]);
+  });
+  it.each(['completed', 'successful'])('never demotes a %s row after preflight failure', async status => {
+    const h = declined(); h.rows.payment_reconcile_queue[0].status = status;
+    const before = structuredClone(h.rows);
+    await expect(auto(h)).rejects.toThrow('recovery_provider_payment_mismatch');
+    expect(h.rows).toEqual(before); expect(h.writes).toEqual([]);
+  });
+  it('never touches a fresh lease', async () => {
+    const h = declined(); Object.assign(h.rows.payment_reconcile_queue[0], { status: 'processing', updated_at: now.toISOString() });
+    expect(await auto(h)).toMatchObject({ claim_conflicts: 1 });
+    expect(h.writes).toEqual([]); expect(h.fetcher).not.toHaveBeenCalled();
+  });
+  it.each([{ source: 'file_import' }, { last_error: 'SOFT_CANCELLED: old' }, { last_error: 'CANCELLED_BY_ADMIN: old' }])('preserves terminal/import exclusion %j', patch => {
+    const h = declined(); Object.assign(h.rows.payment_reconcile_queue[0], patch);
+    return expect(auto(h)).rejects.toThrow('recovery_queue_requires_manual_review').then(() => {
+      expect(h.writes).toEqual([]); expect(h.fetcher).not.toHaveBeenCalled();
+    });
+  });
+  it('defers early automatic repeats without another GET or write', async () => {
+    const h = declined(); await expect(auto(h)).rejects.toThrow('recovery_provider_payment_mismatch');
+    const before = structuredClone(h.rows); const calls = h.fetcher.mock.calls.length;
+    expect(await auto(h)).toMatchObject({ retry_deferred: 1, results: { orders_reconciled: 0 } });
+    expect(await auto(h, { dryRun: true })).toMatchObject({ retry_deferred: 1, dry_run: true, no_writes: true });
+    expect(h.rows).toEqual(before); expect(h.fetcher).toHaveBeenCalledTimes(calls); expect(h.writes).toHaveLength(1);
+  });
+  it('exhausts five validation attempts without completing or granting a failed payment', async () => {
+    const h = declined();
+    for (let i = 0; i < 5; i++) {
+      await expect(auto(h, { now: new Date(now.getTime() + i * 3_600_000) })).rejects.toThrow('recovery_provider_payment_mismatch');
+      expect(h.rows.payment_reconcile_queue[0].attempts).toBe(i + 1);
+    }
+    expect(h.rows.payment_reconcile_queue[0]).toMatchObject({ status: 'error', attempts: 5, next_retry_at: null });
+    await expect(auto(h, { now: new Date(now.getTime() + 10 * 3_600_000) })).rejects.toThrow('recovery_queue_requires_manual_review');
+    expect(h.writes).toHaveLength(5); expect(h.db.functions.invoke).not.toHaveBeenCalled();
+  });
+  it.each(['network', 'timeout', '429', '502', 'invalid_json'])('does not exhaust valid payments during provider unavailability (%s)', mode => {
+    const h = declined(); h.rows.payment_reconcile_queue[0].attempts = 4;
+    if (mode === 'network' || mode === 'timeout') h.fetcher.mockRejectedValue(new Error('private provider details'));
+    else h.fetcher.mockResolvedValue(new Response(mode === 'invalid_json' ? 'not JSON' : '{}', { status: mode === 'invalid_json' ? 200 : Number(mode) }));
+    return expect(auto(h)).rejects.toThrow('recovery_provider_unavailable').then(() => {
+      expect(h.rows.payment_reconcile_queue[0]).toMatchObject({ status: 'error', attempts: 4,
+        last_error: 'recovery_provider_unavailable', next_retry_at: '2026-08-31T09:00:00.000Z' });
+      expect(h.fetcher).toHaveBeenCalledTimes(1); expect(h.writes).toHaveLength(1);
+      expect(h.db.functions.invoke).not.toHaveBeenCalled();
+    });
+  });
+  it('loses the preflight CAS without overwriting another worker', async () => {
+    const h = declined();
+    h.fetcher.mockImplementationOnce(async () => {
+      Object.assign(h.rows.payment_reconcile_queue[0], { status: 'completed', updated_at: '2026-08-31T08:01:00Z' });
+      return new Response(JSON.stringify({ transaction: h.tx }));
+    });
+    expect(await auto(h)).toMatchObject({ claim_conflicts: 1 });
+    expect(h.rows.payment_reconcile_queue[0]).toMatchObject({ status: 'completed', attempts: 0, updated_at: '2026-08-31T08:01:00Z' });
+    expect(h.db.functions.invoke).not.toHaveBeenCalled();
+  });
+  it('reports an execute-error CAS conflict without overwriting the changed lease', async () => {
+    const h = fixture();
+    h.db.functions.invoke.mockImplementation(async () => {
+      h.rows.payment_reconcile_queue[0].updated_at = '2026-08-31T08:01:00Z';
+      return { error: { message: 'interrupted' } };
+    });
+    expect(await h.run()).toMatchObject({ claim_conflicts: 1 });
+    expect(h.rows.payment_reconcile_queue[0]).toMatchObject({ status: 'processing', updated_at: '2026-08-31T08:01:00Z' });
+  });
+  it('makes the automatic recurring reader respect backoff before LIMIT', () => {
+    const source = readFileSync('supabase/functions/bepaid-auto-process/index.ts', 'utf8');
+    expect(source).toContain('next_retry_at.is.null,next_retry_at.lte.${queueNow}');
+    expect(source).toContain('recordPreflightFailure: !queueItemId');
+    expect(source.indexOf('next_retry_at.is.null')).toBeLessThan(source.indexOf('.limit(limit)'));
+  });
+});
+
 describe('canonical provider-verified queue recovery', () => {
   it('legacy event without SBS needs an explicit provider-proven subscription, never an order guess', async () => {
     const h = fixture(); h.rows.payment_reconcile_queue[0].raw_payload = {};
