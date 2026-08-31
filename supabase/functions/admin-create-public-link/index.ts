@@ -26,6 +26,8 @@ import {
 import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
 import { requirePaymentsEdit } from '../_shared/admin-section-auth.ts';
 import { resolveSalesManagerForCreation, SalesManagerSelectionError } from '../_shared/sales-manager-attribution.ts';
+import { handleInstallmentRepaymentLink, type RepaymentLinkRequest } from '../_shared/installment-repayment-link.ts';
+import { RepaymentPlanError } from '../_shared/installment-repayment-plan.ts';
 import {
   resolveInstallmentRetryPolicy,
   resolveBepaidAttemptsValue,
@@ -43,6 +45,7 @@ import {
 } from '../_shared/calculate-installment-plan.ts';
 
 interface CreatePublicLinkRequest {
+  repayment?: RepaymentLinkRequest;
   product_id: string;
   tariff_id: string;
   offer_id?: string | null;
@@ -112,6 +115,11 @@ Deno.serve(async (req) => {
     const isSuper = isSuperRole === true;
 
     const body: CreatePublicLinkRequest = await req.json();
+    // Existing debt is priced and attributed from its original agreement. It
+    // must never enter the new-sale tariff/offer/manager override branch below.
+    if (body.repayment) {
+      return jsonResponse(await handleInstallmentRepaymentLink(supabase, user.id, body.repayment));
+    }
     const responsibleUserId = await resolveSalesManagerForCreation(
       supabase,
       user.id,
@@ -1039,6 +1047,7 @@ Deno.serve(async (req) => {
       row: link,
     });
   } catch (e) {
+    if (e instanceof RepaymentPlanError) return errorResponse(e.code, 409);
     if (e instanceof SalesManagerSelectionError) {
       return errorResponse(e.code, e.status);
     }

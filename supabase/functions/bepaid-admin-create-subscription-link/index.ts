@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,6 +12,7 @@ interface CreateLinkRequest {
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { referralDiscountMeta, resolveReferralCheckoutDiscount } from '../_shared/referral-checkout-discount.ts';
+import { isInstallmentIntent } from '../_shared/installment-repayment-plan.ts';
 
 // Safe name parsing - handles 0/1/2/3+ tokens correctly
 function safeParseFullName(fullName: string | null | undefined): { firstName: string | undefined; lastName: string | undefined } {
@@ -99,6 +100,14 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Subscription not found' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Existing finite debt cannot become a new infinite subscription priced from
+    // a current (possibly foreign) offer. Use the dedicated repayment workflow.
+    if (isInstallmentIntent(subscription.meta)) {
+      return new Response(JSON.stringify({ error: 'existing_installment_repayment_required' }), {
+        status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
