@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { parseBepaidTrackingId } from "../_shared/bepaid-tracking-id.ts";
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
