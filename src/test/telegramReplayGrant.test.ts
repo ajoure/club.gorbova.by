@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { syncReplayGrant } from '../../supabase/functions/telegram-grant-access/sync-replay-grant';
 
-const input = { userId: 'user', clubId: 'club', sourceId: 'order', activeUntil: '2026-09-29T12:00:00Z', now: '2026-08-31T18:00:00Z' };
+const input = {
+  userId: 'user', clubId: 'club', sourceId: 'order', source: 'grant-access-for-order',
+  accessRuleId: 'rule', activeUntil: '2026-09-29T12:00:00Z', now: '2026-08-31T18:00:00Z',
+};
 const original = { id: 'grant', status: 'active', end_at: '2026-09-27T20:59:59Z', updated_at: '2026-08-28T12:00:00Z' };
-function database(options: { row?: any; readError?: boolean; writeError?: boolean; conflict?: boolean; wrongReadback?: boolean } = {}) {
+function database(options: { row?: any; readError?: boolean; writeError?: boolean; insertError?: boolean; conflict?: boolean; wrongReadback?: boolean } = {}) {
   let row = options.row === undefined ? { ...original } : options.row;
   const writes: any[] = [];
   const queries: any[] = [];
@@ -14,13 +17,16 @@ function database(options: { row?: any; readError?: boolean; writeError?: boolea
     const builder: any = {
       select: () => builder,
       eq: (key: string, value: any) => { query.filters.push([key, value]); return builder; },
-      update: (patch: any) => { query.patch = patch; return builder; },
+      update: (patch: any) => { query.patch = patch; query.kind = 'update'; return builder; },
+      insert: (patch: any) => { query.patch = patch; query.kind = 'insert'; return builder; },
       maybeSingle: async () => {
         if (!query.patch) return { data: row && { ...row }, error: options.readError ? new Error('read') : null };
         writes.push(query);
-        if (options.writeError) return { data: null, error: new Error('write') };
+        if (options.writeError || (query.kind === 'insert' && options.insertError)) return { data: null, error: new Error('write') };
         if (options.conflict) return { data: null, error: null };
-        row = { ...row, ...query.patch };
+        row = query.kind === 'insert'
+          ? { id: 'created-grant', ...query.patch }
+          : { ...row, ...query.patch };
         return { data: options.wrongReadback ? { ...row, id: 'another' } : { ...row }, error: null };
       },
     };
@@ -42,10 +48,16 @@ describe('Telegram grant mirror replay without sending another DM', () => {
     expect(await syncReplayGrant(t.db, input)).toEqual({ updated: false, reason: 'already_current' });
     expect(t.writes).toHaveLength(1);
   });
-  it('does not invent a grant for a historical DM without an existing mirror', async () => {
+  it('creates the exact missing source mirror without calling Telegram', async () => {
     const t = database({ row: null });
-    expect((await syncReplayGrant(t.db, input)).reason).toBe('not_found');
-    expect(t.writes).toHaveLength(0);
+    expect(await syncReplayGrant(t.db, input)).toEqual({ updated: true, reason: 'created' });
+    expect(t.writes).toHaveLength(1);
+    expect(t.writes[0].kind).toBe('insert');
+    expect(t.writes[0].patch).toMatchObject({
+      user_id: 'user', club_id: 'club', source: 'grant-access-for-order', source_id: 'order',
+      start_at: input.now, end_at: input.activeUntil, status: 'active',
+      meta: { replay_without_duplicate_dm: true, access_rule_id: 'rule' },
+    });
   });
   it('does not use a fuzzy source when source_id is absent', async () => {
     const t = database();
@@ -81,6 +93,12 @@ describe('Telegram grant mirror replay without sending another DM', () => {
   ])('fails closed on %j', async (options, error) => {
     await expect(syncReplayGrant(database(options).db, input)).rejects.toThrow(error);
   });
+  it.each([
+    [{ row: null, insertError: true }, 'insert_failed'],
+    [{ row: null, conflict: true }, 'insert_readback_failed'],
+  ])('fails closed while creating a missing exact mirror on %j', async (options, error) => {
+    await expect(syncReplayGrant(database(options).db, input)).rejects.toThrow(error);
+  });
   it('synchronizes before duplicate continue and never falls through on lookup/sync failure', () => {
     const source = readFileSync('supabase/functions/telegram-grant-access/index.ts', 'utf8');
     const branch = source.slice(source.indexOf('if (dup && !projectionNeedsRestore)'), source.indexOf('// Process chat'));
@@ -89,5 +107,6 @@ describe('Telegram grant mirror replay without sending another DM', () => {
     expect(branch).not.toContain('lookup failed (continuing)');
     expect(source).toContain("if (existingDmError) throw new Error('telegram_duplicate_dm_lookup_failed')");
     expect(source).toContain("if (legacyError) throw new Error('telegram_duplicate_dm_legacy_lookup_failed')");
+    expect(source).toContain("requestedEnd >= effectiveEnd ? activeUntil : effectiveUntil");
   });
 });
