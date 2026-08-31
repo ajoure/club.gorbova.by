@@ -5,7 +5,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
-import { authorizePaymentsReconcile } from '../payments-reconcile/auth.ts';
+import { authorizePaymentsReconcile } from '../_shared/payments-reconcile-auth.ts';
 import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
 
 const corsHeaders = {

@@ -1,3 +1,4 @@
+// Shared by independently deployed payment queue workers.
 export const STALE_PROCESSING_MS = 2 * 60 * 60 * 1000;
 
 export interface QueueRunOptions {

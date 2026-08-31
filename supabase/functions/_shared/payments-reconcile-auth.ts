@@ -1,4 +1,4 @@
-import { requestHasServiceRoleKey } from '../_shared/service-request-auth.ts';
+import { requestHasServiceRoleKey } from './service-request-auth.ts';
 
 export async function authorizePaymentsReconcile(
   req: Request,

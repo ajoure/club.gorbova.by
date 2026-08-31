@@ -6,7 +6,7 @@ import {
   normalizeQueueRunOptions,
   staleProcessingCutoff,
   staleTerminalReason,
-} from "../../supabase/functions/bepaid-queue-cron/policy";
+} from "../../supabase/functions/_shared/bepaid-queue-policy";
 
 describe("bePaid queue cron authorization", () => {
   const secrets = {
