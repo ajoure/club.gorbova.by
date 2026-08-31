@@ -1001,20 +1001,28 @@ Deno.serve(async (req) => {
     if (extendFromCurrent && !existingProductSub && !isNoCardTrial) {
 
       // PATCH: Added auto_renew to select for fallback guard in extend branch
-      const { data: activeSub } = await supabase
+      let candidateQuery = supabase
         .from("subscriptions_v2")
         .select("id, access_end_at, status, tariff_id, product_id, auto_renew")
         .eq("user_id", userId)
-        .eq("product_id", productId)
-        .eq("status", "active")
-        .order("access_end_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .eq("product_id", productId);
+      if (exactAccessTarget) {
+        // The administrator selected an exact existing chain, not the latest
+        // active row of any tariff. Still validate ownership/scope below.
+        candidateQuery = candidateQuery.eq('id', exactAccessTarget.subscriptionId).in('status', ['active', 'expired']);
+      } else {
+        candidateQuery = candidateQuery.eq('status', 'active').order('access_end_at', { ascending: false }).limit(1);
+      }
+      const { data: activeSub, error: candidateError } = await candidateQuery.maybeSingle();
+      if (exactAccessTarget && candidateError) {
+        return new Response(JSON.stringify({ success: false, error: 'exact_access_subscription_lookup_failed' }),
+          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
 
       const exactCandidateConflict = exactTargetConflict(activeSub);
       if (exactCandidateConflict) return exactCandidateConflict;
 
-      if (activeSub?.access_end_at && new Date(activeSub.access_end_at) > now) {
+      if (activeSub?.access_end_at && (exactAccessTarget || new Date(activeSub.access_end_at) > now)) {
         // ── TARIFF + bePaid SBS MATCH GUARD ─────────────────────────────
         // Extend существующей подписки разрешён ТОЛЬКО при совпадении tariff_id.
         // Дополнительно (PATCH DEAL-LINKAGE-ROOT-FIXES-2026-05): для recurring

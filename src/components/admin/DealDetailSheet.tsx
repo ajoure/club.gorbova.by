@@ -74,6 +74,7 @@ import { cn } from "@/lib/utils";
 import { EditDealDialog } from "./EditDealDialog";
 import { LinkPaymentDialog } from "./payments/LinkPaymentDialog";
 import { GrantAccessFromDealDialog } from "./GrantAccessFromDealDialog";
+import { loadDealAccessSubscription } from "@/lib/dealAccessSubscription";
 import { DealPayerDocumentsCard } from "./DealPayerDocumentsCard";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
@@ -328,17 +329,11 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   });
 
   // Fetch subscription for this deal
-  const { data: subscription } = useQuery({
+  const { data: subscription, isError: subscriptionLookupError, isLoading: subscriptionLookupLoading } = useQuery({
     queryKey: ["deal-subscription", deal?.id],
     queryFn: async () => {
       if (!deal?.id) return null;
-      const { data, error } = await supabase
-        .from("subscriptions_v2")
-        .select("*")
-        .eq("order_id", deal.id)
-        .maybeSingle();
-      if (error) throw error;
-      return data;
+      return loadDealAccessSubscription(supabase, deal);
     },
     enabled: !!deal?.id && open,
     staleTime: 30000,
@@ -1457,8 +1452,10 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                   </div>
                 ) : (
                   <div className="text-center py-4 space-y-3">
-                    <p className="text-muted-foreground text-sm">Подписка не создана</p>
-                    {isAdmin() && deal.status === "paid" && deal.user_id && (
+                    <p className="text-muted-foreground text-sm">{subscriptionLookupError
+                      ? "Не удалось однозначно определить подписку. Обновите данные сделки."
+                      : subscriptionLookupLoading ? "Загрузка подписки…" : "Подписка не создана"}</p>
+                    {!subscriptionLookupError && !subscriptionLookupLoading && isAdmin() && deal.status === "paid" && deal.user_id && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -1473,7 +1470,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                     )}
                   </div>
                 )}
-                {subscription && isAdmin() && deal.status === "paid" && deal.user_id && (
+                {subscription && !subscriptionLookupError && isAdmin() && deal.status === "paid" && deal.user_id && (
                   <Button variant="outline" size="sm" className="mt-3" onClick={() => {
                     setGrantAccessExactMode(true);
                     setGrantAccessDialogOpen(true);

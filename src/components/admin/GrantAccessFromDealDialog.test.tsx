@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ComponentProps } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -43,9 +44,9 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-function show(exact = true) {
+function show(exact = true, existingSubscription?: ComponentProps<typeof GrantAccessFromDealDialog>['existingSubscription']) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
-  const props = { open: true, onOpenChange: vi.fn(), deal, tariff: { name: 'Тестовый тариф', access_days: 30 }, onSuccess: vi.fn(), initialExactEnd: exact };
+  const props = { open: true, onOpenChange: vi.fn(), deal, tariff: { name: 'Тестовый тариф', access_days: 30 }, onSuccess: vi.fn(), initialExactEnd: exact, existingSubscription };
   const view = render(<QueryClientProvider client={client}><GrantAccessFromDealDialog {...props} /></QueryClientProvider>);
   return { ...view, props, client };
 }
@@ -66,6 +67,7 @@ describe('existing deal exact access repair dialog', () => {
     expect(state.invoke.mock.calls[0][1]).toEqual({ method: 'GET' });
     const request = state.invoke.mock.calls[1][1].body;
     expect(request).toMatchObject({ orderId: 'order', customAccessEndAt: target.toISOString(), expectedExistingSubscriptionId: subscriptionId, extendFromCurrent: true });
+    expect(request.customAccessStartAt).toBe(state.candidates[0].access_end_at);
     expect(request).not.toHaveProperty('customAccessDays');
     expect(request).not.toHaveProperty('adminManualAccessEdit');
     expect(request).not.toHaveProperty('manualSubscriptionId');
@@ -91,6 +93,22 @@ describe('existing deal exact access repair dialog', () => {
     state.candidates[0].access_end_at = '2099-10-01T03:01:53.529Z';
     show(); chooseTarget();
     await screen.findByText('Этот режим не сокращает существующий доступ.');
+    expect(screen.getByRole('button', { name: 'Выдать доступ' })).toBeDisabled();
+  });
+  it('can repair an expired subscription explicitly linked to this deal', async () => {
+    state.candidates = [];
+    const { props } = show(true, { id: subscriptionId, status: 'expired', product_id: 'product', tariff_id: 'tariff', access_end_at: '2026-08-01T12:00:00Z' });
+    chooseTarget();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Выдать доступ' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Выдать доступ' }));
+    await waitFor(() => expect(props.onSuccess).toHaveBeenCalled());
+    expect(state.invoke.mock.calls[1][1].body.expectedExistingSubscriptionId).toBe(subscriptionId);
+  });
+  it('does not use an expired linked row of another tariff', async () => {
+    state.candidates = [];
+    show(true, { id: subscriptionId, status: 'expired', product_id: 'product', tariff_id: 'other', access_end_at: '2026-08-01T12:00:00Z' });
+    chooseTarget();
+    await waitFor(() => expect(screen.getAllByRole('alert').length).toBeGreaterThan(0));
     expect(screen.getByRole('button', { name: 'Выдать доступ' })).toBeDisabled();
   });
   it.each([{ success: true, skipped: true }, { manual_review: true, skipped: true }, {}])('does not close or show success for %j', async response => {
@@ -154,7 +172,7 @@ describe('existing deal exact access repair dialog', () => {
     expect(screen.getByRole('button', { name: 'Выдать доступ' }).parentElement).toHaveClass('shrink-0');
     const sheet = readFileSync('src/components/admin/DealDetailSheet.tsx', 'utf8');
     const accessBlock = sheet.slice(sheet.indexOf('{/* Access / Subscription */}'), sheet.indexOf('{/* Documents — единая карточка */}'));
-    expect(accessBlock).toContain('subscription && isAdmin() && deal.status === "paid" && deal.user_id');
+    expect(accessBlock).toContain('subscription && !subscriptionLookupError && isAdmin() && deal.status === "paid" && deal.user_id');
     expect(accessBlock).toContain('Исправить срок доступа');
   });
 });

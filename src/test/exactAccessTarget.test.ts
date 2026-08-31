@@ -67,6 +67,8 @@ describe('exact existing paid access target', () => {
     expect(replay.indexOf('exactTargetConflict(resolvedSubscription)')).toBeLessThan(replay.indexOf('syncSecondaryProductAccessForUser('));
     expect(source.indexOf('exactTargetConflict(existingProductSub)')).toBeLessThan(source.indexOf('// 1. Upsert entitlement'));
     expect(source.indexOf('exactTargetConflict(activeSub)')).toBeLessThan(source.indexOf('// ── TARIFF + bePaid SBS MATCH GUARD'));
+    expect(source).toContain("candidateQuery.eq('id', exactAccessTarget.subscriptionId).in('status', ['active', 'expired'])");
+    expect(source).toContain('exactAccessTarget || new Date(activeSub.access_end_at) > now');
     expect(source).toContain('if (!exactAccessTarget && !fullExistingSub?.payment_method_id && hasPaymentMethod)');
     expect(source).toContain('if (!exactAccessTarget && !extendRecurringSnapshot)');
     expect(source).toContain("...(exactAccessTarget ? { last_extension_mode: 'exact_existing' } : {");

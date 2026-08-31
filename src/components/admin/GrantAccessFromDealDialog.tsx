@@ -50,6 +50,7 @@ interface GrantAccessFromDealDialogProps {
     access_end_at: string | null;
     status: string;
     product_id?: string;
+    tariff_id?: string | null;
   } | null;
   onSuccess: () => void;
   initialExactEnd?: boolean;
@@ -97,8 +98,14 @@ export function GrantAccessFromDealDialog({
     enabled: open && !!deal.user_id && !!deal.product_id,
   });
   const productSubscription = productSubscriptions.length === 1 ? productSubscriptions[0] : null;
-  const exactCurrentEnd = productSubscription?.access_end_at && Number.isFinite(Date.parse(productSubscription.access_end_at))
-    ? new Date(productSubscription.access_end_at) : null;
+  // An expired subscription is usable only with an explicit same-deal lineage
+  // supplied by the sheet, never by choosing the latest historical row.
+  const expiredLinkedSubscription = productSubscriptions.length === 0 && existingSubscription?.status === 'expired'
+    && existingSubscription.product_id === deal.product_id && existingSubscription.tariff_id === deal.tariff_id
+    ? existingSubscription : null;
+  const exactSubscription = productSubscription || expiredLinkedSubscription;
+  const exactCurrentEnd = exactSubscription?.access_end_at && Number.isFinite(Date.parse(exactSubscription.access_end_at))
+    ? new Date(exactSubscription.access_end_at) : null;
 
   // Set default start date from deal_date (canonical) when dialog opens
   const dealDate = deal.deal_date || deal.created_at;
@@ -163,13 +170,12 @@ export function GrantAccessFromDealDialog({
   }, [accessDays, extendFromCurrent, productSubscription, existingSubscription, customStartDate, deal.created_at, deal.deal_date, useExactEnd, exactEnd]);
 
   const exactError = useExactEnd ? (
-    !productSubscription ? "Не подтверждена единственная действующая подписка этого тарифа. Обновите данные сделки."
+    !exactSubscription ? "Не подтверждена единственная существующая подписка этого тарифа. Обновите данные сделки."
       : !exactEnd ? "Укажите корректную точную дату и время окончания."
       : exactEnd <= new Date() ? "Точная дата окончания должна быть в будущем."
-      : !productSubscription.access_end_at || !Number.isFinite(Date.parse(productSubscription.access_end_at))
+      : !exactSubscription.access_end_at || !Number.isFinite(Date.parse(exactSubscription.access_end_at))
         ? "Текущий срок подписки не подтверждён. Требуется ручная проверка."
-      : exactEnd.getTime() < Date.parse(productSubscription.access_end_at) ? "Этот режим не сокращает существующий доступ."
-      : customStartDate && exactEnd <= customStartDate ? "Окончание должно быть позже начала доступа." : null
+      : exactEnd.getTime() < Date.parse(exactSubscription.access_end_at) ? "Этот режим не сокращает существующий доступ." : null
   ) : null;
   const canGrant = isAdmin() && !!deal.user_id && (deal.status === "paid" || deal.status === "partial")
     && !subscriptionLoading && !subscriptionError && productSubscriptions.length <= 1 && !exactError
@@ -180,7 +186,7 @@ export function GrantAccessFromDealDialog({
     mutationFn: async () => {
       if (!canGrant || !deal.user_id) throw new Error("Выдача доступа недоступна: проверьте роль и данные сделки.");
       const requestedEnd = useExactEnd ? exactEnd : null;
-      const expectedId = useExactEnd ? productSubscription?.id : undefined;
+      const expectedId = useExactEnd ? exactSubscription?.id : undefined;
       if (useExactEnd) {
         const capability = await supabase.functions.invoke('grant-access-for-order', { method: 'GET' });
         if (capability.error || capability.data?.capabilities?.exact_existing_access_v1 !== true) {
@@ -191,7 +197,7 @@ export function GrantAccessFromDealDialog({
         body: buildGrantAccessBody({
           orderId: deal.id,
           days: customDays,
-          start: customStartDate,
+          start: useExactEnd ? exactCurrentEnd : customStartDate,
           extendFromCurrent,
           grantTelegram,
           grantGetcourse,
@@ -311,7 +317,7 @@ export function GrantAccessFromDealDialog({
           <Separator />
 
           {/* Custom start date */}
-          <div className="space-y-2">
+          {!useExactEnd && <div className="space-y-2">
             <Label>Дата начала доступа</Label>
             <Popover>
               <PopoverTrigger asChild>
@@ -342,7 +348,7 @@ export function GrantAccessFromDealDialog({
                 ⚠️ Дата начала в прошлом — доступ будет выдан ретроактивно
               </p>
             )}
-          </div>
+          </div>}
 
           <div className="flex items-center gap-2">
             <Checkbox id="exactAccessEnd" checked={useExactEnd} onCheckedChange={(checked) => {
