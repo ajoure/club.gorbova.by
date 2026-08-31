@@ -94,6 +94,22 @@ function fixture() {
 afterEach(() => vi.useRealTimers());
 
 describe('canonical provider-verified queue recovery', () => {
+  it('legacy event without SBS needs an explicit provider-proven subscription, never an order guess', async () => {
+    const h = fixture(); h.rows.payment_reconcile_queue[0].raw_payload = {};
+    await expect(h.run({ dryRun: true })).rejects.toThrow('recovery_no_canonical_order');
+    expect(await h.run({ dryRun: true, providerSubscriptionId: 'sbs_test' })).toMatchObject({
+      no_writes: true, plan: { expected_orders_created: 1, parent_order_id: id(5), expected_access_end_at: newEnd },
+    });
+    expect(h.writes).toEqual([]);
+    h.sbs.last_transaction.uid = id(99);
+    await expect(h.run({ providerSubscriptionId: 'sbs_test' })).rejects.toThrow('recovery_provider_subscription_mismatch');
+    expect(h.writes).toEqual([]);
+  });
+  it('explicit SBS cannot replace contradictory event evidence', async () => {
+    const h = fixture();
+    await expect(h.run({ providerSubscriptionId: 'sbs_other' })).rejects.toThrow('recovery_explicit_subscription_mismatch');
+    expect(h.writes).toEqual([]);
+  });
   it('dry-runs legacy tracking through the exact provider link with zero writes', async () => {
     const h = fixture(); const before = structuredClone(h.rows);
     const result = await h.run({ dryRun: true });

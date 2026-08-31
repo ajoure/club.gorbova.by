@@ -132,7 +132,7 @@ describe("actual scheduled payments-reconcile handler with isolated database", (
     const h = harness({}, "win", "reconcile");
     await h.run({ queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, dry_run: true });
     expect(h.recover).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
-      queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, dryRun: true, providerAuth: "Basic test",
+      queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, dryRun: true, providerAuth: "Basic test", providerSubscriptionId: undefined,
     });
     expect(h.writes).toEqual([]); expect(h.invoke).not.toHaveBeenCalled();
   });

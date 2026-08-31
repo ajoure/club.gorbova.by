@@ -13,6 +13,9 @@
 - Identity: существующий payment → его фактический order; иначе точный
   provider link → subscription → canonical parent order → profile/current
   auth user. Никакого поиска по email/сумме, legacy `orders`, новых контактов.
+- Старое событие без SBS допускает явный `providerSubscriptionId` только в
+  авторизованном exact-вызове после preflight. Он не заменяет конфликтующий
+  SBS события; GET обязан подтвердить last UID именно данного платежа.
 - Для нового recurring cycle переиспользуется общий REBILL engine. Его три
   модуля перенесены в `_shared/rebill`; старые импорты сохранены wrappers.
   Существующий платёж не перепривязывается к другому заказу.

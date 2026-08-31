@@ -56,7 +56,7 @@ async function fulfillmentProof(db: any, order: any, now: Date) {
   return !!activeSub && !!activeEnt && (belongs(activeEnt) || deliveryRecorded);
 }
 
-async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch, now: Date) {
+async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch, now: Date, explicitSbs?: string) {
   if (!UID.test(item.bepaid_uid || '')) throw new Error('recovery_missing_provider_uid');
   const uid = item.bepaid_uid;
   const response = await providerGet(fetcher, `https://gateway.bepaid.by/transactions/${encodeURIComponent(uid)}`, auth);
@@ -75,6 +75,13 @@ async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch,
 
   const tracking = parseBepaidTrackingId(item.tracking_id);
   let sbs = queueProviderSubscriptionId(item);
+  // Old transaction-only events may omit SBS. An authorized exact recovery
+  // can supply the provider ID obtained during preflight, but cannot override
+  // conflicting event evidence. GET must still prove its last UID == this UID.
+  if (explicitSbs !== undefined) {
+    if (!SBS.test(explicitSbs) || (sbs && sbs !== explicitSbs)) throw new Error('recovery_explicit_subscription_mismatch');
+    sbs = explicitSbs;
+  }
   if (!sbs && tracking.subscriptionV2Id && UUID.test(tracking.subscriptionV2Id)) {
     const link = await checked(db.from('provider_subscriptions').select('provider_subscription_id')
       .eq('provider', 'bepaid').eq('subscription_v2_id', tracking.subscriptionV2Id).eq('state', 'active').maybeSingle(), 'tracking_provider_link');
@@ -289,7 +296,8 @@ async function executePlan(db: any, plan: any) {
 }
 
 export async function reconcileExactQueuePayment(db: any, options: {
-  queueItemId: string; dryRun?: boolean; expectedUpdatedAt?: string; providerAuth: string; fetcher?: typeof fetch; now?: Date;
+  queueItemId: string; dryRun?: boolean; expectedUpdatedAt?: string; providerSubscriptionId?: string;
+  providerAuth: string; fetcher?: typeof fetch; now?: Date;
 }) {
   if (!UUID.test(options.queueItemId)) throw new Error('recovery_invalid_queue_id');
   const now = options.now || new Date();
@@ -309,7 +317,7 @@ export async function reconcileExactQueuePayment(db: any, options: {
     return { success: true, stale_terminal: released ? 1 : 0, claim_conflicts: released ? 0 : 1, results: { orders_reconciled: 0 } };
   }
   if (!['pending', 'error', 'processing', 'successful', 'completed'].includes(item.status)) throw new Error('recovery_queue_requires_manual_review');
-  const plan = await loadPlan(db, item, options.providerAuth, options.fetcher || fetch, now);
+  const plan = await loadPlan(db, item, options.providerAuth, options.fetcher || fetch, now, options.providerSubscriptionId);
   if (options.dryRun) return { success: true, dry_run: true, no_writes: true, plan: safePlan(plan) };
   if (item.status === 'completed' && plan.alreadyFulfilled) return { success: true, already_completed: true, results: { already_materialized: 1 } };
   if (!['pending', 'error', 'processing', 'successful'].includes(item.status) || (item.attempts || 0) >= 5) {

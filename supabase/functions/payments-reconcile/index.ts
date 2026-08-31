@@ -68,6 +68,7 @@ serve(async (req) => {
     if (body.queueItemId) {
       const exact = await reconcileExactQueuePayment(supabase, {
         queueItemId: body.queueItemId, expectedUpdatedAt: body.expectedUpdatedAt,
+        providerSubscriptionId: body.providerSubscriptionId,
         dryRun: body.dryRun === true || body.dry_run === true,
         providerAuth: createBepaidAuthHeader(bepaidCreds),
       });
@@ -243,7 +244,7 @@ serve(async (req) => {
     const { data: queueItems, error: queueFetchError } = await supabase
       .from("payment_reconcile_queue")
       .select("*")
-      .or(`and(status.in.(pending,error),attempts.lt.5,or(next_retry_at.is.null,next_retry_at.lte.${queueNow})),and(status.eq.processing,updated_at.lt.${processingCutoff})`)
+      .or(`and(status.eq.pending,attempts.lt.5,or(next_retry_at.is.null,next_retry_at.lte.${queueNow})),and(status.eq.processing,updated_at.lt.${processingCutoff})`)
       .order("created_at", { ascending: true })
       .limit(50);
 
