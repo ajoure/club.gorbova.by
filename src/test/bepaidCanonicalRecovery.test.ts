@@ -150,6 +150,112 @@ describe('canonical provider-verified queue recovery', () => {
     expect(h.rows.payments_v2[1].order_id).toBe(actualOrder);
     expect(h.db.functions.invoke).toHaveBeenCalledTimes(invoked);
   });
+  it.each(['subscription', 'entitlement', 'both'])('does not complete a paid cycle with an active but short %s window', async target => {
+    const h = fixture(); await h.run();
+    Object.assign(h.rows.payment_reconcile_queue[0], { status: 'pending', attempts: 1 });
+    if (target !== 'entitlement') h.rows.subscriptions_v2[0].access_end_at = '2026-09-01T12:00:00Z';
+    if (target !== 'subscription') h.rows.entitlements[0].expires_at = '2026-09-01T12:00:00Z';
+    const before = structuredClone(h.rows);
+    const writes = h.writes.length;
+    const grants = h.db.functions.invoke.mock.calls.length;
+    await expect(h.run({ dryRun: true })).rejects.toThrow('recovery_paid_access_window_short');
+    await expect(h.run()).rejects.toThrow('recovery_paid_access_window_short');
+    expect(h.rows).toEqual(before);
+    expect(h.writes).toHaveLength(writes);
+    expect(h.db.functions.invoke).toHaveBeenCalledTimes(grants);
+  });
+  it('does not silently accept a completed queue when paid access is short', async () => {
+    const h = fixture(); await h.run();
+    h.rows.subscriptions_v2[0].access_end_at = '2026-09-01T12:00:00Z';
+    const writes = h.writes.length;
+    await expect(h.run()).rejects.toThrow('recovery_paid_access_window_short');
+    expect(h.writes).toHaveLength(writes);
+    expect(h.db.functions.invoke).toHaveBeenCalledTimes(1);
+  });
+  it('rejects a successful downstream response that did not deliver the paid window', async () => {
+    const h = fixture();
+    h.rows.payments_v2.push({ ...h.rows.payments_v2[0], id: id(13), provider_payment_id: id(2), paid_at: paidAt });
+    const originalGrant = h.db.functions.invoke.getMockImplementation();
+    h.db.functions.invoke.mockImplementation(async (name: string, options: any) => {
+      const result = await originalGrant!(name, options);
+      h.rows.subscriptions_v2[0].access_end_at = '2026-09-01T12:00:00Z';
+      h.rows.entitlements[0].expires_at = '2026-09-01T12:00:00Z';
+      return result;
+    });
+    await expect(h.run()).rejects.toThrow('recovery_fulfillment_readback_failed');
+    expect(h.rows.payment_reconcile_queue[0].status).toBe('error');
+    expect(h.rows.provider_subscriptions[0].last_charge_at).toBeUndefined();
+  });
+  it.each([0, 1])('accepts a fully paid window at or beyond the exact boundary (+%sms)', async delta => {
+    const h = fixture(); await h.run();
+    const end = new Date(Date.parse(newEnd) + delta).toISOString();
+    h.rows.subscriptions_v2[0].access_end_at = end;
+    h.rows.entitlements[0].expires_at = end;
+    const writes = h.writes.length;
+    expect(await h.run()).toMatchObject({ already_completed: true });
+    expect(h.writes).toHaveLength(writes);
+  });
+  it('does not borrow the previous recovered cycle window for a new payment', async () => {
+    const h = fixture(); await h.run();
+    const nextUid = '11111111-1111-4111-8111-111111111111';
+    h.rows.subscriptions_v2[0].order_id = h.rows.payments_v2[1].order_id;
+    Object.assign(h.rows.payment_reconcile_queue[0], { bepaid_uid: nextUid, status: 'pending', attempts: 0 });
+    Object.assign(h.tx, { uid: nextUid, paid_at: '2026-09-28T08:15:55.123Z' });
+    h.sbs.last_transaction.uid = nextUid;
+    const nextNow = new Date('2026-09-28T10:00:00Z');
+    vi.setSystemTime(nextNow);
+    const writes = h.writes.length;
+    expect(await h.run({ dryRun: true, now: nextNow })).toMatchObject({ no_writes: true, plan: {
+      expected_orders_created: 1, expected_payments_created: 1,
+      access_start_at: newEnd, expected_access_end_at: '2026-10-29T12:00:00.000Z',
+    } });
+    expect(h.writes).toHaveLength(writes);
+  });
+  it('uses the saved same-cycle end on partial retry even if catalog duration changed', async () => {
+    const h = fixture(); h.failGrant(true);
+    await expect(h.run()).rejects.toThrow('recovery_materialized_grant_failed');
+    h.rows.products_v2[0].meta.access_window_rule = 'days';
+    h.rows.tariffs[0].access_days = 90;
+    expect(await h.run({ dryRun: true })).toMatchObject({ plan: { expected_access_end_at: newEnd } });
+    h.restoreGrant(); await h.run();
+    expect(h.rows.subscriptions_v2[0].access_end_at).toBe(newEnd);
+    expect(h.rows.payments_v2).toHaveLength(2);
+  });
+  it('does not borrow saved dates when statement sync attaches a later payment to the old order', async () => {
+    const h = fixture(); await h.run();
+    const laterUid = '22222222-2222-4222-8222-222222222222';
+    h.rows.payments_v2.push({ ...h.rows.payments_v2[1], id: id(22), provider_payment_id: laterUid,
+      paid_at: '2026-09-28T08:15:55.123Z' });
+    Object.assign(h.rows.payment_reconcile_queue[0], { bepaid_uid: laterUid, status: 'pending', attempts: 0 });
+    Object.assign(h.tx, { uid: laterUid, paid_at: '2026-09-28T08:15:55.123Z' });
+    h.sbs.last_transaction.uid = laterUid;
+    const nextNow = new Date('2026-09-28T10:00:00Z');
+    vi.setSystemTime(nextNow);
+    const writes = h.writes.length;
+    await expect(h.run({ dryRun: true, now: nextNow })).rejects.toThrow('recovery_paid_access_window_short');
+    expect(h.writes).toHaveLength(writes);
+  });
+  it('does not re-purchase a fixed course tariff duration with each existing installment', async () => {
+    const h = fixture(); await h.run();
+    h.rows.orders_v2[1].meta = {};
+    h.rows.products_v2[0].meta = {};
+    h.rows.tariffs[0].access_days = 365;
+    const writes = h.writes.length;
+    expect(await h.run()).toMatchObject({ already_completed: true });
+    expect(h.writes).toHaveLength(writes);
+    expect(h.db.functions.invoke).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    { recovery_access_start_at: oldEnd },
+    { recovery_access_start_at: oldEnd, recovery_expected_end_at: 'invalid' },
+    { recovery_access_start_at: oldEnd, recovery_expected_end_at: '2026-08-01T12:00:00Z' },
+  ])('fails closed for a malformed same-payment saved window', async meta => {
+    const h = fixture(); await h.run();
+    h.rows.orders_v2[1].meta = meta;
+    const writes = h.writes.length;
+    await expect(h.run({ dryRun: true })).rejects.toThrow('recovery_invalid_saved_window');
+    expect(h.writes).toHaveLength(writes);
+  });
   it.each(['uid', 'amount', 'currency', 'status', 'paid_at', 'type'])('fails closed before writes on provider %s mismatch', async field => {
     const h = fixture(); (h.tx as any)[field] = field === 'amount' ? 1 : 'invalid';
     await expect(h.run()).rejects.toThrow('recovery_provider_payment_mismatch'); expect(h.writes).toEqual([]);

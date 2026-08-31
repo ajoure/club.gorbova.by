@@ -42,7 +42,7 @@ async function paymentByUid(db: any, uid: string) {
     .eq('provider_payment_id', uid).maybeSingle(), 'payment_lookup');
 }
 
-async function fulfillmentProof(db: any, order: any, now: Date) {
+async function fulfillmentProof(db: any, order: any, now: Date, minimumEnd?: Date) {
   const ents = await checked(db.from('entitlements').select('*').eq('user_id', order.user_id)
     .eq('product_id', order.product_id).eq('status', 'active'), 'entitlement_proof');
   const subs = await checked(db.from('subscriptions_v2').select('*').eq('user_id', order.user_id)
@@ -50,8 +50,12 @@ async function fulfillmentProof(db: any, order: any, now: Date) {
   const ledger = await checked(db.from('access_grant_ledger').select('*')
     .eq('source_order_id', order.id), 'ledger_proof');
   const belongs = (row: any) => row.order_id === order.id || (row.meta?.extended_by_orders || []).includes(order.id);
-  const activeSub = (subs || []).find((row: any) => belongs(row) && date(row.access_end_at) && date(row.access_end_at)! > now);
-  const activeEnt = (ents || []).find((row: any) => date(row.expires_at) && date(row.expires_at)! > now);
+  const reachesWindow = (value: unknown) => {
+    const end = date(value);
+    return !!end && end > now && (!minimumEnd || end >= minimumEnd);
+  };
+  const activeSub = (subs || []).find((row: any) => belongs(row) && reachesWindow(row.access_end_at));
+  const activeEnt = (ents || []).find((row: any) => reachesWindow(row.expires_at));
   const deliveryRecorded = (ledger || []).some((row: any) => ['granted', 'extended'].includes(row.status));
   return !!activeSub && !!activeEnt && (belongs(activeEnt) || deliveryRecorded);
 }
@@ -150,17 +154,34 @@ async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch,
       existingRebill.product_id !== parent.product_id || existingRebill.tariff_id !== parent.tariff_id)) {
     throw new Error('recovery_rebill_identity_mismatch');
   }
-  const savedStart = (existingRebill || parent).meta?.recovery_access_start_at;
+  // A saved window belongs to THIS payment's order, never to the preceding
+  // cycle used as a parent when creating a new REBILL.
+  const windowOwner = existingPayment ? (parent.provider_payment_id === uid ? parent : null) : existingRebill;
+  const savedStart = windowOwner?.meta?.recovery_access_start_at;
+  const savedEnd = windowOwner?.meta?.recovery_expected_end_at;
+  if (!!savedStart !== !!savedEnd || (savedEnd && !date(savedEnd))) throw new Error('recovery_invalid_saved_window');
   const accessStart = savedStart ? date(savedStart) : new Date(Math.max(Date.parse(payment.paid_at),
     isRebill && date(sub?.access_end_at) ? Date.parse(sub.access_end_at) : Date.parse(payment.paid_at)));
   if (!accessStart) throw new Error('recovery_invalid_saved_window');
   const product = await one(db, 'products_v2', parent.product_id);
   const tariff = await one(db, 'tariffs', parent.tariff_id);
   if (!product || !tariff || tariff.product_id !== product.id) throw new Error('recovery_catalog_mismatch');
-  const expectedEnd = product.meta?.access_window_rule === 'calendar_month' ? calcCalendarMonthEnd(accessStart)
+  const expectedEnd = savedEnd ? date(savedEnd)! : product.meta?.access_window_rule === 'calendar_month' ? calcCalendarMonthEnd(accessStart)
     : new Date(accessStart.getTime() + (tariff.access_days ?? 30) * 86_400_000);
+  if (!Number.isFinite(expectedEnd.getTime()) || expectedEnd < accessStart) throw new Error('recovery_invalid_saved_window');
+  // A fixed/course installment must not be interpreted as purchasing the
+  // entire tariff duration again. Only an explicit calendar-month policy or
+  // this payment's immutable recovery window establishes this lower bound.
+  const minimumEnd = savedEnd || product.meta?.access_window_rule === 'calendar_month' ? expectedEnd : undefined;
+  // Still-active access can be short of the paid period. Fail before the
+  // lease/business writes; never hide that deficit by completing the queue
+  // or blindly adding another month. An exact repair must establish its window.
+  if (alreadyFulfilled && minimumEnd && !await fulfillmentProof(db, parent, now, minimumEnd)) {
+    throw new Error('recovery_paid_access_window_short');
+  }
   return { item, uid, payment, sbs, ps, sub, parent, profile, existingPayment, existingRebill, isRebill,
     alreadyFulfilled, accessStart: accessStart.toISOString(), expectedEnd: expectedEnd.toISOString(),
+    minimumEnd: minimumEnd?.toISOString() ?? null,
     nextCharge: providerSub ? new Date(providerSub.renew_at || providerSub.next_billing_at).toISOString() : null };
 }
 
@@ -266,7 +287,7 @@ async function executePlan(db: any, plan: any) {
   if (!persisted || persisted.order_id !== orderId || !sameMoney(persisted.amount, plan.payment.amount) ||
       persisted.currency !== plan.payment.currency || persisted.status !== 'succeeded') throw new Error('recovery_payment_readback_failed');
   const fulfilledOrder = await one(db, 'orders_v2', orderId);
-  if (fulfilledOrder?.status !== 'paid' || !await fulfillmentProof(db, fulfilledOrder, new Date())) {
+  if (fulfilledOrder?.status !== 'paid' || !await fulfillmentProof(db, fulfilledOrder, new Date(), plan.minimumEnd ? new Date(plan.minimumEnd) : undefined)) {
     throw new Error('recovery_fulfillment_readback_failed');
   }
   if (plan.isRebill) {
