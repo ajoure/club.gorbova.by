@@ -1,96 +1,105 @@
-# Products 2 — финальная ревизия + разбор ACL-находки (PLAN-ONLY / READ-ONLY)
+# Отчет диагностики платежного контура (PLAN-ONLY / READ-ONLY)
 
-Изменений не вносилось: код, миграции, данные, Edge Functions и Publish не затронуты.
+Canonical production ref: `hdjgkjceownmmnrqqtuz` (Lovable Cloud). Archival ref не использовался. Ни одной записи, миграции, деплоя, Publish, charge/refund/сообщения не выполнено.
 
-## SHA-гейт
+## 1. INV-25: единственная stale processing строка — PASS (факт установлен)
 
-- Целевой и фактический HEAD: `9dffb20df08ad7e82dd2e14c298702a51cd79d21`; `origin/main` тот же; дерево чистое, WIP нет. **PASS**
+| Поле | Значение |
+|---|---|
+| id (prefix) | `e8d645fa-8b3c-4fc3-a…` |
+| status / status_normalized | `processing` / `successful` |
+| attempts / max_attempts | 1 / 5 |
+| created_at | 2026-08-28 08:15:56Z |
+| updated_at | 2026-08-28 18:00:12Z |
+| paid_at | 2026-08-28 08:15:53Z |
+| last_error | пусто |
+| error_category | null |
+| source / transaction_type / provider | `webhook` / `Оплата` / `bepaid` |
+| amount | 250 BYN |
+| payment | нет строки в `payments_v2` с этим provider uid (0) |
+| order | `matched_order_id` и `processed_order_id` = NULL |
+| profile / email | `matched_profile_id` NULL, `customer_email` NULL |
 
-## Базовые проверки (сохранены)
+Вывод: это успешная провайдерская транзакция, застрявшая без материализации в payment/order/access. Не косметика — потенциально реальный неучтенный платеж 250 BYN.
 
-1. Три дублирующие Lovable-миграции `20260830124428…`, `20260830124544…`, `20260830124721…` в дереве **ABSENT** — PASS.
-2. `src/integrations/supabase/types.ts` present, 26 007 строк, `PostgrestVersion: "14.5"`, типы Products 2 на месте — PASS.
-3. Единственная pending-миграция `20260830130000_restore_payment_links_enriched_security_invoker.sql`, единственный оператор `ALTER VIEW public.payment_links_enriched_v SET (security_invoker = true);` — PASS. В истории БД её нет.
-   Замечание: применённые миграции Products 2 записаны в истории под платформенными версиями `20260830124428 / 124544 / 124721`, а не под именами файлов `083925 / 085855 / 113500`.
+**Ключевое расхождение со scope PR #386 (FINDING-1, критично):**
+- В `cron.job` **нет ни одного job, вызывающего `bepaid-queue-cron`** (проверено полным перечнем cron.job). Функция помечена в реестре как `category=cron`, но по факту вызывается только вручную и через `system-health-remediate` (allowlist `invoke_processor` / `restart_cron`).
+- Статус `processing` этой строке проставил **`payments-reconcile`** (`index.ts` LEVEL 3, `.update({ status: "processing", attempts+1 })`), запускаемый job'ами `payments-reconcile-morning` (06:00 UTC) и `payments-reconcile-evening` (18:00 UTC). Метка 18:00:12Z ровно совпадает с вечерним запуском. Эта функция не возвращает строку из `processing` при обрыве.
+- Значит патч только `bepaid-queue-cron` (stale >2h recovery, CAS claim) **не устранит источник** stale-строк: писатель другой и он не в scope PR.
 
-## 1. `pg_class.relacl` / `aclexplode` для `public.payment_links_enriched_v`
+Cron auth (факт, без значений): job'ы используют статический заголовок `Authorization: Bearer …` прямо в теле команды `net.http_post` (для telegram-очереди — литерал `lovable-cloud-internal`); Vault-секрет для этих job'ов не используется. `bepaid-queue-cron` во внутреннем вызове `bepaid-recover-payment` уже использует env `CRON_SECRET` в заголовке `x-internal-key`. Отдельного блока `[functions.bepaid-queue-cron]` в `supabase/config.toml` нет → gateway verify_jwt по умолчанию.
 
-Владелец: `postgres`. `reloptions = NULL` (security_invoker НЕ установлен).
+Совместимость strict auth PR #386: **NOT VERIFIED / риск**. Так как pg_cron job для этой функции отсутствует, единственные текущие вызывающие — админ-UI/оператор и `system-health-remediate`. Если PR требует service role либо `CRON_SECRET`, admin-путь с пользовательским JWT получит 401. Нужна отдельная managed migration cron **только если** мы хотим реально расписать функцию (сейчас расписания нет) — это решение отдельного approve, не входит в текущий scope.
 
-| grantee | privileges | is_grantable |
-|---|---|---|
-| postgres | SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN | false |
-| anon | SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN | false |
-| authenticated | SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN | false |
-| service_role | SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN | false |
-| sandbox_exec, sandbox_exec_hdjg… | SELECT, INSERT | false |
+## 2. INV-P0-1: все 7 просроченных provider_subscriptions
 
-## 2. `has_table_privilege` (anon / authenticated)
+Алиас = `left(md5(id),8)`. Правило инварианта: `state=active AND next_charge_at <= now-24h AND (last_charge_at IS NULL OR last_charge_at < next_charge_at)`.
 
-| privilege | anon | authenticated |
-|---|---|---|
-| SELECT | true | true |
-| INSERT | true | true |
-| UPDATE | true | true |
-| DELETE | true | true |
-| TRUNCATE | true | true |
-| REFERENCES | true | true |
-| TRIGGER | true | true |
+| alias | provider next_charge | provider last_charge | local status / auto_renew | local next | посл. успешный платеж пользователя | категория |
+|---|---|---|---|---|---|---|
+| ea964829 | 2026-08-15 09:12 | NULL | expired / false | 2026-08-15 | 2026-08-15 09:15 | stale snapshot, уже оплачено; провайдер не закрыт |
+| f1cacb02 | 2026-08-18 06:10 | NULL | active / true | 2026-09-18 | 2026-08-18 06:15 | stale snapshot, уже оплачено |
+| 58f4dc78 | 2026-08-21 06:19 | NULL | active / false | 2026-09-23 | 2026-08-21 06:30 | stale snapshot, уже оплачено (raw_state=`redirecting`) |
+| 05ce32b7 | 2026-08-21 10:49 | NULL | active / false | 2026-09-24 | 2026-08-21 11:01 | stale snapshot, уже оплачено (raw_state=`redirecting`) |
+| 1c50bbc5 | 2026-08-22 08:40 | NULL | active / true | 2027-03-20 | 2026-08-24 18:00 | stale snapshot, уже оплачено |
+| e60f7b89 | 2026-08-24 06:02 | NULL | active / false | 2026-09-24 | 2026-08-24 06:15 | stale snapshot, уже оплачено (raw_state=`redirecting`) |
+| 4b2b75d1 | 2026-08-29 12:00 | 2026-07-29 08:15 | expired / false | 2026-08-29 | 2026-07-29 08:15 | **реальная просрочка / несписание**, единственная |
 
-Это прямо противоречит намерению `20260418131910…` (`REVOKE ALL FROM anon, authenticated; GRANT SELECT TO authenticated`) и последующим миграциям, которые многократно ставили `security_invoker = on` (`20260418131929`, `20260418155148`, `20260418160316`, `20260616200409`). Текущее состояние — расширенные права плюс owner-rights.
+Все 7 имеют реальный initial payment (у пользователей 11–24 успешных платежа, заказы `paid`).
 
-## 3. Авто-обновляемость представления
+Объяснение расхождения с рабочим реестром автопродлений (в нем 1 просрочка): реестр смотрит на локальные `subscriptions_v2` + фактические `payments_v2`, а INV-P0-1 — на снимок `provider_subscriptions`, где **`last_charge_at` не обновляется путем продления** (6 из 7 = NULL при доказанном платеже спустя 3–15 минут после `next_charge_at`, `updated_at` снимка застыл на 11–13 августа). То есть инвариант ложно-положителен по 6 записям и верен по 1 (`4b2b75d1`).
 
-- `information_schema.views.is_updatable = NO`
-- `information_schema.tables.is_insertable_into = NO`
-- DML-правил (`pg_rewrite` INSERT/UPDATE/DELETE) — 0.
+FINDING-2: причина — writer `provider_subscriptions.last_charge_at`/`next_charge_at` не вызывается при успешном rebill. Это отдельный дефект (не в scope PR #386).
 
-Следствие: гранты INSERT/UPDATE/DELETE/TRUNCATE/TRIGGER/REFERENCES на этом представлении практически не исполнимы, но являются лишними привилегиями и подлежат отзыву. Реальная и критичная часть — `SELECT` для `anon` при отсутствии `security_invoker`: чтение выполняется с правами владельца `postgres`, то есть RLS базовой `payment_links` обходится.
+Provider GET (bePaid API) по каждой подписке: **NOT VERIFIED** — это внешний вызов с боевыми ключами, вне read-only режима; вынесен в план (шаг V2), выполняется только read GET без изменения данных.
 
-## 4. Потребители, которым нужен прямой SELECT на представление
+## 3. Placewash — NOT FOUND
 
-- Прямых обращений `.from('payment_links_enriched_v')` в `src/` и `supabase/functions/` — **нет** (`rg` дал 0 совпадений).
-- Единственный фронтенд-путь: `src/hooks/usePaymentLinks.ts` → `supabase.rpc("get_admin_payment_links_v1", …)` (полная загрузка и delta-загрузка).
-- Прочие упоминания представления — только миграции, контрактный тест `src/test/salesManagerCreationUi.contract.test.ts` и сгенерированные `types.ts`.
-- Внутри БД представление читает `get_admin_payment_links_v1` (SECURITY DEFINER, выполняется от владельца — прямой грант ролям для этого не требуется).
+Поиск по `products_v2.name`, `companies.short_name/full_name`, `orders_v2.meta`, `payments_v2.product_name_raw/meta`, `payment_reconcile_queue.product_name/description/shop_name` и по всему репозиторию (варианты Placewash/Playwash/Плейсвош/«плейс»): **0 совпадений**. Единственный хит подстроки «плейс» — слово «Марк**етплейс**ы» в описании импортной строки очереди, к Placewash отношения не имеет и связью не считается.
 
-Вывод по evidence: прямой SELECT для `authenticated` больше не требуется ни одним потребителем.
+Действующий flow проверен на существующих успешных кейсах (без создания сущностей):
+- recurring Club (MIT/provider_managed): provider tx → `payments_v2(status=succeeded, is_recurring)` → `orders_v2 paid` → `subscriptions_v2` продлена (локальный `next_charge_at`/`access_end_at` сдвинуты) → entitlements/Telegram активны. Разрыв только на обратной записи в `provider_subscriptions` (см. §2).
+- one-time education: 192 оплаченных заказа за 30 дней, из них 16 без succeeded `payments_v2` и 15 без `entitlements` — требуется поштучная классификация (шаг V3), не смешивать с историческими импортами.
+- finite installment: рассрочки идут через локальный график; единственный реально просроченный кейс — `4b2b75d1`.
 
-## 5. `get_admin_payment_links_v1`
+## 4. RBAC (по коду, без вызовов)
 
-- Владелец: `postgres`; `prosecdef = true`; `proconfig = search_path=public`.
-- `proacl`: `postgres=X`, `authenticated=X`, `service_role=X`, `sandbox_exec_hdjg…=X`. Для `anon` и PUBLIC EXECUTE отозван (`REVOKE ALL … FROM PUBLIC, anon` в `20260827153330`).
-- Внутренняя авторизация: `IF NOT public.has_admin_section_access(auth.uid(), 'payments', 'view') THEN RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501'` — fail-closed до любого чтения. Возвращает `SETOF public.payment_links_enriched_v` с фильтром по `p_since` и лимитом.
+- `grant-access-for-order`: verify_jwt=false в config, внутри — явные ветки 401 (anon/invalid) и 403 (обычный пользователь), admin-only ветка ручного редактирования доступа. PASS by code review.
+- `telegram-grant-access`: verify_jwt=false, `requestHasServiceRoleKey` + `has_role_v2` с `_section_code='club-members'`, 401/403 ветки на месте. PASS by code review.
+- anonymous checkout / owner / unrelated user / manager-admin / service-cron: ожидаемые 401/403 сохраняются в коде; runtime-подтверждение — **NOT VERIFIED** (требует HTTP-проб, вне read-only).
+- Missing access по paid orders: 15 из 192 (30 дней) без entitlement — кандидаты на разбор, не подтверждено как поломка.
 
-## 6. Корректирующий SQL по принципу минимальных привилегий
+## 5. Диспозиция инвариантов и прочих ошибок
 
-Предложенный кандидат оценивается так:
+Full-check 05:00Z 31.08: статус CRITICAL, 5 P0-инвариантов (INV-P0-1 FAIL count=7; P0-2/3/5 PASS; P0-4 PASS через audit_fallback, но RPC упал с `statement timeout` — скрытая деградация), edge 172/172 OK, но `cors_errors: telegram-mass-broadcast` (не заявлено пользователем, новое).
+Nightly набор из 11: INV-18…INV-25 (orphans, sbs_* без provider_subscriptions, token recurring без provider_subscriptions, paid orders без payments_v2, ratio без order_id, desync с провайдером, тишина вебхука, terminal queue без payments_v2, stale processing) — 10/11 PASS, FAIL только INV-25.
+Очередь: 1608 pending / 451 error / 426 materialized накоплены с января и распределены равномерно по месяцам (июнь 100 pending, июль 65, август 70) — это **исторический link-backlog и provider declines**, а не свежая поломка обработки. Сломанная обработка подтверждена только для одной processing-строки и для отсутствующего расписания процессора.
 
-```sql
-ALTER VIEW public.payment_links_enriched_v SET (security_invoker = true);
-REVOKE ALL ON public.payment_links_enriched_v FROM PUBLIC, anon, authenticated;
-GRANT SELECT ON public.payment_links_enriched_v TO authenticated;
-```
+## 6. Ревизия PR #386 (branch `codex/fix-placewash-payment-flow`, head `2f531661e`)
 
-- Поведение UI/RPC сохраняет: единственный потребитель — SECURITY DEFINER RPC, который читает представление от владельца и не зависит от грантов ролей.
-- Права `anon` и все write-привилегии убирает — да.
-- Но третья строка избыточна: прямых клиентских SELECT нет.
+Код PR в этом окружении недоступен (не merged), ревизия по описанию + по фактическому состоянию production:
+- FINDING-1 (blocker для достижения цели): патч в `bepaid-queue-cron` не покрывает реального писателя `processing` — `payments-reconcile`. Без recovery/CAS в `payments-reconcile` stale-строки продолжат появляться. Codex должен либо перенести recovery туда, либо добавить его дополнительно.
+- FINDING-2: у функции нет pg_cron расписания, поэтому «recovery >2h» сам по себе не запустится. Нужно либо явное решение о расписании (отдельный approve + managed migration), либо recovery в уже расписанной функции.
+- FINDING-3: strict internal auth может закрыть admin/remediate путь (единственный сейчас живой). Нужна ветка «service role ИЛИ CRON_SECRET ИЛИ admin JWT c проверкой роли», иначе `system-health-remediate` и оператор получат 401.
+- Имя ветки `fix-placewash-payment-flow` не соответствует данным: объекта Placewash в проде нет.
 
-Рекомендуемый минимальный вариант (без прямого гранта):
+### Exact execute plan (после исправлений Codex и отдельного approve)
 
-```sql
-ALTER VIEW public.payment_links_enriched_v SET (security_invoker = true);
-REVOKE ALL ON public.payment_links_enriched_v FROM PUBLIC, anon, authenticated;
-```
+1. Гейт: exact merged SHA, чистое дерево, CI PASS. Любой mismatch → STOP.
+2. Required functions (deploy по одной, без bulk): `bepaid-queue-cron`, и — если Codex перенесет recovery — `payments-reconcile`. Webhook-функции не трогаем.
+3. Migrations/config: миграции не требуются, если расписание не вводим. Если вводим cron — одна managed migration с `cron.schedule` и Vault-секретом, отдельный approve.
+4. Dry-run: вызов с `dry_run`/`batchSize=1` — ожидаемые счетчики `stale_recovered=1`, `claim_conflicts=0`, `processed<=1`.
+5. Идемпотентные малые батчи: batchSize 1 → 5 → 20, между батчами read-back.
+6. Read-back: строка `e8d645fa…` перестала быть `processing`; появилась/не появилась `payments_v2` по её uid; счетчики pending/error не выросли скачком.
+7. Runtime без побочек: никаких charge/send/create user/contact/order; только чтение и переход статуса очереди.
 
-`service_role` при необходимости оставить с `SELECT` (сузив с ALL). Оба варианта закрывают критическую находку; рекомендуемый строже. Отмечу, что checked-in миграция `20260830130000` содержит только `ALTER VIEW … security_invoker`, то есть без расширения её SQL широкие гранты `anon` останутся — а это и есть критическая часть.
+### V-шаги диагностики, требующие отдельного разрешения
+- V2: provider GET по 7 подпискам (read-only) для подтверждения категорий.
+- V3: поштучный разбор 15 paid orders без entitlement и 16 без succeeded payment.
+- V4: разбор 250 BYN застрявшей транзакции до платежа/заказа/доступа.
 
-## Итог и статус execute
+## 7. STOP conditions
 
-- Гейты 1–3 по SHA `9dffb20df`: **PASS**
-- Готовность к execute: **STOP**. Две причины:
-  1. **Критическая ACL-находка не покрывается pending-миграцией.** Требуется решение: либо расширить корректирующую миграцию в GitHub до REVOKE-варианта, либо принять `20260830130000` как есть и завести отдельную миграцию на гранты.
-  2. **BLOCKER по способу применения.** Lovable применяет SQL только через платформенный инструмент миграций, который сам создаёт файл с собственным timestamp/UUID и сопутствующий коммит — именно так появились `20260830124428 / 124544 / 124721`. Применить checked-in файл без платформенной копии и авто-коммита технически невозможно. Варианты: (A) разрешить копию и авто-коммит как ожидаемое отклонение; (B) применить SQL вне Lovable, оставив здесь только деплой пяти функций и non-side-effectful пробы; (C) выполнить только деплой функций, отложив миграцию.
-- Деплой пяти функций (`admin-create-payment-link`, `admin-create-public-link`, `admin-invoice-checkout-issue`, `public-checkout`, `public-rr-installment-initiate`) блокером не является; файлы и `_shared/sales-manager-attribution.ts` присутствуют в дереве.
+SHA mismatch или неожиданный diff; попытка bulk-деплоя функций; любая миграция вне явного approve; рост `error`/`pending` после батча; несовпадение read-back; любое действие, ведущее к списанию, отправке сообщения или созданию пользователя/контакта/заказа; обращение к archival Supabase ref.
 
-READ-ONLY: NO CHANGES.
+Итог: PASS по фактам §1–§5, FAIL по INV-P0-1 (1 реальная просрочка) и INV-25, NOT VERIFIED — provider GET, runtime RBAC, содержимое PR #386. Ничего не выполнено.
