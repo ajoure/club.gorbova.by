@@ -249,3 +249,15 @@ verify_jwt = false
 [functions.broadcast-track]
 # Public opaque tracking endpoint. It never accepts profile ids or arbitrary redirects.
 verify_jwt = false
+
+[functions.bepaid-queue-cron]
+# In-function exact service-role / CRON_SECRET authorization, including dry-run.
+verify_jwt = false
+
+[functions.payments-reconcile]
+# In-function exact service-role or dedicated Vault-backed cron credential.
+verify_jwt = false
+
+[functions.bepaid-readonly-pull]
+# Exact managed service credential or verified admin/superadmin. GET-only provider diagnostics.
+verify_jwt = false

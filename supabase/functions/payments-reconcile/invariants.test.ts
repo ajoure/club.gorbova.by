@@ -165,6 +165,23 @@ Deno.test("queue cron forwards its internal credential and supports exact recove
   assertStringIncludes(queueCronSource, "queueItemId ? 1 : batchSize");
 });
 
+Deno.test("queue cron recovers stale processing rows with a CAS claim", () => {
+  assertStringIncludes(
+    queueCronSource,
+    "and(status.eq.processing,updated_at.lt.${processingCutoff})",
+  );
+  assertStringIncludes(queueCronSource, "isStaleProcessingItem(item, processingCutoff)");
+  assertStringIncludes(queueCronSource, '.eq("status", item.status)');
+  assertStringIncludes(queueCronSource, '.eq("updated_at", item.updated_at)');
+  assertStringIncludes(queueCronSource, "results.stale_recovered++");
+  assertStringIncludes(queueCronSource, "results.claim_conflicts++");
+});
+
+Deno.test("queue cron requires service or cron authorization", () => {
+  assertStringIncludes(queueCronSource, "authorizeQueueCronRequest(req");
+  assertStringIncludes(queueCronSource, "status: authorization.status");
+});
+
 Deno.test("queue cron does not treat unresolved skips as success", () => {
   assert(!queueCronSource.includes("processResult?.results?.skipped > 0"));
   assertStringIncludes(

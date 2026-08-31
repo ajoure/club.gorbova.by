@@ -1,9 +1,16 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { authorizeQueueCronRequest } from "./auth.ts";
+import {
+  isStaleProcessingItem,
+  normalizeQueueRunOptions,
+  staleProcessingCutoff,
+  staleTerminalReason,
+} from "./policy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret, x-internal-key",
 };
 
 /**
@@ -45,27 +52,50 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const cronSecret = Deno.env.get("CRON_SECRET") || "";
+    const authorization = authorizeQueueCronRequest(req, {
+      serviceRoleKey: supabaseServiceKey,
+      cronSecret,
+    });
+    if (!authorization.ok) {
+      return new Response(
+        JSON.stringify({ success: false, error: authorization.error }),
+        {
+          status: authorization.status,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // Fail before claiming any rows: the downstream worker requires this key.
+    if (!cronSecret) throw new Error("CRON_SECRET is not configured");
+
     const body = await req.json().catch(() => ({}));
-    const queueItemId = typeof body.queueItemId === "string" ? body.queueItemId : null;
-    const maxAttempts = body.maxAttempts || 5;
-    const batchSize = body.batchSize || 20;
-    const excludeFileImport = body.excludeFileImport !== false; // Default: exclude file_import
-    const excludeCancelled = body.excludeCancelled !== false; // Default: exclude soft-cancelled items
+    const {
+      dryRun,
+      queueItemId,
+      maxAttempts,
+      batchSize,
+      excludeFileImport,
+      excludeCancelled,
+    } = normalizeQueueRunOptions(body);
 
     console.log(`[bepaid-queue-cron] Starting queue processing, batch size: ${batchSize}, max attempts: ${maxAttempts}, excludeFileImport: ${excludeFileImport}`);
 
     const now = new Date().toISOString();
+    const processingCutoff = staleProcessingCutoff(new Date(now));
 
-    // Get pending items with proper retry logic
+    // Get retryable items with proper retry logic
     // Only get items where:
-    // - status is pending or error (NOT cancelled!)
-    // - attempts < maxAttempts
-    // - next_retry_at is null OR <= now (ready for retry)
+    // - status is pending/error and retry is due, OR processing is stale
+    // - attempts < maxAttempts for ordinary retries; exhausted stale claims
+    //   must still leave processing and become an explicit terminal error.
+    // Fresh processing rows remain invisible to overlapping workers.
     let query = supabase
       .from("payment_reconcile_queue")
-      .select("id, bepaid_uid, customer_email, amount, currency, attempts, status, next_retry_at, last_error, source, created_at")
+      .select("id, bepaid_uid, customer_email, amount, currency, attempts, status, next_retry_at, last_error, source, created_at, updated_at, last_attempt_at")
       .limit(queueItemId ? 1 : batchSize * 3);
 
     if (queueItemId) {
@@ -74,14 +104,15 @@ serve(async (req) => {
       query = query.eq("id", queueItemId);
     } else {
       query = query
-        .in("status", ["pending", "error"])
-        .lt("attempts", maxAttempts)
-        .or(`next_retry_at.is.null,next_retry_at.lte.${now}`);
+        .or(
+          `and(status.in.(pending,error),attempts.lt.${maxAttempts},or(next_retry_at.is.null,next_retry_at.lte.${now})),and(status.eq.processing,updated_at.lt.${processingCutoff})`,
+        );
     }
     
     // Exclude file_import by default - these need manual cleanup
     if (excludeFileImport && !queueItemId) {
-      query = query.neq("source", "file_import");
+      // Abandoned imports are not replayed, but must not stay processing forever.
+      query = query.or("source.neq.file_import,status.eq.processing");
     }
     
     // Exclude soft-cancelled items (those with meta.soft_cancelled = true)
@@ -106,6 +137,7 @@ serve(async (req) => {
     let filteredItems = allPendingItems;
     if (excludeCancelled) {
       filteredItems = allPendingItems.filter(item => {
+        if (isStaleProcessingItem(item, processingCutoff)) return true;
         // Exclude items with SOFT_CANCELLED or CANCELLED_BY_ADMIN in last_error
         const lastError = item.last_error || '';
         return !lastError.startsWith('SOFT_CANCELLED') && !lastError.startsWith('CANCELLED_BY_ADMIN');
@@ -128,6 +160,24 @@ serve(async (req) => {
       })
       .slice(0, queueItemId ? 1 : batchSize); // exact item or bounded batch
 
+    // A dry-run is a read-only preview: no claim, audit insert, worker or alert.
+    if (dryRun) {
+      return new Response(JSON.stringify({
+        success: true,
+        dry_run: true,
+        candidates: sortedItems.map(item => ({
+          id: item.id,
+          status: item.status,
+          attempts: item.attempts,
+          action: item.status === "processing" && !isStaleProcessingItem(item, processingCutoff)
+            ? "skip_fresh_claim"
+            : isStaleProcessingItem(item, processingCutoff)
+            ? staleTerminalReason(item, { maxAttempts, excludeCancelled, excludeFileImport, queueItemId }) || "recover_stale"
+            : "process",
+        })),
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     console.log(`[bepaid-queue-cron] Found ${allPendingItems.length} items, processing ${sortedItems.length} after filtering and priority sort`);
     
     // Log source distribution
@@ -143,26 +193,83 @@ serve(async (req) => {
       failed: 0,
       skipped: 0,
       retried: 0,
+      stale_recovered: 0,
+      claim_conflicts: 0,
+      stale_terminal: 0,
       webhook_processed: 0,
       by_source: {} as Record<string, number>,
       errors: [] as string[],
     };
 
     for (const item of sortedItems) {
+      let claimOwned = false;
       try {
         console.log(`[bepaid-queue-cron] Processing item ${item.id}, source=${item.source}, priority=${item.priority}, bepaid_uid=${item.bepaid_uid}, attempts=${item.attempts}`);
-        
-        // Update item to processing status
-        await supabase
+
+        const staleRecovery = isStaleProcessingItem(item, processingCutoff);
+        const softCancelled = excludeCancelled &&
+          (item.last_error?.startsWith("SOFT_CANCELLED") ||
+            item.last_error?.startsWith("CANCELLED_BY_ADMIN"));
+        if (item.status === "processing" && !staleRecovery) {
+          results.claim_conflicts++;
+          continue;
+        }
+        const reason = staleRecovery
+          ? staleTerminalReason(item, { maxAttempts, excludeCancelled, excludeFileImport, queueItemId })
+          : null;
+        if (reason) {
+          const { data: released, error: releaseError } = await supabase
+            .from("payment_reconcile_queue")
+            .update({
+              status: "error",
+              last_error: softCancelled
+                ? `${item.last_error}; ${reason}`
+                : `${reason}: ${item.last_error || "worker interrupted"}`,
+              next_retry_at: null,
+            })
+            .eq("id", item.id)
+            .eq("status", item.status)
+            .eq("updated_at", item.updated_at)
+            .select("id")
+            .maybeSingle();
+          if (releaseError) throw new Error(`Stale claim release failed: ${releaseError.message}`);
+          if (!released) results.claim_conflicts++;
+          else {
+            results.stale_terminal++;
+            results.failed++;
+            results.processed++;
+            results.errors.push(`${item.id}: ${reason}`);
+          }
+          continue;
+        }
+        const claimedAttempts = staleRecovery
+          ? (item.attempts || 0) + 1
+          : (item.attempts || 0);
+
+        // CAS claim: overlapping cron runs must never process the same row.
+        const { data: claimed, error: claimError } = await supabase
           .from("payment_reconcile_queue")
           .update({ 
             status: "processing",
             last_attempt_at: now,
+            attempts: claimedAttempts,
           })
-          .eq("id", item.id);
+          .eq("id", item.id)
+          .eq("status", item.status)
+          .eq("updated_at", item.updated_at)
+          .select("id")
+          .maybeSingle();
 
-        const cronSecret = Deno.env.get("CRON_SECRET");
-        if (!cronSecret) throw new Error("CRON_SECRET is not configured");
+        if (claimError) {
+          throw new Error(`Queue claim failed: ${claimError.message}`);
+        }
+        if (!claimed) {
+          results.claim_conflicts++;
+          console.log(`[bepaid-queue-cron] CAS claim skipped for item ${item.id}: row changed concurrently`);
+          continue;
+        }
+        claimOwned = true;
+        if (staleRecovery) results.stale_recovered++;
 
         const { data: processResult, error: processError } = await supabase.functions.invoke(
           "bepaid-auto-process",
@@ -219,14 +326,24 @@ serve(async (req) => {
           // Canonical payment, order and access were verified.
           await supabase
             .from("payment_reconcile_queue")
-            .update({ status: "completed", processed_at: now })
+            .update({
+              status: "completed",
+              processed_at: now,
+              last_error: null,
+              next_retry_at: null,
+            })
             .eq("id", item.id);
           results.success++;
           if (item.source === 'webhook') results.webhook_processed++;
         } else if (processResult?.results?.already_materialized > 0) {
           await supabase
             .from("payment_reconcile_queue")
-            .update({ status: "completed", processed_at: now })
+            .update({
+              status: "completed",
+              processed_at: now,
+              last_error: null,
+              next_retry_at: null,
+            })
             .eq("id", item.id);
           results.skipped++;
         } else {
@@ -253,6 +370,14 @@ serve(async (req) => {
         results.processed++;
       } catch (err) {
         console.error(`[bepaid-queue-cron] Exception processing item ${item.id}:`, err);
+
+        // A failed/ambiguous CAS is not ownership. Never overwrite another
+        // worker's row from the error handler when our claim did not succeed.
+        if (!claimOwned) {
+          results.failed++;
+          results.errors.push(`${item.id}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+          continue;
+        }
         
         const newAttempts = (item.attempts || 0) + 1;
         const shouldRetry = newAttempts < maxAttempts;
@@ -323,6 +448,9 @@ serve(async (req) => {
         failed: results.failed,
         skipped: results.skipped,
         retried: results.retried,
+        stale_recovered: results.stale_recovered,
+        claim_conflicts: results.claim_conflicts,
+        stale_terminal: results.stale_terminal,
         webhook_processed: results.webhook_processed,
         by_source: results.by_source,
         stuck_items: stuckItems?.length || 0,
@@ -340,6 +468,9 @@ serve(async (req) => {
         failed: results.failed,
         skipped: results.skipped,
         retried: results.retried,
+        stale_recovered: results.stale_recovered,
+        claim_conflicts: results.claim_conflicts,
+        stale_terminal: results.stale_terminal,
         webhook_processed: results.webhook_processed,
         by_source: results.by_source,
         errors: results.errors,
