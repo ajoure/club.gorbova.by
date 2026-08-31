@@ -1,7 +1,7 @@
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PaymentFilters } from "@/pages/admin/AdminPayments";
+import type { PaymentFilters } from "./PaymentsTabContent";
 import { ACTIVE_PAYMENT_PROVIDERS, PAYMENT_PROVIDER_LABELS } from "@/lib/payments/providers";
 
 interface PaymentsFiltersProps {
@@ -14,20 +14,27 @@ interface PaymentsFiltersProps {
     companies: Array<{ value: string; label: string }>;
     currencies: Array<{ value: string; label: string }>;
   };
+  managerDirectory: {
+    isLoading: boolean;
+    isFetching: boolean;
+    isError: boolean;
+    refetch: () => unknown;
+  };
 }
 
-export default function PaymentsFilters({ filters, setFilters, options }: PaymentsFiltersProps) {
+export default function PaymentsFilters({ filters, setFilters, options, managerDirectory }: PaymentsFiltersProps) {
+  const managerId = useId();
   const updateFilter = (key: keyof PaymentFilters, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
   };
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4 p-4 bg-muted/30 rounded-lg">
+    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4 p-4 bg-muted/30 rounded-lg [&>div]:min-w-0">
       <div className="space-y-1">
-        <Label className="text-xs">Менеджер продажи</Label>
+        <Label htmlFor={managerId} className="text-xs">Менеджер продажи</Label>
         <Select value={filters.salesManager} onValueChange={(v) => updateFilter("salesManager", v)}>
-          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-          <SelectContent>
+          <SelectTrigger id={managerId} aria-describedby={`${managerId}-status`} className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent className="max-h-[min(24rem,var(--radix-select-content-available-height))]">
             <SelectItem value="all">Все менеджеры</SelectItem>
             <SelectItem value="__unassigned__">Без менеджера</SelectItem>
             {options.managers.map((option) => (
@@ -35,6 +42,21 @@ export default function PaymentsFilters({ filters, setFilters, options }: Paymen
             ))}
           </SelectContent>
         </Select>
+        <div id={`${managerId}-status`} className="text-xs text-muted-foreground">
+          {managerDirectory.isLoading && <p role="status">Загружаем сотрудников…</p>}
+          {managerDirectory.isError && (
+            <div role="alert">
+              <p>Не удалось загрузить сотрудников. Список может быть неполным.</p>
+              <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs"
+                disabled={managerDirectory.isFetching} onClick={() => { void managerDirectory.refetch(); }}>
+                Повторить загрузку сотрудников
+              </Button>
+            </div>
+          )}
+          {!managerDirectory.isLoading && !managerDirectory.isError && options.managers.length === 0 && (
+            <p role="status">Сотрудники не найдены.</p>
+          )}
+        </div>
       </div>
 
       <div className="space-y-1">
@@ -283,6 +305,12 @@ export default function PaymentsFilters({ filters, setFilters, options }: Paymen
           </SelectContent>
         </Select>
       </div>
+      <p className="col-span-full text-xs text-muted-foreground">
+        Фильтр учитывает менеджера, назначенного в платеже. Смена ответственного в сделке
+        не распределяет старые платежи автоматически.
+      </p>
     </div>
   );
 }
+import { useId } from "react";
+import { Button } from "@/components/ui/button";

@@ -335,12 +335,13 @@ export function PeriodSelector({ value, onChange, className, align = "start" }: 
       </PopoverTrigger>
       <PopoverContent 
         align={align}
+        aria-label="Период платежей и отчётов"
         sideOffset={8}
         className={cn(
-          "w-80 p-0 z-50",
+          "w-80 max-w-[calc(100vw-1rem)] max-h-[var(--radix-popover-content-available-height)] p-0 z-50",
           "bg-background/95 backdrop-blur-xl",
           "border-border/50 shadow-2xl",
-          "rounded-2xl overflow-hidden",
+          "rounded-2xl overflow-y-auto overscroll-contain",
           "animate-in fade-in-0 zoom-in-95"
         )}
       >
