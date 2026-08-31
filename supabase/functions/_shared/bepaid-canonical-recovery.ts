@@ -93,7 +93,7 @@ async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch,
     }
     ps = await checked(db.from('provider_subscriptions').select('*').eq('provider', 'bepaid')
       .eq('provider_subscription_id', sbs).maybeSingle(), 'provider_link');
-    if (!ps?.subscription_v2_id) throw new Error('recovery_missing_provider_link');
+    if (!ps?.subscription_v2_id || ps.state !== 'active') throw new Error('recovery_missing_provider_link');
     sub = await one(db, 'subscriptions_v2', ps.subscription_v2_id);
     if (!sub) throw new Error('recovery_missing_subscription');
   }
@@ -267,6 +267,11 @@ async function executePlan(db: any, plan: any) {
     const end = date(grantedSub?.access_end_at);
     if (!end || end.toISOString() !== plan.expectedEnd || grantedSub.status !== 'active') {
       throw new Error('recovery_access_window_readback_failed');
+    }
+    const entitlements = await checked(db.from('entitlements').select('expires_at').eq('user_id', plan.profile.user_id)
+      .eq('product_id', plan.parent.product_id).eq('status', 'active'), 'entitlement_window_readback');
+    if (!(entitlements || []).some((row: any) => date(row.expires_at) && Date.parse(row.expires_at) >= Date.parse(plan.expectedEnd))) {
+      throw new Error('recovery_entitlement_window_readback_failed');
     }
   }
   if (plan.sbs) {
