@@ -26,10 +26,10 @@ export function resolveGrantPaymentWindow(input: {
   return { start, expectedEnd };
 }
 
-export function accessDateReachesWindow(value: string | null | undefined, expectedEnd: Date | null) {
+export function accessDateReachesWindow(value: string | null | undefined, expectedEnd: Date | null, exact = false) {
   // Missing legacy payment evidence must not turn an already fulfilled order
   // into a fresh extension. A NEW grant still requires a confirmed start date.
   if (!expectedEnd) return true;
   return !!value && Number.isFinite(Date.parse(value)) &&
-    Date.parse(value) >= expectedEnd.getTime() - 12 * 60 * 60 * 1000;
+    Date.parse(value) >= expectedEnd.getTime() - (exact ? 0 : 12 * 60 * 60 * 1000);
 }

@@ -27,6 +27,8 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { usePermissions } from "@/hooks/usePermissions";
+import { buildGrantAccessBody, confirmedGrantIds, parseLocalDateTime, verifyGrantAccessReadback } from "@/lib/grantAccessForm";
 
 interface GrantAccessFromDealDialogProps {
   open: boolean;
@@ -50,6 +52,7 @@ interface GrantAccessFromDealDialogProps {
     product_id?: string;
   } | null;
   onSuccess: () => void;
+  initialExactEnd?: boolean;
 }
 
 export function GrantAccessFromDealDialog({
@@ -59,33 +62,43 @@ export function GrantAccessFromDealDialog({
   tariff,
   existingSubscription,
   onSuccess,
+  initialExactEnd = false,
 }: GrantAccessFromDealDialogProps) {
   const queryClient = useQueryClient();
+  const { isAdmin } = usePermissions();
   const [customDays, setCustomDays] = useState<number | null>(null);
   const [customStartDate, setCustomStartDate] = useState<Date | null>(null);
   const [extendFromCurrent, setExtendFromCurrent] = useState(true);
   const [grantTelegram, setGrantTelegram] = useState(true);
   const [grantGetcourse, setGrantGetcourse] = useState(true);
+  const [useExactEnd, setUseExactEnd] = useState(initialExactEnd);
+  const [exactEndValue, setExactEndValue] = useState("");
+  const exactEnd = useMemo(() => parseLocalDateTime(exactEndValue), [exactEndValue]);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  // Fetch existing active subscription for this product (not just this order)
-  const { data: productSubscription } = useQuery({
-    queryKey: ["product-subscription", deal.user_id, deal.product_id],
+  // Do not preview another tariff or silently choose one of two active chains.
+  const { data: productSubscriptions = [], isLoading: subscriptionLoading, isError: subscriptionError } = useQuery({
+    queryKey: ["product-subscription", deal.user_id, deal.product_id, deal.tariff_id, "grant-access"],
     queryFn: async () => {
-      if (!deal.user_id || !deal.product_id) return null;
-      const { data, error } = await supabase
+      if (!deal.user_id || !deal.product_id) return [];
+      let query = supabase
         .from("subscriptions_v2")
-        .select("id, access_end_at, status, product_id")
+        .select("id, access_end_at, status, product_id, tariff_id")
         .eq("user_id", deal.user_id)
         .eq("product_id", deal.product_id)
-        .eq("status", "active")
+        .eq("status", "active");
+      query = deal.tariff_id ? query.eq("tariff_id", deal.tariff_id) : query.is("tariff_id", null);
+      const { data, error } = await query
         .order("access_end_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) return null;
-      return data;
+        .limit(2);
+      if (error) throw error;
+      return data || [];
     },
     enabled: open && !!deal.user_id && !!deal.product_id,
   });
+  const productSubscription = productSubscriptions.length === 1 ? productSubscriptions[0] : null;
+  const exactCurrentEnd = productSubscription?.access_end_at && Number.isFinite(Date.parse(productSubscription.access_end_at))
+    ? new Date(productSubscription.access_end_at) : null;
 
   // Set default start date from deal_date (canonical) when dialog opens
   const dealDate = deal.deal_date || deal.created_at;
@@ -95,7 +108,15 @@ export function GrantAccessFromDealDialog({
     } else if (open) {
       setCustomStartDate(new Date());
     }
-  }, [open, dealDate]);
+    if (open) {
+      setUseExactEnd(initialExactEnd);
+      setExactEndValue("");
+      setExtendFromCurrent(true);
+      setCustomDays(null);
+      setGrantTelegram(true);
+      setGrantGetcourse(true);
+    }
+  }, [open, deal.id, dealDate, initialExactEnd]);
 
   // Calculate access period
   const accessDays = customDays ?? tariff?.access_days ?? 30;
@@ -120,7 +141,7 @@ export function GrantAccessFromDealDialog({
       startDate = baseDate;
     }
     
-    const endDate = addDays(startDate, accessDays);
+    const endDate = useExactEnd ? exactEnd : addDays(startDate, accessDays);
     
     // Calculate remaining days if extending
     const remainingDays = hasActiveAccess && activeSub?.access_end_at
@@ -139,29 +160,67 @@ export function GrantAccessFromDealDialog({
       currentEndDate: activeSub?.access_end_at ? new Date(activeSub.access_end_at) : null,
       isStartInPast,
     };
-  }, [accessDays, extendFromCurrent, productSubscription, existingSubscription, customStartDate, deal.created_at]);
+  }, [accessDays, extendFromCurrent, productSubscription, existingSubscription, customStartDate, deal.created_at, deal.deal_date, useExactEnd, exactEnd]);
+
+  const exactError = useExactEnd ? (
+    !productSubscription ? "Не подтверждена единственная действующая подписка этого тарифа. Обновите данные сделки."
+      : !exactEnd ? "Укажите корректную точную дату и время окончания."
+      : exactEnd <= new Date() ? "Точная дата окончания должна быть в будущем."
+      : !productSubscription.access_end_at || !Number.isFinite(Date.parse(productSubscription.access_end_at))
+        ? "Текущий срок подписки не подтверждён. Требуется ручная проверка."
+      : exactEnd.getTime() < Date.parse(productSubscription.access_end_at) ? "Этот режим не сокращает существующий доступ."
+      : customStartDate && exactEnd <= customStartDate ? "Окончание должно быть позже начала доступа." : null
+  ) : null;
+  const canGrant = isAdmin() && !!deal.user_id && (deal.status === "paid" || deal.status === "partial")
+    && !subscriptionLoading && !subscriptionError && productSubscriptions.length <= 1 && !exactError
+    && (useExactEnd || (Number.isInteger(accessDays) && accessDays > 0));
 
   // Grant access mutation
   const grantAccessMutation = useMutation({
     mutationFn: async () => {
+      if (!canGrant || !deal.user_id) throw new Error("Выдача доступа недоступна: проверьте роль и данные сделки.");
+      const requestedEnd = useExactEnd ? exactEnd : null;
+      const expectedId = useExactEnd ? productSubscription?.id : undefined;
+      if (useExactEnd) {
+        const capability = await supabase.functions.invoke('grant-access-for-order', { method: 'GET' });
+        if (capability.error || capability.data?.capabilities?.exact_existing_access_v1 !== true) {
+          throw new Error('Сервер ещё не поддерживает безопасную точную правку. Выдача не запускалась; дождитесь обновления.');
+        }
+      }
       const { data, error } = await supabase.functions.invoke("grant-access-for-order", {
-        body: {
+        body: buildGrantAccessBody({
           orderId: deal.id,
-          customAccessDays: customDays,
-          customAccessStartAt: customStartDate?.toISOString(),  // Pass custom start date
+          days: customDays,
+          start: customStartDate,
           extendFromCurrent,
           grantTelegram,
           grantGetcourse,
-        },
+          exactEnd: requestedEnd,
+          expectedExistingSubscriptionId: expectedId,
+        }),
       });
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      return data;
+      const ids = confirmedGrantIds(data);
+      const [subResult, entResult] = await Promise.all([
+        supabase.from("subscriptions_v2").select("id,user_id,product_id,tariff_id,order_id,status,access_end_at,meta")
+          .eq("id", ids.subscriptionId).maybeSingle(),
+        supabase.from("entitlements").select("id,user_id,product_id,order_id,status,expires_at,meta")
+          .eq("id", ids.entitlementId).maybeSingle(),
+      ]);
+      if (subResult.error || entResult.error) throw new Error("Не удалось перепроверить выданный доступ. Проверьте историю сделки перед повтором.");
+      const verifiedEnd = verifyGrantAccessReadback({
+        orderId: deal.id, userId: deal.user_id, productId: deal.product_id, tariffId: deal.tariff_id,
+        subscription: subResult.data, entitlement: entResult.data,
+        minimumEnd: requestedEnd, expectedExistingSubscriptionId: expectedId,
+      });
+      return { verifiedEnd, integrationsIncomplete: ids.integrationsIncomplete, integrationsPending: ids.integrationsPending };
     },
     onSuccess: (data) => {
-      toast.success("Доступ успешно выдан", {
-        description: `До ${format(calculation.endDate, "dd MMMM yyyy", { locale: ru })}`,
+      toast.success("Срок доступа подтверждён", {
+        description: `До ${format(data.verifiedEnd, "dd.MM.yyyy HH:mm:ss.SSS")} (${timeZone})`,
       });
+      if (data.integrationsIncomplete) toast.warning("Доступ выдан, но интеграция не завершена. Проверьте Telegram / GetCourse в истории сделки.");
+      else if (data.integrationsPending) toast.info("Срок доступа подтверждён. Подключение Telegram / GetCourse ещё обрабатывается.");
       queryClient.invalidateQueries({ queryKey: ["deal-subscription", deal.id] });
       queryClient.invalidateQueries({ queryKey: ["product-subscription"] });
       queryClient.invalidateQueries({ queryKey: ["deal-audit", deal.id] });
@@ -173,14 +232,17 @@ export function GrantAccessFromDealDialog({
         description: normalizeEdgeFunctionError(error),
       });
     },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["product-subscription"] });
+      queryClient.invalidateQueries({ queryKey: ["deal-subscription", deal.id] });
+      queryClient.invalidateQueries({ queryKey: ["contact-subscriptions"] });
+    },
   });
-
-  const canGrant = deal.user_id && (deal.status === "paid" || deal.status === "partial");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[480px]">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] flex-col overflow-hidden sm:max-w-[480px]">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Shield className="w-5 h-5 text-primary" />
             Выдать доступ
@@ -190,7 +252,11 @@ export function GrantAccessFromDealDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
+        <fieldset disabled={grantAccessMutation.isPending} className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overscroll-contain py-4 pr-1">
+          {!isAdmin() && <p role="alert" className="text-sm text-destructive">Выдавать доступ может только администратор.</p>}
+          {(subscriptionError || productSubscriptions.length > 1) && <p role="alert" className="text-sm text-destructive">
+            Не удалось однозначно подтвердить подписку. Обновите данные и проверьте связь сделки.
+          </p>}
           {/* Warnings */}
           {!deal.user_id && (
             <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600">
@@ -214,9 +280,9 @@ export function GrantAccessFromDealDialog({
 
           {/* Tariff info */}
           <div className="p-3 rounded-lg bg-muted/50 space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-sm text-muted-foreground">Тариф</span>
-              <Badge variant="outline">{tariff?.name || "Не указан"}</Badge>
+              <Badge variant="outline" className="max-w-full break-words whitespace-normal">{tariff?.name || "Не указан"}</Badge>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Дней по тарифу</span>
@@ -231,9 +297,9 @@ export function GrantAccessFromDealDialog({
                 <CheckCircle className="w-4 h-4" />
                 <span className="text-sm font-medium">Активный доступ</span>
               </div>
-              <div className="flex items-center justify-between text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="text-muted-foreground">Текущий доступ до</span>
-                <span>{format(calculation.currentEndDate, "dd.MM.yyyy")}</span>
+                <span className="text-right">{format(calculation.currentEndDate, "dd.MM.yyyy HH:mm:ss.SSS")}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Осталось дней</span>
@@ -278,8 +344,20 @@ export function GrantAccessFromDealDialog({
             )}
           </div>
 
-          {/* Custom days */}
-          <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Checkbox id="exactAccessEnd" checked={useExactEnd} onCheckedChange={(checked) => {
+              setUseExactEnd(!!checked);
+              if (checked) setExtendFromCurrent(true);
+            }} />
+            <Label htmlFor="exactAccessEnd" className="cursor-pointer">Точная дата окончания</Label>
+          </div>
+          {useExactEnd ? <div className="space-y-2">
+            <Label htmlFor="exactAccessEndValue">Дата и время окончания</Label>
+            <Input id="exactAccessEndValue" type="datetime-local" step="0.001" value={exactEndValue}
+              onChange={(event) => setExactEndValue(event.target.value)} className="min-w-0 max-w-full" />
+            <p className="break-words text-xs text-muted-foreground">Часовой пояс: {timeZone}. Продление существующего доступа без новой оплаты; график списаний провайдера не меняется.</p>
+            {exactError && <p role="alert" className="text-sm text-destructive">{exactError}</p>}
+          </div> : <div className="space-y-2">
             <Label htmlFor="customDays">Количество дней доступа</Label>
             <Input
               id="customDays"
@@ -290,10 +368,10 @@ export function GrantAccessFromDealDialog({
               onChange={(e) => setCustomDays(e.target.value ? parseInt(e.target.value) : null)}
               placeholder={String(tariff?.access_days || 30)}
             />
-          </div>
+          </div>}
 
           {/* Extend from current */}
-          {calculation.hasActiveAccess && (
+          {calculation.hasActiveAccess && !useExactEnd && (
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="extendFromCurrent"
@@ -339,15 +417,19 @@ export function GrantAccessFromDealDialog({
               <CalendarIcon className="w-4 h-4" />
               <span className="text-sm font-medium">Результат</span>
             </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Начало доступа</span>
-              <span>{format(calculation.startDate, "dd.MM.yyyy")}</span>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span className="text-muted-foreground">{useExactEnd ? "Текущая граница доступа" : "Начало доступа"}</span>
+              <span>{useExactEnd
+                ? exactCurrentEnd ? format(exactCurrentEnd, "dd.MM.yyyy HH:mm:ss.SSS") : "Не подтверждена"
+                : format(calculation.startDate, "dd.MM.yyyy HH:mm:ss.SSS")}</span>
             </div>
-            <div className="flex items-center justify-between text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
               <span className="text-muted-foreground">Конец доступа</span>
-              <span className="font-medium">{format(calculation.endDate, "dd.MM.yyyy")}</span>
+              <span className="font-medium">{calculation.endDate ? format(calculation.endDate, "dd.MM.yyyy HH:mm:ss.SSS") : "Не задан"}</span>
             </div>
-            <div className="flex items-center justify-between text-sm">
+            {useExactEnd ? <p className="break-words text-xs text-muted-foreground">
+              {timeZone}{exactEnd ? ` · UTC: ${exactEnd.toISOString()}` : ""}. Историческое начало существующей подписки сохраняется.
+            </p> : <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Всего дней</span>
               <Badge variant="secondary">
                 {extendFromCurrent && calculation.hasActiveAccess 
@@ -355,11 +437,11 @@ export function GrantAccessFromDealDialog({
                   : accessDays
                 }
               </Badge>
-            </div>
+            </div>}
           </div>
-        </div>
+        </fieldset>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Отмена
           </Button>
