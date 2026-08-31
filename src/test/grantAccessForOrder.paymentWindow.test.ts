@@ -12,11 +12,12 @@ describe("grant-access-for-order payment-window contract", () => {
     expect(source).toContain('.from("payments_v2")');
     expect(source).toContain('.eq("status", "succeeded")');
     expect(source).toContain('.order("paid_at", { ascending: true })');
-    expect(source).toContain("baseStartDate = new Date(paidAt)");
+    expect(source).toContain("baseStartDate = paymentWindow.start");
+    expect(source.indexOf('resolveGrantPaymentWindow({')).toBeLessThan(source.indexOf('// ── IDEMPOTENCY HARD GUARD'));
   });
 
   it("does not revive access from the order date or current time", () => {
-    const startWindow = source.slice(source.indexOf("// Determine base start date:"), source.indexOf("// Check for existing active subscription"));
+    const startWindow = source.slice(source.indexOf("const baseStartDate = paymentWindow.start"), source.indexOf("// Check for existing active subscription"));
     expect(startWindow).not.toContain("order.created_at");
     expect(startWindow).not.toContain("order.paid_at");
     expect(startWindow).not.toMatch(/baseStartDate\s*=\s*now/);

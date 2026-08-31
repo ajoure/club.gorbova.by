@@ -36,14 +36,6 @@ const SOURCE_PRIORITY: Record<string, number> = {
   'file_import': 99,  // Lowest priority - excluded by default
 };
 
-// Calculate backoff delay for retry
-function calculateBackoffDelay(attempts: number): number {
-  // Exponential backoff: 5min, 15min, 45min, 2h, 6h
-  const delays = [5, 15, 45, 120, 360];
-  const idx = Math.min(attempts, delays.length - 1);
-  return delays[idx] * 60 * 1000;
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -69,8 +61,6 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Fail before claiming any rows: the downstream worker requires this key.
-    if (!cronSecret) throw new Error("CRON_SECRET is not configured");
 
     const body = await req.json().catch(() => ({}));
     const {
@@ -201,202 +191,32 @@ serve(async (req) => {
       errors: [] as string[],
     };
 
+    const deadline = Date.now() + 60_000;
     for (const item of sortedItems) {
-      let claimOwned = false;
+      if (Date.now() >= deadline) break;
       try {
-        console.log(`[bepaid-queue-cron] Processing item ${item.id}, source=${item.source}, priority=${item.priority}, bepaid_uid=${item.bepaid_uid}, attempts=${item.attempts}`);
-
-        const staleRecovery = isStaleProcessingItem(item, processingCutoff);
-        const softCancelled = excludeCancelled &&
-          (item.last_error?.startsWith("SOFT_CANCELLED") ||
-            item.last_error?.startsWith("CANCELLED_BY_ADMIN"));
-        if (item.status === "processing" && !staleRecovery) {
-          results.claim_conflicts++;
-          continue;
-        }
-        const reason = staleRecovery
-          ? staleTerminalReason(item, { maxAttempts, excludeCancelled, excludeFileImport, queueItemId })
-          : null;
-        if (reason) {
-          const { data: released, error: releaseError } = await supabase
-            .from("payment_reconcile_queue")
-            .update({
-              status: "error",
-              last_error: softCancelled
-                ? `${item.last_error}; ${reason}`
-                : `${reason}: ${item.last_error || "worker interrupted"}`,
-              next_retry_at: null,
-            })
-            .eq("id", item.id)
-            .eq("status", item.status)
-            .eq("updated_at", item.updated_at)
-            .select("id")
-            .maybeSingle();
-          if (releaseError) throw new Error(`Stale claim release failed: ${releaseError.message}`);
-          if (!released) results.claim_conflicts++;
-          else {
-            results.stale_terminal++;
-            results.failed++;
-            results.processed++;
-            results.errors.push(`${item.id}: ${reason}`);
-          }
-          continue;
-        }
-        const claimedAttempts = staleRecovery
-          ? (item.attempts || 0) + 1
-          : (item.attempts || 0);
-
-        // CAS claim: overlapping cron runs must never process the same row.
-        const { data: claimed, error: claimError } = await supabase
-          .from("payment_reconcile_queue")
-          .update({ 
-            status: "processing",
-            last_attempt_at: now,
-            attempts: claimedAttempts,
-          })
-          .eq("id", item.id)
-          .eq("status", item.status)
-          .eq("updated_at", item.updated_at)
-          .select("id")
-          .maybeSingle();
-
-        if (claimError) {
-          throw new Error(`Queue claim failed: ${claimError.message}`);
-        }
-        if (!claimed) {
-          results.claim_conflicts++;
-          console.log(`[bepaid-queue-cron] CAS claim skipped for item ${item.id}: row changed concurrently`);
-          continue;
-        }
-        claimOwned = true;
-        if (staleRecovery) results.stale_recovered++;
-
-        const { data: processResult, error: processError } = await supabase.functions.invoke(
-          "bepaid-auto-process",
-          {
-            body: { queueItemId: item.id },
-            headers: { "x-internal-key": cronSecret },
-          }
-        );
-
-        // Track by source
+        // Selection is not ownership. payments-reconcile is the only CAS
+        // owner, including stale-terminal release and error/completion writes.
+        const { data: outcome, error } = await supabase.functions.invoke("payments-reconcile", {
+          body: { queueItemId: item.id, expectedUpdatedAt: item.updated_at },
+        });
+        results.processed++;
         results.by_source[item.source] = (results.by_source[item.source] || 0) + 1;
-
-        if (processError) {
-          console.error(`[bepaid-queue-cron] Error processing item ${item.id}:`, processError);
-          
-          // Update with error status and next retry time
-          const newAttempts = (item.attempts || 0) + 1;
-          const shouldRetry = newAttempts < maxAttempts;
-          
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({
-              status: "error",
-              attempts: newAttempts,
-              last_error: processError.message,
-              next_retry_at: shouldRetry 
-                ? new Date(Date.now() + calculateBackoffDelay(newAttempts)).toISOString()
-                : null,
-            })
-            .eq("id", item.id);
-
+        if (error || outcome?.success !== true) {
           results.failed++;
-          if (shouldRetry) results.retried++;
-          results.errors.push(`${item.id}: ${processError.message}`);
-        } else if ((processResult?.results?.errors?.length || 0) > 0) {
-          const message = processResult.results.errors.join('; ');
-          const newAttempts = (item.attempts || 0) + 1;
-          const shouldRetry = newAttempts < maxAttempts;
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({
-              status: shouldRetry ? "pending" : "error",
-              attempts: newAttempts,
-              last_error: message,
-              next_retry_at: shouldRetry
-                ? new Date(Date.now() + calculateBackoffDelay(newAttempts)).toISOString()
-                : null,
-            })
-            .eq("id", item.id);
-          results.failed++;
-          if (shouldRetry) results.retried++;
-          results.errors.push(`${item.id}: ${message}`);
-        } else if (processResult?.results?.orders_created > 0 || processResult?.results?.orders_reconciled > 0) {
-          // Canonical payment, order and access were verified.
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({
-              status: "completed",
-              processed_at: now,
-              last_error: null,
-              next_retry_at: null,
-            })
-            .eq("id", item.id);
-          results.success++;
-          if (item.source === 'webhook') results.webhook_processed++;
-        } else if (processResult?.results?.already_materialized > 0) {
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({
-              status: "completed",
-              processed_at: now,
-              last_error: null,
-              next_retry_at: null,
-            })
-            .eq("id", item.id);
-          results.skipped++;
-        } else {
-          // No orders created but no error - might need retry
-          const newAttempts = (item.attempts || 0) + 1;
-          const shouldRetry = newAttempts < maxAttempts;
-          
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({
-              status: shouldRetry ? "pending" : "error",
-              attempts: newAttempts,
-              last_error: "No order created",
-              next_retry_at: shouldRetry 
-                ? new Date(Date.now() + calculateBackoffDelay(newAttempts)).toISOString()
-                : null,
-            })
-            .eq("id", item.id);
-          
-          results.skipped++;
-          if (shouldRetry) results.retried++;
-        }
-        
-        results.processed++;
-      } catch (err) {
-        console.error(`[bepaid-queue-cron] Exception processing item ${item.id}:`, err);
-
-        // A failed/ambiguous CAS is not ownership. Never overwrite another
-        // worker's row from the error handler when our claim did not succeed.
-        if (!claimOwned) {
-          results.failed++;
-          results.errors.push(`${item.id}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+          results.errors.push(item.id + ": canonical_recovery_failed");
           continue;
         }
-        
-        const newAttempts = (item.attempts || 0) + 1;
-        const shouldRetry = newAttempts < maxAttempts;
-        
-        await supabase
-          .from("payment_reconcile_queue")
-          .update({
-            status: "error",
-            attempts: newAttempts,
-            last_error: err instanceof Error ? err.message : 'Unknown error',
-            next_retry_at: shouldRetry 
-              ? new Date(Date.now() + calculateBackoffDelay(newAttempts)).toISOString()
-              : null,
-          })
-          .eq("id", item.id);
-        
+        results.stale_recovered += outcome.stale_recovered || 0;
+        results.stale_terminal += outcome.stale_terminal || 0;
+        results.claim_conflicts += outcome.claim_conflicts || 0;
+        if (outcome.results?.orders_reconciled > 0) {
+          results.success++;
+          if (item.source === "webhook") results.webhook_processed++;
+        } else results.skipped++;
+      } catch {
         results.failed++;
-        results.processed++;
-        results.errors.push(`${item.id}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        results.errors.push(item.id + ": canonical_recovery_transport_failed");
       }
     }
 
