@@ -98,6 +98,9 @@ Deno.serve(async (req) => {
     if (linkErr || !link) {
       return errorResponse('payment_link_not_found', 404);
     }
+    if ((link.meta as { repayment?: unknown } | null)?.repayment) {
+      return errorResponse('repayment_requires_its_own_checkout', 409);
+    }
     if (link.status !== 'active') {
       return errorResponse('payment_link_inactive', 410);
     }
