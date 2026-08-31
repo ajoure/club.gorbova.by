@@ -1,3 +1,4 @@
+// Includes the server access-window dependency graph, not browser runtime code.
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolveGrantPaymentWindow, accessDateReachesWindow } from '../../supabase/functions/grant-access-for-order/payment_window';

@@ -1,3 +1,4 @@
+// Includes the server access-window dependency graph, not browser runtime code.
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { parseExactAccessTarget, exactAccessTargetError, exactAccessOrderAllowed } from '../../supabase/functions/grant-access-for-order/exact_access_target';
