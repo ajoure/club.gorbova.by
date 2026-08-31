@@ -259,5 +259,5 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.bepaid-readonly-pull]
-# Exact managed service credential or verified admin/superadmin. GET-only provider diagnostics.
+# Exact service/Vault reconciliation credential or verified admin. GET-only provider diagnostics.
 verify_jwt = false

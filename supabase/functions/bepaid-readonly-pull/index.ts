@@ -5,12 +5,12 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
-import { requestHasServiceRoleKey } from '../_shared/service-request-auth.ts';
+import { authorizePaymentsReconcile } from '../payments-reconcile/auth.ts';
 import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-payments-reconcile-cron-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -34,9 +34,11 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    // Managed diagnostics may use the exact service credential. Existing
-    // operator access still requires a verified admin user, never an anon key.
-    if (!requestHasServiceRoleKey(req, serviceKey)) {
+    // Server-side diagnostics can use the exact service credential or the
+    // dedicated Vault-backed reconciliation secret. Never copy service keys
+    // out of production just to call this GET-only diagnostic surface.
+    // Existing operator access still requires a verified admin user.
+    if (!await authorizePaymentsReconcile(req, serviceKey, supabase)) {
     // RBAC: admin or superadmin only
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
