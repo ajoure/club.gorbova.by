@@ -56,20 +56,16 @@ StripePrice/product_id не переносятся (в исходных meta и�
 
 ### Dry-run и защита
 - одна транзакция, `lock_timeout=3s`, `statement_timeout=15s`, стабильный порядок ID;
-- каждый UPDATE — CAS по `id + updated_at`, ожидаемый rowcount ровно 1; INSERT — по 1 строке, всего 6;
-- предвычисленный `SELECT` diff (before) и независимый read-back (after) по тем же 10 строкам;
-- ожидаемые счётчики: `tariff_offers` UPDATE=2, INSERT=6; `tariffs` UPDATE=2; новых orders/payments/subscriptions/entitlements=0; уведомлений=0;
+- каждый UPDATE — CAS по `id + updated_at`, ожидаемый rowcount ровно 1; INSERT — по 1 строке, всего 4;
+- предвычисленный `SELECT` diff (before) и независимый read-back (after) по тем же 8 строкам;
+- ожидаемые счётчики: `tariff_offers` UPDATE=2, INSERT=4; `tariffs` UPDATE=2; новых orders/payments/subscriptions/entitlements=0; уведомлений=0;
 - любое отклонение rowcount или ошибка → ROLLBACK и STOP, без адаптации операции и без догадок по UUID;
-- аудит `operation='cb20-hidden-tariff-offers-v1'` с before/after по каждой из 10 строк.
+- аудит `operation='cb20-hidden-tariff-offers-v1'` с before/after по каждой из 8 строк.
 
-### Валидность invoice / RR / минимальной суммы — есть блокер по gift
+### Валидность invoice / RR / минимальной суммы
 - **invoice**: `AdminPaymentLinkDialog` ищет sibling по `is_active && offer_type='invoice'` — после INSERT условие выполняется для обоих тарифов. PASS.
-- **RR**: условие `is_active && offer_type='bank_installment' && meta.bank_installment.rr_runtime.enabled===true && provider==='rr'` — выполняется. PASS для 1325.00.
-- **Минимум 1 BYN — не молчу**: для gift-тарифа `04e6c302` amount=1.00 BYN.
-  - `pay_now/full_payment` 1.00 BYN — валидно (равно минимуму).
-  - `pay_now/internal_installment` на 2 цикла даёт 0.50 BYN за списание, что **ниже минимально допустимой суммы списания**; при `rounding_mode='ceil_to_whole_byn'` получится 1.00 × 2 = 2.00 BYN, то есть сумма к оплате превысит цену оффера. Обе ветки некорректны.
-  - `bank_installment/RR` на 1.00 BYN банк заведомо не примет; `invoice` на 1.00 BYN формально проходит, но акт/счёт на 1 рубль сомнителен по смыслу.
-  - **Рекомендация**: для `04e6c302` в этом execute создавать только `invoice` (и, по решению, не создавать `internal_installment` и `bank_installment`). Тогда счётчик станет 2 UPDATE + 4 INSERT + 2 UPDATE = 8. Выполнять полные 6 INSERT можно только по вашему явному подтверждению, что 0.50/2.00 BYN и RR на 1 рубль допустимы. Молча невалидную настройку не создаю.
+- **RR**: условие `is_active && offer_type='bank_installment' && meta.bank_installment.rr_runtime.enabled===true && provider==='rr'` — выполняется. PASS для 1325.00 (тариф 98539e5d).
+- **Минимум 1 BYN**: gift `pay_now` 1.00 BYN валиден (ровно минимум). Gift `internal_installment` (0.50/списание или итого 2.00 при ceil) и gift `RR` (1.00 BYN банк не примет) — pending до явного решения по amount override, в 8 изменений не входят, невалидную настройку молча не создаю.
 
 ### offer_addons — назначение и обезличенный инвентарь (не копируем)
 Назначение: `offer_addons` привязывает к «родительскому» офферу дополнительные покупки (модули/направления) — витрина допродажи в чекауте. Ключевые поля: `pricing_mode` (`offer_price|fixed_price|percent_discount|free`), `discount_percent`, `is_required`, `is_default_selected`, `access_delivery_mode` (`immediate|fixed_date|manual`), `sort_order`, уникальность `(parent_offer_id, addon_offer_id)`.
@@ -93,11 +89,16 @@ StripePrice/product_id не переносятся (в исходных meta и�
 
 Подтверждённый риск существующего пути `bepaid-admin-create-subscription-link`: сумма берётся из `tariff_offers.auto_charge_amount || amount` по `sub.meta.offer_id = c7f5221e` → 2650.00 BYN вместо 442.00, а план создаётся бессрочным (`interval` без `billing_cycles`). Поэтому endpoint в текущем виде для этой рассрочки непригоден.
 
+**Корректировки к будущему patch (приняты):**
+- `installment_payments` = 0 — ожидаемо: finite provider-managed путь намеренно НЕ ведёт параллельный график. Автоматически заполнять `installment_payments` **запрещено**.
+- `paid_total` пересчитывать только по фактическим уникальным `succeeded` payments минус refunds; запрещено вычислять `total_cycles − provider_paid_cycles` при замене мандата без учёта уже прошедших оплат.
+- Старый мандат в состоянии `failed_attempt` — **не финальный** статус: провайдер может ещё повторить списание. Никакого вызова создания нового мандата, списания или отмены до отдельного явного разрешения.
+
 План реализации в отдельной ветке `codex/ksenia-installment-relink` (один PR, без production-действий):
-1. **admin link writer** — режим «доплата по существующей рассрочке»: сумма из `sub.meta.installment.per_payment_byn`, циклы = `billing_cycles − успешные`, привязка к существующим order/sub, запрет создания новых сущностей.
+1. **admin link writer** — режим «доплата по существующей рассрочке»: сумма из `sub.meta.installment.per_payment_byn`, остаток циклов из фактических оплат (см. правило выше), привязка к существующим order/sub, запрет создания новых сущностей.
 2. **public checkout** — ветка возврата в существующий installment-контекст вместо порождения нового order/subscription.
-3. **finite webhook/progress** — учёт оплаченных циклов, завершение при `paid_cycles = billing_cycles`, заполнение `installment_payments` (сейчас 0 строк).
-4. **contact installment UI** — прогресс «442 из 1326, остаток 884» и кнопка доплаты по графику.
-5. **safe old-mandate replacement** — идемпотентная замена мандата в состоянии `failed_attempt` с переносом `subscription_v2_id`/`order_id`, без отмен и списаний.
+3. **finite webhook/progress** — учёт оплаченных циклов и завершение при `paid_cycles = billing_cycles` на основе succeeded-платежей, без записи в `installment_payments`.
+4. **contact installment UI** — прогресс «оплачено/остаток» и кнопка доплаты по графику.
+5. **safe old-mandate replacement** — идемпотентная замена мандата в `failed_attempt` с переносом `subscription_v2_id`/`order_id`, без отмен и списаний, с учётом возможного повтора списания провайдером по старому мандату.
 
 Все пять пунктов покрываются серверными тестами; выполнение и любые вызовы провайдера — отдельной явной задачей после merge.
