@@ -198,7 +198,7 @@ serve(async (req) => {
         // Selection is not ownership. payments-reconcile is the only CAS
         // owner, including stale-terminal release and error/completion writes.
         const { data: outcome, error } = await supabase.functions.invoke("payments-reconcile", {
-          body: { queueItemId: item.id, expectedUpdatedAt: item.updated_at },
+          body: { queueItemId: item.id, expectedUpdatedAt: item.updated_at, recordPreflightFailure: !queueItemId },
         });
         results.processed++;
         results.by_source[item.source] = (results.by_source[item.source] || 0) + 1;

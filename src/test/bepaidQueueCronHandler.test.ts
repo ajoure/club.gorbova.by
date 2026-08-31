@@ -26,7 +26,7 @@ function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" 
     { success: true, stale_recovered: 1, results: { orders_reconciled: 1 } };
   const invoke = claim === "error" ? vi.fn().mockResolvedValue({ data: null, error: { message: "worker failed" } }) :
     vi.fn().mockResolvedValue({ data: response, error: null });
-  const recover = vi.fn(async () => {
+  const recover = vi.fn(async (_db: unknown, _options: Record<string, unknown>) => {
     if (claim === "error") throw new Error("recovery_test_failure");
     return response;
   });
@@ -105,12 +105,20 @@ describe("actual bePaid queue cron handler with isolated database", () => {
     const h = harness({}, state);
     const result = await (await h.run()).json();
     expect(h.invoke).toHaveBeenCalledExactlyOnceWith("payments-reconcile", {
-      body: { queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at },
+      body: { queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, recordPreflightFailure: true },
     });
     expect(h.writes.filter(w => w.table === "payment_reconcile_queue")).toEqual([]);
     if (state === "win") expect(result.stale_recovered).toBe(1);
     if (state === "lose") expect(result.claim_conflicts).toBe(1);
     if (state === "error") expect(result.failed).toBe(1);
+  });
+
+  it('keeps a manual exact queue execution out of automatic failure accounting', async () => {
+    const h = harness();
+    await h.run({ queueItemId: h.item.id });
+    expect(h.invoke).toHaveBeenCalledExactlyOnceWith('payments-reconcile', {
+      body: { queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, recordPreflightFailure: false },
+    });
   });
 });
 
@@ -124,7 +132,7 @@ describe("actual scheduled payments-reconcile handler with isolated database", (
     const h = harness({}, state, "reconcile");
     expect((await h.run()).status).toBe(200);
     expect(h.recover).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
-      queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, providerAuth: "Basic test",
+      queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, providerAuth: "Basic test", recordPreflightFailure: true,
     });
     expect(h.writes.filter(w => w.table === "payment_reconcile_queue")).toEqual([]);
   });
@@ -132,8 +140,14 @@ describe("actual scheduled payments-reconcile handler with isolated database", (
     const h = harness({}, "win", "reconcile");
     await h.run({ queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, dry_run: true });
     expect(h.recover).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
-      queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, dryRun: true, providerAuth: "Basic test", providerSubscriptionId: undefined,
+      queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, dryRun: true, providerAuth: "Basic test", providerSubscriptionId: undefined, recordPreflightFailure: false,
     });
+    expect(h.writes).toEqual([]); expect(h.invoke).not.toHaveBeenCalled();
+  });
+  it.each([true, false, 'true', 1])('accepts only the explicit boolean opt-in (%s)', async flag => {
+    const h = harness({}, 'win', 'reconcile');
+    await h.run({ queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, dryRun: true, recordPreflightFailure: flag });
+    expect(h.recover.mock.calls[0][1]).toMatchObject({ dryRun: true, recordPreflightFailure: flag === true });
     expect(h.writes).toEqual([]); expect(h.invoke).not.toHaveBeenCalled();
   });
   it("rejects unscoped dry-run rather than accidentally executing a full sweep", async () => {

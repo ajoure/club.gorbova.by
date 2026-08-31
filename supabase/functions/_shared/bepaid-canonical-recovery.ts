@@ -31,10 +31,24 @@ export function queueProviderSubscriptionId(item: any): string | null {
 }
 
 async function providerGet(fetcher: typeof fetch, url: string, auth: string) {
-  const response = await fetcher(url, { method: 'GET', signal: AbortSignal.timeout(15_000),
-    headers: { Authorization: auth, Accept: 'application/json' } });
+  let response: Response;
+  try {
+    response = await fetcher(url, { method: 'GET', signal: AbortSignal.timeout(15_000),
+      headers: { Authorization: auth, Accept: 'application/json' } });
+  } catch {
+    throw new Error('recovery_provider_unavailable');
+  }
+  if (response.status === 429 || response.status >= 500) throw new Error('recovery_provider_unavailable');
   if (!response.ok) throw new Error(`recovery_provider_http_${response.status}`);
-  return await response.json();
+  try {
+    return await response.json();
+  } catch {
+    throw new Error('recovery_provider_unavailable');
+  }
+}
+
+function safeRecoveryError(error: unknown, fallback: string) {
+  return error instanceof Error && /^recovery_[a-z0-9_]+$/.test(error.message) ? error.message : fallback;
 }
 
 async function paymentByUid(db: any, uid: string) {
@@ -318,9 +332,11 @@ async function executePlan(db: any, plan: any) {
 
 export async function reconcileExactQueuePayment(db: any, options: {
   queueItemId: string; dryRun?: boolean; expectedUpdatedAt?: string; providerSubscriptionId?: string;
+  recordPreflightFailure?: boolean;
   providerAuth: string; fetcher?: typeof fetch; now?: Date;
 }) {
   if (!UUID.test(options.queueItemId)) throw new Error('recovery_invalid_queue_id');
+  if (options.recordPreflightFailure && !options.expectedUpdatedAt) throw new Error('recovery_preflight_snapshot_required');
   const now = options.now || new Date();
   const item = await one(db, 'payment_reconcile_queue', options.queueItemId);
   if (!item) throw new Error('recovery_queue_missing');
@@ -338,7 +354,34 @@ export async function reconcileExactQueuePayment(db: any, options: {
     return { success: true, stale_terminal: released ? 1 : 0, claim_conflicts: released ? 0 : 1, results: { orders_reconciled: 0 } };
   }
   if (!['pending', 'error', 'processing', 'successful', 'completed'].includes(item.status)) throw new Error('recovery_queue_requires_manual_review');
-  const plan = await loadPlan(db, item, options.providerAuth, options.fetcher || fetch, now, options.providerSubscriptionId);
+  // Automatic retry accounting is opt-in. Manual exact recovery keeps its
+  // zero-write preflight guards and may intentionally retry before the due date.
+  if (options.recordPreflightFailure && ['pending', 'error'].includes(item.status) &&
+      date(item.next_retry_at) && Date.parse(item.next_retry_at) > now.getTime()) {
+    return { success: true, retry_deferred: 1, results: { orders_reconciled: 0 },
+      ...(options.dryRun ? { dry_run: true, no_writes: true } : {}) };
+  }
+  let plan: any;
+  try {
+    plan = await loadPlan(db, item, options.providerAuth, options.fetcher || fetch, now, options.providerSubscriptionId);
+  } catch (error) {
+    const message = safeRecoveryError(error, 'recovery_preflight_failed');
+    if (!options.recordPreflightFailure || options.dryRun ||
+        !['pending', 'error', 'processing'].includes(item.status) ||
+        message === 'recovery_explicit_subscription_mismatch') throw error;
+    // An outage is not evidence that a valid payment failed validation. Defer
+    // it without exhausting its five validation attempts. No provider retry is
+    // performed inside this call, and no financial/access row is ever changed.
+    const unavailable = message === 'recovery_provider_unavailable';
+    const attempts = (item.attempts || 0) + (unavailable ? 0 : 1);
+    const recorded = await checked(db.from('payment_reconcile_queue').update({
+      status: 'error', attempts, last_attempt_at: now.toISOString(), last_error: message,
+      next_retry_at: attempts < 5 ? new Date(now.getTime() + 3_600_000).toISOString() : null,
+    }).eq('id', item.id).eq('status', item.status).eq('updated_at', item.updated_at)
+      .select('id').maybeSingle(), 'preflight_error');
+    if (!recorded) return { success: true, claim_conflicts: 1, results: { orders_reconciled: 0 } };
+    throw new Error(message);
+  }
   if (options.dryRun) return { success: true, dry_run: true, no_writes: true, plan: safePlan(plan) };
   if (item.status === 'completed' && plan.alreadyFulfilled) return { success: true, already_completed: true, results: { already_materialized: 1 } };
   if (!['pending', 'error', 'processing', 'successful'].includes(item.status) || (item.attempts || 0) >= 5) {
@@ -361,10 +404,12 @@ export async function reconcileExactQueuePayment(db: any, options: {
       results: { orders_reconciled: 1, orders_created: plan.isRebill && !plan.existingRebill ? 1 : 0,
         already_materialized: plan.alreadyFulfilled ? 1 : 0, errors: [] } };
   } catch (error) {
-    const message = error instanceof Error && /^recovery_[a-z0-9_]+$/.test(error.message) ? error.message : 'recovery_execution_failed';
-    await checked(db.from('payment_reconcile_queue').update({ status: 'error', last_error: message,
+    const message = safeRecoveryError(error, 'recovery_execution_failed');
+    const recorded = await checked(db.from('payment_reconcile_queue').update({ status: 'error', last_error: message,
       next_retry_at: (item.attempts || 0) + 1 < 5 ? new Date(now.getTime() + 3_600_000).toISOString() : null })
-      .eq('id', item.id).eq('status', 'processing').eq('updated_at', claimed.updated_at), 'queue_error');
+      .eq('id', item.id).eq('status', 'processing').eq('updated_at', claimed.updated_at)
+      .select('id').maybeSingle(), 'queue_error');
+    if (!recorded) return { success: true, claim_conflicts: 1, results: { orders_reconciled: 0 } };
     throw new Error(message);
   }
 }

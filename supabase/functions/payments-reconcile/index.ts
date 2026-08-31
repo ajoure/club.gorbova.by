@@ -70,6 +70,7 @@ serve(async (req) => {
         queueItemId: body.queueItemId, expectedUpdatedAt: body.expectedUpdatedAt,
         providerSubscriptionId: body.providerSubscriptionId,
         dryRun: body.dryRun === true || body.dry_run === true,
+        recordPreflightFailure: body.recordPreflightFailure === true,
         providerAuth: createBepaidAuthHeader(bepaidCreds),
       });
       return new Response(JSON.stringify(exact), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -258,6 +259,7 @@ serve(async (req) => {
       try {
         const outcome = await reconcileExactQueuePayment(supabase, {
           queueItemId: item.id, expectedUpdatedAt: item.updated_at,
+          recordPreflightFailure: true,
           providerAuth: createBepaidAuthHeader(bepaidCreds),
         });
         results.queue_processed += outcome.results?.orders_reconciled || 0;
