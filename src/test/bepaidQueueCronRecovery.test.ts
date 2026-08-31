@@ -45,8 +45,9 @@ describe("bePaid stale processing recovery policy", () => {
     expect(source).toContain("and(status.eq.processing,updated_at.lt.${processingCutoff})");
     expect(source).not.toContain('.lt("attempts", maxAttempts)');
     expect(source).toContain("staleTerminalReason(item,");
-    expect(source).toContain("if (!claimOwned)");
-    expect(source.indexOf('if (!cronSecret)')).toBeLessThan(source.indexOf('.from("payment_reconcile_queue")'));
+    expect(source).toContain('supabase.functions.invoke("payments-reconcile"');
+    expect(source).toContain('expectedUpdatedAt: item.updated_at');
+    expect(source).not.toContain('.update(');
   });
   it("bounds all caller-controlled run options", () => {
     expect(normalizeQueueRunOptions({
@@ -69,7 +70,7 @@ describe("bePaid stale processing recovery policy", () => {
     expect(normalizeQueueRunOptions({ dryRun: true }).dryRun).toBe(true);
     expect(normalizeQueueRunOptions({ dry_run: "true" }).dryRun).toBe(false);
     const source = readFileSync("supabase/functions/bepaid-queue-cron/index.ts", "utf8");
-    expect(source.indexOf("if (dryRun)")).toBeLessThan(source.indexOf(".update({"));
+    expect(source).not.toContain(".update(");
     expect(source.indexOf("if (dryRun)")).toBeLessThan(source.indexOf("supabase.functions.invoke("));
   });
 

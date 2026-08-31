@@ -21,6 +21,7 @@ import {
   enforceBranchPolicy,
 } from './caller_auth.ts';
 import { resolveStaleAccessPolicy } from './stale_access_policy.ts';
+import { resolveGrantPaymentWindow, accessDateReachesWindow } from './payment_window.ts';
 import { evaluateGrantEligibility, type Branch as EligibilityBranch, type CallerType as EligibilityCallerType } from '../_shared/grant-eligibility.ts';
 import { syncConfiguredClubBonusCascade } from '../_shared/club-bonus-entitlement-source.ts';
 
@@ -608,6 +609,43 @@ Deno.serve(async (req) => {
       );
     }
 
+    const tariffId = order.tariff_id;
+    const product = order.product as any;
+    const tariff = order.tariff as any;
+    const productCode = product?.code || (order.purchase_snapshot as any)?.product_code || "general";
+    const now = new Date();
+    const isClubProduct = await isCalendarMonthProduct(supabase, productId);
+    const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
+
+    // Resolve once, before replay detection. orders_v2 has no paid_at column.
+    let confirmedPaidAt: string | null = null;
+    if (!customAccessStartAt) {
+      const { data: firstSuccessfulPayment, error: paymentWindowError } = await supabase
+        .from("payments_v2")
+        .select("paid_at")
+        .eq("order_id", orderId)
+        .eq("status", "succeeded")
+        .not("paid_at", "is", null)
+        .order("paid_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (paymentWindowError) {
+        return new Response(JSON.stringify({ success: false, error: "access_window_payment_lookup_failed" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      confirmedPaidAt = firstSuccessfulPayment?.paid_at ?? null;
+    }
+    let paymentWindow: ReturnType<typeof resolveGrantPaymentWindow>;
+    try {
+      paymentWindow = resolveGrantPaymentWindow({
+        paidAt: confirmedPaidAt, customStart: customAccessStartAt, customEnd: customAccessEndAt,
+        durationDays, calendarMonth: isClubProduct && !customAccessDays,
+      });
+    } catch {
+      return new Response(JSON.stringify({ success: false, error: "invalid_access_window" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── IDEMPOTENCY HARD GUARD ──────────────────────────────────────────
     // If this order already fulfilled (both entitlement AND subscription exist
     // for the CORRECT product_id), return strict no-op.
@@ -659,24 +697,9 @@ Deno.serve(async (req) => {
     // entitlement/subscription dates actually reach `expected_min_end`. If
     // either side is stale (more than 12h short of expected), do NOT skip —
     // fall through to the normal extend-flow so GREATEST can recover the date.
-    const tariffForSkipGuard = (order as any).tariff as { access_days?: number } | null;
-    const accessDaysForSkipGuard = customAccessDays ?? tariffForSkipGuard?.access_days ?? 30;
-    const paidAtForSkipGuard = (order as any).paid_at
-      ? new Date((order as any).paid_at)
-      : new Date();
-    const expectedMinEndForSkipGuard = new Date(
-      paidAtForSkipGuard.getTime() + accessDaysForSkipGuard * 24 * 60 * 60 * 1000
-    );
-    const skipGuardThresholdMs = expectedMinEndForSkipGuard.getTime() - 12 * 60 * 60 * 1000;
-
-    const entitlementDateOk = !!(
-      existingEntByOrder?.expires_at &&
-      new Date(existingEntByOrder.expires_at).getTime() >= skipGuardThresholdMs
-    );
-    const subscriptionDateOk = !!(
-      resolvedSubscription?.access_end_at &&
-      new Date(resolvedSubscription.access_end_at).getTime() >= skipGuardThresholdMs
-    );
+    const expectedMinEndForSkipGuard = paymentWindow.expectedEnd;
+    const entitlementDateOk = accessDateReachesWindow(existingEntByOrder?.expires_at, expectedMinEndForSkipGuard);
+    const subscriptionDateOk = accessDateReachesWindow(resolvedSubscription?.access_end_at, expectedMinEndForSkipGuard);
 
     const datesAreStale = (entitlementMatchesProduct && !entitlementDateOk)
       || ((subscriptionMatchesOrder || subscriptionExtendedByOrder) && !subscriptionDateOk);
@@ -690,9 +713,9 @@ Deno.serve(async (req) => {
         meta: {
           order_id: orderId,
           product_id: productId,
-          paid_at: paidAtForSkipGuard.toISOString(),
-          expected_min_end: expectedMinEndForSkipGuard.toISOString(),
-          access_days: accessDaysForSkipGuard,
+          paid_at: paymentWindow.start?.toISOString() ?? null,
+          expected_min_end: expectedMinEndForSkipGuard?.toISOString() ?? null,
+          access_days: durationDays,
           existing_entitlement_id: existingEntByOrder?.id || null,
           existing_entitlement_expires_at: existingEntByOrder?.expires_at || null,
           existing_subscription_id: resolvedSubscription?.id || null,
@@ -704,7 +727,7 @@ Deno.serve(async (req) => {
           patch: "patch-12.2-skip-stale-guard",
         },
       });
-      console.log(`[grant-access] PATCH 12.2: skip_already_fulfilled BLOCKED for order ${orderId} — existing dates stale vs expected_min_end=${expectedMinEndForSkipGuard.toISOString()}. Falling through to extend-flow.`);
+      console.log(`[grant-access] skip_already_fulfilled BLOCKED: access is short of the confirmed payment window.`);
       // intentional fall-through: do NOT return, continue to normal flow below.
     } else if (entitlementMatchesProduct && (subscriptionMatchesOrder || subscriptionExtendedByOrder)) {
       const guardSource = subscriptionMatchesOrder ? "order_id" : "extended_by_orders";
@@ -776,7 +799,7 @@ Deno.serve(async (req) => {
           }, {}),
           // PATCH 12.2 telemetry: confirms skip was allowed (dates fresh).
           skip_guard_passed: true,
-          expected_min_end: expectedMinEndForSkipGuard.toISOString(),
+          expected_min_end: expectedMinEndForSkipGuard?.toISOString() ?? null,
           club_bonus_source_status: clubBonusSource.status,
           club_bonus_access_rule_id: clubBonusSource.access_rule_id || null,
           club_bonus_product_access_count: clubBonusSource.product_access.length,
@@ -816,62 +839,13 @@ Deno.serve(async (req) => {
       console.warn(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} has entitlement ${existingEntByOrder.id} but for WRONG product ${existingEntByOrder.product_id} (expected ${productId}). Proceeding to collision handling.`);
     }
     // ── END IDEMPOTENCY GUARD ───────────────────────────────────────────
-    const tariffId = order.tariff_id;
-    const product = order.product as any;
-    const tariff = order.tariff as any;
-    
-    const productCode = product?.code || (order.purchase_snapshot as any)?.product_code || "general";
-    
-    // Calculate access period - use custom days if provided, otherwise from tariff
-    // Phase 1: calendar month rule from products_v2.meta instead of hardcoded UUID
-    const now = new Date();
-    const isClubProduct = await isCalendarMonthProduct(supabase, productId);
-    const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
-    
-    // Determine base start date:
-    // 1. A deliberate admin correction may supply an exact start date.
-    // 2. Otherwise a commercial access window begins at the first confirmed
-    //    successful payment, never when a draft/deal happened to be created.
-    //    The payment timestamp belongs to payments_v2, not orders_v2.
-    // 3. Missing payment evidence is an incomplete payment fact, not
-    //    permission to invent a fresh window from "now" or the deal date.
-    let baseStartDate: Date;
-    if (customAccessStartAt) {
-      baseStartDate = new Date(customAccessStartAt);
-      console.log(`Using custom access start date: ${customAccessStartAt}`);
-    } else {
-      const { data: firstSuccessfulPayment, error: paymentWindowError } = await supabase
-        .from("payments_v2")
-        .select("paid_at")
-        .eq("order_id", orderId)
-        .eq("status", "succeeded")
-        .not("paid_at", "is", null)
-        .order("paid_at", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
-      if (paymentWindowError) {
-        console.error("[grant-access-for-order] payment-window lookup failed", paymentWindowError);
-        return new Response(
-          JSON.stringify({ success: false, error: "access_window_payment_lookup_failed" }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-
-      const paidAt = firstSuccessfulPayment?.paid_at;
-      if (paidAt && !Number.isNaN(new Date(paidAt).getTime())) {
-        baseStartDate = new Date(paidAt);
-        console.log(`Using first successful payment as base: ${paidAt}`);
-      } else {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "access_window_requires_paid_at",
-            message: "Невозможно определить срок доступа: у оплаченного заказа отсутствует корректная дата оплаты.",
-          }),
-          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
+    const baseStartDate = paymentWindow.start;
+    if (!baseStartDate) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: "access_window_requires_paid_at",
+        message: "Невозможно определить срок доступа: у оплаченного заказа отсутствует корректная дата оплаты.",
+      }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
     
     // Check for existing active subscription for this product to extend from

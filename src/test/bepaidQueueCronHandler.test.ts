@@ -22,7 +22,14 @@ function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" 
     ...overrides,
   };
   const writes: Array<{ table: string; values: Record<string, unknown>; filters: unknown[] }> = [];
-  const invoke = vi.fn().mockResolvedValue({ data: { results: { orders_reconciled: 1 } }, error: null });
+  const response = claim === "lose" ? { success: true, claim_conflicts: 1 } :
+    { success: true, stale_recovered: 1, results: { orders_reconciled: 1 } };
+  const invoke = claim === "error" ? vi.fn().mockResolvedValue({ data: null, error: { message: "worker failed" } }) :
+    vi.fn().mockResolvedValue({ data: response, error: null });
+  const recover = vi.fn(async () => {
+    if (claim === "error") throw new Error("recovery_test_failure");
+    return response;
+  });
   let queueReads = 0;
   const client = {
     functions: { invoke },
@@ -61,6 +68,7 @@ function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" 
       if (path.includes("@supabase/supabase-js")) return { createClient: () => client };
       if (path === "./auth.ts") return { authorizeQueueCronRequest };
       if (path.endsWith("/payments-reconcile-auth.ts")) return { authorizePaymentsReconcile };
+      if (path.endsWith("/bepaid-canonical-recovery.ts")) return { reconcileExactQueuePayment: recover };
       if (path.endsWith("/bepaid-queue-policy.ts")) return policy;
       if (path.includes("bepaid-credentials")) return {
         getBepaidCredsStrict: async () => ({ shop_id: "test-shop", secret_key: "test-key" }),
@@ -73,7 +81,7 @@ function harness(overrides: Record<string, unknown> = {}, claim: "win" | "lose" 
   const run = (body: Record<string, unknown> = {}, authorized = true) => handler(new Request("https://example.test", {
     method: "POST", headers: authorized ? { apikey: "service-test" } : {}, body: JSON.stringify(body),
   }));
-  return { run, writes, invoke, item };
+  return { run, writes, invoke, item, recover };
 }
 
 describe("actual bePaid queue cron handler with isolated database", () => {
@@ -93,85 +101,44 @@ describe("actual bePaid queue cron handler with isolated database", () => {
     expect(h.invoke).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [{ attempts: 5 }, "STALE_PROCESSING_MAX_ATTEMPTS"],
-    [{ source: "file_import" }, "STALE_PROCESSING_EXCLUDED_IMPORT"],
-    [{ last_error: "SOFT_CANCELLED: operator" }, "STALE_PROCESSING_CANCELLED"],
-  ])("releases terminal stale rows without replay: %s", async (overrides, reason) => {
-    const h = harness(overrides);
+  it.each(["win", "lose", "error"] as const)("delegates without queue writes, including downstream %s", async state => {
+    const h = harness({}, state);
     const result = await (await h.run()).json();
-    expect(result.stale_terminal).toBe(1);
-    expect(h.invoke).not.toHaveBeenCalled();
-    const updates = h.writes.filter(w => w.table === "payment_reconcile_queue");
-    expect(updates).toHaveLength(1);
-    expect(updates[0].values.status).toBe("error");
-    expect(updates[0].values.last_error).toContain(reason);
-    expect(updates[0].filters).toContainEqual(["eq", "updated_at", h.item.updated_at]);
-  });
-
-  it.each(["lose", "error"] as const)("never overwrites a %s CAS claim", async claim => {
-    const h = harness({}, claim);
-    await h.run();
-    expect(h.invoke).not.toHaveBeenCalled();
-    expect(h.writes.filter(w => w.table === "payment_reconcile_queue")).toHaveLength(1);
-  });
-
-  it("skips even an exact-id request for a fresh worker claim", async () => {
-    const h = harness({ updated_at: new Date().toISOString() });
-    const result = await (await h.run({ queueItemId: h.item.id })).json();
-    expect(result.claim_conflicts).toBe(1);
-    expect(h.invoke).not.toHaveBeenCalled();
-    expect(h.writes.filter(w => w.table === "payment_reconcile_queue")).toHaveLength(0);
-  });
-
-  it("recovers one stale claim and requires verified materialization", async () => {
-    const h = harness();
-    const result = await (await h.run()).json();
-    expect(result.stale_recovered).toBe(1);
-    expect(result.orders_created).toBe(1);
-    expect(h.invoke).toHaveBeenCalledExactlyOnceWith("bepaid-auto-process", {
-      body: { queueItemId: h.item.id }, headers: { "x-internal-key": "cron-test" },
+    expect(h.invoke).toHaveBeenCalledExactlyOnceWith("payments-reconcile", {
+      body: { queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at },
     });
-    const updates = h.writes.filter(w => w.table === "payment_reconcile_queue");
-    expect(updates[0].values.attempts).toBe(2);
-    expect(updates[1].values).toMatchObject({ status: "completed", last_error: null, next_retry_at: null });
+    expect(h.writes.filter(w => w.table === "payment_reconcile_queue")).toEqual([]);
+    if (state === "win") expect(result.stale_recovered).toBe(1);
+    if (state === "lose") expect(result.claim_conflicts).toBe(1);
+    if (state === "error") expect(result.failed).toBe(1);
   });
 });
 
 describe("actual scheduled payments-reconcile handler with isolated database", () => {
-  it("rejects unauthenticated execution", async () => {
+  it("rejects unauthenticated execution before provider recovery", async () => {
     const h = harness({}, "win", "reconcile");
     expect((await h.run({}, false)).status).toBe(401);
-    expect(h.writes).toEqual([]);
+    expect(h.writes).toEqual([]); expect(h.recover).not.toHaveBeenCalled();
   });
-  it.each(["lose", "error"] as const)("leaves another worker untouched on %s claim", async claim => {
-    const h = harness({}, claim, "reconcile");
+  it.each(["win", "lose", "error"] as const)("default run delegates queue ownership (%s)", async state => {
+    const h = harness({}, state, "reconcile");
     expect((await h.run()).status).toBe(200);
-    expect(h.invoke).not.toHaveBeenCalled();
-    expect(h.writes.filter(w => w.table === "payment_reconcile_queue")).toHaveLength(1);
+    expect(h.recover).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+      queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, providerAuth: "Basic test",
+    });
+    expect(h.writes.filter(w => w.table === "payment_reconcile_queue")).toEqual([]);
   });
-  it("releases exhausted stale claims without payment/access side effects", async () => {
-    const h = harness({ attempts: 5 }, "win", "reconcile");
-    const result = await (await h.run()).json();
-    expect(result.stale_terminal).toBe(1);
-    expect(h.invoke).not.toHaveBeenCalled();
-    expect(h.writes.filter(w => w.table === "payment_reconcile_queue")[0].values.status).toBe("error");
-  });
-  it("reclaims an interrupted row but does not invent a missing order", async () => {
+  it("exact dry-run bypasses levels 1/2, audit and notifications", async () => {
     const h = harness({}, "win", "reconcile");
-    const result = await (await h.run()).json();
-    expect(result.stale_recovered).toBe(1);
-    expect(result.queue_processed).toBe(0);
-    expect(h.invoke).not.toHaveBeenCalled();
-    const updates = h.writes.filter(w => w.table === "payment_reconcile_queue");
-    expect(updates[0].filters).toContainEqual(["eq", "updated_at", h.item.updated_at]);
-    expect(updates[1].values).toMatchObject({ status: "pending", last_error: "Could not match to order" });
+    await h.run({ queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, dry_run: true });
+    expect(h.recover).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+      queueItemId: h.item.id, expectedUpdatedAt: h.item.updated_at, dryRun: true, providerAuth: "Basic test",
+    });
+    expect(h.writes).toEqual([]); expect(h.invoke).not.toHaveBeenCalled();
   });
-  it("leaves an explicit terminal error when the last attempt cannot match an order", async () => {
-    const h = harness({ attempts: 4 }, "win", "reconcile");
-    await h.run();
-    const updates = h.writes.filter(w => w.table === "payment_reconcile_queue");
-    expect(updates[1].values).toMatchObject({ status: "error", next_retry_at: null });
-    expect(h.invoke).not.toHaveBeenCalled();
+  it("rejects unscoped dry-run rather than accidentally executing a full sweep", async () => {
+    const h = harness({}, "win", "reconcile");
+    expect((await h.run({ dryRun: true })).status).toBe(400);
+    expect(h.writes).toEqual([]); expect(h.recover).not.toHaveBeenCalled();
   });
 });
