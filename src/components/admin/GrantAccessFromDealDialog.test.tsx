@@ -55,6 +55,19 @@ function chooseTarget(date = target) {
 }
 
 describe('existing deal exact access repair dialog', () => {
+  it.each(['2099-09-01T12:00:00.000Z', '2099-10-15T03:01:53.529Z'])('prefills exactly one tariff period from %s without granting or accumulating days', async (end) => {
+    state.candidates[0].access_end_at = end;
+    show();
+    const button = screen.getByRole('button', { name: 'Добавить 30 дней по тарифу' });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    const expected = new Date(Date.parse(end) + 30 * 86_400_000);
+    expect(screen.getByLabelText('Дата и время окончания')).toHaveValue(localDateTimeValue(expected).replace(/:00\.000$/, '').replace(/\.000$/, ''));
+    expect(screen.getByText(new RegExp(expected.toISOString().replace(/\./g, '\\.')))).toBeInTheDocument();
+    fireEvent.click(button);
+    expect(state.invoke).not.toHaveBeenCalled();
+    expect(screen.getByText(new RegExp(expected.toISOString().replace(/\./g, '\\.')))).toBeInTheDocument();
+  });
   it('sends a millisecond-exact, same-order, same-subscription standard request and verifies both records', async () => {
     const { props } = show();
     expect(screen.getByLabelText('Дата и время окончания')).toHaveAttribute('step', '0.001');
@@ -168,7 +181,11 @@ describe('existing deal exact access repair dialog', () => {
   it('keeps actions outside the scrollable mobile body and exposes the paid existing-deal entrypoint', () => {
     show();
     expect(screen.getByRole('dialog')).toHaveClass('max-h-[calc(100dvh-24px)]', 'overflow-hidden');
-    expect(screen.getByLabelText('Дата и время окончания').closest('fieldset')).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto');
+    const scrollBody = screen.getByTestId('grant-access-scroll-body');
+    expect(scrollBody.tagName).toBe('DIV');
+    expect(scrollBody).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto');
+    expect(scrollBody).toContainElement(screen.getByLabelText('Дата и время окончания').closest('fieldset'));
+    expect(scrollBody).not.toContainElement(screen.getByRole('button', { name: 'Выдать доступ' }));
     expect(screen.getByRole('button', { name: 'Выдать доступ' }).parentElement).toHaveClass('shrink-0');
     const sheet = readFileSync('src/components/admin/DealDetailSheet.tsx', 'utf8');
     const accessBlock = sheet.slice(sheet.indexOf('{/* Access / Subscription */}'), sheet.indexOf('{/* Documents — единая карточка */}'));

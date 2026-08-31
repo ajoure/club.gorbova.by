@@ -28,7 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { usePermissions } from "@/hooks/usePermissions";
-import { buildGrantAccessBody, confirmedGrantIds, parseLocalDateTime, verifyGrantAccessReadback } from "@/lib/grantAccessForm";
+import { buildGrantAccessBody, confirmedGrantIds, localDateTimeValue, parseLocalDateTime, verifyGrantAccessReadback } from "@/lib/grantAccessForm";
 
 interface GrantAccessFromDealDialogProps {
   open: boolean;
@@ -258,7 +258,8 @@ export function GrantAccessFromDealDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <fieldset disabled={grantAccessMutation.isPending} className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overscroll-contain py-4 pr-1">
+        <div data-testid="grant-access-scroll-body" className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
+        <fieldset disabled={grantAccessMutation.isPending} className="min-w-0 space-y-4 py-4 pr-1">
           {!isAdmin() && <p role="alert" className="text-sm text-destructive">Выдавать доступ может только администратор.</p>}
           {(subscriptionError || productSubscriptions.length > 1) && <p role="alert" className="text-sm text-destructive">
             Не удалось однозначно подтвердить подписку. Обновите данные и проверьте связь сделки.
@@ -361,6 +362,15 @@ export function GrantAccessFromDealDialog({
             <Label htmlFor="exactAccessEndValue">Дата и время окончания</Label>
             <Input id="exactAccessEndValue" type="datetime-local" step="0.001" value={exactEndValue}
               onChange={(event) => setExactEndValue(event.target.value)} className="min-w-0 max-w-full" />
+            <Button type="button" variant="outline" size="sm"
+              disabled={!exactCurrentEnd || subscriptionLoading || subscriptionError || productSubscriptions.length > 1
+                || !Number.isFinite(accessDays) || accessDays <= 0}
+              onClick={() => {
+                if (!exactCurrentEnd || !Number.isFinite(accessDays) || accessDays <= 0) return;
+                setExactEndValue(localDateTimeValue(new Date(exactCurrentEnd.getTime() + accessDays * 86_400_000)));
+              }}>
+              Добавить {accessDays} дней по тарифу
+            </Button>
             <p className="break-words text-xs text-muted-foreground">Часовой пояс: {timeZone}. Продление существующего доступа без новой оплаты; график списаний провайдера не меняется.</p>
             {exactError && <p role="alert" className="text-sm text-destructive">{exactError}</p>}
           </div> : <div className="space-y-2">
@@ -446,6 +456,7 @@ export function GrantAccessFromDealDialog({
             </div>}
           </div>
         </fieldset>
+        </div>
 
         <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
