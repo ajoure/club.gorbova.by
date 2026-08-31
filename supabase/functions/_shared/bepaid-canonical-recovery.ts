@@ -374,8 +374,11 @@ export async function reconcileExactQueuePayment(db: any, options: {
     // performed inside this call, and no financial/access row is ever changed.
     const unavailable = message === 'recovery_provider_unavailable';
     const attempts = (item.attempts || 0) + (unavailable ? 0 : 1);
+    // The existing scheduled reader retries pending, not historical error
+    // rows. Keep its retryable work visible without replaying that archive.
+    const status = attempts >= 5 || item.status === 'error' ? 'error' : 'pending';
     const recorded = await checked(db.from('payment_reconcile_queue').update({
-      status: 'error', attempts, last_attempt_at: now.toISOString(), last_error: message,
+      status, attempts, last_attempt_at: now.toISOString(), last_error: message,
       next_retry_at: attempts < 5 ? new Date(now.getTime() + 3_600_000).toISOString() : null,
     }).eq('id', item.id).eq('status', item.status).eq('updated_at', item.updated_at)
       .select('id').maybeSingle(), 'preflight_error');

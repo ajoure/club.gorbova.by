@@ -106,7 +106,7 @@ describe('automatic preflight failure backoff', () => {
     const h = declined(); h.rows.payment_reconcile_queue[0].status = status;
     const businessBefore = structuredClone(Object.fromEntries(Object.entries(h.rows).filter(([key]) => key !== 'payment_reconcile_queue')));
     await expect(auto(h)).rejects.toThrow('recovery_provider_payment_mismatch');
-    expect(h.rows.payment_reconcile_queue[0]).toMatchObject({ status: 'error', attempts: 1,
+    expect(h.rows.payment_reconcile_queue[0]).toMatchObject({ status: status === 'error' ? 'error' : 'pending', attempts: 1,
       last_attempt_at: now.toISOString(), last_error: 'recovery_provider_payment_mismatch', next_retry_at: '2026-08-31T09:00:00.000Z' });
     expect(h.writes).toHaveLength(1); expect(h.writes[0].table).toBe('payment_reconcile_queue');
     expect(Object.fromEntries(Object.entries(h.rows).filter(([key]) => key !== 'payment_reconcile_queue'))).toEqual(businessBefore);
@@ -167,6 +167,29 @@ describe('automatic preflight failure backoff', () => {
     expect(h.rows.payment_reconcile_queue[0]).toMatchObject({ status: 'error', attempts: 5, next_retry_at: null });
     await expect(auto(h, { now: new Date(now.getTime() + 10 * 3_600_000) })).rejects.toThrow('recovery_queue_requires_manual_review');
     expect(h.writes).toHaveLength(5); expect(h.db.functions.invoke).not.toHaveBeenCalled();
+  });
+  it('keeps scheduled pending retries selectable after backoff until the fifth validation failure', async () => {
+    const h = declined(); h.rows.payment_reconcile_queue[0].status = 'pending';
+    for (let i = 0; i < 5; i++) {
+      const attemptAt = new Date(now.getTime() + i * 3_600_000);
+      await expect(auto(h, { now: attemptAt })).rejects.toThrow('recovery_provider_payment_mismatch');
+      const row = h.rows.payment_reconcile_queue[0];
+      expect(row.attempts).toBe(i + 1);
+      if (i < 4) {
+        expect(row.status).toBe('pending');
+        expect(Date.parse(row.next_retry_at)).toBe(attemptAt.getTime() + 3_600_000);
+      } else expect(row).toMatchObject({ status: 'error', next_retry_at: null });
+    }
+    expect(h.writes).toHaveLength(5); expect(h.db.functions.invoke).not.toHaveBeenCalled();
+  });
+  it.each(['pending', 'processing'])('keeps an unavailable provider retry visible to the scheduler (%s)', async status => {
+    const h = declined(); Object.assign(h.rows.payment_reconcile_queue[0], { status, attempts: 2 });
+    h.fetcher.mockRejectedValue(new Error('network unavailable'));
+    await expect(auto(h)).rejects.toThrow('recovery_provider_unavailable');
+    expect(h.rows.payment_reconcile_queue[0]).toMatchObject({ status: 'pending', attempts: 2,
+      next_retry_at: '2026-08-31T09:00:00.000Z', last_error: 'recovery_provider_unavailable' });
+    expect(h.writes).toHaveLength(1); expect(h.writes[0].table).toBe('payment_reconcile_queue');
+    expect(h.db.functions.invoke).not.toHaveBeenCalled();
   });
   it.each(['network', 'timeout', '429', '502', 'invalid_json'])('does not exhaust valid payments during provider unavailability (%s)', mode => {
     const h = declined(); h.rows.payment_reconcile_queue[0].attempts = 4;
