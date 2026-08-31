@@ -168,7 +168,7 @@ async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch,
   if (!product || !tariff || tariff.product_id !== product.id) throw new Error('recovery_catalog_mismatch');
   const expectedEnd = savedEnd ? date(savedEnd)! : product.meta?.access_window_rule === 'calendar_month' ? calcCalendarMonthEnd(accessStart)
     : new Date(accessStart.getTime() + (tariff.access_days ?? 30) * 86_400_000);
-  if (!Number.isFinite(expectedEnd.getTime()) || expectedEnd < accessStart) throw new Error('recovery_invalid_saved_window');
+  if (!Number.isFinite(expectedEnd.getTime()) || expectedEnd <= accessStart) throw new Error('recovery_invalid_saved_window');
   // A fixed/course installment must not be interpreted as purchasing the
   // entire tariff duration again. Only an explicit calendar-month policy or
   // this payment's immutable recovery window establishes this lower bound.

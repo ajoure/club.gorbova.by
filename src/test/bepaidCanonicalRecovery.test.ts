@@ -275,6 +275,7 @@ describe('canonical provider-verified queue recovery', () => {
   it.each([
     { recovery_access_start_at: oldEnd },
     { recovery_access_start_at: oldEnd, recovery_expected_end_at: 'invalid' },
+    { recovery_access_start_at: oldEnd, recovery_expected_end_at: oldEnd },
     { recovery_access_start_at: oldEnd, recovery_expected_end_at: '2026-08-01T12:00:00Z' },
   ])('fails closed for a malformed same-payment saved window', async meta => {
     const h = fixture(); await h.run();
