@@ -1,15 +1,22 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 const migration = read(
-  "supabase/migrations/20260901170547_payment_manager_options_directory.sql",
+  "supabase/migrations/20260901173624_61a1bf5a-04e4-45e3-966e-e0fb484ae79e.sql",
 );
 const directoryHook = read("src/hooks/usePaymentManagerDirectoryOptions.ts");
 const managerHook = read("src/hooks/usePaymentManagerOptions.ts");
 
 describe("payment manager directory contract", () => {
+  it("tracks only the migration version recorded by Lovable", () => {
+    expect(existsSync(resolve(
+      process.cwd(),
+      "supabase/migrations/20260901170547_payment_manager_options_directory.sql",
+    ))).toBe(false);
+  });
+
   it("uses a payment-scoped security-definer RPC with a fail-closed auth matrix", () => {
     expect(migration).toContain(
       "CREATE OR REPLACE FUNCTION public.get_payment_manager_options_v1()",
