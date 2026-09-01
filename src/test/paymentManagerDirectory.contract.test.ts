@@ -10,17 +10,25 @@ const directoryHook = read("src/hooks/usePaymentManagerDirectoryOptions.ts");
 const managerHook = read("src/hooks/usePaymentManagerOptions.ts");
 
 describe("payment manager directory contract", () => {
-  it("uses a payment-scoped, authenticated security-definer RPC", () => {
+  it("uses a payment-scoped security-definer RPC with a fail-closed auth matrix", () => {
     expect(migration).toContain(
       "CREATE OR REPLACE FUNCTION public.get_payment_manager_options_v1()",
     );
     expect(migration).toContain("SECURITY DEFINER");
     expect(migration).toContain("SET search_path = ''");
+    expect(migration).toContain("coalesce((SELECT auth.role()), '') = 'service_role'");
+    expect(migration).not.toContain("request.jwt.claim.role");
     expect(migration).toContain("public.has_permission(v_actor, 'entitlements.view')");
     expect(migration).toContain("RAISE EXCEPTION 'auth_required'");
     expect(migration).toContain("RAISE EXCEPTION 'forbidden_payments_view'");
     expect(migration).toContain("FROM PUBLIC, anon");
     expect(migration).toContain("TO authenticated, service_role");
+  });
+
+  it("distinguishes anonymous, permitted, forbidden and service-role callers", () => {
+    expect(migration).toMatch(/IF v_actor IS NULL AND NOT v_is_service_role THEN[\s\S]*auth_required/);
+    expect(migration).toMatch(/IF NOT v_is_service_role[\s\S]*entitlements\.view[\s\S]*forbidden_payments_view/);
+    expect(migration).toContain("GRANT EXECUTE ON FUNCTION public.get_payment_manager_options_v1()\n  TO authenticated, service_role");
   });
 
   it("returns only stable IDs and labels for non-client staff", () => {

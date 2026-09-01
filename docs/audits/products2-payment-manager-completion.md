@@ -47,7 +47,7 @@ RBAC-blocker: `useStaffOptions` зависит от `users.view`, хотя ст�
 
 Выполнено на актуальном head ветки после устранения RBAC-blocker:
 
-- `npx vitest run`: 217 файлов, 1462 теста PASS; 18 целевых проверок покрывают
+- `npx vitest run`: 217 файлов, 1463 теста PASS; 19 целевых проверок покрывают
   RPC-контракт, справочник и реальный `PaymentsTabContent` с замоканными
   источниками данных.
 - `npx tsc --noEmit -p tsconfig.app.json`: PASS.

@@ -20,7 +20,7 @@ AS $$
 DECLARE
   v_actor uuid := (SELECT auth.uid());
   v_is_service_role boolean :=
-    coalesce(current_setting('request.jwt.claim.role', true), '') = 'service_role';
+    coalesce((SELECT auth.role()), '') = 'service_role';
 BEGIN
   IF v_actor IS NULL AND NOT v_is_service_role THEN
     RAISE EXCEPTION 'auth_required' USING ERRCODE = '42501';
