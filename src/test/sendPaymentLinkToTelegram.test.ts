@@ -30,18 +30,35 @@ describe("sendPaymentLinkToTelegram", () => {
     });
 
     expect(invoke).toHaveBeenCalledWith("telegram-send-notification", {
-      body: {
+      body: expect.objectContaining({
         user_id: "user-1",
         message_type: "custom",
         custom_message: "Оплата остатка",
+        idempotency_key: expect.stringMatching(/^payment-link:[a-f0-9]{64}$/),
         reply_markup: {
           inline_keyboard: [[{
             text: "💳 Ссылка на оплату",
             url: "https://gorbova.by/pay/token",
           }]],
         },
-      },
+      }),
     });
+  });
+
+  it("uses the same URL fingerprint for repeated delivery attempts", async () => {
+    invoke.mockResolvedValue({ data: { success: true, skipped: true }, error: null });
+
+    const input = {
+      userId: "user-1",
+      paymentUrl: "https://gorbova.by/pay/same-token",
+      message: "Оплата",
+    };
+    await sendPaymentLinkToTelegram(input);
+    await sendPaymentLinkToTelegram(input);
+
+    const firstKey = invoke.mock.calls[0][1].body.idempotency_key;
+    const secondKey = invoke.mock.calls[1][1].body.idempotency_key;
+    expect(firstKey).toBe(secondKey);
   });
 
   it("exposes the Edge response reason and HTTP status", async () => {

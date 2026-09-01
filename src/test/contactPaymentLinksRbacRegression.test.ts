@@ -120,6 +120,13 @@ describe("contact payment-link RBAC and RR regression contract", () => {
     expect(telegram).not.toContain("entitlements.manage");
   });
 
+  it("deduplicates an authenticated payment-link delivery for ten minutes", () => {
+    expect(telegram).toContain("isPaymentLinkNotification");
+    expect(telegram).toContain("/^payment-link:[a-f0-9]{64}$/");
+    expect(telegram).toContain("10 * 60 * 1000");
+    expect(telegram).toContain("isCrmAutomation || isPaymentLinkNotification");
+  });
+
   it("registers all payment-link helper functions for managed deployment", () => {
     expect(registry).toMatch(/^composable-checkout-quote$/m);
     expect(registry).toMatch(/^public-rr-installment-initiate$/m);

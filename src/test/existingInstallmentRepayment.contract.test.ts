@@ -78,6 +78,7 @@ describe("existing installment repayment integration boundary", () => {
     expect(telegram).toContain('"telegram-send-notification"');
     expect(telegram).toContain('text: "💳 Ссылка на оплату"');
     expect(telegram).toContain("normalizeEdgeFunctionErrorAsync");
+    expect(telegram).toContain("payment-link:${paymentLinkFingerprint}");
   });
 
   it("binds Telegram delivery to the selected deal owner, not stale contact props", () => {

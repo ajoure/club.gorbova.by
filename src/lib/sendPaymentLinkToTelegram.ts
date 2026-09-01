@@ -29,6 +29,14 @@ export async function sendPaymentLinkToTelegram(input: {
     throw new Error("Ссылка на оплату имеет недопустимый протокол");
   }
 
+  const urlDigest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(paymentUrl.toString()),
+  );
+  const paymentLinkFingerprint = Array.from(new Uint8Array(urlDigest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+
   const { data, error } = await supabase.functions.invoke(
     "telegram-send-notification",
     {
@@ -36,6 +44,7 @@ export async function sendPaymentLinkToTelegram(input: {
         user_id: userId,
         message_type: "custom",
         custom_message: message,
+        idempotency_key: `payment-link:${paymentLinkFingerprint}`,
         reply_markup: {
           inline_keyboard: [
             [{ text: "💳 Ссылка на оплату", url: paymentUrl.toString() }],
