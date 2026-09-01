@@ -1,82 +1,51 @@
-# Отчет о выполнении: PLAN-ONLY READ-ONLY REVIEW — Products 2 / PR #401
+# Products 2 / PR #401 — повторная проверка находок (PLAN-ONLY, READ-ONLY)
 
-Итог: **PASS** (критических находок нет; 2 замечания уровня MINOR).
+## Итог: PASS (новых критических находок нет)
 
-## 1. SHA и источник
+## SHA
+- Ветка `codex/products2-payment-manager-options` получена напрямую с origin.
+- FETCH_HEAD = head ветки = `3326843c20f80e28ee7ce93fd83f9c235ad113fd`, объект существует и является commit.
+- Совпадение с каноническим SHA подтверждено. База `f89ac455...` — расхождений нет.
 
-- Ветка: `codex/products2-payment-manager-options` (GitHub `ajoure/club.gorbova.by`).
-- `git ls-remote` → `e352725fc5592a2b6df994837a19de0f874e86a4`; после `git fetch <branch>` объект существует локально (`git cat-file -t` → `commit`), `FETCH_HEAD` = `e352725f...86a4`. Совпадение точное.
-- База: локальный `origin/main` = `f89ac45561131b5077767f9ada0e3acaf1897126` — совпадает с заявленной.
-- Примечание к процедуре: `origin` в этом окружении — зеркало Lovable, где ветки PR нет; ветка прочитана прямым fetch из GitHub-репозитория. Подмены `main`/другого SHA/устаревшего дерева не было.
+## MINOR-1 — устранена
+В миграции `20260901170547_payment_manager_options_directory.sql`:
+- определение сервисной роли: `coalesce((SELECT auth.role()), '') = 'service_role'`;
+- строка `request.jwt.claim.role` в миграции отсутствует.
 
-## 2. Состав патча (diff f89ac455 → e352725f)
+Матрица доступа в коде:
+- аноним (`auth.uid()` NULL, не service_role) -> `RAISE EXCEPTION 'auth_required'` (42501);
+- authenticated без `entitlements.view` -> `RAISE EXCEPTION 'forbidden_payments_view'` (42501);
+- authenticated с `entitlements.view` -> выдача `user_id`/`label`;
+- service_role -> обе проверки пропускаются, выдача разрешена.
+Права: `REVOKE ALL ... FROM PUBLIC, anon`, `GRANT EXECUTE ... TO authenticated, service_role`. PII не возвращается (только id и имя/плейсхолдер).
 
-11 файлов, 620 вставок. Миграции — ровно одна:
+## Пункт 2 — покрытие тестом (частично, не блокер)
+Файл: `src/test/paymentManagerDirectory.contract.test.ts`.
+- Кейс service_role: `expect(migration).toContain("coalesce((SELECT auth.role()), '') = 'service_role'")` и отсутствие `request.jwt.claim.role`.
+- Кейс аноним: `expect(migration).toMatch(/IF v_actor IS NULL AND NOT v_is_service_role THEN[\s\S]*auth_required/)`.
+- Кейс authenticated без права: `expect(migration).toMatch(/IF NOT v_is_service_role[\s\S]*entitlements\.view[\s\S]*forbidden_payments_view/)`.
+- Кейс authenticated с правом / права вызова: `toContain("GRANT EXECUTE ... TO authenticated, service_role")` плюс проверки возвращаемых колонок и `WHERE role_row.code <> 'user'`.
 
-- `supabase/migrations/20260901170547_payment_manager_options_directory.sql`
+Честная оценка: это статический контракт по тексту миграции (regex по ветвлениям), а не рантайм-вызов RPC четырьмя разными вызывающими. Все четыре ветки адресованы явными assert'ами, но фактическое поведение при вызове тестом не исполняется. Классифицирую как MINOR-3 (не блокер): при желании добавить рантайм-проверку негативных ответов после применения миграции.
 
-Edge Functions не затронуты (0 файлов в `supabase/functions/`), данных не пишется, backfill отсутствует. Остальное — фронтенд/хуки/тесты/типы и один аудит-документ.
+## MINOR-2 — устранена
+`src/components/admin/payments/PaymentsFilters.tsx`: `import { useId } from "react";` и `import { Button } from "@/components/ui/button";` находятся в верхнем блоке импортов (строки 1–2), импортов после исполняемых объявлений нет.
 
-## 3. RPC `public.get_payment_manager_options_v1()` — PASS
+## Неизменный scope
+- Managed migrations: ровно один файл `20260901170547_payment_manager_options_directory.sql` (diff по `supabase/` относительно base содержит только его).
+- Edge Functions к деплою: 0.
+- Записи в production-данные / backfill: 0.
+- Фронтенд использует RPC-справочник (`usePaymentManagerDirectoryOptions` -> `supabase.rpc("get_payment_manager_options_v1")`, без `user_roles_v2` и `useStaffOptions`), исторические snapshot-менеджеры сохраняются.
+- Read-only счётчики `payment_sales_attribution` (effective_to IS NULL): total 31 / assigned 0 / unassigned 31. `orders_v2` не запрашивался, backfill не выполнялся.
 
-| Требование | Факт | Итог |
-| --- | --- | --- |
-| SECURITY DEFINER | да | PASS |
-| `SET search_path = ''` | да, все объекты квалифицированы `public.` | PASS |
-| anonymous → auth_required | `v_actor IS NULL AND NOT service_role` → `RAISE 'auth_required'` (42501) | PASS |
-| authenticated → `has_permission(auth.uid(),'entitlements.view')` | да, иначе `forbidden_payments_view` | PASS |
-| service_role разрешён | ветка `v_is_service_role` | PASS (см. MINOR-1) |
-| REVOKE PUBLIC/anon, GRANT authenticated+service_role | `REVOKE ALL ... FROM PUBLIC, anon; GRANT EXECUTE ... TO authenticated, service_role` | PASS |
-| Возвращает только `user_id`, `label` | RETURNS TABLE(user_id uuid, label text) | PASS |
-| Только персонал с ролью ≠ `user` | `JOIN roles ON id=role_id WHERE code <> 'user'` | PASS |
-| Нет PII (email/телефон/Telegram/детали ролей) | в выборке только id и `full_name`-производный ярлык | PASS |
-| Не расширяет `users.view`, не меняет RLS/роли/назначения/платежи/сделки/заказы | в миграции только CREATE FUNCTION/COMMENT/REVOKE/GRANT | PASS |
+## Блокеры
+Нет.
 
-Качество SQL:
-- Компилируемость: plpgsql, корректные `RETURN QUERY`, `GROUP BY`, `ORDER BY 2, 1`.
-- Неоднозначность идентификаторов: устранена алиасами `user_role`/`role_row`/`profile`; выходные имена `user_id`/`label` не конфликтуют с колонками входа (агрегат + алиас).
-- Детерминизм: дедупликация по `GROUP BY user_role.user_id`, ярлык — `max(nullif(btrim(full_name),''))`, фолбэк `'Менеджер ' || left(uuid,8)`; сортировка по (label, user_id) — стабильна.
-- Least privilege: обход RLS есть (SECURITY DEFINER), но поверхность — ровно 2 неконфиденциальных поля и жёсткий permission-гейт.
-
-Критических находок (обход авторизации, ambiguous identifier, небезопасный search_path, избыточный grant, утечка данных) — нет.
-
-## 4. Проверка предпосылок в production (read-only)
-
-- `public.has_permission(_user_id uuid, _permission_code text)` — существует, SECURITY DEFINER. PASS.
-- `public.user_roles_v2` — колонки `user_id`, `role_id` присутствуют. PASS.
-- `public.roles` — `id`, `code` присутствуют. PASS.
-- `public.profiles` — `user_id`, `full_name` присутствуют. PASS.
-- Агрегат: сотрудников с хотя бы одной ролью ≠ `user` — **13** (без ID и PII).
-- Функция `get_payment_manager_options_v1` в production ещё **отсутствует** — ожидаемо до применения миграции.
-
-## 5. Фронтенд-контракт — PASS
-
-- `/admin/payments` больше не использует `useStaffOptions`: в `src/components/admin/payments/**` совпадений нет; хук остаётся только в CRM-диалогах (сделки, ссылки на оплату) — вне scope.
-- Директория тянется через `usePaymentManagerDirectoryOptions` → `supabase.rpc('get_payment_manager_options_v1')`, react-query, `staleTime` 5 мин.
-- Исторические менеджеры из загруженной атрибуции сохраняются: `buildPaymentManagerOptions` сливает снимки `responsible_user_id/responsible_name` с директорией, дедупликация по стабильному `user_id` (Map).
-- `all` / `__unassigned__` сохранены как отдельные пункты и исключены из директории.
-- loading/error/retry: `role="status"`/`role="alert"`, кнопка «Повторить загрузку сотрудников» с `refetch`, состояние «Сотрудники не найдены».
-- Выбранный бывший менеджер не сбрасывается: `retainedOption` удерживает выбор с безопасным ярлыком «Выбранный менеджер (имя недоступно)».
-- Период/persistence не изменены логически; правки `period-selector` — только адаптивность (max-height/max-width, скролл).
-- Таблица/статистика/CSV считаются из `filteredPayments` — фильтрация по `responsible_user_id` не изменена, паритет сохранён.
-- Overflow desktop/mobile: сетка фильтров `grid-cols-1 sm:grid-cols-2 …`, `min-w-0`, ограничение высоты SelectContent.
-
-## 6. Атрибуция (read-back, без изменений)
-
-`public.payment_sales_attribution` где `effective_to IS NULL`: **total 31 / assigned 0 / unassigned 31** — совпадает с ранее наблюдаемым. `orders_v2.responsible_user_id` не использовался. Исторический backfill — STOP, вне scope: требует отдельного read-only dry-run с точными наборами/счётчиками защищённых строк и отдельного одобрения.
-
-## 7. Находки
-
-- **MINOR-1 (функциональное, fail-closed).** Определение service_role через legacy-GUC `current_setting('request.jwt.claim.role')`. На современном PostgREST клеймы отдаются в `request.jwt.claims` (JSON), поэтому GUC может быть пуст, и прямой вызов от service_role без `sub` упадёт в `auth_required`. Риска безопасности нет (ошибка в сторону запрета), но пункт «service_role allowed» может не выполняться в рантайме. Проверяется только после применения миграции.
-- **MINOR-2 (стиль).** В `PaymentsFilters.tsx` два `import` (`useId`, `Button`) добавлены в конец файла. Для ESM это валидно (hoisting), сборка/тесты зелёные, но стилистически стоит перенести вверх.
-- INFO: `src/integrations/supabase/types.ts` правится вручную (файл автогенерируемый) — после применения миграции регенерация перезапишет запись; расхождений в сигнатуре нет.
-
-## 8. Точный будущий execute-план (НЕ выполняется)
-
-1. Merge ровно ревьюированного head `e352725fc5592a2b6df994837a19de0f874e86a4`.
-2. Синхронизировать точный merge SHA и доказать чистое дерево.
-3. Применить ровно одну managed-миграцию `20260901170547_payment_manager_options_directory.sql`.
-4. Deploy Edge Functions: **0**. Записей данных и backfill: **0**.
-5. Build и Publish.
-6. Runtime QA (после отдельного одобрения): вызов RPC от authenticated с `entitlements.view` (PASS) и без (forbidden), негативная проверка anon, проверка фильтра менеджеров на `/admin/payments` на desktop и mobile, паритет таблицы/статистики/CSV, повторный read-back атрибуции 31/0/31.
-7. Отдельно и позже: решение по MINOR-1 (service_role detection) и MINOR-2.
+## Будущий план EXECUTE (только после отдельного разрешения)
+1. Синхронизировать точный merge SHA PR #401, доказать чистое дерево.
+2. Применить ровно одну managed-миграцию `20260901170547_payment_manager_options_directory.sql`.
+3. Deploy Edge Functions: 0. Запись данных: 0. Backfill: 0.
+4. Read-only проверки: наличие и ACL функции (`REVOKE`/`GRANT`), негативный вызов от анонимного клиента (ожидание 42501), вызов от авторизованного админа (непустой список без PII).
+5. Build точного merge SHA и Publish.
+6. UI-QA в опубликованной версии: фильтр «Все менеджеры» / конкретный менеджер / без менеджера, сохранение выбранного периода, паритет таблица/CSV, бывший сотрудник из snapshot, состояние загрузки/ошибки с retry, скриншоты ПК и мобильного viewport.
+7. Повторный read-back 31/0/31 — атрибуция не должна измениться.
