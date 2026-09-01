@@ -89,9 +89,12 @@ Production checkout smoke не запускался: он создаёт тес�
    завершение; новый код/миграции должны сначала пройти отдельный GitHub PR.
 4. После всех PASS и разрешения merge получить точный merged SHA из GitHub.
    Не подставлять head ветки вместо SHA merge-коммита. Сверить diff и sync.
-5. Через Lovable подтвердить exact SHA и применить ровно одну managed migration
-   `20260901170547_payment_manager_options_directory.sql`. Список deploy
-   functions **пуст**. Проверить права и read-back RPC под допустимой ролью.
+5. Через Lovable подтвердить exact SHA и применить ровно одну managed migration.
+   Lovable записал каноническую managed version как
+   `20260901173624_61a1bf5a-04e4-45e3-966e-e0fb484ae79e.sql`; исходный локальный
+   draft `20260901170547_payment_manager_options_directory.sql` не был записан
+   в migration history и удалён из Git во избежание двойного replay. Список
+   deploy functions **пуст**. Проверить права и read-back RPC под допустимой ролью.
 6. Publish только после всех применимых PASS. Затем проверить опубликованный
    `https://gorbova.by/admin/payments` и отдельно отчёт с общим выбором периода.
    Привязать URL, SHA/build и viewport к двум отдельным скриншотам ПК/mobile.
