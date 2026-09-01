@@ -1,6 +1,7 @@
 # PLAN-ONLY ревизия PR #416
 
-Head SHA: `410fddf33b53afc05755d8f3b29b945e8b785e9a`
+Head SHA: `410fddf33cddfb8ad157d66d0becf4de7bc615b5`
+Merge SHA: `1b051fecbc36eb77f55bc04c27c7df3d23fe9688`
 База: merged main `1e93155c584618edb96e355094520efcd20265d2` (рабочее дерево синхронно с этой базой, проверено локально)
 Режим: read-only. Ничего не изменено, не задеплоено, не отправлено.
 
