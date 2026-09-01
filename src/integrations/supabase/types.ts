@@ -24077,13 +24077,6 @@ export type Database = {
           isSetofReturn: true
         }
       }
-      get_payment_manager_options_v1: {
-        Args: never
-        Returns: {
-          label: string
-          user_id: string
-        }[]
-      }
       get_autoweb_session_participants: {
         Args: { _session_id: string }
         Returns: {
