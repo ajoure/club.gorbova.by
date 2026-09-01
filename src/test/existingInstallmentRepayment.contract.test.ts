@@ -81,12 +81,14 @@ describe("existing installment repayment integration boundary", () => {
     expect(telegram).toContain("payment-link:${paymentLinkFingerprint}");
   });
 
-  it("binds Telegram delivery to the selected deal owner, not stale contact props", () => {
+  it("keeps repayment on the selected deal but routes Telegram to the current contact", () => {
     const dialog = read("src/components/installments/ExistingInstallmentRepaymentDialog.tsx");
     const contact = read("src/components/admin/ContactDetailSheet.tsx");
 
-    expect(dialog).toContain("const resolvedUserId = plan.userId || userId || null");
-    expect(dialog).not.toContain("const resolvedUserId = userId ?? plan.userId");
+    expect(dialog).toContain("resolveInstallmentTelegramRecipientUserId(");
+    expect(dialog).toContain("userId,");
+    expect(dialog).toContain("plan.userId,");
+    expect(dialog).toContain("order_id: plan.orderId");
     expect(contact).toContain("userId={resolvedUserId}");
   });
 

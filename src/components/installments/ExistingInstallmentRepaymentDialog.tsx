@@ -32,6 +32,7 @@ import {
   escapeTelegramHtml,
   sendPaymentLinkToTelegram,
 } from "@/lib/sendPaymentLinkToTelegram";
+import { resolveInstallmentTelegramRecipientUserId } from "@/lib/installmentTelegramRecipient";
 import { cn } from "@/lib/utils";
 import { normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 import type { UiPlan } from "@/hooks/useContactInstallmentsData";
@@ -126,10 +127,14 @@ export function ExistingInstallmentRepaymentDialog({
   userEmail,
   telegramUserId,
 }: ExistingInstallmentRepaymentDialogProps) {
-  // Для погашения существующей рассрочки владелец выбранной сделки —
-  // единственный канонический получатель. Контактный prop может быть устаревшим
-  // после merge/перепривязки профиля и не должен переопределять order.user_id.
-  const resolvedUserId = plan.userId || userId || null;
+  // Сама оплата остаётся привязана к plan.orderId, но Telegram отправляется
+  // текущему пользователю открытой карточки контакта — так же, как в общем
+  // диалоге создания платёжной ссылки. user_id старой сделки нужен только как
+  // безопасный fallback для standalone-режима без карточки контакта.
+  const telegramRecipientUserId = resolveInstallmentTelegramRecipientUserId(
+    userId,
+    plan.userId,
+  );
   const naturalRemainingCount = Math.max(
     1,
     Math.ceil(plan.remainingTotal / Math.max(plan.perPayment, 1)),
@@ -250,9 +255,9 @@ export function ExistingInstallmentRepaymentDialog({
   };
 
   const sendLink = async (paymentUrl: string, createdQuote: Quote) => {
-    if (!resolvedUserId) throw new Error("У контакта нет пользователя для отправки");
+    if (!telegramRecipientUserId) throw new Error("У контакта нет пользователя для отправки");
     await sendPaymentLinkToTelegram({
-      userId: resolvedUserId,
+      userId: telegramRecipientUserId,
       paymentUrl,
       message: buildTelegramMessage(createdQuote),
     });
@@ -389,7 +394,7 @@ export function ExistingInstallmentRepaymentDialog({
                   </span>
                 </>
               )}
-              canSendTelegram={Boolean(telegramUserId && resolvedUserId)}
+              canSendTelegram={Boolean(telegramUserId && telegramRecipientUserId)}
               isSendingTelegram={busyAction === "send"}
               onSendTelegram={sendCreatedLink}
             />
@@ -605,7 +610,7 @@ export function ExistingInstallmentRepaymentDialog({
                   </Button>
                   <Button
                     type="button"
-                    variant={telegramUserId && resolvedUserId ? "outline" : "default"}
+                    variant={telegramUserId && telegramRecipientUserId ? "outline" : "default"}
                     onClick={() => createLink(false)}
                     disabled={!canCreate}
                   >
@@ -616,7 +621,7 @@ export function ExistingInstallmentRepaymentDialog({
                     )}
                     Создать ссылку
                   </Button>
-                  {telegramUserId && resolvedUserId && (
+                  {telegramUserId && telegramRecipientUserId && (
                     <Button
                       type="button"
                       className="sm:col-span-2"
