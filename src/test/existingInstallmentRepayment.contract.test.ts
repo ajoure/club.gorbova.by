@@ -77,6 +77,31 @@ describe("existing installment repayment integration boundary", () => {
     expect(manualDialog).toContain("sendPaymentLinkToTelegram");
     expect(telegram).toContain('"telegram-send-notification"');
     expect(telegram).toContain('text: "💳 Ссылка на оплату"');
+    expect(telegram).toContain("normalizeEdgeFunctionErrorAsync");
+  });
+
+  it("binds Telegram delivery to the selected deal owner, not stale contact props", () => {
+    const dialog = read("src/components/installments/ExistingInstallmentRepaymentDialog.tsx");
+    const contact = read("src/components/admin/ContactDetailSheet.tsx");
+
+    expect(dialog).toContain("const resolvedUserId = plan.userId || userId || null");
+    expect(dialog).not.toContain("const resolvedUserId = userId ?? plan.userId");
+    expect(contact).toContain("userId={resolvedUserId}");
+  });
+
+  it("recovers the active repayment link instead of creating a duplicate", () => {
+    const shared = read("supabase/functions/_shared/installment-repayment-link.ts");
+    const dialog = read("src/components/installments/ExistingInstallmentRepaymentDialog.tsx");
+
+    expect(shared).toContain("action: 'quote' | 'create' | 'get_active'");
+    expect(shared).toContain("input.action === 'get_active'");
+    expect(shared).toContain("active_link: null");
+    expect(shared).toContain("payment_link_id: active.id");
+    expect(shared).toContain("public_url: active.public_url");
+    expect(dialog).toContain('action: "get_active"');
+    expect(dialog).toContain("loadActiveRepaymentLink(plan.orderId, paymentType)");
+    expect(dialog).toContain("loadActiveRepaymentLink(plan.orderId, quote.payment_type)");
+    expect(dialog).toContain("Активная ссылка больше недоступна");
   });
 
   it("keeps the original deal selected and limits the repayment choice to one-time or autopay", () => {
