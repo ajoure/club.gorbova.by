@@ -49,6 +49,11 @@ type Quote = {
 
 type BusyAction = "recover" | "quote" | "create" | "create_and_send" | "send" | null;
 
+type ActiveRepaymentLink = {
+  publicUrl: string;
+  quote: Quote;
+};
+
 interface ExistingInstallmentRepaymentDialogProps {
   plan: UiPlan;
   userId?: string | null;
@@ -69,6 +74,37 @@ const countLabel = (count: number) => {
   if (mod10 === 1 && mod100 !== 11) return "платёж";
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "платежа";
   return "платежей";
+};
+
+const loadActiveRepaymentLink = async (
+  orderId: string,
+  paymentType: "one_time" | "subscription",
+): Promise<ActiveRepaymentLink | null> => {
+  const { data, error } = await supabase.functions.invoke(
+    "admin-create-public-link",
+    {
+      body: {
+        repayment: {
+          action: "get_active",
+          order_id: orderId,
+          payment_type: paymentType,
+        },
+      },
+    },
+  );
+  if (error || data?.success === false || data?.error) {
+    throw new Error(
+      error
+        ? await normalizeEdgeFunctionErrorAsync(error, data)
+        : data?.error || "Не удалось проверить существующую ссылку",
+    );
+  }
+  const active = data?.active_link;
+  if (!active?.public_url || !active?.quote) return null;
+  return {
+    publicUrl: String(active.public_url),
+    quote: active.quote as Quote,
+  };
 };
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -140,32 +176,12 @@ export function ExistingInstallmentRepaymentDialog({
     const recoverActiveLink = async () => {
       setBusyAction("recover");
       try {
-        const { data, error } = await supabase.functions.invoke(
-          "admin-create-public-link",
-          {
-            body: {
-              repayment: {
-                action: "get_active",
-                order_id: plan.orderId,
-                payment_type: paymentType,
-              },
-            },
-          },
-        );
-        if (error || data?.success === false || data?.error) {
-          throw new Error(
-            error
-              ? await normalizeEdgeFunctionErrorAsync(error, data)
-              : data?.error || "Не удалось проверить существующую ссылку",
-          );
-        }
-        const active = data?.active_link;
-        if (!cancelled && active?.public_url && active?.quote) {
-          const activeQuote = active.quote as Quote;
-          setPaymentType(activeQuote.payment_type);
-          setCount(Math.max(2, activeQuote.schedule_minor.length));
-          setQuote(activeQuote);
-          setLink(String(active.public_url));
+        const active = await loadActiveRepaymentLink(plan.orderId, paymentType);
+        if (!cancelled && active) {
+          setPaymentType(active.quote.payment_type);
+          setCount(Math.max(2, active.quote.schedule_minor.length));
+          setQuote(active.quote);
+          setLink(active.publicUrl);
         }
       } catch (error) {
         if (!cancelled) {
@@ -301,7 +317,17 @@ export function ExistingInstallmentRepaymentDialog({
     if (!link || !quote) return;
     setBusyAction("send");
     try {
-      await sendLink(link, quote);
+      // Перечитываем непосредственно перед внешней отправкой: просроченную или
+      // деактивированную после открытия окна ссылку клиенту не отправляем.
+      const active = await loadActiveRepaymentLink(plan.orderId, quote.payment_type);
+      if (!active) {
+        setLink(null);
+        setQuote(null);
+        throw new Error("Активная ссылка больше недоступна. Рассчитайте график заново");
+      }
+      setLink(active.publicUrl);
+      setQuote(active.quote);
+      await sendLink(active.publicUrl, active.quote);
       toast.success("Ссылка отправлена клиенту в Telegram");
     } catch (error) {
       toast.error(

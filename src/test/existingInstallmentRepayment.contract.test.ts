@@ -99,7 +99,9 @@ describe("existing installment repayment integration boundary", () => {
     expect(shared).toContain("payment_link_id: active.id");
     expect(shared).toContain("public_url: active.public_url");
     expect(dialog).toContain('action: "get_active"');
-    expect(dialog).toContain("active?.public_url && active?.quote");
+    expect(dialog).toContain("loadActiveRepaymentLink(plan.orderId, paymentType)");
+    expect(dialog).toContain("loadActiveRepaymentLink(plan.orderId, quote.payment_type)");
+    expect(dialog).toContain("Активная ссылка больше недоступна");
   });
 
   it("keeps the original deal selected and limits the repayment choice to one-time or autopay", () => {
