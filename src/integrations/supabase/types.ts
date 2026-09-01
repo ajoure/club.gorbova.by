@@ -24479,6 +24479,13 @@ export type Database = {
           provider_payment_id: string
         }[]
       }
+      get_payment_manager_options_v1: {
+        Args: never
+        Returns: {
+          label: string
+          user_id: string
+        }[]
+      }
       get_payments_stats:
         | { Args: { from_date: string; to_date: string }; Returns: Json }
         | {
