@@ -23395,6 +23395,23 @@ export type Database = {
         }
         Returns: Json
       }
+      create_existing_installment_payment_link_v1: {
+        Args: {
+          p_actor_id: string
+          p_expected_payments: Json
+          p_expected_providers: Json
+          p_order_id: string
+          p_order_updated_at: string
+          p_quote: Json
+          p_reason: string
+          p_replace_confirmed: boolean
+          p_request_id: string
+          p_sub_id: string
+          p_sub_updated_at: string
+          p_token: string
+        }
+        Returns: Json
+      }
       create_feedback_ticket: {
         Args: {
           p_block_id?: string
@@ -24864,6 +24881,7 @@ export type Database = {
         Args: { _package_template_id?: string; _template_id: string }
         Returns: number
       }
+      payments_reconcile_cron_secret: { Args: never; Returns: string }
       products_bulk_delete_dryrun: {
         Args: { product_ids: string[] }
         Returns: {

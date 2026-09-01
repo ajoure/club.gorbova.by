@@ -88,6 +88,8 @@ email-test-connection
 admin-bepaid-sync-pending
 admin-bepaid-backfill-subscriptions
 bepaid-queue-cron
+bepaid-readonly-pull
+payments-reconcile
 bepaid-receipts-cron
 bepaid-subscription-audit-cron
 log-deployment

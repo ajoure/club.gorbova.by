@@ -112,6 +112,11 @@ Deno.serve(async (req) => {
     } = body;
     const isCrmAutomation =
       isServiceInvocation && message_type === 'crm_pipeline_automation';
+    const isPaymentLinkNotification =
+      !isServiceInvocation &&
+      message_type === 'custom' &&
+      typeof requestedIdempotencyKey === 'string' &&
+      /^payment-link:[a-f0-9]{64}$/.test(requestedIdempotencyKey);
 
     console.log(`[telegram-send-notification] Starting: user_id=${user_id}, type=${message_type}, isService=${isServiceInvocation}`);
 
@@ -316,13 +321,18 @@ Deno.serve(async (req) => {
     // PATCH 10B + 10C: Idempotency через notification_outbox
     // PATCH A: For card_* types, include payment_method_id + verification_version
     // =================================================================
-    const bucket = Math.floor(Date.now() / 1000); // 1-sec dedup window (anti-doubleclick only)
+    const bucket = Math.floor(Date.now() / 1000); // default 1-sec anti-doubleclick window
     
     // Build idempotency key based on message_type
     let idempotencyKey: string;
     
     if (isCrmAutomation) {
       idempotencyKey = requestedIdempotencyKey;
+    } else if (isPaymentLinkNotification) {
+      // The URL itself never enters outbox/audit. The client sends its SHA-256
+      // fingerprint and the server owns the 10-minute deduplication window.
+      const tenMinuteBucket = Math.floor(Date.now() / (10 * 60 * 1000));
+      idempotencyKey = `${user_id}:${requestedIdempotencyKey}:${tenMinuteBucket}`;
     } else if (SERVICE_ROLE_ALLOWED_MESSAGE_TYPES.includes(message_type) && payment_method_meta?.id) {
       // For card_* types: include payment_method_id + verification_version
       // verification_version = verification_checked_at (passed in meta) OR current timestamp bucket
@@ -385,9 +395,9 @@ Deno.serve(async (req) => {
         });
 
         return new Response(JSON.stringify({ 
-          success: isCrmAutomation,
+          success: isCrmAutomation || isPaymentLinkNotification,
           skipped: true,
-          idempotent_replay: isCrmAutomation,
+          idempotent_replay: isCrmAutomation || isPaymentLinkNotification,
           idempotency_key: idempotencyKey,
           error: 'Уведомление уже отправлено в последние 10 минут'
         }), {

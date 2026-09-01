@@ -29,6 +29,10 @@ import { classifyPostCancelCharge } from './post_cancel_charge.ts';
 import { parseBepaidTrackingId } from '../_shared/bepaid-tracking-id.ts';
 import { sanitizeBepaidProviderPayload } from '../_shared/sanitize-bepaid-payload.ts';
 import { sendChargeLifecycleNotification } from '../_shared/charge-lifecycle-notifications.ts';
+import {
+  handleExistingInstallmentRepaymentWebhook,
+  isExistingInstallmentRepaymentTracking,
+} from '../_shared/existing-installment-webhook.ts';
 
 
 const corsHeaders = {
@@ -1235,6 +1239,21 @@ Deno.serve(async (req) => {
     const isRefundTransaction = transactionType === 'refund' || 
                                 body.refund || 
                                 transaction?.refund_reason !== undefined;
+
+    // Existing-debt repayment is deliberately isolated from new-sale and
+    // renewal flows: it records money on the original order and never grants
+    // or extends access.
+    if (isExistingInstallmentRepaymentTracking(rawTrackingId)) {
+      return await handleExistingInstallmentRepaymentWebhook({
+        supabase,
+        body,
+        rawTrackingId: String(rawTrackingId),
+        transaction,
+        subscription,
+        upsertPayment: upsertPaymentV2,
+        corsHeaders,
+      });
+    }
 
     // B2: CRITICAL ALERT moved AFTER transactionUid/subscriptionId are defined
     if (rawTrackingId && !parsedOrderId && !rawTrackingId.startsWith('subv2:')) {

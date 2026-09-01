@@ -1,96 +1,36 @@
-# Products 2 — финальная ревизия + разбор ACL-находки (PLAN-ONLY / READ-ONLY)
+# PLAN-ONLY ревизия PR #417
 
-Изменений не вносилось: код, миграции, данные, Edge Functions и Publish не затронуты.
+Head SHA: `6cc94f7339878f9a46951b09c350d45ff58cc6fd`
+База: current main `2d7f71813613baa25d8a776143fc409ad2c0d60a`
+Режим: read-only. Ничего не изменено, не задеплоено, не отправлено.
 
-## SHA-гейт
+## Контекст инцидента
+Rollout PR #416 отправил одну и ту же ссылку дважды (десктоп + мобильный тест кликнули resend отдельно): `payment_links` не вырос, но `notification_outbox` и `telegram_logs` получили по 2 строки `sent`. Текущая дедупликация — bucket 1 секунда (`Math.floor(Date.now()/1000)`), anti-doubleclick only, поэтому повторные отправки через минуты не блокируются.
 
-- Целевой и фактический HEAD: `9dffb20df08ad7e82dd2e14c298702a51cd79d21`; `origin/main` тот же; дерево чистое, WIP нет. **PASS**
+## Что меняет патч (по описанию)
+1. Клиентский shared helper: SHA-256 от канонического URL → `idempotency_key = payment-link:<64hex>`; сырой URL/токен не попадает в outbox/audit.
+2. Auth-пользовательские custom-уведомления принимают только строгую форму ключа; service-role custom остаётся запрещён.
+3. Сервер: в unique-ключ outbox добавлены `user_id` и серверный 10-минутный bucket.
+4. Повтор в окне со статусом sent → `success=true, skipped=true, idempotent_replay=true`, Telegram не вызывается.
+5. failed/blocked сохраняют retry-семантику (PATCH 10G).
+6. Применяется и к обычным manual-ссылкам, и к рассрочным (shared helper `sendPaymentLinkToTelegram`).
+7. Без миграций/схемы/платежей.
 
-## Базовые проверки (сохранены)
+## Проверки против текущего кода
+- **Авторизация** — PASS. Custom с idempotency-ключом остаётся в ветке authenticated user; service-role custom запрещён (`SERVICE_ROLE_ALLOWED_MESSAGE_TYPES` без custom, строки 33/132). Строгая форма ключа сужает поверхность.
+- **Key spoofing / cross-user** — PASS. Ключ — хеш отправляемого URL; подделка ключа другого пользователя нейтрализуется добавлением `user_id` в unique-ключ — коллизии между пользователями исключены. Самостоятельный «spoof» своего ключа лишь дедуплицирует собственные отправки.
+- **Утечка URL/токена** — PASS. В outbox/audit уходит только `payment-link:<sha256>`; канонизация URL до хеша (текущий helper уже нормализует через `new URL().toString()`).
+- **Предотвращение дублей Telegram** — PASS. 10-мин серверный bucket + user_id + hash закрывают сценарий двойного resend из PR #416; повтор возвращает skipped/idempotent_replay без вызова Telegram API.
+- **Retry после failed/blocked** — PASS. Существующая ветка 23505 → retry (attempt_count+1, статус queued) сохранена; новый ключ не ломает её, т.к. bucket/user_id входят в тот же unique-ключ.
+- **Граница 10 минут** — PASS. После ротации bucket создаётся новая строка outbox и повторная отправка допустима — осознанное поведение окна, согласовано с описанием.
+- **Регрессии других типов уведомлений** — PASS с одним условием подтверждения. Другие custom-отправители (`SendNotificationDialog`, `PreregistrationDetailSheet`) **не передают** idempotency_key и полагаются на серверный default bucket. Условие: строгая валидация должна применяться только когда ключ передан; обязательность ключа для всех custom сломала бы эти два потока. 361 Edge-контракт PASS указывает, что семантика «валидация при наличии» сохранена; подтвердить по диффу при merge-ревью. Типы card_* и crm-pipeline сохраняют свои ключи (ветки строк 324–335 не затронуты).
 
-1. Три дублирующие Lovable-миграции `20260830124428…`, `20260830124544…`, `20260830124721…` в дереве **ABSENT** — PASS.
-2. `src/integrations/supabase/types.ts` present, 26 007 строк, `PostgrestVersion: "14.5"`, типы Products 2 на месте — PASS.
-3. Единственная pending-миграция `20260830130000_restore_payment_links_enriched_security_invoker.sql`, единственный оператор `ALTER VIEW public.payment_links_enriched_v SET (security_invoker = true);` — PASS. В истории БД её нет.
-   Замечание: применённые миграции Products 2 записаны в истории под платформенными версиями `20260830124428 / 124544 / 124721`, а не под именами файлов `083925 / 085855 / 113500`.
+## Вердикт
+**PLAN-ONLY PASS** для head SHA `6cc94f7339878f9a46951b09c350d45ff58cc6fd`.
 
-## 1. `pg_class.relacl` / `aclexplode` для `public.payment_links_enriched_v`
-
-Владелец: `postgres`. `reloptions = NULL` (security_invoker НЕ установлен).
-
-| grantee | privileges | is_grantable |
-|---|---|---|
-| postgres | SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN | false |
-| anon | SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN | false |
-| authenticated | SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN | false |
-| service_role | SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN | false |
-| sandbox_exec, sandbox_exec_hdjg… | SELECT, INSERT | false |
-
-## 2. `has_table_privilege` (anon / authenticated)
-
-| privilege | anon | authenticated |
-|---|---|---|
-| SELECT | true | true |
-| INSERT | true | true |
-| UPDATE | true | true |
-| DELETE | true | true |
-| TRUNCATE | true | true |
-| REFERENCES | true | true |
-| TRIGGER | true | true |
-
-Это прямо противоречит намерению `20260418131910…` (`REVOKE ALL FROM anon, authenticated; GRANT SELECT TO authenticated`) и последующим миграциям, которые многократно ставили `security_invoker = on` (`20260418131929`, `20260418155148`, `20260418160316`, `20260616200409`). Текущее состояние — расширенные права плюс owner-rights.
-
-## 3. Авто-обновляемость представления
-
-- `information_schema.views.is_updatable = NO`
-- `information_schema.tables.is_insertable_into = NO`
-- DML-правил (`pg_rewrite` INSERT/UPDATE/DELETE) — 0.
-
-Следствие: гранты INSERT/UPDATE/DELETE/TRUNCATE/TRIGGER/REFERENCES на этом представлении практически не исполнимы, но являются лишними привилегиями и подлежат отзыву. Реальная и критичная часть — `SELECT` для `anon` при отсутствии `security_invoker`: чтение выполняется с правами владельца `postgres`, то есть RLS базовой `payment_links` обходится.
-
-## 4. Потребители, которым нужен прямой SELECT на представление
-
-- Прямых обращений `.from('payment_links_enriched_v')` в `src/` и `supabase/functions/` — **нет** (`rg` дал 0 совпадений).
-- Единственный фронтенд-путь: `src/hooks/usePaymentLinks.ts` → `supabase.rpc("get_admin_payment_links_v1", …)` (полная загрузка и delta-загрузка).
-- Прочие упоминания представления — только миграции, контрактный тест `src/test/salesManagerCreationUi.contract.test.ts` и сгенерированные `types.ts`.
-- Внутри БД представление читает `get_admin_payment_links_v1` (SECURITY DEFINER, выполняется от владельца — прямой грант ролям для этого не требуется).
-
-Вывод по evidence: прямой SELECT для `authenticated` больше не требуется ни одним потребителем.
-
-## 5. `get_admin_payment_links_v1`
-
-- Владелец: `postgres`; `prosecdef = true`; `proconfig = search_path=public`.
-- `proacl`: `postgres=X`, `authenticated=X`, `service_role=X`, `sandbox_exec_hdjg…=X`. Для `anon` и PUBLIC EXECUTE отозван (`REVOKE ALL … FROM PUBLIC, anon` в `20260827153330`).
-- Внутренняя авторизация: `IF NOT public.has_admin_section_access(auth.uid(), 'payments', 'view') THEN RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501'` — fail-closed до любого чтения. Возвращает `SETOF public.payment_links_enriched_v` с фильтром по `p_since` и лимитом.
-
-## 6. Корректирующий SQL по принципу минимальных привилегий
-
-Предложенный кандидат оценивается так:
-
-```sql
-ALTER VIEW public.payment_links_enriched_v SET (security_invoker = true);
-REVOKE ALL ON public.payment_links_enriched_v FROM PUBLIC, anon, authenticated;
-GRANT SELECT ON public.payment_links_enriched_v TO authenticated;
-```
-
-- Поведение UI/RPC сохраняет: единственный потребитель — SECURITY DEFINER RPC, который читает представление от владельца и не зависит от грантов ролей.
-- Права `anon` и все write-привилегии убирает — да.
-- Но третья строка избыточна: прямых клиентских SELECT нет.
-
-Рекомендуемый минимальный вариант (без прямого гранта):
-
-```sql
-ALTER VIEW public.payment_links_enriched_v SET (security_invoker = true);
-REVOKE ALL ON public.payment_links_enriched_v FROM PUBLIC, anon, authenticated;
-```
-
-`service_role` при необходимости оставить с `SELECT` (сузив с ALL). Оба варианта закрывают критическую находку; рекомендуемый строже. Отмечу, что checked-in миграция `20260830130000` содержит только `ALTER VIEW … security_invoker`, то есть без расширения её SQL широкие гранты `anon` останутся — а это и есть критическая часть.
-
-## Итог и статус execute
-
-- Гейты 1–3 по SHA `9dffb20df`: **PASS**
-- Готовность к execute: **STOP**. Две причины:
-  1. **Критическая ACL-находка не покрывается pending-миграцией.** Требуется решение: либо расширить корректирующую миграцию в GitHub до REVOKE-варианта, либо принять `20260830130000` как есть и завести отдельную миграцию на гранты.
-  2. **BLOCKER по способу применения.** Lovable применяет SQL только через платформенный инструмент миграций, который сам создаёт файл с собственным timestamp/UUID и сопутствующий коммит — именно так появились `20260830124428 / 124544 / 124721`. Применить checked-in файл без платформенной копии и авто-коммита технически невозможно. Варианты: (A) разрешить копию и авто-коммит как ожидаемое отклонение; (B) применить SQL вне Lovable, оставив здесь только деплой пяти функций и non-side-effectful пробы; (C) выполнить только деплой функций, отложив миграцию.
-- Деплой пяти функций (`admin-create-payment-link`, `admin-create-public-link`, `admin-invoice-checkout-issue`, `public-checkout`, `public-rr-installment-initiate`) блокером не является; файлы и `_shared/sales-manager-attribution.ts` присутствуют в дереве.
-
-READ-ONLY: NO CHANGES.
+## Execute-лист (после одобрения)
+1. Merge exact head; sync merge SHA; доказать clean/byte-identical дерево.
+2. Миграции: 0. Записи в БД: 0.
+3. Деплой ТОЛЬКО `telegram-send-notification`.
+4. Build + Publish; отчёт URL/версия/SHA.
+5. Верификация БЕЗ реальной отправки Telegram: контрактные тесты, read-only проверка кода ответа (skipped/idempotent_replay), инспекция логов функции post-deploy. Никаких новых строк в outbox/telegram_logs от верификации.

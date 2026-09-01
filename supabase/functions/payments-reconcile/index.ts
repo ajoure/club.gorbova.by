@@ -1,14 +1,16 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { parseBepaidTrackingId } from "../_shared/bepaid-tracking-id.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { reconcileExactQueuePayment } from "../_shared/bepaid-canonical-recovery.ts";
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { staleProcessingCutoff } from '../_shared/bepaid-queue-policy.ts';
+import { authorizePaymentsReconcile } from '../_shared/payments-reconcile-auth.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-payments-reconcile-cron-secret",
 };
 
 interface BepaidTransaction {
@@ -41,6 +43,11 @@ serve(async (req) => {
   console.info("Starting payments reconciliation...");
 
   try {
+    if (!await authorizePaymentsReconcile(req, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "", supabase)) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     // PATCH-P0.9.1: Strict creds
     const credsResult = await getBepaidCredsStrict(supabase);
     if (isBepaidCredsError(credsResult)) {
@@ -57,10 +64,29 @@ serve(async (req) => {
     
     console.log("Using bePaid secret from strict integration_instances");
 
+    const body = await req.json().catch(() => ({}));
+    if (body.queueItemId) {
+      const exact = await reconcileExactQueuePayment(supabase, {
+        queueItemId: body.queueItemId, expectedUpdatedAt: body.expectedUpdatedAt,
+        providerSubscriptionId: body.providerSubscriptionId,
+        dryRun: body.dryRun === true || body.dry_run === true,
+        recordPreflightFailure: body.recordPreflightFailure === true,
+        providerAuth: createBepaidAuthHeader(bepaidCreds),
+      });
+      return new Response(JSON.stringify(exact), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (body.dryRun === true || body.dry_run === true) {
+      return new Response(JSON.stringify({ error: "dry_run_requires_exact_queue_id" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     const results = {
       checked: 0,
       fixed: 0,
       queue_processed: 0,
+      stale_recovered: 0,
+      stale_terminal: 0,
+      claim_conflicts: 0,
       errors: 0,
       details: [] as any[],
     };
@@ -214,179 +240,35 @@ serve(async (req) => {
     // =====================================================================
     // LEVEL 3: Process payment_reconcile_queue (rejected webhooks)
     // =====================================================================
-    const { data: queueItems } = await supabase
+    const queueNow = new Date().toISOString();
+    const processingCutoff = staleProcessingCutoff(new Date(queueNow));
+    const { data: queueItems, error: queueFetchError } = await supabase
       .from("payment_reconcile_queue")
       .select("*")
-      .eq("status", "pending")
-      .or(`next_retry_at.is.null,next_retry_at.lte.${new Date().toISOString()}`)
-      .lt("attempts", 5)
+      .or(`and(status.eq.pending,attempts.lt.5,or(next_retry_at.is.null,next_retry_at.lte.${queueNow})),and(status.eq.processing,updated_at.lt.${processingCutoff})`)
       .order("created_at", { ascending: true })
       .limit(50);
 
+    if (queueFetchError) throw new Error(`Queue read failed: ${queueFetchError.message}`);
+
     console.info(`Found ${queueItems?.length || 0} queue items to process`);
 
+    const queueDeadline = Date.now() + 60_000;
     for (const item of queueItems || []) {
+      if (Date.now() >= queueDeadline) break;
       try {
-        // Mark as processing
-        await supabase
-          .from("payment_reconcile_queue")
-          .update({ status: "processing", attempts: item.attempts + 1 })
-          .eq("id", item.id);
-
-        let processed = false;
-        const payload = item.raw_payload || {};
-        const additionalData = payload.additional_data || {};
-        
-        // Extract order_id from multiple possible locations
-        let orderIdFromPayload = additionalData.order_id || null;
-        
-        // Parse every supported bePaid tracking format, including recurring
-        // `subv2:{subscription_id}:order:{order_id}`. The old underscore-only
-        // parser left recurring renewals unmatched forever.
-        if (!orderIdFromPayload && item.tracking_id) {
-          orderIdFromPayload = parseBepaidTrackingId(item.tracking_id).orderId;
-        }
-        
-        // Extract transaction info from subscription webhooks
-        const lastTransaction = payload.last_transaction || payload.transaction || {};
-        const bepaidUid = lastTransaction.uid || item.bepaid_uid;
-        const transactionAmount = lastTransaction.amount ? lastTransaction.amount / 100 : (payload.plan?.amount ? payload.plan.amount / 100 : item.amount);
-        const transactionCurrency = lastTransaction.currency || payload.plan?.currency || item.currency || 'BYN';
-
-        // Try to match by order_id from payload first (checks both orders_v2 and legacy orders)
-        if (orderIdFromPayload) {
-          // Check orders_v2 first
-          const { data: orderV2 } = await supabase
-            .from("orders_v2")
-            .select("*")
-            .eq("id", orderIdFromPayload)
-            .maybeSingle();
-
-          if (orderV2) {
-            await processQueueItem(supabase, item, orderV2);
-            processed = true;
-            results.queue_processed++;
-            results.details.push({
-              queue_id: item.id,
-              action: "queue_item_processed_v2",
-              order_number: orderV2.order_number,
-              bepaid_uid: bepaidUid,
-            });
-          } else {
-            // Check legacy orders table
-            const { data: legacyOrder } = await supabase
-              .from("orders")
-              .select("*")
-              .eq("id", orderIdFromPayload)
-              .maybeSingle();
-
-            if (legacyOrder) {
-              await processLegacyQueueItem(supabase, item, legacyOrder, payload);
-              processed = true;
-              results.queue_processed++;
-              results.details.push({
-                queue_id: item.id,
-                action: "queue_item_processed_legacy",
-                order_id: legacyOrder.id,
-                bepaid_uid: bepaidUid,
-              });
-            }
-          }
-        }
-
-        // Try to match by tracking_id against orders_v2
-        if (!processed && item.tracking_id) {
-          const { data: order } = await supabase
-            .from("orders_v2")
-            .select("*")
-            .or(`id.eq.${item.tracking_id},order_number.eq.${item.tracking_id}`)
-            .maybeSingle();
-
-          if (order) {
-            await processQueueItem(supabase, item, order);
-            processed = true;
-            results.queue_processed++;
-            results.details.push({
-              queue_id: item.id,
-              action: "queue_item_processed",
-              order_number: order.order_number,
-              bepaid_uid: bepaidUid,
-            });
-          }
-        }
-
-        // Try to match by email + amount in orders_v2
-        if (!processed && item.customer_email && transactionAmount) {
-          const { data: order } = await supabase
-            .from("orders_v2")
-            .select("*")
-            .eq("customer_email", item.customer_email)
-            .eq("final_price", transactionAmount)
-            .in("status", ["pending", "processing"])
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (order) {
-            await processQueueItem(supabase, item, order);
-            processed = true;
-            results.queue_processed++;
-            results.details.push({
-              queue_id: item.id,
-              action: "queue_item_processed_by_email",
-              order_number: order.order_number,
-              bepaid_uid: bepaidUid,
-            });
-          }
-        }
-
-        // Try to match by email + amount in legacy orders
-        if (!processed && item.customer_email && transactionAmount) {
-          const { data: legacyOrder } = await supabase
-            .from("orders")
-            .select("*")
-            .eq("customer_email", item.customer_email)
-            .eq("amount", transactionAmount)
-            .in("status", ["pending", "processing"])
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (legacyOrder) {
-            await processLegacyQueueItem(supabase, item, legacyOrder, payload);
-            processed = true;
-            results.queue_processed++;
-            results.details.push({
-              queue_id: item.id,
-              action: "queue_item_processed_legacy_by_email",
-              order_id: legacyOrder.id,
-              bepaid_uid: bepaidUid,
-            });
-          }
-        }
-
-        if (!processed) {
-          // Could not match - increment retry
-          const nextRetry = new Date(Date.now() + 6 * 60 * 60 * 1000); // 6 hours
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({
-              status: "pending",
-              next_retry_at: nextRetry.toISOString(),
-              last_error: "Could not match to order",
-            })
-            .eq("id", item.id);
-        }
-      } catch (queueError) {
-        console.error(`Error processing queue item ${item.id}:`, queueError);
-        await supabase
-          .from("payment_reconcile_queue")
-          .update({
-            status: "pending",
-            last_error: String(queueError),
-            next_retry_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour
-          })
-          .eq("id", item.id);
+        const outcome = await reconcileExactQueuePayment(supabase, {
+          queueItemId: item.id, expectedUpdatedAt: item.updated_at,
+          recordPreflightFailure: true,
+          providerAuth: createBepaidAuthHeader(bepaidCreds),
+        });
+        results.queue_processed += outcome.results?.orders_reconciled || 0;
+        results.stale_recovered += outcome.stale_recovered || 0;
+        results.stale_terminal += outcome.stale_terminal || 0;
+        results.claim_conflicts += outcome.claim_conflicts || 0;
+      } catch {
+        // The canonical worker alone owns error/lease writes. Never overwrite
+        // an overlapping worker's row from this orchestrator.
         results.errors++;
       }
     }
@@ -447,128 +329,6 @@ async function checkBepaidTransaction(
   } catch (error) {
     console.error("Error checking bePaid transaction:", error);
     return null;
-  }
-}
-
-async function processQueueItem(supabase: any, item: any, order: any) {
-  const now = new Date();
-  const payload = item.raw_payload || {};
-
-  // Create the canonical payment before mutating the order/queue. Previously
-  // insert errors were ignored, so a queue row could be marked completed and
-  // its order paid while payments_v2 remained empty.
-  const paymentRow = {
-    order_id: order.id,
-    user_id: order.user_id || null,
-    profile_id: item.matched_profile_id || null,
-    amount: item.amount || order.final_price,
-    currency: item.currency || "BYN",
-    provider: "bepaid",
-    provider_payment_id: item.bepaid_uid,
-    status: "succeeded",
-    paid_at: payload.paid_at || now.toISOString(),
-    card_brand: payload.credit_card?.brand,
-    card_last4: payload.credit_card?.last_4,
-    provider_response: payload,
-    meta: {
-      source: "payments_reconcile",
-      queue_id: item.id,
-      tracking_id: item.tracking_id || null,
-    },
-  };
-
-  const { data: existingPayment, error: existingPaymentError } = await supabase
-    .from("payments_v2")
-    .select("id,order_id")
-    .eq("provider", "bepaid")
-    .eq("provider_payment_id", item.bepaid_uid)
-    .maybeSingle();
-
-  if (existingPaymentError) {
-    throw new Error(`payments_v2 lookup failed: ${existingPaymentError.message}`);
-  }
-
-  if (existingPayment?.order_id && existingPayment.order_id !== order.id) {
-    throw new Error(
-      `payments_v2 conflict: transaction ${item.bepaid_uid} already belongs to order ${existingPayment.order_id}`,
-    );
-  }
-
-  if (existingPayment) {
-    let updateQuery = supabase
-      .from("payments_v2")
-      .update(paymentRow)
-      .eq("id", existingPayment.id);
-    updateQuery = existingPayment.order_id
-      ? updateQuery.eq("order_id", order.id)
-      : updateQuery.is("order_id", null);
-
-    const { data: updatedPayment, error: paymentUpdateError } = await updateQuery
-      .select("id,order_id")
-      .maybeSingle();
-
-    if (paymentUpdateError || !updatedPayment) {
-      throw new Error(
-        `payments_v2 update failed: ${paymentUpdateError?.message || "row changed concurrently"}`,
-      );
-    }
-  } else {
-    const { error: paymentInsertError } = await supabase
-      .from("payments_v2")
-      .insert(paymentRow);
-
-    // Another worker may have inserted the same provider transaction between
-    // our lookup and insert. The strict read-back below decides whether that
-    // race is safe; the partial unique index cannot be used via PostgREST
-    // ON CONFLICT, so never rely on an upsert here.
-    if (paymentInsertError && paymentInsertError.code !== "23505") {
-      throw new Error(`payments_v2 insert failed: ${paymentInsertError.message}`);
-    }
-  }
-
-  const { data: persistedPayment, error: verifyError } = await supabase
-    .from("payments_v2")
-    .select("id,order_id")
-    .eq("provider", "bepaid")
-    .eq("provider_payment_id", item.bepaid_uid)
-    .maybeSingle();
-
-  if (verifyError || !persistedPayment || persistedPayment.order_id !== order.id) {
-    throw new Error(
-      `payments_v2 verification failed: ${
-        verifyError?.message ||
-        (!persistedPayment ? "row missing" : `unexpected order ${persistedPayment.order_id || "null"}`)
-      }`,
-    );
-  }
-
-  // Fix order and create subscription
-  await fixOrderAndCreateSubscription(supabase, order, {
-    provider_payment_id: item.bepaid_uid,
-  });
-
-  // Mark queue item as completed
-  const { data: completedQueueItem, error: queueCompletionError } = await supabase
-    .from("payment_reconcile_queue")
-    .update({
-      status: "completed",
-      processed_at: now.toISOString(),
-      processed_order_id: order.id,
-    })
-    .eq("id", item.id)
-    .select("id,status,processed_order_id")
-    .maybeSingle();
-
-  if (
-    queueCompletionError ||
-    completedQueueItem?.status !== "completed" ||
-    completedQueueItem?.processed_order_id !== order.id
-  ) {
-    throw new Error(
-      `payment_reconcile_queue completion failed: ${
-        queueCompletionError?.message || "completion read-back mismatch"
-      }`,
-    );
   }
 }
 
@@ -691,167 +451,6 @@ async function fixOrderAndCreateSubscription(
   }
 
   console.info(`Fixed order ${order.order_number || order.id}`);
-}
-
-// Process legacy orders (from old 'orders' table)
-async function processLegacyQueueItem(supabase: any, item: any, order: any, payload: any) {
-  const now = new Date();
-  const lastTransaction = payload.last_transaction || payload.transaction || {};
-  const bepaidUid = lastTransaction.uid || item.bepaid_uid;
-  const cardInfo = payload.card || lastTransaction.credit_card || {};
-  const subscriptionId = payload.id; // bePaid subscription ID like sbs_xxx
-  
-  // Update legacy order status
-  await supabase
-    .from("orders")
-    .update({
-      status: "paid",
-      bepaid_uid: bepaidUid,
-      meta: {
-        ...order.meta,
-        bepaid_subscription_state: payload.state || 'active',
-        reconciled_at: now.toISOString(),
-        reconciled_bepaid_uid: bepaidUid,
-        bepaid_subscription_id: subscriptionId,
-      },
-    })
-    .eq("id", order.id);
-
-  // Get user profile for the order
-  let userId = order.user_id;
-  if (!userId && order.customer_email) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("user_id")
-      .eq("email", order.customer_email)
-      .maybeSingle();
-    userId = profile?.user_id;
-  }
-
-  // Get product info from order meta
-  const productId = order.meta?.product_v2_id || order.product_id;
-  const tariffCode = order.meta?.tariff_code;
-  
-  // Find tariff by code if available
-  let tariffId = null;
-  let accessDurationDays = 30; // default
-  if (tariffCode && productId) {
-    const { data: tariff } = await supabase
-      .from("tariffs")
-      .select("id, access_duration_days")
-      .eq("code", tariffCode)
-      .eq("product_id", productId)
-      .maybeSingle();
-    if (tariff) {
-      tariffId = tariff.id;
-      accessDurationDays = tariff.access_duration_days || 30;
-    }
-  }
-
-  // LEGACY PATH: Direct writes preserved intentionally — legacy orders lack FK compatibility
-  // with grant-access-for-order. Adding audit warning for traceability.
-  // TODO: Separate discovery needed to determine if legacy orders can be migrated.
-  if (userId && productId) {
-    // Check if subscription already exists
-    const { data: existingSub } = await supabase
-      .from("subscriptions_v2")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("product_id", productId)
-      .in("status", ["active", "trial"])
-      .maybeSingle();
-
-    if (!existingSub) {
-      const accessEndAt = new Date();
-      accessEndAt.setDate(accessEndAt.getDate() + accessDurationDays);
-
-      await supabase.from("subscriptions_v2").insert({
-        user_id: userId,
-        product_id: productId,
-        tariff_id: tariffId,
-        status: "active",
-        access_start_at: now.toISOString(),
-        access_end_at: accessEndAt.toISOString(),
-        is_trial: false,
-        bepaid_subscription_id: subscriptionId,
-        meta: {
-          source: "reconciliation_legacy",
-          bepaid_uid: bepaidUid,
-          legacy_order_id: order.id,
-          reconciled_at: now.toISOString(),
-          _warning: "LEGACY_PATH: direct write, bypasses grant-access-for-order. Not compatible with canonical fulfillment.",
-        },
-      });
-
-      // Create entitlement (legacy — direct write with audit warning)
-      const { data: product } = await supabase
-        .from("products_v2")
-        .select("code")
-        .eq("id", productId)
-        .maybeSingle();
-
-      if (product?.code) {
-        const { data: profileData } = await supabase
-          .from("profiles")
-          .select("id")
-          .eq("user_id", userId)
-          .single();
-        const profileId = profileData?.id || null;
-        
-        await supabase.from("entitlements").upsert(
-          {
-            user_id: userId,
-            profile_id: profileId,
-            product_code: product.code,
-            status: "active",
-            expires_at: accessEndAt.toISOString(),
-            meta: {
-              source: "reconciliation_legacy",
-              legacy_order_id: order.id,
-              _warning: "LEGACY_PATH: direct write, bypasses canonical fulfillment and access_rules resolution",
-            },
-          },
-          { onConflict: "user_id,product_code" }
-        );
-      }
-
-      // Grant Telegram access (legacy path — direct call)
-      try {
-        // Legacy reconcile path: skip telegram grant without club_id (legacy data)
-        console.warn('[TELEGRAM] Legacy reconcile path: no club_id resolvable for product', productId, '— skipping grant');
-        // await supabase.functions.invoke("telegram-grant-access", { body: { user_id: userId, club_id: ???, source_id: order.id, source: 'payments-reconcile:legacy' } });
-      } catch (e) {
-        console.error("Error granting Telegram access:", e);
-      }
-
-      // Audit trail for legacy path usage
-      await supabase.from("audit_logs").insert({
-        actor_type: 'system',
-        actor_label: 'payments-reconcile:legacy_path',
-        action: 'legacy_direct_write_warning',
-        meta: {
-          legacy_order_id: order.id,
-          user_id: userId,
-          product_id: productId,
-          _warning: "Legacy path used direct INSERT into subscriptions_v2/entitlements. Not compatible with grant-access-for-order.",
-        },
-      });
-
-      console.info(`Created subscription for legacy order ${order.id}, user ${userId} (LEGACY PATH — audit warning logged)`);
-    }
-  }
-
-  // Mark queue item as completed
-  await supabase
-    .from("payment_reconcile_queue")
-    .update({
-      status: "completed",
-      processed_at: now.toISOString(),
-      processed_order_id: order.id,
-    })
-    .eq("id", item.id);
-
-  console.info(`Processed legacy order ${order.id}`);
 }
 
 async function notifyAdmins(supabase: any, results: any) {

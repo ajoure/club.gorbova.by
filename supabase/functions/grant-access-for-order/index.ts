@@ -21,6 +21,8 @@ import {
   enforceBranchPolicy,
 } from './caller_auth.ts';
 import { resolveStaleAccessPolicy } from './stale_access_policy.ts';
+import { resolveGrantPaymentWindow, accessDateReachesWindow } from './payment_window.ts';
+import { parseExactAccessTarget, exactAccessTargetError, exactAccessOrderAllowed } from './exact_access_target.ts';
 import { evaluateGrantEligibility, type Branch as EligibilityBranch, type CallerType as EligibilityCallerType } from '../_shared/grant-eligibility.ts';
 import { syncConfiguredClubBonusCascade } from '../_shared/club-bonus-entitlement-source.ts';
 
@@ -29,7 +31,7 @@ import { syncConfiguredClubBonusCascade } from '../_shared/club-bonus-entitlemen
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 // PATCH: Staff emails - NEVER modify subscriptions for these users
@@ -262,10 +264,16 @@ Deno.serve(async (req) => {
         { status: policy.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+    // Authenticated, read-only capability handshake. An old deployment returns
+    // orderId-required on GET, so the exact UI can refuse POST without a write.
+    if (req.method === 'GET') {
+      return new Response(JSON.stringify({ capabilities: { exact_existing_access_v1: true } }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
     // Audit actor derived from resolved caller. Body-provided source/context
     // are recorded separately as `claimed_*` — never treated as identity.
     const auditActor = {
-      actor_type: caller.actorType,
+      actor_type: caller.actorType === "admin" ? "user" : caller.actorType,
       actor_user_id: caller.actorUserId,
       actor_label: caller.actorLabel,
     };
@@ -294,6 +302,24 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    let exactAccessTarget: ReturnType<typeof parseExactAccessTarget>;
+    try {
+      exactAccessTarget = parseExactAccessTarget({
+        expectedExistingSubscriptionId: _body.expectedExistingSubscriptionId,
+        customAccessEndAt,
+        extendFromCurrent,
+      }, new Date());
+      if (exactAccessTarget && branch !== 'standard') throw new Error('exact_access_invalid_branch');
+    } catch {
+      return new Response(JSON.stringify({ success: false, error: 'exact_access_invalid_request' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    const exactTargetConflict = (subscription: Parameters<typeof exactAccessTargetError>[1]) => {
+      const error = exactAccessTargetError(exactAccessTarget, subscription, { productId, tariffId: order.tariff_id });
+      return error ? new Response(JSON.stringify({ success: false, error }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }) : null;
+    };
 
     // PATCH H2.1b-i: 3DS finalize context delegates to extended writer.
     // Backward-compat: only activated when caller passes `context: '3ds_finalize'`.
@@ -375,7 +401,7 @@ Deno.serve(async (req) => {
       .from("orders_v2")
       .select(`
         *,
-        product:products_v2(id, name, code),
+        product:products_v2(id, name, code, entitlement_mode),
         tariff:tariffs(id, name, access_days)
       `)
       .eq("id", orderId)
@@ -403,6 +429,10 @@ Deno.serve(async (req) => {
     const userId = order.user_id;
     const profileId = order.profile_id;
     const productId = order.product_id;
+    if (exactAccessTarget && !exactAccessOrderAllowed(order.status, (order.product as any)?.entitlement_mode)) {
+      return new Response(JSON.stringify({ success: false, error: 'exact_access_order_not_eligible' }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     // ── PATCH-GRANT-ACCESS-ELIGIBILITY-V1 / ELIG-C1-SHADOW ─────────────
     // Non-blocking shadow eligibility evaluation. READ-ONLY.
@@ -438,6 +468,10 @@ Deno.serve(async (req) => {
       Number(order.paid_amount || 0) === 0 &&
       orderMetaForNcGuard.source === 'trial_no_card';
 
+    if (exactAccessTarget && isNoCardTrial) {
+      return new Response(JSON.stringify({ success: false, error: 'exact_access_order_not_eligible' }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     // Admin manual access edit: exact date correction path.
     // This is intentionally before the idempotency replay guard, because editing an
@@ -570,7 +604,7 @@ Deno.serve(async (req) => {
 
       await supabase.from("audit_logs").insert({
         action: "admin.manual_access_date_edit",
-        actor_type: "admin",
+        actor_type: "user",
         actor_user_id: actor.id,
         actor_label: actor.email || "admin",
         target_user_id: userId,
@@ -608,6 +642,43 @@ Deno.serve(async (req) => {
       );
     }
 
+    const tariffId = order.tariff_id;
+    const product = order.product as any;
+    const tariff = order.tariff as any;
+    const productCode = product?.code || (order.purchase_snapshot as any)?.product_code || "general";
+    const now = new Date();
+    const isClubProduct = await isCalendarMonthProduct(supabase, productId);
+    const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
+
+    // Resolve once, before replay detection. orders_v2 has no paid_at column.
+    let confirmedPaidAt: string | null = null;
+    if (!customAccessStartAt) {
+      const { data: firstSuccessfulPayment, error: paymentWindowError } = await supabase
+        .from("payments_v2")
+        .select("paid_at")
+        .eq("order_id", orderId)
+        .eq("status", "succeeded")
+        .not("paid_at", "is", null)
+        .order("paid_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (paymentWindowError) {
+        return new Response(JSON.stringify({ success: false, error: "access_window_payment_lookup_failed" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      confirmedPaidAt = firstSuccessfulPayment?.paid_at ?? null;
+    }
+    let paymentWindow: ReturnType<typeof resolveGrantPaymentWindow>;
+    try {
+      paymentWindow = resolveGrantPaymentWindow({
+        paidAt: confirmedPaidAt, customStart: customAccessStartAt, customEnd: customAccessEndAt,
+        durationDays, calendarMonth: isClubProduct && !customAccessDays,
+      });
+    } catch {
+      return new Response(JSON.stringify({ success: false, error: "invalid_access_window" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── IDEMPOTENCY HARD GUARD ──────────────────────────────────────────
     // If this order already fulfilled (both entitlement AND subscription exist
     // for the CORRECT product_id), return strict no-op.
@@ -621,17 +692,17 @@ Deno.serve(async (req) => {
 
     const { data: existingSubByOrder } = await supabase
       .from("subscriptions_v2")
-      .select("id, status, access_end_at, product_id")
+        .select("id, status, access_end_at, product_id, tariff_id")
       .eq("order_id", orderId)
       .eq("user_id", userId)
       .maybeSingle();
 
     // Also check if any subscription for this user+product was EXTENDED by this orderId
-    let existingSubExtendedByOrder: { id: string; status: string; access_end_at: string | null; product_id: string } | null = null;
+    let existingSubExtendedByOrder: { id: string; status: string; access_end_at: string | null; product_id: string; tariff_id: string | null } | null = null;
     if (!existingSubByOrder && productId) {
       const { data: extendedSubs } = await supabase
         .from("subscriptions_v2")
-        .select("id, status, access_end_at, product_id, meta")
+        .select("id, status, access_end_at, product_id, tariff_id, meta")
         .eq("user_id", userId)
         .eq("product_id", productId);
 
@@ -659,27 +730,13 @@ Deno.serve(async (req) => {
     // entitlement/subscription dates actually reach `expected_min_end`. If
     // either side is stale (more than 12h short of expected), do NOT skip —
     // fall through to the normal extend-flow so GREATEST can recover the date.
-    const tariffForSkipGuard = (order as any).tariff as { access_days?: number } | null;
-    const accessDaysForSkipGuard = customAccessDays ?? tariffForSkipGuard?.access_days ?? 30;
-    const paidAtForSkipGuard = (order as any).paid_at
-      ? new Date((order as any).paid_at)
-      : new Date();
-    const expectedMinEndForSkipGuard = new Date(
-      paidAtForSkipGuard.getTime() + accessDaysForSkipGuard * 24 * 60 * 60 * 1000
-    );
-    const skipGuardThresholdMs = expectedMinEndForSkipGuard.getTime() - 12 * 60 * 60 * 1000;
-
-    const entitlementDateOk = !!(
-      existingEntByOrder?.expires_at &&
-      new Date(existingEntByOrder.expires_at).getTime() >= skipGuardThresholdMs
-    );
-    const subscriptionDateOk = !!(
-      resolvedSubscription?.access_end_at &&
-      new Date(resolvedSubscription.access_end_at).getTime() >= skipGuardThresholdMs
-    );
+    const expectedMinEndForSkipGuard = paymentWindow.expectedEnd;
+    const entitlementDateOk = accessDateReachesWindow(existingEntByOrder?.expires_at, expectedMinEndForSkipGuard, !!customAccessEndAt);
+    const subscriptionDateOk = accessDateReachesWindow(resolvedSubscription?.access_end_at, expectedMinEndForSkipGuard, !!customAccessEndAt);
 
     const datesAreStale = (entitlementMatchesProduct && !entitlementDateOk)
-      || ((subscriptionMatchesOrder || subscriptionExtendedByOrder) && !subscriptionDateOk);
+      || ((subscriptionMatchesOrder || subscriptionExtendedByOrder) && !subscriptionDateOk)
+      || (!!exactAccessTarget && (existingEntByOrder?.status !== 'active' || resolvedSubscription?.status !== 'active'));
 
     if (entitlementMatchesProduct && (subscriptionMatchesOrder || subscriptionExtendedByOrder) && datesAreStale) {
       // PATCH 12.2: do NOT skip — write audit and fall through to extend-flow.
@@ -690,9 +747,9 @@ Deno.serve(async (req) => {
         meta: {
           order_id: orderId,
           product_id: productId,
-          paid_at: paidAtForSkipGuard.toISOString(),
-          expected_min_end: expectedMinEndForSkipGuard.toISOString(),
-          access_days: accessDaysForSkipGuard,
+          paid_at: paymentWindow.start?.toISOString() ?? null,
+          expected_min_end: expectedMinEndForSkipGuard?.toISOString() ?? null,
+          access_days: durationDays,
           existing_entitlement_id: existingEntByOrder?.id || null,
           existing_entitlement_expires_at: existingEntByOrder?.expires_at || null,
           existing_subscription_id: resolvedSubscription?.id || null,
@@ -704,9 +761,11 @@ Deno.serve(async (req) => {
           patch: "patch-12.2-skip-stale-guard",
         },
       });
-      console.log(`[grant-access] PATCH 12.2: skip_already_fulfilled BLOCKED for order ${orderId} — existing dates stale vs expected_min_end=${expectedMinEndForSkipGuard.toISOString()}. Falling through to extend-flow.`);
+      console.log(`[grant-access] skip_already_fulfilled BLOCKED: access is short of the confirmed payment window.`);
       // intentional fall-through: do NOT return, continue to normal flow below.
     } else if (entitlementMatchesProduct && (subscriptionMatchesOrder || subscriptionExtendedByOrder)) {
+      const exactConflict = exactTargetConflict(resolvedSubscription);
+      if (exactConflict) return exactConflict;
       const guardSource = subscriptionMatchesOrder ? "order_id" : "extended_by_orders";
       console.log(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} already fulfilled (product ${productId}, match via ${guardSource}). Running secondary product_access sync to ensure bonus grants are present.`);
 
@@ -776,7 +835,7 @@ Deno.serve(async (req) => {
           }, {}),
           // PATCH 12.2 telemetry: confirms skip was allowed (dates fresh).
           skip_guard_passed: true,
-          expected_min_end: expectedMinEndForSkipGuard.toISOString(),
+          expected_min_end: expectedMinEndForSkipGuard?.toISOString() ?? null,
           club_bonus_source_status: clubBonusSource.status,
           club_bonus_access_rule_id: clubBonusSource.access_rule_id || null,
           club_bonus_product_access_count: clubBonusSource.product_access.length,
@@ -816,62 +875,13 @@ Deno.serve(async (req) => {
       console.warn(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} has entitlement ${existingEntByOrder.id} but for WRONG product ${existingEntByOrder.product_id} (expected ${productId}). Proceeding to collision handling.`);
     }
     // ── END IDEMPOTENCY GUARD ───────────────────────────────────────────
-    const tariffId = order.tariff_id;
-    const product = order.product as any;
-    const tariff = order.tariff as any;
-    
-    const productCode = product?.code || (order.purchase_snapshot as any)?.product_code || "general";
-    
-    // Calculate access period - use custom days if provided, otherwise from tariff
-    // Phase 1: calendar month rule from products_v2.meta instead of hardcoded UUID
-    const now = new Date();
-    const isClubProduct = await isCalendarMonthProduct(supabase, productId);
-    const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
-    
-    // Determine base start date:
-    // 1. A deliberate admin correction may supply an exact start date.
-    // 2. Otherwise a commercial access window begins at the first confirmed
-    //    successful payment, never when a draft/deal happened to be created.
-    //    The payment timestamp belongs to payments_v2, not orders_v2.
-    // 3. Missing payment evidence is an incomplete payment fact, not
-    //    permission to invent a fresh window from "now" or the deal date.
-    let baseStartDate: Date;
-    if (customAccessStartAt) {
-      baseStartDate = new Date(customAccessStartAt);
-      console.log(`Using custom access start date: ${customAccessStartAt}`);
-    } else {
-      const { data: firstSuccessfulPayment, error: paymentWindowError } = await supabase
-        .from("payments_v2")
-        .select("paid_at")
-        .eq("order_id", orderId)
-        .eq("status", "succeeded")
-        .not("paid_at", "is", null)
-        .order("paid_at", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
-      if (paymentWindowError) {
-        console.error("[grant-access-for-order] payment-window lookup failed", paymentWindowError);
-        return new Response(
-          JSON.stringify({ success: false, error: "access_window_payment_lookup_failed" }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-
-      const paidAt = firstSuccessfulPayment?.paid_at;
-      if (paidAt && !Number.isNaN(new Date(paidAt).getTime())) {
-        baseStartDate = new Date(paidAt);
-        console.log(`Using first successful payment as base: ${paidAt}`);
-      } else {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "access_window_requires_paid_at",
-            message: "Невозможно определить срок доступа: у оплаченного заказа отсутствует корректная дата оплаты.",
-          }),
-          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
+    const baseStartDate = paymentWindow.start;
+    if (!baseStartDate) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: "access_window_requires_paid_at",
+        message: "Невозможно определить срок доступа: у оплаченного заказа отсутствует корректная дата оплаты.",
+      }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
     
     // Check for existing active subscription for this product to extend from
@@ -893,6 +903,10 @@ Deno.serve(async (req) => {
       });
 
       if (providerLinked.outcome === 'manual_review_provider_linkage_conflict') {
+        if (exactAccessTarget) {
+          return new Response(JSON.stringify({ success: false, error: 'exact_access_provider_linkage_conflict' }),
+            { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
         // STOP. No new subv2. Audit + early return (HTTP 200, skipped).
         await supabase.from('audit_logs').insert({
           action: 'grant-access-for-order.manual_review_provider_linkage_conflict',
@@ -945,6 +959,8 @@ Deno.serve(async (req) => {
       }
 
       if (providerLinked.outcome === 'extend') {
+        const exactConflict = exactTargetConflict(providerLinked.subscription);
+        if (exactConflict) return exactConflict;
         // Use the pre-created subv2 as the extend target. accessStartAt stays
         // at baseStartDate (order.paid_at) because past_due has no access_end_at.
         existingProductSub = {
@@ -985,17 +1001,28 @@ Deno.serve(async (req) => {
     if (extendFromCurrent && !existingProductSub && !isNoCardTrial) {
 
       // PATCH: Added auto_renew to select for fallback guard in extend branch
-      const { data: activeSub } = await supabase
+      let candidateQuery = supabase
         .from("subscriptions_v2")
         .select("id, access_end_at, status, tariff_id, product_id, auto_renew")
         .eq("user_id", userId)
-        .eq("product_id", productId)
-        .eq("status", "active")
-        .order("access_end_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .eq("product_id", productId);
+      if (exactAccessTarget) {
+        // The administrator selected an exact existing chain, not the latest
+        // active row of any tariff. Still validate ownership/scope below.
+        candidateQuery = candidateQuery.eq('id', exactAccessTarget.subscriptionId).in('status', ['active', 'expired']);
+      } else {
+        candidateQuery = candidateQuery.eq('status', 'active').order('access_end_at', { ascending: false }).limit(1);
+      }
+      const { data: activeSub, error: candidateError } = await candidateQuery.maybeSingle();
+      if (exactAccessTarget && candidateError) {
+        return new Response(JSON.stringify({ success: false, error: 'exact_access_subscription_lookup_failed' }),
+          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
 
-      if (activeSub?.access_end_at && new Date(activeSub.access_end_at) > now) {
+      const exactCandidateConflict = exactTargetConflict(activeSub);
+      if (exactCandidateConflict) return exactCandidateConflict;
+
+      if (activeSub?.access_end_at && (exactAccessTarget || new Date(activeSub.access_end_at) > now)) {
         // ── TARIFF + bePaid SBS MATCH GUARD ─────────────────────────────
         // Extend существующей подписки разрешён ТОЛЬКО при совпадении tariff_id.
         // Дополнительно (PATCH DEAL-LINKAGE-ROOT-FIXES-2026-05): для recurring
@@ -1182,6 +1209,11 @@ Deno.serve(async (req) => {
       }
     }
     
+    // The exact UI repair must never fall back to CREATE or select a different
+    // subscription after the administrator's preview. Check before any grant.
+    const exactConflict = exactTargetConflict(existingProductSub);
+    if (exactConflict) return exactConflict;
+
     // Phase 1: Calculate access_end_at - calendar month from config, days for others
     let accessEndAt: Date;
     if (customAccessEndAt) {
@@ -1741,7 +1773,7 @@ Deno.serve(async (req) => {
         decision: 'snapshot_already_present',
       };
 
-      if (!extendRecurringSnapshot) {
+      if (!exactAccessTarget && !extendRecurringSnapshot) {
         const resolved = await resolveRecurringFromOrderOrTariff(
           supabase,
           order.offer_id,
@@ -1800,10 +1832,12 @@ Deno.serve(async (req) => {
           last_extension_at: now.toISOString(),
           last_extension_days: durationDays,
           // PATCH 14: Preserve recurring_amount from order
-          recurring_amount: existingMeta.recurring_amount || order.final_price,
-          recurring_currency: existingMeta.recurring_currency || order.currency || 'BYN',
-          // PATCH: Ensure recurring_snapshot exists
-          recurring_snapshot: extendRecurringSnapshot,
+          // An exact paid-window repair does not reconfigure billing terms.
+          ...(exactAccessTarget ? { last_extension_mode: 'exact_existing' } : {
+            recurring_amount: existingMeta.recurring_amount || order.final_price,
+            recurring_currency: existingMeta.recurring_currency || order.currency || 'BYN',
+            recurring_snapshot: extendRecurringSnapshot,
+          }),
         },
       };
 
@@ -1813,7 +1847,7 @@ Deno.serve(async (req) => {
       }
 
       // Attach payment method if not present — auto_renew from SoT, not hardcoded
-      if (!fullExistingSub?.payment_method_id && hasPaymentMethod) {
+      if (!exactAccessTarget && !fullExistingSub?.payment_method_id && hasPaymentMethod) {
         updateData.payment_method_id = userPaymentMethod.id;
         // PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX: only enable auto_renew if subscription flow
         updateData.auto_renew = shouldAutoRenew;

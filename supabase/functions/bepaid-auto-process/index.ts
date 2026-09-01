@@ -1,3 +1,4 @@
+import { queueProviderSubscriptionId } from "../_shared/bepaid-canonical-recovery.ts";
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
@@ -290,9 +291,10 @@ Deno.serve(async (req) => {
       const staleProcessingCutoff = new Date(
         Date.now() - 2 * 60 * 60 * 1000,
       ).toISOString();
+      const queueNow = new Date().toISOString();
       query = query
         .or(
-          `status.in.(pending,error),and(status.eq.processing,updated_at.lt.${staleProcessingCutoff})`,
+          `and(status.in.(pending,error),or(next_retry_at.is.null,next_retry_at.lte.${queueNow})),and(status.eq.processing,updated_at.lt.${staleProcessingCutoff})`,
         )
         .is('matched_order_id', null) // Skip already linked payments
         .lt('attempts', 5)
@@ -331,6 +333,23 @@ Deno.serve(async (req) => {
 
     for (const item of queueItems || []) {
       try {
+        // Recurring payments must resolve the provider-linked canonical graph
+        // before any legacy/fuzzy profile or order matching below.
+        if (queueProviderSubscriptionId(item) || item.tracking_id?.startsWith("subv2:")) {
+          const { data: recovered, error } = await supabase.functions.invoke("payments-reconcile", {
+            body: { queueItemId: item.id, expectedUpdatedAt: item.updated_at, dryRun, recordPreflightFailure: !queueItemId },
+          });
+          if (error || recovered?.success !== true) {
+            results.needs_review++;
+            results.errors.push(item.id + ": canonical_recurring_recovery_failed");
+          } else {
+            results.orders_reconciled += recovered.results?.orders_reconciled || 0;
+            results.already_materialized += recovered.results?.already_materialized || 0;
+            results.skipped += recovered.claim_conflicts || 0;
+          }
+          continue;
+        }
+
         console.log(`[BEPAID-AUTO-PROCESS] Processing item ${item.id}, bepaid_uid=${item.bepaid_uid}, transaction_type=${item.transaction_type}, description=${item.description}`);
 
         // Skip if already has matched order or is manually linked

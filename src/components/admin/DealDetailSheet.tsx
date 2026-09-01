@@ -74,6 +74,7 @@ import { cn } from "@/lib/utils";
 import { EditDealDialog } from "./EditDealDialog";
 import { LinkPaymentDialog } from "./payments/LinkPaymentDialog";
 import { GrantAccessFromDealDialog } from "./GrantAccessFromDealDialog";
+import { loadDealAccessSubscription } from "@/lib/dealAccessSubscription";
 import { DealPayerDocumentsCard } from "./DealPayerDocumentsCard";
 import { CrmTasksSection } from "./tasks/CrmTasksSection";
 import { CallsHistorySection } from "./calls/CallsHistorySection";
@@ -139,7 +140,7 @@ const getActionLabel = (action: string): string => {
 
 export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }: DealDetailSheetProps) {
   const queryClient = useQueryClient();
-  const { hasPermission } = usePermissions();
+  const { hasPermission, isAdmin } = usePermissions();
   const { data: staff = [] } = useStaffOptions();
   const canReassignSales = hasPermission("deals.reassign");
   const navigate = useNavigate();
@@ -150,6 +151,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const [fetchingDocs, setFetchingDocs] = useState(false);
   const [linkPaymentDialogOpen, setLinkPaymentDialogOpen] = useState(false);
   const [grantAccessDialogOpen, setGrantAccessDialogOpen] = useState(false);
+  const [grantAccessExactMode, setGrantAccessExactMode] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("overview");
   const [composeEmailOpen, setComposeEmailOpen] = useState(false);
   const [responsibleId, setResponsibleId] = useState("__unassigned__");
@@ -327,17 +329,11 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   });
 
   // Fetch subscription for this deal
-  const { data: subscription } = useQuery({
+  const { data: subscription, isError: subscriptionLookupError, isLoading: subscriptionLookupLoading } = useQuery({
     queryKey: ["deal-subscription", deal?.id],
     queryFn: async () => {
       if (!deal?.id) return null;
-      const { data, error } = await supabase
-        .from("subscriptions_v2")
-        .select("*")
-        .eq("order_id", deal.id)
-        .maybeSingle();
-      if (error) throw error;
-      return data;
+      return loadDealAccessSubscription(supabase, deal);
     },
     enabled: !!deal?.id && open,
     staleTime: 30000,
@@ -1456,18 +1452,32 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                   </div>
                 ) : (
                   <div className="text-center py-4 space-y-3">
-                    <p className="text-muted-foreground text-sm">Подписка не создана</p>
-                    {deal.status === "paid" && deal.user_id && (
+                    <p className="text-muted-foreground text-sm">{subscriptionLookupError
+                      ? "Не удалось однозначно определить подписку. Обновите данные сделки."
+                      : subscriptionLookupLoading ? "Загрузка подписки…" : "Подписка не создана"}</p>
+                    {!subscriptionLookupError && !subscriptionLookupLoading && isAdmin() && deal.status === "paid" && deal.user_id && (
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setGrantAccessDialogOpen(true)}
+                        onClick={() => {
+                          setGrantAccessExactMode(false);
+                          setGrantAccessDialogOpen(true);
+                        }}
                       >
                         <Shield className="w-4 h-4 mr-2" />
                         Выдать доступ
                       </Button>
                     )}
                   </div>
+                )}
+                {subscription && !subscriptionLookupError && isAdmin() && deal.status === "paid" && deal.user_id && (
+                  <Button variant="outline" size="sm" className="mt-3" onClick={() => {
+                    setGrantAccessExactMode(true);
+                    setGrantAccessDialogOpen(true);
+                  }}>
+                    <Shield className="mr-2 h-4 w-4" />
+                    Исправить срок доступа
+                  </Button>
                 )}
               </CardContent>
             </Card>
@@ -1653,6 +1663,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       {/* Grant Access Dialog */}
       <GrantAccessFromDealDialog
         open={grantAccessDialogOpen}
+        initialExactEnd={grantAccessExactMode}
         onOpenChange={setGrantAccessDialogOpen}
         deal={{
           id: deal.id,

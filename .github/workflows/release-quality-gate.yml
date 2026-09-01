@@ -32,6 +32,8 @@ jobs:
         run: npm run verify:edge-functions
       - name: Unit and integration contracts
         run: npx vitest run
+      - name: Browser application types
+        run: npx tsc -p tsconfig.app.json --noEmit
       - name: Production build
         run: npm run build
 

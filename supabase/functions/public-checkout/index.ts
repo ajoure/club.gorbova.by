@@ -11,6 +11,8 @@ import { resolveProviderChoice, isValidProviderChoice, type CustomerProvider } f
 import { materializeComposableOrderGroup } from '../_shared/materialize-composable-order-group.ts';
 import { buildFiniteInstallmentOrderMeta } from './installment-meta.ts';
 import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
+import { createExistingInstallmentCheckout } from '../_shared/existing-installment-checkout.ts';
+import { RepaymentPlanError } from '../_shared/installment-repayment-plan.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -34,7 +36,7 @@ Deno.serve(async (req) => {
       const { data: link, error: linkErr } = await supabase
         .from('payment_links')
         .select(`
-          id, url_token, user_id, amount, currency, payment_type, description, status,
+          id, url_token, user_id, product_id, tariff_id, amount, currency, payment_type, description, status,
           max_uses, current_uses, expires_at, meta, provider, provider_mode, account_code, offer_id,
           products_v2!payment_links_product_id_fkey ( id, name, description, category ),
           tariffs!payment_links_tariff_id_fkey ( id, name, code, access_days )
@@ -67,6 +69,7 @@ Deno.serve(async (req) => {
       const tariff = (link as any).tariffs;
       const linkMetaGet = (link as any).meta || {};
       const installment = linkMetaGet.installment ?? null;
+      const repayment = linkMetaGet.repayment ?? null;
       const requiresAuth = !link.user_id && linkMetaGet.auth_policy === 'required';
 
       // Phase 5-C: surface allowed providers + provider_mode для UI выбора.
@@ -110,6 +113,16 @@ Deno.serve(async (req) => {
         link_user_id: link.user_id,
         // Stage L: installment summary (read-only для UI, срок зафиксирован админом).
         installment,
+        repayment: repayment ? {
+          existing_installment: true,
+          payment_type: repayment.payment_type,
+          paid_minor: repayment.paid_minor,
+          remaining_minor: repayment.remaining_minor,
+          schedule_minor: repayment.schedule_minor,
+          interval_days: repayment.interval_days,
+          preserves_purchase: true,
+          changes_access: false,
+        } : null,
         // Phase 4.1 — provider indicator (UI badge / saved-card gating).
         provider: (link as any).provider ?? 'bepaid',
         account_code: (link as any).account_code ?? null,
@@ -162,6 +175,15 @@ Deno.serve(async (req) => {
 
     if (link.max_uses && link.current_uses >= link.max_uses) {
       return errorResponse('Payment link usage limit reached', 410);
+    }
+
+    if ((link.meta as Record<string, any>)?.repayment) {
+      const repaymentResult = await createExistingInstallmentCheckout({
+        supabase,
+        link,
+        origin: resolvePublicReturnOrigin(req.headers.get('origin')),
+      });
+      return jsonResponse(repaymentResult);
     }
 
     // ── Phase 5-C — Provider choice resolution ──
@@ -458,6 +480,7 @@ Deno.serve(async (req) => {
 
     let orderGroupId: string | null = null;
     if (composableCheckout && Array.isArray(composableCheckout.items) && composableCheckout.items.length > 0) {
+      if (!result.order_id) return errorResponse('composable_primary_order_missing', 500);
       try {
         orderGroupId = await materializeComposableOrderGroup(supabase, {
           primaryOrderId: result.order_id,
@@ -499,6 +522,12 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
+    if (error instanceof RepaymentPlanError) {
+      const retryable = ['repayment_checkout_in_progress', 'repayment_provider_transport_error'].includes(error.code);
+      return jsonResponse({ success: false, error_code: error.code,
+        error: retryable ? 'Ссылка создаётся. Повторите попытку через несколько секунд.' : 'Оплата по этой рассрочке временно недоступна. Обратитесь к менеджеру.' },
+      retryable ? 409 : 422);
+    }
     console.error('[public-checkout] Unexpected error:', error);
     return errorResponse('Internal server error', 500);
   }

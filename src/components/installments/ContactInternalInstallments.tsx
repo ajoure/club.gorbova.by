@@ -12,6 +12,7 @@ import {
   useContactInternalInstallments as useContactInternalInstallmentsHook,
   type UiPlan,
 } from "@/hooks/useContactInstallmentsData";
+import { ExistingInstallmentRepaymentDialog } from "./ExistingInstallmentRepaymentDialog";
 
 /**
  * Внутренние рассрочки контакта.
@@ -26,6 +27,9 @@ import {
 interface ContactInternalInstallmentsProps {
   profileId?: string | null;
   userId?: string | null;
+  userName?: string | null;
+  userEmail?: string | null;
+  telegramUserId?: number | null;
   onOpenDeal?: (orderId: string) => void;
   /** Preloaded plans (wrapper-driven). When provided, `isLoading` prop drives skeleton. */
   plans?: UiPlan[];
@@ -70,6 +74,9 @@ const STATUS_META: Record<
 export function ContactInternalInstallments({
   profileId,
   userId,
+  userName,
+  userEmail,
+  telegramUserId,
   onOpenDeal,
   plans: plansProp,
   isLoading: isLoadingProp,
@@ -204,19 +211,28 @@ export function ContactInternalInstallments({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-2 border-t">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
                 <span className="text-xs font-mono text-muted-foreground truncate">
                   {plan.orderNumber ?? plan.orderId.slice(0, 8)}
                 </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5"
-                  onClick={() => handleOpen(plan.orderId)}
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Открыть сделку
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <ExistingInstallmentRepaymentDialog
+                    plan={plan}
+                    userId={userId}
+                    userName={userName}
+                    userEmail={userEmail}
+                    telegramUserId={telegramUserId}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => handleOpen(plan.orderId)}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Открыть сделку
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

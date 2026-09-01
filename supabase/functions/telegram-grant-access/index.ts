@@ -5,6 +5,7 @@ import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-execu
 import { greetPrefix } from '../_shared/recipient-name.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 import { requestHasServiceRoleKey } from '../_shared/service-request-auth.ts';
+import { syncReplayGrant } from './sync-replay-grant.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -623,8 +624,16 @@ Deno.serve(async (req) => {
       if (!is_manual) {
         const { resolveEffectiveClubAccess, effectiveEndAtIso } = await import('../_shared/resolve-effective-access.ts');
         const accessSnapshot = await resolveEffectiveClubAccess(supabase, user_id, club.id);
-        if (accessSnapshot.allSources.length > 0) {
-          activeUntil = effectiveEndAtIso(accessSnapshot);
+        if (accessSnapshot.isUnlimited) {
+          activeUntil = null;
+        } else if (accessSnapshot.allSources.length > 0) {
+          const effectiveUntil = effectiveEndAtIso(accessSnapshot);
+          const requestedEnd = activeUntil ? Date.parse(activeUntil) : Number.NEGATIVE_INFINITY;
+          const effectiveEnd = effectiveUntil ? Date.parse(effectiveUntil) : Number.NEGATIVE_INFINITY;
+          if (Number.isNaN(requestedEnd) || Number.isNaN(effectiveEnd)) {
+            throw new Error('telegram_effective_access_invalid_end');
+          }
+          activeUntil = requestedEnd >= effectiveEnd ? activeUntil : effectiveUntil;
         }
         console.log(`[grant-access] Resolved effectiveEndAt for club ${club.id}: ${activeUntil}, sources: ${accessSnapshot.allSources.length}, unlimited: ${accessSnapshot.isUnlimited}`);
       }
@@ -653,7 +662,7 @@ Deno.serve(async (req) => {
       if (!is_manual && canonicalBusinessRef) {
         const dmIdempotencyKey = `access_granted_dm:${user_id}:${club.id}:${canonicalBusinessRef}`;
         try {
-          const { data: existingDm } = await supabase
+          const { data: existingDm, error: existingDmError } = await supabase
             .from('telegram_messages')
             .select('id, message_id, created_at')
             .eq('user_id', user_id)
@@ -661,6 +670,7 @@ Deno.serve(async (req) => {
             .filter('meta->>idempotency_key', 'eq', dmIdempotencyKey)
             .limit(1)
             .maybeSingle();
+          if (existingDmError) throw new Error('telegram_duplicate_dm_lookup_failed');
 
           // Fallback for legacy rows without idempotency_key — match by
           // (user, club, event=access_granted_dm, source_id=any of canonical refs).
@@ -671,7 +681,7 @@ Deno.serve(async (req) => {
               source_id,
             ].filter(Boolean) as string[]));
             if (candidateRefs.length > 0) {
-              const { data: legacy } = await supabase
+              const { data: legacy, error: legacyError } = await supabase
                 .from('telegram_messages')
                 .select('id, message_id, meta, created_at')
                 .eq('user_id', user_id)
@@ -681,12 +691,25 @@ Deno.serve(async (req) => {
                 .in('meta->>source_id', candidateRefs)
                 .order('created_at', { ascending: false })
                 .limit(1);
+              if (legacyError) throw new Error('telegram_duplicate_dm_legacy_lookup_failed');
               if (legacy && legacy.length > 0) legacyMatch = legacy[0] as any;
             }
           }
 
           const dup = existingDm || legacyMatch;
           if (dup && !projectionNeedsRestore) {
+            // DM idempotency must not freeze the second access projection at
+            // its previous paid window. Preserve its identity, meta and state.
+            await syncReplayGrant(supabase, {
+              userId: user_id,
+              clubId: club.id,
+              sourceId: source_id,
+              source: source || 'system',
+              grantedBy: admin_id || null,
+              accessRuleId: access_rule_id || null,
+              comment: comment || null,
+              activeUntil,
+            });
             // Even when the DM is a duplicate, converge the access window. Do
             // not overwrite healthy active/pending membership states.
             const { error: projectionUpdateError } = await supabase
@@ -750,7 +773,9 @@ Deno.serve(async (req) => {
             console.log(`[telegram-grant-access] Duplicate DM exists, but access projection requires restore: user=${user_id} club=${club.id}`);
           }
         } catch (dupErr) {
-          console.warn('[telegram-grant-access] duplicate-DM lookup failed (continuing):', dupErr);
+          // Fail closed: a lookup/sync failure must not fall through to unban,
+          // createInviteLink or sendMessage and resend an already delivered DM.
+          throw dupErr;
         }
       }
 

@@ -1,9 +1,16 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { authorizeQueueCronRequest } from "./auth.ts";
+import {
+  isStaleProcessingItem,
+  normalizeQueueRunOptions,
+  staleProcessingCutoff,
+  staleTerminalReason,
+} from "../_shared/bepaid-queue-policy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret, x-internal-key",
 };
 
 /**
@@ -29,14 +36,6 @@ const SOURCE_PRIORITY: Record<string, number> = {
   'file_import': 99,  // Lowest priority - excluded by default
 };
 
-// Calculate backoff delay for retry
-function calculateBackoffDelay(attempts: number): number {
-  // Exponential backoff: 5min, 15min, 45min, 2h, 6h
-  const delays = [5, 15, 45, 120, 360];
-  const idx = Math.min(attempts, delays.length - 1);
-  return delays[idx] * 60 * 1000;
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -45,27 +44,48 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const cronSecret = Deno.env.get("CRON_SECRET") || "";
+    const authorization = authorizeQueueCronRequest(req, {
+      serviceRoleKey: supabaseServiceKey,
+      cronSecret,
+    });
+    if (!authorization.ok) {
+      return new Response(
+        JSON.stringify({ success: false, error: authorization.error }),
+        {
+          status: authorization.status,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+
     const body = await req.json().catch(() => ({}));
-    const queueItemId = typeof body.queueItemId === "string" ? body.queueItemId : null;
-    const maxAttempts = body.maxAttempts || 5;
-    const batchSize = body.batchSize || 20;
-    const excludeFileImport = body.excludeFileImport !== false; // Default: exclude file_import
-    const excludeCancelled = body.excludeCancelled !== false; // Default: exclude soft-cancelled items
+    const {
+      dryRun,
+      queueItemId,
+      maxAttempts,
+      batchSize,
+      excludeFileImport,
+      excludeCancelled,
+    } = normalizeQueueRunOptions(body);
 
     console.log(`[bepaid-queue-cron] Starting queue processing, batch size: ${batchSize}, max attempts: ${maxAttempts}, excludeFileImport: ${excludeFileImport}`);
 
     const now = new Date().toISOString();
+    const processingCutoff = staleProcessingCutoff(new Date(now));
 
-    // Get pending items with proper retry logic
+    // Get retryable items with proper retry logic
     // Only get items where:
-    // - status is pending or error (NOT cancelled!)
-    // - attempts < maxAttempts
-    // - next_retry_at is null OR <= now (ready for retry)
+    // - status is pending/error and retry is due, OR processing is stale
+    // - attempts < maxAttempts for ordinary retries; exhausted stale claims
+    //   must still leave processing and become an explicit terminal error.
+    // Fresh processing rows remain invisible to overlapping workers.
     let query = supabase
       .from("payment_reconcile_queue")
-      .select("id, bepaid_uid, customer_email, amount, currency, attempts, status, next_retry_at, last_error, source, created_at")
+      .select("id, bepaid_uid, customer_email, amount, currency, attempts, status, next_retry_at, last_error, source, created_at, updated_at, last_attempt_at")
       .limit(queueItemId ? 1 : batchSize * 3);
 
     if (queueItemId) {
@@ -74,14 +94,15 @@ serve(async (req) => {
       query = query.eq("id", queueItemId);
     } else {
       query = query
-        .in("status", ["pending", "error"])
-        .lt("attempts", maxAttempts)
-        .or(`next_retry_at.is.null,next_retry_at.lte.${now}`);
+        .or(
+          `and(status.in.(pending,error),attempts.lt.${maxAttempts},or(next_retry_at.is.null,next_retry_at.lte.${now})),and(status.eq.processing,updated_at.lt.${processingCutoff})`,
+        );
     }
     
     // Exclude file_import by default - these need manual cleanup
     if (excludeFileImport && !queueItemId) {
-      query = query.neq("source", "file_import");
+      // Abandoned imports are not replayed, but must not stay processing forever.
+      query = query.or("source.neq.file_import,status.eq.processing");
     }
     
     // Exclude soft-cancelled items (those with meta.soft_cancelled = true)
@@ -106,6 +127,7 @@ serve(async (req) => {
     let filteredItems = allPendingItems;
     if (excludeCancelled) {
       filteredItems = allPendingItems.filter(item => {
+        if (isStaleProcessingItem(item, processingCutoff)) return true;
         // Exclude items with SOFT_CANCELLED or CANCELLED_BY_ADMIN in last_error
         const lastError = item.last_error || '';
         return !lastError.startsWith('SOFT_CANCELLED') && !lastError.startsWith('CANCELLED_BY_ADMIN');
@@ -128,6 +150,24 @@ serve(async (req) => {
       })
       .slice(0, queueItemId ? 1 : batchSize); // exact item or bounded batch
 
+    // A dry-run is a read-only preview: no claim, audit insert, worker or alert.
+    if (dryRun) {
+      return new Response(JSON.stringify({
+        success: true,
+        dry_run: true,
+        candidates: sortedItems.map(item => ({
+          id: item.id,
+          status: item.status,
+          attempts: item.attempts,
+          action: item.status === "processing" && !isStaleProcessingItem(item, processingCutoff)
+            ? "skip_fresh_claim"
+            : isStaleProcessingItem(item, processingCutoff)
+            ? staleTerminalReason(item, { maxAttempts, excludeCancelled, excludeFileImport, queueItemId }) || "recover_stale"
+            : "process",
+        })),
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     console.log(`[bepaid-queue-cron] Found ${allPendingItems.length} items, processing ${sortedItems.length} after filtering and priority sort`);
     
     // Log source distribution
@@ -143,135 +183,40 @@ serve(async (req) => {
       failed: 0,
       skipped: 0,
       retried: 0,
+      stale_recovered: 0,
+      claim_conflicts: 0,
+      stale_terminal: 0,
       webhook_processed: 0,
       by_source: {} as Record<string, number>,
       errors: [] as string[],
     };
 
+    const deadline = Date.now() + 60_000;
     for (const item of sortedItems) {
+      if (Date.now() >= deadline) break;
       try {
-        console.log(`[bepaid-queue-cron] Processing item ${item.id}, source=${item.source}, priority=${item.priority}, bepaid_uid=${item.bepaid_uid}, attempts=${item.attempts}`);
-        
-        // Update item to processing status
-        await supabase
-          .from("payment_reconcile_queue")
-          .update({ 
-            status: "processing",
-            last_attempt_at: now,
-          })
-          .eq("id", item.id);
-
-        const cronSecret = Deno.env.get("CRON_SECRET");
-        if (!cronSecret) throw new Error("CRON_SECRET is not configured");
-
-        const { data: processResult, error: processError } = await supabase.functions.invoke(
-          "bepaid-auto-process",
-          {
-            body: { queueItemId: item.id },
-            headers: { "x-internal-key": cronSecret },
-          }
-        );
-
-        // Track by source
+        // Selection is not ownership. payments-reconcile is the only CAS
+        // owner, including stale-terminal release and error/completion writes.
+        const { data: outcome, error } = await supabase.functions.invoke("payments-reconcile", {
+          body: { queueItemId: item.id, expectedUpdatedAt: item.updated_at, recordPreflightFailure: !queueItemId },
+        });
+        results.processed++;
         results.by_source[item.source] = (results.by_source[item.source] || 0) + 1;
-
-        if (processError) {
-          console.error(`[bepaid-queue-cron] Error processing item ${item.id}:`, processError);
-          
-          // Update with error status and next retry time
-          const newAttempts = (item.attempts || 0) + 1;
-          const shouldRetry = newAttempts < maxAttempts;
-          
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({
-              status: "error",
-              attempts: newAttempts,
-              last_error: processError.message,
-              next_retry_at: shouldRetry 
-                ? new Date(Date.now() + calculateBackoffDelay(newAttempts)).toISOString()
-                : null,
-            })
-            .eq("id", item.id);
-
+        if (error || outcome?.success !== true) {
           results.failed++;
-          if (shouldRetry) results.retried++;
-          results.errors.push(`${item.id}: ${processError.message}`);
-        } else if ((processResult?.results?.errors?.length || 0) > 0) {
-          const message = processResult.results.errors.join('; ');
-          const newAttempts = (item.attempts || 0) + 1;
-          const shouldRetry = newAttempts < maxAttempts;
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({
-              status: shouldRetry ? "pending" : "error",
-              attempts: newAttempts,
-              last_error: message,
-              next_retry_at: shouldRetry
-                ? new Date(Date.now() + calculateBackoffDelay(newAttempts)).toISOString()
-                : null,
-            })
-            .eq("id", item.id);
-          results.failed++;
-          if (shouldRetry) results.retried++;
-          results.errors.push(`${item.id}: ${message}`);
-        } else if (processResult?.results?.orders_created > 0 || processResult?.results?.orders_reconciled > 0) {
-          // Canonical payment, order and access were verified.
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({ status: "completed", processed_at: now })
-            .eq("id", item.id);
-          results.success++;
-          if (item.source === 'webhook') results.webhook_processed++;
-        } else if (processResult?.results?.already_materialized > 0) {
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({ status: "completed", processed_at: now })
-            .eq("id", item.id);
-          results.skipped++;
-        } else {
-          // No orders created but no error - might need retry
-          const newAttempts = (item.attempts || 0) + 1;
-          const shouldRetry = newAttempts < maxAttempts;
-          
-          await supabase
-            .from("payment_reconcile_queue")
-            .update({
-              status: shouldRetry ? "pending" : "error",
-              attempts: newAttempts,
-              last_error: "No order created",
-              next_retry_at: shouldRetry 
-                ? new Date(Date.now() + calculateBackoffDelay(newAttempts)).toISOString()
-                : null,
-            })
-            .eq("id", item.id);
-          
-          results.skipped++;
-          if (shouldRetry) results.retried++;
+          results.errors.push(item.id + ": canonical_recovery_failed");
+          continue;
         }
-        
-        results.processed++;
-      } catch (err) {
-        console.error(`[bepaid-queue-cron] Exception processing item ${item.id}:`, err);
-        
-        const newAttempts = (item.attempts || 0) + 1;
-        const shouldRetry = newAttempts < maxAttempts;
-        
-        await supabase
-          .from("payment_reconcile_queue")
-          .update({
-            status: "error",
-            attempts: newAttempts,
-            last_error: err instanceof Error ? err.message : 'Unknown error',
-            next_retry_at: shouldRetry 
-              ? new Date(Date.now() + calculateBackoffDelay(newAttempts)).toISOString()
-              : null,
-          })
-          .eq("id", item.id);
-        
+        results.stale_recovered += outcome.stale_recovered || 0;
+        results.stale_terminal += outcome.stale_terminal || 0;
+        results.claim_conflicts += outcome.claim_conflicts || 0;
+        if (outcome.results?.orders_reconciled > 0) {
+          results.success++;
+          if (item.source === "webhook") results.webhook_processed++;
+        } else results.skipped++;
+      } catch {
         results.failed++;
-        results.processed++;
-        results.errors.push(`${item.id}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        results.errors.push(item.id + ": canonical_recovery_transport_failed");
       }
     }
 
@@ -323,6 +268,9 @@ serve(async (req) => {
         failed: results.failed,
         skipped: results.skipped,
         retried: results.retried,
+        stale_recovered: results.stale_recovered,
+        claim_conflicts: results.claim_conflicts,
+        stale_terminal: results.stale_terminal,
         webhook_processed: results.webhook_processed,
         by_source: results.by_source,
         stuck_items: stuckItems?.length || 0,
@@ -340,6 +288,9 @@ serve(async (req) => {
         failed: results.failed,
         skipped: results.skipped,
         retried: results.retried,
+        stale_recovered: results.stale_recovered,
+        claim_conflicts: results.claim_conflicts,
+        stale_terminal: results.stale_terminal,
         webhook_processed: results.webhook_processed,
         by_source: results.by_source,
         errors: results.errors,
