@@ -1,6 +1,7 @@
 # PLAN-ONLY ревизия PR #416
 
-Head SHA: `410fddf33b53afc05755d8f3b29b945e8b785e9a`
+Head SHA: `410fddf33cddfb8ad157d66d0becf4de7bc615b5`
+Merge SHA: `1b051fecbc36eb77f55bc04c27c7df3d23fe9688`
 База: merged main `1e93155c584618edb96e355094520efcd20265d2` (рабочее дерево синхронно с этой базой, проверено локально)
 Режим: read-only. Ничего не изменено, не задеплоено, не отправлено.
 
@@ -20,7 +21,7 @@ Head SHA: `410fddf33b53afc05755d8f3b29b945e8b785e9a`
 
 ## Execute-лист (после явного одобрения)
 
-1. Смёржить ровно отревьюенный SHA; синхронизировать merged main и доказать чистое byte-identical дерево.
+1. Синхронизировать merged main `1b051fecbc36eb77f55bc04c27c7df3d23fe9688` и доказать чистое byte-identical дерево.
 2. Ноль миграций, ноль записей в данные.
 3. Задеплоить ровно одну функцию: `admin-create-public-link` (изменилась её shared-зависимость).
 4. `bun run build`; при PASS — Publish; зафиксировать URL, версию и SHA.
