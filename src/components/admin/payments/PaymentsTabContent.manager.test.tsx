@@ -12,7 +12,9 @@ const fixtures = vi.hoisted(() => ({
   isLoading: false, isFetching: false, isError: false, refetch: vi.fn() },
   dateFilter: vi.fn(),
 }));
-vi.mock("@/hooks/useStaffOptions", () => ({ useStaffOptions: () => fixtures.directory }));
+vi.mock("@/hooks/usePaymentManagerDirectoryOptions", () => ({
+  usePaymentManagerDirectoryOptions: () => fixtures.directory,
+}));
 vi.mock("@/hooks/useUnifiedPayments", () => ({ useUnifiedPayments: (date: unknown) => {
   fixtures.dateFilter(date);
   return { payments: fixtures.payments, isLoading: false, refetch: vi.fn() };

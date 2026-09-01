@@ -1,20 +1,24 @@
 # Products 2 — подготовка завершения: выбор менеджера в платежах
 
-Дата: 2026-08-31. Статус: **подготовлено к review; не объединено, не опубликовано**.
+Дата: 2026-09-01. Статус: **исправляется blocker plan-only; не объединено, не опубликовано**.
 
-Пользователь потребовал остановиться **до Lovable**. В этом этапе не разрешены
-merge, auto-merge, обращение в Lovable, production-read/write, deploy и Publish.
-Новое разрешение пользователя требуется для продолжения. Никакие команды из
-этого документа ещё не отправлены в Lovable.
+После команды пользователя «Продолжай» выполнена plan-only ревизия в уже
+авторизованной канонической вкладке Lovable. Ревизия ничего не меняла и нашла
+RBAC-blocker: `useStaffOptions` зависит от `users.view`, хотя страница платежей
+доступна с `entitlements.view`. В ответ подготовлен узкий RPC-контракт; до его
+повторной plan-only проверки merge, production apply и Publish запрещены.
 
 ## GitHub-артефакт и scope
 
 - База: `72e901add20798d86c8474e65392e84643f80223` (`origin/main`, PR #400).
 - Ветка: `codex/products2-payment-manager-options`; точный head SHA фиксируется
   в PR и повторно проверяется перед продолжением.
-- `usePaymentManagerOptions`: существующий справочник `useStaffOptions` +
-  текущие назначения из загруженных платежей. Дедупликация по `user_id`, не
-  по имени. Изменений ролей, RLS или правил состава сотрудников нет.
+- `get_payment_manager_options_v1`: отдельный минимальный справочник для
+  платежей, разрешённый только при `entitlements.view`; возвращает только
+  `user_id` и отображаемое имя сотрудников с non-user ролью. Он не расширяет
+  `users.view` и не ослабляет RLS таблиц.
+- `usePaymentManagerOptions`: этот RPC-справочник + текущие назначения из
+  загруженных платежей. Дедупликация по `user_id`, не по имени.
 - `PaymentsFilters` / `PaymentsTabContent`: выбор сотрудника при пустом периоде,
   сохранение выбранного значения и имени при смене периода, включая бывшего
   сотрудника; загрузка / ошибка с повтором / пустой справочник; пояснение пустой
@@ -33,20 +37,23 @@ merge, auto-merge, обращение в Lovable, production-read/write, deploy 
 Фильтры хранятся в состоянии страницы; сохранение после полной перезагрузки
 страницы или повторного входа этим патчем не добавляется.
 
-Нет новых migrations, Edge Functions, RPC, зависимостей, auth/RLS изменений
-или backfill. Не менялись сделки, назначения, платежи, подписки, доступы,
-провайдеры, контакты и уведомления. Прямой Supabase CLI/MCP/API не используется.
+Добавлен один локальный GitHub migration-файл с read-only RPC; он ещё не
+применён. Нет Edge Functions, зависимостей, ослабления RLS или backfill. Не
+менялись сделки, назначения, платежи, подписки, доступы, провайдеры, контакты и
+уведомления. Прямой доступ к production Supabase не используется: применение
+возможно только через Lovable после точного merged SHA.
 
 ## Локальная проверка
 
-Выполнено до открытия PR:
+Выполнено на актуальном head ветки после устранения RBAC-blocker:
 
-- `npx vitest run`: 199 файлов, 1192 теста PASS; из них 15 новых проверок
-  справочника и реального `PaymentsTabContent` с замоканными источниками данных.
+- `npx vitest run`: 217 файлов, 1462 теста PASS; 18 целевых проверок покрывают
+  RPC-контракт, справочник и реальный `PaymentsTabContent` с замоканными
+  источниками данных.
 - `npx tsc --noEmit -p tsconfig.app.json`: PASS.
 - Точечный ESLint нового hook, его теста, `PaymentsFilters` и UI-теста: PASS.
 - `npm run build`: PASS; существующее предупреждение о крупных чанках не скрыто.
-- `npm run verify:edge-functions`: PASS, 361 source / 222 literal references.
+- `npm run verify:edge-functions`: PASS, 361 source / 223 literal references.
 - `git diff --check`: PASS.
 
 UI-тесты проверяют одинаковое применение manager-фильтра к таблице и данным
@@ -82,8 +89,9 @@ Production checkout smoke не запускался: он создаёт тес�
    завершение; новый код/миграции должны сначала пройти отдельный GitHub PR.
 4. После всех PASS и разрешения merge получить точный merged SHA из GitHub.
    Не подставлять head ветки вместо SHA merge-коммита. Сверить diff и sync.
-5. Через Lovable подтвердить exact SHA и read-only runtime. Для этого патча
-   список managed migrations **пуст**, список deploy functions **пуст**.
+5. Через Lovable подтвердить exact SHA и применить ровно одну managed migration
+   `20260901170547_payment_manager_options_directory.sql`. Список deploy
+   functions **пуст**. Проверить права и read-back RPC под допустимой ролью.
 6. Publish только после всех применимых PASS. Затем проверить опубликованный
    `https://gorbova.by/admin/payments` и отдельно отчёт с общим выбором периода.
    Привязать URL, SHA/build и viewport к двум отдельным скриншотам ПК/mobile.
@@ -97,9 +105,11 @@ Production checkout smoke не запускался: он создаёт тес�
 Scope: Products 2, выбор менеджера на /admin/payments.
 GitHub PR/head SHA: Codex подставит заново проверенные значения при отправке.
 
-Проверь доступ существующего useStaffOptions к справочнику под разрешённой
-ролью; в нём должны находиться согласованные сотрудники по стабильным user_id,
-не по догадке о написании имени. Верни только обезличенный результат и счётчики.
+Проверь новую managed migration get_payment_manager_options_v1: SECURITY
+DEFINER с пустым search_path, auth_required, gate entitlements.view, закрытие
+PUBLIC/anon и ответ только user_id+label для non-user staff. Не расширять
+users.view и не ослаблять RLS. Получи ветку по её точному remote branch name,
+затем подтверди exact SHA. Верни только обезличенный результат и счётчики.
 Проверь current payment_sales_attribution / effective_to IS NULL: сколько
 платежей назначено, сколько без менеджера; не изменяй историю и не подставляй
 текущего ответственного сделки в старые платежи.
@@ -107,8 +117,8 @@ GitHub PR/head SHA: Codex подставит заново проверенные
 Дай план проверки: пустой период, все периоды, именной выбор, all/unassigned,
 переключение периода без потери выбора, бывший сотрудник, понятная ошибка
 справочника, фильтр+таблица+статистика+CSV, desktop/mobile без overflow.
-Отдельно подтверди безопасный rollback и что для этого frontend-патча не нужны
-новые migrations, deploy functions или data writes. При ошибке прав, missing
+Отдельно подтверди безопасный rollback, что нужна ровно одна перечисленная
+migration и не нужны deploy functions или data writes. При ошибке прав, missing
 dependency, неожиданной атрибуции или новом critical finding — STOP.
 ```
 

@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef } from "react";
-import { useStaffOptions, type StaffOption } from "@/hooks/useStaffOptions";
+import {
+  usePaymentManagerDirectoryOptions,
+  type PaymentManagerDirectoryOption,
+} from "@/hooks/usePaymentManagerDirectoryOptions";
 import type { UnifiedPayment } from "@/hooks/useUnifiedPayments";
 
 type PaymentManager = Pick<UnifiedPayment, "responsible_user_id" | "responsible_name">;
 export type PaymentManagerOption = { value: string; label: string };
-const EMPTY_STAFF: StaffOption[] = [];
+const EMPTY_STAFF: PaymentManagerDirectoryOption[] = [];
 const isManager = (value: string | null): value is string =>
   Boolean(value && value !== "all" && value !== "__unassigned__");
 
 /** Directory choices must not depend on whether this period contains payments. */
 export function buildPaymentManagerOptions(
-  staff: Pick<StaffOption, "user_id" | "label">[],
+  staff: PaymentManagerDirectoryOption[],
   payments: PaymentManager[],
 ): PaymentManagerOption[] {
   const names = new Map<string, string>();
@@ -34,7 +37,7 @@ export function buildPaymentManagerOptions(
 }
 
 export function usePaymentManagerOptions(payments: PaymentManager[], selectedValue: string) {
-  const directory = useStaffOptions();
+  const directory = usePaymentManagerDirectoryOptions();
   const staff = directory.data ?? EMPTY_STAFF;
   const options = useMemo(() => buildPaymentManagerOptions(staff, payments), [staff, payments]);
   const selectedOption = options.find(option => option.value === selectedValue);

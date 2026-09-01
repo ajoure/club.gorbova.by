@@ -6,7 +6,9 @@ const directory = vi.hoisted(() => ({
   data: [] as Array<{ user_id: string; label: string }>,
   isLoading: false, isFetching: false, isError: false, refetch: vi.fn(),
 }));
-vi.mock("@/hooks/useStaffOptions", () => ({ useStaffOptions: () => directory }));
+vi.mock("@/hooks/usePaymentManagerDirectoryOptions", () => ({
+  usePaymentManagerDirectoryOptions: () => directory,
+}));
 afterEach(cleanup);
 beforeEach(() => {
   Object.assign(directory, { data: [], isLoading: false, isFetching: false, isError: false });
