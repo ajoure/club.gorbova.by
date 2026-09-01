@@ -21,7 +21,7 @@ Merge SHA: `1b051fecbc36eb77f55bc04c27c7df3d23fe9688`
 
 ## Execute-лист (после явного одобрения)
 
-1. Смёржить ровно отревьюенный SHA; синхронизировать merged main и доказать чистое byte-identical дерево.
+1. Синхронизировать merged main `1b051fecbc36eb77f55bc04c27c7df3d23fe9688` и доказать чистое byte-identical дерево.
 2. Ноль миграций, ноль записей в данные.
 3. Задеплоить ровно одну функцию: `admin-create-public-link` (изменилась её shared-зависимость).
 4. `bun run build`; при PASS — Publish; зафиксировать URL, версию и SHA.
