@@ -4117,7 +4117,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
             <TabsContent value="installments" className="m-0">
               <ContactInstallmentsTabContent
                 profileId={contact.id}
-                userId={contact.user_id}
+                userId={resolvedUserId}
                 userName={contact.full_name}
                 userEmail={contact.email}
                 telegramUserId={resolvedTelegramUserId}

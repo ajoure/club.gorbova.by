@@ -3,7 +3,7 @@ import { loadInstallmentRepaymentContext, quoteInstallmentRepayment } from './in
 import { RepaymentPlanError } from './installment-repayment-plan.ts';
 
 export type RepaymentLinkRequest = {
-  action: 'quote' | 'create'; order_id: string; payment_type: 'one_time' | 'subscription';
+  action: 'quote' | 'create' | 'get_active'; order_id: string; payment_type: 'one_time' | 'subscription';
   count?: number; interval_days?: number; expected_fingerprint?: string;
   replace_mandate_confirmed?: boolean; request_id?: string; reason?: string;
 };
@@ -11,6 +11,36 @@ export type RepaymentLinkRequest = {
 /** Called only after requirePaymentsEdit, inside the canonical public-link writer. */
 export async function handleInstallmentRepaymentLink(db: SupabaseClient, actorId: string, input: RepaymentLinkRequest) {
   const context = await loadInstallmentRepaymentContext(db, input.order_id);
+  if (input.action === 'get_active') {
+    const { data: links, error } = await db.from('payment_links')
+      .select('id,user_id,public_url,payment_type,currency,status,expires_at,created_at,meta')
+      .eq('user_id', context.order.user_id)
+      .eq('status', 'active')
+      .filter('meta->repayment->>original_order_id', 'eq', context.order.id)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error) throw new RepaymentPlanError('repayment_read_failed');
+    const now = Date.now();
+    const active = (links || []).find(link => !link.expires_at || Date.parse(link.expires_at) > now);
+    if (!active) return { success: true, active_link: null };
+    const repayment = (active.meta as Record<string, any> | null)?.repayment as Record<string, any> | undefined;
+    if (!repayment || repayment.contract_version !== 1
+      || repayment.original_order_id !== context.order.id
+      || repayment.subscription_v2_id !== context.sub.id
+      || repayment.preserves_purchase !== true
+      || repayment.changes_access !== false
+      || !['one_time', 'subscription'].includes(String(repayment.payment_type))) {
+      throw new RepaymentPlanError('invalid_repayment_link');
+    }
+    return {
+      success: true,
+      active_link: {
+        payment_link_id: active.id,
+        public_url: active.public_url,
+        quote: repayment,
+      },
+    };
+  }
   const quote = quoteInstallmentRepayment(context, input);
   if (input.action === 'quote') return { success: true, quote };
   if (input.action !== 'create') throw new RepaymentPlanError('invalid_repayment_action');

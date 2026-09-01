@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CalendarDays,
   CreditCard,
@@ -33,6 +33,7 @@ import {
   sendPaymentLinkToTelegram,
 } from "@/lib/sendPaymentLinkToTelegram";
 import { cn } from "@/lib/utils";
+import { normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 import type { UiPlan } from "@/hooks/useContactInstallmentsData";
 
 type Quote = {
@@ -46,7 +47,7 @@ type Quote = {
   changes_access: false;
 };
 
-type BusyAction = "quote" | "create" | "create_and_send" | "send" | null;
+type BusyAction = "recover" | "quote" | "create" | "create_and_send" | "send" | null;
 
 interface ExistingInstallmentRepaymentDialogProps {
   plan: UiPlan;
@@ -89,7 +90,10 @@ export function ExistingInstallmentRepaymentDialog({
   userEmail,
   telegramUserId,
 }: ExistingInstallmentRepaymentDialogProps) {
-  const resolvedUserId = userId ?? plan.userId;
+  // Для погашения существующей рассрочки владелец выбранной сделки —
+  // единственный канонический получатель. Контактный prop может быть устаревшим
+  // после merge/перепривязки профиля и не должен переопределять order.user_id.
+  const resolvedUserId = plan.userId || userId || null;
   const naturalRemainingCount = Math.max(
     1,
     Math.ceil(plan.remainingTotal / Math.max(plan.perPayment, 1)),
@@ -108,6 +112,7 @@ export function ExistingInstallmentRepaymentDialog({
   const [link, setLink] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const requestId = useRef(crypto.randomUUID());
+  const activeLookupDone = useRef(false);
 
   const resetQuote = () => {
     setQuote(null);
@@ -121,10 +126,65 @@ export function ExistingInstallmentRepaymentDialog({
     if (!nextOpen) {
       resetQuote();
       requestId.current = crypto.randomUUID();
+      activeLookupDone.current = false;
     }
   };
 
   const selectedCount = paymentType === "one_time" ? 1 : count;
+
+  useEffect(() => {
+    if (!open || activeLookupDone.current) return;
+    activeLookupDone.current = true;
+    let cancelled = false;
+
+    const recoverActiveLink = async () => {
+      setBusyAction("recover");
+      try {
+        const { data, error } = await supabase.functions.invoke(
+          "admin-create-public-link",
+          {
+            body: {
+              repayment: {
+                action: "get_active",
+                order_id: plan.orderId,
+                payment_type: paymentType,
+              },
+            },
+          },
+        );
+        if (error || data?.success === false || data?.error) {
+          throw new Error(
+            error
+              ? await normalizeEdgeFunctionErrorAsync(error, data)
+              : data?.error || "Не удалось проверить существующую ссылку",
+          );
+        }
+        const active = data?.active_link;
+        if (!cancelled && active?.public_url && active?.quote) {
+          const activeQuote = active.quote as Quote;
+          setPaymentType(activeQuote.payment_type);
+          setCount(Math.max(2, activeQuote.schedule_minor.length));
+          setQuote(activeQuote);
+          setLink(String(active.public_url));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Не удалось проверить существующую ссылку",
+          );
+        }
+      } finally {
+        if (!cancelled) setBusyAction(null);
+      }
+    };
+
+    void recoverActiveLink();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, paymentType, plan.orderId]);
 
   const requestQuote = async () => {
     setBusyAction("quote");
@@ -144,7 +204,11 @@ export function ExistingInstallmentRepaymentDialog({
         },
       );
       if (error || data?.success === false || data?.error) {
-        throw new Error(data?.error || error?.message || "Не удалось рассчитать график");
+        throw new Error(
+          error
+            ? await normalizeEdgeFunctionErrorAsync(error, data)
+            : data?.error || "Не удалось рассчитать график",
+        );
       }
       setQuote(data.quote as Quote);
       setLink(null);
@@ -201,7 +265,11 @@ export function ExistingInstallmentRepaymentDialog({
         },
       );
       if (error || data?.success === false || data?.error) {
-        throw new Error(data?.error || error?.message || "Не удалось создать ссылку");
+        throw new Error(
+          error
+            ? await normalizeEdgeFunctionErrorAsync(error, data)
+            : data?.error || "Не удалось создать ссылку",
+        );
       }
 
       const publicUrl = String(data.public_url);
