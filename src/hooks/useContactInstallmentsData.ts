@@ -11,6 +11,7 @@ import { repaymentBalance } from "../../supabase/functions/_shared/installment-r
 
 export interface UiPlan {
   orderId: string;
+  userId: string;
   orderNumber: string | null;
   productName: string;
   tariffName: string;
@@ -81,6 +82,7 @@ export function mapOrderToPlan(order: any): UiPlan | null {
 
   return {
     orderId: order.id,
+    userId: order.user_id,
     orderNumber: order.order_number ?? null,
     productName: order?.products_v2?.name ?? "Продукт",
     tariffName: order?.tariffs?.name ?? "Тариф",
