@@ -27,6 +27,9 @@ import { ExistingInstallmentRepaymentDialog } from "./ExistingInstallmentRepayme
 interface ContactInternalInstallmentsProps {
   profileId?: string | null;
   userId?: string | null;
+  userName?: string | null;
+  userEmail?: string | null;
+  telegramUserId?: number | null;
   onOpenDeal?: (orderId: string) => void;
   /** Preloaded plans (wrapper-driven). When provided, `isLoading` prop drives skeleton. */
   plans?: UiPlan[];
@@ -71,6 +74,9 @@ const STATUS_META: Record<
 export function ContactInternalInstallments({
   profileId,
   userId,
+  userName,
+  userEmail,
+  telegramUserId,
   onOpenDeal,
   plans: plansProp,
   isLoading: isLoadingProp,
@@ -210,7 +216,13 @@ export function ContactInternalInstallments({
                   {plan.orderNumber ?? plan.orderId.slice(0, 8)}
                 </span>
                 <div className="flex flex-wrap gap-2">
-                  <ExistingInstallmentRepaymentDialog plan={plan} />
+                  <ExistingInstallmentRepaymentDialog
+                    plan={plan}
+                    userId={userId}
+                    userName={userName}
+                    userEmail={userEmail}
+                    telegramUserId={telegramUserId}
+                  />
                   <Button
                     size="sm"
                     variant="outline"

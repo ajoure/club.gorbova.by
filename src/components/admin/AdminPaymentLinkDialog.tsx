@@ -35,7 +35,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Link2, Copy, ExternalLink, Loader2, Layers, Tag, CheckCircle, Send,
+  Link2, Loader2, Layers, Tag, CheckCircle, Send,
   AlertTriangle, MousePointerClick, CreditCard, RefreshCw, Info, Users,
   Check, ChevronsUpDown
 } from "lucide-react";
@@ -43,6 +43,7 @@ import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 import { AddonPicker } from "@/components/checkout/AddonPicker";
 import { OrderSummary, type OrderSummaryLine } from "@/components/checkout/OrderSummary";
 import { InvoiceDeliverySuccess } from "@/components/payment/InvoiceDeliverySuccess";
+import { PaymentLinkSuccessPanel } from "@/components/payment/PaymentLinkSuccessPanel";
 
 import { useTariffOffers, type TariffOffer } from "@/hooks/useTariffOffers";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
@@ -58,6 +59,10 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
+import {
+  escapeTelegramHtml,
+  sendPaymentLinkToTelegram,
+} from "@/lib/sendPaymentLinkToTelegram";
 /**
  * mode:
  *   - "contact" (default) — текущее поведение: ссылка привязывается к контакту,
@@ -744,12 +749,6 @@ export function AdminPaymentLinkDialog({
     // (`<b>...</b>`) такой проблемы не имеет и поддерживается всеми
     // клиентами Telegram. Edge `telegram-send-notification`
     // автоматически переключается на parse_mode=HTML при наличии тегов.
-    const escapeHtml = (t: string) =>
-      (t || "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-
     const isInstallmentMsg =
       isInstallmentOffer && (selectedInstallmentMonths ?? 0) >= 2;
     const isSubscriptionMsg =
@@ -782,8 +781,8 @@ export function AdminPaymentLinkDialog({
 
     return `💳 <b>Оплата ${headerKind}</b>
 
-📦 Продукт: ${escapeHtml(productName)}
-📋 Тариф: ${escapeHtml(tariffName)}
+📦 Продукт: ${escapeTelegramHtml(productName)}
+📋 Тариф: ${escapeTelegramHtml(tariffName)}
 ${amountLine}
 📅 Тип: ${typeLabel}`;
   };
@@ -1328,25 +1327,12 @@ ${amountLine}
         selectedTariff.name,
       );
 
-      const { data, error } = await supabase.functions.invoke(
-        "telegram-send-notification",
-        {
-          body: {
-            user_id: userId,
-            message_type: "custom",
-            custom_message: telegramMessage,
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: "💳 Ссылка на оплату", url: generatedUrl }],
-              ],
-            },
-          },
-        }
-      );
-
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || "Ошибка отправки");
-      return data;
+      if (!userId) throw new Error("Контакт не выбран");
+      return sendPaymentLinkToTelegram({
+        userId,
+        paymentUrl: generatedUrl,
+        message: telegramMessage,
+      });
     },
     onSuccess: () => {
       toast.success("Ссылка отправлена клиенту в Telegram");
@@ -1434,21 +1420,12 @@ ${amountLine}
           selectedProduct?.name ?? "—",
           selectedTariff?.name ?? "—",
         );
-        const { data: tgData, error: tgError } = await supabase.functions.invoke(
-          "telegram-send-notification",
-          {
-            body: {
-              user_id: userId,
-              message_type: "custom",
-              custom_message: telegramMessage,
-              reply_markup: {
-                inline_keyboard: [[{ text: "💳 Ссылка на оплату", url: publicUrl }]],
-              },
-            },
-          }
-        );
-        if (tgError) throw tgError;
-        if (!tgData?.success) throw new Error(tgData?.error || "Ошибка отправки");
+        if (!userId) throw new Error("Контакт не выбран");
+        await sendPaymentLinkToTelegram({
+          userId,
+          paymentUrl: publicUrl,
+          message: telegramMessage,
+        });
         toast.success("Ссылка создана и отправлена клиенту в Telegram");
       } catch (tgErr) {
         toast.warning(
@@ -1546,60 +1523,19 @@ ${amountLine}
           </DialogHeader>
 
           {generatedUrl ? (
-            <div className="space-y-4">
-              <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
-                <div className="flex items-center gap-2 mb-3">
-                  <CheckCircle className="h-5 w-5 text-primary shrink-0" />
-                  <p className="font-medium">Ссылка создана</p>
-                </div>
-                <p className="text-sm text-muted-foreground mb-2 break-words">
+            <PaymentLinkSuccessPanel
+              url={generatedUrl}
+              summary={(
+                <>
                   {selectedProduct?.name} — {selectedTariff?.name} · {amount} {previewCurrency}
                   {effectivePaymentType === "subscription" ? " (подписка)" : " (разовая)"}
-                </p>
-                <div className="rounded-md border bg-background p-2 font-mono text-xs break-all select-all">
-                  {generatedUrl}
-                </div>
-              </div>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <Button
-                  variant="outline"
-                  className="w-full sm:flex-1 gap-2"
-                  onClick={() => copyToClipboard(generatedUrl)}
-                >
-                  <Copy className="h-4 w-4" />
-                  Копировать
-                </Button>
-                <Button
-                  className="w-full sm:flex-1 gap-2"
-                  onClick={() => window.open(generatedUrl, "_blank")}
-                >
-                  <ExternalLink className="h-4 w-4" />
-                  Открыть
-                </Button>
-              </div>
-              {effectiveTelegramUserId && (
-                <Button
-                  variant="outline"
-                  className="w-full gap-2"
-                  disabled={sendToTelegramMutation.isPending}
-                  onClick={() => sendToTelegramMutation.mutate()}
-                >
-                  {sendToTelegramMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
-                  Отправить клиенту в Telegram
-                </Button>
+                </>
               )}
-              <Button
-                variant="ghost"
-                className="w-full"
-                onClick={() => setGeneratedUrl(null)}
-              >
-                Создать ещё одну ссылку
-              </Button>
-            </div>
+              canSendTelegram={Boolean(effectiveTelegramUserId)}
+              isSendingTelegram={sendToTelegramMutation.isPending}
+              onSendTelegram={() => sendToTelegramMutation.mutate()}
+              onCreateAnother={() => setGeneratedUrl(null)}
+            />
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* User info — только в contact mode */}

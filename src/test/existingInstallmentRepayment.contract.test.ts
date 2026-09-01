@@ -63,6 +63,30 @@ describe("existing installment repayment integration boundary", () => {
     const dialog = read("src/components/installments/ExistingInstallmentRepaymentDialog.tsx");
     expect(card).toContain("ExistingInstallmentRepaymentDialog");
     expect(dialog).toContain("Создать ссылку на остаток");
-    expect(dialog).toContain("Новый продукт, сделка и дополнительный доступ не создаются");
+    expect(dialog).toContain("Новый продукт, новая сделка и дополнительный доступ не создаются");
+  });
+
+  it("reuses the canonical payment-link success and Telegram delivery path", () => {
+    const dialog = read("src/components/installments/ExistingInstallmentRepaymentDialog.tsx");
+    const manualDialog = read("src/components/admin/AdminPaymentLinkDialog.tsx");
+    const telegram = read("src/lib/sendPaymentLinkToTelegram.ts");
+
+    expect(dialog).toContain("PaymentLinkSuccessPanel");
+    expect(manualDialog).toContain("PaymentLinkSuccessPanel");
+    expect(dialog).toContain("sendPaymentLinkToTelegram");
+    expect(manualDialog).toContain("sendPaymentLinkToTelegram");
+    expect(telegram).toContain('"telegram-send-notification"');
+    expect(telegram).toContain('text: "💳 Ссылка на оплату"');
+  });
+
+  it("keeps the original deal selected and limits the repayment choice to one-time or autopay", () => {
+    const dialog = read("src/components/installments/ExistingInstallmentRepaymentDialog.tsx");
+
+    expect(dialog).toContain("Выбранная сделка");
+    expect(dialog).toContain("Разовый платёж");
+    expect(dialog).toContain("Автоплатежи");
+    expect(dialog).toContain('paymentType === "one_time" ? 1 : count');
+    expect(dialog).not.toContain("Выберите продукт");
+    expect(dialog).not.toContain("selectedProductId");
   });
 });

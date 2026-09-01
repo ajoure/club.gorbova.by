@@ -25,12 +25,18 @@ import {
 interface ContactInstallmentsTabContentProps {
   profileId?: string | null;
   userId?: string | null;
+  userName?: string | null;
+  userEmail?: string | null;
+  telegramUserId?: number | null;
   currency?: string;
 }
 
 export function ContactInstallmentsTabContent({
   profileId,
   userId,
+  userName,
+  userEmail,
+  telegramUserId,
   currency = "BYN",
 }: ContactInstallmentsTabContentProps) {
   const internal = useContactInternalInstallments(profileId, userId);
@@ -97,6 +103,9 @@ export function ContactInstallmentsTabContent({
         <ContactInternalInstallments
           profileId={profileId}
           userId={userId}
+          userName={userName}
+          userEmail={userEmail}
+          telegramUserId={telegramUserId}
           plans={internalPlans}
           isLoading={false}
         />
