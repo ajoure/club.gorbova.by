@@ -33,6 +33,7 @@ import { TimezoneSelector, usePersistedTimezone } from "./TimezoneSelector";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { matchSearchIndex } from "@/lib/multiTermSearch";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { usePaymentManagerOptions } from "@/hooks/usePaymentManagerOptions";
 import { UnifiedPayment as UnifiedPaymentType } from "@/hooks/useUnifiedPayments";
 
 // P0-guard: Sum by currency helper (one pass O(n))
@@ -200,6 +201,7 @@ export function PaymentsTabContent() {
 
   // Always use all payments (no more source mode filtering)
   const payments = allPayments;
+  const managers = usePaymentManagerOptions(payments, filters.salesManager);
 
   const filterOptions = useMemo(() => {
     const uniqueOptions = (
@@ -213,10 +215,7 @@ export function PaymentsTabContent() {
     ).sort((a, b) => a.label.localeCompare(b.label, "ru"));
 
     return {
-      managers: uniqueOptions(payments.map((payment) => ({
-        value: payment.responsible_user_id,
-        label: payment.responsible_name,
-      }))),
+      managers: managers.options,
       products: uniqueOptions(payments.map((payment) => ({
         value: payment.mapped_product_id,
         label: payment.product_name,
@@ -233,7 +232,7 @@ export function PaymentsTabContent() {
         .sort()
         .map((currency) => ({ value: currency, label: currency })),
     };
-  }, [payments]);
+  }, [payments, managers.options]);
 
   // Helper to normalize transaction type
   const normalizeType = (raw: string | null | undefined) => {
@@ -651,8 +650,8 @@ export function PaymentsTabContent() {
       </div>
       
       {/* 4. Search row + Filters button */}
-      <div className="flex items-center gap-2 px-1">
-        <div className="relative flex-1">
+      <div className="flex flex-wrap items-center gap-2 px-1">
+        <div className="relative min-w-0 flex-1 basis-48">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Поиск по UID, email, телефону, карте..."
@@ -719,9 +718,18 @@ export function PaymentsTabContent() {
             filters={filters}
             setFilters={setFilters}
             options={filterOptions}
+            managerDirectory={managers}
           />
         </div>
       )}
+
+      {!isLoading && filteredPayments.length === 0
+        && filters.salesManager !== "all" && filters.salesManager !== "__unassigned__" && (
+          <p role="status" className="px-1 text-sm text-muted-foreground">
+            Нет платежей с назначением выбранному менеджеру для текущего периода и фильтров.
+            {" "}Старые платежи без назначения ищите через «Без менеджера».
+          </p>
+        )}
       
       {/* Batch actions */}
       {selectedItems.size > 0 && (
