@@ -21,6 +21,7 @@ import PaymentMethodBadge from "./PaymentMethodBadge";
 import ReceiptStatusBadge from "./ReceiptStatusBadge";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   DndContext,
   closestCenter,
@@ -168,6 +169,9 @@ export default function PaymentsTable({
   columns: externalColumns,
   onColumnsChange,
 }: PaymentsTableProps) {
+  const { hasPermission } = usePermissions();
+  const canReassignSales = hasPermission("deals.reassign");
+
   // Dialog states
   const [linkContactOpen, setLinkContactOpen] = useState(false);
   const [unlinkContactOpen, setUnlinkContactOpen] = useState(false);
@@ -665,6 +669,7 @@ export default function PaymentsTable({
         );
 
       case 'sales_manager': {
+        const hasCanonicalDealLink = payment.rawSource === 'payments_v2' && !!payment.order_id;
         const sourceLabels: Record<string, string> = {
           payment_link: 'Платёжная ссылка',
           platform_send: 'Отправка из платформы',
@@ -679,20 +684,34 @@ export default function PaymentsTable({
         const sourceLabel = payment.assignment_source
           ? sourceLabels[payment.assignment_source] || payment.assignment_source
           : null;
+        const managerSummary = (
+          <div className="flex min-w-0 flex-col gap-0.5 text-xs">
+            <div className="flex items-center gap-1.5">
+              <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate font-medium">
+                {payment.responsible_name || 'Без менеджера'}
+              </span>
+            </div>
+            {sourceLabel && (
+              <span className="truncate text-[10px] text-muted-foreground">{sourceLabel}</span>
+            )}
+          </div>
+        );
         return (
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="flex min-w-0 flex-col gap-0.5 text-xs">
-                <div className="flex items-center gap-1.5">
-                  <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate font-medium">
-                    {payment.responsible_name || 'Без менеджера'}
-                  </span>
-                </div>
-                {sourceLabel && (
-                  <span className="truncate text-[10px] text-muted-foreground">{sourceLabel}</span>
-                )}
-              </div>
+              {hasCanonicalDealLink ? (
+                <button
+                  type="button"
+                  className="block w-full rounded-md p-1 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => openDealSheet(payment.order_id!, payment.profile_id)}
+                  aria-label={`Открыть сделку для менеджера продажи: ${payment.responsible_name || 'Без менеджера'}`}
+                >
+                  {managerSummary}
+                </button>
+              ) : (
+                managerSummary
+              )}
             </TooltipTrigger>
             <TooltipContent side="bottom" className="max-w-xs text-xs">
               <div>{payment.responsible_name || 'Без менеджера'}</div>
@@ -700,6 +719,16 @@ export default function PaymentsTable({
               {payment.assigned_by_name && <div>Назначил: {payment.assigned_by_name}</div>}
               {payment.assignment_effective_from && (
                 <div>С: {formatPaymentTimeIANA(payment.assignment_effective_from, selectedTimezoneIANA)}</div>
+              )}
+              {hasCanonicalDealLink && (
+                <div className="mt-1 text-muted-foreground">
+                  Нажмите, чтобы открыть сделку{canReassignSales ? ' и изменить менеджера' : ''}.
+                </div>
+              )}
+              {!hasCanonicalDealLink && (
+                <div className="mt-1 text-muted-foreground">
+                  Сначала завершите привязку платежа к сделке.
+                </div>
               )}
             </TooltipContent>
           </Tooltip>
@@ -786,6 +815,12 @@ export default function PaymentsTable({
                 <FileText className="h-3 w-3 mr-2" />
                 Документы
               </DropdownMenuItem>
+              {canReassignSales && payment.rawSource === 'payments_v2' && payment.order_id && (
+                <DropdownMenuItem onClick={() => openDealSheet(payment.order_id!, payment.profile_id)}>
+                  <User className="h-3 w-3 mr-2" />
+                  Назначить менеджера
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => copyUid(payment.uid)}>
                 <Copy className="h-3 w-3 mr-2" />

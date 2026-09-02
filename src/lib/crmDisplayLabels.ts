@@ -44,6 +44,8 @@ const AUDIT_LABELS: Record<string, string> = {
   "crm.deal.deleted": "Сделка удалена",
   "crm.deal.restored": "Сделка восстановлена",
   "crm.deal.moved": "Сделка перемещена",
+  "deal.sales_manager_changed": "Изменён менеджер продажи",
+  deal_sales_manager_assigned_on_create: "Назначен менеджер продажи",
   crm_stage_applied_success: "Сделка перемещена в успешную стадию",
   crm_stage_applied_failed: "Сделка перемещена в стадию отказа",
   crm_stage_applied_pending: "Сделка поставлена в ожидание оплаты",
@@ -61,6 +63,62 @@ const AUDIT_LABELS: Record<string, string> = {
   access_revoked: "Доступ отозван",
   access_expired: "Доступ истёк",
 };
+
+const SALES_MANAGER_SOURCE_LABELS: Record<string, string> = {
+  manual_reassignment: "Ручное назначение",
+  bulk_reassignment: "Массовое назначение",
+  backfill: "Историческое назначение",
+  admin_manual: "При создании сделки",
+  payment_link: "Платёжная ссылка",
+  platform_send: "Отправка из платформы",
+};
+
+function textValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function managerName(meta: Record<string, unknown>, nameKey: string, idKey: string): string {
+  const name = textValue(meta[nameKey]);
+  if (name) return name;
+  return meta[idKey] ? "Сотрудник" : "Без менеджера";
+}
+
+/**
+ * Человекочитаемые строки для аудита менеджера продажи. Возвращает null для
+ * остальных событий, чтобы их существующая локализация не менялась.
+ */
+export function formatSalesManagerAuditDetails(
+  action: string | null | undefined,
+  meta: Record<string, unknown> | null | undefined,
+): string[] | null {
+  const key = String(action || "").trim();
+  const values = meta ?? {};
+
+  if (key === "deal.sales_manager_changed") {
+    const lines = [
+      `Менеджер: ${managerName(values, "old_responsible_name", "old_responsible_user_id")} → ${managerName(values, "new_responsible_name", "new_responsible_user_id")}`,
+    ];
+    const changedPaymentCount = Number(values.changed_payment_count);
+    if (Number.isFinite(changedPaymentCount) && changedPaymentCount >= 0) {
+      lines.push(`Связанных платежей обновлено: ${changedPaymentCount}`);
+    }
+    const reason = textValue(values.reason);
+    if (reason) lines.push(`Причина: ${reason}`);
+    const source = textValue(values.source);
+    if (source) lines.push(`Источник: ${SALES_MANAGER_SOURCE_LABELS[source] || "Системное назначение"}`);
+    return lines;
+  }
+
+  if (key === "deal_sales_manager_assigned_on_create") {
+    const responsibleName = textValue(values.responsible_name_snapshot) || "Сотрудник";
+    const lines = [`Менеджер: ${responsibleName}`];
+    const source = textValue(values.source);
+    if (source) lines.push(`Источник: ${SALES_MANAGER_SOURCE_LABELS[source] || "Системное назначение"}`);
+    return lines;
+  }
+
+  return null;
+}
 
 export function localizeAuditAction(action: string | null | undefined): string {
   if (!action) return "Системное событие";

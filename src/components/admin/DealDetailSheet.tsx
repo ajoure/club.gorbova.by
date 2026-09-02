@@ -183,6 +183,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
       queryClient.invalidateQueries({ queryKey: ["deals-board"] });
       queryClient.invalidateQueries({ queryKey: ["deal-audit", deal?.id] });
+      queryClient.invalidateQueries({ queryKey: ["unified-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["contact_feed"] });
     },
     onError: (error: Error) => toast.error(error.message || "Не удалось изменить менеджера"),
   });

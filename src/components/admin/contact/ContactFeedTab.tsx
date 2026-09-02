@@ -35,7 +35,7 @@ import {
   Instagram, LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { localizeAuditAction, localizeEntityType, localizeReasonCode, localizeCrmStatus } from "@/lib/crmDisplayLabels";
+import { formatSalesManagerAuditDetails, localizeAuditAction, localizeEntityType, localizeReasonCode, localizeCrmStatus } from "@/lib/crmDisplayLabels";
 
 /** Русская подпись для «technical» event-title типа `company.created` / `company.linked_to_contact`. */
 function humanizeEventTitle(title: string | null | undefined): string {
@@ -546,20 +546,37 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
       .or(auditFilters.join(","))
       .order("created_at", { ascending: false })
       .limit(160);
+    const actorIds = Array.from(new Set(((audits || []) as any[]).map((audit) => audit.actor_user_id).filter(Boolean)));
+    const actorNames = new Map<string, string>();
+    if (actorIds.length) {
+      const { data: actorProfiles } = await supabase
+        .from("profiles")
+        .select("user_id,full_name")
+        .in("user_id", actorIds);
+      ((actorProfiles || []) as any[]).forEach((actor) => {
+        if (actor.user_id && actor.full_name) actorNames.set(actor.user_id, actor.full_name);
+      });
+    }
     for (const a of ((audits || []) as any[])) {
       const action = String(a.action || "");
       const title = localizeAuditAction(action);
       const entityLabel = localizeEntityType(a.entity_type);
       const metaObj = (a.meta && typeof a.meta === "object") ? a.meta as Record<string, any> : {};
-      const reasonLabel = metaObj.reason ? localizeReasonCode(String(metaObj.reason)) : "";
+      const managerAuditDetails = formatSalesManagerAuditDetails(action, metaObj);
+      const reasonLabel = !managerAuditDetails && metaObj.reason ? localizeReasonCode(String(metaObj.reason)) : "";
       const bodyLines: string[] = [];
       if (entityLabel) bodyLines.push(`Объект: ${entityLabel}`);
-      if (reasonLabel) bodyLines.push(`Причина: ${reasonLabel}`);
-      if (metaObj.pipeline_name) bodyLines.push(`Воронка: ${metaObj.pipeline_name}`);
-      if (metaObj.to_stage_name) bodyLines.push(`Новая стадия: ${metaObj.to_stage_name}`);
-      else if (metaObj.target_stage_name) bodyLines.push(`Целевая стадия: ${metaObj.target_stage_name}`);
+      if (managerAuditDetails) {
+        bodyLines.push(...managerAuditDetails);
+      } else {
+        if (reasonLabel) bodyLines.push(`Причина: ${reasonLabel}`);
+        if (metaObj.pipeline_name) bodyLines.push(`Воронка: ${metaObj.pipeline_name}`);
+        if (metaObj.to_stage_name) bodyLines.push(`Новая стадия: ${metaObj.to_stage_name}`);
+        else if (metaObj.target_stage_name) bodyLines.push(`Целевая стадия: ${metaObj.target_stage_name}`);
+      }
       const body = bodyLines.join("\n");
-      if (match(title, body, a.actor_label, JSON.stringify(a.meta || {}))) events.push({ id: `audit-${a.id}`, kind: "event", at: a.created_at, title, body, author: a.actor_label || (a.actor_type === "system" ? "Система" : "Сотрудник"), meta: { event_source: "audit", action: a.action, entity_type: a.entity_type, entity_id: a.entity_id, raw_meta: a.meta } });
+      const actorName = a.actor_label || actorNames.get(a.actor_user_id) || (a.actor_type === "system" ? "Система" : "Сотрудник");
+      if (match(title, body, actorName, JSON.stringify(a.meta || {}))) events.push({ id: `audit-${a.id}`, kind: "event", at: a.created_at, title, body, author: actorName, meta: { event_source: "audit", action: a.action, entity_type: a.entity_type, entity_id: a.entity_id, raw_meta: a.meta } });
     }
   }
 
