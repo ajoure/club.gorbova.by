@@ -84,6 +84,7 @@ import { ComposeEmailDialog } from "./ComposeEmailDialog";
 import { PaymentReceiptButton } from "@/components/payments/PaymentReceiptButton";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
+import { formatSalesManagerAuditDetails } from "@/lib/crmDisplayLabels";
 
 import { InternalInstallmentBlock } from "@/components/installments/InternalInstallmentBlock";
 
@@ -346,13 +347,29 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
     queryKey: ["deal-audit", deal?.id],
     queryFn: async () => {
       if (!deal?.id) return [];
-      const { data: logs, error } = await supabase
+      const auditQuery = () => supabase
         .from("audit_logs")
         .select("*")
-        .or(`entity_id.eq.${deal.id},meta->>order_id.eq.${deal.id},meta->>orderId.eq.${deal.id}`)
         .order("created_at", { ascending: false })
         .limit(20);
-      if (error) return [];
+
+      // Current deal events always have entity_id. Legacy events may only have
+      // the order id inside meta, so query those JSONB shapes independently.
+      // A malformed legacy filter must never hide valid current audit rows.
+      const [entityResult, legacySnakeResult, legacyCamelResult] = await Promise.all([
+        auditQuery().eq("entity_id", deal.id),
+        auditQuery().contains("meta", { order_id: deal.id }),
+        auditQuery().contains("meta", { orderId: deal.id }),
+      ]);
+      if (entityResult.error) throw entityResult.error;
+
+      const logs = Array.from(new Map([
+        ...(entityResult.data || []),
+        ...(legacySnakeResult.error ? [] : legacySnakeResult.data || []),
+        ...(legacyCamelResult.error ? [] : legacyCamelResult.data || []),
+      ].map((log) => [log.id, log])).values())
+        .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+        .slice(0, 20);
 
       // Fetch actor profiles for the logs
       const actorIds = [...new Set(logs.map(l => l.actor_user_id).filter(Boolean))];
@@ -1540,42 +1557,44 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {auditLogs.map((log: any) => (
-                      <div key={log.id} className="p-3 rounded-lg bg-muted/30 space-y-1.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-medium text-sm">{getActionLabel(log.action)}</span>
-                          <span className="text-xs text-muted-foreground whitespace-nowrap">
-                            {format(new Date(log.created_at), "dd.MM HH:mm")}
-                          </span>
-                        </div>
-                        {log.actor_profile && (
+                    {auditLogs.map((log: any) => {
+                      const managerDetails = formatSalesManagerAuditDetails(log.action, log.meta || {});
+                      const actorLabel = log.actor_profile?.full_name
+                        || log.actor_profile?.email
+                        || log.actor_label
+                        || (log.actor_type === "system" ? "Система" : "Сотрудник");
+                      return (
+                        <div key={log.id} className="p-3 rounded-lg bg-muted/30 space-y-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="font-medium text-sm">{getActionLabel(log.action)}</span>
+                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                              {format(new Date(log.created_at), "dd.MM HH:mm")}
+                            </span>
+                          </div>
                           <div className="text-xs text-muted-foreground">
                             <span>Выполнил: </span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!log.actor_user_id) return;
-                                onOpenChange(false);
-                                navigate(`/admin/contacts?contact=${log.actor_user_id}`);
-                              }}
-                              className="text-primary hover:underline inline-flex items-center gap-1"
-                            >
-                              {log.actor_profile.full_name || log.actor_profile.email || "Сотрудник"}
-                              <ExternalLink className="w-3 h-3" />
-                            </button>
+                            {log.actor_user_id && log.actor_profile ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onOpenChange(false);
+                                  navigate(`/admin/contacts?contact=${log.actor_user_id}`);
+                                }}
+                                className="text-primary hover:underline inline-flex items-center gap-1"
+                              >
+                                {actorLabel}
+                                <ExternalLink className="w-3 h-3" />
+                              </button>
+                            ) : actorLabel}
                           </div>
-                        )}
-                        {log.action === "deal.sales_manager_changed" && (
-                          <div className="text-xs text-muted-foreground">
-                            {(log.meta?.old_responsible_name || "Без менеджера")}
-                            {" → "}
-                            {(log.meta?.new_responsible_name || "Без менеджера")}
-                            {log.meta?.changed_payment_count != null && ` · платежей: ${log.meta.changed_payment_count}`}
-                            {log.meta?.reason && ` · ${log.meta.reason}`}
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                          {managerDetails.length > 0 && (
+                            <div className="text-xs text-muted-foreground space-y-0.5">
+                              {managerDetails.map((detail) => <div key={detail}>{detail}</div>)}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>

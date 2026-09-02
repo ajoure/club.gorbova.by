@@ -537,15 +537,31 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
       if (match(title, body, p.provider_payment_id)) events.push({ id: `payment-${p.id}`, kind: "event", at: p.paid_at || p.updated_at || p.created_at, title, body, author: "Система", meta: { event_source: "payment", status: p.status, amount: p.amount, currency: p.currency, provider: p.provider } });
     }
 
-    const auditFilters = [`entity_id.eq.${contactId}`, `meta.ilike.%${contactId}%`];
-    if (userId) auditFilters.push(`target_user_id.eq.${userId}`, `actor_user_id.eq.${userId}`, `meta.ilike.%${userId}%`);
-    for (const oid of orderIds.slice(0, 20)) auditFilters.push(`entity_id.eq.${oid}`, `meta.ilike.%${oid}%`);
-    const { data: audits } = await supabase
+    const auditSelect = "id,actor_user_id,action,target_user_id,meta,created_at,actor_type,actor_label,entity_type,entity_id";
+    const auditEntityIds = [contactId, ...orderIds.slice(0, 20)];
+    const entityAuditPromise = supabase
       .from("audit_logs")
-      .select("id,actor_user_id,action,target_user_id,meta,created_at,actor_type,actor_label,entity_type,entity_id")
-      .or(auditFilters.join(","))
+      .select(auditSelect)
+      .in("entity_id", auditEntityIds)
       .order("created_at", { ascending: false })
       .limit(160);
+    const userAuditPromise = userId
+      ? supabase
+        .from("audit_logs")
+        .select(auditSelect)
+        .or(`target_user_id.eq.${userId},actor_user_id.eq.${userId}`)
+        .order("created_at", { ascending: false })
+        .limit(160)
+      : Promise.resolve({ data: [], error: null });
+    const [entityAuditResult, userAuditResult] = await Promise.all([entityAuditPromise, userAuditPromise]);
+
+    // Keep a bad secondary path from hiding exact contact/deal events.
+    const audits = Array.from(new Map([
+      ...(entityAuditResult.error ? [] : entityAuditResult.data || []),
+      ...(userAuditResult.error ? [] : userAuditResult.data || []),
+    ].map((audit) => [audit.id, audit] as const)).values())
+      .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+      .slice(0, 160);
     const actorIds = Array.from(new Set(((audits || []) as any[]).map((audit) => audit.actor_user_id).filter(Boolean)));
     const actorNames = new Map<string, string>();
     if (actorIds.length) {
