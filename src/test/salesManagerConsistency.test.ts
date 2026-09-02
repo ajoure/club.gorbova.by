@@ -30,6 +30,21 @@ describe("sales manager consistency", () => {
     expect(deal).toContain('queryKey: ["deal-audit", deal?.id]');
   });
 
+  it("loads current deal audit independently from legacy JSONB fallbacks", () => {
+    const deal = read("src/components/admin/DealDetailSheet.tsx");
+    expect(deal).toContain('auditQuery().eq("entity_id", deal.id)');
+    expect(deal).toContain('auditQuery().contains("meta", { order_id: deal.id })');
+    expect(deal).toContain('auditQuery().contains("meta", { orderId: deal.id })');
+    expect(deal).not.toContain('meta->>order_id.eq.${deal.id}');
+  });
+
+  it("loads contact feed audit from exact contact, deal and user fields", () => {
+    const feed = read("src/components/admin/contact/ContactFeedTab.tsx");
+    expect(feed).toContain('.in("entity_id", auditEntityIds)');
+    expect(feed).toContain('target_user_id.eq.${userId},actor_user_id.eq.${userId}');
+    expect(feed).not.toContain("meta.ilike");
+  });
+
   it("renders a Russian reassignment audit with actor-facing details", () => {
     expect(localizeAuditAction("deal.sales_manager_changed")).toBe("Изменён менеджер продажи");
     expect(formatSalesManagerAuditDetails("deal.sales_manager_changed", {
