@@ -545,21 +545,15 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
       .in("entity_id", auditEntityIds)
       .order("created_at", { ascending: false })
       .limit(160);
-    const userAuditPromise = userId
-      ? supabase
-        .from("audit_logs")
-        .select(auditSelect)
-        .or(`target_user_id.eq.${userId},actor_user_id.eq.${userId}`)
-        .order("created_at", { ascending: false })
-        .limit(160)
-      : Promise.resolve({ data: [], error: null });
-    const [entityAuditResult, userAuditResult] = await Promise.all([entityAuditPromise, userAuditPromise]);
+    const entityAuditResult = await entityAuditPromise;
 
-    // Keep a bad secondary path from hiding exact contact/deal events.
-    const audits = Array.from(new Map([
-      ...(entityAuditResult.error ? [] : entityAuditResult.data || []),
-      ...(userAuditResult.error ? [] : userAuditResult.data || []),
-    ].map((audit) => [audit.id, audit] as const)).values())
+    // Actor and target identify who performed/received an action, not which
+    // contact owns it. Restrict the feed to this contact and its deals so a
+    // staff contact cannot see unrelated customer events merely because that
+    // staff member was the actor or assigned manager.
+    const audits = Array.from(new Map((
+      entityAuditResult.error ? [] : entityAuditResult.data || []
+    ).map((audit) => [audit.id, audit] as const)).values())
       .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
       .slice(0, 160);
     const actorIds = Array.from(new Set(((audits || []) as any[]).map((audit) => audit.actor_user_id).filter(Boolean)));

@@ -38,10 +38,11 @@ describe("sales manager consistency", () => {
     expect(deal).not.toContain('meta->>order_id.eq.${deal.id}');
   });
 
-  it("loads contact feed audit from exact contact, deal and user fields", () => {
+  it("scopes contact feed audit to the contact and its deals", () => {
     const feed = read("src/components/admin/contact/ContactFeedTab.tsx");
     expect(feed).toContain('.in("entity_id", auditEntityIds)');
-    expect(feed).toContain('target_user_id.eq.${userId},actor_user_id.eq.${userId}');
+    expect(feed).not.toContain('target_user_id.eq.${userId}');
+    expect(feed).not.toContain('actor_user_id.eq.${userId}');
     expect(feed).not.toContain("meta.ilike");
   });
 
