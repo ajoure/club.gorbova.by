@@ -1,33 +1,51 @@
-# PLAN-ONLY ревизия PR #424 — финальное исправление спринта «Продукты 2»
+# Products 2 / PR #401 — повторная проверка находок (PLAN-ONLY, READ-ONLY)
 
-**SHA:** `f05f83e5bd6c3d1e8ef65eeff0492199d39e8d0b` (HEAD рабочего дерева совпадает, merge PR #424 из `codex/products2-contact-audit-final`, коммит `8e51055e1`).
-**Режим:** READ-ONLY. Код, миграции, функции, данные, deploy, Publish — не изменялись.
+## Итог: PASS (новых критических находок нет)
 
-## Вердикт: PASS
+## SHA
+- Ветка `codex/products2-payment-manager-options` получена напрямую с origin.
+- FETCH_HEAD = head ветки = `3326843c20f80e28ee7ce93fd83f9c235ad113fd`, объект существует и является commit.
+- Совпадение с каноническим SHA подтверждено. База `f89ac455...` — расхождений нет.
 
-## Проверки
+## MINOR-1 — устранена
+В миграции `20260901170547_payment_manager_options_directory.sql`:
+- определение сервисной роли: `coalesce((SELECT auth.role()), '') = 'service_role'`;
+- строка `request.jwt.claim.role` в миграции отсутствует.
 
-### 1) Идентификаторы сделок контакта — PASS
-- `ContactFeedTab.tsx:862-864` — `rpcDealIds` извлекаются из событий `contact_feed_list` с `kind === "deal"` и валидацией UUID (`/^[0-9a-f-]{36}$/i`).
-- RPC `contact_feed_list` (миграция `20260704182851`, строки 262-292) возвращает deal-события с `id = o.id` (UUID заказа), разрешённые через `profiles.user_id = orders_v2.user_id` — идентификаторы подлинные.
-- `ContactFeedTab.tsx:510-515` — заказы ищутся независимыми точными запросами: `eq("profile_id", contactId)` (авторитетный, его ошибка пробрасывается), плюс безопасные fallback: `eq("user_id")`, `ilike("customer_email")`, `ilike("customer_phone")`. Ошибки fallback-веток игнорируются, результаты дедуплицируются по `id` и сортируются. Прежний комбинированный `.or(orderOr...)` удалён — устранён риск тихой инвалидации всего запроса legacy-значением.
+Матрица доступа в коде:
+- аноним (`auth.uid()` NULL, не service_role) -> `RAISE EXCEPTION 'auth_required'` (42501);
+- authenticated без `entitlements.view` -> `RAISE EXCEPTION 'forbidden_payments_view'` (42501);
+- authenticated с `entitlements.view` -> выдача `user_id`/`label`;
+- service_role -> обе проверки пропускаются, выдача разрешена.
+Права: `REVOKE ALL ... FROM PUBLIC, anon`, `GRANT EXECUTE ... TO authenticated, service_role`. PII не возвращается (только id и имя/плейсхолдер).
 
-### 2) Область аудита — PASS
-- `ContactFeedTab.tsx:563-568` — аудит ограничен `.in("entity_id", [contactId, ...orderIds.slice(0, 20)])`.
-- Фильтров `actor_user_id.eq` / `target_user_id.eq` / `meta.ilike` нет (проверено и текстовым тестом `salesManagerConsistency.test.ts`). Утечка чужих событий через actor/target исключена; actor используется только для отображения имени.
+## Пункт 2 — покрытие тестом (частично, не блокер)
+Файл: `src/test/paymentManagerDirectory.contract.test.ts`.
+- Кейс service_role: `expect(migration).toContain("coalesce((SELECT auth.role()), '') = 'service_role'")` и отсутствие `request.jwt.claim.role`.
+- Кейс аноним: `expect(migration).toMatch(/IF v_actor IS NULL AND NOT v_is_service_role THEN[\s\S]*auth_required/)`.
+- Кейс authenticated без права: `expect(migration).toMatch(/IF NOT v_is_service_role[\s\S]*entitlements\.view[\s\S]*forbidden_payments_view/)`.
+- Кейс authenticated с правом / права вызова: `toContain("GRANT EXECUTE ... TO authenticated, service_role")` плюс проверки возвращаемых колонок и `WHERE role_row.code <> 'user'`.
 
-### 3) deal.sales_manager_changed для ORD-26-00306 — PASS (с оговоркой)
-- Запись аудита пишется с `entity_id` = UUID сделки; если сделка попадает в `orderIds` (через RPC по user_id или прямые запросы) — событие попадёт в ленту связанного контакта.
-- Русский рендер подтверждён тестом: `localizeAuditAction("deal.sales_manager_changed")` → «Изменён менеджер продажи»; `formatSalesManagerAuditDetails` выводит «Менеджер: X → Y», «Связанных платежей обновлено: N», «Причина», «Источник».
-- **Оговорка (не блокер):** `auditEntityIds` ограничен `orderIds.slice(0, 20)` — у контакта с >20 сделками аудит старших сделок может не попасть в ленту. Для ORD-26-00306 (свежая сделка) это не влияет.
+Честная оценка: это статический контракт по тексту миграции (regex по ветвлениям), а не рантайм-вызов RPC четырьмя разными вызывающими. Все четыре ветки адресованы явными assert'ами, но фактическое поведение при вызове тестом не исполняется. Классифицирую как MINOR-3 (не блокер): при желании добавить рантайм-проверку негативных ответов после применения миграции.
 
-### 4) Незатронутость платежей/RLS/миграций/Edge Functions/данных — PASS
-- Diff `861a515b..f05f83e5`: только `src/components/admin/contact/ContactFeedTab.tsx` (+43/-12) и `src/test/salesManagerConsistency.test.ts` (+5). Миграций, SQL, Edge Functions, изменений payments_v2/RLS нет.
+## MINOR-2 — устранена
+`src/components/admin/payments/PaymentsFilters.tsx`: `import { useId } from "react";` и `import { Button } from "@/components/ui/button";` находятся в верхнем блоке импортов (строки 1–2), импортов после исполняемых объявлений нет.
+
+## Неизменный scope
+- Managed migrations: ровно один файл `20260901170547_payment_manager_options_directory.sql` (diff по `supabase/` относительно base содержит только его).
+- Edge Functions к деплою: 0.
+- Записи в production-данные / backfill: 0.
+- Фронтенд использует RPC-справочник (`usePaymentManagerDirectoryOptions` -> `supabase.rpc("get_payment_manager_options_v1")`, без `user_roles_v2` и `useStaffOptions`), исторические snapshot-менеджеры сохраняются.
+- Read-only счётчики `payment_sales_attribution` (effective_to IS NULL): total 31 / assigned 0 / unassigned 31. `orders_v2` не запрашивался, backfill не выполнялся.
 
 ## Блокеры
 Нет.
 
-## Технические детали
-- Base: `861a515b2355576961e49f213bccb6e4be646ed3` (релиз PR #423).
-- Изменённые файлы: 2 (UI + тест), суммарно 48+/12-.
-- Известная оговорка: лимит `slice(0, 20)` на deal-ids в аудит-запросе; при необходимости — follow-up отдельной задачей.
+## Будущий план EXECUTE (только после отдельного разрешения)
+1. Синхронизировать точный merge SHA PR #401, доказать чистое дерево.
+2. Применить ровно одну managed-миграцию `20260901170547_payment_manager_options_directory.sql`.
+3. Deploy Edge Functions: 0. Запись данных: 0. Backfill: 0.
+4. Read-only проверки: наличие и ACL функции (`REVOKE`/`GRANT`), негативный вызов от анонимного клиента (ожидание 42501), вызов от авторизованного админа (непустой список без PII).
+5. Build точного merge SHA и Publish.
+6. UI-QA в опубликованной версии: фильтр «Все менеджеры» / конкретный менеджер / без менеджера, сохранение выбранного периода, паритет таблица/CSV, бывший сотрудник из snapshot, состояние загрузки/ошибки с retry, скриншоты ПК и мобильного viewport.
+7. Повторный read-back 31/0/31 — атрибуция не должна измениться.
