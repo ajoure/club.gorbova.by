@@ -570,13 +570,39 @@ async function loadPlatformEventsForContact(
       .limit(160);
     const entityAuditResult = await entityAuditPromise;
 
+    // Some production PostgREST paths return no rows for a mixed contact/deal
+    // `in(...)` filter even though the same deal audit is readable with an
+    // exact entity lookup (the deal history uses that canonical path). Keep
+    // the efficient batch query, then retry manager events through an OR of
+    // exact, UUID-only deal ids. This covers all 80 loaded deals in one request
+    // and preserves the contact boundary: actor/target ids are deliberately
+    // never used as ownership filters.
+    const managerAuditActions = [
+      "deal.sales_manager_changed",
+      "deal_sales_manager_assigned_on_create",
+    ];
+    const batchAudits = entityAuditResult.error ? [] : entityAuditResult.data || [];
+    const hasManagerAudit = batchAudits.some((audit) =>
+      managerAuditActions.includes(String(audit.action || "")),
+    );
+    const managerAuditFallbackResult = !hasManagerAudit && orderIds.length
+      ? await supabase
+          .from("audit_logs")
+          .select(auditSelect)
+          .in("action", managerAuditActions)
+          .or(orderIds.map((orderId) => `entity_id.eq.${orderId}`).join(","))
+          .order("created_at", { ascending: false })
+          .limit(160)
+      : null;
+
     // Actor and target identify who performed/received an action, not which
     // contact owns it. Restrict the feed to this contact and its deals so a
     // staff contact cannot see unrelated customer events merely because that
     // staff member was the actor or assigned manager.
-    const audits = Array.from(new Map((
-      entityAuditResult.error ? [] : entityAuditResult.data || []
-    ).map((audit) => [audit.id, audit] as const)).values())
+    const audits = Array.from(new Map([
+      ...batchAudits,
+      ...(managerAuditFallbackResult?.error ? [] : managerAuditFallbackResult?.data || []),
+    ].map((audit) => [audit.id, audit] as const)).values())
       .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
       .slice(0, 160);
     const actorIds = Array.from(new Set(((audits || []) as any[]).map((audit) => audit.actor_user_id).filter(Boolean)));
