@@ -479,7 +479,12 @@ function useVoiceRecorder() {
 }
 
 
-async function loadPlatformEventsForContact(contactId: string, types: FeedKind[] | null, search: string | null): Promise<FeedEvent[]> {
+async function loadPlatformEventsForContact(
+  contactId: string,
+  types: FeedKind[] | null,
+  search: string | null,
+  rpcDealIds: string[] = [],
+): Promise<FeedEvent[]> {
   if (types && !types.includes("event") && !types.includes("deal")) return [];
   const q = (search || "").trim().toLowerCase();
   const match = (...parts: any[]) => !q || parts.some((v) => String(v ?? "").toLowerCase().includes(q));
@@ -490,20 +495,38 @@ async function loadPlatformEventsForContact(contactId: string, types: FeedKind[]
   const email = ((contact as any)?.email || "").toLowerCase();
   const phoneDigits = String((contact as any)?.phone || "").replace(/\D/g, "");
 
-  const orderOr: string[] = [`profile_id.eq.${contactId}`];
-  if (userId) orderOr.push(`user_id.eq.${userId}`);
-  if (email) orderOr.push(`customer_email.ilike.${email}`);
-  if (phoneDigits) orderOr.push(`customer_phone.ilike.%${phoneDigits}%`);
-
-  const { data: orders } = await supabase
+  const orderSelect = "id,order_number,status,final_price,currency,created_at,updated_at,deal_date,customer_email,product:products_v2(name),tariff:tariffs(name)";
+  const orderQuery = () => supabase
     .from("orders_v2")
-    .select("id,order_number,status,final_price,currency,created_at,updated_at,deal_date,customer_email,product:products_v2(name),tariff:tariffs(name)")
-    .or(orderOr.join(","))
+    .select(orderSelect)
     .order("created_at", { ascending: false })
     .limit(80);
 
-  const orderRows = (orders || []) as any[];
-  const orderIds = orderRows.map((o) => o.id).filter(Boolean);
+  // Do not combine profile/user/email/phone filters in one PostgREST `.or(...)`.
+  // A legacy value containing reserved filter syntax can invalidate that entire
+  // request and silently remove the order ids needed for deal audit events.
+  // Keep the canonical profile lookup authoritative and run legacy fallbacks
+  // independently, then merge the results deterministically.
+  const orderResults = await Promise.all([
+    orderQuery().eq("profile_id", contactId),
+    ...(userId ? [orderQuery().eq("user_id", userId)] : []),
+    ...(email ? [orderQuery().ilike("customer_email", email)] : []),
+    ...(phoneDigits ? [orderQuery().ilike("customer_phone", `%${phoneDigits}%`)] : []),
+  ]);
+  if (orderResults[0]?.error) throw orderResults[0].error;
+
+  const orderRows = Array.from(new Map(orderResults
+    .flatMap((result) => result.error ? [] : result.data || [])
+    .map((order) => [order.id, order] as const)).values())
+    .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+    .slice(0, 80) as any[];
+  // The canonical feed RPC already resolved deals through the contact's user_id.
+  // Reuse those ids as a second authoritative source so audit events remain
+  // available even when a legacy order cannot be rediscovered by profile/email/phone.
+  const orderIds = Array.from(new Set([
+    ...rpcDealIds,
+    ...orderRows.map((o) => o.id).filter(Boolean),
+  ])).slice(0, 80);
 
   if (!types || types.includes("deal")) {
     for (const o of orderRows) {
@@ -836,7 +859,15 @@ export function ContactFeedTab({
       let platformEvents: FeedEvent[] = [];
       if (!isCompany && !isDeal) {
         try {
-          platformEvents = await loadPlatformEventsForContact(entityId, types as FeedKind[] | null, debounced || null);
+          const rpcDealIds = rpcEvents
+            .filter((event) => event.kind === "deal" && /^[0-9a-f-]{36}$/i.test(String(event.id)))
+            .map((event) => String(event.id));
+          platformEvents = await loadPlatformEventsForContact(
+            entityId,
+            types as FeedKind[] | null,
+            debounced || null,
+            rpcDealIds,
+          );
         } catch (platformError) {
           console.warn("[contact-feed] platform events fallback failed:", platformError);
         }
