@@ -1,51 +1,53 @@
-# Products 2 / PR #401 — повторная проверка находок (PLAN-ONLY, READ-ONLY)
+# Отчет о выполнении: PLAN-ONLY ревизия PR #420 — STOP на git identity gate
 
-## Итог: PASS (новых критических находок нет)
+## A. Git identity и точный scope — FAIL (BLOCK)
 
-## SHA
-- Ветка `codex/products2-payment-manager-options` получена напрямую с origin.
-- FETCH_HEAD = head ветки = `3326843c20f80e28ee7ce93fd83f9c235ad113fd`, объект существует и является commit.
-- Совпадение с каноническим SHA подтверждено. База `f89ac455...` — расхождений нет.
+Проверено только чтение git-объектов, без изменений.
 
-## MINOR-1 — устранена
-В миграции `20260901170547_payment_manager_options_directory.sql`:
-- определение сервисной роли: `coalesce((SELECT auth.role()), '') = 'service_role'`;
-- строка `request.jwt.claim.role` в миграции отсутствует.
+- Ожидаемая база `origin/main = 4508c9eacd70152686ec5841e528e0e57562f106` — **подтверждена**:
+  - `git rev-parse HEAD` → `4508c9eacd70152686ec5841e528e0e57562f106`
+  - `git ls-remote --heads origin` → `4508c9eacd70152686ec5841e528e0e57562f106  refs/heads/main`
+  - HEAD-коммит: `Merge pull request #419 from ajoure/codex/products2-migration-history-cleanup`
+- Ожидаемый head PR #420 `d0359bffb` — **не разрешается**:
+  - `git cat-file -t d0359bffb` → `fatal: Not a valid object name d0359bffb`
+  - `git ls-remote origin` (27 ref-ов) не содержит ни `d0359bf`, ни `refs/pull/420/*`
+  - Доступные codex-ветки в зеркале: `codex/fix-bepaid-cancel-materialization`, `codex/fix-referral-partner-audit-fks`, `codex/live-rollout-4c5cc1c` — ветки PR #420 среди них нет
 
-Матрица доступа в коде:
-- аноним (`auth.uid()` NULL, не service_role) -> `RAISE EXCEPTION 'auth_required'` (42501);
-- authenticated без `entitlements.view` -> `RAISE EXCEPTION 'forbidden_payments_view'` (42501);
-- authenticated с `entitlements.view` -> выдача `user_id`/`label`;
-- service_role -> обе проверки пропускаются, выдача разрешена.
-Права: `REVOKE ALL ... FROM PUBLIC, anon`, `GRANT EXECUTE ... TO authenticated, service_role`. PII не возвращается (только id и имя/плейсхолдер).
+Причина: подключенный `origin` — это зеркало Lovable проекта, в нем нет GitHub-ссылок `refs/pull/*` и еще не смерженной ветки PR #420. Разрешить точный полный head SHA невозможно, следовательно delta PR #420 недоступна для ревизии.
 
-## Пункт 2 — покрытие тестом (частично, не блокер)
-Файл: `src/test/paymentManagerDirectory.contract.test.ts`.
-- Кейс service_role: `expect(migration).toContain("coalesce((SELECT auth.role()), '') = 'service_role'")` и отсутствие `request.jwt.claim.role`.
-- Кейс аноним: `expect(migration).toMatch(/IF v_actor IS NULL AND NOT v_is_service_role THEN[\s\S]*auth_required/)`.
-- Кейс authenticated без права: `expect(migration).toMatch(/IF NOT v_is_service_role[\s\S]*entitlements\.view[\s\S]*forbidden_payments_view/)`.
-- Кейс authenticated с правом / права вызова: `toContain("GRANT EXECUTE ... TO authenticated, service_role")` плюс проверки возвращаемых колонок и `WHERE role_row.code <> 'user'`.
+По вашему стоп-правилу («STOP immediately on exact SHA mismatch / missing dependency») ревизия остановлена на этом шаге.
 
-Честная оценка: это статический контракт по тексту миграции (regex по ветвлениям), а не рантайм-вызов RPC четырьмя разными вызывающими. Все четыре ветки адресованы явными assert'ами, но фактическое поведение при вызове тестом не исполняется. Классифицирую как MINOR-3 (не блокер): при желании добавить рантайм-проверку негативных ответов после применения миграции.
+## B–F. Контрактные проверки — не выполнялись
 
-## MINOR-2 — устранена
-`src/components/admin/payments/PaymentsFilters.tsx`: `import { useId } from "react";` и `import { Button } from "@/components/ui/button";` находятся в верхнем блоке импортов (строки 1–2), импортов после исполняемых объявлений нет.
+- B. Single-source и confirmed-order mutation contract — NOT REVIEWED (нет delta)
+- C. Интеграция `set_deal_responsible_v1` и сохранение истории — NOT REVIEWED
+- D. RBAC `deals.reassign` — NOT REVIEWED
+- E. Русские формулировки аудита/ленты контакта и отсутствие сырых кодов — NOT REVIEWED
+- F. Инвалидция кэшей `unified-payments`, `contact_feed`, `deal-audit` — NOT REVIEWED
 
-## Неизменный scope
-- Managed migrations: ровно один файл `20260901170547_payment_manager_options_directory.sql` (diff по `supabase/` относительно base содержит только его).
-- Edge Functions к деплою: 0.
-- Записи в production-данные / backfill: 0.
-- Фронтенд использует RPC-справочник (`usePaymentManagerDirectoryOptions` -> `supabase.rpc("get_payment_manager_options_v1")`, без `user_roles_v2` и `useStaffOptions`), исторические snapshot-менеджеры сохраняются.
-- Read-only счётчики `payment_sales_attribution` (effective_to IS NULL): total 31 / assigned 0 / unassigned 31. `orders_v2` не запрашивался, backfill не выполнялся.
+Ревизия текущего `main` вместо delta PR #420 не проводилась намеренно: это дало бы вердикт не о том объекте.
 
-## Блокеры
-Нет.
+## G. Находки
 
-## Будущий план EXECUTE (только после отдельного разрешения)
-1. Синхронизировать точный merge SHA PR #401, доказать чистое дерево.
-2. Применить ровно одну managed-миграцию `20260901170547_payment_manager_options_directory.sql`.
-3. Deploy Edge Functions: 0. Запись данных: 0. Backfill: 0.
-4. Read-only проверки: наличие и ACL функции (`REVOKE`/`GRANT`), негативный вызов от анонимного клиента (ожидание 42501), вызов от авторизованного админа (непустой список без PII).
-5. Build точного merge SHA и Publish.
-6. UI-QA в опубликованной версии: фильтр «Все менеджеры» / конкретный менеджер / без менеджера, сохранение выбранного периода, паритет таблица/CSV, бывший сотрудник из snapshot, состояние загрузки/ошибки с retry, скриншоты ПК и мобильного viewport.
-7. Повторный read-back 31/0/31 — атрибуция не должна измениться.
+- CRITICAL-1 (блокирующая, процессная): head-объект PR #420 `d0359bffb` недостижим из доступного remote. Файловые/функциональные ссылки привести невозможно.
+- Прочих находок нет — код PR не читался.
+
+## H. Итог
+
+**BLOCK** — git identity gate не пройден (head PR #420 не разрешается).
+
+Rollback-вывод: производственных изменений не вносилось, поэтому откатывать нечего. Если PR #420 уже был влит вне этого зеркала, безопасный откат — только revert PR #420, без затрагивания PR #401/#414–#419.
+
+## Подтверждение объема воздействия
+
+- migrations: 0
+- Edge Functions: 0
+- data writes: 0
+- deploy: 0
+- Publish: 0
+
+## Что нужно для продолжения (на выбор)
+
+1. Смержить PR #420 в `main`, сообщить точный merge SHA — тогда delta будет доступна в зеркале.
+2. Либо запушить ветку PR #420 в зеркало Lovable под именем `codex/...`, чтобы head `d0359bffb` разрешался.
+3. Либо прислать полный diff PR #420 (patch) для ревизии по тексту, с явной пометкой, что identity gate подтверждается вами вручную.
