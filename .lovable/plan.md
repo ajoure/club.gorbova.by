@@ -1,69 +1,51 @@
-# Отчет о выполнении: STRICT PLAN-ONLY ревизия PR #420 (опция 3 — патч + ручное подтверждение identity)
+# Products 2 / PR #401 — повторная проверка находок (PLAN-ONLY, READ-ONLY)
 
-## A. Manual Git identity и точный scope — PASS
+## Итог: PASS (новых критических находок нет)
 
-- База подтверждена объектом: `git rev-parse HEAD` = `4508c9eacd70152686ec5841e528e0e57562f106` (совпадает с `origin/main` в зеркале).
-- Head `d0359bffbd421f4c9323d69263933c4af25ba12a` и ветка `origin/codex/products2-manager-consistency` приняты как ручное свидетельство (опция 3); `refs/pull/420/*` не требовался.
-- Пре-имидж патча проверен по blob-хешам base-файлов (`git hash-object`), все 5 совпали побайтно:
-  - `DealDetailSheet.tsx` → `5f870b6a…cff6` ✓
-  - `contact/ContactFeedTab.tsx` → `141e617d…dea5f` ✓
-  - `payments/PaymentsFilters.tsx` → `dd549f1f…be58` ✓
-  - `payments/PaymentsTable.tsx` → `86ddc89e…19ee8` ✓
-  - `lib/crmDisplayLabels.ts` → `cd05ed42…aac0a` ✓
-  - `src/test/salesManagerConsistency.test.ts` отсутствует в базе → корректно как new file `0000000…`.
-- Scope ровно 6 файлов, только UI/клиентская логика и тест. Миграций, Edge Functions, SQL — нет. Патч внутренне согласован, конфликтов/офсетов нет.
+## SHA
+- Ветка `codex/products2-payment-manager-options` получена напрямую с origin.
+- FETCH_HEAD = head ветки = `3326843c20f80e28ee7ce93fd83f9c235ad113fd`, объект существует и является commit.
+- Совпадение с каноническим SHA подтверждено. База `f89ac455...` — расхождений нет.
 
-## B. Single-source и confirmed-order mutation contract — PASS
+## MINOR-1 — устранена
+В миграции `20260901170547_payment_manager_options_directory.sql`:
+- определение сервисной роли: `coalesce((SELECT auth.role()), '') = 'service_role'`;
+- строка `request.jwt.claim.role` в миграции отсутствует.
 
-- Единственная запись менеджера — `orders_v2` через RPC в `DealDetailSheet.tsx:169` (`reassignSalesMutation`). Патч не добавляет ни одной мутации на `payments_v2` / `payment_sales_attribution`.
-- `PaymentsTable.tsx`, ячейка `case 'sales_manager'`: гейт `hasCanonicalDealLink = payment.rawSource === 'payments_v2' && !!payment.order_id`. И кликабельный менеджер, и пункт меню «Назначить менеджера» вызывают `openDealSheet(payment.order_id!, payment.profile_id)` → загрузка канонической `orders_v2` (`PaymentsTable.tsx:302`).
-- `effective_order_id` в патче не используется как цель мутации; он остаётся только в существующей display-ячейке сделки (`PaymentsTable.tsx:586–605`, вне delta). Queue-строки (`rawSource === 'queue'`) и `payments_v2` без `order_id` не дают ни клика, ни пункта меню и показывают требование: «Сначала завершите привязку платежа к сделке».
-- Копия в `PaymentsFilters.tsx` переписана корректно: говорит о «текущем версионном назначении платежа», о распространении назначения на связанные платежи и возвраты при смене менеджера в сделке и о сохранении истории. Независимого менеджера платежа не подразумевает.
+Матрица доступа в коде:
+- аноним (`auth.uid()` NULL, не service_role) -> `RAISE EXCEPTION 'auth_required'` (42501);
+- authenticated без `entitlements.view` -> `RAISE EXCEPTION 'forbidden_payments_view'` (42501);
+- authenticated с `entitlements.view` -> выдача `user_id`/`label`;
+- service_role -> обе проверки пропускаются, выдача разрешена.
+Права: `REVOKE ALL ... FROM PUBLIC, anon`, `GRANT EXECUTE ... TO authenticated, service_role`. PII не возвращается (только id и имя/плейсхолдер).
 
-## C. `set_deal_responsible_v1` и сохранение истории — PASS
+## Пункт 2 — покрытие тестом (частично, не блокер)
+Файл: `src/test/paymentManagerDirectory.contract.test.ts`.
+- Кейс service_role: `expect(migration).toContain("coalesce((SELECT auth.role()), '') = 'service_role'")` и отсутствие `request.jwt.claim.role`.
+- Кейс аноним: `expect(migration).toMatch(/IF v_actor IS NULL AND NOT v_is_service_role THEN[\s\S]*auth_required/)`.
+- Кейс authenticated без права: `expect(migration).toMatch(/IF NOT v_is_service_role[\s\S]*entitlements\.view[\s\S]*forbidden_payments_view/)`.
+- Кейс authenticated с правом / права вызова: `toContain("GRANT EXECUTE ... TO authenticated, service_role")` плюс проверки возвращаемых колонок и `WHERE role_row.code <> 'user'`.
 
-- Единственный write-path не изменён: `supabase.rpc("set_deal_responsible_v1", { p_deal_id, p_responsible_user_id, p_reason, p_source: "manual_reassignment" })`. Патч не трогает параметры, не добавляет альтернативных RPC/UPDATE.
-- Версионирование остаётся на стороне БД (`20260830083925_sales_manager_attribution_data.sql`: закрытие текущей версии `effective_to`, вставка новых строк, рекурсивный обход `reference_payment_id` для возвратов, `changed_payment_count`). Delta это только отображает.
+Честная оценка: это статический контракт по тексту миграции (regex по ветвлениям), а не рантайм-вызов RPC четырьмя разными вызывающими. Все четыре ветки адресованы явными assert'ами, но фактическое поведение при вызове тестом не исполняется. Классифицирую как MINOR-3 (не блокер): при желании добавить рантайм-проверку негативных ответов после применения миграции.
 
-## D. RBAC `deals.reassign` — PASS
+## MINOR-2 — устранена
+`src/components/admin/payments/PaymentsFilters.tsx`: `import { useId } from "react";` и `import { Button } from "@/components/ui/button";` находятся в верхнем блоке импортов (строки 1–2), импортов после исполняемых объявлений нет.
 
-- `PaymentsTable.tsx`: `const { hasPermission } = usePermissions(); const canReassignSales = hasPermission("deals.reassign")`; пункт «Назначить менеджера» рендерится только при `canReassignSales && rawSource === 'payments_v2' && order_id`.
-- Кликабельный менеджер без права остаётся навигацией в сделку (read-only), подсказка тогда не обещает изменение менеджера (суффикс «и изменить менеджера» добавляется только при праве).
-- Финальный гейт не обходится: сама форма назначения в `DealDetailSheet.tsx:952` под `canReassignSales`, а RPC делает собственную серверную проверку `has_permission(actor,'deals.reassign')`.
+## Неизменный scope
+- Managed migrations: ровно один файл `20260901170547_payment_manager_options_directory.sql` (diff по `supabase/` относительно base содержит только его).
+- Edge Functions к деплою: 0.
+- Записи в production-данные / backfill: 0.
+- Фронтенд использует RPC-справочник (`usePaymentManagerDirectoryOptions` -> `supabase.rpc("get_payment_manager_options_v1")`, без `user_roles_v2` и `useStaffOptions`), исторические snapshot-менеджеры сохраняются.
+- Read-only счётчики `payment_sales_attribution` (effective_to IS NULL): total 31 / assigned 0 / unassigned 31. `orders_v2` не запрашивался, backfill не выполнялся.
 
-## E. Русский рендер аудита / лента контакта — PASS
+## Блокеры
+Нет.
 
-- `crmDisplayLabels.ts`: добавлены заголовки `deal.sales_manager_changed` → «Изменён менеджер продажи», `deal_sales_manager_assigned_on_create` → «Назначен менеджер продажи».
-- `formatSalesManagerAuditDetails` выдаёт: «Менеджер: старый → новый», «Связанных платежей обновлено: N», «Причина: …», «Источник: …» (код источника маппится, неизвестный код заменяется на «Системное назначение», а не показывается сырым).
-- Ключи meta совпадают с фактически пишущимися в миграциях: `old_responsible_name`, `new_responsible_name`, `old/new_responsible_user_id`, `changed_payment_count` (`…083925…sql:508–530`) и `responsible_name_snapshot`, `source` (`…085855…sql:195–203`).
-- Сырые UUID не выводятся: `managerName()` при отсутствии имени даёт «Сотрудник»/«Без менеджера».
-- Исполнитель: в ленте автор теперь `actor_label || имя из profiles(user_id→full_name) || «Система»/«Сотрудник»` — сырых идентификаторов нет.
-
-## F. Инвалидция кэшей — PASS
-
-- `DealDetailSheet.tsx` `onSuccess` теперь инвалидирует `["admin-deals"]`, `["deals-board"]`, `["deal-audit", deal?.id]`, `["unified-payments"]`, `["contact_feed"]`.
-- Префиксное совпадение подтверждено фактическими ключами: `useUnifiedPayments.tsx:201` — `["unified-payments", from, to, …]`; `ContactFeedTab.tsx:761` — `["contact_feed", entityId, types, debounced]`. React Query инвалидирует по префиксу, значит оба покрыты.
-
-## G. Находки
-
-Критических находок нет.
-
-Minor-1 (`ContactFeedTab.tsx`, ветка `managerAuditDetails`): `Причина` для событий менеджера выводится «как есть», без `localizeReasonCode`. Для ручного назначения это свободный текст оператора (корректно), но если когда-нибудь RPC вызовут с кодовой причиной, она попадёт в ленту без локализации. Не блокирует.
-
-Minor-2 (`ContactFeedTab.tsx`, `loadPlatformEventsForContact`): добавлен дополнительный запрос к `profiles` по `actor_user_id` на каждую загрузку ленты. Стоимость невелика (≤160 аудит-записей, один `in`-запрос), но это лишний round-trip там, где `actor_label` обычно уже заполнен. Не блокирует.
-
-## H. Итог
-
-**PASS**. Патч соответствует контракту B–F, риск ограничен UI-слоем.
-
-Rollback: при необходимости — только revert PR #420. Никакие миграции, функции и данные откатывать не нужно; PR #401/#414–#419 не затрагиваются.
-
-## Подтверждение объема воздействия
-
-- migrations: 0
-- Edge Functions: 0
-- data writes: 0
-- deploy: 0
-- Publish: 0
-
-Ревизия завершена, изменения не вносились.
+## Будущий план EXECUTE (только после отдельного разрешения)
+1. Синхронизировать точный merge SHA PR #401, доказать чистое дерево.
+2. Применить ровно одну managed-миграцию `20260901170547_payment_manager_options_directory.sql`.
+3. Deploy Edge Functions: 0. Запись данных: 0. Backfill: 0.
+4. Read-only проверки: наличие и ACL функции (`REVOKE`/`GRANT`), негативный вызов от анонимного клиента (ожидание 42501), вызов от авторизованного админа (непустой список без PII).
+5. Build точного merge SHA и Publish.
+6. UI-QA в опубликованной версии: фильтр «Все менеджеры» / конкретный менеджер / без менеджера, сохранение выбранного периода, паритет таблица/CSV, бывший сотрудник из snapshot, состояние загрузки/ошибки с retry, скриншоты ПК и мобильного viewport.
+7. Повторный read-back 31/0/31 — атрибуция не должна измениться.
