@@ -55,6 +55,17 @@ verify_jwt = true
 [functions.public-rr-installment-initiate]
 verify_jwt = false
 
+# CRM destructive operations are browser-invoked and require a user JWT.
+# Their in-code RBAC guards remain the second authorization layer.
+[functions.merge-clients]
+verify_jwt = true
+
+[functions.detect-duplicates]
+verify_jwt = true
+
+[functions.unmerge-clients]
+verify_jwt = true
+
 [functions.rr-webhook]
 verify_jwt = false
 
