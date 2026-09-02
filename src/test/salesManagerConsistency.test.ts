@@ -40,6 +40,11 @@ describe("sales manager consistency", () => {
 
   it("scopes contact feed audit to the contact and its deals", () => {
     const feed = read("src/components/admin/contact/ContactFeedTab.tsx");
+    expect(feed).toContain('orderQuery().eq("profile_id", contactId)');
+    expect(feed).toContain('orderQuery().eq("user_id", userId)');
+    expect(feed).not.toContain('.or(orderOr.join(","))');
+    expect(feed).toContain('event.kind === "deal"');
+    expect(feed).toContain("...rpcDealIds");
     expect(feed).toContain('.in("entity_id", auditEntityIds)');
     expect(feed).not.toContain('target_user_id.eq.${userId}');
     expect(feed).not.toContain('actor_user_id.eq.${userId}');
