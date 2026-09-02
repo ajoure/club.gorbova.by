@@ -46,8 +46,8 @@ describe("sales manager consistency", () => {
     expect(feed).toContain('event.kind === "deal"');
     expect(feed).toContain("...rpcDealIds");
     expect(feed).toContain('.in("entity_id", auditEntityIds)');
-    expect(feed).toContain('.in("action", managerAuditActions)');
-    expect(feed).toContain('`entity_id.eq.${orderId}`');
+    expect(feed).toContain('.eq("entity_id", orderId)');
+    expect(feed).toContain("exactDealAuditResults.flatMap");
     expect(feed).not.toContain('target_user_id.eq.${userId}');
     expect(feed).not.toContain('actor_user_id.eq.${userId}');
     expect(feed).not.toContain("meta.ilike");

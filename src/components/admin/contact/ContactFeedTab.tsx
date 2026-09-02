@@ -573,10 +573,11 @@ async function loadPlatformEventsForContact(
     // Some production PostgREST paths return no rows for a mixed contact/deal
     // `in(...)` filter even though the same deal audit is readable with an
     // exact entity lookup (the deal history uses that canonical path). Keep
-    // the efficient batch query, then retry manager events through an OR of
-    // exact, UUID-only deal ids. This covers all 80 loaded deals in one request
-    // and preserves the contact boundary: actor/target ids are deliberately
-    // never used as ownership filters.
+    // the efficient batch query, then retry each loaded deal through the same
+    // exact query as DealDetailSheet. The feed is an on-demand admin view; the
+    // extra reads are preferable to silently hiding audit. Exact deal ids also
+    // preserve the contact boundary: actor/target ids are deliberately never
+    // used as ownership filters.
     const managerAuditActions = [
       "deal.sales_manager_changed",
       "deal_sales_manager_assigned_on_create",
@@ -585,15 +586,14 @@ async function loadPlatformEventsForContact(
     const hasManagerAudit = batchAudits.some((audit) =>
       managerAuditActions.includes(String(audit.action || "")),
     );
-    const managerAuditFallbackResult = !hasManagerAudit && orderIds.length
-      ? await supabase
+    const exactDealAuditResults = !hasManagerAudit && orderIds.length
+      ? await Promise.all(orderIds.map((orderId) => supabase
           .from("audit_logs")
           .select(auditSelect)
-          .in("action", managerAuditActions)
-          .or(orderIds.map((orderId) => `entity_id.eq.${orderId}`).join(","))
+          .eq("entity_id", orderId)
           .order("created_at", { ascending: false })
-          .limit(160)
-      : null;
+          .limit(20)))
+      : [];
 
     // Actor and target identify who performed/received an action, not which
     // contact owns it. Restrict the feed to this contact and its deals so a
@@ -601,7 +601,7 @@ async function loadPlatformEventsForContact(
     // staff member was the actor or assigned manager.
     const audits = Array.from(new Map([
       ...batchAudits,
-      ...(managerAuditFallbackResult?.error ? [] : managerAuditFallbackResult?.data || []),
+      ...exactDealAuditResults.flatMap((result) => result.error ? [] : result.data || []),
     ].map((audit) => [audit.id, audit] as const)).values())
       .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
       .slice(0, 160);
