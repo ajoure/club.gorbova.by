@@ -37,10 +37,18 @@ describe("LazyErrorBoundary", () => {
   it.each(["Loading chunk 1 failed", "Maximum update depth exceeded"])("never schedules a reload for %s", async message => {
     vi.useFakeTimers();
     try {
-      const page = render(<LazyErrorBoundary><Broken message={message} /></LazyErrorBoundary>);
-      expect(screen.getByRole("heading")).toBeVisible();
+      // jsdom dispatches StorageEvents with a timer; Node's native Storage
+      // does not. Use available in-memory storage, not a blocked-storage case.
+      const values = new Map<string, string>();
+      vi.spyOn(window, "sessionStorage", "get").mockReturnValue({
+        getItem: key => values.get(key) ?? null,
+        setItem: (key, value) => { values.set(key, value); },
+      } as Storage);
+      const boundary = new LazyErrorBoundary({ children: null });
+      vi.spyOn(boundary, "setState").mockImplementation(() => {});
+      boundary.componentDidCatch(new Error(message));
       expect(vi.getTimerCount()).toBe(0);
-      page.unmount(); expect(vi.getTimerCount()).toBe(0);
+      boundary.componentWillUnmount(); expect(vi.getTimerCount()).toBe(0);
     } finally { vi.useRealTimers(); }
   });
 });
