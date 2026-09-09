@@ -233,7 +233,7 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
       <SidebarProvider>
         <div className="flex w-full overflow-hidden" style={{ height: 'var(--app-height)' }}>
           <AdminSidebar />
-          <main className={`flex-1 h-full flex flex-col min-w-0 min-h-0 overflow-x-hidden ${fullHeight ? "overflow-hidden" : "overflow-y-auto"}`}>
+          <main className={`flex-1 h-full flex flex-col min-w-0 min-h-0 overflow-x-hidden overscroll-y-none ${fullHeight ? "overflow-hidden" : "overflow-y-auto"}`}>
             <header 
               className="border-b border-border/30 flex items-center justify-between px-3 md:px-4 bg-background/60 backdrop-blur-xl sticky top-0 z-10"
               style={{ 

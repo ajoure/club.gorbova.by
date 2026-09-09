@@ -261,3 +261,7 @@ verify_jwt = false
 [functions.bepaid-readonly-pull]
 # Exact service/Vault reconciliation credential or verified admin. GET-only provider diagnostics.
 verify_jwt = false
+
+[functions.report-client-error]
+# JWT wall plus in-function current-user and deals.view authorization; no audit permission expansion.
+verify_jwt = true
