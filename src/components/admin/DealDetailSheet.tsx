@@ -1558,7 +1558,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 ) : (
                   <div className="space-y-2">
                     {auditLogs.map((log: any) => {
-                      const managerDetails = formatSalesManagerAuditDetails(log.action, log.meta || {});
+                      // Non-manager events intentionally return null (the contact feed uses that sentinel).
+                      const managerDetails = formatSalesManagerAuditDetails(log.action, log.meta || {}) ?? [];
                       const actorLabel = log.actor_profile?.full_name
                         || log.actor_profile?.email
                         || log.actor_label
