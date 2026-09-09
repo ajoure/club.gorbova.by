@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminPaymentLinkDialog } from "./AdminPaymentLinkDialog";
+import { PullToRefresh } from "@/components/layout/PullToRefresh";
 
 const fixture = vi.hoisted(() => {
   const products = [
@@ -117,6 +118,7 @@ function renderDialog(onOpenChange = vi.fn()) {
   const result = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
+        <PullToRefresh>
         <AdminPaymentLinkDialog
           open
           onOpenChange={onOpenChange}
@@ -124,6 +126,7 @@ function renderDialog(onOpenChange = vi.fn()) {
           userName="Марина Колейчик"
           userEmail="marina@example.com"
         />
+        </PullToRefresh>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -145,6 +148,27 @@ function selectProductByName(name: string) {
 describe("AdminPaymentLinkDialog product selection", () => {
   beforeEach(() => {
     invoke.mockClear();
+  });
+
+  it("preserves product/tariff after blur, focus return and a downward gesture in the portalled form", async () => {
+    const { onOpenChange, container } = renderDialog();
+    selectProductByName("Gorbova Club");
+    selectNativeByValue("Тариф", "tariff-club");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Тариф" })).toHaveTextContent("FULL"));
+    const comment = screen.getByLabelText("Комментарий (опционально)");
+    fireEvent.change(comment, { target: { value: "Тестовый черновик — не создавать" } });
+    (comment as HTMLElement).focus(); (comment as HTMLElement).blur();
+    fireEvent.blur(window); fireEvent.focus(window); fireEvent(document, new Event("visibilitychange"));
+    const target = screen.getByRole("combobox", { name: "Продукт" });
+    fireEvent.touchStart(target, { touches: [{ clientX: 100, clientY: 0 }], changedTouches: [{ clientX: 100, clientY: 0 }] });
+    fireEvent.touchMove(target, { touches: [{ clientX: 100, clientY: 800 }], changedTouches: [{ clientX: 100, clientY: 800 }] });
+    fireEvent.touchEnd(target, { touches: [], changedTouches: [{ clientX: 100, clientY: 800 }] });
+    expect(target).toHaveTextContent("Gorbova Club");
+    expect(screen.getByRole("combobox", { name: "Тариф" })).toHaveTextContent("FULL");
+    expect(comment).toHaveValue("Тестовый черновик — не создавать");
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(container.querySelectorAll("svg")).toHaveLength(0);
+    expect(invoke.mock.calls.some(([name]) => name.startsWith("admin-create"))).toBe(false);
   });
 
   it("keeps Gorbova Club selected and does not close the nested dialog", async () => {

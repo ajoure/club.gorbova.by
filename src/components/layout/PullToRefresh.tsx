@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, ReactNode, useEffect } from "react";
+import { useState, useRef, useCallback, ReactNode } from "react";
 import { Loader2, ArrowDown } from "lucide-react";
 
 interface PullToRefreshProps {
@@ -59,13 +59,6 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
   const raw = typeof window !== 'undefined' ? window.innerHeight * THRESHOLD_PERCENT : 120;
   const threshold = Math.min(THRESHOLD_MAX_PX, Math.max(THRESHOLD_MIN_PX, raw));
 
-  const blurIfNeeded = useCallback((e: React.SyntheticEvent) => {
-    const active = document.activeElement;
-    if (!isEditableElement(active)) return;
-    if (isInsideEditableTarget(e.target)) return;
-    (active as HTMLElement).blur();
-  }, []);
-
   const resetPull = useCallback(() => {
     isPulling.current = false;
     directionLocked.current = null;
@@ -77,8 +70,11 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
 
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
-      // Block if editing, refreshing, or in cooldown
-      if (isEditableElement(document.activeElement)) return;
+      // A gesture may only call an explicitly supplied, state-preserving refresh.
+      // Never arm the old hard-reload fallback (also after keyboard blur).
+      if (!onRefresh || e.touches.length !== 1) return;
+      if (isEditableElement(document.activeElement) || isInsideEditableTarget(e.target)) return;
+      if (document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) return;
       if (refreshing) return;
 
       // Cooldown check
@@ -87,17 +83,14 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
 
       // Find scrollable container from touch target with fallback
       const targetEl = (e.target as Element | null) ?? null;
-      const startFrom = (targetEl && typeof (targetEl as any).closest === 'function')
-        ? (targetEl as Element)
-        : (e.currentTarget as Element);
+      const startFrom = targetEl instanceof Element ? targetEl : e.currentTarget;
 
       // Если касание началось внутри горизонтального scroll-контейнера таблицы —
       // не перехватываем жест, отдаём управление браузеру (горизонтальный свайп
       // прокручивает таблицу, вертикальный — нативно прокручивает страницу).
       if (
-        targetEl &&
-        typeof (targetEl as any).closest === 'function' &&
-        (targetEl as Element).closest('[data-table-scroll-x="true"], .table-scroll-x')
+        targetEl instanceof Element &&
+        targetEl.closest('[data-table-scroll-x="true"], .table-scroll-x')
       ) {
         return;
       }
@@ -120,13 +113,13 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
       scrollContainerRef.current = scrollContainer;
       setPullState('pulling');
     },
-    [refreshing]
+    [refreshing, onRefresh]
   );
 
   const handleTouchMove = useCallback(
     (e: React.TouchEvent) => {
       // Guard checks
-      if (isEditableElement(document.activeElement)) return;
+      if (!onRefresh || e.touches.length !== 1 || isEditableElement(document.activeElement)) { resetPull(); return; }
       if (!isPulling.current || refreshing) return;
 
       // Re-check scroll position
@@ -176,11 +169,12 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
         resetPull();
       }
     },
-    [refreshing, threshold, resetPull]
+    [refreshing, threshold, resetPull, onRefresh]
   );
 
   const handleTouchEnd = useCallback(() => {
     if (!isPulling.current) return;
+    if (!onRefresh || isEditableElement(document.activeElement) || document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) { resetPull(); return; }
 
     const wasReady = currentPullDistance.current >= threshold;
     
@@ -200,23 +194,18 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
     // Trigger refresh
     lastRefreshTime.current = Date.now();
     
-    if (!onRefresh) {
-      // No custom handler - reload page
-      window.location.reload();
-      return;
-    }
-
     setRefreshing(true);
     setPullState('idle');
     setPullDistance(threshold * 0.4); // Keep indicator visible during refresh
 
-    Promise.resolve(onRefresh())
+    Promise.resolve().then(onRefresh)
+      .catch(() => { /* The caller owns error feedback. Do not turn refresh failure into a page crash. */ })
       .finally(() => {
         setRefreshing(false);
         setPullDistance(0);
         currentPullDistance.current = 0;
       });
-  }, [onRefresh, threshold]);
+  }, [onRefresh, threshold, resetPull]);
 
   // Cancel on touch cancel
   const handleTouchCancel = useCallback(() => {
@@ -235,11 +224,10 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
       className="flex-1 min-h-0 flex flex-col relative"
       style={{
         // iOS: Disable native pull-to-refresh
-        overscrollBehavior: 'contain',
+        overscrollBehavior: 'none',
         WebkitOverflowScrolling: 'touch',
         touchAction: 'pan-y',
       }}
-      onPointerDownCapture={blurIfNeeded}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
