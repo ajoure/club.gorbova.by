@@ -1,5 +1,5 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 
 export interface FeeRules {
   erip_percent: number;
@@ -23,7 +23,7 @@ export function useBepaidFeeRules() {
   return useQuery({
     queryKey: ['bepaid-fee-rules'],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data } = await operationalSupabase
         .rpc("list_operational_integrations")
         .select('config')
         .eq('provider', 'bepaid')

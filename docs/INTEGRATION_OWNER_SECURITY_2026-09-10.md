@@ -15,3 +15,5 @@ Lovable plan-only и консолидированная ревизия выпо�
 До завершения: GitHub checks, exact merged SHA, применение только указанной миграции и deploy только перечисленных изменённых функций через Lovable, read-back grants/policies/функций и неизменности 2 super_admin, безопасный runtime owner/staff/anon, повтор security scan. Publish только после PASS. После Publish — проверки рабочего UI на ПК и 390×844 с привязкой к URL/версии. Никакие реальные письма, платежи, возвраты, отмены или создания пользователей не являются smoke-тестом. Миграция не изменяет строки клиентов, платежей или доступов.
 
 На момент подготовки production migration/deploy/Publish не выполнялись.
+
+Уточнение синхронизации: Lovable пересоздаёт types.ts по ещё старой БД до применения managed migration. Дополнительные RPC-контракты вынесены в operational-client.ts, который использует тот же authenticated клиент и не меняет runtime-права. Перед deploy сверять точное содержимое approved GitHub tree и hash миграции; внутренний временный edit-коммит Lovable может иметь другой HEAD при идентичном коде.

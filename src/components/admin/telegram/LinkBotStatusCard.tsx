@@ -1,5 +1,5 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -11,7 +11,7 @@ export function LinkBotStatusCard() {
   const { data: bot, isLoading, error } = useQuery({
     queryKey: ['link-bot-status'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await operationalSupabase
         .rpc("list_operational_telegram_bots")
         .select('id, bot_name, bot_username, status, is_primary, last_check_at, error_message, updated_at')
         .eq('is_primary', true)

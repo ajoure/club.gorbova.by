@@ -1,3 +1,4 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -48,14 +49,14 @@ export function ComposeEmailDialog({
     queryKey: ["email-accounts-for-compose"],
     queryFn: async () => {
       // Try integration_instances first
-      const { data: integrations } = await supabase
+      const { data: integrations } = await operationalSupabase
         .rpc("list_operational_integrations")
         .select("id, alias, config, is_default")
         .eq("category", "email")
         .eq("status", "connected");
 
       // Then email_accounts
-      const { data: accounts } = await supabase
+      const { data: accounts } = await operationalSupabase
         .rpc("list_operational_email_accounts")
         .select("id, display_name, email, is_default")
         .eq("is_active", true);

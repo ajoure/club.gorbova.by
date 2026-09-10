@@ -1,3 +1,4 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -97,7 +98,7 @@ export function CommunicationSettingsTabContent() {
   const { data: accounts = [], isLoading: loadingAccounts } = useQuery({
     queryKey: ["email-accounts"],
     queryFn: async () => {
-      const { data, error } = await (supabase
+      const { data, error } = await (operationalSupabase
         .rpc("list_operational_email_accounts"))
         .select("id, email, display_name, provider, is_default, is_active, imap_enabled")
         .order("created_at", { ascending: false });
