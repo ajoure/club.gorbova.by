@@ -24810,6 +24810,58 @@ export type Database = {
         }
         Returns: Json
       }
+      list_operational_acquiring_connections: {
+        Args: never
+        Returns: {
+          account_code: string
+          account_name: string
+          capabilities_snapshot: Json
+          is_default: boolean
+          provider: string
+          status: string
+          test_mode: boolean
+        }[]
+      }
+      list_operational_email_accounts: {
+        Args: never
+        Returns: {
+          created_at: string
+          display_name: string
+          email: string
+          id: string
+          imap_enabled: boolean
+          is_active: boolean
+          is_default: boolean
+          provider: string
+        }[]
+      }
+      list_operational_integrations: {
+        Args: never
+        Returns: {
+          alias: string
+          category: string
+          config: Json
+          id: string
+          is_default: boolean
+          provider: string
+          status: string
+        }[]
+      }
+      list_operational_telegram_bots: {
+        Args: never
+        Returns: {
+          bot_id: number
+          bot_name: string
+          bot_username: string
+          created_at: string
+          error_message: string
+          id: string
+          is_primary: boolean
+          last_check_at: string
+          status: string
+          updated_at: string
+        }[]
+      }
       live_event_comment_reaction_summary: {
         Args: { _comment_ids: string[] }
         Returns: {
