@@ -15072,6 +15072,75 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_refund_requests: {
+        Row: {
+          access_action: string
+          actor_user_id: string
+          amount: number
+          created_at: string
+          currency: string
+          order_group_item_id: string | null
+          order_id: string
+          payment_id: string
+          provider: string
+          provider_refund_id: string | null
+          reason: string
+          reduce_days: number | null
+          request_key: string
+          state: string
+          updated_at: string
+        }
+        Insert: {
+          access_action: string
+          actor_user_id: string
+          amount: number
+          created_at?: string
+          currency: string
+          order_group_item_id?: string | null
+          order_id: string
+          payment_id: string
+          provider: string
+          provider_refund_id?: string | null
+          reason: string
+          reduce_days?: number | null
+          request_key: string
+          state?: string
+          updated_at?: string
+        }
+        Update: {
+          access_action?: string
+          actor_user_id?: string
+          amount?: number
+          created_at?: string
+          currency?: string
+          order_group_item_id?: string | null
+          order_id?: string
+          payment_id?: string
+          provider?: string
+          provider_refund_id?: string | null
+          reason?: string
+          reduce_days?: number | null
+          request_key?: string
+          state?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_refund_requests_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_refund_requests_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_sales_attribution: {
         Row: {
           assigned_by: string | null
@@ -25210,6 +25279,21 @@ export type Database = {
       }
       report_package_field_dependencies: {
         Args: { _field_id: string }
+        Returns: Json
+      }
+      reserve_payment_refund_request: {
+        Args: {
+          _access_action: string
+          _actor_user_id: string
+          _amount: number
+          _currency: string
+          _order_group_item_id: string
+          _order_id: string
+          _payment_id: string
+          _reason: string
+          _reduce_days: number
+          _request_key: string
+        }
         Returns: Json
       }
       resolve_broadcast_audience: { Args: { _filters: Json }; Returns: Json }
