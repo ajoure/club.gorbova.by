@@ -123,3 +123,33 @@ Owner RLS действительно не блокирует service role, по�
 
 Ожидаемые rowcounts из раздела 6 сохраняются; дополнительно перенос payment 1: 1 UPDATE `payments_v2.order_id`, 1 UPDATE `orders_v2` B (final_price+meta), 1 UPDATE `orders_v2` A (архив+superseded_by), 0 DELETE.
 Provider writes, SQL-мутации, код, коммиты и Publish не выполнялись.
+
+---
+
+# Дополнение 2 (READ-ONLY): группы, items, ссылка, guards. Блокирующие замечания
+
+## Факты (не-PII)
+
+`order_groups` (обе, `payer_type=individual`, `source=admin_payment_link`, `payment_method=internal_installment`, `currency=BYN`, `paid_at=null`, `meta keys`: `separate_entitlements`, `single_crm_deal`; `quote_snapshot keys`: `adjustment_amount, adjustment_reason, available_addons, currency, items, selected_addon_offer_ids, subtotal, total`):
+- A: `6ec21793-7901-46b2-9540-b4defeec84db`, `GRP-SUB-LINK-MS69W0DD`, primary A, `status=pending`, subtotal 2650.00, adjustment −1325.00, **total_amount 1325.00**, создана 29.07.2026
+- B: `806f3295-6327-4831-b2c4-a6631b217fcf`, `GRP-SUB-LINK-MSOFLH7I`, primary B, `status=pending`, subtotal 2650.00, adjustment −1325.00, **total_amount 1325.00**, создана 11.08.2026
+
+`order_group_items` (по одному, `role=primary`, `quantity=1`, `sort_order=0`, `discount_amount=0.00`, product `3e43fb28-8322-41bc-bfee-714731bdc630`, tariff `767bb895-30fa-49c9-8f31-d0794590020a`, offer `c7f5221e-715e-4b4e-8312-f542616d9416`, `item_snapshot keys`: `discount_amount, final_amount, list_amount, offer_id, product_id, product_name, role, sort_order, tariff_id, tariff_name`):
+- A item `9fcacc8f-d4b5-472f-8561-858d32b974b6`: list 2650.00, final **2650.00**
+- B item `0235abb4-67ee-4b36-b718-525957e5e9fa`: list 2650.00, final **2650.00**
+- `payment_allocations` по обоим items: 0
+
+`payment_links`: у A группы ссылок нет; у B ровно одна — `a11f2595-6bfc-486a-981c-3ebcd2706b39`, `status=active`, amount 66300 (копейки, 663.00 BYN), `payment_type=subscription`, `provider=bepaid`, `provider_mode=fixed`, `max_uses=null`, `current_uses=0`, `expires_at=null`, tariff/offer/product как выше, `order_group_id=B`.
+
+Поля для guards: `orders_v2` — `id, order_number, status, final_price, paid_amount, currency, product_id, tariff_id, offer_id, is_deleted, meta`; `subscriptions_v2` — `id, order_id, status, installment_status, billing_cycles, paid_billing_cycles, access_start_at, access_end_at, provider_subscription_id`; `provider_subscriptions` — `id, order_id, provider_subscription_id, state`; `payments_v2` — `id, order_id, amount, status, transaction_type, provider, provider_payment_id, refunded_amount, is_deleted, paid_at`.
+
+## Блокирующие замечания (только к этим уточнениям)
+
+1. **Коррекция суммы — только item, не group.** Обе группы уже имеют `total_amount = 1325.00` (adjustment −1325.00 «повторный клиент»). Расхождение 2650 живёт в `order_group_items.final_amount`/`list_amount` и в `item_snapshot`. SQL должен править `final_amount` у **B item `0235abb4…`** до 1325.00 и синхронно `item_snapshot.final_amount`, с сохранением старых значений в `meta`/audit; `list_amount 2650.00` как прейскурант оставить, иначе потеряется база скидки. Трогать `order_groups.total_amount` нельзя — иначе двойная коррекция. Требуется подтвердить по коду `getDealCommercialAmount`, что он читает item, а не group — иначе правка item не изменит UI.
+2. **Активная многоразовая ссылка B — блокер.** `a11f2595…`: `status=active`, `max_uses=null`, `expires_at=null` → допускает новые оплаты 663 BYN и новый заказ поверх уже закрытой рассрочки. До/в составе сведения её нужно перевести в неактивное состояние существующим механизмом (без DELETE). Иначе сведение может быть аннулировано новой оплатой.
+3. **A-заказ без offer, item с offer.** У заказа A `offer_id` пуст, а у его group item offer `c7f5221e…`. При soft-delete A это не мешает, но guard должен не считать A источником коммерческих сумм и не переносить его item в B (переносим только payment 1).
+4. **Фильтр `is_deleted` — да, но шире.** Скрывать soft-deleted нужно не только в списке рассрочек: те же данные читают карточка сделки, суммы контакта и отчёты. Патч должен добавить фильтр во всех читающих путях, иначе A исчезнет в одном месте и останется в суммах в другом.
+5. **`refund_preflight` — принимаю, с условиями.** Read-only action в существующем `subscription-admin-actions` + кнопка «Проверить в bePaid» в `RefundDialog`: только authenticated admin, обязательный exact `payment_id`, server-side GET транзакции и подписок того же user/product, ответ строго `id/status/amount/date/http`, без raw payload/PII, без DB и provider writes. Согласен, что `bepaid-list-subscriptions` не годится — он делает массовые upsert. Условие: новый action не должен переиспользовать общий helper, который пишет в `payment_reconcile_queue`/`provider_subscriptions`; нужен отдельный чистый GET-путь и явный запрет любых write-хелперов, иначе «read-only» станет фактическим импортом.
+6. **Порядок.** Сведение данных выполняется только после fresh provider proof через `refund_preflight` (после deploy) и подтверждения terminal states; локально: `sbs_9a86268a608fca3f = canceled`, `sbs_bd6975629dfe2c83 = completed`.
+
+Реализаций, SQL, коммитов, deploy и provider writes не выполнялось.
