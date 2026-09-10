@@ -62,13 +62,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Check permissions
-    const { data: hasPermission } = await supabase.rpc('has_permission', {
+    // Bot credentials and webhook configuration belong only to super_admin.
+    // Operational messaging and member-management use separate endpoints.
+    const { data: hasPermission, error: permissionError } = await supabase.rpc('has_role_v2', {
       _user_id: user.id,
-      _permission_code: 'entitlements.manage',
+      _role_code: 'super_admin',
     });
 
-    if (!hasPermission) {
+    if (permissionError || hasPermission !== true) {
       return new Response(JSON.stringify({ error: 'Forbidden' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

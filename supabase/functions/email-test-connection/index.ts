@@ -36,6 +36,19 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Testing a configured mailbox uses its stored credentials. This is
+    // integration administration, not ordinary email sending/receiving.
+    const { data: isSuperAdmin, error: roleError } = await supabase.rpc('has_role_v2', {
+      _user_id: user.id,
+      _role_code: 'super_admin',
+    });
+    if (roleError || isSuperAdmin !== true) {
+      return new Response(JSON.stringify({ error: 'Superadmin access required' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const { account_id } = await req.json();
 
     if (!account_id) {
