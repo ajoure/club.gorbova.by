@@ -145,9 +145,9 @@ export default function AdminIntegrations() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-2">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">Интеграции</h1>
-        <div className="flex gap-2">
+        <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
           {activeTab === "crm" && canEdit && (
             <Button variant="outline" onClick={() => setGetcourseImportOpen(true)}>
               <Download className="h-4 w-4 mr-2" />
@@ -164,8 +164,8 @@ export default function AdminIntegrations() {
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-          <TabsList className="inline-flex w-auto min-w-max sm:grid sm:grid-cols-6 sm:max-w-3xl">
+        <div className="min-w-0">
+          <TabsList className="grid h-auto w-full grid-cols-3 gap-1 sm:max-w-3xl sm:grid-cols-6">
             {visibleCategories.map((cat) => {
               const Icon = CATEGORY_ICONS[cat.id] || Link2;
               const count = cat.id === "telegram" ? 0 : (instances || []).filter(
@@ -175,7 +175,7 @@ export default function AdminIntegrations() {
                 (i) => i.category === cat.id && i.status === "error"
               );
               return (
-                <TabsTrigger key={cat.id} value={cat.id} className="flex items-center gap-1.5 text-xs sm:text-sm whitespace-nowrap px-3">
+                <TabsTrigger key={cat.id} value={cat.id} className="flex min-w-0 items-center gap-1.5 whitespace-nowrap px-2 py-2 text-xs sm:text-sm">
                   <Icon className="h-4 w-4 shrink-0" />
                   <span>{cat.label}</span>
                   {count > 0 && (
