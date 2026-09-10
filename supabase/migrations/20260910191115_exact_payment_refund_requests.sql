@@ -71,7 +71,12 @@ BEGIN
        AND state IN ('reserved','unknown','provider_succeeded')) THEN
     RAISE EXCEPTION 'payment_refund_requires_review';
   END IF;
-  IF _amount > p.amount-coalesce(p.refunded_amount,0) THEN
+  IF _amount > p.amount-greatest(coalesce(p.refunded_amount,0),
+    coalesce((SELECT sum(abs(f.amount)) FROM public.payments_v2 f
+      WHERE f.order_id=_order_id AND NOT coalesce(f.is_deleted,false)
+        AND f.status::text IN ('refunded','succeeded','paid')
+        AND (f.amount<0 OR coalesce(f.transaction_type,'') ~* 'refund|возврат' OR f.meta->>'type'='refund')
+        AND coalesce(f.reference_payment_id::text,f.meta->>'parent_payment_id')=_payment_id::text),0)) THEN
     RAISE EXCEPTION 'refund_exceeds_payment_balance';
   END IF;
   INSERT INTO public.payment_refund_requests(request_key,order_id,payment_id,amount,currency,

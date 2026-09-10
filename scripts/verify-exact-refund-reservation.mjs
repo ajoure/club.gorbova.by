@@ -76,6 +76,7 @@ INSERT INTO payments_v2(id,order_id,status,amount,refunded_amount,currency,provi
 VALUES ('${uid(31)}','${uid(30)}','succeeded',100,0,'BYN','bepaid','legacy-parent','payment','{}'),
 ('${uid(32)}','${uid(30)}','refunded',-40,0,'BYN','bepaid','legacy-refund','refund','{"parent_payment_id":"${uid(31)}"}');`);
 await db.exec('SET ROLE service_role');
+await rejects(()=>db.query('SELECT reserve_payment_refund_request($1,$2,$3,$4,$5,$6,$7,null,null,$8)',[uid(35),uid(30),uid(31),61,'BYN',uid(1),'keep','Synthetic legacy']),/exceeds/);
 await rejects(()=>record(31,61,'over-legacy',uid(30)),/exceeds/);
 r=await record(31,60,'remaining-legacy',uid(30));check(r.total_refunded_after,100);check(r.refund_status,'full');
 await db.exec('RESET ROLE');

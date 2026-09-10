@@ -23,6 +23,6 @@ The existing repayment workflow calculates remaining debt from the original orde
 
 - Full Vitest suite: 241 files, 1643 tests passed.
 - Browser TypeScript, Deno checks for both deployed functions, production build passed.
-- PGlite: 45 checks covering service-only permissions, exact parent, amount precision and remainder, stable request key, concurrent request exclusion, ambiguous provider result, canonical idempotency, three successive partial refunds and legacy refund rows.
+- PGlite: 46 checks covering service-only permissions, exact parent, amount precision and remainder, stable request key, concurrent request exclusion, ambiguous provider result, canonical idempotency, three successive partial refunds and legacy refund rows.
 - PGlite command: `node scripts/verify-exact-refund-reservation.mjs /path/to/@electric-sql/pglite/dist/index.js`.
 - Production visual and provider checks must be recorded after deployment; local checks do not prove publication.
