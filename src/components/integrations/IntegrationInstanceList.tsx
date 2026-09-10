@@ -221,10 +221,10 @@ export function IntegrationInstanceList({
                 : "border-border"
             )}
           >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-3">
                 <div className={cn(
-                  "h-10 w-10 rounded-lg flex items-center justify-center",
+                  "h-10 w-10 shrink-0 rounded-lg flex items-center justify-center",
                   instance.status === "connected" 
                     ? "bg-green-100" 
                     : instance.status === "error"
@@ -240,9 +240,9 @@ export function IntegrationInstanceList({
                       : "bg-muted-foreground/30"
                   )} />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-foreground">{instance.alias}</span>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="break-words font-medium text-foreground">{instance.alias}</span>
                     {getStatusBadge(instance.status)}
                   </div>
                   {instance.error_message && (
@@ -258,7 +258,7 @@ export function IntegrationInstanceList({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center justify-end gap-2">
                 {supportsWebhook(instance.provider) && (
                   <Button
                     variant="ghost"
@@ -272,7 +272,7 @@ export function IntegrationInstanceList({
                 )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Действия подключения">
                       <MoreHorizontal className="h-4 w-4" />
                     </Button>
                   </DropdownMenuTrigger>
