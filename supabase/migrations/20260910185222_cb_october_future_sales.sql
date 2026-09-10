@@ -188,6 +188,11 @@ BEGIN
   ELSIF position('01 августа 2026' IN source_html)>0 OR position('октябрь 2026' IN source_html)=0 THEN
     RAISE EXCEPTION 'cb_preregistration_date_drift';
   END IF;
+  IF (length(source_html)-length(replace(source_html,'<s>1200 BYN</s>','')))/length('<s>1200 BYN</s>')=1 THEN
+    source_html := replace(source_html,'<s>1200 BYN</s>','');
+  ELSIF position('1200 BYN' IN source_html)>0 THEN
+    RAISE EXCEPTION 'cb_preregistration_price_drift';
+  END IF;
   UPDATE public.site_pages SET blocks=jsonb_set(blocks,'{0,content,code}',to_jsonb(source_html)),
     seo_settings=coalesce(seo_settings,'{}'::jsonb)||jsonb_build_object('title',target_title),updated_at=now()
   WHERE id=page_id AND (blocks#>>'{0,content,code}' IS DISTINCT FROM source_html OR seo_settings->>'title' IS DISTINCT FROM target_title);

@@ -63,7 +63,7 @@ for (const [oldId,,tariffId] of rules) {
     duration_days:core?null:30,conditions:core?{access_mode:'partial',allowed_module_ids:modules}:{untouched:true},notes:'preserved'});
 }
 await insert('site_pages',{id:'a924f3c6-367e-4585-b467-b1d14861c9a7',slug:'cb20predzapis',status:'published',seo_settings:{description:'Preserve description'},
-  blocks:[{id:'3f366661-bed4-4134-8938-ff2f92da79c6',type:'html',content:{code:'<h2>Старт потока: 01 августа 2026г.</h2><p>Формат: онлайн</p><style>.w1650{color:red}</style>'}}]});
+  blocks:[{id:'3f366661-bed4-4134-8938-ff2f92da79c6',type:'html',content:{code:'<h2>Старт потока: 01 августа 2026г.</h2><p>Формат: онлайн</p><div>Бесплатно <s>1200 BYN</s></div><style>.w1650{color:red}</style>'}}]});
 let assertions=0;
 const equal=(a,b,label)=>{assert.deepEqual(a,b,label);assertions++;};
 const snapshot=async table=>(await db.query(`SELECT * FROM ${table} ORDER BY id`)).rows;
@@ -91,7 +91,7 @@ equal(newAccountantRule.conditions.allowed_module_ids.length,21);
 equal(newAccountantRule.conditions.allowed_module_ids.some(x=>excluded.includes(x)),false);
 equal((await db.query('SELECT count(*)::int n FROM access_rules WHERE duration_days=30')).rows[0].n,14,'seven bonus clones keep 30 days');
 const page=(await snapshot('site_pages'))[0];
-equal(page.blocks[0].content.code,'<h2>Старт потока: октябрь 2026</h2><p>Формат: онлайн</p><style>.w1650{color:red}</style>');
+equal(page.blocks[0].content.code,'<h2>Старт потока: октябрь 2026</h2><p>Формат: онлайн</p><div>Бесплатно </div><style>.w1650{color:red}</style>');
 equal(page.seo_settings.description,'Preserve description');
 equal(page.seo_settings.title,'Ценный бухгалтер — стань профессионалом, который понимает логику учета, умеет работать с НПА и самостоятельно принимает решения | Катерина Горбова');
 for(const [oldOffer,newOffer] of offers) {
