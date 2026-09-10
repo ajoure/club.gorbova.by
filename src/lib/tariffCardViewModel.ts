@@ -18,6 +18,8 @@ import { resolvePriceSuffix, resolveBadgeText, resolveOldPrice } from "./resolve
 export interface CardConfig {
   badge_text?: string | null;
   price_display?: number | null;
+  /** Marketing-only monthly illustration; never an installment charge amount. */
+  installment_from_byn?: number | null;
   old_price?: number | null;
   price_suffix?: string;
   cta_text?: string | null;

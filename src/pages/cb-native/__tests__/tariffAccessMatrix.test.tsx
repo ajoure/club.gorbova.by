@@ -99,6 +99,34 @@ const paymentOffers = [
 ];
 
 describe("CbNative tariff access matrix", () => {
+  it("excludes the three VIP bonuses only from the accountant tariff", () => {
+    for (const index of [0, 1, 2]) {
+      const { container, unmount } = render(
+        <CbNativeTariffCard tariff={tariff} index={index} onSelectOffer={() => undefined} />,
+      );
+      for (const name of ["«Делегирование»", "«Найм, адаптация и удержание персонала»", "«Таймлайн месяца»"]) {
+        expect(container.textContent?.includes(name)).toBe(index !== 0);
+      }
+      expect(container.textContent).toContain(`Доступ ${[6, 9, 12][index]} месяцев`);
+      expect(container.textContent).toContain("после окончания курса");
+      unmount();
+    }
+  });
+
+  it.each([[1790, 139], [2190, 183], [2990, 249]])(
+    "uses the configured marketing minimum for price %s, without computing billing amounts",
+    (price, monthly) => {
+      const { container } = render(
+        <CbNativeTariffCard
+          tariff={{ ...tariff, meta: { card_config: { price_display: price, installment_from_byn: monthly } } }}
+          index={0}
+          onSelectOffer={() => undefined}
+        />,
+      );
+      expect(container.querySelector("[data-cb-native-monthly-price]")).toHaveTextContent(String(monthly));
+    },
+  );
+
   it("keeps payment actions in the same order and uses their saved visual settings", () => {
     const expectedLabels = [
       "Оплатить 100% картой",

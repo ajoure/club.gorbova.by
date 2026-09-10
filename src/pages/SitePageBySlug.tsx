@@ -31,6 +31,7 @@ import { SiteSlotManifestContext } from "@/contexts/SiteSlotManifestContext";
 import type { SiteBlock, SitePage } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
 import { getCanonicalHostname } from "@/utils/accessAlias";
+import { applySitePageSeo } from "@/lib/sitePageSeo";
 
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -192,6 +193,9 @@ export default function SitePageBySlug({ resolvedPage = null }: SitePageBySlugPr
     : queriedResolution;
   const isLoading = !resolvedPage && queryLoading;
   const page = resolution?.status === "ok" ? resolution.page : null;
+  useEffect(() => {
+    if (page) return applySitePageSeo(page.seo_settings);
+  }, [page]);
   const blocks = (page?.blocks as unknown as SiteBlock[]) || [];
   const { pricingData } = useSitePricingData(blocks);
 

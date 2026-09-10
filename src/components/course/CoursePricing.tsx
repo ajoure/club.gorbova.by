@@ -22,9 +22,9 @@ const tariffs: TariffData[] = [
     id: "buh",
     name: "Бухгалтер",
     subtitle: "Для тех, кто хочет полюбить бухгалтерию",
-    price: 1490,
-    originalPrice: 1690,
-    monthly: 136,
+    price: 1790,
+    originalPrice: 2090,
+    monthly: 139,
     accessMonths: 6,
     conferences: 5,
     features: [
@@ -32,25 +32,24 @@ const tariffs: TariffData[] = [
       "18 основных модулей",
       "Задания с подробными разборами",
       "Материалы, тетрадь, майндкарты",
-      "Доступ к клубу «Буква закона»",
       "Итоговый конспект",
-      "Сертификат о прохождении",
-      "VIP модули: Делегирование, Найм, Таймлайн"
+      "Сертификат о прохождении"
     ]
   },
   {
     id: "gl-buh",
     name: "Главный бухгалтер",
     subtitle: "Полная программа с глубоким погружением",
-    price: 2490,
-    originalPrice: 2690,
-    monthly: 227,
-    accessMonths: 8,
+    price: 2190,
+    originalPrice: 2590,
+    monthly: 183,
+    accessMonths: 9,
     conferences: 6,
     isPopular: true,
     badge: "Популярный",
     features: [
       "Всё из тарифа «Бухгалтер»",
+      "VIP модули: Делегирование, Найм и адаптация, Таймлайн месяца",
       "Доступ к Клубу тариф Full на 4 недели",
       "Grand модуль: Налоговое законодательство",
       "Grand модуль: Система в бухгалтерии",
@@ -62,14 +61,15 @@ const tariffs: TariffData[] = [
     id: "biz-lady",
     name: "Бизнес-леди",
     subtitle: "Максимальный результат после курса",
-    price: 2490,
-    originalPrice: 2690,
-    monthly: 163,
-    accessMonths: 10,
+    price: 2990,
+    originalPrice: 3490,
+    monthly: 249,
+    accessMonths: 12,
     conferences: 6,
     badge: "VIP",
     features: [
       "Всё из тарифа «Главный бухгалтер»",
+      "Доступ к Клубу тариф Business на 4 недели вместо Full",
       "Business модуль: Экспресс-аудит",
       "Business модуль: Восстановление учета",
       "Скидка 50% на модули по отраслям",
@@ -137,7 +137,7 @@ export function CoursePricing({ onPreregister, onPurchase }: CoursePricingProps)
                   )}
                   
                   <div className="flex justify-center gap-4 mt-4 text-xs text-muted-foreground">
-                    <span>Доступ: {tariff.accessMonths} мес</span>
+                    <span>Доступ: {tariff.accessMonths} мес после окончания курса</span>
                     <span>•</span>
                     <span>{tariff.conferences} конференций</span>
                   </div>
