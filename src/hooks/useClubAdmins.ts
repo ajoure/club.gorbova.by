@@ -1,3 +1,4 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -99,8 +100,8 @@ export function useClubAdmins(clubId: string | null) {
         .single();
 
       if (clubRow?.bot_id) {
-        const { data: bot } = await supabase
-          .from("telegram_bots")
+        const { data: bot } = await operationalSupabase
+          .rpc("list_operational_telegram_bots")
           .select("bot_id, bot_name, bot_username")
           .eq("id", clubRow.bot_id)
           .single();

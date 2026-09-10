@@ -1,3 +1,4 @@
+import { integrationOwnerDenial } from '../_shared/integration-owner-auth.ts';
 // @ts-nocheck
 // telegram-bot-rights-check
 // Read-only по invite/access данным. Допустимая запись — только audit-событие
@@ -63,6 +64,11 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
+
+  const denial = await integrationOwnerDenial(req, supabase);
+  if (denial) return new Response(JSON.stringify({ error: denial.error }), {
+    status: denial.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
 
   let body: RequestBody;
   try {

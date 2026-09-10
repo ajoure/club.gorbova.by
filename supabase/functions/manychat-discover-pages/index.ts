@@ -282,6 +282,15 @@ Deno.serve(async (req) => {
     return errorResponse("unauthorized", "Невалидный токен", 401);
   }
 
+  const ownerClient = createClient(supabaseUrl, supabaseServiceKey);
+  const { data: isSuperAdmin, error: roleError } = await ownerClient.rpc("has_role_v2", {
+    _user_id: userData.user.id,
+    _role_code: "super_admin",
+  });
+  if (roleError || isSuperAdmin !== true) {
+    return errorResponse("forbidden", "Настройка интеграции доступна только суперадминистратору", 403);
+  }
+
   let body: DiscoverRequest;
   try {
     body = await req.json();

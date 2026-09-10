@@ -137,6 +137,7 @@ serve(async (req) => {
     // send SUPABASE_SERVICE_ROLE_KEY as Bearer. Treat that as trusted admin without user lookup.
     const isServiceRoleCall = token === supabaseKey;
     const adminSvc = createClient(supabaseUrl, supabaseKey);
+    let isConnectionOwner = false;
 
     if (!isServiceRoleCall) {
       const userClient = createClient(supabaseUrl, supabaseAnonKey, {
@@ -155,6 +156,7 @@ serve(async (req) => {
       const { data: isSuper } = await adminSvc.rpc("has_role_v2", {
         _user_id: userData.user.id, _role_code: "super_admin",
       });
+      isConnectionOwner = isSuper === true;
       if (!isAdmin && !isSuper) {
         return new Response(
           JSON.stringify({ success: false, error: "Forbidden" }),
@@ -166,6 +168,15 @@ serve(async (req) => {
 
     const request: KinescopeRequest = await req.json();
     const { action, instance_id, api_token: directToken, project_id, folder_id, video_id, live_event_id, page = 1, per_page = 100 } = request;
+
+    // Staff may use the existing connection for video operations. Supplying or
+    // validating connection credentials is reserved for the configuration owner.
+    if ((action === "validate_token" || directToken) && !isConnectionOwner) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Superadmin access required" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     console.log(`Kinescope API action: ${action} internal: ${isServiceRoleCall}`);
 

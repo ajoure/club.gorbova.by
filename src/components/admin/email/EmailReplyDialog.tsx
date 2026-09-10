@@ -1,3 +1,4 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -75,8 +76,8 @@ export function EmailReplyDialog({
   const { data: emailAccounts } = useQuery({
     queryKey: ["email-accounts-for-reply"],
     queryFn: async () => {
-      const { data: accounts } = await supabase
-        .from("email_accounts")
+      const { data: accounts } = await operationalSupabase
+        .rpc("list_operational_email_accounts")
         .select("id, display_name, email, is_default")
         .eq("is_active", true);
 

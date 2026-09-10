@@ -1,5 +1,5 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 
 /**
  * Phase 6-B — Unified read-model для подключений эквайринга.
@@ -74,8 +74,8 @@ export function useAcquiringProfiles() {
     queryKey: ["acquiring-profiles-unified-v1"],
     queryFn: async (): Promise<AcquiringProfile[]> => {
       const [stripeRes, bepaidRes] = await Promise.all([
-        supabase
-          .from("acquiring_connections")
+        operationalSupabase
+          .rpc("list_operational_acquiring_connections")
           .select(
             "account_code, account_name, test_mode, is_default, status, capabilities_snapshot",
           )
@@ -83,8 +83,8 @@ export function useAcquiringProfiles() {
           .eq("status", "active")
           .order("is_default", { ascending: false })
           .order("account_name"),
-        supabase
-          .from("integration_instances")
+        operationalSupabase
+          .rpc("list_operational_integrations")
           .select("id, alias, status, is_default, config")
           .eq("provider", "bepaid")
           .in("status", ["active", "connected"])

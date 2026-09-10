@@ -1,3 +1,4 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -232,8 +233,8 @@ export function ContactTelegramChat({
   const { data: telegramBots = [] } = useQuery({
     queryKey: ["telegram-bots-for-chat"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("telegram_bots")
+      const { data, error } = await operationalSupabase
+        .rpc("list_operational_telegram_bots")
         .select("id, bot_name, bot_username, status, is_primary")
         .order("created_at", { ascending: true });
       if (error) throw error;

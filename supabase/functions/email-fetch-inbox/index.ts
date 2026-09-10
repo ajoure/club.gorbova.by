@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { integrationOwnerDenial } from '../_shared/integration-owner-auth.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -404,7 +405,36 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    const authHeader = req.headers.get('Authorization') ?? '';
+    const token = /^Bearer\s+(\S+)$/i.exec(authHeader)?.[1];
+    if (!token) return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+    const isInternal = !!supabaseKey && token === supabaseKey;
+    if (!isInternal) {
+      const { data: authData, error: authError } = await supabase.auth.getUser(token);
+      if (authError || !authData.user) return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+      const checks = await Promise.all(['communication', 'contacts'].map(section =>
+        supabase.rpc('has_admin_section_access', {
+          _user_id: authData.user.id, _section_code: section, _min_level: 'edit',
+        })));
+      if (!checks.some(result => !result.error && result.data === true)) {
+        return new Response(JSON.stringify({ error: 'Forbidden' }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     const { account_id, test_only } = await req.json().catch(() => ({}));
+
+    if (test_only) {
+      const denial = await integrationOwnerDenial(req, supabase, supabaseKey);
+      if (denial) return new Response(JSON.stringify({ error: denial.error }), {
+        status: denial.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // Get email accounts with IMAP enabled
     let query = supabase

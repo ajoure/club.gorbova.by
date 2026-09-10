@@ -1,3 +1,4 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -251,8 +252,8 @@ const [analysisResult, setAnalysisResult] = useState<{
   const { data: bots = [], isLoading: loadingBots } = useQuery({
     queryKey: ["telegram-bots-for-ai"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("telegram_bots")
+      const { data, error } = await operationalSupabase
+        .rpc("list_operational_telegram_bots")
         .select("id, bot_name, bot_username, status")
         .eq("status", "active")
         .order("created_at", { ascending: false });

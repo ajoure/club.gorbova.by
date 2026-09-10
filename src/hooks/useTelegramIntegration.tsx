@@ -1,3 +1,4 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -146,12 +147,17 @@ export function useTelegramClubs() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('telegram_clubs')
-        // Never expose encrypted bot credentials to read-only club staff.
-        .select('*, telegram_bots(id,bot_name,bot_username,bot_id,status,is_primary,last_check_at,error_message,created_at,updated_at)')
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      return data as TelegramClub[];
+      const { data: bots, error: botsError } = await operationalSupabase.rpc('list_operational_telegram_bots');
+      if (botsError) throw botsError;
+      const byId = new Map((bots ?? []).map(bot => [bot.id, bot]));
+      return (data ?? []).map(club => ({
+        ...club,
+        telegram_bots: byId.get(club.bot_id),
+      })) as TelegramClub[];
     },
   });
 }

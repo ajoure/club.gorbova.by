@@ -1,3 +1,4 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -75,8 +76,8 @@ export function LessonNotificationConfig({
   const { data: bots, isLoading: botsLoading } = useQuery({
     queryKey: ["telegram-bots-active"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("telegram_bots")
+      const { data, error } = await operationalSupabase
+        .rpc("list_operational_telegram_bots")
         .select("id, bot_username, bot_name, status")
         .in("status", ["ok", "active"])
         .order("bot_name");
