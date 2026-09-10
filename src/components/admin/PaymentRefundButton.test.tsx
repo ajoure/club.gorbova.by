@@ -29,6 +29,14 @@ describe('per-payment refund reuses the canonical dialog',()=>{
     await waitFor(()=>expect(screen.getByRole('status')).toHaveTextContent('Все найденные подписки завершены'));
     expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('subscription-admin-actions',{body:{action:'refund_preflight',payment_id:'third',order_id:'order'}});
   });
+  it('keeps a failed provider check visible in the dialog',async()=>{
+    mocks.invoke.mockResolvedValue({data:null,error:new Error('Synthetic failure')});
+    render(<PaymentRefundButton payment={payments[2]} orderNumber="SYNTHETIC"/>);
+    fireEvent.click(screen.getByRole('button',{name:'Возврат'}));
+    fireEvent.click(screen.getByRole('button',{name:'Проверить в bePaid'}));
+    await waitFor(()=>expect(screen.getByRole('alert')).toHaveTextContent('Не удалось проверить bePaid'));
+    expect(mocks.invoke.mock.calls[0][1].body.action).toBe('refund_preflight');
+  });
   it('does not submit more than the payment remainder',async()=>{
     render(<PaymentRefundButton payment={payments[2]} orderNumber="SYNTHETIC"/>);
     fireEvent.click(screen.getByRole('button',{name:'Возврат'}));

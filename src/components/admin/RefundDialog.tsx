@@ -186,8 +186,9 @@ export function RefundDialog({
   const requiresPayment = !!paymentId || refundablePayments.length > 0;
   const effectiveProvider = selectedPayment?.provider ?? paymentProvider;
   const [providerProof, setProviderProof] = useState<any>(null);
+  const [providerError, setProviderError] = useState<string | null>(null);
   const [checkingProvider, setCheckingProvider] = useState(false);
-  useEffect(() => { setProviderProof(null); }, [open, selectedPaymentId]);
+  useEffect(() => { setProviderProof(null); setProviderError(null); }, [open, selectedPaymentId]);
   const [reason, setReason] = useState("");
   const [refundAmount, setRefundAmount] = useState(amount);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -284,6 +285,7 @@ export function RefundDialog({
 
   const checkProvider = async () => {
     setCheckingProvider(true);
+    setProviderError(null);
     setProviderProof(null);
     try {
       const {data,error} = await supabase.functions.invoke("subscription-admin-actions", {body:{
@@ -291,7 +293,7 @@ export function RefundDialog({
       }});
       if (error || !data?.success) throw new Error("Не удалось проверить bePaid. Повторите проверку позже.");
       setProviderProof(data);
-    } catch (error) { toast.error(error instanceof Error ? error.message : "Ошибка проверки bePaid"); }
+    } catch (error) { setProviderError(error instanceof Error ? error.message : "Ошибка проверки bePaid"); }
     finally { setCheckingProvider(false); }
   };
 
@@ -401,6 +403,7 @@ export function RefundDialog({
               <Button type="button" variant="outline" disabled={checkingProvider || isProcessing}
                 onClick={checkProvider}>{checkingProvider ? "Проверка…" : "Проверить в bePaid"}</Button>
               <p className="text-xs text-muted-foreground">Проверяет платёж и связанные подписки. Деньги и доступ не изменяются.</p>
+              {providerError && <p role="alert" className="text-destructive">{providerError}</p>}
               {providerProof && <div role="status" className="space-y-2 break-words">
                 <p>Платёж: {providerProof.transaction.matches_payment ? "сумма и валюта подтверждены" : "требует проверки"} · {providerProof.transaction.status} · HTTP {providerProof.transaction.http ?? "нет ответа"}</p>
                 {providerProof.subscriptions.map((s: any) => <div key={s.id}>
