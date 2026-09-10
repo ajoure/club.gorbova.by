@@ -1,3 +1,4 @@
+import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
@@ -205,7 +206,7 @@ Deno.serve(async (req) => {
     if (tariffCode) {
       const { data } = await supabase
         .from('tariffs')
-        .select('id, name, code, access_days, public_id')
+        .select('id, name, code, access_days, public_id, meta')
         .eq('product_id', productId)
         .eq('code', tariffCode)
         .eq('is_active', true)
@@ -216,7 +217,7 @@ Deno.serve(async (req) => {
     if (!tariff) {
       const { data } = await supabase
         .from('tariffs')
-        .select('id, name, code, access_days, public_id')
+        .select('id, name, code, access_days, public_id, meta')
         .eq('product_id', productId)
         .eq('is_active', true)
         .order('created_at', { ascending: true })
@@ -452,8 +453,7 @@ Deno.serve(async (req) => {
 
     const subCheckoutAccessDays = tariff.access_days || 30;
     const subCheckoutNow = new Date();
-    const subCheckoutPlannedEnd = new Date(subCheckoutNow);
-    subCheckoutPlannedEnd.setDate(subCheckoutPlannedEnd.getDate() + subCheckoutAccessDays);
+    const subCheckoutPlannedEnd = courseAccessEnd(tariff.meta) || new Date(subCheckoutNow.getTime() + subCheckoutAccessDays * 86_400_000);
 
     const orderNumber = generateOrderNumber();
     const amountMoney = amountCents / 100;

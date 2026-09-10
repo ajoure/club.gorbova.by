@@ -1,3 +1,4 @@
+import { courseAccessEnd } from '../../../supabase/functions/_shared/course-access-window';
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -49,7 +50,7 @@ type OrderRow = {
   trial_end_at: string | null;
   meta: { trial_days?: number; offer_id?: string } | null;
   products_v2: { name: string } | null;
-  tariffs: { name: string; access_days: number | null; trial_days: number | null } | null;
+  tariffs: { name: string; access_days: number | null; trial_days: number | null; meta?: unknown } | null;
   payments_v2: Array<{ status: string | null }>;
 };
 
@@ -123,7 +124,7 @@ export function GlobalPaymentHandler() {
       }
     } else {
       accessDays = tariffAccessDays;
-      accessEndAt = addDays(now, accessDays);
+      accessEndAt = courseAccessEnd(data.tariffs?.meta) || addDays(now, accessDays);
     }
 
     return {
@@ -160,7 +161,7 @@ export function GlobalPaymentHandler() {
         trial_end_at,
         meta,
         products_v2 (name),
-        tariffs (name, access_days, trial_days),
+        tariffs (name, access_days, trial_days, meta),
         payments_v2 (status)
       `
       )

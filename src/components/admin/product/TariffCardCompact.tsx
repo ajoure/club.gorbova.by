@@ -30,6 +30,7 @@ interface TariffCardCompactProps {
     name: string;
     subtitle?: string;
     access_days: number;
+    meta?: { course_access?: { months?: number; kind?: string }; [key: string]: unknown } | null;
     is_active: boolean;
     is_public?: boolean;
     is_popular?: boolean;
@@ -97,7 +98,9 @@ export function TariffCardCompact({
           <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap">
             <span className="flex items-center gap-1">
               <Clock className="h-3 w-3" />
-              {tariff.access_days} дней
+              {tariff.meta?.course_access?.kind === "course_end_calendar_months"
+                ? `${tariff.meta.course_access.months} мес. после окончания курса`
+                : `${tariff.access_days} дней`}
             </span>
             {trialOffer && (
               <span className="text-xs">Trial {trialOffer.trial_days} дн.</span>

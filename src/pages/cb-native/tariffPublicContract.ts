@@ -1,5 +1,9 @@
 import type { PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 
+// Separate catalogue for the 21st training cohort. Shared by both public landings.
+export const CB21_PRODUCT_ID = "2b7bf6d4-ad8d-46ad-9399-7f96c307c596";
+export const CB21_TRAINING_ID = "4365e913-36f1-432e-ab16-748c3ca6826a";
+
 const ACTIONABLE_TYPES = new Set([
   "pay_now",
   "trial",

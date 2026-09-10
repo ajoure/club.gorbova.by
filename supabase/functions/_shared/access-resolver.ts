@@ -436,7 +436,7 @@ async function resolveProductAccessGrants(
 /**
  * Resolve training_content filters from access_rules.
  */
-async function resolveTrainingContentFilters(
+export async function resolveTrainingContentFilters(
   supabase: any,
   productId: string,
   tariffId: string | null,
@@ -455,12 +455,15 @@ async function resolveTrainingContentFilters(
 
   if (!rules?.length) return filters;
 
-  // If tariff_id is set, prefer tariff-specific rule
-  const tariffRule = tariffId ? rules.find((r: any) => r.tariff_id === tariffId) : null;
-  const productRule = rules.find((r: any) => !r.tariff_id);
-  const bestRule = tariffRule || productRule;
-
-  if (bestRule) {
+  // A tariff may grant the primary cohort plus a separate bonus training.
+  // Resolve precedence independently for every root; never let row order
+  // replace the primary course with its bonus or another tariff's content.
+  const roots = [...new Set(rules.map((r: any) => r.target_ref))];
+  for (const root of roots) {
+    const matching = rules.filter((r: any) => r.target_ref === root);
+    const bestRule = (tariffId ? matching.find((r: any) => r.tariff_id === tariffId) : null)
+      || matching.find((r: any) => !r.tariff_id);
+    if (!bestRule) continue;
     const cond = bestRule.conditions || {};
     filters.push({
       root_module_id: bestRule.target_ref,

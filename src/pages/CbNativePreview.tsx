@@ -32,14 +32,14 @@ import { AdvantagesSection } from "./cb-native/sections/AdvantagesSection";
 import { PostTariffSection } from "./cb-native/sections/PostTariffSection";
 import { FaqSection } from "./cb-native/sections/FaqSection";
 import { CbNativeTariffCard } from "./cb-native/sections/CbNativeTariffCard";
-import { sortCbTariffsForDisplay } from "./cb-native/tariffPublicContract";
+import { CB21_PRODUCT_ID, sortCbTariffsForDisplay } from "./cb-native/tariffPublicContract";
 import { BrandHeaderSection } from "./cb-native/sections/BrandHeaderSection";
 import { UnifiedFooter } from "@/components/layout/UnifiedFooter";
 
 // Same product bound to live /cb (site_pages slug='cb'). NO hardcoded prices.
 // «Ценный бухгалтер | 1 ступень 2.0 | 21 поток» is the only product rendered
 // by /cb. The previous value pointed at the already completed 20th flow.
-const CB_PRODUCT_ID = "2b7bf6d4-ad8d-46ad-9399-7f96c307c596";
+
 
 const scrollToTariffs = () => {
   const el = document.getElementById("tariffs");
@@ -72,7 +72,7 @@ export default function CbNativePreview() {
     };
   }, [isPreview]);
 
-  const { data, isLoading, error } = usePublicProduct({ productId: CB_PRODUCT_ID });
+  const { data, isLoading, error } = usePublicProduct({ productId: CB21_PRODUCT_ID });
 
   return (
     <div
@@ -128,7 +128,7 @@ export default function CbNativePreview() {
         `}</style>
         {isLoading ? (
           <UniversalPricingSkeleton />
-        ) : error || !data?.product || !data?.tariffs?.length ? (
+        ) : error || !data?.product || data.product.id !== CB21_PRODUCT_ID || !data?.tariffs?.length ? (
           <section className="py-20" style={{ background: CB_PALETTE.bgSoft }}>
             <div className="mx-auto max-w-4xl px-5 text-center">
               <h2

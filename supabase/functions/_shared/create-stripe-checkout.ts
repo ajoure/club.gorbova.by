@@ -1,3 +1,4 @@
+import { courseAccessEnd } from './course-access-window.ts';
 // Phase 4.1 — Stripe branch for shared public-payment checkout.
 //
 // Cалled from `_shared/create-payment-checkout.ts` ТОЛЬКО когда provider==='stripe'.
@@ -121,7 +122,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
       ? supabase.from('tariff_offers').select('id, tariff_id, is_active, offer_type, meta').eq('id', offer_id).maybeSingle()
       : Promise.resolve({ data: null }),
     supabase.from('products_v2').select('id, name, code, public_id, meta').eq('id', product_id).maybeSingle(),
-    supabase.from('tariffs').select('id, name, code, access_days, public_id').eq('id', tariff_id).maybeSingle(),
+    supabase.from('tariffs').select('id, name, code, access_days, public_id, meta').eq('id', tariff_id).maybeSingle(),
     supabase.from('profiles').select('id, email, full_name').eq('user_id', user_id).maybeSingle(),
   ]);
 
@@ -186,8 +187,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
 
     const accessDays = tariff.access_days || 30;
     const nowD = new Date();
-    const plannedEnd = new Date(nowD);
-    plannedEnd.setDate(plannedEnd.getDate() + accessDays);
+    const plannedEnd = courseAccessEnd(tariff.meta) || new Date(nowD.getTime() + accessDays * 86_400_000);
 
     const orderMeta: Record<string, unknown> = {
       type: 'public_payment_link_stripe',

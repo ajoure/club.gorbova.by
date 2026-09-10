@@ -22,6 +22,13 @@ export function FaqSection() {
   }
   if (cur) items.push(cur);
 
+  const accessQuestion = items.find((item) => item.q === "На какое время выдается доступ к курсу?");
+  if (accessQuestion) {
+    accessQuestion.a = [
+      "После окончания курса доступ сохраняется: на тарифе «Бухгалтер» — 6 месяцев, «Главный бухгалтер» — 9 месяцев, «Бизнес-леди» — 12 месяцев. Для ранее оплаченных покупок сохраняются условия, действовавшие при покупке.",
+    ];
+  }
+
   return (
     <section
       id="rec776467188"

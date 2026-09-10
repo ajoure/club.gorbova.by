@@ -4,7 +4,7 @@ import { Calendar, Clock, Monitor, Users, Sparkles, ChevronDown } from "lucide-r
 import { AnimatedSection } from "@/components/landing/AnimatedSection";
 
 const courseInfo = [
-  { icon: Calendar, label: "Старт", value: "21 июня 2025" },
+  { icon: Calendar, label: "Старт", value: "октябрь 2026" },
   { icon: Clock, label: "Длительность", value: "7 недель" },
   { icon: Monitor, label: "Формат", value: "Онлайн" },
   { icon: Users, label: "Конференции", value: "5-6 живых встреч" },

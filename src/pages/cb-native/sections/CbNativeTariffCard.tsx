@@ -1,11 +1,12 @@
 /**
  * Native tariff card for /cb-native-preview.
  *
- * Text/visual source of truth (verbatim, char-for-char):
+ * Historical text/visual baseline:
  *   src/pages/cb-native/cbold_manifest.json → rec1219722591.text (182 lines)
  *
  * Rules:
- *  - No paraphrasing/reordering. Every displayed string is a slice of manifest text.
+ *  - Preserve the baseline except the explicitly approved September 2026
+ *    future-sales changes: accountant bonuses and course access durations.
  *  - Prices come from the product tariff's card_config. Checkout amounts still
  *    come from the selected backend offer, so the visual price and payment
  *    flow share the same configurable product source rather than stale Tilda
@@ -72,9 +73,6 @@ const CARDS: CardData[] = [
     programme: [
       { text: t(25) },                                // 5 практических конференций с Катериной
       { text: t(26).replace(/^→\s*/, "") },           // Итоговый конспект для удобной работы
-      { badge: "VIP", text: t(29) },                  // «Делегирование»
-      { badge: "VIP", text: t(32) },                  // «Найм, адаптация и удержание персонала»
-      { badge: "VIP", text: t(35) },                  // «Таймлайн месяца»
       { badge: "Grand", text: t(40), locked: true },  // «Налоговое законодательство Беларуси»
       { badge: "Grand", text: t(42), locked: true },  // «Система в бухгалтерии»
       { badge: "Business", text: t(44), locked: true },
@@ -101,7 +99,7 @@ const CARDS: CardData[] = [
       { bold: t(67), text: t(68) },                   // Задания / для личной проработки…
       { bold: t(70), text: t(71) },                   // Дополнительные материалы / , рабочая тетрадь…
       { bold: t(73), text: t(74) },                   // Доступ к Клубу "Буква закона" / тариф Full на 4 недели
-      { bold: t(76), text: t(77) },                   // Доступ 8 месяцев / после окончания курса
+      { bold: "Доступ 9 месяцев", text: t(77) },      // после окончания курса
     ],
     programme: [
       { text: t(81) },                                // 6 практических конференций с Катериной
@@ -135,7 +133,7 @@ const CARDS: CardData[] = [
       { bold: t(126), text: t(127) },                 // Задания …
       { bold: t(129), text: t(130) },                 // Дополнительные материалы …
       { bold: t(132), text: t(133) },                 // Доступ к клубу “Буква закона” / тариф Business на 4 недели
-      { bold: t(135), text: t(136) },                 // Доступ 10 месяцев / после окончания курса
+      { bold: "Доступ 12 месяцев", text: t(136) },    // после окончания курса
     ],
     programme: [
       { text: t(138) },                               // 6 практических конференций с Катериной
@@ -183,11 +181,11 @@ const resolveVisualPricing = (tariff: PublicTariff) => {
   const firstOffer = activeOffers[0];
 
   const current =
-    finiteAmount(cardConfig?.price_display) ??
     finiteAmount(primaryFullPayment?.amount) ??
     finiteAmount(tariff.current_price) ??
     finiteAmount(firstPayNow?.amount) ??
-    finiteAmount(firstOffer?.amount);
+    finiteAmount(firstOffer?.amount) ??
+    finiteAmount(cardConfig?.price_display);
   const configuredOld = finiteAmount(cardConfig?.old_price);
   const old = current && configuredOld && configuredOld > current ? configuredOld : null;
   const suffix = cardConfig?.price_suffix?.trim() || "BYN";
@@ -195,7 +193,9 @@ const resolveVisualPricing = (tariff: PublicTariff) => {
   return {
     current,
     old,
-    monthly: current ? Math.round(current / 12) : null,
+    // Marketing minimum is configured separately from real installment charges.
+    // Preserve the legacy fallback for tariffs without an explicit minimum.
+    monthly: current ? finiteAmount(cardConfig?.installment_from_byn) ?? Math.round(current / 12) : null,
     suffix,
   };
 };

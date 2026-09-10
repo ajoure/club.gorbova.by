@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
@@ -1343,6 +1344,9 @@ async function chargeSubscription(
 
       const nextChargeDate = new Date(newEndDate);
       nextChargeDate.setDate(nextChargeDate.getDate() - 3);
+      // Financing schedule stays independent of the fixed course access end.
+      const fixedCourseEnd = courseAccessEnd(tariff?.meta);
+      if (fixedCourseEnd) newEndDate = fixedCourseEnd;
 
       // Update subscription with new dates
       await supabase
@@ -1477,8 +1481,7 @@ async function chargeSubscription(
 
             const renewalAccessDays = tariff?.access_days || 30;
             const renewalNow = new Date();
-            const renewalPlannedEnd = new Date(renewalNow);
-            renewalPlannedEnd.setDate(renewalPlannedEnd.getDate() + renewalAccessDays);
+            const renewalPlannedEnd = courseAccessEnd(tariff?.meta) || new Date(renewalNow.getTime() + renewalAccessDays * 86_400_000);
 
             // Create NEW deal for this renewal
             const { data: newOrder, error: createErr } = await supabase
@@ -1794,8 +1797,8 @@ async function chargeSubscription(
           result: {
             access_start: new Date().toISOString(),
             access_end: newEndDate.toISOString(),
-            window_days: isClubProduct ? null : (tariff.access_days || 30),
-            source_window_rule: isClubProduct ? 'calendar_month' : 'tariff_duration',
+            window_days: fixedCourseEnd || isClubProduct ? null : (tariff.access_days || 30),
+            source_window_rule: fixedCourseEnd ? 'course_end_calendar_months' : isClubProduct ? 'calendar_month' : 'tariff_duration',
             previous_end: subscription?.access_end_at || null,
             post_check: ledgerPostCheck,
           },
@@ -2344,7 +2347,7 @@ Deno.serve(async (req) => {
       .from('subscriptions_v2')
       .select(`
         *,
-        tariffs(id, name, code, access_days, getcourse_offer_id, public_id)
+        tariffs(id, name, code, access_days, getcourse_offer_id, public_id, meta)
       `)
       .lte('next_charge_at', endOfDayIso)  // Use end of day instead of nowIso
       .in('status', ['active', 'trial', 'past_due'])
@@ -2435,7 +2438,7 @@ Deno.serve(async (req) => {
       .from('subscriptions_v2')
       .select(`
         *,
-        tariffs(id, name, access_days, trial_auto_charge, getcourse_offer_id)
+        tariffs(id, name, access_days, trial_auto_charge, getcourse_offer_id, meta)
       `)
       .eq('status', 'trial')
       .eq('is_trial', true)
