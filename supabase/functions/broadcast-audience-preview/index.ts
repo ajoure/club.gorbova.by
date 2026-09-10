@@ -48,35 +48,51 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({}));
+    const pageOffset = body?.page_offset ?? 0;
+    const pageLimit = body?.page_limit ?? 50;
+    if (!Number.isSafeInteger(pageOffset) || pageOffset < 0 || pageOffset > 2147483647
+      || !Number.isSafeInteger(pageLimit) || pageLimit < 1 || pageLimit > 100) {
+      return json({ error: "Некорректная страница получателей" }, 400);
+    }
     const filters: Record<string, unknown> = body?.filters && typeof body.filters === "object" ? body.filters : {};
     // The resolver delegates to contact/user-level RPCs which only accept the
     // bypass marker when auth.uid() is NULL (service role). The marker can
     // therefore never be used to escalate a browser session directly.
-    const systemFilters = { ...filters, __system_bypass: true };
+    const systemFilters = {
+      ...filters, __system_bypass: true,
+      __preview_offset: pageOffset, __preview_limit: pageLimit,
+    };
     if (filters.education) {
-      const { data: baseUsers, error: usersError } = await admin.rpc(
-        "resolve_broadcast_audience_user_ids_system",
-        { _filters: systemFilters },
-      );
-      if (usersError) throw usersError;
-      const candidates = (baseUsers || []) as Array<{ user_id: string; has_telegram: boolean; has_email: boolean }>;
-      const eligible = await filterUsersByEducationCondition(
-        admin,
-        candidates.map((row) => row.user_id),
-        filters.education,
-      );
-      const selected = candidates.filter((row) => eligible.has(row.user_id));
-      const userIds = selected.map((row) => row.user_id);
-      const { data: profiles, error: profilesError } = userIds.length
-        ? await admin
+      // Read bounded batches so PostgREST's row cap cannot hide later recipients.
+      const userIds: string[] = [];
+      for (let offset = 0; ; offset += 200) {
+        const { data: candidates, error: usersError } = await admin.rpc(
+          "resolve_broadcast_audience_user_ids_system", { _filters: systemFilters },
+        ).order("user_id").range(offset, offset + 199);
+        if (usersError) throw usersError;
+        const batch = (candidates || []) as Array<{ user_id: string }>;
+        const eligible = await filterUsersByEducationCondition(
+          admin, batch.map((row) => row.user_id), filters.education,
+        );
+        userIds.push(...eligible);
+        if (batch.length < 200) break;
+      }
+      const profiles = [];
+      for (let offset = 0; offset < userIds.length; offset += 200) {
+        const { data: batch, error: profilesError } = await admin
           .from("profiles")
           .select("id, user_id, full_name, email, telegram_username, telegram_user_id, is_archived, status")
-          .in("user_id", userIds)
-        : { data: [], error: null };
-      if (profilesError) throw profilesError;
+          .in("user_id", userIds.slice(offset, offset + 200));
+        if (profilesError) throw profilesError;
+        profiles.push(...(batch || []));
+      }
       const activeProfiles = (profiles || []).filter((profile) => (
         filters.include_archived === true || !(profile.is_archived || profile.status === "archived")
-      ));
+      )).sort((a, b) => {
+        if (a.full_name === null && b.full_name !== null) return 1;
+        if (a.full_name !== null && b.full_name === null) return -1;
+        return (a.full_name || "").localeCompare(b.full_name || "", "ru") || a.id.localeCompare(b.id);
+      });
       const telegramCount = activeProfiles.filter((profile) => profile.telegram_user_id).length;
       const emailCount = activeProfiles.filter((profile) => profile.email).length;
       return json({
@@ -86,7 +102,9 @@ Deno.serve(async (req) => {
         email_archived_count: 0,
         email_no_account_count: 0,
         total_count: new Set(activeProfiles.map((profile) => profile.user_id)).size,
-        users: activeProfiles.slice(0, 100).map((profile) => ({
+        page_offset: pageOffset,
+        page_limit: pageLimit,
+        users: activeProfiles.slice(pageOffset, pageOffset + pageLimit).map((profile) => ({
           id: profile.id,
           full_name: profile.full_name,
           email: profile.email,

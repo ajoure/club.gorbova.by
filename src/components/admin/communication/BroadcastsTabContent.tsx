@@ -38,10 +38,6 @@ import {
 } from "@/components/ui/popover";
 import {
   Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
 import {
@@ -93,6 +89,7 @@ import { uploadToTelegramMedia } from "@/components/admin/chat/uploadToTelegramM
 import { TelegramMessagePreview } from "./TelegramMessagePreview";
 
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
+import { BroadcastRecipientsSheet } from "./BroadcastRecipientsSheet";
 import { RuleListEditor } from "./RuleListEditor";
 
 const BroadcastAnalyticsSection = lazy(() =>
@@ -2302,39 +2299,9 @@ export function BroadcastsTabContent() {
                     Просмотр получателей
                   </Button>
                 </SheetTrigger>
-                <SheetContent>
-                  <SheetHeader>
-                    <SheetTitle>Получатели рассылки</SheetTitle>
-                    <SheetDescription>
-                      Первые 50 из {audience?.totalCount || 0} получателей
-                    </SheetDescription>
-                  </SheetHeader>
-                  <ScrollArea className="h-[calc(var(--app-height)-150px)] mt-4">
-                    <div className="space-y-2">
-                      {audience?.users.map((user) => (
-                        <div
-                          key={user.id}
-                          className="flex items-center gap-3 p-3 rounded-lg bg-muted/50"
-                        >
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">
-                              {user.full_name || "Без имени"}
-                            </p>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {user.email || "—"}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {user.has_telegram && (
-                              <MessageCircle className="h-4 w-4 text-blue-500" />
-                            )}
-                            {user.has_email && <Mail className="h-4 w-4 text-orange-500" />}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </ScrollArea>
-                </SheetContent>
+                {previewOpen && (
+                  <BroadcastRecipientsSheet key={JSON.stringify(rpcFilters)} filters={rpcFilters} />
+                )}
               </Sheet>
             </CardContent>
           </Card>
