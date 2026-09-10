@@ -47,6 +47,11 @@ DECLARE
   old_rules jsonb;
   old_addons jsonb;
 BEGIN
+  IF NOT EXISTS(SELECT 1 FROM public.products_v2 WHERE id=p AND code='prd_8649986b7c9e')
+     OR NOT EXISTS(SELECT 1 FROM public.training_modules WHERE id='4365e913-36f1-432e-ab16-748c3ca6826a'
+       AND product_id=p AND is_active AND parent_module_id IS NULL) THEN
+    RAISE EXCEPTION 'cb21_product_training_binding_drift';
+  END IF;
   -- Lock only catalogue rows involved in this generation, not customer tables.
   PERFORM t.id FROM public.tariffs t JOIN cb_tariff_map m ON m.old_id=t.id FOR UPDATE OF t;
   PERFORM o.id FROM public.tariff_offers o JOIN cb_offer_map m ON m.old_id=o.id FOR UPDATE OF o;
@@ -56,7 +61,11 @@ BEGIN
   IF existing_count=3 THEN
     IF (SELECT count(*) FROM public.tariffs t JOIN cb_tariff_map m ON m.new_id=t.id
         WHERE t.product_id=p AND t.meta->>'sales_generation'=generation AND t.price_monthly=m.price)=3
-       AND (SELECT count(*) FROM public.tariff_offers o JOIN cb_offer_map m ON m.new_id=o.id)=12
+       AND (SELECT count(*) FROM public.tariff_offers o JOIN cb_offer_map om ON om.new_id=o.id
+         JOIN cb_tariff_map m ON m.old_id=om.tariff_old_id
+         WHERE o.tariff_id=m.new_id AND o.amount=m.price
+           AND (o.meta#>>'{document_defaults,amount}')::numeric=m.price
+           AND (o.meta#>>'{document_defaults,unit_price}')::numeric=m.price)=12
        AND (SELECT count(*) FROM public.access_rules r JOIN cb_rule_map m ON m.new_id=r.id)=10
        AND (SELECT count(*) FROM public.offer_addons WHERE parent_offer_id IN (SELECT new_id FROM cb_offer_map))=108
        AND EXISTS(SELECT 1 FROM public.flows f WHERE f.id=flow_id AND f.product_id=p
@@ -71,7 +80,9 @@ BEGIN
      AND (SELECT count(*) FROM public.tariff_offers o JOIN cb_offer_map om ON om.old_id=o.id
           JOIN cb_tariff_map m ON m.old_id=om.tariff_old_id
           WHERE o.tariff_id=m.old_id AND o.is_active AND o.amount=m.old_price
-            AND o.auto_charge_offer_id IS NULL)=12
+            AND o.auto_charge_offer_id IS NULL AND o.auto_charge_amount IS NULL AND o.reentry_amount IS NULL
+            AND (o.meta#>>'{document_defaults,amount}')::numeric=m.old_price
+            AND (o.meta#>>'{document_defaults,unit_price}')::numeric=m.old_price)=12
      AND (SELECT count(*) FROM public.tariff_offers WHERE tariff_id IN (SELECT old_id FROM cb_tariff_map) AND is_active)=12
      AND (SELECT count(*) FROM public.access_rules r JOIN cb_rule_map m ON m.old_id=r.id
           WHERE r.tariff_id=m.tariff_old_id AND r.product_id=p AND r.is_active)=10
@@ -128,7 +139,8 @@ BEGIN
   SELECT (jsonb_populate_record(NULL::public.tariff_offers, to_jsonb(o)||jsonb_build_object(
     'id',om.new_id,'tariff_id',m.new_id,'amount',m.price,'created_at',now(),'updated_at',now(),
     'visible_from',NULL,'visible_to',NULL,
-    'meta',coalesce(o.meta,'{}'::jsonb)||jsonb_build_object('sales_generation',generation,'supersedes_offer_id',o.id)
+    'meta',coalesce(o.meta,'{}'::jsonb)||jsonb_build_object('sales_generation',generation,'supersedes_offer_id',o.id,
+      'document_defaults',coalesce(o.meta->'document_defaults','{}'::jsonb)||jsonb_build_object('amount',m.price,'unit_price',m.price))
   ))).* FROM public.tariff_offers o JOIN cb_offer_map om ON om.old_id=o.id
   JOIN cb_tariff_map m ON m.old_id=om.tariff_old_id;
 

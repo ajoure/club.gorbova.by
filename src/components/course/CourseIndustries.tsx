@@ -2,10 +2,6 @@ import { AnimatedSection } from "@/components/landing/AnimatedSection";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Check, Clock, ShoppingCart, Truck, Factory, Building, Utensils, Code, Briefcase, User, Plane, Heart, GraduationCap, Store, Building2 } from "lucide-react";
-import { useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
-import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
 
 interface Industry {
   name: string;
@@ -33,22 +29,8 @@ const industries: Industry[] = [
 ];
 
 export function CourseIndustries() {
-  const { user } = useAuth();
-  const navigate = useNavigate();
-  const [loadingIndex, setLoadingIndex] = useState<number | null>(null);
-
-  const handleBuyModule = (industry: Industry, index: number) => {
-    if (!user) {
-      navigate("/auth", { state: { returnTo: "/course-accountant" } });
-      return;
-    }
-    
-    setLoadingIndex(index);
-    // TODO: Integrate with payment system
-    setTimeout(() => {
-      toast.success(`Модуль "${industry.name}" добавлен в корзину`);
-      setLoadingIndex(null);
-    }, 500);
+  const handleBuyModule = () => {
+    document.getElementById("tariffs")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   return (
@@ -124,10 +106,9 @@ export function CourseIndustries() {
                         size="sm"
                         variant="outline"
                         className="w-full border-white/20 text-white hover:bg-white/10 hover:text-white text-xs"
-                        onClick={() => handleBuyModule(industry, index)}
-                        disabled={loadingIndex === index}
+                        onClick={handleBuyModule}
                       >
-                        {loadingIndex === index ? "..." : "Купить"}
+                        Выбрать тариф
                       </Button>
                     </div>
                   )}

@@ -14,7 +14,7 @@ const offers = maps('cb_offer_map');
 const rules = maps('cb_rule_map');
 const product = '2b7bf6d4-ad8d-46ad-9399-7f96c307c596';
 const excluded = ['60aa7a27-5346-4ba0-9686-d297e14d49cf','9ce7a575-bbe4-45f1-8c4f-262b432127bf','83544104-b2c1-48c2-a0c9-015ceec012a1'];
-const tables = ['tariffs','tariff_offers','access_rules','flows','site_pages','offer_addons','tariff_features','products_v2'];
+const tables = ['tariffs','tariff_offers','access_rules','flows','site_pages','offer_addons','tariff_features','products_v2','training_modules'];
 for (const table of tables) {
   const row = types.split(`      ${table}: {\n        Row: {\n`)[1].split('        }')[0];
   const columns = [...row.matchAll(/^          (\w+): (.+)$/gm)].map(([,name,type]) => {
@@ -33,6 +33,7 @@ async function insert(table, record) {
   const keys=Object.keys(record);
   await db.query(`INSERT INTO ${table}(${keys.join(',')}) VALUES(${keys.map((_,i)=>'$'+(i+1)).join(',')})`,keys.map(k=>typeof record[k]==='object' && record[k]!==null?JSON.stringify(record[k]):record[k]));
 }
+await insert('training_modules',{id:'4365e913-36f1-432e-ab16-748c3ca6826a',product_id:product,is_active:true,parent_module_id:null});
 await insert('products_v2',{id:product,code:'prd_8649986b7c9e',landing_config:{price_suffix:'BYN/мес',tariffs_title:'Тарифы'}});
 for (const [i,[oldId]] of tariffs.entries()) {
   await insert('tariffs',{id:oldId,product_id:product,code:`old-${i}`,public_id:`T-OLD-${i}`,name:['Бухгалтер','Главный бухгалтер','Бизнес-леди'][i],
@@ -44,7 +45,7 @@ for (const [i,[oldId,,tariffId]] of offers.entries()) {
   await insert('tariff_offers',{id:oldId,tariff_id:tariffId,offer_type:['bank_installment','pay_now','pay_now','invoice'][i%4],
     payment_method:['bank_transfer','internal_installment','full_payment','bank_transfer'][i%4],amount:[1650,1950,2650][t],
     is_active:true,is_primary:i%4===2,installment_count:i%4===1?2:null,installment_interval_days:i%4===1?30:null,
-    auto_charge_offer_id:null,button_label:'Existing action',sort_order:i%4,meta:{crm_routing:{pipeline_id:123,pending_stage_id:456,success_stage_id:789,failed_stage_id:999},document_scenarios:{paid:'preserved'},slot_role:`button_${i%4+1}`,installment:{max_months:2,rounding_mode:'ceil_to_whole_byn'}}});
+    auto_charge_offer_id:null,button_label:'Existing action',sort_order:i%4,meta:{crm_routing:{pipeline_id:123,pending_stage_id:456,success_stage_id:789,failed_stage_id:999},document_scenarios:{paid:'preserved'},document_defaults:{amount:[1650,1950,2650][t],unit_price:[1650,1950,2650][t],service_name:'Existing tariff service',amount_manual_override:false},slot_role:`button_${i%4+1}`,installment:{max_months:2,rounding_mode:'ceil_to_whole_byn'}}});
 }
 for (const [i,[parentId]] of offers.entries()) {
   for (let n=0;n<9;n++) await insert('offer_addons',{
@@ -99,6 +100,7 @@ for(const [oldOffer,newOffer] of offers) {
   const newRow=(await db.query('SELECT * FROM tariff_offers WHERE id=$1',[newOffer])).rows[0];
   equal(newRow.meta.crm_routing,oldRow.meta.crm_routing,'exact CRM routing preserved');
   equal(newRow.meta.document_scenarios,oldRow.meta.document_scenarios,'document routing preserved');
+  equal(newRow.meta.document_defaults,{...oldRow.meta.document_defaults,amount:Number(newRow.amount),unit_price:Number(newRow.amount)},'document sums match actual payment offer');
   const after=(await db.query('SELECT * FROM offer_addons WHERE parent_offer_id=$1 ORDER BY sort_order',[newOffer])).rows;
   const before=original.offer_addons.filter(x=>x.parent_offer_id===oldOffer).sort((a,b)=>a.sort_order-b.sort_order);
   equal(after.length,9);
@@ -110,6 +112,11 @@ equal((await snapshot('products_v2'))[0].landing_config,{price_suffix:'BYN',tari
 const beforeRepeat=Object.fromEntries(await Promise.all(tables.map(async t=>[t,await snapshot(t)])));
 await db.exec(sql);
 for (const t of tables) equal(await snapshot(t),beforeRepeat[t],`idempotent ${t}`);
+// A training moved to another product blocks even an otherwise complete generation.
+await db.query('UPDATE training_modules SET product_id=$1', ['00000000-0000-0000-0000-000000000020']);
+await assert.rejects(db.exec(sql),/cb21_product_training_binding_drift/);assertions++;
+await db.exec('ROLLBACK');
+await db.query('UPDATE training_modules SET product_id=$1',[product]);
 // A partially removed generation must fail rather than duplicate or silently repair.
 await db.query('DELETE FROM tariffs WHERE id=$1',[tariffs[0][1]]);
 await assert.rejects(db.exec(sql),/partial_cb_catalogue_generation/);assertions++;
