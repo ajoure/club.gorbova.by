@@ -153,3 +153,44 @@ Provider writes, SQL-мутации, код, коммиты и Publish не вы
 6. **Порядок.** Сведение данных выполняется только после fresh provider proof через `refund_preflight` (после deploy) и подтверждения terminal states; локально: `sbs_9a86268a608fca3f = canceled`, `sbs_bd6975629dfe2c83 = completed`.
 
 Реализаций, SQL, коммитов, deploy и provider writes не выполнялось.
+
+---
+
+# Дополнение 3 (READ-ONLY): причина третьего списания, cron-риски, статусы ссылки, фильтры is_deleted
+
+## Хронология (audit_logs, system-акторы, без ПД)
+
+A `e17b35b2…` / `sbs_9a86268a608fca3f`
+- 29.07.2026 16:02:03 `installment.retry_policy.resolved_pre_bepaid` (`create-payment-checkout`)
+- 29.07.2026 16:02:05 `system.payment_link.created`, затем `public_checkout.created` (`public-checkout`)
+- 29.07.2026 16:03:00–16:03:03 `grant-access-for-order.provider_linked_extend`, `entitlement.tariff_id_persisted`, `admin.grant_access` (service_role)
+- 29.07.2026 16:03:11 `bepaid.subscription.installment_processed`: `billing_cycles=2`, `installment_count=2`, `model=bepaid_finite_subscription`, `state=active`, `original_order_id=A`
+- 11.08.2026 09:01:36 `bepaid.subscription.cancel` (`bepaid-cancel-subscription`, actor_type=system): `source=public_link_replace`, `is_admin=false`, `requested=1`, `canceled=1`, `remote_missing=0`
+
+B `9673e359…` / `sbs_bd6975629dfe2c83`
+- 11.08.2026 09:01:40–09:01:41 (через 4 сек после отмены A): `installment.retry_policy.resolved_pre_bepaid`, `system.payment_link.created`, `public_checkout.created`
+- 11.08.2026 09:02:01 `bepaid.webhook.grant_skipped_no_fallback`, затем `installment_processed`: **`billing_cycles=2`, `installment_count=2`, `original_order_id=B`**
+- 10.09.2026 09:16:02–09:16:17: `provider_linked_extend` (`previous_status=past_due`, tracking `subv2:d16b01e5…:order:9673e359…`), `admin.grant_access` (`duration_days=300`, до 2027-06-07), `installment_processed` (`last_tx_uid=6e1edf0b…`), `installment_completed` (`paid_billing_cycles=2`)
+
+## Причина третьего списания
+Сценарий `public_link_replace`: клиент прошёл по новой публичной ссылке, система отменила старую подписку A (после 1 оплаченного цикла из 2) и создала **новый конечный план заново с `billing_cycles=2`**. Ранее оплаченный 663 от 29.07 в новый мандат **не засчитывался** (`original_order_id=B`, `paid_billing_cycles` считались с нуля). Итог 1+2 = 3 × 663 = 1989 при обязательстве 1325/1326. Это дефект контура замены мандата: при replace remaining cycles должны рассчитываться от уже оплаченной суммы по исходному заказу, а не сбрасываться в полный график.
+
+## Риск следующих списаний — сейчас отсутствует, кроме одного канала
+Подписки клиента по продукту ровно две:
+- `c6633a7b…` (order A): `canceled`, `auto_renew=false`, `next_charge_at=null`, meta `installment_status=terminated`, paid 1 из 2, access_end 28.08.2026
+- `d16b01e5…` (order B): `expired`, `auto_renew=false`, `next_charge_at=null`, meta `installment_status=completed`, paid 2 из 2, access_end 07.06.2027
+
+`installment_payments` = 0 строк; provider states: `canceled` и `completed`. Активные cron, которые вообще могут списывать: `installment-charge-cron-morning/evening` (0 6/18 * * *), `subscription-charge-morning/evening` (743/744), `preregistration-charge-*` (1–4 числа). Все они отбирают строки с `next_charge_at`/активным статусом — у обеих подписок таких признаков нет, поэтому автосписаний по ним не ожидается.
+Единственный оставшийся канал нового списания — **активная многоразовая ссылка `a11f2595…`** (`status=active`, `max_uses=null`, `current_uses=0`, `expires_at=null`, amount 66300 копеек, `payment_type=subscription`): повторный переход создаст новый заказ и новый мандат, ровно как 11.08. Её отключение — обязательная часть точечного apply.
+
+## Допустимые статусы ссылки
+`payment_links.status` фактически принимает три значения: `active`, `completed`, `invalidated`. Для отключения корректен `invalidated` (не DELETE); дополнительно можно выставить `expires_at`. Колонки для guard: `id, status, max_uses, current_uses, expires_at, order_group_id, amount, payment_type, provider`.
+
+## Фильтры is_deleted — что уже есть, чего нет (по коду)
+Уже фильтруют `orders_v2.is_deleted=false`: `src/pages/admin/AdminDeals.tsx:222,380`, `src/hooks/useDealsBoard.ts:61`, `src/components/admin/shared/pickers/DealPickerDialog.tsx:141,176,202`, `src/components/admin/bepaid/ContactDealsDialog.tsx:87`, `src/components/admin/payments/AutoRenewalsTabContent.tsx:598`, `src/hooks/useUnifiedPayments.tsx:263`.
+Не фильтруют: `src/hooks/useContactInstallmentsData.ts` — запрос `orders_v2` (строки ~117–130) не содержит `.eq("is_deleted", false)`; `is_deleted` там применяется только к вложенным `payments_v2` (строка 57). Это и есть единственное доказанное место, требующее правки — после soft-delete A рассрочка A иначе останется видимой. Расширение на отчёты не требую: отдельных report-запросов без фильтра я не нашёл.
+
+## Подтверждение по сумме сделки
+`getDealCommercialAmount` (`src/lib/payments/composableDealAmount.ts:13-26`) берёт `composable_line_amount`, а он заполняется из `item.final_amount` (`src/components/admin/ContactDetailSheet.tsx:563`), иначе fallback на `orders_v2.final_price`. Значит правка именно `order_group_items.final_amount` + `item_snapshot.final_amount` у B item `0235abb4…` до 1325.00 (при `list_amount 2650.00` и `order_groups.total_amount 1325.00` без изменений) корректно уберёт «2650» из UI.
+
+Изменений, SQL-мутаций, коммитов, deploy и provider-вызовов не выполнялось.
