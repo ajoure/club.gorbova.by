@@ -35,6 +35,6 @@ describe("composable refund group recovery", () => {
   });
 
   it("does not select a refund transaction as the parent payment", () => {
-    expect(subscriptionAdminActions).toContain("p.transaction_type !== 'refund'");
+    expect(subscriptionAdminActions).toContain("selectRefundPayment(payments, payment_id)");
   });
 });

@@ -1,3 +1,5 @@
+import { readRefundProviderProof } from '../_shared/refund-provider-preflight.ts';
+import { selectRefundPayment, assertRefundAmount, isRefundablePayment } from '../_shared/refund-payment-selection.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
@@ -278,10 +280,43 @@ Deno.serve(async (req) => {
     const {
       action, subscription_id, order_id, days, new_end_date, refund_amount,
       refund_reason, access_action, reduce_days, order_group_item_id,
-      refund_request_key,
+      refund_request_key, payment_id,
     } = body;
 
     console.log(`Admin ${adminUserId} performing ${action}`);
+
+    // Authenticated diagnostic only: no database/provider writes and no raw response data.
+    if (action === 'refund_preflight') {
+      const reply = (data: unknown, status = 200) => new Response(JSON.stringify(data), {
+        status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+      if (!payment_id || !order_id) return reply({success:false,error:'exact_payment_required'},400);
+      const {data: payment, error: pe} = await supabase.from('payments_v2')
+        .select('id,order_id,provider,provider_payment_id,amount,currency,refunded_amount')
+        .eq('id',payment_id).eq('order_id',order_id).single();
+      const {data: order, error: oe} = await supabase.from('orders_v2')
+        .select('id,user_id,product_id').eq('id',order_id).single();
+      if (pe || oe || !payment || !order?.user_id || !order?.product_id || payment.provider !== 'bepaid'
+          || !payment.provider_payment_id || Number(payment.amount)<=0) return reply({success:false,error:'payment_not_found'},404);
+      const {data: relatedOrders,error: re} = await supabase.from('orders_v2').select('id')
+        .eq('user_id',order.user_id).eq('product_id',order.product_id).limit(101);
+      const {data: localSubs,error: se} = await supabase.from('subscriptions_v2').select('provider_subscription_id')
+        .eq('user_id',order.user_id).eq('product_id',order.product_id).limit(11);
+      if (re || se || !relatedOrders?.length || relatedOrders.length>100 || (localSubs?.length ?? 0)>10)
+        return reply({success:false,error:'subscription_scope_requires_review'},409);
+      const {data: providerSubs,error: pse} = await supabase.from('provider_subscriptions').select('provider_subscription_id')
+        .eq('provider','bepaid').in('order_id',relatedOrders.map(o=>o.id)).limit(11);
+      if (pse || (providerSubs?.length ?? 0)>10) return reply({success:false,error:'subscription_scope_requires_review'},409);
+      const ids = [...new Set([...(localSubs ?? []),...(providerSubs ?? [])]
+        .map(s=>s.provider_subscription_id).filter((id): id is string => !!id))];
+      if (ids.length>10 || ids.some(id=>!/^sbs_[a-z0-9]+$/i.test(id))) return reply({success:false,error:'subscription_scope_requires_review'},409);
+      const credentials = await getBepaidCredsStrict(supabase);
+      if (isBepaidCredsError(credentials)) return reply({success:false,error:'provider_credentials_unavailable'},503);
+      const proof = await readRefundProviderProof(createBepaidAuthHeader(credentials), {
+        uid:payment.provider_payment_id, amount:Number(payment.amount),currency:payment.currency,
+      },ids);
+      return reply({success:true,payment_id,order_id,local_refunded_amount:payment.refunded_amount ?? 0,...proof});
+    }
 
     // Handle refund separately since it uses order_id not subscription_id
     if (action === 'refund') {
@@ -325,20 +360,54 @@ Deno.serve(async (req) => {
         });
       }
 
-      if (order.status !== 'paid') {
+      if (order.is_deleted || (!payment_id && order.status !== 'paid')) {
         return new Response(JSON.stringify({ success: false, error: 'Only paid orders can be refunded' }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      const actualRefundAmount = refund_amount || order.final_price;
-      const payments = order.payments_v2 as any[];
-      const successfulPayment = payments?.find((p: any) =>
-        p.status === 'succeeded' &&
-        p.provider_payment_id &&
-        p.transaction_type !== 'refund'
-      );
+      const payments = (order.payments_v2 || []) as any[];
+      let successfulPayment: any;
+      try {
+        successfulPayment = selectRefundPayment(payments, payment_id);
+      } catch (error) {
+        return new Response(JSON.stringify({ success: false, error: (error as Error).message }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const actualRefundAmount = refund_amount ?? (successfulPayment
+        ? Number(successfulPayment.amount) - Number(successfulPayment.refunded_amount || 0) : order.final_price);
+      try {
+        if (successfulPayment) {
+          assertRefundAmount(successfulPayment, actualRefundAmount, order.currency);
+          if (!['bepaid','stripe'].includes(successfulPayment.provider)) throw new Error('unsupported_refund_provider');
+          if (!refund_request_key || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(refund_request_key)) {
+            throw new Error('refund_request_key_required');
+          }
+          const remainingOrderAmount = payments.filter(isRefundablePayment)
+            .reduce((total, p) => total + Number(p.amount) - Number(p.refunded_amount || 0), 0);
+          if (!order_group_item_id && effectiveAccessAction === 'revoke' && actualRefundAmount < remainingOrderAmount - 0.001) {
+            throw new Error('partial_order_refund_cannot_revoke_access');
+          }
+        } else if (!Number.isFinite(actualRefundAmount) || actualRefundAmount <= 0 || actualRefundAmount > Number(order.final_price)) {
+          throw new Error('invalid_payment_refund_amount');
+        }
+        if (effectiveAccessAction === 'reduce' && (!Number.isInteger(reduce_days) || reduce_days <= 0)) {
+          throw new Error('invalid_reduce_days');
+        }
+      } catch (error) {
+        return new Response(JSON.stringify({ success: false, error: (error as Error).message }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      // An exact payment of a multi-item group must retain its allocation semantics.
+      if (payment_id && !order_group_item_id) {
+        const { data: group, error: groupError } = await supabase.from('order_groups')
+          .select('id,order_group_items(id)').eq('primary_order_id', order_id).maybeSingle();
+        if (groupError || (group?.order_group_items?.length || 0) > 1) {
+          return new Response(JSON.stringify({ success: false, error: 'select_group_item_for_refund' }),
+            { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+      }
       let composableRefundIntentId: string | null = null;
       let composableAccessOrderId: string | null = null;
       if (order_group_item_id) {
@@ -470,6 +539,27 @@ Deno.serve(async (req) => {
         composableAccessOrderId = intent.item_order_id || null;
       }
       
+      if (successfulPayment) {
+        const { data: reservation, error: reserveError } = await supabase.rpc('reserve_payment_refund_request', {
+          _request_key: refund_request_key, _order_id: order_id, _payment_id: successfulPayment.id,
+          _amount: actualRefundAmount, _currency: order.currency, _actor_user_id: adminUserId,
+          _access_action: effectiveAccessAction, _reduce_days: reduce_days || null,
+          _order_group_item_id: order_group_item_id || null, _reason: refund_reason.trim(),
+        });
+        if (reserveError || reservation?.reserved !== true) {
+          return new Response(JSON.stringify({ success: false,
+            error: reserveError?.message || 'refund_request_already_exists',
+            request_state: reservation?.state || null, manual_review_required: true }),
+            { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+      }
+      const markRefundRequest = async (state: string, providerRefundId?: string) => {
+        if (!successfulPayment) return;
+        const { data: updated, error } = await supabase.from('payment_refund_requests').update({
+          state, ...(providerRefundId ? { provider_refund_id: providerRefundId } : {}), updated_at: new Date().toISOString(),
+        }).eq('request_key', refund_request_key).eq('payment_id', successfulPayment.id).select('request_key').single();
+        if (error || !updated) throw new Error('refund_request_recording_failed_manual_review');
+      };
       let bepaidRefundResult: any = null;
       let bepaidRefundError: string | null = null;
       let bepaidAlreadyRefunded = false;
@@ -501,6 +591,7 @@ Deno.serve(async (req) => {
                 amount_minor: Math.round(actualRefundAmount * 100),
                 account_code: accountCode,
                 reason: 'requested_by_customer',
+                request_key: refund_request_key,
               },
               headers: { Authorization: authHeader },
             },
@@ -516,6 +607,7 @@ Deno.serve(async (req) => {
 
         const effective = effectiveAccessAction;
         const stripeOk = !stripeRefundError && stripeRefundResp?.ok === true;
+        await markRefundRequest(stripeOk ? 'provider_succeeded' : 'unknown', stripeRefundResp?.refund_id);
         if (stripeOk && composableRefundIntentId && stripeRefundResp?.refund_id) {
           const { error: bindError } = await supabase.rpc(
             'bind_composable_refund_provider_id',
@@ -634,6 +726,7 @@ Deno.serve(async (req) => {
         const credsResult = await getBepaidCredsStrict(supabase);
         
         if (isBepaidCredsError(credsResult)) {
+          await markRefundRequest('failed');
           console.log('BEPAID_CREDS_MISSING, skipping refund: ' + credsResult.error);
         } else {
           const bepaidCreds = credsResult;
@@ -651,6 +744,7 @@ Deno.serve(async (req) => {
 
             const bepaidResponse = await fetch('https://gateway.bepaid.by/transactions/refunds', {
               method: 'POST',
+              signal: AbortSignal.timeout(20000),
               headers: {
                 'Authorization': bepaidAuth,
                 'Content-Type': 'application/json',
@@ -676,6 +770,7 @@ Deno.serve(async (req) => {
               || combinedErrText.includes('already refunded');
 
             if (bepaidRefundResult.transaction?.status === 'successful') {
+              await markRefundRequest('provider_succeeded', bepaidRefundResult.transaction.uid);
               console.log(`bePaid refund successful: uid=${bepaidRefundResult.transaction.uid}`);
             } else if (alreadyRefunded) {
               // Idempotent: bePaid уже вернул этот платёж. Не считаем ошибкой.
@@ -683,6 +778,7 @@ Deno.serve(async (req) => {
               bepaidRefundError = 'bepaid_already_refunded';
               console.warn('[refund] bePaid reports payment already refunded — treating as idempotent skip');
             } else if (bepaidRefundResult.transaction?.status === 'failed') {
+              await markRefundRequest('failed');
               bepaidRefundError = bepaidRefundResult.transaction.message || 'Refund failed';
               console.error('bePaid refund failed:', bepaidRefundError);
             } else if (bepaidRefundResult.errors || nestedResp?.errors) {
@@ -691,6 +787,7 @@ Deno.serve(async (req) => {
             }
           } catch (err) {
             bepaidRefundError = err instanceof Error ? err.message : String(err);
+            await markRefundRequest('unknown');
             console.error('bePaid API error:', bepaidRefundError);
           }
         }
@@ -719,7 +816,7 @@ Deno.serve(async (req) => {
             .from('audit_logs')
             .select('id, meta')
             .eq('action', 'admin.subscription.refund_db_recording_failed')
-            .contains('meta', { order_id })
+            .contains('meta', { order_id, payment_id: successfulPayment.id, parent_payment_uid: successfulPayment.provider_payment_id })
             .order('created_at', { ascending: false })
             .limit(1);
           const meta0 = (priorFailed?.[0]?.meta as any) || null;
@@ -752,7 +849,10 @@ Deno.serve(async (req) => {
             },
           });
           if (rpcErr) rpcRecoveryError = String(rpcErr.message || rpcErr);
-          else rpcRecoveryResult = rpcOut;
+          else {
+            rpcRecoveryResult = rpcOut;
+            await markRefundRequest('completed', recoveredRefundUid);
+          }
         }
 
         await supabase.from('audit_logs').insert({
@@ -868,6 +968,8 @@ Deno.serve(async (req) => {
               action: 'admin.subscription.refund_db_recording_failed',
               meta: {
                 order_id,
+                payment_id: successfulPayment.id,
+                parent_payment_uid: successfulPayment.provider_payment_id,
                 order_number: order.order_number,
                 refund_amount: actualRefundAmount,
                 bepaid_refund_uid: bepaidRefundResult.transaction.uid,
@@ -1097,6 +1199,7 @@ Deno.serve(async (req) => {
         },
       });
 
+      if (bepaidRefundSuccessful) await markRefundRequest('completed', bepaidRefundResult.transaction.uid);
       console.log(`Refund processed for order ${order_id}: ${actualRefundAmount} ${order.currency}`);
 
       return new Response(JSON.stringify({ 

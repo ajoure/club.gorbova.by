@@ -8,6 +8,7 @@ const order = { id: 'order', user_id: 'user', currency: 'BYN', paid_amount: 442,
   meta: { installment: { model: 'bepaid_finite_subscription', billing_cycles: 3, per_payment_byn: 442, effective_total_byn: 1326 } }, payments_v2: [payment] };
 
 describe('contact installment factual balance', () => {
+  it('hides an archived duplicate without deleting its history', () => expect(mapOrderToPlan({...order,is_deleted:true})).toBeNull());
   it('shows one paid and 884 remaining without cached installment_progress', () => {
     expect(mapOrderToPlan(order)).toMatchObject({ paidCycles: 1, totalCycles: 3, paidTotal: 442, remainingTotal: 884, uiStatus: 'active' });
   });

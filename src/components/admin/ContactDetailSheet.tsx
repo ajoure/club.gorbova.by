@@ -533,6 +533,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
           payments_v2(id, status, paid_at, created_at, provider_response)
         `)
         .or(`profile_id.eq.${contact.id},user_id.in.(${userIds.join(',')})`)
+        .eq("is_deleted", false)
         .in("status", ['paid', 'partial', 'pending', 'canceled', 'refunded'] as const)
         .order("deal_date", { ascending: false });
       if (error) throw error;
