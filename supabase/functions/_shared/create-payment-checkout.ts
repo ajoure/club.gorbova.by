@@ -1,3 +1,4 @@
+import { courseAccessEnd } from './course-access-window.ts';
 /**
  * Shared helper: create bePaid payment checkout (one_time or subscription)
  * 
@@ -276,7 +277,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   // === Load product, tariff, profile ===
   const [productResult, tariffResult, profileResult] = await Promise.all([
     supabase.from('products_v2').select('id, name, code, public_id').eq('id', product_id).maybeSingle(),
-    supabase.from('tariffs').select('id, name, code, access_days, public_id').eq('id', tariff_id).maybeSingle(),
+    supabase.from('tariffs').select('id, name, code, access_days, public_id, meta').eq('id', tariff_id).maybeSingle(),
     supabase.from('profiles').select('id, email, full_name').eq('user_id', user_id).maybeSingle(),
   ]);
 
@@ -409,8 +410,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     const accessDaysOneTime = tariff.access_days || 30;
     const nowOneTime = new Date();
-    const plannedEndOneTime = new Date(nowOneTime);
-    plannedEndOneTime.setDate(plannedEndOneTime.getDate() + accessDaysOneTime);
+    const plannedEndOneTime = courseAccessEnd(tariff.meta) || new Date(nowOneTime.getTime() + accessDaysOneTime * 86_400_000);
 
     // CRM routing — Layer A (B.0 invariant): always materialize crm_routing_snapshot
     // (positive or structural-negative). Snapshot is written once at INSERT and never
@@ -944,8 +944,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     const accessDaysSub = tariff.access_days || 30;
     const nowSub = new Date();
-    const plannedEndSub = new Date(nowSub);
-    plannedEndSub.setDate(plannedEndSub.getDate() + accessDaysSub);
+    const plannedEndSub = courseAccessEnd(tariff.meta) || new Date(nowSub.getTime() + accessDaysSub * 86_400_000);
 
     // CRM routing — Layer A (B.0 invariant): always materialize crm_routing_snapshot
     const subRouting = await resolveOrderRouting(supabase, { offer_id, tariff_id, product_id });

@@ -1,3 +1,4 @@
+import { courseAccessEnd } from '../_shared/course-access-window.ts';
 // PATCH H2.1b-i (writer extension) + H2.1b-ii (race-INSERT guard + entitlement/telegram)
 // Self-contained handler for `context: '3ds_finalize'` payloads to
 // grant-access-for-order. Owns subscription decisions (multi-candidate guard,
@@ -86,6 +87,7 @@ export interface TariffShape {
   id: string;
   access_days: number;
   amount?: number | null;
+  meta?: Record<string, unknown> | null;
 }
 
 export interface SubShape {
@@ -236,6 +238,19 @@ export async function handleThreeDsFinalize(
     return { kind: "skip_inactive_offer", reason: `order_status=${order.status}` };
   }
 
+  // Load the paid tariff before reusing an existing subscription as well.
+  let orderTariff: TariffShape | null = null;
+  if (order.tariff_id) {
+    const { data: t } = await supabase
+      .from("tariffs")
+      .select("id, access_days, amount:price_monthly, meta")
+      .eq("id", order.tariff_id)
+      .maybeSingle();
+    orderTariff = (t as TariffShape) || null;
+  }
+
+  const fixedCourseEnd = courseAccessEnd(orderTariff?.meta);
+
   const orderSbs: string | null = (order.meta as any)?.bepaid_subscription_id ?? null;
 
   // 2) Candidate scan: (user_id, product_id) ALL non-canceled.
@@ -283,7 +298,7 @@ export async function handleThreeDsFinalize(
         kind: "skip_already_processed",
         subscription_id: reusedSub.id,
         access_end_at: reusedSub.access_end_at,
-        next_charge_at_suggested: reusedSub.access_end_at
+        next_charge_at_suggested: !fixedCourseEnd && reusedSub.access_end_at
           ? computeNextChargeAt(new Date(reusedSub.access_end_at), !!order.is_trial).next_charge_at
           : null,
         entitlement_id: entitlementState.id,
@@ -341,7 +356,7 @@ export async function handleThreeDsFinalize(
       kind: "incomplete_subscription_completed",
       subscription_id: reusedSub.id,
       access_end_at: reusedSub.access_end_at,
-      next_charge_at_suggested: computeNextChargeAt(new Date(reusedSub.access_end_at), !!order.is_trial).next_charge_at,
+      next_charge_at_suggested: fixedCourseEnd && !order.is_trial ? null : computeNextChargeAt(new Date(reusedSub.access_end_at), !!order.is_trial).next_charge_at,
       entitlement_id: ensured.entitlement_id,
       telegram,
       reason: byOrderId ? "matched_by_order_id_missing_entitlement" : "matched_by_sbs_missing_entitlement",
@@ -362,17 +377,6 @@ export async function handleThreeDsFinalize(
     return { kind: "manual_review_multi_candidate", candidate_ids: ids };
   }
 
-  // 5) Load order tariff
-  let orderTariff: TariffShape | null = null;
-  if (order.tariff_id) {
-    const { data: t } = await supabase
-      .from("tariffs")
-      .select("id, access_days, amount")
-      .eq("id", order.tariff_id)
-      .maybeSingle();
-    orderTariff = (t as TariffShape) || null;
-  }
-
   // 6a) CREATE NEW (with best-effort pre-INSERT re-check).
   if (classification.decision === "create_new") {
     const trial = bootstrapTrial(order as OrderShape);
@@ -387,7 +391,7 @@ export async function handleThreeDsFinalize(
       await audit("grant.trial_bootstrap", { order_id: orderId, access_end_at: accessEndAt.toISOString() });
     } else {
       const days = orderTariff?.access_days ?? 0;
-      accessEndAt = new Date(extendFromDate.getTime() + days * DAY_MS);
+      accessEndAt = fixedCourseEnd || new Date(extendFromDate.getTime() + days * DAY_MS);
       status = "active";
       bootstrap = "recurring";
     }
@@ -435,7 +439,9 @@ export async function handleThreeDsFinalize(
       .single();
     if (insErr) return { kind: "error", reason: `insert_subscription: ${insErr.message}` };
 
-    const next = computeNextChargeAt(accessEndAt, bootstrap === "trial");
+    const next = fixedCourseEnd && bootstrap !== "trial"
+      ? { next_charge_at: null, offset_days: 0, reason: "course_financing_schedule_is_separate" }
+      : computeNextChargeAt(accessEndAt, bootstrap === "trial");
     await audit("grant.next_charge_at_computed", {
       subscription_id: inserted.id,
       next_charge_at: next.next_charge_at,
@@ -483,10 +489,10 @@ export async function handleThreeDsFinalize(
 
   let bonusDays = 0;
   let prorationMeta: Record<string, unknown> | undefined;
-  if (sub.status === "active" && !sameTariff && sub.tariff_id && orderTariff) {
+  if (!fixedCourseEnd && sub.status === "active" && !sameTariff && sub.tariff_id && orderTariff) {
     const { data: oldT } = await supabase
       .from("tariffs")
-      .select("id, access_days, amount")
+      .select("id, access_days, amount:price_monthly, meta")
       .eq("id", sub.tariff_id)
       .maybeSingle();
     if (oldT) {
@@ -505,7 +511,7 @@ export async function handleThreeDsFinalize(
   const { extendFromDate, reason } = resolveExtendFromDate(sub, order as OrderShape, now);
   const baseDays = orderTariff?.access_days ?? 0;
   const totalDays = baseDays + bonusDays;
-  const newEnd = new Date(extendFromDate.getTime() + totalDays * DAY_MS);
+  const newEnd = fixedCourseEnd || new Date(extendFromDate.getTime() + totalDays * DAY_MS);
 
   const updatePayload: Record<string, unknown> = {
     status: "active",
@@ -539,7 +545,9 @@ export async function handleThreeDsFinalize(
   }
 
   const isTrial = !!order.is_trial;
-  const next = computeNextChargeAt(newEnd, isTrial);
+  const next = fixedCourseEnd && !isTrial
+    ? { next_charge_at: null, offset_days: 0, reason: "course_financing_schedule_is_separate" }
+    : computeNextChargeAt(newEnd, isTrial);
   await audit("grant.next_charge_at_computed", {
     subscription_id: sub.id,
     next_charge_at: next.next_charge_at,

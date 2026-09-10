@@ -127,6 +127,14 @@ describe("CbNative tariff access matrix", () => {
     },
   );
 
+  it("displays the live payment offer amount when an old display override remains", () => {
+    const { container } = render(<CbNativeTariffCard index={0} onSelectOffer={() => undefined}
+      tariff={{ ...tariff, meta: { card_config: { price_display: 1650 } },
+        offers: [{ ...paymentOffers[3], amount: 1790, is_primary: true }] }} />);
+    expect(container.querySelector("[data-cb-native-current-price]")?.textContent?.replace(/\s/g, "")).toContain("1790");
+    expect(container.querySelector("[data-cb-native-current-price]")).not.toHaveTextContent("1650");
+  });
+
   it("keeps payment actions in the same order and uses their saved visual settings", () => {
     const expectedLabels = [
       "Оплатить 100% картой",

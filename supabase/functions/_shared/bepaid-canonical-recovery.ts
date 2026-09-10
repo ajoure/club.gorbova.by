@@ -1,3 +1,4 @@
+import { courseAccessEnd } from './course-access-window.ts';
 // Exact, provider-verified queue recovery. No legacy writes, fuzzy identity
 // matching, user creation or provider mutations. Only this module owns leases.
 // deno-lint-ignore-file no-explicit-any
@@ -174,19 +175,22 @@ async function loadPlan(db: any, item: any, auth: string, fetcher: typeof fetch,
   const savedStart = windowOwner?.meta?.recovery_access_start_at;
   const savedEnd = windowOwner?.meta?.recovery_expected_end_at;
   if (!!savedStart !== !!savedEnd || (savedEnd && !date(savedEnd))) throw new Error('recovery_invalid_saved_window');
-  const accessStart = savedStart ? date(savedStart) : new Date(Math.max(Date.parse(payment.paid_at),
-    isRebill && date(sub?.access_end_at) ? Date.parse(sub.access_end_at) : Date.parse(payment.paid_at)));
-  if (!accessStart) throw new Error('recovery_invalid_saved_window');
   const product = await one(db, 'products_v2', parent.product_id);
   const tariff = await one(db, 'tariffs', parent.tariff_id);
   if (!product || !tariff || tariff.product_id !== product.id) throw new Error('recovery_catalog_mismatch');
-  const expectedEnd = savedEnd ? date(savedEnd)! : product.meta?.access_window_rule === 'calendar_month' ? calcCalendarMonthEnd(accessStart)
+  const fixedCourseEnd = courseAccessEnd(tariff.meta);
+  // An installment finances the same course window; it does not start after
+  // the already granted end of that course.
+  const accessStart = savedStart ? date(savedStart) : new Date(Math.max(Date.parse(payment.paid_at),
+    !fixedCourseEnd && isRebill && date(sub?.access_end_at) ? Date.parse(sub.access_end_at) : Date.parse(payment.paid_at)));
+  if (!accessStart) throw new Error('recovery_invalid_saved_window');
+  const expectedEnd = savedEnd ? date(savedEnd)! : fixedCourseEnd ? fixedCourseEnd : product.meta?.access_window_rule === 'calendar_month' ? calcCalendarMonthEnd(accessStart)
     : new Date(accessStart.getTime() + (tariff.access_days ?? 30) * 86_400_000);
   if (!Number.isFinite(expectedEnd.getTime()) || expectedEnd <= accessStart) throw new Error('recovery_invalid_saved_window');
   // A fixed/course installment must not be interpreted as purchasing the
   // entire tariff duration again. Only an explicit calendar-month policy or
   // this payment's immutable recovery window establishes this lower bound.
-  const minimumEnd = savedEnd || product.meta?.access_window_rule === 'calendar_month' ? expectedEnd : undefined;
+  const minimumEnd = savedEnd || fixedCourseEnd || product.meta?.access_window_rule === 'calendar_month' ? expectedEnd : undefined;
   // Still-active access can be short of the paid period. Fail before the
   // lease/business writes; never hide that deficit by completing the queue
   // or blindly adding another month. An exact repair must establish its window.

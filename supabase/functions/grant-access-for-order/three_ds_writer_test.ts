@@ -388,3 +388,23 @@ Deno.test("handler: response always contains next_charge_at_suggested for ok/ext
     throw new Error(`Unexpected kind ${r.kind}`);
   }
 });
+
+for (const months of [6, 9, 12]) {
+  Deno.test(`versioned course: create and later installment retain fixed ${months}-month end`, async () => {
+    const meta = { course_access: { kind: 'course_end_calendar_months', end_date: '2026-12-10', months, timezone: 'Europe/Minsk' } };
+    const expected = months === 6 ? '2027-06-10T20:59:59.000Z' : months === 9 ? '2027-09-10T20:59:59.000Z' : '2027-12-10T20:59:59.000Z';
+    for (const existing of [false, true]) {
+      const mock = makeMockSb({
+        ...baseSeeds(),
+        orders: [{ id: 'new-payment-order', user_id: 'u', product_id: 'p', tariff_id: 'course-tariff', status: 'paid' }],
+        tariffs: [{ id: 'course-tariff', access_days: 30, amount: 1790, meta }],
+        subscriptions: existing ? [{ id: 'existing-sub', tariff_id: 'course-tariff', user_id: 'u', product_id: 'p', status: 'active', access_end_at: expected, order_id: 'first-payment-order' }] : [],
+      });
+      const result = await handleThreeDsFinalize('new-payment-order', { supabase: mock.sb, now: new Date('2026-11-10T10:00:00Z'), audit: makeAudit().audit, invokeTelegramGrant: tgSkip });
+      assertEquals(result.kind, existing ? 'extended' : 'bootstrap_created');
+      assertEquals(mock.tables.subscriptions_v2[0].access_end_at, expected);
+      assertEquals(mock.tables.entitlements[0].expires_at, expected);
+      if ('next_charge_at_suggested' in result) assertEquals(result.next_charge_at_suggested, null);
+    }
+  });
+}

@@ -3,12 +3,13 @@ export interface StaleAccessPolicyInput {
   now: Date;
   context?: string | null;
   shouldAutoRenew: boolean;
+  fixedCourseWindow?: boolean;
 }
 
 export function resolveStaleAccessPolicy(input: StaleAccessPolicyInput) {
   const isStale = input.canonicalAccessEndAt.getTime() < input.now.getTime();
 
-  if (isStale && input.context === "historical_payment_recovery") {
+  if (isStale && (input.context === "historical_payment_recovery" || input.fixedCourseWindow)) {
     return {
       accessEndAt: input.canonicalAccessEndAt,
       nextChargeAt: null as Date | null,

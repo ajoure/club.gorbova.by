@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
@@ -301,7 +302,7 @@ Deno.serve(async (req) => {
 
     const { data: tariff } = await supabase
       .from('tariffs')
-      .select('id, name, code, access_days, original_price, trial_days, trial_price, trial_auto_charge, getcourse_offer_id, public_id')
+      .select('id, name, code, access_days, original_price, trial_days, trial_price, trial_auto_charge, getcourse_offer_id, public_id, meta')
       .eq('code', tariffCode)
       .eq('product_id', productId)
       .eq('is_active', true)
@@ -520,8 +521,8 @@ Deno.serve(async (req) => {
     // Create order - use total amount for installments
     const dcAccessDays = tariff.access_days || 30;
     const dcNow = new Date();
-    const dcPlannedEnd = new Date(dcNow);
-    dcPlannedEnd.setDate(dcPlannedEnd.getDate() + (isTrial ? effectiveTrialDays : dcAccessDays));
+    const fixedCourseEnd = isTrial ? null : courseAccessEnd(tariff.meta);
+    const dcPlannedEnd = fixedCourseEnd || new Date(dcNow.getTime() + (isTrial ? effectiveTrialDays : dcAccessDays) * 86_400_000);
 
     const { data: order, error: orderError } = await supabase
       .from('orders_v2')
@@ -1012,7 +1013,7 @@ Deno.serve(async (req) => {
       
       // If extending existing subscription, start from its end date
       const baseDate = extendFromDate || new Date();
-      const accessEndAt = new Date(baseDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
+      const accessEndAt = fixedCourseEnd || new Date(baseDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
 
       // Set next_charge_at only if this is a recurring subscription or trial with auto-charge
       let nextChargeAt: Date | null = null;

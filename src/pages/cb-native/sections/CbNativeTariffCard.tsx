@@ -181,11 +181,11 @@ const resolveVisualPricing = (tariff: PublicTariff) => {
   const firstOffer = activeOffers[0];
 
   const current =
-    finiteAmount(cardConfig?.price_display) ??
     finiteAmount(primaryFullPayment?.amount) ??
     finiteAmount(tariff.current_price) ??
     finiteAmount(firstPayNow?.amount) ??
-    finiteAmount(firstOffer?.amount);
+    finiteAmount(firstOffer?.amount) ??
+    finiteAmount(cardConfig?.price_display);
   const configuredOld = finiteAmount(cardConfig?.old_price);
   const old = current && configuredOld && configuredOld > current ? configuredOld : null;
   const suffix = cardConfig?.price_suffix?.trim() || "BYN";

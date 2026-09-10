@@ -1,3 +1,4 @@
+import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { dedupeExtendedByOrders } from './extended_by_orders_dedupe.ts';
 import {
@@ -402,7 +403,7 @@ Deno.serve(async (req) => {
       .select(`
         *,
         product:products_v2(id, name, code, entitlement_mode),
-        tariff:tariffs(id, name, access_days)
+        tariff:tariffs(id, name, access_days, meta)
       `)
       .eq("id", orderId)
       .single();
@@ -649,6 +650,7 @@ Deno.serve(async (req) => {
     const now = new Date();
     const isClubProduct = await isCalendarMonthProduct(supabase, productId);
     const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
+    const fixedCourseEnd = !customAccessDays && !customAccessEndAt ? courseAccessEnd(tariff?.meta) : null;
 
     // Resolve once, before replay detection. orders_v2 has no paid_at column.
     let confirmedPaidAt: string | null = null;
@@ -671,7 +673,7 @@ Deno.serve(async (req) => {
     let paymentWindow: ReturnType<typeof resolveGrantPaymentWindow>;
     try {
       paymentWindow = resolveGrantPaymentWindow({
-        paidAt: confirmedPaidAt, customStart: customAccessStartAt, customEnd: customAccessEndAt,
+        paidAt: confirmedPaidAt, customStart: customAccessStartAt, customEnd: customAccessEndAt || fixedCourseEnd?.toISOString(),
         durationDays, calendarMonth: isClubProduct && !customAccessDays,
       });
     } catch {
@@ -1220,6 +1222,8 @@ Deno.serve(async (req) => {
       // PATCH: exact target end date takes priority over all other calculations
       accessEndAt = new Date(customAccessEndAt);
       console.log(`[grant-access-for-order] Using customAccessEndAt: ${accessEndAt.toISOString()}`);
+    } else if (fixedCourseEnd) {
+      accessEndAt = fixedCourseEnd;
     } else if (isClubProduct && !customAccessDays) {
       // PATCH: For renewals with existing subscription, align entitlement
       // with subscription.access_end_at (canonical SoT) instead of
@@ -1931,6 +1935,7 @@ Deno.serve(async (req) => {
       // before bePaid sync can update the real date.
       const staleAccessPolicy = resolveStaleAccessPolicy({
         canonicalAccessEndAt: accessEndAt,
+        fixedCourseWindow: !!fixedCourseEnd,
         now,
         context: _body.context,
         shouldAutoRenew,
@@ -2553,7 +2558,7 @@ Deno.serve(async (req) => {
         access_start: accessStartAt.toISOString(),
         access_end: accessEndAt.toISOString(),
         window_days: durationDays,
-        source_window_rule: isClubProduct ? 'calendar_month' : (tariff?.access_days ? 'tariff_duration' : 'default_30d'),
+        source_window_rule: fixedCourseEnd ? 'course_end_calendar_months' : isClubProduct ? 'calendar_month' : (tariff?.access_days ? 'tariff_duration' : 'default_30d'),
         previous_end: existingProductSub?.access_end_at || null,
         post_check: postCheck,
       },
