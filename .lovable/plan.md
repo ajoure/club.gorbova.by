@@ -1,120 +1,69 @@
-# READ-ONLY ревизия: недостающие факты Products2 и ЦБ
+# План: точечный возврат конкретного платежа + сведение дубля рассрочки (20 поток)
 
-Ниже — только подтверждённые данные. Никаких изменений кода, файлов проекта, БД, доступов, секретов, функций, deploy или Publish не выполнялось.
+PLAN-ONLY / READ-ONLY. Код, SQL, provider-writes, deploy и Publish не выполнялись.
+Опубликованный source: `b08aa42bfba39ccbafa2ffd9d296ee895e2eeffd`.
 
-## Products2: девять целевых таблиц
+## 1. Актуальные факты (read-only, без ПД)
 
-Целевой набор: `integration_instances`, `integration_credentials`, `payment_settings`, `email_accounts`, `telegram_bots`, `integration_field_mappings`, `integration_sync_settings`, `acquiring_connections`, `telegram_clubs`.
+Продукт: `3e43fb28-8322-41bc-bfee-714731bdc630` (20 поток). Всего у клиента по этому продукту — ровно 2 заказа.
 
-### Политики: roles, qual, with_check
+Заказ A (исходный) `e17b35b2-d908-48e1-b98f-ca5f86cdf579`
+- `SUB-LINK-MS69W0DD`, статус `paid`, final_price 663.00 BYN, paid_amount 663.00, tariff `98539e5d-…`, offer NULL, создан 29.07.2026, is_deleted=false
+- подписка `c6633a7b-216f-41e5-b32a-cb771add4ad6`: provider_managed, `sbs_9a86268a608fca3f`, отменена 11.08.2026 (`bepaid_terminal_state=canceled`), access_end 28.08.2026
+- платёж 1: `40f01f87-79c1-44cf-9148-64c71d0d871f`, 663.00, `succeeded`, provider uid `e1908f33-…`, оплачен 29.07.2026, refunded_amount 0
+- entitlement по этому заказу: 0
 
-Все перечисленные политики — `PERMISSIVE`.
+Заказ B (дубль/перевыпуск) `9673e359-e98e-4e7e-8196-f31f60b4e16d`
+- `SUB-LINK-MSOFLH7I`, статус `paid`, final_price 663.00, paid_amount 663.00, tariff `767bb895-…`, offer `c7f5221e-…`, создан 11.08.2026
+- подписка `d16b01e5-efdd-43c8-a98c-c7d15daacfa7`: `sbs_bd6975629dfe2c83`, billing_cycles 2, paid_billing_cycles 2, installment_status `completed`, статус `expired`, access_end 07.06.2027
+- платёж 2: `8401bbfb-1d90-4b3f-8738-7ce581a9bc51`, 663.00, `succeeded`, uid `44c6af6c-…`, 11.08.2026, refunded_amount 0
+- платёж 3: `1ad28122-537a-4272-8cc4-7df4cf4bd6ac`, 663.00, `succeeded`, uid `6e1edf0b-1fb4-47a5-a048-6f937cce7d52`, 10.09.2026, refunded_amount 0
+- entitlement `17285a9f-…`: active, product_code `prd_7222cb3152c3`, expires 07.06.2027
 
-| Таблица | Политика | cmd / roles | qual | with_check |
-|---|---|---|---|---|
-| `acquiring_connections` | `superadmin_modify_acquiring_connections` | ALL / authenticated | `has_role_v2(auth.uid(),'super_admin')` | то же |
-|  | `superadmin_select_acquiring_connections` | SELECT / authenticated | `has_role_v2(auth.uid(),'super_admin')` | — |
-| `integration_credentials` | `integration_credentials_admin_select` | SELECT / authenticated | `has_role_v2(...,'admin') OR has_role_v2(...,'super_admin')` | — |
-|  | `integration_credentials_admin_insert` | INSERT / authenticated | — | `admin OR super_admin` |
-|  | `integration_credentials_admin_update` | UPDATE / authenticated | `admin OR super_admin` | `admin OR super_admin` |
-|  | `integration_credentials_admin_delete` | DELETE / authenticated | `super_admin` | — |
-| `integration_instances` | `Admins can manage integration instances` | ALL / PUBLIC | `has_permission(auth.uid(),'entitlements.manage')` | то же |
-|  | `Admins can view integration instances` | SELECT / PUBLIC | `has_permission(auth.uid(),'entitlements.manage')` | — |
-| `integration_field_mappings` | `Admins can manage field mappings` | ALL / PUBLIC | `has_permission(auth.uid(),'entitlements.manage')` | то же |
-| `integration_sync_settings` | `Admins can manage sync settings` | ALL / PUBLIC | `has_permission(auth.uid(),'entitlements.manage')` | то же |
-| `payment_settings` | `Admins can manage payment settings` | ALL / PUBLIC | `has_permission(auth.uid(),'entitlements.manage')` | то же |
-| `email_accounts` | `Admins can manage email accounts` | ALL / PUBLIC | `has_permission(auth.uid(),'entitlements.manage')` | то же |
-| `telegram_bots` | `Admins can manage telegram bots` | ALL / PUBLIC | `has_permission(auth.uid(),'entitlements.manage')` | то же |
-|  | `RBAC v3: view telegram bots` | SELECT / authenticated | `has_admin_resource_access(...,'integrations','telegram','view') OR has_admin_section_access(...,'club-members','view')` | — |
-|  | `RBAC v3: manage telegram bots` | ALL / authenticated | то же с `edit` | то же с `edit` |
-| `telegram_clubs` | `Admins can manage telegram clubs` | ALL / PUBLIC | `has_permission(auth.uid(),'entitlements.manage')` | то же |
-|  | `RBAC v3: view telegram clubs` | SELECT / authenticated | `integrations/telegram:view OR club-members:view` | — |
-|  | `RBAC v3: manage telegram clubs` | ALL / authenticated | `integrations/telegram:edit OR club-members:edit` | то же |
+Итого: 3 подтверждённых списания × 663 = 1989 BYN при обязательстве 1326/1325 по одной подписке; refund-строк нет (0), `installment_payments` строк нет (0 — provider-managed finite не материализует график).
 
-### Effective grants
+Целевое состояние по требованию: одна сделка 1325 BYN, первые два 663+663 остаются, третий (`1ad28122-…` / uid `6e1edf0b-…`) должен быть возвращаемым, доступ сохраняется.
 
-Live `has_table_privilege` подтвердил одинаково широкие grants на всех девяти таблицах:
+## 2. Provider GET
+Свежая read-only сверка транзакций/возвратов/подписок у провайдера не выполнена: canonical credentials теперь owner-restricted (этап PR433/434), у среды нет доступа к ним, ранее прямой read-only auth возвращал 401. Фиксирую как ограничение — provider-side подтверждение нужно снять до apply (см. preconditions).
 
-- `anon`: SELECT, INSERT, UPDATE, DELETE, TRUNCATE;
-- `authenticated`: SELECT, INSERT, UPDATE, DELETE, TRUNCATE;
-- `service_role`: полный доступ.
+## 3. Корневая причина точечного возврата
+`supabase/functions/subscription-admin-actions/index.ts` (refund):
+- строки 336–341: `payments?.find(p => p.status==='succeeded' && p.provider_payment_id && p.transaction_type!=='refund')` — берётся **первый** подходящий платёж заказа. Для заказа B это платёж 2 (11.08), а не третий.
+- `actualRefundAmount = refund_amount || order.final_price` — сумма не проверяется против выбранного платежа.
+`src/components/admin/RefundDialog.tsx` работает на уровне `orderId`, конкретный `payment_id` не передаётся; кнопка возврата не привязана к строке платежа.
 
-Следовательно, будущая migration должна явно убрать grants у `anon`/`PUBLIC`, убрать `TRUNCATE` у `authenticated` и оставить только строго необходимое. RLS сейчас не компенсирует риск `TRUNCATE`, поскольку это table privilege вне row policies.
+## 4. Минимальный GitHub-first патч (одним PR)
+1. Edge `subscription-admin-actions`, action `refund`:
+   - принимать необязательный `payment_id`; если передан — выбирать именно эту строку `payments_v2` с проверками: `order_id` совпадает, `status='succeeded'`, `transaction_type!=='refund'`, `is_deleted` не true, есть `provider_payment_id`; иначе `payment_not_refundable`.
+   - валидация суммы: `refund_amount <= payment.amount - payment.refunded_amount`, иначе `refund_exceeds_payment_balance`. Без `payment_id` — прежнее поведение (обратная совместимость).
+   - идемпотентность: `refund_request_key` обязателен при переданном `payment_id`; фактическая защита остаётся в `record_refund_atomic` (dedup по `provider_payment_id` refund-uid). Ничего нового в БД не создаётся.
+   - `access_action` по умолчанию `keep` — доступ и entitlement не трогаются.
+2. UI: в списке платежей сделки/рассрочки (DealDetailSheet и вкладка рассрочек) кнопка «Возврат» на каждой строке платежа; `RefundDialog` получает `paymentId`, `maxAmount = amount - refunded_amount`, показывает дату/сумму конкретного списания и передаёт `payment_id` + `refund_request_key`.
+3. Тесты: unit на выбор платежа (третий, не первый), на превышение суммы, на повторный вызов с тем же ключом; UI-тест наличия кнопки на каждой строке.
+4. Никаких изменений схемы, RLS, grants, RPC.
 
-### Колонки, которые нельзя отдавать в raw read-model
+## 5. Сведение дубля (отдельный apply, не в этом PR)
+Без удаления платежей, orders и доступа:
+- заказ A `e17b35b2-…`: пометить в `meta` как `superseded_by = 9673e359-…`, статус и платёж не менять, is_deleted не ставить.
+- заказ B `9673e359-…`: сделать носителем обязательства 1325/1326 (`meta.installment.effective_total_byn`), связать платёж 1 как учтённый по этому обязательству через `meta`, без переноса строк платежей.
+- подписки, entitlement `17285a9f-…` (expires 07.06.2027) и access_rules не менять.
+- после возврата третьего платежа: `orders_v2.status` остаётся `paid` (частичный возврат), классификатор UI покажет «Частичный возврат» по paidSum/refundedSum.
 
-- `integration_instances`: `config jsonb`, `config_secrets jsonb`, а также operational identity/status/timestamps.
-- `integration_credentials`: `config jsonb`, `secrets jsonb`, provider/status/audit timestamps.
-- `payment_settings`: `key text`, `value jsonb`, description/timestamps.
-- `email_accounts`: SMTP/IMAP host, port, encryption, username, `smtp_password`, sender/default/active/fetch fields.
-- `telegram_bots`: identity/status fields и `bot_token_encrypted`.
-- `integration_field_mappings`: instance/entity/project/external field, type/required/key/transform rules.
-- `integration_sync_settings`: instance/entity/direction/enabled/filters/conflict strategy/last sync.
-- `acquiring_connections`: provider/account identity, publishable key, URLs, locale, status/test/default, capabilities/error/verification timestamps; приватные acquiring secrets находятся отдельно в Vault.
-- `telegram_clubs`: operational club/bot/chat linkage and status fields; это не config-only read-model для membership/переписки.
+## 6. Ожидаемые rowcounts при apply
+Возврат 663 по `1ad28122-…`:
+- +1 строка `payments_v2` (`transaction_type='refund'`, amount −663.00, provider uid возврата), всего 4
+- `payments_v2.refunded_amount` у `1ad28122-…`: 0 → 663.00 (1 UPDATE)
+- `orders_v2` `9673e359-…`: 1 UPDATE meta, status остаётся `paid`
+- `entitlements`: 0 изменений; `subscriptions_v2`: 0 изменений; `installment_payments`: 0
+- audit: 1 запись `admin.subscription.refund_recorded`
+Сведение дубля: 2 UPDATE в `orders_v2` (только meta / пометка), 0 DELETE.
 
-## Views/RPC и возможные обходы
+## 7. Preconditions для apply
+- PR смержен, checks PASS, exact SHA сообщён; функция `subscription-admin-actions` задеплоена из approved source.
+- Свежий provider read-only GET по uid `6e1edf0b-…`: транзакция `successful`, возвратов по ней 0; подписка `sbs_bd6975629dfe2c83` в terminal/completed состоянии; `sbs_9a86268a608fca3f` — canceled.
+- Повторная сверка: refunded_amount по всем трём платежам = 0, refund-строк 0.
+- Возврат запускается ровно один раз с `payment_id=1ad28122-…`, `refund_amount=663.00`, `access_action='keep'`, уникальным `refund_request_key`.
+- Read-back по п.6; при любом расхождении, provider-ошибке или новом critical — STOP.
 
-### Views
-
-- `email_accounts_safe` — `security_invoker=true`; исключает password, возвращает `has_password`. Но ACL сейчас также широк. После restrictive base-table policy обычный staff потеряет чтение через эту view; для разрешённых рабочих экранов нужен узкий guarded RPC с фиксированным allowlist.
-- `telegram_bots_safe` — `security_invoker=true`; исключает token, возвращает `has_token`. Та же зависимость от base RLS.
-- `v_club_members_enriched` — `security_invoker=true`; читает `telegram_clubs` для operational membership. Его SELECT-путь необходимо сохранить по текущему `club-members:view`, не превращая membership/переписку в owner-only.
-- `v_integration_credentials_public` в live schema и main migrations **отсутствует**. Если он создаётся draft PR433, до merge проверить `security_definer`, fixed columns, grants и internal `super_admin` guard; raw `config/secrets` запрещены.
-
-### Acquiring Vault RPC
-
-- `get_acquiring_secret(text,text,text)` — `SECURITY DEFINER`, `search_path=public,vault`; EXECUTE только `service_role`, `anon/authenticated` запрещены. Это штатный server-only getter.
-- `admin_save_acquiring_secret(uuid,text,text)` — `SECURITY DEFINER`; EXECUTE у authenticated/service_role, но внутри обязательны `auth.uid()` и `has_role_v2(...,'super_admin')`; виды секретов allowlisted.
-- `admin_delete_acquiring_secrets(uuid)` — тот же explicit `super_admin` guard.
-- `ensure_single_default_integration()` — trigger function, execute только service_role; отдельного пользовательского пути нет.
-
-### Дополнительные definer-пути
-
-- `compute_club_member_final_status` читает `telegram_clubs`, имеет authenticated EXECUTE без видимого caller guard. Он относится к operational membership, но требует отдельного contract-теста: нельзя допустить возврата config/secret-полей.
-- `admin_get_club_membership(s)`, `get_club_member_summary`, `get_club_members_enriched` и Telegram message RPC относятся к membership/переписке. Их текущие предметные guards надо сохранить; они не должны получать доступ к bot token/config.
-- `email_accounts_safe` используется `EmailAccountService.list()`, а mutations сейчас идут напрямую в `email_accounts`; draft должен перевести только настройку на super-admin action boundary, не ломая server-side inbox/send workers.
-
-## Уточнённый scope PR433
-
-1. Restrictive owner policy (`has_role_v2(auth.uid(),'super_admin')`) для исходных config-таблиц: `integration_instances`, `integration_credentials`, `payment_settings`, `email_accounts`, `telegram_bots`, `integration_field_mappings`, `integration_sync_settings`, `acquiring_connections`.
-2. `telegram_clubs`: сохранить текущий operational SELECT для разрешённых ролей; INSERT/UPDATE/DELETE разрешить только owner/super_admin. Membership и переписка остаются на существующих предметных RPC/guards.
-3. Убрать grants `anon/PUBLIC` с девяти таблиц; у `authenticated` убрать `TRUNCATE`. Оставить только команды, реально необходимые для RLS/RPC; service-role сохранить.
-4. Fixed-allowlist RPC для UI без raw `config`, `config_secrets`, `secrets`, `value`, password/token. Флаги наличия секрета допустимы.
-5. Config-only edge guards сделать `super_admin`. Не менять предметные guards звонков, SMS, видео, inbox, платежных worker/webhook и operational messaging.
-6. Учесть подтверждённые исключения main: `instagram-webhook-test` уже допускает admin/superadmin; `hosterby-api` использует legacy role guard; Kinescope допускает admin для работы с видео. Это не повод расширять config-only scope.
-7. После merged exact SHA провести role-matrix: anon, user, staff, admin, super_admin, service-role; отдельно table CRUD/TRUNCATE, views/RPC и каждый config endpoint. STOP при любом raw secret/config поле или operational regression.
-
-## ЦБ: точные schema/contracts
-
-- `tariffs`: UUID id/product_id; code/name/description; `access_days int`; `is_active`, `is_public`; presentation/price fields; `visible_from/visible_to timestamptz`; JSON `features/meta/document_params`; unique `(product_id,code)` и `public_id`.
-- `tariff_offers`: UUID id/tariff_id; offer type/button/amount; trial/auto-charge/installment/payment fields; `is_active/is_primary`; visibility window; JSON `meta`; один primary pay_now и один `meta.slot_role` на тариф.
-- `flows`: UUID id/product_id; code/name; `start_date/end_date date`; active/default/capacity/meta; unique `(product_id,code)` уже существует.
-- `access_rules`: UUID id/product_id/tariff_id; target type/ref/label; active/priority/duration; JSON conditions; unique `(product_id,tariff_id,target type,target ref)`.
-- `tariff_prices`: UUID tariff/stage; price/final price/currency/discount/active; unique `(tariff_id,pricing_stage_id)`. Для пяти текущих тарифов ЦБ строк **0**.
-
-`/cb` вызывает `public-product` по exact product ID. Сервер выбирает только tariffs с `is_active=true`, `is_public=true` и открытым `visible_from/visible_to`; offers — только active и в своём окне. Поэтому при одновременном `is_active=true` старых и новых тарифов публичная страница покажет оба поколения, если старым оставить `is_public=true` и открытое окно. Старые payment links при этом могут продолжать работать по старым IDs независимо от публичности тарифа.
-
-## Десять клонируемых access_rules
-
-Основные правила:
-
-1. `ce22859f-9b08-450d-a2ca-68cd592fb6f8` — Бухгалтер, training content, target `4365e913-36f1-432e-ab16-748c3ca6826a`, partial, **24** module IDs, duration null. В новой версии исключить три согласованных модуля.
-2. `d4c8ad89-04b0-4d9a-bde7-029aec33ee2d` — Главный бухгалтер, тот же target, partial, **26** module IDs, duration null.
-3. `9eaa3ed9-6cbc-4386-895d-459d63ba24cd` — Бизнес-леди, тот же target, full, duration null.
-
-Неизменяемые 30-дневные бонусы:
-
-4. `14d57191-2b83-43c5-8901-4fa41e5a325d` — Главный бухгалтер, club, target `fa547c41-3a84-4c4f-904a-427332a0506e`.
-5. `12d63704-0e60-4dfe-b522-f23196eda730` — Главный бухгалтер, section access, target `93448ee2-1f9c-423e-b5d5-56ba9d74fe41`.
-6. `a91354a2-9e84-477d-ae34-f8642e7f8f44` — Главный бухгалтер, training content bonus, target `8b1fb03e-8743-4654-a07f-b6c03ca7517b`, partial, 2 modules.
-7. `aee1d3d3-d68c-4c95-8327-580f1f85cbc5` — Бизнес-леди, club, target `fa547c41-3a84-4c4f-904a-427332a0506e`.
-8. `40819e0c-b4be-4cb2-aa0a-0b040168c888` — Бизнес-леди, section access, target `93448ee2-1f9c-423e-b5d5-56ba9d74fe41`.
-9. `5b16064a-0577-4240-ad07-f6432cb554f9` — Бизнес-леди, section access, target `d0136a5c-7b7b-4991-b1cf-1755e2c684a4`.
-10. `557bc290-92f3-4c47-913f-5ed299577f17` — Бизнес-леди, training content bonus, target `8b1fb03e-8743-4654-a07f-b6c03ca7517b`, partial, 20 modules.
-
-Expected future-only delta остаётся: `flows +1`, `tariffs +3`, `tariff_offers +12`, `access_rules +10`, `tariff_prices +0` при сохранении текущего price source через offers. Старые три payment links, старые tariffs/offers/rules/orders/access остаются неизменными и активными; чтобы не показывать старые тарифы на `/cb`, закрывается только их публичная видимость (`is_public=false` либо завершённое visibility window), не `is_active`.
-
-Основной доступ: Главный бухгалтер — до `2027-09-10`, Бизнес-леди — до `2027-12-10`, расчёт календарными месяцами от `2026-12-10`. Все семь bonus rules остаются ровно 30 дней. Для Бухгалтера применяется отдельное согласованное правило контента без трёх исключённых модулей; срок не выводится из маркетингового текста.
-
-STOP: ничего не исполнено.
+Реальный возврат не запускался.
