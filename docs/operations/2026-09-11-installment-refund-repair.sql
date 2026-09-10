@@ -49,7 +49,7 @@ BEGIN
       AND meta->>'bepaid_subscription_id'='sbs_bd6975629dfe2c83' AND access_end_at::date='2027-06-07')
     OR (SELECT count(*) FROM provider_subscriptions WHERE order_id IN(a,b) AND provider='bepaid'
       AND ((provider_subscription_id='sbs_9a86268a608fca3f' AND state='canceled')
-        OR (provider_subscription_id='sbs_bd6975629dfe2c83' AND state='completed')))<>2 THEN
+        OR (provider_subscription_id='sbs_bd6975629dfe2c83' AND state='canceled')))<>2 THEN
    RAISE EXCEPTION 'subscription_precondition_changed';
  END IF;
  SELECT jsonb_build_object('subscriptions',(SELECT jsonb_agg(jsonb_build_array(id,status,auto_renew,next_charge_at,access_start_at,access_end_at) ORDER BY id) FROM subscriptions_v2 WHERE order_id IN(a,b)),
