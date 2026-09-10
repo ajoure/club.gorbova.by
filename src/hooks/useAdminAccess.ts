@@ -17,7 +17,8 @@ import {
  *
  * Правила вычисления уровня:
  *   - super_admin           → 'manage' для всего (минуя RPC)
- *   - admin                 → 'manage' для всего (минуя RPC)
+ *   - admin                 → 'manage', кроме настроек интеграций
+ *   - integrations          → только super_admin, независимо от kill-switch
  *   - остальные             → строго то, что вернул RPC; чего нет в ответе — 'none'.
  *
  * Resource override > section.
@@ -110,10 +111,14 @@ export function useAdminAccess(): AdminAccessApi {
     const bypass = !gatingEnabled || isSuperAdmin || isAdmin;
 
     const getSectionLevel = (sectionCode: string): AccessLevel => {
+      // Integration configuration is an owner-only boundary, not a delegable
+      // section grant. Never let the admin/kill-switch bypass reopen it.
+      if (sectionCode === "integrations") return isSuperAdmin ? "manage" : "none";
       if (bypass) return "manage";
       return sections.get(sectionCode) ?? "none";
     };
     const getResourceLevel = (sectionCode: string, resourceCode: string): AccessLevel => {
+      if (sectionCode === "integrations") return isSuperAdmin ? "manage" : "none";
       if (bypass) return "manage";
       const perSection = resources.get(sectionCode);
       const override = perSection?.get(resourceCode);
@@ -128,8 +133,9 @@ export function useAdminAccess(): AdminAccessApi {
       meets(getResourceLevel(sectionCode, resourceCode), min);
 
     const canAccessPath = (pathOrLocation: string, min: AccessLevel = "view") => {
-      if (bypass) return true;
       const r = resolveAdminSectionForPath(pathOrLocation);
+      if (r.sectionCode === "integrations") return isSuperAdmin;
+      if (bypass) return true;
       if (r.kind === "open") return true;
       if (r.kind === "unknown") return false; // deny-by-default
       if (r.resourceCode) return canAccessResource(r.sectionCode!, r.resourceCode, min);

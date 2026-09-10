@@ -64,9 +64,9 @@ serve(async (req) => {
       );
     }
 
-    const { data: isSuperAdmin, error: roleErr } = await supabaseAdmin.rpc("has_role", {
+    const { data: isSuperAdmin, error: roleErr } = await supabaseAdmin.rpc("has_role_v2", {
       _user_id: userData.user.id,
-      _role: "superadmin",
+      _role_code: "super_admin",
     });
 
     if (roleErr) {

@@ -12,7 +12,7 @@ export function LinkBotStatusCard() {
     queryKey: ['link-bot-status'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('telegram_bots')
+        .rpc("list_operational_telegram_bots")
         .select('id, bot_name, bot_username, status, is_primary, last_check_at, error_message, updated_at')
         .eq('is_primary', true)
         .maybeSingle();

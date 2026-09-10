@@ -389,7 +389,7 @@ export default function AdminLiveEvents() {
     queryKey: ["kinescope-instance"],
     queryFn: async () => {
       const { data } = await supabase
-        .from("integration_instances")
+        .rpc("list_operational_integrations")
         .select("id, config, status")
         .eq("provider", "kinescope")
         .eq("status", "connected")

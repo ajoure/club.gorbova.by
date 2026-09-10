@@ -22407,6 +22407,23 @@ export type Database = {
       }
     }
     Functions: {
+      list_operational_telegram_bots: {
+        Args: Record<PropertyKey, never>
+        Returns: { id: string; bot_name: string; bot_username: string; bot_id: number | null; status: string; is_primary: boolean | null; last_check_at: string | null; error_message: string | null; created_at: string; updated_at: string }[]
+      }
+      list_operational_email_accounts: {
+        Args: Record<PropertyKey, never>
+        Returns: { id: string; email: string; display_name: string | null; provider: string; is_default: boolean | null; is_active: boolean | null; imap_enabled: boolean | null; created_at: string | null }[]
+      }
+      list_operational_integrations: {
+        Args: Record<PropertyKey, never>
+        Returns: { id: string; alias: string; category: string; provider: string; status: string; is_default: boolean; config: Json }[]
+      }
+      list_operational_acquiring_connections: {
+        Args: Record<PropertyKey, never>
+        Returns: { account_code: string; account_name: string; provider: string; test_mode: boolean; is_default: boolean; status: string; capabilities_snapshot: Json }[]
+      }
+
       _autoweb_scenario_require_admin: { Args: never; Returns: undefined }
       _crm_company_emit_domain_event: {
         Args: {

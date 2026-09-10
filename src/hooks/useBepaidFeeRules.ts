@@ -24,7 +24,7 @@ export function useBepaidFeeRules() {
     queryKey: ['bepaid-fee-rules'],
     queryFn: async () => {
       const { data } = await supabase
-        .from('integration_instances')
+        .rpc("list_operational_integrations")
         .select('config')
         .eq('provider', 'bepaid')
         .in('status', ['active', 'connected'])
@@ -35,7 +35,8 @@ export function useBepaidFeeRules() {
       
       return {
         ...DEFAULT_FEE_RULES,
-        ...feeRules,
+        ...Object.fromEntries(Object.entries(feeRules ?? {}).filter(([, value]) =>
+          typeof value === 'number' && Number.isFinite(value))),
       };
     },
     staleTime: 5 * 60 * 1000, // 5 minutes

@@ -75,7 +75,7 @@ export function useAcquiringProfiles() {
     queryFn: async (): Promise<AcquiringProfile[]> => {
       const [stripeRes, bepaidRes] = await Promise.all([
         supabase
-          .from("acquiring_connections")
+          .rpc("list_operational_acquiring_connections")
           .select(
             "account_code, account_name, test_mode, is_default, status, capabilities_snapshot",
           )
@@ -84,7 +84,7 @@ export function useAcquiringProfiles() {
           .order("is_default", { ascending: false })
           .order("account_name"),
         supabase
-          .from("integration_instances")
+          .rpc("list_operational_integrations")
           .select("id, alias, status, is_default, config")
           .eq("provider", "bepaid")
           .in("status", ["active", "connected"])
