@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createPortal } from "react-dom";
 import { PullToRefresh } from "./PullToRefresh";
 afterEach(cleanup);
@@ -9,6 +9,21 @@ function pull(target: Element) {
   fireEvent.touchEnd(target, { touches: [] });
 }
 describe("mobile refresh must preserve unfinished work", () => {
+  it.each([undefined, vi.fn().mockResolvedValue(undefined)])(
+    "does not cancel an upward gesture used to read further down the page (callback: %s)",
+    (refresh) => {
+      render(<PullToRefresh onRefresh={refresh}><p>Материалы курса</p></PullToRefresh>);
+      const target = screen.getByText("Материалы курса");
+      fireEvent.touchStart(target, { touches: [{ clientX: 100, clientY: 600 }] });
+      const move = createEvent.touchMove(target, {
+        touches: [{ clientX: 100, clientY: 100 }], cancelable: true,
+      });
+      fireEvent(target, move);
+      fireEvent.touchEnd(target, { touches: [] });
+      expect(move.defaultPrevented).toBe(false);
+      if (refresh) expect(refresh).not.toHaveBeenCalled();
+    },
+  );
   it("does not arm a hard reload after entering text and blurring the field", () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     try {

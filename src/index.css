@@ -2,8 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Scroll normally, but never let a mobile overscroll reload an unfinished form. */
-html, body { overscroll-behavior-y: none; }
+/* Suppress native pull-to-refresh only at the viewport boundary.
+   Do not apply this to body: its overflow-x:hidden below also computes Y to
+   auto, creating a non-scrolling intermediary on document-scrolled pages.
+   Blocking scroll chaining there traps mobile gestures before they reach
+   the root (e.g. the library/course pages). Keep body's default Y = auto. */
+html { overscroll-behavior-y: none; }
 
 /* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
 All colors MUST be HSL.
