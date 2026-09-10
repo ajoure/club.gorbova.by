@@ -31,6 +31,7 @@ export interface UiPlan {
 // the generated client type for this legacy query.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function mapOrderToPlan(order: any): UiPlan | null {
+  if (order?.is_deleted) return null;
   const meta = order?.meta ?? {};
   const canonical = meta.installment ?? {};
   const progress = meta.installment_progress ?? null;
@@ -117,11 +118,12 @@ export function useContactInternalInstallments(
       let query: any = supabase
         .from("orders_v2")
         .select(
-          `id, user_id, order_number, currency, created_at, paid_amount, meta, product_id, tariff_id,
+          `id, user_id, order_number, currency, created_at, paid_amount, meta, product_id, tariff_id, is_deleted,
            payments_v2 (id, order_id, user_id, currency, provider, provider_payment_id, status, amount, refunded_amount, is_deleted, transaction_type),
            products_v2:product_id ( name ),
            tariffs:tariff_id ( name )`,
         )
+        .eq("is_deleted", false)
         .order("created_at", { ascending: false });
 
       if (orFilters.length === 1) {

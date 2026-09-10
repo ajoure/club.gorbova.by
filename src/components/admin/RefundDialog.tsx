@@ -15,6 +15,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { AlertTriangle, CreditCard, Ban, Calendar, RefreshCcw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
+import { isRefundablePayment, type RefundPayment } from "../../../supabase/functions/_shared/refund-payment-selection";
 import {
   adjustRefundAccessActionForAmount,
   DEFAULT_REFUND_ACCESS_ACTION,
@@ -44,6 +46,7 @@ interface RefundDialogProps {
   amount: number;
   currency: string;
   paymentProvider?: string | null;
+  paymentId?: string;
   onSuccess?: () => void;
 }
 
@@ -161,8 +164,30 @@ export function RefundDialog({
   amount,
   currency,
   paymentProvider,
+  paymentId,
   onSuccess,
 }: RefundDialogProps) {
+  const [selectedPaymentId, setSelectedPaymentId] = useState(paymentId || "");
+  const { data: refundPayments, isLoading: paymentsLoading, error: paymentsError } = useQuery({
+    queryKey: ["refund-payments", orderId],
+    enabled: open,
+    staleTime: 0,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("payments_v2")
+        .select("id,order_id,status,provider,provider_payment_id,transaction_type,amount,refunded_amount,currency,is_deleted,paid_at,created_at")
+        .eq("order_id", orderId).order("created_at", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as RefundPayment[];
+    },
+  });
+  const refundablePayments = (refundPayments ?? []).filter(isRefundablePayment);
+  const selectedPayment = refundablePayments.find(p => p.id === selectedPaymentId);
+  const paymentAvailable = selectedPayment ? Number(selectedPayment.amount) - Number(selectedPayment.refunded_amount || 0) : null;
+  const requiresPayment = !!paymentId || refundablePayments.length > 0;
+  const effectiveProvider = selectedPayment?.provider ?? paymentProvider;
+  const [providerProof, setProviderProof] = useState<any>(null);
+  const [checkingProvider, setCheckingProvider] = useState(false);
+  useEffect(() => { setProviderProof(null); }, [open, selectedPaymentId]);
   const [reason, setReason] = useState("");
   const [refundAmount, setRefundAmount] = useState(amount);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -177,11 +202,24 @@ export function RefundDialog({
   const selectedAvailable = selectedAllocation
     ? Number(selectedAllocation.amount) - Number(selectedAllocation.refunded_amount || 0)
     : null;
-  const isFullRefund = refundAmount >= (selectedAvailable ?? amount);
+  const maxAvailable = Math.min(selectedAvailable ?? Infinity, paymentAvailable ?? amount);
+  const orderAvailable = refundablePayments.reduce((sum,p) => sum + Number(p.amount) - Number(p.refunded_amount || 0), 0);
+  const isFullRefund = refundAmount >= (selectedAvailable ?? (orderAvailable || amount));
+  const selectionReady = !paymentsLoading && !paymentsError && (!requiresPayment || !!selectedPayment);
+
+  useEffect(() => {
+    if (!open || !refundPayments) return;
+    const eligible = refundPayments.filter(isRefundablePayment);
+    const id = paymentId || (eligible.length === 1 ? eligible[0].id : "");
+    setSelectedPaymentId(id);
+    const p = eligible.find(p => p.id === id);
+    if (p) setRefundAmount(Number(p.amount) - Number(p.refunded_amount || 0));
+  }, [open, paymentId, refundPayments]);
 
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
+      setSelectedPaymentId(paymentId || "");
       setRefundAmount(amount);
       setReason("");
       setAccessAction(DEFAULT_REFUND_ACCESS_ACTION);
@@ -190,6 +228,7 @@ export function RefundDialog({
       setGroupItems([]);
       setSelectedGroupItemId("");
       setGroupPrimaryOrderId(null);
+      if (paymentId) return;
       void (async () => {
         const { data: selectedItem } = await (supabase as any)
           .from("order_group_items")
@@ -234,7 +273,7 @@ export function RefundDialog({
         }
       })();
     }
-  }, [open, amount, orderId]);
+  }, [open, amount, orderId, paymentId]);
 
   // A partial refund cannot revoke all access. A full refund keeps the explicit
   // administrator choice and never silently switches `keep` back to `revoke`.
@@ -243,14 +282,28 @@ export function RefundDialog({
     if (adjusted !== accessAction) setAccessAction(adjusted);
   }, [accessAction, isFullRefund]);
 
+  const checkProvider = async () => {
+    setCheckingProvider(true);
+    setProviderProof(null);
+    try {
+      const {data,error} = await supabase.functions.invoke("subscription-admin-actions", {body:{
+        action:"refund_preflight",order_id:orderId,payment_id:selectedPaymentId,
+      }});
+      if (error || !data?.success) throw new Error("Не удалось проверить bePaid. Повторите проверку позже.");
+      setProviderProof(data);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Ошибка проверки bePaid"); }
+    finally { setCheckingProvider(false); }
+  };
+
   const handleRefund = async () => {
     if (!reason.trim()) {
       toast.error("Укажите причину возврата");
       return;
     }
 
-    const maxRefundAmount = selectedAvailable ?? amount;
-    if (refundAmount <= 0 || refundAmount > maxRefundAmount) {
+    if (!selectionReady) { toast.error("Выберите доступный платёж для возврата"); return; }
+    const maxRefundAmount = maxAvailable;
+    if (!Number.isFinite(refundAmount) || refundAmount <= 0 || refundAmount > maxRefundAmount || Math.abs(refundAmount * 100 - Math.round(refundAmount * 100)) > 1e-6) {
       toast.error("Некорректная сумма возврата");
       return;
     }
@@ -271,7 +324,8 @@ export function RefundDialog({
           access_action: accessAction,
           reduce_days: accessAction === "reduce" ? reduceDays : undefined,
           order_group_item_id: selectedGroupItemId || undefined,
-          refund_request_key: selectedGroupItemId ? refundRequestKey : undefined,
+          payment_id: selectedPaymentId || undefined,
+          refund_request_key: refundRequestKey,
         },
       });
 
@@ -319,6 +373,45 @@ export function RefundDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
+          {paymentsLoading && <p role="status">Загрузка платежей…</p>}
+          {paymentsError && <p role="alert">Не удалось загрузить платежи. Закройте окно и повторите позже.</p>}
+          {requiresPayment && (
+            <div className="space-y-2">
+              <Label htmlFor="refund-payment">Платёж для возврата</Label>
+              <select id="refund-payment" value={selectedPaymentId} disabled={!!paymentId || isProcessing}
+                className="w-full min-w-0 rounded-md border bg-background p-2 text-sm"
+                onChange={event => {
+                  const id = event.target.value;
+                  setSelectedPaymentId(id);
+                  const p = refundablePayments.find(p => p.id === id);
+                  if (p) setRefundAmount(Number(p.amount) - Number(p.refunded_amount || 0));
+                  setRefundRequestKey(crypto.randomUUID());
+                }}>
+                <option value="">Выберите списание</option>
+                {refundablePayments.map(p => <option key={p.id} value={p.id}>
+                  {new Date(p.paid_at || p.created_at || "").toLocaleDateString("ru-RU")} · {formatAmount(Number(p.amount))} · {p.id.slice(-8)}
+                </option>)}
+              </select>
+              {paymentId && !paymentsLoading && !selectedPayment && <p role="alert">Выбранный платёж уже возвращён или недоступен.</p>}
+              <p className="text-xs text-muted-foreground">Возврат относится только к выбранному списанию. Остальные оплаты сохраняются.</p>
+            </div>
+          )}
+          {effectiveProvider === "bepaid" && selectedPayment && (
+            <div className="space-y-2 rounded-lg border p-3 text-sm">
+              <Button type="button" variant="outline" disabled={checkingProvider || isProcessing}
+                onClick={checkProvider}>{checkingProvider ? "Проверка…" : "Проверить в bePaid"}</Button>
+              <p className="text-xs text-muted-foreground">Проверяет платёж и связанные подписки. Деньги и доступ не изменяются.</p>
+              {providerProof && <div role="status" className="space-y-2 break-words">
+                <p>Платёж: {providerProof.transaction.matches_payment ? "сумма и валюта подтверждены" : "требует проверки"} · {providerProof.transaction.status} · HTTP {providerProof.transaction.http ?? "нет ответа"}</p>
+                {providerProof.subscriptions.map((s: any) => <div key={s.id}>
+                  <p>{s.id}: {s.status} · HTTP {s.http ?? "нет ответа"}</p>
+                  {s.next_charge_at && <p>Следующая дата у провайдера: {new Date(s.next_charge_at).toLocaleString("ru-RU")}</p>}
+                </div>)}
+                <p>{providerProof.all_subscriptions_terminal ? "Все найденные подписки завершены или отменены." : "Отсутствие дальнейших списаний пока не подтверждено."}</p>
+                <p className="text-xs text-muted-foreground">Проверено: {new Date(providerProof.checked_at).toLocaleString("ru-RU")}. История возвратов требует отдельной сверки.</p>
+              </div>}
+            </div>
+          )}
           {groupItems.length > 0 && (
             <div className="rounded-2xl border border-white/70 bg-gradient-to-br from-white/90 to-fuchsia-50/60 p-4 shadow-[0_12px_35px_rgba(112,57,91,.08)] backdrop-blur-xl">
               <Label className="text-slate-700">Позиция комплекта</Label>
@@ -368,18 +461,18 @@ export function RefundDialog({
               </p>
             </div>
           )}
-          {paymentProvider === 'stripe' ? (
+          {effectiveProvider === 'stripe' ? (
             <div className="flex items-start gap-3 p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800">
               <AlertTriangle className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
               <p className="text-sm text-indigo-800 dark:text-indigo-200">
-                Возврат будет проведён через Stripe Refund API. Статус заказа обновится автоматически по приходу webhook (canonical write-path через record_refund_atomic).
+                Возврат будет проведён через Stripe. Статус заказа обновится после подтверждения платёжной системы.
               </p>
             </div>
-          ) : paymentProvider && paymentProvider !== 'bepaid' ? (
+          ) : effectiveProvider && effectiveProvider !== 'bepaid' ? (
             <div className="flex items-start gap-3 p-3 rounded-lg bg-orange-50 dark:bg-orange-950/30 border border-orange-300 dark:border-orange-700">
               <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
               <div className="text-sm text-orange-800 dark:text-orange-200">
-                <p className="font-medium">Ручной платёж ({paymentProvider})</p>
+                <p className="font-medium">Ручной платёж ({effectiveProvider})</p>
                 <p className="mt-1">Этот заказ был оплачен вручную. Возврат через bePaid невозможен — будет только изменён статус в системе.</p>
               </div>
             </div>
@@ -399,12 +492,12 @@ export function RefundDialog({
               type="number"
               value={refundAmount}
               onChange={(e) => setRefundAmount(parseFloat(e.target.value) || 0)}
-              max={selectedAvailable ?? amount}
+              max={maxAvailable}
               min={0.01}
               step={0.01}
             />
             <p className="text-xs text-muted-foreground">
-              Максимум: {formatAmount(selectedAvailable ?? amount)}
+              Максимум: {formatAmount(maxAvailable)}
             </p>
           </div>
 
@@ -459,7 +552,7 @@ export function RefundDialog({
           <Button
             variant="destructive"
             onClick={handleRefund}
-            disabled={isProcessing || !reason.trim()}
+            disabled={isProcessing || !reason.trim() || !selectionReady}
             className="w-full sm:w-auto"
           >
             {isProcessing ? "Обработка..." : `Вернуть ${formatAmount(refundAmount)}`}

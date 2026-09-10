@@ -13,6 +13,7 @@ interface Body {
   payment_intent: string;            // pi_*
   amount_minor?: number;             // optional partial refund in minor units
   account_code?: string;
+  request_key?: string;
   reason?: 'requested_by_customer' | 'duplicate' | 'fraudulent';
 }
 
@@ -24,6 +25,7 @@ Deno.serve(async (req) => {
     if (!body.payment_intent || !/^pi_[A-Za-z0-9]+$/.test(body.payment_intent)) {
       return errorResponse('invalid_payment_intent', 400);
     }
+    if (body.request_key && !/^[0-9a-f-]{36}$/i.test(body.request_key)) return errorResponse('invalid_request_key', 400);
     // MP-A2-1: SOT resolver instead of hardcoded 'stripe_poland' fallback.
     const acct = await resolveDefaultStripeAccount(supabase, body.account_code);
     const account_code = acct.account_code;
@@ -41,6 +43,7 @@ Deno.serve(async (req) => {
       headers: {
         Authorization: `Bearer ${sk}`,
         'Content-Type': 'application/x-www-form-urlencoded',
+        ...(body.request_key ? { 'Idempotency-Key': `refund:${body.request_key}` } : {}),
       },
       body: form.toString(),
     });

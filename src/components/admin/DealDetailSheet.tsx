@@ -86,6 +86,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
 import { formatSalesManagerAuditDetails } from "@/lib/crmDisplayLabels";
 
+import { PaymentRefundButton } from "./PaymentRefundButton";
 import { InternalInstallmentBlock } from "@/components/installments/InternalInstallmentBlock";
 
 interface DealDetailSheetProps {
@@ -1259,8 +1260,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                           key={payment.id}
                           className="p-3 rounded-lg bg-muted/50 space-y-3"
                         >
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="font-medium">
                                   {new Intl.NumberFormat("ru-BY", {
@@ -1290,7 +1291,13 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                                   ? format(new Date(payment.paid_at), "dd.MM.yy HH:mm")
                                   : format(new Date(payment.created_at), "dd.MM.yy HH:mm")}
                               </div>
-                              <div className="flex items-center gap-1">
+                              <div className="flex flex-wrap justify-end items-center gap-1">
+                                {isAdmin() && <PaymentRefundButton payment={payment} orderNumber={deal.order_number} onSuccess={() => {
+                                  queryClient.invalidateQueries({ queryKey: ["deal-payments", deal.id] });
+                                  queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
+                                  queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+                                  queryClient.invalidateQueries({ queryKey: ["refund-payments", deal.id] });
+                                }} />}
                                 {canResolveReceipt ? (
                                   <PaymentReceiptButton paymentId={payment.id} label="Открыть чек" />
                                 ) : isBepaid && (
