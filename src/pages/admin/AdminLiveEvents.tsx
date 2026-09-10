@@ -1,3 +1,4 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -388,7 +389,7 @@ export default function AdminLiveEvents() {
   const { data: kinescopeInstance, isLoading: kinescopeInstanceLoading } = useQuery({
     queryKey: ["kinescope-instance"],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data } = await operationalSupabase
         .rpc("list_operational_integrations")
         .select("id, config, status")
         .eq("provider", "kinescope")

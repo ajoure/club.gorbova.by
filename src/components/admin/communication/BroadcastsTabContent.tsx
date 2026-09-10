@@ -1,3 +1,4 @@
+import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { lazy, Suspense, useState, useRef, useCallback, useMemo, useEffect } from "react";
 import {
   AlertDialog,
@@ -381,7 +382,7 @@ export function BroadcastsTabContent() {
   const { data: bots } = useQuery({
     queryKey: ["broadcast-bots"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await operationalSupabase
         .rpc("list_operational_telegram_bots")
         .select("id, bot_name, bot_username, is_primary")
         .eq("status", "active")
