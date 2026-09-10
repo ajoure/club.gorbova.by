@@ -49,14 +49,14 @@ export function ComposeEmailDialog({
     queryFn: async () => {
       // Try integration_instances first
       const { data: integrations } = await supabase
-        .from("integration_instances")
+        .rpc("list_operational_integrations")
         .select("id, alias, config, is_default")
         .eq("category", "email")
         .eq("status", "connected");
 
       // Then email_accounts
       const { data: accounts } = await supabase
-        .from("email_accounts")
+        .rpc("list_operational_email_accounts")
         .select("id, display_name, email, is_default")
         .eq("is_active", true);
 

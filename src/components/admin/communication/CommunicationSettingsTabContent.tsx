@@ -98,7 +98,7 @@ export function CommunicationSettingsTabContent() {
     queryKey: ["email-accounts"],
     queryFn: async () => {
       const { data, error } = await (supabase
-        .from("email_accounts_safe" as any))
+        .rpc("list_operational_email_accounts"))
         .select("id, email, display_name, provider, is_default, is_active, imap_enabled")
         .order("created_at", { ascending: false });
       if (error) throw error;

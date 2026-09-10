@@ -233,7 +233,7 @@ export function ContactTelegramChat({
     queryKey: ["telegram-bots-for-chat"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("telegram_bots")
+        .rpc("list_operational_telegram_bots")
         .select("id, bot_name, bot_username, status, is_primary")
         .order("created_at", { ascending: true });
       if (error) throw error;

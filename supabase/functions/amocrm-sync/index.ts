@@ -1,3 +1,4 @@
+import { integrationOwnerDenial } from '../_shared/integration-owner-auth.ts';
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -266,24 +267,10 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // Verify auth for admin endpoints
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
-    
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const denial = await integrationOwnerDenial(req, supabaseClient, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
+    if (denial) return new Response(JSON.stringify({ error: denial.error }), {
+      status: denial.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
 
     const url = new URL(req.url);
     let action = url.searchParams.get('action') || undefined;

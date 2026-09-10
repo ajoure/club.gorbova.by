@@ -1,64 +1,17 @@
-# Настройка интеграций: только super_admin
+Настройки интеграций доступны только super_admin. Ранее право сотрудника на управление платежами открывало конфигурацию почты, Telegram и других подключений через общее entitlements.manage. Теперь интерфейс, таблицы конфигурации и серверные действия используют отдельную проверку владельца; рабочие платежи, переписка, участники и видео сохраняют предметные права.
 
-Статус: подготовлено частичное исправление кода; **не merge / не deploy** до
-канонической Lovable plan-only ревизии и завершения защиты БД.
+Изменения:
+- Канонический useAdminAccess закрывает integrations до admin/kill-switch bypass.
+- Managed migration 20260910181807_integration_owner_boundary.sql: restrictive owner policies на 9 таблиц конфигурации (включая integrations для VOCHI/WebSMS), запрет non-owner writes в telegram_clubs, отзыв anon/PUBLIC и authenticated TRUNCATE. Обычный SELECT клубов сохранён. Глобальный entitlements.manage не меняется.
+- Четыре authenticated RPC возвращают фиксированные operational поля: боты без токена/ошибки, почтовые отправители без SMTP реквизитов, подключение bePaid с allowlist полей карточки, Stripe с валютами, Kinescope только с идентификатором/статусом. Нет raw config/config_secrets/secrets. Соответствующие рабочие UI переведены на RPC; интерфейсы настройки владельца сохраняют доступ к исходным таблицам.
+- Owner guards: telegram-bot-actions, integration-healthcheck, email-test-connection, hosterby-api, instagram-webhook-test, manychat-discover-pages, telegram-bot-rights-check; configuration path kinescope-api. Integration/getcourse/amocrm sync допускают owner или существующий exact internal service credential. Email fetch сохраняет серверный worker и сотрудников с communication/contacts edit; test-only требует owner/internal.
 
-## Явное требование пользователя
+Проверки подготовки: TypeScript и production build PASS; полная серия 1558 тестов PASS и 28 целевых тестов авторизации/контрактов после их расширения. Изолированный PostgreSQL: 340 assertions PASS, точная миграция применена дважды, anon/user/staff/admin не читают и не меняют конфигурацию, owner/service CRUD работает, проекции не возвращают синтетические секреты. Это не production-проверка и не проверка реального устройства.
 
-Настройка подключений доступна только суперадминистратору. Сотрудники могут
-работать с уже настроенными платежами, перепиской и участниками по собственным
-разрешениям. Ключи, токены, изменение подключений им недоступны.
+Повторяемая SQL-проверка: scripts/verify-integration-owner-boundary.mjs принимает путь к @electric-sql/pglite@0.5.8/dist/index.js. Зависимость установлена только во временном каталоге проверки, зависимости приложения не менялись.
 
-## Подготовлено
+Lovable plan-only и консолидированная ревизия выполнены 10.09.2026. Подтверждены canonical main a604f886, Lovable Cloud, 2 назначения super_admin; safe views security_invoker, acquiring secret getter service-only, vault mutation RPC owner-only. Отсутствие draft SHA в main ожидаемо. Исторические права на membership/переписку остаются отдельными от конфигурации.
 
-- Канонический useAdminAccess закрывает секцию и ресурсы integrations для
-  всех, кроме super_admin, до admin/kill-switch bypass. Это применяется к меню
-  и AdminRouteGuard. Отдельный маршрут участников клуба остаётся club-members.
-- telegram-bot-actions: has_role_v2(super_admin) вместо entitlements.manage.
-- integration-healthcheck: каноническая роль super_admin вместо legacy роли.
-- email-test-connection: проверка super_admin до чтения настроек/пароля и
-  сетевого обращения. Раньше функция ограничивалась проверкой аутентификации.
-- Тесты: обычный сотрудник, admin, делегированные manage-права, выключенный
-  общий section-gating, super_admin; неизменность operational маршрутов.
+До завершения: GitHub checks, exact merged SHA, применение только указанной миграции и deploy только перечисленных изменённых функций через Lovable, read-back grants/policies/функций и неизменности 2 super_admin, безопасный runtime owner/staff/anon, повтор security scan. Publish только после PASS. После Publish — проверки рабочего UI на ПК и 390×844 с привязкой к URL/версии. Никакие реальные письма, платежи, возвраты, отмены или создания пользователей не являются smoke-тестом. Миграция не изменяет строки клиентов, платежей или доступов.
 
-## Обязательно закончить перед выпуском
-
-1. Read-only через Lovable: текущие pg_policies/grants/RPC и все endpoints
-   настройки. Число super_admin и штатная идентичность владельца — без ПД.
-2. Разделить configuration/secret tables и operational selectors:
-   integration_instances, integration_credentials, email_accounts,
-   telegram_bots, payment_settings, acquiring settings и остальные фактически
-   используемые источники. Не переписывать общий entitlements.manage: это
-   сломает легитимную работу с платежами и доступами.
-3. Подготовить узкую managed миграцию: полный доступ к конфигурации только
-   super_admin. Не просто добавить permissive policy: они складываются OR.
-4. До запрета чтения исходных таблиц перевести operational selectors на
-   существующий или проверенный безопасный read-model без секретов. Например,
-   useAcquiringProfiles читает весь config, в то время как ему нужны только
-   shop_id/test_mode; useTelegramClubs содержит join к telegram_bots.
-   email_accounts_safe / telegram_bots_safe сейчас security_invoker — запрет
-   исходной таблицы автоматически затронет и их. Не менять их на безусловные
-   definer views ради обхода RLS.
-5. Проверить все остальные server-side configuration actions. Ни UI-патч,
-   ни три изменённых endpoint не закрывают весь периметр сами по себе.
-6. Ролевая матрица БД: anon/staff payments-only/admin/super_admin; deny secrets
-   и writes для первых трёх, корректная работа сотрудника с платежами и
-   сообщениями, service-role backend без изменения механизма авторизации.
-7. GitHub PR/checks, exact merged SHA, только названные migrations/functions
-   через Lovable, read-back, security PASS, Publish, ПК+mobile на live.
-
-## Блокер текущего исполнения
-
-Встроенный браузер на продолжении задачи не предоставлен инструменту
-(Browser is not available: iab). Чтение проекта Lovable работает; отправка
-PLAN-ONLY через connector дважды отклонена INVALID_ARGUMENT. История
-проверена: новое сообщение не принято. open_in_codex вернул queued, не факт
-открытия. Сторонний Chrome не использовался. Прямой доступ к production
-Supabase, новые сессии, ослабление прав/авторизации не применялись.
-
-Этот PR не содержит миграций и не исправляет production RLS сам по себе.
-
-## Локальные проверки
-
-231 тестовый файл / 1546 тестов PASS; TypeScript и production build PASS.
-Это локальные проверки, не проверка production RLS или опубликованного UI.
+На момент подготовки production migration/deploy/Publish не выполнялись.

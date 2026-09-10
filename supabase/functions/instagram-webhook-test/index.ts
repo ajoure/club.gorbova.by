@@ -36,14 +36,14 @@ Deno.serve(async (req) => {
     });
   }
 
-  // RBAC: admin or super_admin
-  const { data: isAdmin } = await supabaseAdmin.rpc('has_any_role', {
-    p_user_id: userData.user.id,
-    p_roles: ['admin', 'superadmin'],
+  // Configuration diagnostics use the same owner boundary as connection setup.
+  const { data: isSuperAdmin, error: roleError } = await supabaseAdmin.rpc('has_role_v2', {
+    _user_id: userData.user.id,
+    _role_code: 'super_admin',
   });
 
-  if (!isAdmin) {
-    return new Response(JSON.stringify({ success: false, error: 'Admin access required' }), {
+  if (roleError || isSuperAdmin !== true) {
+    return new Response(JSON.stringify({ success: false, error: 'Superadmin access required' }), {
       status: 403,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

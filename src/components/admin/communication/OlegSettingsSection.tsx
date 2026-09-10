@@ -252,7 +252,7 @@ const [analysisResult, setAnalysisResult] = useState<{
     queryKey: ["telegram-bots-for-ai"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("telegram_bots")
+        .rpc("list_operational_telegram_bots")
         .select("id, bot_name, bot_username, status")
         .eq("status", "active")
         .order("created_at", { ascending: false });

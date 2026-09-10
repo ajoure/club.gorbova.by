@@ -76,7 +76,7 @@ export function LessonNotificationConfig({
     queryKey: ["telegram-bots-active"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("telegram_bots")
+        .rpc("list_operational_telegram_bots")
         .select("id, bot_username, bot_name, status")
         .in("status", ["ok", "active"])
         .order("bot_name");

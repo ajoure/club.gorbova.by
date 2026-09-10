@@ -76,7 +76,7 @@ export function EmailReplyDialog({
     queryKey: ["email-accounts-for-reply"],
     queryFn: async () => {
       const { data: accounts } = await supabase
-        .from("email_accounts")
+        .rpc("list_operational_email_accounts")
         .select("id, display_name, email, is_default")
         .eq("is_active", true);
 

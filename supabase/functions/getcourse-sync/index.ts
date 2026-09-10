@@ -1,3 +1,4 @@
+import { integrationOwnerDenial } from '../_shared/integration-owner-auth.ts';
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -404,6 +405,11 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    const denial = await integrationOwnerDenial(req, supabase, supabaseServiceKey);
+    if (denial) return new Response(JSON.stringify({ error: denial.error }), {
+      status: denial.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
 
     const body = await req.json();
     const { instance_id, action, order_id, user_id, offer_code } = body;
