@@ -22,7 +22,7 @@ INSERT INTO payments_v2(id,order_id,amount,status,provider,currency,provider_pay
 INSERT INTO subscriptions_v2 VALUES
 ('c6633a7b-216f-41e5-b32a-cb771add4ad6','${a}','canceled',false,null,'{"bepaid_subscription_id":"sbs_9a86268a608fca3f"}',null,'2026-08-28'),
 ('d16b01e5-efdd-43c8-a98c-c7d15daacfa7','${b}','expired',false,null,'{"bepaid_subscription_id":"sbs_bd6975629dfe2c83"}',null,'2027-06-07');
-INSERT INTO provider_subscriptions VALUES ('${a}','bepaid','sbs_9a86268a608fca3f','canceled'),('${b}','bepaid','sbs_bd6975629dfe2c83','completed');
+INSERT INTO provider_subscriptions VALUES ('${a}','bepaid','sbs_9a86268a608fca3f','canceled'),('${b}','bepaid','sbs_bd6975629dfe2c83','canceled');
 INSERT INTO entitlements VALUES ('00000000-0000-0000-0000-000000000099','${b}','active','2027-06-07');
 INSERT INTO order_groups VALUES ('${g}','${b}',1325,2650,-1325);
 INSERT INTO order_group_items VALUES ('0235abb4-67ee-4b36-b718-525957e5e9fa','${g}','${b}',2650,2650,'{"final_amount":2650}');
