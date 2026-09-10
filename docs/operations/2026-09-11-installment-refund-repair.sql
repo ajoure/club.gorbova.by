@@ -43,10 +43,10 @@ BEGIN
  IF (SELECT count(*) FROM subscriptions_v2 WHERE order_id IN(a,b))<>2
     OR NOT EXISTS(SELECT 1 FROM subscriptions_v2 WHERE id='c6633a7b-216f-41e5-b32a-cb771add4ad6'
       AND order_id=a AND status='canceled' AND NOT auto_renew AND next_charge_at IS NULL
-      AND provider_subscription_id='sbs_9a86268a608fca3f')
+      AND meta->>'bepaid_subscription_id'='sbs_9a86268a608fca3f')
     OR NOT EXISTS(SELECT 1 FROM subscriptions_v2 WHERE id='d16b01e5-efdd-43c8-a98c-c7d15daacfa7'
       AND order_id=b AND status='expired' AND NOT auto_renew AND next_charge_at IS NULL
-      AND provider_subscription_id='sbs_bd6975629dfe2c83' AND access_end_at::date='2027-06-07')
+      AND meta->>'bepaid_subscription_id'='sbs_bd6975629dfe2c83' AND access_end_at::date='2027-06-07')
     OR (SELECT count(*) FROM provider_subscriptions WHERE order_id IN(a,b) AND provider='bepaid'
       AND ((provider_subscription_id='sbs_9a86268a608fca3f' AND state='canceled')
         OR (provider_subscription_id='sbs_bd6975629dfe2c83' AND state='completed')))<>2 THEN

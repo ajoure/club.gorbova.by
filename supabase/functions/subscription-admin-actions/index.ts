@@ -300,15 +300,16 @@ Deno.serve(async (req) => {
           || !payment.provider_payment_id || Number(payment.amount)<=0) return reply({success:false,error:'payment_not_found'},404);
       const {data: relatedOrders,error: re} = await supabase.from('orders_v2').select('id')
         .eq('user_id',order.user_id).eq('product_id',order.product_id).limit(101);
-      const {data: localSubs,error: se} = await supabase.from('subscriptions_v2').select('provider_subscription_id')
+      const {data: localSubs,error: se} = await supabase.from('subscriptions_v2').select('id,meta')
         .eq('user_id',order.user_id).eq('product_id',order.product_id).limit(11);
       if (re || se || !relatedOrders?.length || relatedOrders.length>100 || (localSubs?.length ?? 0)>10)
         return reply({success:false,error:'subscription_scope_requires_review'},409);
       const {data: providerSubs,error: pse} = await supabase.from('provider_subscriptions').select('provider_subscription_id')
         .eq('provider','bepaid').in('order_id',relatedOrders.map(o=>o.id)).limit(11);
       if (pse || (providerSubs?.length ?? 0)>10) return reply({success:false,error:'subscription_scope_requires_review'},409);
-      const ids = [...new Set([...(localSubs ?? []),...(providerSubs ?? [])]
-        .map(s=>s.provider_subscription_id).filter((id): id is string => !!id))];
+      const ids = [...new Set([...(localSubs ?? []).map(s=>s.meta?.bepaid_subscription_id),
+        ...(providerSubs ?? []).map(s=>s.provider_subscription_id)]
+        .filter((id): id is string => typeof id === 'string' && !!id))];
       if (ids.length>10 || ids.some(id=>!/^sbs_[a-z0-9]+$/i.test(id))) return reply({success:false,error:'subscription_scope_requires_review'},409);
       const credentials = await getBepaidCredsStrict(supabase);
       if (isBepaidCredsError(credentials)) return reply({success:false,error:'provider_credentials_unavailable'},503);
