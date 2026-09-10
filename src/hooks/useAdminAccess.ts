@@ -60,7 +60,7 @@ export interface AdminAccessApi {
 
 export function useAdminAccess(): AdminAccessApi {
   const { user } = useAuth();
-  const { isSuperAdmin, isAdmin } = useRbac();
+  const { isSuperAdmin, isAdmin, loading: rbacLoading } = useRbac();
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin-access", user?.id],
@@ -143,7 +143,8 @@ export function useAdminAccess(): AdminAccessApi {
     };
 
     return {
-      isLoading: !!user?.id && isLoading,
+      // Role and section queries resolve independently; wait for both before routing.
+      isLoading: !!user?.id && (isLoading || rbacLoading),
       isSuperAdmin,
       isAdmin,
       sections,
@@ -155,5 +156,5 @@ export function useAdminAccess(): AdminAccessApi {
       canAccessResource,
       canAccessPath,
     };
-  }, [data, isLoading, user?.id, isSuperAdmin, isAdmin]);
+  }, [data, isLoading, rbacLoading, user?.id, isSuperAdmin, isAdmin]);
 }
