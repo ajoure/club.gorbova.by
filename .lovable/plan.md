@@ -67,3 +67,59 @@ PLAN-ONLY / READ-ONLY. Код, SQL, provider-writes, deploy и Publish не вы
 - Read-back по п.6; при любом расхождении, provider-ошибке или новом critical — STOP.
 
 Реальный возврат не запускался.
+
+---
+
+# Дополнение по консолидированной ревизии Codex (READ-ONLY, EXECUTE не разрешён)
+
+## 1. Идемпотентность до вызова провайдера — принято
+Подтверждаю: live `record_refund_atomic` дедуплицирует только по УЖЕ полученному `provider_payment_id = p_refund_uid`, то есть защищает лишь запись, а не повторный POST в bePaid. Раздел 4 плана заменяется:
+- новая service-only таблица `payment_refund_requests` (RLS: только service_role; никаких anon/authenticated grants);
+- reserve-RPC `SECURITY DEFINER`: `SELECT ... FOR UPDATE` по строке `payments_v2`, вставка заявки с уникальным fingerprint `request_key + payment_id + amount_minor + access_action`;
+- состояния: `reserved → provider_called → recorded | failed`; повторный вызов с тем же fingerprint возвращает существующую заявку, конкурирующий вызов с другим fingerprint по тому же payment получает отказ; «неопределённая» попытка (нет terminal-ответа провайдера) блокирует повтор до ручного разбора;
+- провайдер вызывается только после успешного reserve; после ответа — `record_refund_atomic` в той же логической цепочке.
+Managed-копия допускается только как тот же SQL с новым timestamp после exact SHA.
+
+## 2. Выбор платежа и суммы — принято
+- Без `payment_id` при >1 refundable платеже — явная ошибка `payment_id_required` (никакого «первого»).
+- UI загружает безопасный список: `payment_id`, дата, сумма, остаток; передаёт exact ID.
+- Сумма: целое положительное в копейках, `<= amount - refunded_amount` выбранного платежа.
+- Провайдеры не смешиваются: возврат идёт только через провайдера самого платежа (bePaid ≠ Stripe ≠ банковская рассрочка); чужой провайдер — отказ.
+- `access_action='revoke'` запрещён, если возврат частичный по сделке; допустим только при полном возврате всей суммы.
+
+## 3. Сведение дубля — принимаю вариант Codex (B — носитель)
+Обновлённые факты зависимостей (не-PII):
+
+| объект | A `e17b35b2…` | B `9673e359…` |
+|---|---|---|
+| payments_v2 | 1 | 2 |
+| subscriptions_v2 | 1 (`c6633a7b…`, canceled) | 1 (`d16b01e5…`, expired/completed) |
+| provider_subscriptions | 1 `5c816d58…`→A? нет: `77ad2163…` `sbs_9a86268a608fca3f` state `canceled` | 1 `5c816d58…` `sbs_bd6975629dfe2c83` state `completed` |
+| entitlements | 0 | 1 (`17285a9f…`, до 07.06.2027) |
+| order_groups / order_group_items | 1 / 1 (`9fcacc8f…`, primary, final_amount 2650.00, group `6ec21793…`) | 1 / 1 (`0235abb4…`, primary, final_amount 2650.00, group `806f3295…`) |
+| payment_allocations | 0 | 0 |
+| access_grant_ledger | 1 | 9 |
+| order_notification_deliveries | 7 | 8 |
+| payment_reconcile_queue | 1 | 1 |
+| payment_sales_attribution | 0 | 1 |
+| installment_payments / generated_documents / crm_tasks / statement_lines / scheduled_product_access / company_order_links / site_form_submissions / composable_refund_intents / referral_* | 0 | 0 |
+| payment_links | таблица не имеет `order_id`; связь через offer/link meta — уточнить отдельным read-only шагом |
+
+Целевой сценарий (для отдельного apply, не сейчас):
+- B остаётся носителем доступа и обязательства: `final_price = 1325.00`, `meta.installment.effective_total_byn = 1325`, `meta.rounding_adjustment = 1` (первые два платежа net 1326);
+- payment 1 `40f01f87…` переносится A → B с `meta.previous_order_id = A` и audit-записью; сумма/статус/provider uid не меняются;
+- payment 3 `1ad28122…` помечается `meta.refund_candidate = true`, доступ не трогается;
+- A: soft-delete/архив с `meta.superseded_by = B`; исторические строки (ledger, notifications, group item, reconcile) сохраняются, physical DELETE запрещён;
+- старая подписка `c6633a7b…` / `sbs_9a86268a608fca3f` скрывается из активной рассрочки существующим механизмом (уже `canceled` + provider `canceled`), без DELETE;
+- расхождение `order_group_items.final_amount = 2650.00` против 1325 фиксирую как отдельный вопрос — трогать группы в этом apply не планирую.
+
+## 4. Provider read-only — точный доступный инструмент
+Owner RLS действительно не блокирует service role, поэтому фиктивного GET не будет. Доступные штатные read-only функции: `bepaid-raw-transactions`, `bepaid-fetch-transactions`, `bepaid-list-subscriptions`. Все требуют admin/owner JWT; у среды его нет, прямой вызов ранее вернул HTTP 401. Credentials не читались и не выводились. Сведение данных выполняется только после доказанных terminal provider states (сейчас локально: `sbs_9a86268a608fca3f` = `canceled`, `sbs_bd6975629dfe2c83` = `completed`) — подтверждение со стороны провайдера должен дать owner-запуск одной из трёх функций.
+
+## 5. Live `record_refund_atomic` — баг подтверждён
+Сигнатура: `record_refund_atomic(uuid,uuid,numeric,text,text,uuid,uuid,jsonb)`, SHA256 определения `b7ef76965246c6fb6467de7d0d900c8de46651f770e7aee2e9b188be921f7847`.
+В live-версии сохранён цикл 2026-05-22: `v_prior_refunded += p.refunded_amount` для всех строк И дополнительно `+= ABS(p.amount)` для refund-строк. Так как канонический writer пишет ОБА признака, второй и последующие частичные возвраты считают предыдущий возврат дважды → преждевременный `refund_status='full'` и `orders_v2.status='refunded'`. Исправлений в live нет.
+Следствие для плана: до исправления этой функции последовательные частичные возвраты по одной сделке некорректны. В GitHub-патч добавляется правка счётчика (учитывать `refunded_amount` по не-refund строкам, а `ABS(amount)` — только по legacy refund-строкам без parent) вместе с regression-тестом на два подряд частичных возврата. Возврат третьего платежа — первый по сделке B, поэтому текущий баг его не искажает, но патч должен войти в тот же PR.
+
+Ожидаемые rowcounts из раздела 6 сохраняются; дополнительно перенос payment 1: 1 UPDATE `payments_v2.order_id`, 1 UPDATE `orders_v2` B (final_price+meta), 1 UPDATE `orders_v2` A (архив+superseded_by), 0 DELETE.
+Provider writes, SQL-мутации, код, коммиты и Publish не выполнялись.
