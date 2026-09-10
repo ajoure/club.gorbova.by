@@ -65,7 +65,7 @@ BEGIN
       AND amount=66300 AND provider='bepaid' AND payment_type='subscription' AND max_uses IS NULL AND current_uses=0) THEN
    RAISE EXCEPTION 'group_or_link_precondition_changed';
  END IF;
- SELECT jsonb_build_object('orders',(SELECT jsonb_agg(jsonb_build_object('id',id,'final_price',final_price,'paid_amount',paid_amount) ORDER BY id) FROM orders_v2 WHERE id IN(a,b)),
+ SELECT jsonb_build_object('orders',(SELECT jsonb_agg(jsonb_build_object('id',id,'final_price',final_price,'paid_amount',paid_amount,'installment_progress_money',jsonb_build_object('effective_total_byn',meta->'installment_progress'->'effective_total_byn','paid_total_byn',meta->'installment_progress'->'paid_total_byn','remaining_total_byn',meta->'installment_progress'->'remaining_total_byn')) ORDER BY id) FROM orders_v2 WHERE id IN(a,b)),
    'item_final',2650,'group_total',1325,'link_status','active','payment_1_order',a) INTO before_money;
  UPDATE payments_v2 SET order_id=b,meta=coalesce(meta,'{}')||jsonb_build_object('previous_order_id',a,'repair_marker',marker),updated_at=now() WHERE id=p1;
  GET DIAGNOSTICS n=ROW_COUNT; IF n<>1 THEN RAISE EXCEPTION 'payment_move_count'; END IF;
@@ -74,6 +74,7 @@ BEGIN
    meta=coalesce(meta,'{}')||jsonb_build_object('repair_marker',marker,'rounding_adjustment',1,'manual_review',true,
      'review_reason','Third charge 663 awaits refund; first two charges total 1326 against agreement 1325',
      'refund_candidate_payment_id',p3,'superseded_order_id',a,
+     'installment_progress',coalesce(meta->'installment_progress','{}')||jsonb_build_object('effective_total_byn',1325,'paid_total_byn',1989,'remaining_total_byn',0,'billing_cycles',2,'paid_billing_cycles',2,'remaining_billing_cycles',0,'next_charge_at',null,'extra_payment_count',1),
      'installment',coalesce(meta->'installment','{}')||jsonb_build_object('effective_total_byn',1325,'billing_cycles',2,'per_payment_byn',663)),updated_at=now() WHERE id=b;
  UPDATE orders_v2 SET is_deleted=true,meta=coalesce(meta,'{}')||jsonb_build_object('superseded_by',b,'repair_marker',marker),updated_at=now() WHERE id=a;
  UPDATE order_group_items SET final_amount=1325,item_snapshot=coalesce(item_snapshot,'{}')||jsonb_build_object('final_amount',1325) WHERE id=item;
