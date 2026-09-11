@@ -5575,6 +5575,118 @@ export type Database = {
           },
         ]
       }
+      course_caption_gap_audits: {
+        Row: {
+          caption_sha256: string
+          classification: string
+          created_at: string
+          expected_parts: number
+          id: string
+          manifest_sha256: string
+          quality_status: string
+          raw_vtt: string
+          requested_by: string
+          source_id: string
+          source_revision: string
+          status: string
+        }
+        Insert: {
+          caption_sha256: string
+          classification?: string
+          created_at?: string
+          expected_parts: number
+          id?: string
+          manifest_sha256: string
+          quality_status?: string
+          raw_vtt: string
+          requested_by: string
+          source_id: string
+          source_revision: string
+          status?: string
+        }
+        Update: {
+          caption_sha256?: string
+          classification?: string
+          created_at?: string
+          expected_parts?: number
+          id?: string
+          manifest_sha256?: string
+          quality_status?: string
+          raw_vtt?: string
+          requested_by?: string
+          source_id?: string
+          source_revision?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_caption_gap_audits_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "course_transcription_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_caption_gap_parts: {
+        Row: {
+          asr_text: string | null
+          attempts: number
+          audio_sha256: string
+          audit_id: string
+          claim_token: string | null
+          end_ms: number
+          error_code: string | null
+          gap_index: number
+          lease_until: string | null
+          part_index: number
+          start_ms: number
+          status: string
+          text_sha256: string | null
+          updated_at: string
+        }
+        Insert: {
+          asr_text?: string | null
+          attempts?: number
+          audio_sha256: string
+          audit_id: string
+          claim_token?: string | null
+          end_ms: number
+          error_code?: string | null
+          gap_index: number
+          lease_until?: string | null
+          part_index: number
+          start_ms: number
+          status?: string
+          text_sha256?: string | null
+          updated_at?: string
+        }
+        Update: {
+          asr_text?: string | null
+          attempts?: number
+          audio_sha256?: string
+          audit_id?: string
+          claim_token?: string | null
+          end_ms?: number
+          error_code?: string | null
+          gap_index?: number
+          lease_until?: string | null
+          part_index?: number
+          start_ms?: number
+          status?: string
+          text_sha256?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_caption_gap_parts_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: false
+            referencedRelation: "course_caption_gap_audits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       course_preregistrations: {
         Row: {
           consent: boolean
@@ -23759,6 +23871,37 @@ export type Database = {
       contact_note_delete: { Args: { _note_id: string }; Returns: boolean }
       convert_preorder_on_pay_atomic: {
         Args: { p_paid_order_id: string }
+        Returns: Json
+      }
+      course_gap_audit_create: {
+        Args: {
+          _actor: string
+          _caption_sha256: string
+          _manifest_sha256: string
+          _parts: Json
+          _raw_vtt: string
+          _source_id: string
+          _source_revision: string
+        }
+        Returns: Json
+      }
+      course_gap_claim: {
+        Args: {
+          _audio_sha256: string
+          _audit_id: string
+          _manifest_sha256: string
+          _part_index: number
+        }
+        Returns: Json
+      }
+      course_gap_finish: {
+        Args: {
+          _audit_id: string
+          _claim_token: string
+          _error_code?: string
+          _part_index: number
+          _text: string
+        }
         Returns: Json
       }
       course_transcription_claim_part: {
