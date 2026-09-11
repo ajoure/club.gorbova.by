@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
+import {reviewCaption,captionSnapshotRevision} from './lib/reviewed-captions.mjs';
 
 let db;
 const owner='00000000-0000-4000-8000-000000000001';
@@ -27,6 +28,7 @@ before(async()=>{
     CREATE TABLE public.products_v2(id uuid PRIMARY KEY);
   `);
   await db.exec(await readFile(new URL(appliedCorpusMigration,migrationsUrl),'utf8'));
+  await db.exec(await readFile(new URL('20260911180940_course_reviewed_caption_snapshots.sql',migrationsUrl),'utf8'));
 });
 after(async()=>{await db?.close();});
 
@@ -152,4 +154,60 @@ test('ready provider subtitles import once, stay private/unreviewed and block du
 test('subtitle import cannot override an existing potentially billed STT job',async()=>{
   const j=await job();
   await assert.rejects(rpc('course_transcription_import_subtitles',[j.source,revision,'Текст',{language:'ru',cue_count:1,subtitle_sha256:'d'.repeat(64)}]),/stt_job_exists_reconcile_first/);
+});
+
+async function captionSource({shuffled=false}={}){
+  const raw=shuffled?
+    'WEBVTT\n\n00:10.000 --> 00:30.000\nПродолжаем обсуждать задачи учебного курса.\n\n00:00.000 --> 00:10.000\nСначала рассмотрим темы и содержание обучения.':
+    'WEBVTT\n\n00:00.000 --> 00:30.000\nРассматриваем учебные темы и практические вопросы.';
+  const parsed=reviewCaption(raw,30000,{allowCueOrderReview:true}),video=randomUUID(),id=randomUUID();
+  const rev=captionSnapshotRevision({video_id:video,duration_ms:30000,raw_sha256:parsed.provenance.raw_sha256});
+  const provenance={...parsed.provenance,video_id:video,duration_ms:30000};
+  await db.query(`INSERT INTO course_transcription_sources(id,provider,video_id,source_revision,revision_basis,caption_sha256,duration_ms,enabled,created_by)
+    VALUES($1,'kinescope',$2,$3,'public_caption_snapshot',$4,30000,true,$5)`,[id,video,rev,provenance.raw_sha256,owner]);
+  return{id,rev,parsed,provenance,args:[id,rev,parsed.text,parsed.metadata,provenance]};
+}
+
+test('public caption RPC preserves provenance and exact replay for original and reviewed cue order',async()=>{
+  for(const shuffled of [false,true]){
+    const c=await captionSource({shuffled});
+    assert.equal((await rpc('course_transcription_import_reviewed_captions',c.args)).reused,false);
+    assert.equal((await rpc('course_transcription_import_reviewed_captions',c.args)).reused,true);
+    const row=await one('SELECT caption_provenance,subtitle_metadata,classification,quality_status FROM course_transcripts WHERE source_id=$1',[c.id]);
+    assert.deepEqual(row.caption_provenance,c.provenance);assert.deepEqual(row.subtitle_metadata,c.parsed.metadata);
+    assert.equal(row.classification,'paid_private');assert.equal(row.quality_status,'unreviewed');
+  }
+});
+test('snapshot source constraints reject audio metadata and a fabricated snapshot revision',async()=>{
+  const c=await captionSource();
+  await assert.rejects(db.query("UPDATE course_transcription_sources SET audio_track_id='track',audio_bytes=123 WHERE id=$1",[c.id]),/course_caption_snapshot_identity/);
+  await assert.rejects(db.query('UPDATE course_transcription_sources SET source_revision=$1 WHERE id=$2',['a'.repeat(64),c.id]),/course_caption_snapshot_identity/);
+  await assert.rejects(rpc('course_transcription_create_job',[c.id,owner,30000]),/public_caption_requires_reviewed_path/);
+  await assert.rejects(rpc('course_transcription_import_subtitles',c.args.slice(0,4)),/public_caption_requires_reviewed_path/);
+  assert.equal((await one('SELECT count(*)::int AS n FROM course_transcription_jobs WHERE source_id=$1',[c.id])).n,0);
+});
+test('reviewed caption provenance rejects unknown fields, changed source bytes and unproved transforms',async()=>{
+  const c=await captionSource();
+  const invalid=[{...c.provenance,url:'https://example.invalid/private'},
+    {...c.provenance,raw_sha256:'f'.repeat(64)},{...c.provenance,normalized_cue_multiset_sha256:'e'.repeat(64)},
+    {...c.provenance,transform:'stable_cue_order_v1',inversions:5},{...c.provenance,inversions:1}];
+  for(const provenance of invalid)await assert.rejects(rpc('course_transcription_import_reviewed_captions',[...c.args.slice(0,4),provenance]),/invalid_caption/);
+  assert.equal((await one('SELECT count(*)::int AS n FROM course_transcripts WHERE source_id=$1',[c.id])).n,0);
+});
+test('server-side quality guards reject extra fields, long gaps and missing coverage even if a client claims ready',async()=>{
+  const c=await captionSource();
+  for(const metadata of [{...c.parsed.metadata,extra:'unexpected'},{...c.parsed.metadata,quality_flags:['long_gap']},
+    {...c.parsed.metadata,max_gap_ms:120001},{...c.parsed.metadata,covered_ms:null},{...c.parsed.metadata,uncovered_ms:1}]){
+    await assert.rejects(rpc('course_transcription_import_reviewed_captions',[...c.args.slice(0,3),metadata,c.provenance]),/review_caption_quality_required/);
+  }
+  assert.equal((await one('SELECT count(*)::int AS n FROM course_transcripts WHERE source_id=$1',[c.id])).n,0);
+});
+test('new reviewed RPC remains service-only; both owner and staff browsers are denied mutation',async()=>{
+  const c=await captionSource();
+  for(const role of ['anon','authenticated']){
+    await db.exec(`SET ROLE ${role}; SET request.jwt.claim.sub='${owner}'`);
+    await assert.rejects(db.query('SELECT course_transcription_import_reviewed_captions($1,$2,$3,$4,$5)',c.args),/permission denied/);
+    await assert.rejects(db.query('UPDATE course_transcripts SET caption_provenance=$1',[c.provenance]),/permission denied/);
+    await db.exec('RESET ROLE');
+  }
 });
