@@ -767,7 +767,7 @@ export async function syncSecondaryProductAccessForUser(
 
 // ─── helpers ─────────────────────────────────────────────────────────────
 
-function buildEnrichedMeta(p: {
+export function buildEnrichedMeta(p: {
   rule_id: string;
   order_id: string | null;
   source_subscription_id: string | null;

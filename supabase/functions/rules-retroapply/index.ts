@@ -31,7 +31,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { checkPriorPurchase } from "../_shared/check-prior-purchase.ts";
-import { buildPriorPurchaseCache } from "../_shared/product-access-grants.ts";
+import { buildPriorPurchaseCache, buildEnrichedMeta } from "../_shared/product-access-grants.ts";
 import {
   classifyEntitlement,
   canExecuteDestructive,
@@ -91,6 +91,8 @@ interface UserAction {
   current_expires_at: string | null;
   source_subscription_id: string | null;
   skip_reason: string | null;
+  /** Server-computed purchase scope, shared with order fulfillment; never read from request input. */
+  prior_purchase_grant_meta?: Record<string, unknown>;
   /** Stage 3: маркер того, что admin_canonicalize_all переопределит ручную/admin lineage */
   lineage_will_be_overridden?: boolean;
   /** Stage 3: текущая lineage записи для UI */
@@ -511,6 +513,20 @@ async function processRule(
       current_expires_at: currentExpiry,
       source_subscription_id: sub?.id || null,
       skip_reason: skipReason,
+      ...(conditions.condition_type === "prior_purchase" && conditions.match_mode === "per_product" ? {
+        prior_purchase_grant_meta: buildEnrichedMeta({
+          rule_id: rule.id,
+          order_id: null,
+          source_subscription_id: sub?.id || null,
+          source_entitlement_source_id: null,
+          source_access_kind: sub?.id ? "subscription" : null,
+          source_tariff_id: sub?.tariff_id || rule.tariff_id || null,
+          source_access_end_at: sub?.access_end_at || null,
+          source_window_rule: rule.duration_days ? "rule_duration" : "align_with_source",
+          prior_purchase: priorPurchaseCache?.get(userId)?.get(targetProdId) || null,
+          target_product_id: targetProdId,
+        }),
+      } : {}),
       lineage_will_be_overridden: extras?.lineage_will_be_overridden || false,
       current_lineage: extras?.current_lineage ?? null,
       window_resolved_from: extras?.window_resolved_from ?? null,
@@ -1189,6 +1205,21 @@ async function executeActions(
     targeted++;
 
     if (action.category === "missing_access") {
+      const currentRule = ruleMap.get(action.rule_id);
+      const needsPurchaseScope = currentRule?.conditions?.condition_type === "prior_purchase"
+        && currentRule.conditions.match_mode === "per_product";
+      const purchaseMeta = needsPurchaseScope ? action.prior_purchase_grant_meta : undefined;
+      // Preview and execute use the same paid-order cache and canonical metadata builder.
+      // Missing/ambiguous scope must never create an unusable or unrestricted entitlement.
+      if (needsPurchaseScope && (!purchaseMeta?.prior_purchase_order_id
+          || !["full_tariff_scope", "module_scope_only"].includes(String(purchaseMeta.scope_resolution_mode))
+          || !action.planned_expires_at || !Number.isFinite(Date.parse(action.planned_expires_at))
+          || Date.parse(action.planned_expires_at) <= Date.now())) {
+        skipped_error++;
+        errors.push({ action_id: action.action_id, error: "historical_scope_or_window_unresolved" });
+        continue;
+      }
+
       // Idempotent guard: check if entitlement exists with ANY status
       // (unique constraint is on user_id + product_code, not status-specific)
       const { data: existing } = await supabase
@@ -1237,6 +1268,13 @@ async function executeActions(
             || !!oldMeta.source_rule_id
           );
 
+          if (needsPurchaseScope && (isManualLineage
+              || (oldMeta.source_rule_id && oldMeta.source_rule_id !== action.rule_id))) {
+            skipped_error++;
+            errors.push({ action_id: action.action_id, error: "historical_existing_lineage_protected" });
+            continue;
+          }
+
           if (oldMeta.source_rule_id && oldMeta.source_rule_id !== action.rule_id) {
             if (!isSystemLineage || isManualLineage) {
               // Manual lineage with foreign source_rule_id → skip (manual review)
@@ -1273,7 +1311,7 @@ async function executeActions(
             retroapplyPatch.business_subscription_id = action.source_subscription_id;
           }
 
-          const mergedMeta = { ...oldMeta, ...retroapplyPatch };
+          const mergedMeta = { ...oldMeta, ...purchaseMeta, ...retroapplyPatch };
 
           // Build update payload
           const updatePayload: Record<string, unknown> = {
@@ -1351,6 +1389,7 @@ async function executeActions(
         status: "active",
         expires_at: action.planned_expires_at,
         meta: {
+          ...purchaseMeta,
           source_type: "retroapply",
           source_rule_id: action.rule_id,
           source_window_rule: sourceWindowRule,
