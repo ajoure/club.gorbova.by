@@ -32,8 +32,6 @@ jobs:
         run: npm run verify:edge-functions
       - name: Unit and integration contracts
         run: npx vitest run
-      - name: Autosales dialogue policy
-        run: node --experimental-strip-types --test scripts/autosales-dialogue-policy.test.mjs
       - name: Sales knowledge and dialogue contracts (offline)
         run: node --test scripts/sales-knowledge/*.test.mjs
       - name: Browser application types

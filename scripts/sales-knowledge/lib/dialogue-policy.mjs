@@ -12,6 +12,9 @@ export function evaluateReply({ policy, conversation, candidate, now }) {
     if (!id(value) || !Array.isArray(policy[list]) || !policy[list].includes(value)) return deny('outside_scope');
   }
   if (!['bot', 'business'].includes(conversation.transport)) return deny('unknown_transport');
+  if (policy.require_activation === true && (conversation.sales_started !== true
+      || conversation.activation_policy_version !== policy.version)) return deny('activation_required');
+  if (policy.owner_test === true && policy.conversation_ids.length !== 1) return deny('test_scope_not_single');
   const nowMs = time(now), inboundTime = time(conversation.last_inbound_at);
   if (!Number.isFinite(nowMs) || !Number.isFinite(inboundTime) || inboundTime > nowMs) return deny('invalid_clock');
   if (conversation.transport === 'business') {
@@ -43,6 +46,27 @@ export function evaluateReply({ policy, conversation, candidate, now }) {
 export function applyConversationEvent(state, event) {
   if (!state || !event) throw new Error('invalid_conversation_event');
   const next = { ...state };
+  if (['manual_pause', 'silent_handoff', 'manual_resume'].includes(event.type)) {
+    if (!sameControlScope(next, event)) throw new Error('dialogue_scope_mismatch');
+    if (event.type !== 'manual_resume') {
+      return { ...next, state: next.opted_out ? 'STOPPED'
+        : next.delivery_uncertain ? 'DELIVERY_UNKNOWN' : 'HUMAN_HOLD', human_hold: true };
+    }
+    // Resume is an authenticated operator action after a fresh canonical history read.
+    // It never starts a sale, clears an opt-out, or reconciles uncertain delivery.
+    if (next.state !== 'HUMAN_HOLD' || next.opted_out !== false
+        || next.delivery_uncertain !== false || next.inflight_reply !== false) return next;
+    if (event.history_reconciled !== true || !id(event.history_revision)
+        || event.history_revision === next.history_revision
+        || !seq(next.last_inbound_seq) || !seq(next.last_answered_inbound_seq)
+        || !seq(event.answered_inbound_seq)
+        || event.answered_inbound_seq < next.last_answered_inbound_seq
+        || event.answered_inbound_seq > next.last_inbound_seq) throw new Error('resume_requires_fresh_history');
+    return { ...next, state: next.sales_started === false ? 'OFF'
+        : next.last_inbound_seq > event.answered_inbound_seq ? 'READY' : 'WAIT_CUSTOMER',
+      human_hold: false, human_requested: false, history_revision: event.history_revision,
+      last_answered_inbound_seq: event.answered_inbound_seq };
+  }
   if (event.type === 'opt_out') return { ...next, state: 'STOPPED', opted_out: true };
   if (['human_message', 'human_request'].includes(event.type)) return { ...next, state: 'HUMAN_HOLD', human_hold: true };
   if (event.type === 'delivery_unknown') {
@@ -71,4 +95,45 @@ export function applyConversationEvent(state, event) {
     return { ...next, history_revision: event.history_revision };
   }
   return next;
+}
+
+function sameControlScope(conversation, event) {
+  return id(conversation.id) && conversation.id === event.conversation_id
+    && id(conversation.bot_id) && conversation.bot_id === event.bot_id
+    && conversation.transport === 'business' && event.transport === 'business'
+    && id(conversation.business_connection_id)
+    && conversation.business_connection_id === event.business_connection_id;
+}
+
+/** Exact phrase with explicit whitespace/case normalization, never intent matching. */
+export function matchesSalesTrigger(text, phrase) {
+  if (typeof text !== 'string' || typeof phrase !== 'string' || !phrase.trim()) return false;
+  const normalize = v => v.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase();
+  return normalize(text) === normalize(phrase);
+}
+
+/** Trusted adapter only: persist incoming event and activation in one transaction.
+ * Preregistration, scope, event origin and approval must come from server sources.
+ * This does not authorize generation or delivery; evaluateReply remains mandatory.
+ */
+export function activateSalesConversation({ policy, conversation, event }) {
+  if (!conversation || !event || !sameControlScope(conversation, event)
+      || event.type !== 'customer_message' || event.origin !== 'live'
+      || !seq(event.seq) || !seq(conversation.last_inbound_seq)
+      || event.seq <= conversation.last_inbound_seq) return conversation;
+  const next = applyConversationEvent(conversation, event);
+  if (conversation.sales_started === true || conversation.state !== 'OFF'
+      || conversation.human_hold !== false || conversation.human_requested !== false
+      || conversation.opted_out !== false || conversation.delivery_uncertain !== false
+      || conversation.inflight_reply !== false) return next;
+  if (policy?.approved !== true || policy.require_activation !== true
+      || !['shadow', 'draft', 'auto'].includes(policy.mode) || !id(policy.version)
+      || !id(policy.knowledge_version) || event.preregistration_verified !== true
+      || !matchesSalesTrigger(event.text, policy.trigger_phrase)) return next;
+  for (const [key, value] of [['bot_ids', conversation.bot_id], ['conversation_ids', conversation.id],
+    ['campaign_ids', conversation.campaign_id], ['business_connection_ids', conversation.business_connection_id]]) {
+    if (!id(value) || !Array.isArray(policy[key]) || !policy[key].includes(value)) return next;
+  }
+  if (policy.owner_test === true && policy.conversation_ids.length !== 1) return next;
+  return { ...next, state: 'READY', sales_started: true, activation_policy_version: policy.version };
 }
