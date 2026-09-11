@@ -1,7 +1,7 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import {reviewCaption,captionSnapshotRevision} from './lib/reviewed-captions.mjs';
 
@@ -28,7 +28,7 @@ before(async()=>{
     CREATE TABLE public.products_v2(id uuid PRIMARY KEY);
   `);
   await db.exec(await readFile(new URL(appliedCorpusMigration,migrationsUrl),'utf8'));
-  await db.exec(await readFile(new URL('20260911180940_course_reviewed_caption_snapshots.sql',migrationsUrl),'utf8'));
+  await db.exec(await readFile(new URL('20260911184123_9c93b1c8-09c9-4f6a-9f80-d1490ed4f009.sql',migrationsUrl),'utf8'));
 });
 after(async()=>{await db?.close();});
 
@@ -51,11 +51,17 @@ async function job(duration=100000){
 const claim=(id,index,hash=audioHash,rev=revision)=>rpc('course_transcription_claim_part',[id,index,hash,rev]);
 const finish=(id,index,token,text='Пример текста урока',error=null)=>rpc('course_transcription_finish_part',[id,index,token,text,error]);
 
-test('course corpus creation has one migration matching the applied history',async()=>{
-  const creators=[];
+test('course corpus migrations have one creation and no duplicate SQL bodies',async()=>{
+  const creators=[],seenBodies=new Map();
   for(const file of (await readdir(migrationsUrl)).filter(name=>name.endsWith('.sql')).sort()){
     const sql=await readFile(new URL(file,migrationsUrl),'utf8');
     if(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?public\.course_transcription_sources\b/i.test(sql))creators.push(file);
+    if(sql.includes('public.course_transcription_')){
+      const digest=createHash('sha256').update(sql.replace(/\r\n?/g,'\n').trim()).digest('hex');
+      assert.equal(seenBodies.has(digest),false,
+        `Duplicate corpus SQL would replay twice: ${seenBodies.get(digest)} / ${file}`);
+      seenBodies.set(digest,file);
+    }
   }
   assert.deepEqual(creators,[appliedCorpusMigration],
     'A second corpus-creation migration breaks clean database replay');
