@@ -85,7 +85,7 @@ BEGIN
       'source_refs',item->'refs','source_cohort',(item->>'cohort')::int,'source_amount_unknown',true,'source_purchase_date_unknown',true),
     jsonb_build_object('product_id',item->>'product_id','product_name',product_name,'product_code',product_code_value,
       'tariff_id',item->'tariff_id','tariff_name',tariff_name,'flow_id',item->'flow_id',
-      'flow_assignment_mode',CASE WHEN item->>'flow_id' IS NULL THEN 'no_flow' ELSE 'explicit' END,
+      'flow_assignment_mode',CASE WHEN item->>'flow_id' IS NULL THEN 'no_flow' ELSE 'from_sheet' END,
       'reconcile_source','owner_confirmed_historical','import_source','owner_confirmed_sheet_17_18',
       'history_only',true,'owner_confirmed_paid',true,'historical_purchase_type',item->>'kind',
       'display_purchase_name',product_name,'module_list_mapped',CASE WHEN is_module THEN jsonb_build_array(item->>'product_id') ELSE '[]'::jsonb END,
@@ -98,8 +98,10 @@ BEGIN
    OR EXISTS(SELECT 1 FROM public.subscriptions_v2 WHERE order_id=ANY(new_ids))
    OR EXISTS(SELECT 1 FROM public.entitlements WHERE order_id=ANY(new_ids))
    OR EXISTS(SELECT 1 FROM public.entitlement_sources WHERE order_id=ANY(new_ids))
+   OR EXISTS(SELECT 1 FROM public.access_grant_ledger WHERE order_id=ANY(new_ids) OR source_order_id=ANY(new_ids))
+   OR EXISTS(SELECT 1 FROM public.referral_balance_transactions WHERE source_id::text=ANY(new_ids::text[]))
    OR EXISTS(SELECT 1 FROM public.orders_v2 WHERE id=ANY(new_ids) AND (paid_amount<>0 OR base_price<>0 OR final_price<>0
-     OR status<>'paid' OR is_deleted IS TRUE OR pipeline_id IS NOT NULL OR pipeline_stage_id IS NOT NULL))
+     OR meta->>'deal_month' IS NOT NULL OR status<>'paid' OR is_deleted IS TRUE OR pipeline_id IS NOT NULL OR pipeline_stage_id IS NOT NULL))
  THEN RAISE EXCEPTION 'Unexpected historical payment/access/financial side effect'; END IF;
  INSERT INTO public.audit_logs(action,actor_type,actor_label,meta)
  VALUES('HISTORICAL_PURCHASES_IMPORTED','system','Owner-approved paid history reconciliation',
