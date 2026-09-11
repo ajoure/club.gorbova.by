@@ -53,7 +53,9 @@ export function applyConversationEvent(state, event) {
     if (!id(event.delivery_id) || event.delivery_id !== next.pending_delivery_id
         || !seq(event.inbound_seq) || event.inbound_seq > next.last_inbound_seq
         || !seq(next.last_answered_inbound_seq)) throw new Error('invalid_delivery_sequence');
-    return { ...next, state: next.human_hold || next.opted_out ? next.state : 'WAIT_CUSTOMER',
+    const mayReturnToWait = ['SENDING', 'DELIVERY_UNKNOWN', 'READY', 'WAIT_CUSTOMER'].includes(next.state)
+      && !next.human_hold && !next.opted_out;
+    return { ...next, state: mayReturnToWait ? 'WAIT_CUSTOMER' : next.state,
       last_answered_inbound_seq: Math.max(next.last_answered_inbound_seq, event.inbound_seq),
       delivery_uncertain: false, inflight_reply: false, pending_delivery_id: null };
   }
@@ -63,6 +65,10 @@ export function applyConversationEvent(state, event) {
     return { ...next, last_inbound_seq: event.seq, last_inbound_at: event.at,
       last_inbound_actor: 'customer', history_revision: event.history_revision,
       state: ['READY', 'WAIT_CUSTOMER'].includes(next.state) ? 'READY' : next.state };
+  }
+  if (event.type === 'edited_message') {
+    if (!id(event.history_revision)) throw new Error('invalid_history_revision');
+    return { ...next, history_revision: event.history_revision };
   }
   return next;
 }

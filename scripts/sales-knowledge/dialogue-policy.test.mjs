@@ -67,7 +67,7 @@ test('ordinary bot does not inherit Business restrictions but retains selected c
 for (const event of ['timer', 'payment_received', 'page_view', 'webinar_attendance', 'edited_message', 'bot_echo']) {
   test(`${event} cannot unlock waiting`, () => {
     const data = scenario(); data.conversation.state = 'WAIT_CUSTOMER'; data.conversation.last_answered_inbound_seq = 5;
-    data.conversation = applyConversationEvent(data.conversation, { type: event });
+    data.conversation = applyConversationEvent(data.conversation, { type: event, history_revision: 'edited-revision' });
     assert.equal(evaluateReply(data).allowed, false);
   });
 }
@@ -79,6 +79,18 @@ test('a new incoming message invalidates the old draft without releasing human h
   data.conversation = applyConversationEvent(data.conversation, { type: 'human_message' });
   data.conversation = applyConversationEvent(data.conversation, { ...event, seq: 7, history_revision: 'history-7' });
   assert.equal(data.conversation.state, 'HUMAN_HOLD');
+});
+test('editing history invalidates a drafted answer without inventing a new customer turn', () => {
+  const data = scenario();
+  data.conversation = applyConversationEvent(data.conversation, { type: 'edited_message', history_revision: 'edited-revision' });
+  assert.equal(data.conversation.last_inbound_seq, 5);
+  assert.equal(evaluateReply(data).reason, 'stale_history');
+});
+test('a late delivery acknowledgement cannot reactivate an administratively stopped conversation', () => {
+  for (const state of ['OFF', 'STOPPED', 'HUMAN_HOLD']) {
+    const data = { ...scenario().conversation, state, pending_delivery_id: 'delivery' };
+    assert.equal(applyConversationEvent(data, { type: 'delivery_confirmed', delivery_id: 'delivery', inbound_seq: 5 }).state, state);
+  }
 });
 test('delivery confirmation must match the pending attempt and preserve opt-out', () => {
   const data = scenario().conversation; data.pending_delivery_id = 'delivery'; data.inflight_reply = true;
