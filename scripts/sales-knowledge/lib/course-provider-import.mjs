@@ -148,7 +148,10 @@ async function inspectAlias(io,token,alias){
   const subtitles=[];
   for(let page=1;page<=20;page++){
     const response=await io.provider(`/videos/${video.id}/subtitles?page=${page}&per_page=100`,token);
-    const rows=unwrap(response)||[];if(!Array.isArray(rows))throw new Error('subtitle_list_invalid');
+    // Kinescope returns HTTP 200 {data:null} for videos with no tracks.
+    // Nullish unwrapping would incorrectly retain the envelope as a row list.
+    const rows=(response?.data===null?[]:unwrap(response))||[];
+    if(!Array.isArray(rows))throw new Error('subtitle_list_invalid');
     subtitles.push(...rows);if(rows.length<100)break;if(page===20)throw new Error('subtitle_pagination_incomplete');
   }
   const ru=subtitles.filter(s=>s.language==='ru'&&(!s.status||s.status==='done'));
@@ -169,12 +172,18 @@ async function inspectAlias(io,token,alias){
     status:!parsed.quality_flags.length?'ready_to_import':warningsOnly?'ready_with_warnings':'quality_review',parsed};
 }
 
-export async function dryRunCourse(io,actor,{aliases}={}){
+export async function dryRunCourse(io,actor,{aliases,onProgress=async()=>{}}={}){
   const token=await tokenAndOwner(io,actor),snapshot=await readCourseBindings(io);
   const all=[...new Set(snapshot.bindings.map(b=>b.alias))].sort();
   const chosen=aliases||all;if(chosen.some(a=>!all.includes(a)))throw new Error('alias_outside_course');
   const sources=[];
   for(const alias of chosen){
+    // Persist metadata before the next provider call, so an unexpected STOP
+    // identifies the exact alias without losing already inspected sources.
+    // Progress is intentionally not an importable dry_run manifest.
+    await onProgress({schema_version:1,mode:'dry_run_progress',complete:false,
+      product_ids:COURSE_PRODUCT_IDS,current_alias:alias,counts:snapshot.counts,
+      unresolved:snapshot.unresolved,sources:structuredClone(sources)});
     try{
       const result=await inspectAlias(io,token,alias);const {parsed,...meta}=result;
       const duplicate=sources.find(s=>s.video_id===meta.video_id&&s.source_revision===meta.source_revision);

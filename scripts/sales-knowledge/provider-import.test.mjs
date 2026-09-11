@@ -172,3 +172,25 @@ test('public legacy redirects use HEAD without credentials and validate every ta
     await assert.rejects(unsafe.resolveLegacyAlias('123456789'),/legacy_redirect_(not_allowed|loop)/);
   }
 });
+test('a stopped dry-run records the current alias and previous results in a non-importable progress report',async()=>{
+  const f=fixture(),provider=f.io.provider;f.blocks.push({...f.blocks[0],id:'b2',content:{url:'https://kinescope.io/zFailAlias123'}});
+  f.io.provider=async(path)=>{if(path==='/videos/zFailAlias123')throw new Error('provider_http_503');return provider(path);};
+  const progress=[];
+  await assert.rejects(dryRunCourse(f.io,owner,{onProgress:async p=>progress.push(p)}),/provider_http_503/);
+  assert.equal(progress.length,2);assert.equal(progress[0].sources.length,0);
+  assert.equal(progress[1].current_alias,'zFailAlias123');assert.equal(progress[1].sources.length,1);
+  assert.equal(progress[1].mode,'dry_run_progress');assert.equal(progress[1].complete,false);
+  assert.doesNotMatch(JSON.stringify(progress),/https:|synthetic|Сегодня/);
+  await assert.rejects(importCourseBatch(f.io,owner,progress[1],[0]),/manifest_scope_invalid/);
+  assert.equal(f.writes.length,0);
+});
+test('Kinescope data:null means no subtitle tracks while unknown object shapes still stop',async()=>{
+  const f=fixture(),provider=f.io.provider;
+  f.io.provider=async(path)=>path.includes('/subtitles?')?{data:null}:provider(path);
+  const plan=await dryRunCourse(f.io,owner);assert.equal(plan.totals.missing_ru_subtitles,1);
+  assert.equal(plan.sources[0].status,'missing_ru_subtitles');assert.equal(plan.complete,true);
+  await assert.rejects(importCourseBatch(f.io,owner,plan,[0]),/batch_not_ready/);
+  f.io.provider=async(path)=>path.includes('/subtitles?')?{data:{unexpected:[]}}:provider(path);
+  await assert.rejects(dryRunCourse(f.io,owner),/subtitle_list_invalid/);
+  assert.equal(f.writes.length,0);
+});

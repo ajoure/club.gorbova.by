@@ -18,7 +18,9 @@ try{
   const actor=process.env.COURSE_KB_OWNER_ID;
   let report;
   if(mode==='dry-run'){
-    report=await dryRunCourse(io,actor,{aliases:get('--aliases')?.split(',')});
+    report=await dryRunCourse(io,actor,{aliases:get('--aliases')?.split(','),onProgress:async progress=>{
+      latestReport=progress;await writeFile(output,JSON.stringify(progress,null,2)+'\n',{mode:0o600});
+    }});
   }else if(mode==='execute'){
     const path=get('--manifest'),approved=get('--approved-manifest-sha256');
     if(!path||!approved)throw new Error('approved_manifest_required');
