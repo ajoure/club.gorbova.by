@@ -135,7 +135,10 @@ export async function dryRunCourse(io,actor,{aliases}={}){
       const result=await inspectAlias(io,token,alias);const {parsed,...meta}=result;
       const duplicate=sources.find(s=>s.video_id===meta.video_id&&s.source_revision===meta.source_revision);
       const bindings=snapshot.bindings.filter(b=>b.alias===alias);
-      if(duplicate){duplicate.aliases.push(alias);duplicate.bindings.push(...bindings);continue;}
+      if(duplicate){
+        if(parsed&&duplicate.content_sha256!==parsed.content_sha256)throw new Error('subtitle_snapshot_changed');
+        duplicate.aliases.push(alias);duplicate.bindings.push(...bindings);continue;
+      }
       sources.push({...meta,aliases:[alias],bindings,
         ...(parsed?{content_sha256:parsed.content_sha256,chars:parsed.chars,subtitle_metadata:parsed.metadata,quality_flags:parsed.quality_flags}:{})});
     }catch(error){

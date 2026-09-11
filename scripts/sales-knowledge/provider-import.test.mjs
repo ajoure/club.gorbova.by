@@ -65,6 +65,12 @@ test('subtitle links cannot fetch private networks, credentials, HTTP, or lookal
   for(const url of ['http://kinescope.io/a','https://127.0.0.1/a','https://kinescopecdn.net.evil.test/a','https://user:secret@kinescope.io/a','https://kinescope.io:123/a'])assert.throws(()=>safeSubtitleUrl(url));
   assert.equal(safeSubtitleUrl('https://kinescopecdn.net/a').hostname,'kinescopecdn.net');
 });
+test('two aliases resolving to one video cannot hide changed subtitles during dry-run',async()=>{
+  const f=fixture();f.blocks.push({...f.blocks[0],id:'b2',content:{url:'https://kinescope.io/secondAlias123'}});
+  let calls=0;f.io.subtitle=async()=>++calls===1?vtt:vtt.replace('Сегодня','Завтра');
+  await assert.rejects(dryRunCourse(f.io,owner),/subtitle_snapshot_changed/);
+  assert.equal(f.writes.length,0);
+});
 test('subtitle fetch omits credentials and rejects redirect outside provider',async()=>{
   const calls=[];const io=createManagedTransport({supabaseUrl:'https://example.supabase.co',serviceKey:'test',fetchImpl:async(url,options)=>{
     calls.push({url:String(url),options});return new Response(null,{status:302,headers:{location:'http://127.0.0.1/a'}});
