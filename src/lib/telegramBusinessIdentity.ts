@@ -44,7 +44,7 @@ export function getTelegramMessageIdentityLabel({
   botName,
   botUsername,
 }: TelegramMessageIdentityInput): string | null {
-  const isBusiness = transport === "business" || source === "telegram_business";
+  const isBusiness = transport === "business" || (!transport && source === "telegram_business");
   if (isBusiness) {
     const name = getTelegramBusinessAccountName(businessAccount);
     if (direction === "incoming") {

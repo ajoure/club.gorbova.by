@@ -66,6 +66,13 @@ describe("Telegram Business identity labels", () => {
     ).toBe("gorbova support");
   });
 
+  it("uses the explicit transport even if legacy source metadata disagrees", () => {
+    expect(getTelegramMessageIdentityLabel({
+      direction: "incoming", transport: "bot", source: "telegram_business",
+      businessAccount: kateryna, botName: "gorbova support",
+    })).toBe("gorbova support");
+  });
+
   it("falls back safely when a Business connection has no profile name", () => {
     expect(getTelegramBusinessAccountName(null)).toBeNull();
     expect(getTelegramPersonalChannelLabel(null)).toBe("Личный Telegram");

@@ -34,13 +34,6 @@ import {
   TooltipProvider,
 } from "@/components/ui/tooltip";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Send,
   MessageCircle,
   Bot,
@@ -103,7 +96,7 @@ import {
 import {
   buildQuotePreview,
 } from "./chat/telegramFormat";
-import { selectDefaultTelegramSender } from "@/lib/telegramSenderSelection";
+import { belongsToTelegramChannel, telegramChannelCacheKey, type ContactTelegramChannel } from "@/lib/telegramChannelScope";
 import {
   getTelegramMessageIdentityLabel,
   type TelegramBusinessIdentity,
@@ -194,7 +187,65 @@ const EMOJI_LIST = TELEGRAM_REACTION_EMOJIS;
 
 // PATCH 13.6+: Используется централизованный словарь EVENT_LABELS из @/lib/eventLabels
 
-export function ContactTelegramChat({
+
+type ChannelDraft = { message: string; file: File | null; fileType: "photo" | "video" | "audio" | "voice" | "video_note" | "document" | null };
+interface ChannelChatProps {
+  channel: ContactTelegramChannel;
+  initialDraft?: ChannelDraft;
+  onDraftChange: (draft: ChannelDraft) => void;
+  onBusyChange: (busy: boolean) => void;
+}
+
+export function ContactTelegramChat(props: ContactTelegramChatProps) {
+  const [selected, setSelected] = useState<{ userId: string; key: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const drafts = useRef(new Map<string, ChannelDraft>());
+  const { data: channels = [], isFetching, isError, refetch } = useQuery({
+    queryKey: ["telegram-contact-channels", props.userId],
+    enabled: !!props.userId && !!props.telegramUserId,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("admin_get_contact_telegram_channels_v1" as any, { p_user_id: props.userId } as any);
+      if (error) throw error;
+      return (data || []) as unknown as ContactTelegramChannel[];
+    },
+  });
+  const channel = channels.find(c => selected?.userId === props.userId && c.channel_key === selected.key)
+    ?? channels.find(c => c.is_primary) ?? channels[0];
+  const draftKey = `${props.userId}:${channel?.channel_key ?? ""}`;
+  const saveDraft = useCallback((draft: ChannelDraft) => { drafts.current.set(draftKey, draft); }, [draftKey]);
+
+  if (!props.telegramUserId) return <div className="p-6 text-center text-sm text-muted-foreground">Telegram не привязан</div>;
+  if (!channel || isError) return <TelegramSenderNotice loading={isFetching} failed={isError} onRetry={() => { void refetch(); }} />;
+
+  return <div className="flex h-full min-h-0 flex-col" data-testid="telegram-channel-panel">
+    <div className="shrink-0 border-b px-2 pb-2" data-testid="telegram-channel-picker">
+      <div className="mb-1.5 text-xs font-medium text-muted-foreground">Telegram · {channels.length} отдельных каналов</div>
+      <div className="grid grid-cols-2 gap-1.5" role="group" aria-label="Каналы Telegram">
+        {channels.map(item => <button key={item.channel_key} type="button" disabled={busy}
+          aria-pressed={item.channel_key === channel.channel_key}
+          onClick={() => setSelected({ userId: props.userId, key: item.channel_key })}
+          className={cn("min-w-0 rounded-lg border px-2 py-1.5 text-left text-xs transition-colors disabled:opacity-60",
+            item.channel_key === channel.channel_key ? "border-primary bg-primary/10 text-primary" : "border-border/50 hover:bg-muted")}>
+          <span className="flex items-start gap-1">
+            {item.transport === "business" ? <User className="mt-0.5 h-3 w-3 shrink-0" /> : <Bot className="mt-0.5 h-3 w-3 shrink-0" />}
+            <span className="min-w-0 break-words font-medium">{item.label}{item.is_primary && <span className="ml-1 text-[10px]">· Основной</span>}</span>
+            {Number(item.unanswered_count) > 0 && <span className="ml-auto shrink-0 rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground" title="Требуют ответа">{item.unanswered_count}</span>}
+          </span>
+          {item.username && <span className="block break-all text-[10px] text-muted-foreground">@{item.username.replace(/^@/, "")}</span>}
+          <span className="block text-[10px] text-muted-foreground">Сообщений: {item.message_count}</span>
+        </button>)}
+      </div>
+    </div>
+    <div className="flex-1 min-h-0">
+      <TelegramChannelChat key={draftKey} {...props} channel={channel} initialDraft={drafts.current.get(draftKey)} onDraftChange={saveDraft} onBusyChange={setBusy} />
+    </div>
+  </div>;
+}
+
+function TelegramChannelChat({
   userId,
   telegramUserId,
   telegramUsername,
@@ -208,20 +259,25 @@ export function ContactTelegramChat({
   hidePhotoButton = false,
   onMessageSent,
   isActive = true,
-}: ContactTelegramChatProps) {
+  channel, initialDraft, onDraftChange, onBusyChange,
+}: ContactTelegramChatProps & ChannelChatProps) {
   const queryClient = useQueryClient();
-  const [message, setMessage] = useState("");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [selectedFileType, setSelectedFileType] = useState<"photo" | "video" | "audio" | "voice" | "video_note" | "document" | null>(null);
+  const [message, setMessage] = useState(initialDraft?.message ?? "");
+  const [selectedFile, setSelectedFile] = useState<File | null>(initialDraft?.file ?? null);
+  const [selectedFileType, setSelectedFileType] = useState<"photo" | "video" | "audio" | "voice" | "video_note" | "document" | null>(initialDraft?.fileType ?? null);
   const [isUploading, setIsUploading] = useState(false);
   const [showMediaMenu, setShowMediaMenu] = useState(false);
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
   const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
   const [editingMessage, setEditingMessage] = useState<TelegramMessage | null>(null);
   const [editText, setEditText] = useState("");
-  const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
-  const [selectedBusinessAccountId, setSelectedBusinessAccountId] = useState<string | null>(null);
-  const senderWasChosenManuallyRef = useRef(false);
+  const selectedBotId = channel.transport === "bot" ? channel.channel_ref : null;
+  const selectedBusinessAccountId = channel.transport === "business" ? channel.channel_ref : null;
+  const chatCacheKey = useMemo(() => telegramChannelCacheKey(userId, channel), [userId, channel.channel_key]);
+  const channelRpcArgs = { p_user_id: userId, p_transport: channel.transport, p_channel_ref: channel.channel_ref };
+  useEffect(() => {
+    onDraftChange({ message, file: selectedFile, fileType: selectedFileType });
+  }, [message, selectedFile, selectedFileType, onDraftChange]);
   const [replyingTo, setReplyingTo] = useState<TelegramMessage | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [isNearBottomState, setIsNearBottomState] = useState(true);
@@ -249,99 +305,18 @@ export function ContactTelegramChat({
     return map;
   }, [telegramBots]);
 
-  const activeBots = useMemo(() => telegramBots.filter(b => b.status === "active"), [telegramBots]);
-  const { data: businessContext } = useQuery({
-    queryKey: ["telegram-latest-incoming-sender-context", userId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("telegram_messages")
-        .select("business_connection_id, business_account_id, bot_id, transport, created_at")
-        .eq("user_id", userId)
-        .eq("direction", "incoming")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      return data as {
-        business_connection_id: string | null;
-        business_account_id: string | null;
-        bot_id: string | null;
-        transport: "bot" | "business" | null;
-        created_at: string;
-      } | null;
-    },
-    enabled: !!userId,
-    staleTime: 30_000,
-  });
-  const { data: businessAccount } = useQuery({
-    queryKey: ["telegram-business-sender", businessContext?.business_account_id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("telegram_business_connections")
-        .select("id, bot_id, first_name, last_name, username, can_reply, is_enabled")
-        .eq("id", businessContext!.business_account_id!)
-        .maybeSingle();
-      if (error) throw error;
-      return data;
-    },
-    enabled: businessContext?.transport === "business" && !!businessContext.business_account_id,
-    staleTime: 30_000,
-  });
-  // A client may have talked both to a bot and to the connected personal
-  // account. Keep every eligible Business sender available instead of hiding
-  // it merely because a later bot message became the latest inbound event.
-  const { data: dialogBusinessMessageLinks = [] } = useQuery({
-    queryKey: ["telegram-dialog-business-message-links", userId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("telegram_messages")
-        .select("id, business_account_id")
-        .eq("user_id", userId)
-        .eq("transport", "business")
-        .not("business_account_id", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(1000);
-      if (error) throw error;
-      return (data || []) as Array<{ id: string; business_account_id: string }>;
-    },
-    enabled: !!userId,
-    staleTime: 30_000,
-  });
-  const dialogBusinessAccountIds = useMemo(
-    () => Array.from(new Set(dialogBusinessMessageLinks.map((row) => row.business_account_id))),
-    [dialogBusinessMessageLinks],
-  );
-  const businessAccountIdByMessageId = useMemo(
-    () => new Map(dialogBusinessMessageLinks.map((row) => [row.id, row.business_account_id])),
-    [dialogBusinessMessageLinks],
-  );
-  const { data: dialogBusinessAccounts = [] } = useQuery({
-    queryKey: ["telegram-dialog-business-senders", dialogBusinessAccountIds],
-    queryFn: async () => {
-      if (!dialogBusinessAccountIds.length) return [];
-      const { data, error } = await supabase
-        .from("telegram_business_connections")
-        .select("id, bot_id, first_name, last_name, username, can_reply, is_enabled")
-        .in("id", dialogBusinessAccountIds);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: dialogBusinessAccountIds.length > 0,
-    staleTime: 30_000,
-  });
-  const selectedBusinessAccount = useMemo(
-    () => dialogBusinessAccounts.find((account) => account.id === selectedBusinessAccountId) || businessAccount || null,
-    [dialogBusinessAccounts, selectedBusinessAccountId, businessAccount],
-  );
-  const selectedSender = selectedBusinessAccountId
-    ? `business:${selectedBusinessAccountId}`
-    : selectedBotId ? `bot:${selectedBotId}` : "";
+  const businessContext = { business_connection_id: channel.business_connection_id };
+  const selectedBusinessAccount = channel.transport === "business" ? {
+    id: channel.channel_ref, bot_id: channel.bot_id, first_name: channel.first_name,
+    last_name: channel.last_name, username: channel.username, can_reply: channel.can_reply, is_enabled: true,
+  } : null;
+  const dialogBusinessAccounts = useMemo(() => selectedBusinessAccount ? [selectedBusinessAccount] : [], [channel]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const didInitialScrollRef = useRef(false);
   const lastUserIdRef = useRef<string | null>(null);
   const lastIsActiveRef = useRef<boolean>(true);
-  
+
   // Anti double-click protection for send button
   const lastSendTimeRef = useRef<number>(0);
   const SEND_DEBOUNCE_MS = 500;
@@ -470,6 +445,7 @@ export function ContactTelegramChat({
         : null,
       meta: r.meta ?? null,
       is_read: r.is_read,
+      requires_reply: r.requires_reply,
       is_pinned: r.is_pinned,
       is_favorite: r.is_favorite,
       error_message: r.error_message,
@@ -496,7 +472,7 @@ export function ContactTelegramChat({
   //     Drives `isLoading` — the only critical path.
   //   Stage 2 (full): last 200 messages, full text/meta. Runs after Stage 1
   //     lands, enriches the cache. Never blocks first paint.
-  // Both stages fill the same `["telegram-messages", userId]` cache; downstream
+  // Both stages fill the same `chatCacheKey` cache; downstream
   // optimistic writes (send/edit/delete) keep pointing at that single key.
   // PATCH-CONTACT-CENTER-TELEGRAM-CHAT-PERFORMANCE-V1.2:
   //   1) Removed `placeholderData: (prev) => prev` on both queries — it
@@ -506,19 +482,19 @@ export function ContactTelegramChat({
   //   2) `refetchOnMount: false` on both — warm reopens must NOT round-trip
   //      to the server when data is still fresh. Realtime + background
   //      refresh (see fullEnabled effect below) keep the cache honest.
-  const { data: leanData, isLoading: leanLoading } = useQuery({
-    queryKey: ["telegram-messages-lean", userId],
+  const { data: leanData, isLoading: leanLoading, isError: leanError, refetch: refetchLean } = useQuery({
+    queryKey: ["telegram-messages-lean", userId, channel.channel_key],
     queryFn: async () => {
       const { data, error } = await supabase.rpc(
-        "admin_get_telegram_messages_lean_v1" as any,
-        { p_user_id: userId, p_limit: 20, p_text_limit: 4096 } as any,
+        "admin_get_telegram_channel_messages_v1" as any,
+        { ...channelRpcArgs, p_limit: 20, p_text_limit: 4096 } as any,
       );
       if (error) throw error;
       const mapped = mapRowsToMessages((data || []) as any[]);
       // Seed the shared cache so downstream reads/writes see something
       // immediately, and Stage 2 can merge into a warm cache.
       queryClient.setQueryData(
-        ["telegram-messages", userId],
+        chatCacheKey,
         (old: TelegramMessage[] | undefined) => mergeByIdPreferEnriched(old || [], mapped),
       );
       return mapped;
@@ -539,7 +515,7 @@ export function ContactTelegramChat({
   const [fullEnabled, setFullEnabled] = useState(false);
   // Freshness marker stored in queryClient so it survives remount of this
   // component (e.g., inbox → chat navigation cycles).
-  const fullFreshnessKey = ["telegram-messages-full-at", userId] as const;
+  const fullFreshnessKey = ["telegram-messages-full-at", userId, channel.channel_key] as const;
   useEffect(() => {
     setFullEnabled(false);
     if (!userId || !leanData) return;
@@ -565,18 +541,17 @@ export function ContactTelegramChat({
     return () => cancel(handle);
   }, [userId, leanData]);
 
-  const { data: fullData, refetch: refetchMessages } = useQuery({
-    queryKey: ["telegram-messages", userId],
+  const { data: fullData, isError: fullError, refetch: refetchMessages } = useQuery({
+    queryKey: chatCacheKey,
     queryFn: async () => {
-      const { data, error } = await supabase.rpc("admin_get_telegram_messages_fast_v1", {
-        p_user_id: userId,
-        p_limit: 200,
-      });
+      const { data, error } = await supabase.rpc("admin_get_telegram_channel_messages_v1" as any, {
+        ...channelRpcArgs, p_limit: 200,
+      } as any);
       if (error) throw error;
       const nextMessages = mapRowsToMessages((data || []) as any[]);
       setHasOlderMessages(nextMessages.length === 200);
       const prevMessages =
-        (queryClient.getQueryData(["telegram-messages", userId]) as TelegramMessage[] | undefined) || [];
+        (queryClient.getQueryData(chatCacheKey) as TelegramMessage[] | undefined) || [];
       return mergeByIdPreferEnriched(prevMessages, nextMessages);
     },
     enabled: !!userId && fullEnabled,
@@ -606,12 +581,12 @@ export function ContactTelegramChat({
   const messages = fullData ?? leanData;
   const messagesLoading = leanLoading && !leanData && !fullData;
   const { data: unansweredItems = [] } = useQuery({
-    queryKey: ["contact-center-unanswered", userId],
+    queryKey: ["contact-center-unanswered", userId, channel.channel_key],
     enabled: !!userId,
     staleTime: 15_000,
     queryFn: async () => {
-      const { data, error } = await supabase.rpc("get_contact_center_unanswered_v1" as any, {
-        p_user_id: userId,
+      const { data, error } = await supabase.rpc("admin_get_telegram_channel_messages_v1" as any, {
+        ...channelRpcArgs, p_limit: 50, p_unanswered_only: true,
       } as any);
       if (error) throw error;
       return (data || []) as Array<{ id: string; message_text: string | null; created_at: string }>;
@@ -650,9 +625,9 @@ export function ContactTelegramChat({
     setIsLoadingOlderMessages(true);
     try {
       const { data, error } = await supabase.rpc(
-        "admin_get_telegram_messages_page_v2" as any,
+        "admin_get_telegram_channel_messages_v1" as any,
         {
-          p_user_id: userId,
+          ...channelRpcArgs,
           p_before_created_at: oldest.created_at,
           p_before_id: oldest.id,
           p_limit: 100,
@@ -662,7 +637,7 @@ export function ContactTelegramChat({
 
       const older = mapRowsToMessages((data || []) as any[]);
       queryClient.setQueryData(
-        ["telegram-messages", userId],
+        chatCacheKey,
         (current: TelegramMessage[] | undefined) =>
           mergeByIdPreferEnriched(current || messages, older),
       );
@@ -681,160 +656,38 @@ export function ContactTelegramChat({
     }
   }, [isLoadingOlderMessages, messages, queryClient, userId]);
 
-  // Fetch events from telegram_logs - optimized
-  const { data: events, isLoading: eventsLoading, refetch: refetchEvents } = useQuery({
-    queryKey: ["telegram-events", userId],
+  // Preserve historical technical access events, but only for clubs served
+  // by this bot. A Business account must never inherit its bridge bot's events.
+  const { data: accessEvents = [] } = useQuery({
+    queryKey: ["telegram-access-events", telegramUserId, channel.channel_key],
+    enabled: !!telegramUserId && channel.transport === "bot",
+    staleTime: 30_000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("telegram_logs")
-        .select("id, action, status, created_at, meta, message_text")
-        .eq("user_id", userId)
-        .not("action", "in", "(ADMIN_CHAT_MESSAGE,ADMIN_CHAT_FILE)")
-        .order("created_at", { ascending: true })
-        .limit(50);
-      if (error) throw error;
-      return (data || []).map((e: any) => ({ ...e, type: "event" })) as TelegramEvent[];
-    },
-    enabled: !!userId,
-    staleTime: 30000,
-    refetchOnWindowFocus: false,
-  });
-
-  // Fetch billing/subscription events from audit_logs
-  const { data: billingEvents, isLoading: billingLoading, refetch: refetchBilling } = useQuery({
-    queryKey: ["billing-events", userId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("audit_logs")
-        .select("id, action, created_at, meta")
-        .eq("target_user_id", userId)
-        .in("action", [
-          "subscription.charged",
-          "subscription.renewal_order_created",
-          "subscription.purchased",
-          "subscription.created",
-          "subscription.activated",
-          "subscription.expired",
-          "subscription.canceled",
-          "subscription.charge_failed",
-          "subscription.gc_sync_renewal_success",
-          "subscription.gc_sync_renewal_failed",
-          "payment.success",
-          "payment.failed",
-          "telegram.backfill_grant",
-        ])
-        .order("created_at", { ascending: true })
-        .limit(50);
-      if (error) throw error;
-      return (data || []).map((e: any) => ({ 
-        ...e, 
-        type: "event",
-        status: "ok",
-      })) as TelegramEvent[];
-    },
-    enabled: !!userId,
-    staleTime: 30000,
-    refetchOnWindowFocus: false,
-  });
-
-  // Telegram does not echo a bot's own sendMessage response back through the
-  // webhook. Historical join decisions therefore exist only in the access
-  // audit. Surface those records so old technical replies are not invisible;
-  // new replies are persisted as normal outgoing telegram_messages by webhook.
-  const { data: accessEvents } = useQuery({
-    queryKey: ["telegram-access-events", telegramUserId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("telegram_access_audit")
-        .select("id, event_type, created_at, reason, meta")
+      const { data, error } = await supabase.from("telegram_access_audit")
+        .select("id, event_type, created_at, reason, meta, telegram_clubs!inner(bot_id)")
         .eq("telegram_user_id", telegramUserId!)
+        .eq("telegram_clubs.bot_id", channel.channel_ref)
         .in("event_type", ["JOIN_APPROVED", "JOIN_DECLINED"])
-        .order("created_at", { ascending: true })
-        .limit(50);
+        .order("created_at", { ascending: true }).limit(50);
       if (error) throw error;
       return (data || []).map((event: any) => ({
-        id: `access-${event.id}`,
-        type: "event" as const,
-        action: event.event_type,
-        status: "success",
-        created_at: event.created_at,
-        message_text:
-          event.event_type === "JOIN_DECLINED"
-            ? "Заявка отклонена. Активный доступ к клубу не был найден."
-            : "Заявка одобрена. Доступ в клуб открыт.",
+        id: `access-${event.id}`, type: "event" as const, action: event.event_type,
+        status: "success", created_at: event.created_at,
+        message_text: event.event_type === "JOIN_DECLINED"
+          ? "Заявка отклонена. Активный доступ к клубу не был найден."
+          : "Заявка одобрена. Доступ в клуб открыт.",
         meta: { ...(event.meta || {}), reason: event.reason || null, source: "telegram_access_audit" },
       })) as TelegramEvent[];
     },
-    enabled: !!telegramUserId,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
   });
-
-  // Combine and sort messages + telegram events + billing events.
-  // PATCH: Hide event-pills that mirror a real outgoing telegram_messages bubble.
-  // Rules:
-  //   - status must be 'success' (failed/skipped stay visible as diagnostic pills);
-  //   - whitelist of admin/notification actions that are normally mirrored to chat;
-  //   - either bubble exists in ±5min window (heuristic) OR meta marks it as mirrored,
-  //     OR text is empty (no value to show as pill).
-  const normalizeText = (t?: string | null) =>
-    (t || "").replace(/\s+/g, " ").trim().toLowerCase();
-
-  const MIRRORABLE_ACTIONS = new Set<string>([
-    'SEND_REMINDER',
-    'manual_notification',
-    'MANUAL_NOTIFICATION',
-    'custom',
-    'telegram.notification.sent',
-    // Auto/manual access grants — backend mirrors them as a real outgoing
-    // bubble in telegram_messages, so the event-pill is redundant.
-    'AUTO_GRANT',
-    'MANUAL_GRANT',
-    'JOIN_APPROVED',
-    'JOIN_DECLINED',
-    // subscription_reminder_*d are matched via prefix below
-  ]);
-
-  const SUCCESSFUL_STATUSES = new Set<string>(['success', 'ok', 'sent']);
-
-  // V1.2: chatItems is now memoized on [messages, events, billingEvents].
-  // Draft/highlighted/unread state changes no longer rebuild the array
-  // (so downstream map + date/time precompute stays reference-stable).
   const chatItems = useMemo<ChatItem[]>(() => {
-    const msgs = messages || [];
-    const outgoingMirrored = msgs.filter(
-      (m: any) => m.direction === 'outgoing' && (m.meta?.automated === true || m.meta?.source)
-    );
-    const mirroredAt: number[] = outgoingMirrored.map((m: any) => new Date(m.created_at).getTime());
-    const mirroredTexts = new Set(outgoingMirrored.map((m: any) => normalizeText(m.message_text)));
-
-    const isMirrored = (e: TelegramEvent): boolean => {
-      const action = e.action || '';
-      const isMirrorable =
-        MIRRORABLE_ACTIONS.has(action) ||
-        action.startsWith('subscription_reminder_');
-      if (!isMirrorable) return false;
-      if (!SUCCESSFUL_STATUSES.has(String(e.status || ''))) return false;
-      if ((e.meta as any)?.mirrored_to_telegram_messages === true) return true;
-      const mirroredTgId = (e.meta as any)?.telegram_message_id;
-      if (typeof mirroredTgId === 'number' && mirroredTgId > 0) {
-        const hit = msgs.some((m: any) => m.message_id === mirroredTgId);
-        if (hit) return true;
-      }
-      if (!e.message_text || !e.message_text.trim()) return true;
-      if (mirroredTexts.has(normalizeText(e.message_text))) return true;
-      const t = new Date(e.created_at).getTime();
-      return mirroredAt.some((mt) => Math.abs(mt - t) <= 300_000);
-    };
-
-    return [
-      ...msgs,
-      ...((events || []).filter((e) => !isMirrored(e as TelegramEvent))),
-      ...(accessEvents || []),
-      ...(billingEvents || []),
-    ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, events, accessEvents, billingEvents]);
+    const rows = messages || [];
+    const legacyAccess = accessEvents.filter(event => !rows.some(message =>
+      message.direction === "outgoing" &&
+      message.meta?.source === (event.action === "JOIN_DECLINED" ? "join_request_declined" : "join_request_approved") &&
+      Math.abs(new Date(message.created_at).getTime() - new Date(event.created_at).getTime()) < 300_000));
+    return [...rows, ...legacyAccess].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  }, [messages, accessEvents]);
 
   // V1.3: reactions moved above chatItemsWithMeta so precompute has access.
   const telegramMessageIds = useMemo(
@@ -973,7 +826,7 @@ export function ContactTelegramChat({
       const botUsernameRaw = msg.bot_username ?? joined?.bot_username ?? fromMap?.bot_username ?? null;
       const flattenedSource = (msgAny.source ?? null) as string | null;
       const messageSource = (metaAny.source ?? flattenedSource) as string | null;
-      const businessAccountId = msg.business_account_id ?? businessAccountIdByMessageId.get(msg.id) ?? null;
+      const businessAccountId = msg.business_account_id ?? null;
       const resolvedBusinessAccount = businessAccountId
         ? dialogBusinessAccounts.find((account) => account.id === businessAccountId) ?? null
         : dialogBusinessAccounts.length === 1
@@ -1060,7 +913,6 @@ export function ContactTelegramChat({
     clientName,
     avatarUrl,
     botsMap,
-    businessAccountIdByMessageId,
     dialogBusinessAccounts,
   ]);
 
@@ -1092,58 +944,10 @@ export function ContactTelegramChat({
     });
   }, [messages]);
 
-  // Reset sender immediately on dialog switch so the footer doesn't flash
-  // the previous chat's sender while the next dialog context is loading.
-  useEffect(() => {
-    senderWasChosenManuallyRef.current = false;
-    setSelectedBotId(null);
-    setSelectedBusinessAccountId(null);
-  }, [userId]);
-
-  // === DEFAULT SENDER SELECTION ===
-  useEffect(() => {
-    if (senderWasChosenManuallyRef.current) return;
-
-    const selection = selectDefaultTelegramSender({
-      messages: businessContext
-        ? [{
-            direction: "incoming",
-            created_at: businessContext.created_at,
-            transport: businessContext.transport,
-            bot_id: businessContext.bot_id,
-            business_account_id: businessContext.business_account_id,
-          }]
-        : [],
-      activeBots,
-      businessAccount,
-    });
-    setSelectedBotId(selection?.botId ?? null);
-    setSelectedBusinessAccountId(selection?.businessAccountId ?? null);
-  }, [businessContext, activeBots, userId, businessAccount]);
-
-  const handleBotChange = (botId: string) => {
-    senderWasChosenManuallyRef.current = true;
-    setSelectedBotId(botId);
-    setSelectedBusinessAccountId(null);
-  };
-
-  const handleSenderChange = (value: string) => {
-    senderWasChosenManuallyRef.current = true;
-    if (value.startsWith("business:")) {
-      const accountId = value.slice("business:".length);
-      setSelectedBusinessAccountId(accountId);
-      setSelectedBotId(null);
-    } else {
-      handleBotChange(value.slice("bot:".length));
-      return;
-    }
-  };
-
   const refetch = useCallback(() => {
     refetchMessages();
-    refetchEvents();
-    refetchBilling();
-  }, [refetchMessages, refetchEvents, refetchBilling]);
+    queryClient.invalidateQueries({ queryKey: ["telegram-contact-channels", userId] });
+  }, [refetchMessages, queryClient, userId]);
 
   const getScrollViewport = useCallback((): HTMLElement | null => {
     return (scrollRef.current?.querySelector(
@@ -1225,7 +1029,7 @@ export function ContactTelegramChat({
     const channelName = `chat-messages-${userId}-${instanceIdRef.current}`;
     console.log("[ContactTelegramChat][realtime] subscribing", { channelName, filter });
 
-    const channel = supabase
+    const realtimeChannel = supabase
       .channel(channelName)
       .on(
         "postgres_changes",
@@ -1237,6 +1041,8 @@ export function ContactTelegramChat({
         },
         (payload) => {
           const newMsg = payload.new as any;
+          queryClient.invalidateQueries({ queryKey: ["telegram-contact-channels", userId] });
+          if (!belongsToTelegramChannel(newMsg, channel)) return;
           console.log("[ContactTelegramChat][realtime] INSERT", { id: newMsg?.id, user_id: newMsg?.user_id, direction: newMsg?.direction });
           const msgText = (newMsg?.message_text || "").trim();
           const msgTime = new Date(newMsg?.created_at || Date.now()).getTime();
@@ -1256,7 +1062,7 @@ export function ContactTelegramChat({
           // Patch cache: merge incoming row directly, drop matching temp row.
           // Dedup by telegram_messages.id — guard against double-insert from realtime + fallback refetch.
           queryClient.setQueryData(
-            ["telegram-messages", userId],
+            chatCacheKey,
             (old: TelegramMessage[] | undefined) => {
               const list = old ? [...old] : [];
               if (list.some((m) => m.id === newMsg.id)) return list;
@@ -1295,9 +1101,11 @@ export function ContactTelegramChat({
         },
         (payload) => {
           const updated = payload.new as any;
+          queryClient.invalidateQueries({ queryKey: ["telegram-contact-channels", userId] });
+          if (!belongsToTelegramChannel(updated, channel)) return;
           const shouldPin = isNearBottom();
           queryClient.setQueryData(
-            ["telegram-messages", userId],
+            chatCacheKey,
             (old: TelegramMessage[] | undefined) => {
               if (!old) return old;
               let found = false;
@@ -1345,7 +1153,8 @@ export function ContactTelegramChat({
         },
         (payload) => {
           const row = payload.new as any;
-          const cached = queryClient.getQueryData(["telegram-messages", userId]) as
+          if (!belongsToTelegramChannel(row, channel)) return;
+          const cached = queryClient.getQueryData(chatCacheKey) as
             | TelegramMessage[]
             | undefined;
           const alreadyHave = !!cached?.some((m) => m.id === row?.id);
@@ -1362,7 +1171,7 @@ export function ContactTelegramChat({
         window.clearTimeout(refetchTimerRef.current);
       }
       console.log("[ContactTelegramChat][realtime] unsubscribing", { channelName });
-      supabase.removeChannel(channel);
+      supabase.removeChannel(realtimeChannel);
       supabase.removeChannel(inboxBridgeChannel);
     };
   }, [userId, queryClient, isNearBottom, startStickyScroll, debouncedRefetch]);
@@ -1385,7 +1194,7 @@ export function ContactTelegramChat({
       body: { action: "get_media_urls", message_ids: ids },
     }).then(({ data, error }) => {
       if (error || !data?.urls) return;
-      queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => {
+      queryClient.setQueryData(chatCacheKey, (old: TelegramMessage[] | undefined) => {
         if (!old) return old;
         return old.map((m) => {
           const url = data.urls[m.id];
@@ -1415,7 +1224,7 @@ export function ContactTelegramChat({
     // Start polling if there are pending items and haven't exceeded max attempts
     if (hasPendingMedia && pendingRefreshCountRef.current < MAX_PENDING_REFRESH_ATTEMPTS) {
       console.log(`[AUTO-REFRESH] Starting polling for pending media (attempt ${pendingRefreshCountRef.current + 1}/${MAX_PENDING_REFRESH_ATTEMPTS})`);
-      
+
       pendingAutoRefreshRef.current = window.setInterval(async () => {
         // Stop if max attempts reached
         if (pendingRefreshCountRef.current >= MAX_PENDING_REFRESH_ATTEMPTS) {
@@ -1432,19 +1241,19 @@ export function ContactTelegramChat({
           console.log("[AUTO-REFRESH] Skipping - already refetching");
           return;
         }
-        
+
         isRefetchingRef.current = true;
         pendingRefreshCountRef.current += 1;
-        
+
         try {
           console.log(`[AUTO-REFRESH] Refreshing messages (attempt ${pendingRefreshCountRef.current}/${MAX_PENDING_REFRESH_ATTEMPTS})`);
           await refetchMessages();
-          
+
           // === EARLY STOP: Check if pending disappeared after refetch ===
           // Get fresh data from query cache
-          const freshMessages = queryClient.getQueryData(["telegram-messages", userId]) as TelegramMessage[] | undefined;
+          const freshMessages = queryClient.getQueryData(chatCacheKey) as TelegramMessage[] | undefined;
           const stillHasPending = freshMessages?.some((m) => m.meta?.upload_status === 'pending');
-          
+
           if (!stillHasPending) {
             console.log("[AUTO-REFRESH] No more pending media, stopping polling early");
             pendingRefreshCountRef.current = 0;
@@ -1454,7 +1263,7 @@ export function ContactTelegramChat({
             }
           }
           // === END EARLY STOP ===
-          
+
         } finally {
           isRefetchingRef.current = false;
         }
@@ -1491,19 +1300,19 @@ export function ContactTelegramChat({
       "BUSINESS_CONNECTION_INVALID": "Подключение личного Telegram изменилось или было отключено",
       "BUSINESS_PEER_USAGE_MISSING": "Клиент должен снова написать Екатерине, прежде чем можно будет ответить из системы",
     };
-    
+
     // Check for exact match first
     if (translations[errorMessage]) {
       return translations[errorMessage];
     }
-    
+
     // Check for partial matches
     for (const [key, value] of Object.entries(translations)) {
       if (errorMessage.includes(key)) {
         return value;
       }
     }
-    
+
     // Return original if no translation found
     return errorMessage;
   };
@@ -1605,7 +1414,7 @@ export function ContactTelegramChat({
       // Фиксируем границу до фактической отправки, чтобы incoming, пришедший
       // во время отправки, НЕ попал в эту boundary, даже если realtime уже
       // добавил его в кэш к моменту onSuccess.
-      const snapshot = (queryClient.getQueryData(["telegram-messages", userId]) as
+      const snapshot = (queryClient.getQueryData(chatCacheKey) as
         | TelegramMessage[]
         | undefined) || [];
       const replyScope = selectedBusinessAccountId
@@ -1652,17 +1461,17 @@ export function ContactTelegramChat({
           source: "local_preview",
         } : null,
       };
-      queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => 
+      queryClient.setQueryData(chatCacheKey, (old: TelegramMessage[] | undefined) =>
         [...(old || []), tempMessage]
       );
       startStickyScroll(2200);
     },
     onSuccess: async (result) => {
       // FIX B: Remove all temp messages BEFORE refetch to prevent duplicates
-      queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) =>
+      queryClient.setQueryData(chatCacheKey, (old: TelegramMessage[] | undefined) =>
         (old || []).filter(m => !m.id.startsWith('temp-'))
       );
-      
+
       setMessage("");
       setSelectedFile(null);
       setSelectedFileType(null);
@@ -1713,13 +1522,15 @@ export function ContactTelegramChat({
     },
   });
 
+  useEffect(() => { onBusyChange(sendMutation.isPending || isUploading); }, [sendMutation.isPending, isUploading, onBusyChange]);
+
   // Edit message mutation
   const editMutation = useMutation({
     mutationFn: async ({ dbMessageId, messageId, text }: { dbMessageId: string; messageId: number; text: string }) => {
       const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
-        body: { 
-          action: "edit_message", 
-          user_id: userId, 
+        body: {
+          action: "edit_message",
+          user_id: userId,
           message: text,
           message_id: messageId,
           db_message_id: dbMessageId,
@@ -1744,9 +1555,9 @@ export function ContactTelegramChat({
   const deleteMutation = useMutation({
     mutationFn: async ({ dbMessageId, messageId }: { dbMessageId: string; messageId: number }) => {
       const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
-        body: { 
-          action: "delete_message", 
-          user_id: userId, 
+        body: {
+          action: "delete_message",
+          user_id: userId,
           message_id: messageId,
           db_message_id: dbMessageId,
         },
@@ -1955,6 +1766,7 @@ export function ContactTelegramChat({
     if (
       sendMutation.isPending ||
       isUploading ||
+      !channel.can_reply ||
       (!selectedBotId && !selectedBusinessAccountId)
     ) return;
     const trimmed = renderContactCenterMessagePlaceholders(message, {
@@ -2122,12 +1934,17 @@ export function ContactTelegramChat({
                   <Skeleton key={i} className="h-12 w-3/4" />
                 ))}
               </div>
+            ) : (leanError && !leanData && !fullData) || fullError ? (
+              <div className="p-4 text-center text-sm" role="alert">
+                <p>Не удалось загрузить историю выбранного канала.</p>
+                <Button variant="outline" className="mt-2" onClick={() => { void refetchLean(); void refetchMessages(); }}>Повторить загрузку</Button>
+              </div>
             ) : !chatItems?.length ? (
               <div className="h-full flex items-center justify-center text-muted-foreground min-h-[200px]">
                 <div className="text-center">
                   <Bot className="w-10 h-10 mx-auto mb-2 opacity-30" />
                   <p className="text-sm">Нет сообщений</p>
-                  <p className="text-xs">Начните диалог, отправив сообщение</p>
+                  <p className="text-xs">В этом Telegram-канале переписки пока нет</p>
                 </div>
               </div>
             ) : (
@@ -2239,34 +2056,11 @@ export function ContactTelegramChat({
           {(botsFailed || (!selectedBotId && !selectedBusinessAccountId)) && (
             <TelegramSenderNotice loading={botsFetching} failed={botsFailed} onRetry={() => { void refetchBots(); }} />
           )}
-          {(activeBots.length > 0 || dialogBusinessAccounts.some((account) => account.is_enabled && account.can_reply)) && (
-            <div className="flex items-center gap-1.5 pb-1.5">
-              <Select value={selectedSender} onValueChange={handleSenderChange}>
-                <SelectTrigger className="h-7 w-auto min-w-[140px] text-[11px] rounded-lg border-border/40 bg-muted/30 gap-1 px-2">
-                  <Bot className="h-3 w-3 shrink-0" />
-                  <SelectValue placeholder="Выберите отправителя" />
-                </SelectTrigger>
-                <SelectContent>
-                  {dialogBusinessAccounts
-                    .filter((account) => account.is_enabled && account.can_reply)
-                    .map((account) => {
-                      const name = [account.first_name, account.last_name].filter(Boolean).join(" ").trim()
-                        || (account.username ? `@${account.username}` : "Telegram Business");
-                      return (
-                        <SelectItem key={account.id} value={`business:${account.id}`} className="text-xs">
-                          {name} · личный Telegram
-                        </SelectItem>
-                      );
-                    })}
-                  {activeBots.map(bot => (
-                    <SelectItem key={bot.id} value={`bot:${bot.id}`} className="text-xs">
-                      {bot.bot_name?.trim() ? bot.bot_name : `@${bot.bot_username}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <div className="pb-1.5 text-xs text-muted-foreground" data-testid="telegram-channel-sender">
+            Отправитель: <span className="font-medium text-foreground">{channel.label}</span>
+            {channel.transport === "bot" && channel.username && <span> · @{channel.username.replace(/^@/, "")}</span>}
+          </div>
+          {!channel.can_reply && <p className="mb-2 text-xs text-muted-foreground">Ответ из этого канала сейчас недоступен. Для личного Telegram нужен действующий диалог клиента с аккаунтом.</p>}
           {replyingTo && (
             <div className="flex items-start gap-2 mb-2 p-2 rounded-md bg-muted border-l-2 border-primary">
               <CornerUpLeft className="w-3.5 h-3.5 text-primary mt-0.5 flex-shrink-0" />
@@ -2313,7 +2107,7 @@ export function ContactTelegramChat({
                 </div>
               </PopoverContent>
             </Popover>
-            
+
             <DropdownMenu open={showMediaMenu} onOpenChange={setShowMediaMenu}>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-9 w-9 p-0 shrink-0">
@@ -2435,7 +2229,7 @@ export function ContactTelegramChat({
               }}
             />
           </div>
-          
+
           <div className="min-w-0 w-full">
             <TokenizedRichInput
               value={message}
@@ -2454,7 +2248,7 @@ export function ContactTelegramChat({
             <Button
               onClick={handleSend}
               aria-label="Отправить сообщение"
-              disabled={(!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || (!selectedBotId && !selectedBusinessAccountId)}
+              disabled={!channel.can_reply || (!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || (!selectedBotId && !selectedBusinessAccountId)}
               className="h-12 w-12 p-0 shrink-0"
               title={!selectedBotId && !selectedBusinessAccountId ? "Выберите отправителя" : undefined}
             >

@@ -33,7 +33,8 @@ describe("Telegram Business contact-centre wiring", () => {
 
   it("shows the personal Telegram identity instead of the technical connected bot", () => {
     expect(contactTelegramChatSource).toContain("getTelegramMessageIdentityLabel");
-    expect(contactTelegramChatSource).toContain("businessAccountIdByMessageId");
+    expect(contactTelegramChatSource).toContain("msg.business_account_id ?? null");
+    expect(contactTelegramChatSource).toContain("admin_get_telegram_channel_messages_v1");
     expect(unifiedInboxHookSource).toContain("getTelegramPersonalChannelLabel");
     expect(unifiedInboxHookSource).toContain("latestIdentity.transport === \"business\"");
     expect(sourceBadgeSource).toContain('label?.includes("личный Telegram")');
