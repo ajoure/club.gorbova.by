@@ -30,6 +30,7 @@ export async function runArchivedLoginMerge(client: any, mode: 'dry-run'|'execut
     if(status.data?.state==='complete')return {ok:true,state:'complete',changed:0};
     try {
       const current=await read();
+      if(current.email_confirmed_at||current.last_sign_in_at)return {ok:false,stage:'auth_security_drift',manual_review:true};
       if((current.email||'').trim().toLowerCase()===next_email){
         const undo=await client.auth.admin.updateUserById(user_id,{email:previous_email});
         if(undo.error)return {ok:false,stage:'auth_rollback',manual_review:true};
