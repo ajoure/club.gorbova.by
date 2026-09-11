@@ -62,3 +62,10 @@ test('failed SQL finish compensates Auth; uncertain committed finish never resto
  const failed=client({failFinish:true});assert.equal((await runArchivedLoginMerge(failed,'execute')).stage,'rolled_back');assert.equal(failed.state.email,'old@example.invalid');
  const uncertain=client({uncertainFinish:true});assert.equal((await runArchivedLoginMerge(uncertain,'execute')).ok,true);assert.deepEqual(uncertain.state.updates,['active@example.invalid']);
 });
+
+test('unexpected confirmation state stops compensation instead of moving a verified login again',async()=>{
+ const c=client();const read=c.auth.admin.getUserById;
+ c.auth.admin.getUserById=async()=>{const r=await read();if(c.state.updates.length)r.data.user.email_confirmed_at='2026-09-11T00:00:00Z';return r;};
+ const result=await runArchivedLoginMerge(c,'execute');assert.equal(result.stage,'auth_security_drift');assert.equal(result.manual_review,true);
+ assert.deepEqual(c.state.updates,['active@example.invalid']);
+});
