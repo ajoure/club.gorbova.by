@@ -384,7 +384,6 @@ export function BroadcastsTabContent() {
     queryFn: async () => {
       const { data, error } = await operationalSupabase
         .rpc("list_operational_telegram_bots")
-        .select("id, bot_name, bot_username, is_primary")
         .eq("status", "active")
         .order("bot_name", { ascending: true });
       if (error) throw error;

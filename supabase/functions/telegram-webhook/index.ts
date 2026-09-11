@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { classifyBusinessMessage } from '../_shared/telegram-business.ts';
+import { persistMonitoredTelegramMessage } from '../_shared/telegram-monitoring.ts';
 import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
@@ -625,6 +626,33 @@ Deno.serve(async (req) => {
     const botToken = bot.bot_token_encrypted;
     const update: TelegramUpdate = rawBody as TelegramUpdate;
 
+    // Also recognize retries of messages written before update_id instrumentation.
+    // Telegram message_id is scoped to its chat, not globally to the bot.
+    if (update.message?.chat.type === 'private') {
+      const { data: existingMessage, error: lookupError } = await supabase.from('telegram_messages')
+        .select('id').eq('bot_id', botId).eq('telegram_user_id', update.message.chat.id)
+        .eq('message_id', update.message.message_id).eq('direction', 'incoming').eq('transport', 'bot')
+        .limit(1).maybeSingle();
+      if (lookupError) throw new Error('telegram_message_dedupe_lookup_failed');
+      if (existingMessage) {
+        return new Response(JSON.stringify({ ok: true, duplicate: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // Persist configured group/channel messages before command side effects.
+    // A failed archive write throws and returns 500, allowing Telegram to retry.
+    const monitored = await persistMonitoredTelegramMessage(supabase, botId, rawBody);
+    if (monitored.handled) {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system', actor_user_id: null, actor_label: 'telegram-webhook',
+        action: 'telegram_monitoring_received',
+        meta: { bot_id: botId, update_id: update.update_id, saved: monitored.saved,
+          kind: rawBody.channel_post ? 'channel_post' : rawBody.edited_channel_post ? 'edited_channel_post' : 'group_message' },
+      });
+    }
+
     if (update.business_connection || update.business_message || update.edited_business_message || update.deleted_business_messages) {
       console.log('[BUSINESS] update received', {
         update_id: update.update_id,
@@ -1083,6 +1111,7 @@ Deno.serve(async (req) => {
     // Handle /start command
     // ==========================================
     if (update.message?.text?.startsWith('/start')) {
+      const msg = update.message;
       const telegramUserId = update.message.from.id;
       const telegramUsername = update.message.from.username;
       const telegramFirstName = update.message.from.first_name;
@@ -1374,7 +1403,7 @@ Deno.serve(async (req) => {
               message_text: '/start',
               message_id: msg.message_id,
               status: 'sent',
-              meta: { webhook_stage: 'inserted', raw: msg, is_guest_start: true },
+              meta: { webhook_stage: 'inserted', raw: msg, is_guest_start: true, telegram_update_id: update.update_id },
             });
             console.log('[WEBHOOK] Created guest via /start', createdGuest.id, 'tg', telegramUserId);
           }
@@ -1473,18 +1502,10 @@ Deno.serve(async (req) => {
         // (this column has no FK to auth.users; for guests we use profile.id).
         const effectiveUserId: string | null = profile?.user_id || profile?.id || null;
 
-        // One-time confirmation to a brand-new guest so they know the team will reply
-        if (justCreatedGuest && botToken) {
-          try {
-            const botDisplayName = (bot?.bot_name || '').trim() || 'команды';
-            await sendMessage(
-              botToken,
-              chatId,
-              `Спасибо! Ваше сообщение получено, ${botDisplayName === 'команды' ? 'команда' : 'команда ' + botDisplayName} ответит в ближайшее время.`
-            );
-          } catch (ackErr) {
-            console.error('[WEBHOOK] Guest ack send failed:', ackErr);
-          }
+        if (!effectiveUserId) {
+          return new Response(JSON.stringify({ ok: false, error: 'contact_persistence_failed' }), {
+            status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
         }
 
         if (effectiveUserId) {
@@ -1579,7 +1600,8 @@ Deno.serve(async (req) => {
             storage_path: null,
             upload_status: fileId ? 'pending' : null,
             webhook_stage: 'inserted',
-            raw: msg
+            raw: msg,
+            telegram_update_id: update.update_id,
           };
           
           try {
@@ -1600,6 +1622,13 @@ Deno.serve(async (req) => {
               .select('id')
               .single();
             
+            if (insertError?.code === '23505' && insertError.message?.includes('telegram_messages_bot_update_dedupe_idx')) {
+              // This update was persisted already. Do not repeat ticket bridges,
+              // notifications, or AI replies when Telegram retries delivery.
+              return new Response(JSON.stringify({ ok: true, duplicate: true }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
             if (insertError) {
               console.error('[WEBHOOK] Phase 1 insert failed:', insertError);
               webhookError = String(insertError.message || insertError);
@@ -1612,6 +1641,34 @@ Deno.serve(async (req) => {
             console.error('[WEBHOOK] Phase 1 exception:', insertErr);
             webhookError = String(insertErr);
           }
+
+          if (!dbMessageId && !__AUDIT_SHAPE_ACTIVE) {
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system', actor_user_id: null, actor_label: 'telegram-webhook',
+              action: 'webhook_message_received',
+              meta: { bot_id: botId, update_id: update.update_id,
+                message_id: msg.message_id, db_message_id: null,
+                stage: 'insert_failed', error: 'message_persistence_failed' },
+            });
+            return new Response(JSON.stringify({ ok: false, error: 'message_persistence_failed' }), {
+              status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          // One-time confirmation to a brand-new guest so they know the team will reply
+          if (justCreatedGuest && botToken) {
+            try {
+              const botDisplayName = (bot?.bot_name || '').trim() || 'команды';
+              await sendMessage(
+                botToken,
+                chatId,
+                `Спасибо! Ваше сообщение получено, ${botDisplayName === 'команды' ? 'команда' : 'команда ' + botDisplayName} ответит в ближайшее время.`
+              );
+            } catch (ackErr) {
+              console.error('[WEBHOOK] Guest ack send failed:', ackErr);
+            }
+          }
+
 
           // ========== HOTFIX: EARLY RETURN ==========
           // Return IMMEDIATELY to Telegram after Phase 1 INSERT
@@ -1859,14 +1916,16 @@ Deno.serve(async (req) => {
             console.error('[Push] Admin notification error:', pushErr);
           }
 
-          // Best-effort audit log (non-blocking)
-          Promise.resolve(
+          // Await the audit write before returning; message persistence is already durable.
+          await Promise.resolve(
             supabase.from('audit_logs').insert({
               actor_type: 'system',
               actor_user_id: null,
               actor_label: 'telegram-webhook',
               action: 'webhook_message_received',
               meta: {
+                bot_id: botId,
+                update_id: update.update_id,
                 message_id: msg.message_id,
                 db_message_id: dbMessageId,
                 telegram_user_id: telegramUserId,
@@ -1900,37 +1959,6 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Group/supergroup messages for analytics
-      if (chatType === 'supergroup' || chatType === 'group') {
-        // Find club for this chat with analytics enabled
-        const { data: club } = await supabase
-          .from('telegram_clubs')
-          .select('id, chat_analytics_enabled')
-          .eq('bot_id', botId)
-          .eq('chat_id', chatId)
-          .single();
-
-        if (club?.chat_analytics_enabled) {
-          const displayName = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ');
-          const hasMedia = !!(msg.photo || msg.video || msg.document);
-          const text = msg.text || msg.caption || null;
-
-          await supabase.from('tg_chat_messages').upsert({
-            club_id: club.id,
-            chat_id: chatId,
-            message_id: msg.message_id,
-            message_ts: new Date(msg.date * 1000).toISOString(),
-            from_tg_user_id: msg.from.id,
-            from_display_name: displayName || null,
-            text,
-            has_media: hasMedia,
-            reply_to_message_id: msg.reply_to_message?.message_id || null,
-            raw_payload: msg,
-          }, { onConflict: 'club_id,message_id' });
-
-          console.log(`Saved message ${msg.message_id} for analytics in club ${club.id}`);
-        }
-      }
     }
 
     // ==========================================

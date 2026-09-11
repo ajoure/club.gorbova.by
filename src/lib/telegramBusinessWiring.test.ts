@@ -57,7 +57,7 @@ describe("Telegram Business contact-centre wiring", () => {
   });
 
   it("re-applies a configured webhook secret and preserves existing update types", () => {
-    expect(botActionsSource).toContain("missingUpdates.length === 0");
+    expect(botActionsSource).not.toContain("missingUpdates.length === 0");
     expect(botActionsSource).toContain("[...new Set([...currentUpdates, ...businessRequiredUpdates])]");
     expect(botActionsSource).toContain("updatePayload.secret_token = webhookSecret");
   });

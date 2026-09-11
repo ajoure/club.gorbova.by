@@ -21,10 +21,36 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // Cron authenticates through a Vault-backed verifier; browser callers must
+    // have operational management access. No secret is sent to the browser.
+    const cronHeader = req.headers.get('x-telegram-summary-cron-secret');
+    if (cronHeader !== null) {
+      const { data: valid, error } = await supabase.rpc('verify_telegram_summary_cron_secret', { _candidate: cronHeader });
+      if (error || valid !== true) {
+        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: corsHeaders });
+      }
+    } else {
+      const authorization = req.headers.get('authorization') || '';
+      const { data: { user }, error } = await supabase.auth.getUser(authorization.replace(/^Bearer\s+/i, ''));
+      if (error || !user) {
+        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: corsHeaders });
+      }
+      const [{ data: communication }, { data: telegram }] = await Promise.all([
+        supabase.rpc('has_admin_section_access', { _user_id: user.id, _section_code: 'communication', _min_level: 'manage' }),
+        supabase.rpc('has_permission', { _user_id: user.id, _permission_code: 'telegram.manage' }),
+      ]);
+      if (communication !== true && telegram !== true) {
+        return new Response(JSON.stringify({ error: 'forbidden' }), { status: 403, headers: corsHeaders });
+      }
+    }
+
     const body: DailySummaryRequest = await req.json().catch(() => ({}));
     
     // Default to yesterday's date
     const targetDate = body.date || new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !Number.isFinite(Date.parse(targetDate))) {
+      return new Response(JSON.stringify({ error: 'invalid_date' }), { status: 400, headers: corsHeaders });
+    }
     
     console.log(`Generating daily summary for date: ${targetDate}`);
 
@@ -281,15 +307,18 @@ ${messagesText.slice(0, 15000)}
       }
     }
 
+    const success = results.every((result) => result.status !== 'error');
+
     // Log cron execution
     await supabase.from('telegram_logs').insert({
       action: 'DAILY_SUMMARY_CRON',
       target: 'analytics',
-      status: 'ok',
+      status: success ? 'ok' : 'error',
       meta: { date: targetDate, results },
     });
 
-    return new Response(JSON.stringify({ success: true, date: targetDate, results }), {
+    return new Response(JSON.stringify({ success, date: targetDate, results }), {
+      status: success ? 200 : 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 

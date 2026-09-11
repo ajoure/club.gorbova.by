@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { TELEGRAM_BUSINESS_ALLOWED_UPDATES } from '../_shared/telegram-business.ts';
+import { TELEGRAM_MONITORING_UPDATES } from '../_shared/telegram-monitoring.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -185,10 +186,12 @@ Deno.serve(async (req) => {
         const webhookUrl = `${supabaseUrl}/functions/v1/telegram-webhook?bot_id=${bot_id}`;
         const webhookPayload: Record<string, unknown> = {
           url: webhookUrl,
+          drop_pending_updates: false,
           allowed_updates: [
             'message', 'message_reaction', 'message_reaction_count', 'chat_member',
             'my_chat_member', 'chat_join_request', 'callback_query',
             ...TELEGRAM_BUSINESS_ALLOWED_UPDATES,
+            ...TELEGRAM_MONITORING_UPDATES,
           ],
         };
         const webhookSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET');
@@ -260,6 +263,7 @@ Deno.serve(async (req) => {
           'message', 'message_reaction', 'message_reaction_count', 'chat_member',
           'my_chat_member', 'chat_join_request', 'callback_query',
           ...TELEGRAM_BUSINESS_ALLOWED_UPDATES,
+          ...TELEGRAM_MONITORING_UPDATES,
         ];
         const missingUpdates = businessRequiredUpdates.filter(u => !currentUpdates.includes(u));
         const requiredUpdates = [...new Set([...currentUpdates, ...businessRequiredUpdates])];
@@ -278,17 +282,6 @@ Deno.serve(async (req) => {
         // Telegram does not expose whether secret_token is already installed.
         // If a secret is configured, always re-apply setWebhook so enabling or
         // rotating it cannot leave Telegram sending unsigned requests.
-        if (missingUpdates.length === 0) {
-          return new Response(JSON.stringify({
-            success: true,
-            no_op: true,
-            message: 'Webhook already has all required allowed_updates',
-            current_updates: currentUpdates,
-          }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
-
         const currentUrl = webhookInfo.result?.url;
         if (!currentUrl) {
           return new Response(JSON.stringify({ error: 'No webhook URL set. Use set_webhook first.' }), {
@@ -299,6 +292,7 @@ Deno.serve(async (req) => {
 
         const updatePayload: Record<string, unknown> = {
           url: currentUrl,
+          drop_pending_updates: false,
           allowed_updates: requiredUpdates,
         };
         if (webhookSecret) updatePayload.secret_token = webhookSecret;

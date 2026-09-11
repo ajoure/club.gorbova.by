@@ -84,6 +84,7 @@ import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/u
 import { VideoNoteRecorder } from "./VideoNoteRecorder";
 import { AdminVoiceRecorder } from "./chat/AdminVoiceRecorder";
 import { OutboundMediaPreview } from "./chat/OutboundMediaPreview";
+import { TelegramSenderNotice } from "./chat/TelegramSenderNotice";
 import { ChatMediaMessage } from "./chat/ChatMediaMessage";
 import { useTelegramReactions, useToggleTelegramReaction } from "@/hooks/useTelegramReactions";
 import { SmilePlus } from "lucide-react";
@@ -230,12 +231,11 @@ export function ContactTelegramChat({
   const [isRefreshingMedia, setIsRefreshingMedia] = useState(false);
 
   // Fetch available bots
-  const { data: telegramBots = [] } = useQuery({
+  const { data: telegramBots = [], isFetching: botsFetching, isError: botsFailed, refetch: refetchBots } = useQuery({
     queryKey: ["telegram-bots-for-chat"],
     queryFn: async () => {
       const { data, error } = await operationalSupabase
         .rpc("list_operational_telegram_bots")
-        .select("id, bot_name, bot_username, status, is_primary")
         .order("created_at", { ascending: true });
       if (error) throw error;
       return data || [];
@@ -2236,6 +2236,9 @@ export function ContactTelegramChat({
             родитель уже ограничен по высоте (Telegram-вкладка),
             поэтому композер всегда виден внизу карточки. */}
         <div className="shrink-0 border-t bg-background px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)]">
+          {(botsFailed || (!selectedBotId && !selectedBusinessAccountId)) && (
+            <TelegramSenderNotice loading={botsFetching} failed={botsFailed} onRetry={() => { void refetchBots(); }} />
+          )}
           {(activeBots.length > 0 || dialogBusinessAccounts.some((account) => account.is_enabled && account.can_reply)) && (
             <div className="flex items-center gap-1.5 pb-1.5">
               <Select value={selectedSender} onValueChange={handleSenderChange}>
@@ -2450,6 +2453,7 @@ export function ContactTelegramChat({
           <div className="flex shrink-0 flex-col gap-1 items-end">
             <Button
               onClick={handleSend}
+              aria-label="Отправить сообщение"
               disabled={(!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || (!selectedBotId && !selectedBusinessAccountId)}
               className="h-12 w-12 p-0 shrink-0"
               title={!selectedBotId && !selectedBusinessAccountId ? "Выберите отправителя" : undefined}
