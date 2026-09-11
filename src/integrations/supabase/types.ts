@@ -24811,6 +24811,19 @@ export type Database = {
         Args: { p_club_id: string; p_user_id: string }
         Returns: boolean
       }
+      historical_business_source_is_current: {
+        Args: {
+          _meta: Json
+          _product_code?: string
+          _product_id: string
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      historical_lesson_access_guard: {
+        Args: { _lesson_id: string; _user_id: string }
+        Returns: boolean
+      }
       instagram_outbox_pull_v1: {
         Args: { p_account_id: string; p_limit: number; p_lock_id: string }
         Returns: {
