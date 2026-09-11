@@ -141,3 +141,56 @@ test('subtitle fetch omits credentials and rejects redirect outside provider',as
   await assert.rejects(io.subtitle('https://kinescopecdn.net/a'),/subtitle_host_not_allowed/);
   assert.equal(calls.length,1);assert.equal(calls[0].options.headers,undefined);
 });
+test('legacy numeric API 404 resolves through public redirect with original course binding intact',async()=>{
+  const f=fixture(),provider=f.io.provider;f.blocks[0].content.url='https://kinescope.io/123456789';
+  f.io.provider=async(path)=>{if(path==='/videos/123456789')throw new Error('provider_http_404');return provider(path);};
+  let resolutions=0;f.io.resolveLegacyAlias=async(alias)=>{assert.equal(alias,'123456789');resolutions++;return 'newAlias123';};
+  const plan=await dryRunCourse(f.io,owner);
+  assert.equal(plan.sources[0].resolved_alias,'newAlias123');assert.deepEqual(plan.sources[0].aliases,['123456789']);
+  assert.equal(plan.sources[0].bindings[0].alias,'123456789');assert.equal(plan.sources[0].video_id,videoId);
+  assert.equal(plan.totals.provider_not_found,0);assert.equal(plan.totals.ready_to_import,1);
+  const result=await importCourseBatch(f.io,owner,plan,[0]);assert.equal(result.results[0].replay_changes,0);
+  assert.equal(resolutions,2);assert.doesNotMatch(JSON.stringify(plan),/https:|synthetic/);
+});
+test('legacy fallback is limited to numeric video 404 and does not conceal provider errors',async()=>{
+  for(const [numeric,code,expectedCalls] of [[true,'provider_http_404',1],[false,'provider_http_404',0],[true,'provider_http_503',0]]){
+    const f=fixture();f.blocks[0].content.url='https://kinescope.io/'+(numeric?'123456789':'testAlias123');
+    let calls=0;f.io.resolveLegacyAlias=async()=>{calls++;return null;};f.io.provider=async()=>{throw new Error(code);};
+    if(code.endsWith('404'))assert.equal((await dryRunCourse(f.io,owner)).totals.provider_not_found,1);
+    else await assert.rejects(dryRunCourse(f.io,owner),/provider_http_503/);
+    assert.equal(calls,expectedCalls);assert.equal(f.writes.length,0);
+  }
+});
+test('public legacy redirects use HEAD without credentials and validate every target',async()=>{
+  const calls=[];const io=createManagedTransport({supabaseUrl:'https://example.supabase.co',serviceKey:'test',fetchImpl:async(url,options)=>{
+    calls.push({url:String(url),options});return calls.length===1?new Response(null,{status:308,headers:{location:'/newAlias123'}}):new Response(null,{status:200});
+  }});
+  assert.equal(await io.resolveLegacyAlias('123456789'),'newAlias123');assert.equal(calls.length,2);
+  for(const c of calls){assert.equal(c.options.headers,undefined);assert.equal(c.options.method,'HEAD');assert.equal(c.options.redirect,'manual');}
+  for(const location of ['https://evil.test/video','http://kinescope.io/video','https://user:secret@kinescope.io/video','https://kinescope.io/video?token=x','https://kinescope.io/a/b','/%2e%2e','/123456789']){
+    const unsafe=createManagedTransport({supabaseUrl:'https://example.supabase.co',serviceKey:'test',fetchImpl:async()=>new Response(null,{status:308,headers:{location}})});
+    await assert.rejects(unsafe.resolveLegacyAlias('123456789'),/legacy_redirect_(not_allowed|loop)/);
+  }
+});
+test('a stopped dry-run records the current alias and previous results in a non-importable progress report',async()=>{
+  const f=fixture(),provider=f.io.provider;f.blocks.push({...f.blocks[0],id:'b2',content:{url:'https://kinescope.io/zFailAlias123'}});
+  f.io.provider=async(path)=>{if(path==='/videos/zFailAlias123')throw new Error('provider_http_503');return provider(path);};
+  const progress=[];
+  await assert.rejects(dryRunCourse(f.io,owner,{onProgress:async p=>progress.push(p)}),/provider_http_503/);
+  assert.equal(progress.length,2);assert.equal(progress[0].sources.length,0);
+  assert.equal(progress[1].current_alias,'zFailAlias123');assert.equal(progress[1].sources.length,1);
+  assert.equal(progress[1].mode,'dry_run_progress');assert.equal(progress[1].complete,false);
+  assert.doesNotMatch(JSON.stringify(progress),/https:|synthetic|Сегодня/);
+  await assert.rejects(importCourseBatch(f.io,owner,progress[1],[0]),/manifest_scope_invalid/);
+  assert.equal(f.writes.length,0);
+});
+test('Kinescope data:null means no subtitle tracks while unknown object shapes still stop',async()=>{
+  const f=fixture(),provider=f.io.provider;
+  f.io.provider=async(path)=>path.includes('/subtitles?')?{data:null}:provider(path);
+  const plan=await dryRunCourse(f.io,owner);assert.equal(plan.totals.missing_ru_subtitles,1);
+  assert.equal(plan.sources[0].status,'missing_ru_subtitles');assert.equal(plan.complete,true);
+  await assert.rejects(importCourseBatch(f.io,owner,plan,[0]),/batch_not_ready/);
+  f.io.provider=async(path)=>path.includes('/subtitles?')?{data:{unexpected:[]}}:provider(path);
+  await assert.rejects(dryRunCourse(f.io,owner),/subtitle_list_invalid/);
+  assert.equal(f.writes.length,0);
+});
