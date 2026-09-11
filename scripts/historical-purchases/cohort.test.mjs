@@ -113,3 +113,10 @@ test('the paid window ends exactly at expiry; canceled rebilling preserves only 
   assert.equal(hasPaidBusinessWindow({...paid,order_flags:{gift:true}},'2026-09-11T09:00:00Z'),false);
   assert.equal(hasPaidBusinessWindow({...paid,order_flags:{test:1}},'2026-09-11T09:00:00Z'),false);
 });
+
+test('Auth-owned course facts prevent duplicate insertion and banned profiles remain excluded',()=>{
+ const source=fixture(),inventory=inventoryFixture(source),row=inventory[0];row.user_id='existing-auth';
+ row.existing_paid_root_orders_db=[{profile_id:null,user_id:row.user_id,tariff_id:catalog.tariffs['Главный бухгалтер'],hist_type:null}];
+ assert.equal(planMissingHistory(source,inventory,catalog).actions.some(a=>a.refs.includes('17:2')&&a.kind==='base_tariff_purchase'),false);
+ row.profile_status='banned';assert.equal(planMissingHistory(source,inventory,catalog).actions.some(a=>a.refs.includes('17:2')),false);
+});

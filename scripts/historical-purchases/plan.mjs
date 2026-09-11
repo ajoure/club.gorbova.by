@@ -11,6 +11,7 @@ export function hasPaidBusinessWindow(subscription, asOf) {
   const now = Date.parse(asOf), end = Date.parse(subscription.access_end_at);
   if (!Number.isFinite(now)) throw new Error('An explicit valid audit timestamp is required');
   return Number.isFinite(end) && end > now
+    && (!subscription.access_start_at || Date.parse(subscription.access_start_at) <= now)
     // canceled means rebilling stopped; the paid window is still valid.
     && ['active', 'past_due', 'canceled'].includes(subscription.status)
     && subscription.verified_paid_250 === true && subscription.order_status === 'paid'
@@ -42,13 +43,13 @@ export function planMissingHistory(source, inventory, catalog, decisions = {}, a
     const conflictApproved = row.refs.every(ref => decisions.email_priority_refs?.includes(ref));
     if (!current.profile_id || current.match_status === 'ambiguous_email'
         || (current.phone_points_to_other_profile && !conflictApproved)
-        || current.profile_merged_to) {
+        || current.profile_merged_to || current.profile_status === 'banned') {
       review.push({refs:row.refs, reason: current.match_status === 'ambiguous_email' ? 'ambiguous_identity' : 'identity_review', missing_modules:missingModules.length});
       continue;
     }
     // A missing phone is not a shared identity. Real shared phones still need no
     // purchase action when the unique email already has the requested facts.
-    const owned = o => o.profile_id === current.profile_id;
+    const owned = o => o.profile_id === current.profile_id || (current.user_id && o.user_id === current.user_id);
     const rootExists = row.tariff_id && current.existing_paid_root_orders_db.some(o =>
       o.tariff_id === row.tariff_id && !['module_only_standalone','module_child_purchase'].includes(o.hist_type) && owned(o));
     const facts = missingModules.map(product_id => ({product_id, tariff_id:null, kind:'module_only_standalone'}));
