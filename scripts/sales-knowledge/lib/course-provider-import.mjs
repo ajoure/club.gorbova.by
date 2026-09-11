@@ -55,6 +55,27 @@ export function createManagedTransport({supabaseUrl,serviceKey,fetchImpl=fetch})
       if(!/^\/videos\/[a-zA-Z0-9-]+(?:\/subtitles(?:\/[a-zA-Z0-9-]+)?)?(?:\?page=\d+&per_page=100)?$/.test(path))throw new Error('provider_path_invalid');
       return jsonRequest('https://api.kinescope.io/v1'+path,{headers:{Authorization:`Bearer ${token}`}},'provider');
     },
+    async resolveLegacyAlias(alias){
+      if(!/^\d+$/.test(alias))throw new Error('legacy_alias_invalid');
+      let target=new URL('https://kinescope.io/'+alias);
+      const seen=new Set();
+      for(let redirects=0;redirects<4;redirects++){
+        if(seen.has(target.href))throw new Error('legacy_redirect_loop');seen.add(target.href);
+        // Public redirect discovery never carries provider or database credentials.
+        const r=await fetchImpl(target,{method:'HEAD',redirect:'manual',signal:AbortSignal.timeout(60000)});
+        if([301,302,303,307,308].includes(r.status)){
+          const location=r.headers.get('location');if(!location)throw new Error('legacy_redirect_missing_location');
+          let next;try{next=new URL(location,target);}catch{throw new Error('legacy_redirect_invalid');}
+          if(next.origin!=='https://kinescope.io'||next.username||next.password||next.search||next.hash
+            ||!/^\/[a-zA-Z0-9-]+$/.test(next.pathname))throw new Error('legacy_redirect_not_allowed');
+          target=next;continue;
+        }
+        if(r.status===404)return null;
+        if(r.status!==200)throw new Error(`legacy_redirect_http_${r.status}`);
+        const resolved=target.pathname.slice(1);return resolved===alias?null:resolved;
+      }
+      throw new Error('legacy_redirect_limit');
+    },
     async subtitle(url){
       let target=safeSubtitleUrl(url);
       for(let redirects=0;redirects<4;redirects++){
@@ -110,10 +131,18 @@ async function tokenAndOwner(io,actor){
 }
 const unwrap=x=>x?.data??x;
 async function inspectAlias(io,token,alias){
-  let video;
+  let video,resolvedAlias=alias;
   try{video=unwrap(await io.provider('/videos/'+alias,token));}
-  catch(error){if(error?.message==='provider_http_404')throw new Error('video_http_404');throw error;}
+  catch(error){
+    if(error?.message!=='provider_http_404')throw error;
+    const resolved=/^\d+$/.test(alias)&&io.resolveLegacyAlias?await io.resolveLegacyAlias(alias):null;
+    if(!resolved)throw new Error('video_http_404');
+    resolvedAlias=resolved;
+    try{video=unwrap(await io.provider('/videos/'+resolvedAlias,token));}
+    catch(error){if(error?.message==='provider_http_404')throw new Error('video_http_404');throw error;}
+  }
   const rev=providerRevision(video),duration=Math.round(video.duration*1000);
+  const source={video_id:video.id,source_revision:rev,duration_ms:duration,resolved_alias:resolvedAlias};
   const tracks=video.audio_tracks||[];
   const audio=tracks.find(x=>x.language==='ru')||(tracks.length===1?tracks[0]:null);
   const subtitles=[];
@@ -123,7 +152,7 @@ async function inspectAlias(io,token,alias){
     subtitles.push(...rows);if(rows.length<100)break;if(page===20)throw new Error('subtitle_pagination_incomplete');
   }
   const ru=subtitles.filter(s=>s.language==='ru'&&(!s.status||s.status==='done'));
-  if(ru.length!==1)return {video_id:video.id,source_revision:rev,duration_ms:duration,status:ru.length?'multiple_ru_tracks':'missing_ru_subtitles'};
+  if(ru.length!==1)return {...source,status:ru.length?'multiple_ru_tracks':'missing_ru_subtitles'};
   const detail=unwrap(await io.provider(`/videos/${video.id}/subtitles/${ru[0].id}`,token));
   if(detail.language!=='ru'||detail.status&&detail.status!=='done')throw new Error('subtitle_not_ready');
   const raw=await io.subtitle(detail.url);
@@ -131,11 +160,11 @@ async function inspectAlias(io,token,alias){
   try{parsed=inspectSubtitles(raw,duration,'ru');}
   catch(error){
     if(!subtitleReviewCodes.has(error?.message))throw error;
-    return {video_id:video.id,source_revision:rev,duration_ms:duration,subtitle_id:detail.id,
+    return {...source,subtitle_id:detail.id,
       status:'subtitle_parse_review',review_reason:error.message,subtitle_sha256:sha(raw)};
   }
   const warningsOnly=parsed.quality_flags.every(f=>f==='long_gap')&&parsed.metadata.uncovered_ms/duration<=0.1;
-  return {video_id:video.id,source_revision:rev,duration_ms:duration,subtitle_id:detail.id,
+  return {...source,subtitle_id:detail.id,
     audio_track_id:audio?.id||null,audio_bytes:Number.isSafeInteger(audio?.file_size)&&audio.file_size>0?audio.file_size:null,
     status:!parsed.quality_flags.length?'ready_to_import':warningsOnly?'ready_with_warnings':'quality_review',parsed};
 }
