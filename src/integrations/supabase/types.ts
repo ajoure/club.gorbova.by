@@ -5687,6 +5687,95 @@ export type Database = {
           },
         ]
       }
+      course_gap_continuations: {
+        Row: {
+          approval_sha256: string
+          audit_context: Json
+          audit_id: string
+          created_at: string
+          held_part_snapshot: Json
+          id: string
+          reason: string
+          reviewed_by: string
+          selected_parts: number[]
+          status: string
+        }
+        Insert: {
+          approval_sha256: string
+          audit_context: Json
+          audit_id: string
+          created_at?: string
+          held_part_snapshot: Json
+          id?: string
+          reason?: string
+          reviewed_by: string
+          selected_parts?: number[]
+          status?: string
+        }
+        Update: {
+          approval_sha256?: string
+          audit_context?: Json
+          audit_id?: string
+          created_at?: string
+          held_part_snapshot?: Json
+          id?: string
+          reason?: string
+          reviewed_by?: string
+          selected_parts?: number[]
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_gap_continuations_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: true
+            referencedRelation: "course_caption_gap_audits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_gap_evidence_annotations: {
+        Row: {
+          alphabet_flag: string
+          audit_id: string
+          continuation_id: string
+          evidence_kind: string
+          part_index: number
+          text_sha256: string
+        }
+        Insert: {
+          alphabet_flag: string
+          audit_id: string
+          continuation_id: string
+          evidence_kind?: string
+          part_index: number
+          text_sha256: string
+        }
+        Update: {
+          alphabet_flag?: string
+          audit_id?: string
+          continuation_id?: string
+          evidence_kind?: string
+          part_index?: number
+          text_sha256?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_gap_evidence_annotations_audit_id_part_index_fkey"
+            columns: ["audit_id", "part_index"]
+            isOneToOne: true
+            referencedRelation: "course_caption_gap_parts"
+            referencedColumns: ["audit_id", "part_index"]
+          },
+          {
+            foreignKeyName: "course_gap_evidence_annotations_continuation_id_fkey"
+            columns: ["continuation_id"]
+            isOneToOne: false
+            referencedRelation: "course_gap_continuations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       course_preregistrations: {
         Row: {
           consent: boolean
@@ -23891,6 +23980,37 @@ export type Database = {
           _audit_id: string
           _manifest_sha256: string
           _part_index: number
+        }
+        Returns: Json
+      }
+      course_gap_continue_authorize: {
+        Args: {
+          _actor: string
+          _approval_sha256: string
+          _audit_id: string
+          _caption_sha256: string
+          _held_text_sha256: string
+          _manifest_sha256: string
+          _source_revision: string
+        }
+        Returns: Json
+      }
+      course_gap_continue_claim: {
+        Args: {
+          _approval_sha256: string
+          _audio_sha256: string
+          _continuation_id: string
+          _part_index: number
+        }
+        Returns: Json
+      }
+      course_gap_continue_finish: {
+        Args: {
+          _claim_token: string
+          _continuation_id: string
+          _error_code?: string
+          _part_index: number
+          _text: string
         }
         Returns: Json
       }
