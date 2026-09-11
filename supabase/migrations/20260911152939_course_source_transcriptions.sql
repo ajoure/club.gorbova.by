@@ -226,7 +226,8 @@ BEGIN
       jsonb_build_object('language','ru','cue_count',(_metadata->>'cue_count')::integer,
         'subtitle_sha256',_metadata->>'subtitle_sha256','first_ms',(_metadata->>'first_ms')::bigint,
         'last_ms',(_metadata->>'last_ms')::bigint,'covered_ms',(_metadata->>'covered_ms')::bigint,
-        'max_gap_ms',(_metadata->>'max_gap_ms')::bigint));
+        'max_gap_ms',(_metadata->>'max_gap_ms')::bigint,'uncovered_ms',(_metadata->>'uncovered_ms')::bigint,
+        'gap_count_gt60',(_metadata->>'gap_count_gt60')::integer,'quality_flags',_metadata->'quality_flags'));
   RETURN jsonb_build_object('source_id',s.id,'chars',length(txt),'sha256',encode(sha256(convert_to(txt,'UTF8')),'hex'),'reused',false);
 END $$;
 

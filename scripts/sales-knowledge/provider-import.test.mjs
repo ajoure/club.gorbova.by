@@ -55,7 +55,19 @@ test('wrong product scope, duplicate indices, too-long batch and non-owner are r
   await assert.rejects(importCourseBatch(f.io,owner,{...plan,product_ids:['flow21']},[0]),/manifest_scope_invalid/);
   await assert.rejects(importCourseBatch(f.io,owner,plan,[0,0]),/batch_size_invalid/);
   await assert.rejects(importCourseBatch(f.io,owner,plan,[0],{maxDurationMs:1000}),/over_budget/);
+  await assert.rejects(importCourseBatch(f.io,owner,plan,[0],{maxChars:1}),/over_budget/);
   await assert.rejects(dryRunCourse(f.io,'00000000-0000-4000-8000-000000000002'),/owner_required/);
+});
+test('internal gaps stay unreviewed and are importable only below ten percent missing time',async()=>{
+  const f=fixture(),provider=f.io.provider;
+  f.io.provider=async(path)=>{const r=await provider(path);if(r.data.id===videoId)r.data.duration=3600;return r;};
+  f.io.subtitle=async()=>`WEBVTT\n\n00:00:00.000 --> 00:10:00.000\nСегодня обсуждаем вопросы обучения.\n\n00:12:30.000 --> 01:00:00.000\nПродолжаем обсуждать программу курса.`;
+  const plan=await dryRunCourse(f.io,owner),source=plan.sources[0];
+  assert.equal(source.status,'ready_with_warnings');assert.equal(source.subtitle_metadata.uncovered_ms,150000);
+  assert.equal(source.subtitle_metadata.gap_count_gt60,1);assert.deepEqual(source.subtitle_metadata.quality_flags,['long_gap']);
+  f.io.subtitle=async()=>`WEBVTT\n\n00:00:00.000 --> 00:10:00.000\nСегодня обсуждаем вопросы обучения.\n\n00:20:00.000 --> 01:00:00.000\nПродолжаем обсуждать программу курса.`;
+  const changed=await dryRunCourse(f.io,owner);assert.equal(changed.sources[0].status,'quality_review');
+  await assert.rejects(importCourseBatch(f.io,owner,changed,[0]),/over_budget/);assert.equal(f.writes.length,0);
 });
 test('cross-product or nested curriculum structure requires review',async()=>{
   const f=fixture();f.lessons[0].product_id='other';await assert.rejects(dryRunCourse(f.io,owner),/course_binding_conflict/);

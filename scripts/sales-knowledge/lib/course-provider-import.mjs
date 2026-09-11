@@ -120,9 +120,10 @@ async function inspectAlias(io,token,alias){
   const detail=unwrap(await io.provider(`/videos/${video.id}/subtitles/${ru[0].id}`,token));
   if(detail.language!=='ru'||detail.status&&detail.status!=='done')throw new Error('subtitle_not_ready');
   const parsed=inspectSubtitles(await io.subtitle(detail.url),duration,'ru');
+  const warningsOnly=parsed.quality_flags.every(f=>f==='long_gap')&&parsed.metadata.uncovered_ms/duration<=0.1;
   return {video_id:video.id,source_revision:rev,duration_ms:duration,subtitle_id:detail.id,
     audio_track_id:audio?.id||null,audio_bytes:Number.isSafeInteger(audio?.file_size)&&audio.file_size>0?audio.file_size:null,
-    status:parsed.quality_flags.length?'quality_review':'ready_to_import',parsed};
+    status:!parsed.quality_flags.length?'ready_to_import':warningsOnly?'ready_with_warnings':'quality_review',parsed};
 }
 
 export async function dryRunCourse(io,actor,{aliases}={}){
@@ -154,14 +155,17 @@ export async function dryRunCourse(io,actor,{aliases}={}){
   return {schema_version:1,mode:'dry_run',product_ids:COURSE_PRODUCT_IDS,captured_at:new Date().toISOString(),
     complete:!aliases,counts:snapshot.counts,unresolved:snapshot.unresolved,sources,
     totals:{source_count:sources.length,ready_to_import:sources.filter(s=>s.status==='ready_to_import').length,
+      ready_with_warnings:sources.filter(s=>s.status==='ready_with_warnings').length,
       quality_review:sources.filter(s=>s.status==='quality_review').length,provider_not_found:sources.filter(s=>s.status==='provider_not_found').length}};
 }
 
-export async function importCourseBatch(io,actor,manifest,indices,{maxSources=3,maxDurationMs=1800000,onProgress=async()=>{}}={}){
+export async function importCourseBatch(io,actor,manifest,indices,{maxSources=3,maxChars=1000000,maxDurationMs=Infinity,onProgress=async()=>{}}={}){
   if(manifest?.schema_version!==1||manifest.mode!=='dry_run'||!eqIds(manifest.product_ids||[],COURSE_PRODUCT_IDS))throw new Error('manifest_scope_invalid');
   if(!Array.isArray(indices)||indices.length<1||indices.length>maxSources||new Set(indices).size!==indices.length)throw new Error('batch_size_invalid');
   const selected=indices.map(i=>manifest.sources?.[i]);
-  if(selected.some(s=>!s||s.status!=='ready_to_import')||selected.reduce((n,s)=>n+s.duration_ms,0)>maxDurationMs)throw new Error('batch_not_ready_or_over_budget');
+  const importable=s=>s&&['ready_to_import','ready_with_warnings'].includes(s.status);
+  if(selected.some(s=>!importable(s)||!Number.isSafeInteger(s.chars)||s.chars<1)||selected.reduce((n,s)=>n+s.duration_ms,0)>maxDurationMs
+    ||selected.reduce((n,s)=>n+s.chars,0)>maxChars)throw new Error('batch_not_ready_or_over_budget');
   const token=await tokenAndOwner(io,actor),current=await readCourseBindings(io),results=[];
   for(const source of selected){
     for(const binding of source.bindings){
@@ -170,7 +174,7 @@ export async function importCourseBatch(io,actor,manifest,indices,{maxSources=3,
     }
     if(!source.bindings.length||source.aliases.some(a=>!current.bindings.some(b=>b.alias===a)))throw new Error('source_outside_course');
     const fresh=await inspectAlias(io,token,source.aliases[0]);
-    if(fresh.status!=='ready_to_import'||fresh.video_id!==source.video_id||fresh.source_revision!==source.source_revision
+    if(!importable(fresh)||fresh.status!==source.status||fresh.video_id!==source.video_id||fresh.source_revision!==source.source_revision
       ||fresh.parsed.content_sha256!==source.content_sha256||fresh.parsed.metadata.subtitle_sha256!==source.subtitle_metadata.subtitle_sha256)throw new Error('source_changed_since_dry_run');
     let existing=await io.rows('course_transcription_sources','id,enabled,duration_ms',{video_id:`eq.${source.video_id}`,source_revision:`eq.${source.source_revision}`});
     if(!existing.length){await io.write('course_transcription_sources',{id:randomUUID(),provider:'kinescope',video_id:fresh.video_id,

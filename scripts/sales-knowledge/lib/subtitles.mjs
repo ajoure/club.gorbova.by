@@ -32,8 +32,9 @@ export function inspectSubtitles(input,durationMs,language='ru'){
     cues.push({start,end,text});
   }
   if(!cues.length)throw new Error('no_subtitle_cues');
-  let covered=0,until=0,maxGap=0;
-  for(const cue of cues){maxGap=Math.max(maxGap,cue.start-until);covered+=Math.max(0,cue.end-Math.max(until,cue.start));until=Math.max(until,cue.end);}
+  let covered=0,until=0,maxGap=0,gapCount=0;
+  for(const cue of cues){if(cue.start-until>60000)gapCount++;maxGap=Math.max(maxGap,cue.start-until);covered+=Math.max(0,cue.end-Math.max(until,cue.start));until=Math.max(until,cue.end);}
+  if(durationMs-until>60000)gapCount++;
   maxGap=Math.max(maxGap,durationMs-until);
   const text=cues.map(c=>c.text).join('\n');
   const letters=text.match(/\p{L}/gu)||[],cyrillic=text.match(/[А-Яа-яЁё]/g)||[];
@@ -46,7 +47,8 @@ export function inspectSubtitles(input,durationMs,language='ru'){
   if(/subtitles by|субтитры (?:создал|сделал|подогнал)|amara\.org/i.test(text))flags.push('subtitle_artifact');
   return {text,content_sha256:hash(text),chars:[...text].length,quality_status:'unreviewed',quality_flags:flags,
     metadata:{language,cue_count:cues.length,subtitle_sha256:hash(input),first_ms:cues[0].start,last_ms:until,
-      covered_ms:covered,max_gap_ms:maxGap},duration_ms:durationMs};
+      covered_ms:Math.min(covered,durationMs),max_gap_ms:maxGap,uncovered_ms:Math.max(0,durationMs-covered),
+      gap_count_gt60:gapCount,quality_flags:flags},duration_ms:durationMs};
 }
 
 export function providerRevision(video){
