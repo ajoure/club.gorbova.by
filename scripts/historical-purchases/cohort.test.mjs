@@ -71,6 +71,13 @@ test('existing snapshot facts are not reinserted; proposal IDs are stable and ne
   assert.ok(a.actions.every(x=>x.history_only&&x.create_payment===false&&x.grant_access===false));
 });
 
+test('a split-child with a parent tariff is not a full course purchase',()=>{
+  const source=fixture(),inventory=inventoryFixture(source),row=inventory[0];
+  row.existing_paid_root_orders_db=[{profile_id:row.profile_id,tariff_id:catalog.tariffs['Главный бухгалтер'],hist_type:'module_child_purchase'}];
+  const plan=planMissingHistory(source,inventory,catalog);
+  assert.ok(plan.actions.some(a=>a.refs.includes('17:2')&&a.kind==='base_tariff_purchase'));
+});
+
 test('identity conflicts remain excluded until the specific source row is confirmed', () => {
   const source=fixture(), inventory=inventoryFixture(source);
   inventory[0].phone_points_to_other_profile=true;

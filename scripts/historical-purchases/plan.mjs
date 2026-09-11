@@ -50,7 +50,7 @@ export function planMissingHistory(source, inventory, catalog, decisions = {}, a
     // purchase action when the unique email already has the requested facts.
     const owned = o => o.profile_id === current.profile_id;
     const rootExists = row.tariff_id && current.existing_paid_root_orders_db.some(o =>
-      o.tariff_id === row.tariff_id && o.hist_type !== 'module_only_standalone' && owned(o));
+      o.tariff_id === row.tariff_id && !['module_only_standalone','module_child_purchase'].includes(o.hist_type) && owned(o));
     const facts = missingModules.map(product_id => ({product_id, tariff_id:null, kind:'module_only_standalone'}));
     if (row.tariff_id && !rootExists) facts.push({product_id:row.product_id, tariff_id:row.tariff_id, kind:'base_tariff_purchase'});
     for (const fact of facts) {
