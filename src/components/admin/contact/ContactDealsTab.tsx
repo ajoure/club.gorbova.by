@@ -20,7 +20,7 @@ import {
 import { format, parse } from "date-fns";
 import { ru } from "date-fns/locale";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
-import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
+import { formatEffectiveDealDate, getEffectiveDealTimestamp } from "@/utils/getEffectiveDealDate";
 import { getDealCommercialAmount } from "@/lib/payments/composableDealAmount";
 import { useStaffOptions } from "@/hooks/useStaffOptions";
 
@@ -130,8 +130,8 @@ function groupDealsByProduct(deals: AnyDeal[], moduleMetaMap?: Map<string, any>)
   const groups: DealsGroup[] = [];
   for (const [key, items] of map) {
     const sorted = [...items].sort((a, b) => {
-      const da = new Date(getEffectiveDealDate(a)).getTime();
-      const db = new Date(getEffectiveDealDate(b)).getTime();
+      const da = getEffectiveDealTimestamp(a);
+      const db = getEffectiveDealTimestamp(b);
       return db - da;
     });
     const paidCount = items.filter(i => i.status === "paid").length;
@@ -143,7 +143,7 @@ function groupDealsByProduct(deals: AnyDeal[], moduleMetaMap?: Map<string, any>)
     // Sort group by latest paid deal date; fallback to latest deal date overall.
     const paidItems = items.filter(i => i.status === "paid");
     const tsPool = (paidItems.length ? paidItems : items).map(i =>
-      new Date(getEffectiveDealDate(i)).getTime()
+      getEffectiveDealTimestamp(i)
     );
     const sortTs = tsPool.length ? Math.max(...tsPool) : 0;
 
@@ -379,7 +379,7 @@ function DealRow({
           </div>
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
             <CalendarIcon className="w-2.5 h-2.5" />
-            <span>{format(new Date(getEffectiveDealDate(deal)), "dd.MM.yy HH:mm")}</span>
+            <span>{formatEffectiveDealDate(deal, "dd.MM.yy HH:mm")}</span>
           </div>
           <div className={deal.responsible_user_id ? "text-[11px] text-muted-foreground" : "text-[11px] text-amber-600"}>
             {responsibleName || "Без менеджера"}

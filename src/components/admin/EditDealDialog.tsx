@@ -46,6 +46,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MonthYearPicker } from "@/components/ui/month-year-picker";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
+import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
+
 interface EditDealDialogProps {
   deal: any | null;
   open: boolean;
@@ -173,13 +175,14 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
 
   useEffect(() => {
     if (deal) {
+      const effectiveDate = getEffectiveDealDate(deal);
       setFormData({
         status: deal.status || "",
         final_price: String(deal.final_price || ""),
         product_id: deal.product_id || "",
         tariff_id: deal.tariff_id || "",
         offer_id: deal.offer_id || "",
-        deal_date: deal.deal_date ? new Date(deal.deal_date) : deal.created_at ? new Date(deal.created_at) : null,
+        deal_date: effectiveDate ? new Date(effectiveDate) : null,
         access_start_at: subscription?.access_start_at ? new Date(subscription.access_start_at) : null,
         access_end_at: subscription?.access_end_at ? new Date(subscription.access_end_at) : null,
         next_charge_at: subscription?.next_charge_at ? new Date(subscription.next_charge_at) : null,
@@ -213,7 +216,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         user_id: formData.user_id || deal.user_id,
       };
       // deal_date: update only if changed
-      const oldDealDate = deal.deal_date || deal.created_at;
+      const oldDealDate = getEffectiveDealDate(deal);
       const newDealDate = formData.deal_date?.toISOString();
       const dealDateChanged = newDealDate && newDealDate !== oldDealDate;
       if (newDealDate) {
