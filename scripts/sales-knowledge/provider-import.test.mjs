@@ -99,6 +99,41 @@ test('timestamp and chapter links retain the exact video alias and discard URL p
   const plan=await dryRunCourse(f.io,owner);assert.equal(plan.sources[0].aliases[0],'testAlias123');
   assert.equal(plan.unresolved.length,0);assert.doesNotMatch(JSON.stringify(plan),/t=120|chapter/);
 });
+test('unordered subtitles are quarantined while the complete dry-run keeps valid sources',async()=>{
+  const f=fixture(),provider=f.io.provider;
+  f.blocks.push({...f.blocks[0],id:'b2',content:{url:'https://kinescope.io/zValidAlias123'}});
+  f.io.provider=async(path)=>{const r=await provider(path);if(path==='/videos/zValidAlias123')r.data.id='22222222-2222-4222-8222-222222222222';return r;};
+  const malformed='WEBVTT\n\n00:10.000 --> 00:20.000\nПервый фрагмент.\n\n00:00.000 --> 00:10.000\nФрагмент с нарушенным порядком.';
+  let calls=0;f.io.subtitle=async()=>++calls===1?malformed:vtt;
+  const plan=await dryRunCourse(f.io,owner),bad=plan.sources[0];
+  assert.equal(plan.complete,true);assert.equal(plan.totals.source_count,2);
+  assert.equal(plan.totals.subtitle_parse_review,1);assert.equal(plan.totals.ready_to_import,1);
+  assert.equal(bad.review_reason,'unordered_subtitle_cues');assert.equal(bad.video_id,videoId);
+  assert.equal(bad.bindings[0].block_id,'b1');assert.match(bad.subtitle_sha256,/^[a-f0-9]{64}$/);
+  assert.equal(bad.chars,undefined);assert.equal(bad.content_sha256,undefined);
+  assert.doesNotMatch(JSON.stringify(plan),/Первый|нарушенным|https:|synthetic/);
+  await assert.rejects(importCourseBatch(f.io,owner,plan,[0]),/batch_not_ready/);
+  assert.equal(f.writes.length,0);
+});
+test('parser review does not mask network failures or inconsistent aliases',async()=>{
+  const f=fixture();f.io.subtitle=async()=>{throw new Error('subtitle_http_503');};
+  await assert.rejects(dryRunCourse(f.io,owner),/subtitle_http_503/);
+  for(const change of ['ready','different_invalid']){
+    const g=fixture();g.blocks.push({...g.blocks[0],id:'b2',content:{url:'https://kinescope.io/zSecondAlias123'}});
+    let calls=0;g.io.subtitle=async()=>++calls===1?'<html>invalid</html>':change==='ready'?vtt:'<html>changed</html>';
+    await assert.rejects(dryRunCourse(g.io,owner),/subtitle_snapshot_changed/);
+    assert.equal(g.writes.length,0);
+  }
+});
+test('all non-Russian and ambiguous subtitle sources appear in totals',async()=>{
+  for(const [rows,status] of [[[],'missing_ru_subtitles'],[[{language:'ru'},{language:'ru'}],'multiple_ru_tracks']]){
+    const f=fixture(),provider=f.io.provider;
+    f.io.provider=async(path)=>path.includes('/subtitles?')?{data:rows}:provider(path);
+    const plan=await dryRunCourse(f.io,owner);assert.equal(plan.totals[status],1);
+    await assert.rejects(importCourseBatch(f.io,owner,plan,[0]),/batch_not_ready/);
+    assert.equal(f.writes.length,0);
+  }
+});
 test('subtitle fetch omits credentials and rejects redirect outside provider',async()=>{
   const calls=[];const io=createManagedTransport({supabaseUrl:'https://example.supabase.co',serviceKey:'test',fetchImpl:async(url,options)=>{
     calls.push({url:String(url),options});return new Response(null,{status:302,headers:{location:'http://127.0.0.1/a'}});

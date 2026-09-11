@@ -9,6 +9,11 @@ export const COURSE_PRODUCT_IDS=Object.freeze([
 const sha=s=>createHash('sha256').update(s).digest('hex');
 const uuid=s=>typeof s==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(s);
 const eqIds=(a,b)=>JSON.stringify([...a].sort())===JSON.stringify([...b].sort());
+// Only known parser validation failures are local to a subtitle source.
+// Transport, credentials, curriculum and snapshot failures still stop the run.
+const subtitleReviewCodes=new Set(['invalid_subtitle_input','russian_subtitles_required',
+  'invalid_subtitle_format','unparsed_subtitle_block','invalid_cue_timing',
+  'invalid_cue_time','invalid_cue_interval','unordered_subtitle_cues','no_subtitle_cues']);
 
 export function safeSubtitleUrl(value){
   let u;try{u=new URL(value);}catch{throw new Error('subtitle_url_invalid');}
@@ -121,7 +126,14 @@ async function inspectAlias(io,token,alias){
   if(ru.length!==1)return {video_id:video.id,source_revision:rev,duration_ms:duration,status:ru.length?'multiple_ru_tracks':'missing_ru_subtitles'};
   const detail=unwrap(await io.provider(`/videos/${video.id}/subtitles/${ru[0].id}`,token));
   if(detail.language!=='ru'||detail.status&&detail.status!=='done')throw new Error('subtitle_not_ready');
-  const parsed=inspectSubtitles(await io.subtitle(detail.url),duration,'ru');
+  const raw=await io.subtitle(detail.url);
+  let parsed;
+  try{parsed=inspectSubtitles(raw,duration,'ru');}
+  catch(error){
+    if(!subtitleReviewCodes.has(error?.message))throw error;
+    return {video_id:video.id,source_revision:rev,duration_ms:duration,subtitle_id:detail.id,
+      status:'subtitle_parse_review',review_reason:error.message,subtitle_sha256:sha(raw)};
+  }
   const warningsOnly=parsed.quality_flags.every(f=>f==='long_gap')&&parsed.metadata.uncovered_ms/duration<=0.1;
   return {video_id:video.id,source_revision:rev,duration_ms:duration,subtitle_id:detail.id,
     audio_track_id:audio?.id||null,audio_bytes:Number.isSafeInteger(audio?.file_size)&&audio.file_size>0?audio.file_size:null,
@@ -139,6 +151,8 @@ export async function dryRunCourse(io,actor,{aliases}={}){
       const duplicate=sources.find(s=>s.video_id===meta.video_id&&s.source_revision===meta.source_revision);
       const bindings=snapshot.bindings.filter(b=>b.alias===alias);
       if(duplicate){
+        if(duplicate.status!==meta.status||duplicate.review_reason!==meta.review_reason
+          ||duplicate.subtitle_sha256!==meta.subtitle_sha256)throw new Error('subtitle_snapshot_changed');
         if(parsed&&duplicate.content_sha256!==parsed.content_sha256)throw new Error('subtitle_snapshot_changed');
         duplicate.aliases.push(alias);duplicate.bindings.push(...bindings);continue;
       }
@@ -160,6 +174,9 @@ export async function dryRunCourse(io,actor,{aliases}={}){
     totals:{source_count:sources.length,ready_to_import:sources.filter(s=>s.status==='ready_to_import').length,
       ready_with_warnings:sources.filter(s=>s.status==='ready_with_warnings').length,
       quality_review:sources.filter(s=>s.status==='quality_review').length,provider_not_found:sources.filter(s=>s.status==='provider_not_found').length,
+      subtitle_parse_review:sources.filter(s=>s.status==='subtitle_parse_review').length,
+      missing_ru_subtitles:sources.filter(s=>s.status==='missing_ru_subtitles').length,
+      multiple_ru_tracks:sources.filter(s=>s.status==='multiple_ru_tracks').length,
       subtitles_not_found:sources.filter(s=>s.status==='subtitles_not_found').length,source_revision_unknown:sources.filter(s=>s.status==='source_revision_unknown').length}};
 }
 
