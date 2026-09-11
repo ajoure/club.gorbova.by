@@ -40,7 +40,7 @@ export function createPublicCaptionTransport({fetchImpl=fetch}={}){
 }
 
 /** Extract one JSON literal; never execute the surrounding player JavaScript. */
-export function parsePublicPlayer(html){
+export function parsePublicPlayer(html,{includeHls=false}={}){
   if(typeof html!=='string'||html.length>MAX_BYTES)throw new Error('public_player_invalid');
   const matches=[...html.matchAll(/\bplayerOptions\s*=\s*/g)];
   if(matches.length!==1)throw new Error('public_player_ambiguous');
@@ -61,7 +61,8 @@ export function parsePublicPlayer(html){
   if(!Array.isArray(video.vtt))throw new Error('public_caption_tracks_missing');
   const tracks=video.vtt.filter(track=>track.srcLang==='ru');
   if(tracks.length!==1)throw new Error('public_russian_track_ambiguous');
-  return {video_id:video.id.toLowerCase(),duration_ms:duration,subtitle_url:safeSubtitleUrl(tracks[0].src).href};
+  return {video_id:video.id.toLowerCase(),duration_ms:duration,subtitle_url:safeSubtitleUrl(tracks[0].src).href,
+    ...(includeHls?{hls_url:safeSubtitleUrl(video.sources?.hls?.src).href}:{})};
 }
 
 function timestamp(value){
