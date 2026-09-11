@@ -254,7 +254,6 @@ const [analysisResult, setAnalysisResult] = useState<{
     queryFn: async () => {
       const { data, error } = await operationalSupabase
         .rpc("list_operational_telegram_bots")
-        .select("id, bot_name, bot_username, status")
         .eq("status", "active")
         .order("created_at", { ascending: false });
       if (error) throw error;

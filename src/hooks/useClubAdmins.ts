@@ -102,7 +102,6 @@ export function useClubAdmins(clubId: string | null) {
       if (clubRow?.bot_id) {
         const { data: bot } = await operationalSupabase
           .rpc("list_operational_telegram_bots")
-          .select("bot_id, bot_name, bot_username")
           .eq("id", clubRow.bot_id)
           .single();
 
