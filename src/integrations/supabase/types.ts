@@ -5783,12 +5783,14 @@ export type Database = {
         Row: {
           audio_bytes: number | null
           audio_track_id: string | null
+          caption_sha256: string | null
           created_at: string
           created_by: string
           duration_ms: number
           enabled: boolean
           id: string
           provider: string
+          revision_basis: string
           source_revision: string
           verified_at: string
           video_id: string
@@ -5796,12 +5798,14 @@ export type Database = {
         Insert: {
           audio_bytes?: number | null
           audio_track_id?: string | null
+          caption_sha256?: string | null
           created_at?: string
           created_by: string
           duration_ms: number
           enabled?: boolean
           id?: string
           provider: string
+          revision_basis?: string
           source_revision: string
           verified_at?: string
           video_id: string
@@ -5809,12 +5813,14 @@ export type Database = {
         Update: {
           audio_bytes?: number | null
           audio_track_id?: string | null
+          caption_sha256?: string | null
           created_at?: string
           created_by?: string
           duration_ms?: number
           enabled?: boolean
           id?: string
           provider?: string
+          revision_basis?: string
           source_revision?: string
           verified_at?: string
           video_id?: string
@@ -5823,6 +5829,7 @@ export type Database = {
       }
       course_transcripts: {
         Row: {
+          caption_provenance: Json | null
           char_count: number
           classification: string
           content_sha256: string
@@ -5837,6 +5844,7 @@ export type Database = {
           transcript_text: string
         }
         Insert: {
+          caption_provenance?: Json | null
           char_count: number
           classification?: string
           content_sha256: string
@@ -5851,6 +5859,7 @@ export type Database = {
           transcript_text: string
         }
         Update: {
+          caption_provenance?: Json | null
           char_count?: number
           classification?: string
           content_sha256?: string
@@ -23775,6 +23784,16 @@ export type Database = {
           _error_code?: string
           _job_id: string
           _part_index: number
+          _text: string
+        }
+        Returns: Json
+      }
+      course_transcription_import_reviewed_captions: {
+        Args: {
+          _metadata: Json
+          _provenance: Json
+          _source_id: string
+          _source_revision: string
           _text: string
         }
         Returns: Json
