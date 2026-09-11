@@ -22703,6 +22703,25 @@ export type Database = {
           telegram_access_status: string
         }[]
       }
+      admin_get_contact_telegram_channels_v1: {
+        Args: { p_user_id: string }
+        Returns: {
+          bot_id: string
+          business_connection_id: string
+          can_reply: boolean
+          channel_key: string
+          channel_ref: string
+          first_name: string
+          incoming_count: number
+          is_primary: boolean
+          label: string
+          last_name: string
+          message_count: number
+          transport: string
+          unanswered_count: number
+          username: string
+        }[]
+      }
       admin_get_payments_page_v1: {
         Args: {
           p_from: string
@@ -22721,6 +22740,19 @@ export type Database = {
       admin_get_payments_stats_v1: {
         Args: { p_from: string; p_provider?: string; p_to: string }
         Returns: Json
+      }
+      admin_get_telegram_channel_messages_v1: {
+        Args: {
+          p_before_created_at?: string
+          p_before_id?: string
+          p_channel_ref: string
+          p_limit?: number
+          p_text_limit?: number
+          p_transport: string
+          p_unanswered_only?: boolean
+          p_user_id: string
+        }
+        Returns: Json[]
       }
       admin_get_telegram_messages_fast_v1: {
         Args: { p_limit?: number; p_user_id: string }
