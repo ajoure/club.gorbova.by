@@ -14,7 +14,7 @@ before(async()=>{
     CREATE FUNCTION public.has_role_v2(_user_id uuid,_role_code text) RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT _user_id='${owner}'::uuid AND _role_code='super_admin' $$;
     GRANT USAGE ON SCHEMA auth,public TO anon,authenticated,service_role;
     CREATE TABLE public.training_lessons(id uuid PRIMARY KEY);CREATE TABLE public.lesson_blocks(id uuid PRIMARY KEY);CREATE TABLE public.products_v2(id uuid PRIMARY KEY);`);
-  for(const name of ['20260911172902_90aeec8b-4b8d-4ff2-b180-19e2d6ad992a.sql','20260911184123_9c93b1c8-09c9-4f6a-9f80-d1490ed4f009.sql','20260911193829_course_caption_gap_audit.sql'])
+  for(const name of ['20260911172902_90aeec8b-4b8d-4ff2-b180-19e2d6ad992a.sql','20260911184123_9c93b1c8-09c9-4f6a-9f80-d1490ed4f009.sql','20260911200704_62084073-0485-4613-8b9f-38c2cdf67e1b.sql'])
     await db.exec(await readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8'));
 });
 after(async()=>await db?.close());
