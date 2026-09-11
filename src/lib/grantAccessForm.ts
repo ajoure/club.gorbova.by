@@ -44,8 +44,18 @@ export function buildGrantAccessBody(input: {
   };
 }
 
+export class AccessAlreadyExistsError extends Error {
+  constructor() {
+    super('Доступ уже существует. Повторная выдача не нужна.');
+    this.name = 'AccessAlreadyExistsError';
+  }
+}
+
 export function confirmedGrantIds(value: unknown) {
   const data = record(value);
+  if (data.reason === 'insert_blocked_active_overlap' && data.skipped === true) {
+    throw new AccessAlreadyExistsError();
+  }
   if (data.manual_review === true || data.manualReview === true) throw new Error('Требуется ручная проверка связи оплаты и доступа. Срок не подтверждён.');
   if (data.skipped === true) throw new Error('Выдача пропущена сервером. Доступ не подтверждён; проверьте причину в истории сделки.');
   if (data.success !== true || data.error) throw new Error('Сервер не подтвердил выдачу доступа. Обновите данные и проверьте историю сделки.');

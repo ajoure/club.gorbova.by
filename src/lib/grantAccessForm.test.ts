@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGrantAccessBody, confirmedGrantIds, localDateTimeValue, parseLocalDateTime, verifyGrantAccessReadback } from './grantAccessForm';
+import { AccessAlreadyExistsError, buildGrantAccessBody, confirmedGrantIds, localDateTimeValue, parseLocalDateTime, verifyGrantAccessReadback } from './grantAccessForm';
 
 const end = new Date('2026-09-30T03:01:53.529Z');
 const body = { orderId: 'order', start: new Date('2026-08-31T03:01:53.529Z'), days: 30,
@@ -34,6 +34,12 @@ describe('grant form exact request and proof', () => {
   it.each([null, {}, { success: false }, { success: true, skipped: true }, { success: true, manual_review: true },
     { success: true, manualReview: true }, { success: true, error: 'failure' }, { success: true }])
     ('never treats an unconfirmed or skipped response as success: %j', value => expect(() => confirmedGrantIds(value)).toThrow());
+  it('distinguishes existing access from unresolved payment linkage without reporting a new grant', () => {
+    expect(() => confirmedGrantIds({ skipped: true, manual_review: true, reason: 'insert_blocked_active_overlap' }))
+      .toThrow(AccessAlreadyExistsError);
+    expect(() => confirmedGrantIds({ skipped: true, manual_review: true, reason: 'provider_linkage_conflict' }))
+      .toThrow('Требуется ручная проверка');
+  });
   it('supports normal and idempotent response ID shapes', () => {
     expect(confirmedGrantIds({ success: true, results: { subscription: { id: 'sub' }, entitlement: { id: 'ent' } } }))
       .toMatchObject({ subscriptionId: 'sub', entitlementId: 'ent' });
