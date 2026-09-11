@@ -1,0 +1,39 @@
+{
+  "audit_source": "canonical Lovable Cloud read-only report, 2026-09-11",
+  "execute_ready": false,
+  "course_product_id": "7101ed3c-7839-4a74-ad95-aa0660369b22",
+  "flow_18_id": "2d635c0d-37d5-4600-a86f-5c34297f7aab",
+  "flow_17_id": null,
+  "tariffs": {
+    "Бухгалтер": "adbe94e8-171d-4b49-8338-66c554bb1f0b",
+    "Главный бухгалтер": "543940b1-99da-47f3-accc-671ad5b11afe",
+    "Бизнес-леди": "9bc81736-e7e5-48db-9925-b866427a98e1"
+  },
+  "legacy_tariff_alias_mapping_verified": true,
+  "legacy_tariff_alias_mapping_authority": "Explicit owner confirmation 2026-09-11",
+  "legacy_tariff_aliases": {
+    "Для своих 1": "Бухгалтер",
+    "Для своих 2": "Главный бухгалтер",
+    "тариф 2": "Главный бухгалтер",
+    "Для своих 3": "Бизнес-леди",
+    "тариф 3": "Бизнес-леди"
+  },
+  "module_selection_authority": "Only literal 1 flags in columns L:S; owner confirmation 2026-09-11. Ignore module names in F/J/K when flags disagree.",
+  "module_product_ids_in_sheet_column_order": [
+    "64d9f812-617c-41a8-b3dc-bb113156d6f3",
+    "ea98d043-e852-443f-8807-6e77de6a5e1f",
+    "99f1f156-f384-417e-bdf8-9203eb3c9d42",
+    "d7effaf4-9be0-4ce2-971b-e02fe2a85a9a",
+    "abee24cd-5c8b-4111-a6cb-7dee7acf168c",
+    "9187db54-8f57-42eb-bbcb-d7103d2459a9",
+    "064dd768-de8b-40db-89bc-f8d4a7e442ba",
+    "f833c846-a78d-4096-9dac-b8417d588371"
+  ],
+  "club_product_id": "11c9f1b8-0355-4753-bd74-40b42aa53616",
+  "club_business_tariff_id": "7c748940-dcad-4c7c-a92e-76a2344622d3",
+  "club_business_primary_offer_id": "bc0f7a90-df41-4a86-b2ea-2a1234d0d534",
+  "excluded_product_ids": [
+    "3e43fb28-8322-41bc-bfee-714731bdc630",
+    "2b7bf6d4-ad8d-46ad-9399-7f96c307c596"
+  ]
+}

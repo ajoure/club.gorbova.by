@@ -7,13 +7,15 @@
  * - Два уровня проверки:
  *   1. Прямой match: orders_v2.product_id = targetProductId
  *   2. Fallback: purchase_snapshot.module_list_mapped содержит targetProductId
- *      ТОЛЬКО для historical_purchase_type = 'module_only_standalone'
- *      ТОЛЬКО если module_list_mapped.length === 1 (однозначный маппинг)
+ *      Только явные UUID-компоненты известных типов исторической покупки.
+ *      Split-child и несколько явно перечисленных UUID не требуют дублирующего заказа.
  *
  * Используется в:
  * - access-resolver.ts (secondary grants resolution)
  * - grant-access-for-order/index.ts (per-product prior purchase check)
  */
+
+import { HISTORICAL_COMPONENT_TYPES, hasHistoricalComponent, isModuleOnlyHistory } from './historical-component-purchase.ts';
 
 type SupabaseQueryClient = {
   from: (relation: string) => any;
@@ -78,6 +80,7 @@ export async function checkPriorPurchase(
       .from('orders_v2')
       .select('id, tariff_id, purchase_snapshot')
       .eq('status', 'paid')
+      .not('is_deleted', 'is', true)
       .neq('id', excludeOrderId);
 
     query = Array.isArray(value)
@@ -86,13 +89,19 @@ export async function checkPriorPurchase(
 
     if (moduleFallback) {
       query = query
-        .eq('purchase_snapshot->>historical_purchase_type', 'module_only_standalone')
+        .in('purchase_snapshot->>historical_purchase_type', HISTORICAL_COMPONENT_TYPES)
         .contains('purchase_snapshot', { module_list_mapped: [targetProductId] });
     } else {
       query = query.eq('product_id', targetProductId);
     }
     if (requiredTariffId) query = query.eq('tariff_id', requiredTariffId);
-    return await query.limit(5);
+    const data: any[] = [];
+    for (let from = 0; ; from += 1000) {
+      const response = await query.order('id').range(from, from + 999);
+      if (response.error) return response;
+      data.push(...(response.data || []));
+      if ((response.data || []).length < 1000) return { data, error: null };
+    }
   };
 
   // Step 1: direct match through either canonical user_id or the linked profile.
@@ -111,8 +120,8 @@ export async function checkPriorPurchase(
     directOrders.push(...(response.data || []));
   }
 
-  // Pick best: prefer order with tariff_id (full purchase)
-  const directOrder = directOrders.find((o: any) => o.tariff_id)
+  // A split child carrying the parent tariff is still only a module purchase.
+  const directOrder = directOrders.find((o: any) => o.tariff_id && !isModuleOnlyHistory(o.purchase_snapshot?.historical_purchase_type))
     || directOrders[0]
     || null;
 
@@ -130,8 +139,7 @@ export async function checkPriorPurchase(
   }
 
   // Step 2: Fallback — check module_list_mapped in purchase_snapshot
-  // Only for historical_purchase_type = 'module_only_standalone'
-  // Only when module_list_mapped contains exactly 1 UUID matching targetProductId
+  // Only explicitly mapped UUID components of supported historical purchase types.
   // Use JSONB containment for efficient server-side filtering
   const moduleResults = await Promise.all([
     queryOrders('user_id', userId, true),
@@ -152,10 +160,7 @@ export async function checkPriorPurchase(
     const snapshot = order.purchase_snapshot as Record<string, any> | null;
     if (!snapshot) continue;
 
-    // Double-check: must have module_list_mapped with exactly 1 UUID
-    const moduleList = snapshot.module_list_mapped;
-    if (!Array.isArray(moduleList)) continue;
-    if (moduleList.length !== 1) continue; // multi-module → manual_review, skip
+    if (!hasHistoricalComponent(snapshot, targetProductId)) continue;
 
     return {
       found: true,
