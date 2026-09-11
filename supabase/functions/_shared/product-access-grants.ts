@@ -24,6 +24,7 @@ import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { writeLedgerEntry, type LedgerSourceEventType, type LedgerSourceSubjectType } from './fulfillment-executor.ts';
 import { checkPriorPurchase } from './check-prior-purchase.ts';
 import { resolvePriorPurchaseOwner } from './prior-purchase-identity.ts';
+import { HISTORICAL_COMPONENT_TYPES, hasHistoricalComponent, isModuleOnlyHistory } from './historical-component-purchase.ts';
 
 export type SecondaryGrantOutcome =
   | 'granted'        // new entitlement created
@@ -214,7 +215,7 @@ export async function buildPriorPurchaseCache(
   const priorityRank = (info: PriorPurchaseInfo): number => {
     if (info.match_type === 'direct') {
       const isBase = info.historical_purchase_type === 'base_tariff_purchase'
-        || (!!info.historical_tariff_id && info.historical_purchase_type !== 'module_only_standalone');
+        || (!!info.historical_tariff_id && !isModuleOnlyHistory(info.historical_purchase_type));
       return isBase ? 3 : 2;
     }
     return 1; // module_list_mapped
@@ -258,6 +259,7 @@ export async function buildPriorPurchaseCache(
           .from('orders_v2')
           .select('user_id, profile_id, product_id, id, tariff_id, purchase_snapshot')
           .eq('status', 'paid')
+          .not('is_deleted', 'is', true)
           .in(channel.column, channel.ids)
           .in('product_id', uniqueProducts);
         if (excludeOrderId) q = q.neq('id', excludeOrderId);
@@ -306,8 +308,9 @@ export async function buildPriorPurchaseCache(
           .from('orders_v2')
           .select('user_id, profile_id, product_id, id, tariff_id, purchase_snapshot')
           .eq('status', 'paid')
+          .not('is_deleted', 'is', true)
           .in(channel.column, channel.ids)
-          .eq('purchase_snapshot->>historical_purchase_type', 'module_only_standalone')
+          .in('purchase_snapshot->>historical_purchase_type', HISTORICAL_COMPONENT_TYPES)
           .contains('purchase_snapshot', { module_list_mapped: [targetProdId] });
         if (excludeOrderId) q = q.neq('id', excludeOrderId);
 
@@ -329,7 +332,7 @@ export async function buildPriorPurchaseCache(
           if (!ownerUserId) continue;
           const snapshot = row.purchase_snapshot || {};
           const moduleList = Array.isArray(snapshot.module_list_mapped) ? snapshot.module_list_mapped : [];
-          if (!moduleList.includes(targetProdId)) continue;
+          if (!hasHistoricalComponent(snapshot, targetProdId)) continue;
           recordInfo(ownerUserId, targetProdId, {
             match_type: 'module_list_mapped',
             order_id: row.id,
