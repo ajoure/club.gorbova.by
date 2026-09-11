@@ -424,7 +424,6 @@ function TelegramChannelChat({
       business_connection_id: r.business_connection_id ?? null,
       business_account_id: r.business_account_id ?? null,
       message_origin: r.message_origin ?? null,
-      requires_reply: r.requires_reply ?? false,
       admin_profile: r.sent_by_admin
         ? { full_name: r.admin_full_name, avatar_url: r.admin_avatar_url }
         : null,
