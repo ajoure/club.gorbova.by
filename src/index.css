@@ -7,7 +7,7 @@
    auto, creating a non-scrolling intermediary on document-scrolled pages.
    Blocking scroll chaining there traps mobile gestures before they reach
    the root (e.g. the library/course pages). Keep body's default Y = auto. */
-html { overscroll-behavior-y: none; }
+html { overscroll-behavior-y: none; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 /* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
 All colors MUST be HSL.
@@ -15,8 +15,9 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    /* Dynamic viewport height — stable on iOS with keyboard */
+    /* CSS fallback; appViewport tracks the visible area above the keyboard. */
     --app-height: 100dvh;
+    --visual-viewport-top: 0px;
 
     /* iOS-like glass blue theme */
     --background: 220 60% 97%;
@@ -139,7 +140,7 @@ All colors MUST be HSL.
   #root {
     width: 100%;
     min-width: 0;
-    min-height: 100dvh;
+    min-height: var(--app-height);
     max-width: none;
     margin: 0;
     padding: 0;
@@ -283,9 +284,10 @@ body.impersonation-active .impersonation-offset {
   }
 }
 
-/* iOS zoom prevention - only for mobile inputs */
-@media (max-width: 767px) {
-  input, textarea, select {
+/* Prevent focus zoom for all editors, including landscape touch devices.
+   Pinch zoom stays available: no viewport maximum-scale or gesture blocking. */
+@media (max-width: 767px), (any-pointer: coarse) {
+  input, textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"] {
     font-size: 16px !important;
   }
 }
@@ -626,4 +628,49 @@ body.impersonation-active .impersonation-offset {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85em;
   border: 1px dashed hsl(20 90% 50% / 0.6);
+}
+
+/* Shared mobile geometry: browser tabs and installed standalone apps. */
+@media (max-width: 767px), (any-pointer: coarse) {
+  .app-viewport-shell {
+    position: relative;
+    top: var(--visual-viewport-top, 0px);
+  }
+  [data-viewport-dialog] {
+    top: calc(var(--visual-viewport-top, 0px) + var(--app-height) / 2);
+    left: calc(50% + (env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) / 2);
+    max-width: calc(100vw - 1.5rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    max-height: calc(var(--app-height) - 2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    overflow-x: hidden;
+    overflow-wrap: anywhere;
+  }
+  [data-viewport-sheet] {
+    max-width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    max-height: var(--app-height);
+    overflow-y: auto;
+  }
+  [data-viewport-sheet="left"], [data-viewport-sheet="right"] {
+    top: var(--visual-viewport-top, 0px);
+    height: var(--app-height);
+  }
+  [data-viewport-sheet="left"]:not([class~="p-0"]), [data-viewport-sheet="right"]:not([class~="p-0"]) {
+    padding-top: max(1.5rem, env(safe-area-inset-top, 0px));
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));
+  }
+  [data-viewport-sheet="left"] { left: env(safe-area-inset-left, 0px); }
+  [data-viewport-sheet="right"] { right: env(safe-area-inset-right, 0px); }
+  [data-viewport-sheet="top"] { top: var(--visual-viewport-top, 0px); }
+  [data-viewport-sheet="bottom"] {
+    bottom: max(0px, calc(100dvh - var(--app-height) - var(--visual-viewport-top, 0px)));
+  }
+  [data-viewport-sheet="bottom"]:not([class~="p-0"]) {
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (max-width: 767px) {
+  .member-content {
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+  }
 }

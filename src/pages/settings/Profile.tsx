@@ -409,7 +409,7 @@ export default function ProfileSettings() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-2xl mx-auto space-y-6">
+      <div className="w-full min-w-0 max-w-2xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Профиль</h1>
           <p className="text-muted-foreground">Управление личными данными</p>
@@ -436,7 +436,7 @@ export default function ProfileSettings() {
             ) : (
               <>
                 {/* Avatar */}
-                <div className="flex items-center gap-4">
+                <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
                   <div className="relative">
                     <Avatar className="h-20 w-20">
                       {profile?.avatar_url && <AvatarImage src={profile.avatar_url} alt={profile.full_name || ""} />}

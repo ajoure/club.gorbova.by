@@ -1188,7 +1188,7 @@ export default function AdminContacts() {
     <div className="space-y-4 pb-24">
       {/* Pill-style Tabs */}
       <div className="px-1 pt-1 pb-1.5 shrink-0">
-        <div className="inline-flex items-center p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+        <div className="flex flex-wrap sm:inline-flex sm:flex-nowrap items-center p-0.5 rounded-2xl sm:rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
           {CONTACT_PRESETS.map((preset) => {
             const isActive = activePreset === preset.id;
             return (

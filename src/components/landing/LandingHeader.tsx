@@ -109,7 +109,9 @@ export function LandingHeader() {
       }`}
       style={{
         top: "var(--impersonation-bar-height, 0px)",
-        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingTop: "max(0.75rem, env(safe-area-inset-top, 0px))",
+        paddingLeft: "env(safe-area-inset-left, 0px)",
+        paddingRight: "env(safe-area-inset-right, 0px)",
         background: isScrolled
           ? "linear-gradient(135deg, hsl(var(--card) / 0.95), hsl(var(--card) / 0.85))"
           : "transparent",

@@ -61,6 +61,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             className="sticky top-0 z-40 border-b border-border/50 bg-background/80 backdrop-blur-xl flex items-center px-2 md:px-3"
             style={{ 
               paddingTop: 'env(safe-area-inset-top, 0px)',
+              paddingLeft: 'max(0.5rem, env(safe-area-inset-left, 0px))',
+              paddingRight: 'max(0.5rem, env(safe-area-inset-right, 0px))',
               minHeight: 'calc(2.5rem + env(safe-area-inset-top, 0px))'
             }}
           >
@@ -70,7 +72,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </header>
           <PullToRefresh>
             <main 
-              className="flex-1 flex flex-col p-4 md:p-6 bg-gradient-to-br from-background via-muted/30 to-background overflow-x-clip pb-20 md:pb-6 min-h-0"
+              className="member-content flex-1 flex flex-col min-w-0 p-4 md:p-6 bg-gradient-to-br from-background via-muted/30 to-background overflow-x-clip pb-20 md:pb-6 min-h-0"
               style={{
                 paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
                 paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',

@@ -69,7 +69,9 @@ describe("Contact-center safety and mobile performance", () => {
     expect(unifiedChatHeaderSource).toContain('aria-label="Вернуться к списку чатов"');
     expect(unifiedChatHeaderSource).toContain("linked && setSheetOpen(true)");
     expect(unifiedInboxSource).toContain("touch-scroll flex-1");
-    expect(channelPickerSource).toContain("overflow-x-auto");
+    // All three sources stay visible even at 320px; no hidden horizontal strip.
+    expect(channelPickerSource).toContain("grid-cols-3 min-w-0");
+    expect(channelPickerSource).toContain("h-11 w-full min-w-0");
     expect(ticketChatSource).toContain("contact-center-safe-bottom");
   });
 

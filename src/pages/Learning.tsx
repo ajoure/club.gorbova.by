@@ -438,16 +438,16 @@ export default function Learning() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full max-w-md grid-cols-2">
-            <TabsTrigger value="store" className="flex items-center gap-2">
-              <ShoppingBag className="h-4 w-4" />
+          <TabsList className="grid w-full h-auto max-w-md grid-cols-2">
+            <TabsTrigger value="store" className="flex min-w-0 h-11 items-center gap-1 px-1 text-xs sm:text-sm sm:gap-2">
+              <ShoppingBag className="hidden sm:block h-4 w-4 shrink-0" />
               Все продукты
             </TabsTrigger>
-            <TabsTrigger value="library" className="flex items-center gap-2">
-              <BookOpen className="h-4 w-4" />
+            <TabsTrigger value="library" className="flex min-w-0 h-11 items-center gap-1 px-1 text-xs sm:text-sm sm:gap-2">
+              <BookOpen className="hidden sm:block h-4 w-4 shrink-0" />
               Моя библиотека
               {libraryItemsCount > 0 && (
-                <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 flex items-center justify-center text-xs">
+                <Badge variant="secondary" className="shrink-0 h-5 min-w-5 px-1 flex items-center justify-center text-xs">
                   {libraryItemsCount}
                 </Badge>
               )}
