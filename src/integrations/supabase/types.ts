@@ -5626,6 +5626,261 @@ export type Database = {
         }
         Relationships: []
       }
+      course_transcription_bindings: {
+        Row: {
+          block_id: string
+          block_updated_at: string
+          lesson_id: string
+          product_id: string
+          source_id: string
+          verified_at: string
+        }
+        Insert: {
+          block_id: string
+          block_updated_at: string
+          lesson_id: string
+          product_id: string
+          source_id: string
+          verified_at?: string
+        }
+        Update: {
+          block_id?: string
+          block_updated_at?: string
+          lesson_id?: string
+          product_id?: string
+          source_id?: string
+          verified_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_transcription_bindings_block_id_fkey"
+            columns: ["block_id"]
+            isOneToOne: false
+            referencedRelation: "lesson_blocks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "course_transcription_bindings_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "training_lessons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "course_transcription_bindings_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "course_transcription_bindings_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "course_transcription_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_transcription_jobs: {
+        Row: {
+          created_at: string
+          duration_ms: number
+          id: string
+          requested_by: string
+          source_id: string
+          status: string
+          total_parts: number
+          updated_at: string
+          window_ms: number
+        }
+        Insert: {
+          created_at?: string
+          duration_ms: number
+          id?: string
+          requested_by: string
+          source_id: string
+          status?: string
+          total_parts: number
+          updated_at?: string
+          window_ms?: number
+        }
+        Update: {
+          created_at?: string
+          duration_ms?: number
+          id?: string
+          requested_by?: string
+          source_id?: string
+          status?: string
+          total_parts?: number
+          updated_at?: string
+          window_ms?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_transcription_jobs_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: true
+            referencedRelation: "course_transcription_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_transcription_parts: {
+        Row: {
+          attempts: number
+          audio_sha256: string | null
+          claim_token: string | null
+          end_ms: number
+          error_code: string | null
+          job_id: string
+          lease_until: string | null
+          part_index: number
+          start_ms: number
+          status: string
+          transcript_text: string | null
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          audio_sha256?: string | null
+          claim_token?: string | null
+          end_ms: number
+          error_code?: string | null
+          job_id: string
+          lease_until?: string | null
+          part_index: number
+          start_ms: number
+          status?: string
+          transcript_text?: string | null
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          audio_sha256?: string | null
+          claim_token?: string | null
+          end_ms?: number
+          error_code?: string | null
+          job_id?: string
+          lease_until?: string | null
+          part_index?: number
+          start_ms?: number
+          status?: string
+          transcript_text?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_transcription_parts_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "course_transcription_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_transcription_sources: {
+        Row: {
+          audio_bytes: number | null
+          audio_track_id: string | null
+          created_at: string
+          created_by: string
+          duration_ms: number
+          enabled: boolean
+          id: string
+          provider: string
+          source_revision: string
+          verified_at: string
+          video_id: string
+        }
+        Insert: {
+          audio_bytes?: number | null
+          audio_track_id?: string | null
+          created_at?: string
+          created_by: string
+          duration_ms: number
+          enabled?: boolean
+          id?: string
+          provider: string
+          source_revision: string
+          verified_at?: string
+          video_id: string
+        }
+        Update: {
+          audio_bytes?: number | null
+          audio_track_id?: string | null
+          created_at?: string
+          created_by?: string
+          duration_ms?: number
+          enabled?: boolean
+          id?: string
+          provider?: string
+          source_revision?: string
+          verified_at?: string
+          video_id?: string
+        }
+        Relationships: []
+      }
+      course_transcripts: {
+        Row: {
+          char_count: number
+          classification: string
+          content_sha256: string
+          created_at: string
+          duration_ms: number
+          job_id: string | null
+          origin: string
+          quality_status: string
+          source_id: string
+          source_revision: string
+          subtitle_metadata: Json | null
+          transcript_text: string
+        }
+        Insert: {
+          char_count: number
+          classification?: string
+          content_sha256: string
+          created_at?: string
+          duration_ms: number
+          job_id?: string | null
+          origin?: string
+          quality_status?: string
+          source_id: string
+          source_revision: string
+          subtitle_metadata?: Json | null
+          transcript_text: string
+        }
+        Update: {
+          char_count?: number
+          classification?: string
+          content_sha256?: string
+          created_at?: string
+          duration_ms?: number
+          job_id?: string | null
+          origin?: string
+          quality_status?: string
+          source_id?: string
+          source_revision?: string
+          subtitle_metadata?: Json | null
+          transcript_text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_transcripts_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "course_transcription_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "course_transcripts_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: true
+            referencedRelation: "course_transcription_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       crm_activity_log: {
         Row: {
           activity_type: string
@@ -23495,6 +23750,42 @@ export type Database = {
       contact_note_delete: { Args: { _note_id: string }; Returns: boolean }
       convert_preorder_on_pay_atomic: {
         Args: { p_paid_order_id: string }
+        Returns: Json
+      }
+      course_transcription_claim_part: {
+        Args: {
+          _audio_sha256: string
+          _job_id: string
+          _part_index: number
+          _source_revision: string
+        }
+        Returns: Json
+      }
+      course_transcription_create_job: {
+        Args: { _actor: string; _duration_ms: number; _source_id: string }
+        Returns: Json
+      }
+      course_transcription_finalize: {
+        Args: { _job_id: string; _source_revision: string }
+        Returns: Json
+      }
+      course_transcription_finish_part: {
+        Args: {
+          _claim_token: string
+          _error_code?: string
+          _job_id: string
+          _part_index: number
+          _text: string
+        }
+        Returns: Json
+      }
+      course_transcription_import_subtitles: {
+        Args: {
+          _metadata: Json
+          _source_id: string
+          _source_revision: string
+          _text: string
+        }
         Returns: Json
       }
       create_composable_refund_intent: {
