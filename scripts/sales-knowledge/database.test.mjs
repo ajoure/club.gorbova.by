@@ -1,6 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 
@@ -8,6 +8,8 @@ let db;
 const owner='00000000-0000-4000-8000-000000000001';
 const staff='00000000-0000-4000-8000-000000000002';
 const revision='a'.repeat(64), audioHash='b'.repeat(64);
+const migrationsUrl=new URL('../../supabase/migrations/',import.meta.url);
+const appliedCorpusMigration='20260911172902_90aeec8b-4b8d-4ff2-b180-19e2d6ad992a.sql';
 before(async()=>{
   db=new PGlite();
   await db.exec(`
@@ -24,7 +26,7 @@ before(async()=>{
     CREATE TABLE public.lesson_blocks(id uuid PRIMARY KEY);
     CREATE TABLE public.products_v2(id uuid PRIMARY KEY);
   `);
-  await db.exec(await readFile(new URL('../../supabase/migrations/20260911152939_course_source_transcriptions.sql',import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL(appliedCorpusMigration,migrationsUrl),'utf8'));
 });
 after(async()=>{await db?.close();});
 
@@ -46,6 +48,16 @@ async function job(duration=100000){
 }
 const claim=(id,index,hash=audioHash,rev=revision)=>rpc('course_transcription_claim_part',[id,index,hash,rev]);
 const finish=(id,index,token,text='Пример текста урока',error=null)=>rpc('course_transcription_finish_part',[id,index,token,text,error]);
+
+test('course corpus creation has one migration matching the applied history',async()=>{
+  const creators=[];
+  for(const file of (await readdir(migrationsUrl)).filter(name=>name.endsWith('.sql')).sort()){
+    const sql=await readFile(new URL(file,migrationsUrl),'utf8');
+    if(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?public\.course_transcription_sources\b/i.test(sql))creators.push(file);
+  }
+  assert.deepEqual(creators,[appliedCorpusMigration],
+    'A second corpus-creation migration breaks clean database replay');
+});
 
 test('closed corpus: owner can read; staff cannot; anonymous and browser RPC/mutations denied',async()=>{
   await source();
