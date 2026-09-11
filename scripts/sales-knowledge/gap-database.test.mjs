@@ -62,7 +62,15 @@ test('expired claims and late finish never resume or retry; empty ASR is uncerta
    assert.equal((await claim(a.audit_id)).action,'hold');assert.equal((await claim(a.audit_id,1)).action,'hold');
    assert.equal((await one('SELECT attempts FROM course_caption_gap_parts WHERE audit_id=$1 AND part_index=0',[a.audit_id])).attempts,1);
    assert.equal((await one('SELECT status FROM course_caption_gap_audits WHERE id=$1',[a.audit_id])).status,'review_required');
+   const evidence=await one('SELECT asr_text,text_sha256 FROM course_caption_gap_parts WHERE audit_id=$1 AND part_index=0',[a.audit_id]);
+   assert.equal(evidence.text_sha256,evidence.asr_text===null?null:sha(evidence.asr_text));
  }
+});
+test('revoked owner cannot finish an outstanding claim',async()=>{
+ const a=await create(await source()),c=await claim(a.audit_id);
+ await db.query('UPDATE course_caption_gap_audits SET requested_by=$2 WHERE id=$1',[a.audit_id,staff]);
+ await assert.rejects(finish(a.audit_id,0,c.claim_token),/owner_required/);
+ assert.equal((await one('SELECT status FROM course_caption_gap_parts WHERE audit_id=$1 AND part_index=0',[a.audit_id])).status,'claimed');
 });
 test('source drift disables new claims; evidence CHECK rejects nullable hashes',async()=>{
  const id=await source(),a=await create(id);await db.query('UPDATE course_transcription_sources SET enabled=false WHERE id=$1',[id]);

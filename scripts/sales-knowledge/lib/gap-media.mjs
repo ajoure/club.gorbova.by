@@ -16,9 +16,12 @@ export function captionGaps(raw,duration){
   let until=0;const gaps=[];
   const add=end=>{if(end-until>120000)gaps.push({gap_index:gaps.length,start_ms:until,end_ms:end});};
   for(let block of raw.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n').trim().split(/\n[ \t]*\n/)){
+    if(block.startsWith('WEBVTT')){block=block.split('\n').slice(1).join('\n').trim();if(!block)continue;}
     if(/^(NOTE(?:\s|$)|STYLE(?:\s|$)|REGION(?:\s|$))/.test(block))continue;
-    const line=block.split('\n').find(x=>x.includes('-->'));if(!line)continue;
-    const m=line.match(/^(\S+)\s+-->\s+(\S+)/);const start=stamp(m[1]),end=stamp(m[2]);
+    const lines=block.split('\n'),ti=lines.findIndex(x=>x.includes('-->'));
+    if(ti<0||ti>1)throw Error('unparsed_subtitle_block');
+    const m=lines[ti].match(/^(\S+)\s+-->\s+(\S+)(?:\s+.*)?$/);if(!m)throw Error('invalid_cue_timing');
+    const start=stamp(m[1]),end=stamp(m[2]);
     add(start);until=Math.max(until,end);
   }
   add(duration);
@@ -47,7 +50,7 @@ function byteRange(s){
 }
 export function parseAudioPlaylist(text,url,duration){
   if(!text.startsWith('#EXTM3U')||text.length>2000000||!text.includes('#EXT-X-ENDLIST')
-    ||/#EXT-X-(?:KEY|DISCONTINUITY|GAP|PART|SKIP)(?::|\r?\n)/.test(text))throw Error('hls_playlist_unsupported');
+    ||/#EXT-X-(?:KEY|DISCONTINUITY|GAP|PART|SKIP)(?::|\r?\n|$)/.test(text))throw Error('hls_playlist_unsupported');
   let init=null,seconds=null,range=null,at=0;const segments=[];
   for(const line of text.split(/\r?\n/)){
     if(line.startsWith('#EXT-X-MAP:')){if(init)throw Error('hls_map_ambiguous');const a=attrs(line);init={url:resolve(a.URI,url),...byteRange(a.BYTERANGE)};}

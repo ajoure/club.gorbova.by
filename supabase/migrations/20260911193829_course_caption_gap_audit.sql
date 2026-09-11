@@ -31,6 +31,7 @@ CREATE TABLE public.course_caption_gap_parts (
   error_code text CHECK(length(error_code)<=80),
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(audit_id,part_index),
+  CHECK((asr_text IS NULL AND text_sha256 IS NULL) OR (asr_text IS NOT NULL AND text_sha256 IS NOT NULL AND text_sha256=encode(sha256(convert_to(asr_text,'UTF8')),'hex'))),
   CHECK(end_ms>start_ms AND end_ms<=start_ms+90000),
   CHECK(status<>'claimed' OR (attempts=1 AND claim_token IS NOT NULL AND lease_until IS NOT NULL)),
   CHECK(status<>'evidence' OR (asr_text IS NOT NULL AND text_sha256 IS NOT NULL AND length(btrim(asr_text))>0 AND text_sha256=encode(sha256(convert_to(asr_text,'UTF8')),'hex')))
@@ -115,6 +116,7 @@ DECLARE a public.course_caption_gap_audits; p public.course_caption_gap_parts; f
 BEGIN
   SELECT * INTO a FROM public.course_caption_gap_audits WHERE id=_audit_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'audit_missing'; END IF;
+  IF NOT coalesce(public.has_role_v2(a.requested_by,'super_admin'),false) THEN RAISE EXCEPTION 'owner_required'; END IF;
   SELECT * INTO p FROM public.course_caption_gap_parts WHERE audit_id=a.id AND part_index=_part_index FOR UPDATE;
   IF NOT FOUND OR _claim_token IS NULL OR p.claim_token IS DISTINCT FROM _claim_token THEN RAISE EXCEPTION 'claim_mismatch'; END IF;
   IF p.status='evidence' THEN
@@ -125,7 +127,7 @@ BEGIN
   failed:=_error_code IS NOT NULL OR clean IS NULL OR length(clean)=0 OR length(clean)>100000 OR p.lease_until<=now();
   UPDATE public.course_caption_gap_parts SET status=CASE WHEN failed THEN 'uncertain' ELSE 'evidence' END,
     asr_text=CASE WHEN length(clean)<=100000 THEN clean ELSE NULL END,
-    text_sha256=CASE WHEN NOT failed THEN encode(sha256(convert_to(clean,'UTF8')),'hex') ELSE NULL END,
+    text_sha256=CASE WHEN length(clean)<=100000 THEN encode(sha256(convert_to(clean,'UTF8')),'hex') ELSE NULL END,
     error_code=CASE WHEN failed THEN coalesce(left(_error_code,80),CASE WHEN p.lease_until<=now() THEN 'lease_expired' ELSE 'invalid_asr' END) ELSE NULL END,updated_at=now()
     WHERE audit_id=a.id AND part_index=_part_index;
   IF failed THEN UPDATE public.course_caption_gap_audits SET status='review_required' WHERE id=a.id;

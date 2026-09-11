@@ -53,7 +53,7 @@ test('HLS selection verifies explicit contiguous ranges and rejects unsupported/
  const url=audioPlaylist(master,'https://kinescopecdn.net/master.m3u8');assert.equal(url,'https://kinescopecdn.net/audio.m3u8');
  const p=parseAudioPlaylist(playlist,url,360000),range=gapRange(p,{start_ms:120000,end_ms:251000});
  assert.deepEqual(range,{url:'https://kinescopecdn.net/audio.m4a',offset:124,bytes:132,trim_ms:0});
- for(const invalid of [playlist.replace('4@124','4'),playlist+'\n#EXT-X-KEY:METHOD=AES-128',playlist.replace('#EXT-X-ENDLIST','')])assert.throws(()=>parseAudioPlaylist(invalid,url,360000));
+ for(const invalid of [playlist.replace('4@124','4'),playlist+'\n#EXT-X-KEY:METHOD=AES-128',playlist+'\n#EXT-X-DISCONTINUITY',playlist.replace('#EXT-X-ENDLIST','')])assert.throws(()=>parseAudioPlaylist(invalid,url,360000));
  assert.throws(()=>parseAudioPlaylist(playlist,url,362000),/duration_mismatch/);
  p.segments[31].offset++;assert.throws(()=>gapRange(p,{start_ms:120000,end_ms:251000}),/not_contiguous/);
  assert.throws(()=>audioPlaylist(master.replace('audio.m3u8','https://evil.test/audio'),'https://kinescopecdn.net/master'),/host_not_allowed/);
