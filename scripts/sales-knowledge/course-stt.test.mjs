@@ -17,7 +17,7 @@ function fixture(){
       course_transcription_bindings:bindings,course_transcripts:transcripts})[table];},
     async provider(path){if(path.includes('/subtitles?'))return {data:state.ru?[{language:'ru'}]:[]};
       return {data:{id:video,duration:2,version:state.revision,updated_at:'2026-01-01',audio_tracks:[{
-        id:'44444444-4444-4444-8444-444444444444',language:'und',file_size:5,url:'https://kinescopecdn.net/audio?token=synthetic'}]}};},
+        id:'44444444-4444-4444-8444-444444444444',language:'und',file_size:5,download_link:'https://kinescopecdn.net/audio?token=synthetic'}]}};},
     async write(table,data){state.writes++;
       if(table==='course_transcription_sources')sources.push({...data,revision_basis:'provider_api'});
       if(table==='course_transcription_bindings'&&!bindings.length)bindings.push(data);

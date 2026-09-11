@@ -43,7 +43,7 @@ export async function inspectSttSource(io,actor,alias){
   if(!Array.isArray(tracks)||tracks.length!==1)throw Error('single_audio_track_required');
   const audio=tracks[0];
   if(!uuid(audio.id)||!Number.isSafeInteger(audio.file_size)||audio.file_size<1||audio.file_size>60000000)throw Error('audio_metadata_required');
-  safeSubtitleUrl(audio.url);
+  safeSubtitleUrl(audio.download_link);
   for(let page=1;page<=20;page++){
     const response=await io.provider(`/videos/${video.id}/subtitles?page=${page}&per_page=100`,token);
     const rows=response?.data===null?[]:unwrap(response);
@@ -53,7 +53,7 @@ export async function inspectSttSource(io,actor,alias){
   }
   const identity={alias,video_id:video.id,source_revision:revision,duration_ms:duration,
     audio_track_id:audio.id,audio_bytes:audio.file_size,bindings};
-  return {identity,audioUrl:audio.url}; // URL stays in memory, never in manifests/logs.
+  return {identity,audioUrl:audio.download_link}; // URL stays in memory, never in manifests/logs.
 }
 
 export async function prepareStt(io,actor,alias,media){
