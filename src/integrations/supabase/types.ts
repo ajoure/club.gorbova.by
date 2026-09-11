@@ -22847,6 +22847,10 @@ export type Database = {
           user_id: string
         }[]
       }
+      admin_import_historical_cb_17_18: {
+        Args: { _mode?: string; _payload: Json }
+        Returns: Json
+      }
       admin_lookup_contact_duplicate: {
         Args: {
           p_email?: string
@@ -22897,6 +22901,10 @@ export type Database = {
           _last4: string
           _target_profile_id: string
         }
+        Returns: Json
+      }
+      admin_repair_historical_cb_scope: {
+        Args: { _mode?: string; _payload: Json }
         Returns: Json
       }
       admin_reset_user_telegram: {
