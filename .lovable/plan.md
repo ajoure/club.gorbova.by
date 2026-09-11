@@ -1,54 +1,74 @@
-# PLAN-ONLY / READ-ONLY: проверка зависимостей PR440
+# План: READ-ONLY ревизия мобильной адаптации (scope codex/responsive-viewport)
 
-Ничего не изменено: без записи в БД, без deploy, без setWebhook, без сообщений, без unsigned пингов. Все факты получены read-only.
+Статус: **PLAN-ONLY / READ-ONLY — PASS с условиями.** Код, SQL, БД, Edge, auth,
+webhook, deploy и Publish не выполнялись. Ожидается точный merged SHA от Codex.
 
-## 1. Граница дедупликации по update_id — PASS
+## Что подтверждено чтением текущего кода (база `bbc231053`)
 
-- Входящие bot-сообщения: 4137 строк, из них с `meta->>'telegram_update_id'` — **0**.
-- Значит частичный unique `(bot_id, meta->>'telegram_update_id') WHERE direction='incoming' AND transport='bot' AND update_id IS NOT NULL` создаётся на пустом наборе: 6 исторических дублей не затрагиваются, миграция не требует удаления строк.
-- Зависимость: handler обязан начать писать `telegram_update_id` до того, как индекс станет практически полезным; до этого защита неактивна (не ошибка, но и не покрытие истории).
-- Возврат 500 при неуспешной вставке и не-повтор autoactions на 23505 согласуются: Telegram повторит доставку, а повторная вставка отсеется индексом.
+- `index.html`: `width=device-width, initial-scale=1.0, viewport-fit=cover,
+  interactive-widget=resizes-content`. `user-scalable=no` и `maximum-scale`
+  отсутствуют — требование «сохранить pinch zoom» уже выполнено, менять meta не нужно.
+- `manifest.json`: `display: standalone`, `orientation: portrait-primary` —
+  landscape в PWA не запрещён системно на iOS, поэтому landscape-правила нужны.
+- `--app-height: 100dvh` объявлена статически в `:root` (`src/index.css`) и
+  не обновляется из `visualViewport`. Её используют `AdminLayout` (fixed
+  `height: var(--app-height)` + `overflow-hidden`) и три шторки
+  (`AccessHistorySheet`, `ConsentDetailSheet`, `BillingDetailSheet`) через
+  `calc(var(--app-height) - N)`. Любое изменение семантики переменной затрагивает все четыре места.
+- `useVisualViewportInset` уже существует и корректно считает inset клавиатуры —
+  новый helper должен переиспользовать её, а не дублировать слушатели.
+- Правило `@media (max-width: 767px) { input, textarea, select { font-size: 16px } }`
+  не покрывает `contenteditable`/`.ProseMirror` (композер) и не действует в
+  landscape при ширине > 767px — отсюда автозум Safari при вводе.
+- Safe-area: `.contact-center-safe-top/bottom` учитывают left/right, но шапки
+  `DashboardLayout`/`MobileBottomNav` используют голый `env(...)` без `max()`,
+  а `main` в Dashboard имеет `pb-20` без прибавления `safe-area-inset-bottom`.
+- `SidebarProvider` задаёт `min-h-svh`, что конфликтует с фиксированной высотой
+  `AdminLayout` и даёт двойной скролл-контейнер на мобильном.
+- `html, body { overflow-x: hidden; max-width: 100vw }` уже стоят; есть
+  контрактный тест `src/test/mobileDocumentScroll.contract.test.ts`, который
+  запрещает `overscroll-behavior` на `body` — новые правила не должны его нарушить.
 
-## 2. Cron ежедневных сводок — образец применим
+## Согласованный объём изменений (GitHub-only, UI/CSS/viewport helper)
 
-Файл `supabase/migrations/20260815120000_secure_broadcast_dispatcher_cron.sql` действительно даёт нужный шаблон: vault-секрет, `verify_*_cron_secret` (STABLE SECURITY DEFINER, execute только `service_role`), `invoke_*` через `net.http_post` с заголовком, `cron.schedule`/`alter_job` идемпотентно.
+1. Единый viewport-helper: одна подписка на `visualViewport` (resize/scroll),
+   запись `--app-height` и `--keyboard-inset` в `documentElement`, throttle через
+   `requestAnimationFrame`, корректный cleanup, безопасный фолбэк `100dvh/100vh`.
+2. Зум ввода: распространить 16px на `[contenteditable]`, `.ProseMirror` и на
+   landscape-фазу (по `pointer: coarse`, а не только по ширине).
+3. Компактность: `ChannelPicker` и панели действий контакт-центра — перенос/скролл
+   вместо выхода за 320px; кнопки сохраняют 44px touch-target.
+4. Safe-area: `max(base, env(...))` для top/bottom/left/right в шапках, нижней
+   навигации и нижнем резерве `main`.
+5. Модалки/шторки: высота от `--app-height` с учётом клавиатуры, внутренняя
+   прокрутка, липкий футер над home indicator.
 
-Зависимости, которые нужно учесть в PR440:
-- `pg_cron`, `pg_net`, `supabase_vault` установлены — PASS.
-- Секрет в `cron.job.command` не попадает — сохранить это свойство (в media-worker сейчас противоположный, плохой паттерн; не копировать).
-- Edge `telegram-daily-summary`: `verify_jwt=false` требует записи в `supabase/config.toml`; без строгого верификатора функция станет публичной — верификатор обязан идти в том же PR.
-- Расписание `15 3 * * *` — один запуск в сутки, минимальная нагрузка.
+## Риски регрессии, которые проверяем отдельно
 
-## 3. Медиа: бакет и MIME
+- Двойной отступ notch в standalone (существующие правила `data-mobile-sticky-main`).
+- Прыжки высоты при появлении iOS-клавиатуры, если `--app-height` начнёт
+  включать keyboard inset — три шторки и AdminLayout нужно проверять вместе.
+- Потеря инерционного скролла в `.touch-scroll`/`.table-scroll-x`.
+- Регресс комнаты эфира (`liveRoomTheme.css`, `100svh`-композер).
+- Падение контрактных тестов `mobileDocumentScroll` и `dealsMobileFilters`.
 
-- Целевой бакет — **`telegram-media`**, private, лимит 500 MB. Меняем только список типов; public/лимит не трогаем.
-- Текущий список уже включает изображения, видео, аудио, pdf, doc/docx, xls/xlsx, `application/octet-stream`. Отсутствуют ровно `application/zip` и `text/plain` — добавляем только их.
-- Блокирующая зависимость: `allowed_mime_types` нельзя менять SQL-миграцией (запись в `storage.buckets` отклоняется), а инструмент обновления бакета управляет public/лимитом. Изменение списка типов нужно провести отдельным управляемым шагом на этапе EXECUTE; в PR440 это не код-изменение.
+## План приёмки
 
-## 4. Dry-run 9 ошибок медиа (без скачивания и без вывода путей)
+Ширины: 320 / 375 / 390 / 430 / 768 / 1024 / 1280, портрет и ландшафт.
+Среды: Safari iOS (browser), Safari standalone PWA, Android Chrome, десктоп.
 
-Server-side `getFile` по каждому job, только счётчики:
-- **4 восстановимы** — это ровно случаи MIME (3 × zip, 1 × text/plain): файл у провайдера доступен, после расширения списка типов повторная обработка пройдёт.
-- **5 невосстановимы** — все `telegram_getFile_failed` возвращают `file is too big`: ограничение Bot API, повторные попытки бесполезны. Нужен явный терминальный статус, а не retry.
-- Ни одна строка `media_jobs` не обновлена.
+Для каждого сочетания:
+1. Горизонтального скролла и обрезанных кнопок/подписей нет; выбор канала целиком помещается на 320px.
+2. Тап в поле ввода и в композер не вызывает автозум; ручной pinch zoom работает.
+3. При открытой клавиатуре поле ввода и кнопка отправки видны, лента прокручивается.
+4. Поворот экрана и закрытие клавиатуры возвращают корректную высоту без «залипшего» пустого блока.
+5. В standalone контент не заезжает под notch и home indicator, в landscape — под боковые вырезы.
+6. Модалки и шторки: заголовок и футер видны, содержимое прокручивается, ничего не уезжает за экран.
+7. Контакт-центр: отправка сообщений тестовым клиентам не выполняется, проверка только визуальная.
+8. Проверка после merge: точный SHA, `tsgo --noEmit`, профильные тесты, Preview 200; скриншоты
+   ПК и мобильного — только после Publish, инициированного пользователем.
 
-## 5. Два сбоя аудита
+## Что не входит в scope
 
-- Записи: 07.04.2026 и 07.07.2026, обе без `db_message_id`, без `chat_id` и **без retained raw payload**.
-- Сообщение апрельского случая позже сохранено по каноническому ключу (найдена 1 строка с тем же message_id, время совпадает до секунды).
-- Июльский случай в `telegram_messages` отсутствует. Восстановить его нечем: raw нет, спекулятивный импорт исключён. Фиксируем как известную единичную потерю.
-
-## 6. Ремедиация вебхуков (готово к EXECUTE, не выполнено)
-
-1. Для всех 4 ботов `setWebhook` на существующий endpoint с прежним secret_token, `allowed_updates` = текущий набор + `channel_post`, `edited_channel_post`, и обязательно `drop_pending_updates=false` — очередь из 5 сохраняется.
-2. Сразу после — `getWebhookInfo` по каждому боту: pending и last_error с отметкой времени.
-3. Через контрольный интервал — повторный `getWebhookInfo` плюс счётчики свежих входящих в БД и в `audit_logs`. Никаких тестовых отправок клиентам и никаких клиентских сообщений.
-4. `getUpdates` не вызывать; массовый `sync-telegram-history` не запускать.
-5. Если pending не уходит или reset повторяется при pending=0 — эскалация как сетевая проблема Telegram/edge, без сброса очереди.
-
-Про 401: согласен — unsigned пинги ничего не говорят о подписи реального Telegram; выводы по ним не делаю и повторять их не буду.
-
-## 7. Что блокирует EXECUTE
-
-- Точный merged SHA PR440 не назван — до него ничего не применяется и не деплоится.
-- Изменение `allowed_mime_types` бакета — отдельный управляемый шаг, вне миграции.
+Отправка сообщений, изменения RPC/RLS/Edge/webhook, правки истории Telegram,
+изменение meta viewport (запрет зума), переработка unified inbox группировки.
