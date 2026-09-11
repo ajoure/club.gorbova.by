@@ -22520,6 +22520,7 @@ export type Database = {
         Args: { p_order_ids: string[]; p_selected_payment_ids: string[] }
         Returns: string
       }
+      admin_archived_login_merge_g9: { Args: { _phase: string }; Returns: Json }
       admin_create_contact: {
         Args: {
           p_city?: string
