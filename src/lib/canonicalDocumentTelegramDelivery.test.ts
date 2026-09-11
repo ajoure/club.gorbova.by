@@ -32,7 +32,7 @@ describe("canonical document Telegram delivery truth", () => {
 
   it("does not restore a sticky personal sender in the Contact Center", () => {
     expect(contactTelegramChatSource).toContain("channels.find(c => c.is_primary)");
-    expect(contactTelegramChatSource).toContain("selected?.userId === props.userId");
+    expect(contactTelegramChatSource).toContain("key={props.userId}");
     expect(contactTelegramChatSource).toContain('channel.transport === "business" ? channel.channel_ref : null');
     expect(contactTelegramChatSource).not.toContain("tg_sender_");
     expect(contactTelegramChatSource).not.toContain("tg_bot_");

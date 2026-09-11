@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ContactTelegramChat } from "../ContactTelegramChat";
@@ -18,7 +18,7 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {
 vi.mock("@/integrations/supabase/operational-client", () => ({ operationalSupabase: { rpc: () => ({ order: async () => ({ data: [], error: null }) }) } }));
 vi.mock("@/hooks/useTelegramReactions", () => ({ useTelegramReactions: () => ({ data: [] }), useToggleTelegramReaction: () => ({ mutate: vi.fn() }) }));
 vi.mock("@/components/admin/TokenizedRichInput", () => ({ TokenizedRichInput: ({ value, onChange }: any) => <textarea aria-label="Черновик" value={value} onChange={e => onChange(e.target.value)} /> }));
-vi.mock("./TelegramMessageBubble", () => ({ TelegramMessageBubble: ({ data, ...props }: any) => <div>{(data || props.bubble || props).messageText}</div> }));
+vi.mock("./TelegramMessageBubble", () => ({ TelegramMessageBubble: ({ data, onReply }: any) => <div>{data.messageText}<button onClick={() => onReply(data.id)}>Ответить {data.id}</button></div> }));
 
 const channels = [
   { channel_key: "bot:support", transport: "bot", channel_ref: "support", label: "Support", username: "support_bot", is_primary: true, can_reply: true, message_count: 1, unanswered_count: 0, bot_id: "support" },
@@ -39,23 +39,42 @@ beforeEach(() => {
   });
 });
 
-describe("Telegram channel navigation", () => {
-  it("keeps all five channels, isolates history and restores each channel's draft", async () => {
+describe("Compact Telegram sender", () => {
+  it("keeps history visible, offers five senders below, and routes an explicit reply independently of the bridge bot", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><ContactTelegramChat userId="11111111-1111-4111-8111-111111111111" telegramUserId={123} telegramUsername={null} hidePhotoButton /></QueryClientProvider>);
-    const picker = await screen.findByRole("group", { name: "Каналы Telegram" });
-    expect(within(picker).getAllByRole("button")).toHaveLength(5);
-    expect(within(picker).getByRole("button", { name: /Support/ })).toHaveAttribute("aria-pressed", "true");
-    await screen.findByLabelText("Черновик");
-    fireEvent.change(screen.getByLabelText("Черновик"), { target: { value: "Черновик саппорта" } });
-    fireEvent.click(within(picker).getByRole("button", { name: /Личный Telegram/ }));
-    await waitFor(() => expect(screen.getByLabelText("Черновик")).toHaveValue(""));
+    await screen.findByText("Только саппорту");
+    expect(screen.getByText("Только лично")).toBeInTheDocument();
+    expect(screen.queryByTestId("telegram-channel-picker")).not.toBeInTheDocument();
+    expect(screen.getByTestId("telegram-channel-sender")).toHaveTextContent("Support");
+    fireEvent.change(screen.getByLabelText("Черновик"), { target: { value: "Черновик ответа" } });
+    fireEvent.keyDown(screen.getByRole("button", { name: "Выбрать отправителя" }), { key: "ArrowDown" });
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getAllByRole("menuitem")).toHaveLength(5);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /GetCourse/ }));
+    expect(screen.getByTestId("telegram-channel-sender")).toHaveTextContent("GetCourse");
+    expect(screen.getByLabelText("Черновик")).toHaveValue("");
+    expect(screen.getByText("Только лично")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ответить personal-message" }));
     expect(screen.getByTestId("telegram-channel-sender")).toHaveTextContent("Личный Telegram");
-    fireEvent.change(screen.getByLabelText("Черновик"), { target: { value: "Личный черновик" } });
-    fireEvent.click(within(picker).getByRole("button", { name: /Support/ }));
-    await waitFor(() => expect(screen.getByLabelText("Черновик")).toHaveValue("Черновик саппорта"));
-    expect(client.getQueryData(["telegram-messages", "11111111-1111-4111-8111-111111111111", "bot", "support"])).toEqual(expect.arrayContaining([expect.objectContaining({ id: "support-message", transport: "bot" })]));
-    expect(client.getQueryData(["telegram-messages", "11111111-1111-4111-8111-111111111111", "business", "personal"])).toEqual(expect.arrayContaining([expect.objectContaining({ id: "personal-message", transport: "business" })]));
+    fireEvent.click(screen.getByRole("button", { name: "Ответить support-message" }));
+    expect(screen.getByTestId("telegram-channel-sender")).toHaveTextContent("Support");
+    expect(client.getQueryData(["telegram-messages", "11111111-1111-4111-8111-111111111111", "combined-senders-v1"])).toHaveLength(2);
+    expect(screen.getByLabelText("Черновик")).toHaveValue("Черновик ответа");
+    await act(async () => { mocks.callbacks.find(c => c.event === "INSERT")!.cb({ new: { ...messages[1], id: "new-personal", message_text: "Новое личное", requires_reply: true } }); });
+    expect(screen.getByTestId("telegram-channel-sender")).toHaveTextContent("Support");
+    expect(await screen.findByText("Новое личное")).toBeInTheDocument();
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
+  it("defaults to the exact channel of the latest unanswered message", async () => {
+    mocks.rpc.mockImplementation(async (name: string, args: any) => {
+      if (name === "admin_get_contact_telegram_channels_v1") return { data: channels, error: null };
+      if (name === "admin_get_telegram_channel_messages_v1") return { data: args.p_transport === "business" ? [{ ...messages[1], requires_reply: true }] : [], error: null };
+      return { data: [], error: null };
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><ContactTelegramChat userId="11111111-1111-4111-8111-111111111111" telegramUserId={123} telegramUsername={null} hidePhotoButton /></QueryClientProvider>);
+    await waitFor(() => expect(screen.getByTestId("telegram-channel-sender")).toHaveTextContent("Личный Telegram"));
+  });
+
 });
