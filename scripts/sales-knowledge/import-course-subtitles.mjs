@@ -8,7 +8,7 @@ let reportPath,latestReport;
 try{
   const args=process.argv.slice(2),get=name=>{const i=args.indexOf(name);return i<0?undefined:args[i+1];};
   if(!args.includes('--managed-lovable')||process.env.COURSE_KB_MANAGED_PROJECT_ID!=='796a93b9-74cc-403c-8ec5-cafdb2a5beaa')throw new Error('canonical_managed_environment_required');
-  if((process.env.SUPABASE_URL||'').includes('ypwsuumurrtkxatoyqhk'))throw new Error('legacy_environment_forbidden');
+  if(process.env.SUPABASE_URL!=='https://hdjgkjceownmmnrqqtuz.supabase.co')throw new Error('canonical_database_required');
   const mode=get('--mode'),output=get('--report');if(!output)throw new Error('report_path_required');
   // Reserve a new owner-private report before any mutations. Never overwrite
   // an earlier report or expose source text/URLs in stdout.
