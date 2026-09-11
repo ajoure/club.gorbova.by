@@ -83,6 +83,22 @@ test('two aliases resolving to one video cannot hide changed subtitles during dr
   await assert.rejects(dryRunCourse(f.io,owner),/subtitle_snapshot_changed/);
   assert.equal(f.writes.length,0);
 });
+test('video 404, subtitles 404 and missing revision remain distinct unresolved source statuses',async()=>{
+  for(const [where,status] of [['video','provider_not_found'],['subtitles','subtitles_not_found'],['revision','source_revision_unknown']]){
+    const f=fixture(),provider=f.io.provider;
+    f.io.provider=async(path)=>{
+      if(where==='video'||where==='subtitles'&&path.includes('/subtitles'))throw new Error('provider_http_404');
+      const r=await provider(path);if(where==='revision'&&r.data.id===videoId)r.data.updated_at=null;return r;
+    };
+    const plan=await dryRunCourse(f.io,owner);assert.equal(plan.sources[0].status,status);assert.equal(plan.totals[status],1);
+    await assert.rejects(importCourseBatch(f.io,owner,plan,[0]),/over_budget/);assert.equal(f.writes.length,0);
+  }
+});
+test('timestamp and chapter links retain the exact video alias and discard URL parameters',async()=>{
+  const f=fixture();f.blocks[0].content.url+='?t=120#chapter';
+  const plan=await dryRunCourse(f.io,owner);assert.equal(plan.sources[0].aliases[0],'testAlias123');
+  assert.equal(plan.unresolved.length,0);assert.doesNotMatch(JSON.stringify(plan),/t=120|chapter/);
+});
 test('subtitle fetch omits credentials and rejects redirect outside provider',async()=>{
   const calls=[];const io=createManagedTransport({supabaseUrl:'https://example.supabase.co',serviceKey:'test',fetchImpl:async(url,options)=>{
     calls.push({url:String(url),options});return new Response(null,{status:302,headers:{location:'http://127.0.0.1/a'}});

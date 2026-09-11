@@ -105,7 +105,9 @@ async function tokenAndOwner(io,actor){
 }
 const unwrap=x=>x?.data??x;
 async function inspectAlias(io,token,alias){
-  const video=unwrap(await io.provider('/videos/'+alias,token));
+  let video;
+  try{video=unwrap(await io.provider('/videos/'+alias,token));}
+  catch(error){if(error?.message==='provider_http_404')throw new Error('video_http_404');throw error;}
   const rev=providerRevision(video),duration=Math.round(video.duration*1000);
   const tracks=video.audio_tracks||[];
   const audio=tracks.find(x=>x.language==='ru')||(tracks.length===1?tracks[0]:null);
@@ -144,7 +146,8 @@ export async function dryRunCourse(io,actor,{aliases}={}){
         ...(parsed?{content_sha256:parsed.content_sha256,chars:parsed.chars,subtitle_metadata:parsed.metadata,quality_flags:parsed.quality_flags}:{})});
     }catch(error){
       const code=error instanceof Error?error.message:'';
-      if(code==='provider_http_404'){sources.push({aliases:[alias],status:'provider_not_found',bindings:snapshot.bindings.filter(b=>b.alias===alias)});continue;}
+      const sourceStatus={video_http_404:'provider_not_found',provider_http_404:'subtitles_not_found',provider_revision_unknown:'source_revision_unknown'}[code];
+      if(sourceStatus){sources.push({aliases:[alias],status:sourceStatus,bindings:snapshot.bindings.filter(b=>b.alias===alias)});continue;}
       throw error;
     }
   }
@@ -156,7 +159,8 @@ export async function dryRunCourse(io,actor,{aliases}={}){
     complete:!aliases,counts:snapshot.counts,unresolved:snapshot.unresolved,sources,
     totals:{source_count:sources.length,ready_to_import:sources.filter(s=>s.status==='ready_to_import').length,
       ready_with_warnings:sources.filter(s=>s.status==='ready_with_warnings').length,
-      quality_review:sources.filter(s=>s.status==='quality_review').length,provider_not_found:sources.filter(s=>s.status==='provider_not_found').length}};
+      quality_review:sources.filter(s=>s.status==='quality_review').length,provider_not_found:sources.filter(s=>s.status==='provider_not_found').length,
+      subtitles_not_found:sources.filter(s=>s.status==='subtitles_not_found').length,source_revision_unknown:sources.filter(s=>s.status==='source_revision_unknown').length}};
 }
 
 export async function importCourseBatch(io,actor,manifest,indices,{maxSources=3,maxChars=1000000,maxDurationMs=Infinity,onProgress=async()=>{}}={}){
