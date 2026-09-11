@@ -47,6 +47,7 @@ for(const g of ['G1','G10'])test(`${g} dry-run, exact ownership transfer and rep
   const auth=(await db.query('SELECT * FROM auth.users ORDER BY id')).rows;
   const payments=(await db.query('SELECT * FROM payments_v2 ORDER BY id')).rows;
   await db.exec(renderResidual(g,'dry-run'));
+  await db.exec(renderResidual(g,'rollback'));
   assert.equal((await db.query('SELECT count(*)::int n FROM merge_history')).rows[0].n,0);
   assert.equal((await db.query('SELECT user_id FROM profiles WHERE id=$1',[o])).rows[0].user_id,oldU);
   await db.exec(renderResidual(g,'execute'));await db.exec(renderResidual(g,'execute'));

@@ -36,6 +36,7 @@ test('pilot dry-run is read-only; execute moves one purchase and replay changes 
     const before=(await db.query('SELECT * FROM profiles WHERE id=$1',[master])).rows[0];
     const orderBefore=(await db.query('SELECT * FROM orders_v2')).rows[0];
     await db.exec(renderPilot('dry-run'));
+    await db.exec(renderPilot('rollback'));
     assert.equal((await db.query('SELECT count(*)::int n FROM merge_history')).rows[0].n,0);
     assert.equal((await db.query('SELECT profile_id FROM orders_v2')).rows[0].profile_id,old);
     await db.exec(renderPilot('execute'));
