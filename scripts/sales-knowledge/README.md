@@ -4,6 +4,11 @@
 не подключается к production и не вызывает распознавание. Подготовлен для
 первого этапа базы знаний продаж; это не готовый импорт или обученный бот.
 
+Отдельно подготовлен [импорт существующих субтитров основного курса и
+20-го потока](COURSE_IMPORT.md) в закрытое хранилище. Он запускается только
+в канонической managed-среде Lovable после ревизии, использует реальные
+данные и не покупает повторную расшифровку. Команды ниже остаются offline.
+
 ```sh
 node scripts/sales-knowledge/plan-transcriptions.mjs /private/snapshot.json /private/new-plan.json
 node --test scripts/sales-knowledge/plan-transcriptions.test.mjs
