@@ -22907,6 +22907,7 @@ export type Database = {
         Args: { p_product_id: string; p_tariff_id?: string; p_user_id: string }
         Returns: Json
       }
+      admin_retire_merged_login_g10: { Args: { _phase: string }; Returns: Json }
       admin_safe_delete_profile: {
         Args: { _dry_run?: boolean; _profile_id: string }
         Returns: Json
