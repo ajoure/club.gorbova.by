@@ -147,8 +147,8 @@ export function DashboardBreadcrumbs() {
   }
 
   return (
-    <Breadcrumb>
-      <BreadcrumbList>
+    <Breadcrumb className="min-w-0">
+      <BreadcrumbList className="flex-nowrap min-w-0">
         <BreadcrumbItem>
           <BreadcrumbLink asChild>
             <Link to="/dashboard" className="flex items-center gap-1">
@@ -159,14 +159,14 @@ export function DashboardBreadcrumbs() {
         </BreadcrumbItem>
         
         {breadcrumbItems.map((item, index) => (
-          <span key={item.path} className="flex items-center gap-1.5">
+          <span key={item.path} className={`${item.isLast ? "flex" : "hidden md:flex"} items-center gap-1.5 min-w-0`}>
             <BreadcrumbSeparator />
-            <BreadcrumbItem>
+            <BreadcrumbItem className="min-w-0">
               {item.isLast ? (
-                <BreadcrumbPage>{item.label}</BreadcrumbPage>
+                <BreadcrumbPage className="truncate" title={item.label}>{item.label}</BreadcrumbPage>
               ) : (
                 <BreadcrumbLink asChild>
-                  <Link to={item.path}>{item.label}</Link>
+                  <Link to={item.path} className="truncate" title={item.label}>{item.label}</Link>
                 </BreadcrumbLink>
               )}
             </BreadcrumbItem>

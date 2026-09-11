@@ -40,8 +40,7 @@ export function ChannelPicker({ contact, activeSource, onChange, onRequestCreate
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="touch-scroll flex items-center gap-1 px-2 py-1 border-b border-border/10 bg-muted/20 overflow-x-auto">
-        <span className="text-[10px] text-muted-foreground mr-1">Канал:</span>
+      <div data-testid="contact-source-picker" className="grid shrink-0 grid-cols-3 min-w-0 gap-1 px-1 py-1 border-b border-border/10 bg-muted/20">
         {OPTIONS.map(({ source, label, Icon }) => {
           const present = !!contact.channels[source];
           const isActive = source === activeSource;
@@ -56,7 +55,7 @@ export function ChannelPicker({ contact, activeSource, onChange, onRequestCreate
               variant="ghost"
               size="sm"
               className={cn(
-                "h-6 px-2 text-[11px] rounded-full gap-1",
+                "h-11 w-full min-w-0 px-1 text-[11px] whitespace-nowrap rounded-full gap-1",
                 isActive && "bg-primary/15 text-primary",
                 disabled && "opacity-40",
                 isCreate && "border border-dashed border-primary/40 text-primary/80 hover:bg-primary/10",
@@ -70,11 +69,11 @@ export function ChannelPicker({ contact, activeSource, onChange, onRequestCreate
                 if (present && !isActive) onChange(source);
               }}
             >
-              <Icon className="h-3 w-3" />
-              {label}
-              {isCreate && <Plus className="h-3 w-3 ml-0.5" />}
+              <Icon className="hidden xl:block h-3 w-3 shrink-0" />
+              <span>{source === "support" ? "Поддержка" : label}</span>
+              {isCreate && <Plus className="h-3 w-3 shrink-0" />}
               {ch && ch.unread > 0 && (
-                <span className="ml-0.5 inline-flex items-center justify-center min-w-3.5 h-3.5 px-1 rounded-full bg-primary text-primary-foreground text-[9px] font-bold">
+                <span className="shrink-0 inline-flex items-center justify-center min-w-3.5 h-3.5 px-1 rounded-full bg-primary text-primary-foreground text-[9px] font-bold">
                   {ch.unread > 99 ? "99+" : ch.unread}
                 </span>
               )}
@@ -86,7 +85,7 @@ export function ChannelPicker({ contact, activeSource, onChange, onRequestCreate
           return (
             <Tooltip key={source}>
               <TooltipTrigger asChild>
-                <span>{btn}</span>
+                <span className="min-w-0">{btn}</span>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="text-[11px]">
                 {isCreate ? "Создать обращение в техподдержку" : "Канал не привязан к контакту"}

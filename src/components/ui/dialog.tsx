@@ -36,6 +36,7 @@ const DialogContent = React.forwardRef<
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
+      data-viewport-dialog=""
       ref={ref}
       onPointerDownOutside={(e) => {
         const target = e.target as HTMLElement | null;

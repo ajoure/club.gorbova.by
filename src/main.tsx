@@ -18,9 +18,13 @@ console.info('[Build] origin:', window.location.origin, '| env:', window.locatio
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
+import { installAppViewport } from "./lib/appViewport";
 import { initAccessAliasEnvironment } from "./utils/accessAlias";
 
 initAccessAliasEnvironment();
+
+const disposeViewport = installAppViewport();
+if (import.meta.hot) import.meta.hot.dispose(disposeViewport);
 
 // iOS standalone (PWA / Add to Home Screen) detector — sets `is-ios-standalone`
 // class on <html>. Used by index.css to apply notch/safe-area fixes ONLY in

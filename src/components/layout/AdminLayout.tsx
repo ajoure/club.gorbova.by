@@ -230,14 +230,16 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
   return (
     <>
       <ImpersonationBar />
-      <SidebarProvider>
-        <div className="flex w-full overflow-hidden" style={{ height: 'var(--app-height)' }}>
+      <SidebarProvider className="min-h-0">
+        <div className="app-viewport-shell flex w-full overflow-hidden" style={{ height: 'var(--app-height)' }}>
           <AdminSidebar />
           <main className={`flex-1 h-full flex flex-col min-w-0 min-h-0 overflow-x-hidden overscroll-y-none ${fullHeight ? "overflow-hidden" : "overflow-y-auto"}`}>
             <header 
-              className="border-b border-border/30 flex items-center justify-between px-3 md:px-4 bg-background/60 backdrop-blur-xl sticky top-0 z-10"
+              className="shrink-0 border-b border-border/30 flex items-center justify-between px-3 md:px-4 bg-background/60 backdrop-blur-xl sticky top-0 z-10"
               style={{ 
                 paddingTop: 'env(safe-area-inset-top, 0px)',
+                paddingLeft: 'max(0.75rem, env(safe-area-inset-left, 0px))',
+                paddingRight: 'max(0.75rem, env(safe-area-inset-right, 0px))',
                 minHeight: 'calc(2.5rem + env(safe-area-inset-top, 0px))'
               }}
             >
