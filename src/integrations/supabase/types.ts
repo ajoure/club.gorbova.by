@@ -22903,6 +22903,10 @@ export type Database = {
         }
         Returns: Json
       }
+      admin_repair_historical_cb_dates: {
+        Args: { _mode?: string; _payload: Json }
+        Returns: Json
+      }
       admin_repair_historical_cb_scope: {
         Args: { _mode?: string; _payload: Json }
         Returns: Json
