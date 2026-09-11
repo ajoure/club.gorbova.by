@@ -495,7 +495,7 @@ export default function AdminProductsV2() {
       <div className="space-y-4" onMouseDown={handleMouseDown}>
         {/* Pill-style filter tabs */}
         <div className="px-1 pt-1 pb-1.5 shrink-0">
-          <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+          <div className="flex flex-wrap sm:inline-flex sm:flex-nowrap p-0.5 rounded-2xl sm:rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
             {productTabs.map((tab) => {
               const isActive = activeTab === tab.id;
               return (
@@ -569,7 +569,7 @@ export default function AdminProductsV2() {
         ) : (
           <>
             {/* ── Select-all + Sort controls ── */}
-            <div className="flex items-center justify-between px-1 gap-2">
+            <div className="flex flex-wrap items-center justify-between px-1 gap-2">
               <div className="flex items-center gap-2">
                 <Checkbox
                   checked={selectedCount > 0 && selectedCount === sortedData.length}

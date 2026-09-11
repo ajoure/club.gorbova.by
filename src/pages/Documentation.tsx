@@ -1198,14 +1198,14 @@ export default function Documentation() {
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "user" | "admin")} className="w-full">
           {showAdminDocs ? (
-            <TabsList className="grid w-full grid-cols-2 max-w-md">
-              <TabsTrigger value="user" className="flex items-center gap-2">
-                <BookOpen className="h-4 w-4" />
-                Для пользователей
+            <TabsList className="grid w-full h-auto grid-cols-2 max-w-md">
+              <TabsTrigger value="user" className="flex min-w-0 h-11 items-center gap-1 px-1 text-xs sm:text-sm sm:gap-2">
+                <BookOpen className="hidden sm:block h-4 w-4 shrink-0" />
+                Пользователям
               </TabsTrigger>
-              <TabsTrigger value="admin" className="flex items-center gap-2">
-                <Shield className="h-4 w-4" />
-                Для администраторов
+              <TabsTrigger value="admin" className="flex min-w-0 h-11 items-center gap-1 px-1 text-xs sm:text-sm sm:gap-2">
+                <Shield className="hidden sm:block h-4 w-4 shrink-0" />
+                Администраторам
               </TabsTrigger>
             </TabsList>
           ) : null}
