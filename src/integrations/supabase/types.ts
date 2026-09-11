@@ -22520,6 +22520,7 @@ export type Database = {
         Args: { p_order_ids: string[]; p_selected_payment_ids: string[] }
         Returns: string
       }
+      admin_archived_login_merge_g9: { Args: { _phase: string }; Returns: Json }
       admin_create_contact: {
         Args: {
           p_city?: string
@@ -22906,6 +22907,7 @@ export type Database = {
         Args: { p_product_id: string; p_tariff_id?: string; p_user_id: string }
         Returns: Json
       }
+      admin_retire_merged_login_g10: { Args: { _phase: string }; Returns: Json }
       admin_safe_delete_profile: {
         Args: { _dry_run?: boolean; _profile_id: string }
         Returns: Json
