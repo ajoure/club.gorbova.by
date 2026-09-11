@@ -269,3 +269,7 @@ verify_jwt = true
 # Verified Vault cron secret or authenticated operational manager required.
 [functions.telegram-daily-summary]
 verify_jwt = false
+
+# Exact server key checked by the handler; no user/browser access.
+[functions.admin-merge-archived-login]
+verify_jwt = false
