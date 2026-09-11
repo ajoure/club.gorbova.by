@@ -28,7 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { usePermissions } from "@/hooks/usePermissions";
-import { buildGrantAccessBody, confirmedGrantIds, localDateTimeValue, parseLocalDateTime, verifyGrantAccessReadback } from "@/lib/grantAccessForm";
+import { AccessAlreadyExistsError, buildGrantAccessBody, confirmedGrantIds, localDateTimeValue, parseLocalDateTime, verifyGrantAccessReadback } from "@/lib/grantAccessForm";
 
 interface GrantAccessFromDealDialogProps {
   open: boolean;
@@ -234,6 +234,12 @@ export function GrantAccessFromDealDialog({
       onOpenChange(false);
     },
     onError: (error: any) => {
+      if (error instanceof AccessAlreadyExistsError) {
+        toast.info("Доступ уже существует", {
+          description: "Повторная выдача не нужна.",
+        });
+        return;
+      }
       toast.error("Ошибка выдачи доступа", {
         description: normalizeEdgeFunctionError(error),
       });
@@ -302,8 +308,9 @@ export function GrantAccessFromDealDialog({
             <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20 space-y-2">
               <div className="flex items-center gap-2 text-green-600">
                 <CheckCircle className="w-4 h-4" />
-                <span className="text-sm font-medium">Активный доступ</span>
+                <span className="text-sm font-medium">Доступ уже существует</span>
               </div>
+              <p className="text-sm text-muted-foreground">Повторная выдача не нужна.</p>
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="text-muted-foreground">Текущий доступ до</span>
                 <span className="text-right">{format(calculation.currentEndDate, "dd.MM.yyyy HH:mm:ss.SSS")}</span>
