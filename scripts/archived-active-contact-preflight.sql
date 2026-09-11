@@ -28,6 +28,8 @@ WITH normalized AS MATERIALIZED (
 ), classified AS (
   SELECT p.*, count(*) OVER (PARTITION BY p.archived_id) AS active_candidates,
     a.user_id AS archived_user_id, m.user_id AS master_user_id,
+    m.status::text AS candidate_status,
+    m.status::text = 'banned' AS candidate_is_banned,
     a.merged_to_profile_id,
     a.telegram_user_id IS NOT NULL AND m.telegram_user_id IS NOT NULL
       AND a.telegram_user_id <> m.telegram_user_id AS telegram_conflict,
