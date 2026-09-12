@@ -18,6 +18,7 @@ async function fixture(){
   });
   await db.exec(`CREATE TABLE ${table}(${columns.join(',')})`);
  }
+ await db.exec(`CREATE UNIQUE INDEX ON tariff_offers(tariff_id) WHERE is_primary=true AND offer_type='pay_now'; CREATE UNIQUE INDEX ON tariff_offers(tariff_id,((meta->>'slot_role'))) WHERE nullif(meta->>'slot_role','') IS NOT NULL; CREATE UNIQUE INDEX ON offer_addons(parent_offer_id,addon_offer_id);`);
  await db.exec(`CREATE TABLE sales_jobs(conversation_id uuid,status text); CREATE TABLE sales_conversations(id uuid,campaign_id uuid); CREATE TABLE audit_logs(actor_type text,action text,meta jsonb); CREATE TABLE sales_campaigns(code text,mode text,id uuid DEFAULT gen_random_uuid()); INSERT INTO sales_campaigns(code,mode) VALUES('cb21-owner-test','off'); CREATE TABLE training_modules(id uuid PRIMARY KEY,parent_module_id uuid,title text);`);
  const insert=async(table,row)=>db.query(`INSERT INTO ${table}(${Object.keys(row).join(',')}) VALUES(${Object.keys(row).map((_,i)=>'$'+(i+1)).join(',')})`,Object.values(row));
  const pairs=[...sql.matchAll(/\('(accountant|chief|business|alumni|gift)','([^']+)','([^']+)',(\d+),(\d+|NULL),(\d+)\)/g)].map(([,role,source,target,price,old,days])=>({role,source,target,price:+price,old:old==='NULL'?null:+old,days:+days}));
@@ -38,7 +39,7 @@ async function fixture(){
    const target=randomUUID();for(const source of [true,false])await insert('access_rules',{id:randomUUID(),product_id:source?p20:p21,tariff_id:source?p.source:p.target,is_active:true,grant_target_type:k===0?'training_content':k===1?'club':'section_access',target_ref:k===0?source?root20:root21:target,conditions:k===0?{access_mode:i<2?'partial':'full',allowed_module_ids:i<2?(source?m20:m21).slice(0,i===0?source?24:21:26):[],allowed_lesson_ids:[]}: {rule_purpose:'bonus'},duration_days:k===0?null:30});
   }
  }
- for(const id of ['4d01edc1-6189-4017-ba43-922e7e9479ac','9687b2a8-585d-4770-9505-2a01030a093a','80780ddb-cafd-4427-ae8d-872853596120','e5b64e47-08d0-4ef5-8bed-2524d1ac8170'])await insert('tariff_offers',{id,tariff_id:pairs[3].target,amount:1325,is_active:true,meta:{slot_role:'old'},button_label:'Старая ссылка'});
+ for(const id of ['4d01edc1-6189-4017-ba43-922e7e9479ac','9687b2a8-585d-4770-9505-2a01030a093a','80780ddb-cafd-4427-ae8d-872853596120','e5b64e47-08d0-4ef5-8bed-2524d1ac8170'])await insert('tariff_offers',{id,tariff_id:pairs[3].target,amount:1325,is_active:true,meta:{slot_role:'old_'+id.slice(0,8)},button_label:'Старая ссылка'});
  for(let k=0;k<4;k++)for(let a=0;a<9;a++){
   const product=randomUUID(),tariff=randomUUID(),offer=randomUUID();
   for(const source of [true,false])await insert('offer_addons',{id:randomUUID(),parent_offer_id:source?sourceOffers[8+k]:destOffers[8+k],addon_product_id:product,addon_tariff_id:tariff,addon_offer_id:offer,is_active:true,pricing_mode:'percent_discount',discount_percent:50,is_required:false,is_default_selected:false,allow_repurchase_after_expiry:true,access_delivery_mode:source?'fixed_date':'manual',access_opens_at:source?'2026-09-30T21:00:00Z':null,meta:{},sort_order:a});
@@ -70,4 +71,12 @@ test('wrong reviewed fingerprint or missing owner dates cannot apply',async()=>{
 
 test('missing source-to-target module pair aborts before public writes',async()=>{
  const {db}=await fixture();try{const before=await snapshot(db);await db.exec("DELETE FROM training_modules WHERE id=(SELECT id FROM training_modules WHERE parent_module_id='4365e913-36f1-432e-ab16-748c3ca6826a' LIMIT 1)");await assert.rejects(run(db,options),/expected_28_module_pairs/);await db.exec('ROLLBACK');assert.deepEqual(await snapshot(db),before);}finally{await db.close();}
+});
+
+test('dry-run catches preserved primary-offer collision before any permanent write',async()=>{
+ const {db,pairs}=await fixture();try{
+  await db.query("UPDATE tariff_offers SET is_primary=true,offer_type='pay_now' WHERE id='4d01edc1-6189-4017-ba43-922e7e9479ac'");
+  await assert.rejects(run(db,options),/primary_offer_collision/);await db.exec('ROLLBACK');
+  assert.equal((await db.query("SELECT count(*)::int n FROM audit_logs")).rows[0].n,0);
+ }finally{await db.close();}
 });

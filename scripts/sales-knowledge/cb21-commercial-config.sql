@@ -128,6 +128,20 @@ BEGIN
  END LOOP;
  IF (SELECT count(*) FROM _cb21_tariffs)<>5 OR (SELECT count(*) FROM _cb21_offers)<>24 OR (SELECT count(*) FROM _cb21_addons)<>72 OR (SELECT count(*) FROM _cb21_rules)<>12 THEN RAISE EXCEPTION 'configuration_rowcounts_changed'; END IF;
  IF EXISTS(SELECT 1 FROM _cb21_rules WHERE tariff_id='dbdb839e-84a0-4c00-8b8c-e60e4c558d94' AND grant_target_type='club') THEN RAISE EXCEPTION 'alumni_club_forbidden'; END IF;
+ -- TEMP LIKE does not copy live unique indexes. Check the resulting catalog,
+ -- including inactive or legacy rows, before allowing any permanent write.
+ IF EXISTS(WITH final_offers AS (
+  SELECT tariff_id,is_primary,offer_type,meta FROM _cb21_offers UNION ALL
+  SELECT tariff_id,is_primary,offer_type,meta FROM public.tariff_offers existing_offer WHERE tariff_id IN(SELECT target FROM _cb21_pairs) AND NOT EXISTS(SELECT 1 FROM _cb21_offers d WHERE d.id=existing_offer.id)
+ ) SELECT 1 FROM final_offers WHERE is_primary AND offer_type='pay_now' GROUP BY tariff_id HAVING count(*)>1)
+ THEN RAISE EXCEPTION 'primary_offer_collision'; END IF;
+ IF EXISTS(WITH final_offers AS (
+  SELECT tariff_id,meta FROM _cb21_offers UNION ALL
+  SELECT tariff_id,meta FROM public.tariff_offers existing_offer WHERE tariff_id IN(SELECT target FROM _cb21_pairs) AND NOT EXISTS(SELECT 1 FROM _cb21_offers d WHERE d.id=existing_offer.id)
+ ) SELECT 1 FROM final_offers WHERE nullif(meta->>'slot_role','') IS NOT NULL GROUP BY tariff_id,meta->>'slot_role' HAVING count(*)>1)
+ THEN RAISE EXCEPTION 'offer_slot_collision'; END IF;
+ IF EXISTS(SELECT 1 FROM _cb21_addons d JOIN public.offer_addons existing_addon ON existing_addon.parent_offer_id=d.parent_offer_id AND existing_addon.addon_offer_id=d.addon_offer_id AND existing_addon.id<>d.id)
+ THEN RAISE EXCEPTION 'existing_addon_collision'; END IF;
 END $$;
 INSERT INTO _cb21_diff SELECT 'tariffs',d.id,to_jsonb(b)-'updated_at'-'created_at',to_jsonb(d)-'updated_at'-'created_at' FROM _cb21_tariffs d LEFT JOIN public.tariffs b USING(id) WHERE (to_jsonb(b)-'updated_at'-'created_at') IS DISTINCT FROM (to_jsonb(d)-'updated_at'-'created_at');
 INSERT INTO _cb21_diff SELECT 'tariff_offers',d.id,to_jsonb(b)-'updated_at'-'created_at',to_jsonb(d)-'updated_at'-'created_at' FROM _cb21_offers d LEFT JOIN public.tariff_offers b USING(id) WHERE (to_jsonb(b)-'updated_at'-'created_at') IS DISTINCT FROM (to_jsonb(d)-'updated_at'-'created_at');
