@@ -873,7 +873,8 @@ Deno.serve(async (req) => {
               .from('telegram_messages')
               .update({
                 message_text: messageRow.message_text,
-                meta: { ...(existingMessage.meta || {}), ...messageRow.meta, edited: true },
+                meta: { ...(existingMessage.meta || {}), ...messageRow.meta, edited: true,
+                  storage_bucket:null,storage_path:null,uploaded_file_id:null },
               })
               .eq('id', existingMessage.id)
           : supabase
@@ -882,8 +883,12 @@ Deno.serve(async (req) => {
                 onConflict: 'bot_id,business_connection_id,telegram_user_id,message_id',
                 ignoreDuplicates: false,
               });
-        const { error: editError } = await editMutation;
+        const { data: editedMessage, error: editError } = await editMutation.select('id').maybeSingle();
         if (editError) console.error('[BUSINESS] edit sync failed', editError);
+        if (!editError && editedMessage?.id && file?.file_id) {
+          await supabase.from('media_jobs').insert({message_db_id:editedMessage.id,user_id:effectiveUserId,
+            bot_id:botId,telegram_file_id:file.file_id,file_type:fileType,file_name:msgAny.document?.file_name || null});
+        }
       } else {
         const { data: inserted, error: insertError } = await supabase
           .from('telegram_messages')

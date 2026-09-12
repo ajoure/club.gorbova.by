@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {planDialogueReply, slotValues, DIALOGUE_QUESTIONS} from '../../supabase/functions/_shared/sales-runtime/sequence.mjs';
+import {planDialogueReply, slotValues, DIALOGUE_QUESTIONS, hasExplicitTechnicalProblem} from '../../supabase/functions/_shared/sales-runtime/sequence.mjs';
 const trigger='Хочу программу курса ЦБ';
 const facts=[
  {id:'program',text:'ПОЛНАЯ ПРОГРАММА: 28 модулей',classification:'sales_safe',source:'catalog'},
@@ -20,6 +20,21 @@ function exchange(context, reply, incoming) {
  context.history.push({role:'seller',text:reply.text,question_id:reply.question_id},{role:'customer',text:incoming});
  context.firstReply=false;context.stage=reply.stage;context.lastQuestionId=reply.question_id;
 }
+test('technical checkout trouble always assigns the last message instead of creating another payment link',()=>{
+ for (const text of ['Ссылка не открывается','При оплате ошибка 500','Не получается оплатить по ссылке','Кнопка рассрочки не работает']) {
+  const c=setup();exchange(c,planDialogueReply(c,assess(c)),text);
+  const result=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'},{intent:'payment'}));
+  assert.deepEqual(result,{action:'handoff',reason:'technical_problem'});
+ }
+});
+test('AI recognizes screenshot-only or paraphrased technical problems and hands them off silently',()=>{
+ const c=setup();exchange(c,planDialogueReply(c,assess(c)),'Вот скрин, дальше не пускает');
+ assert.deepEqual(planDialogueReply(c,assess(c,{}, {intent:'technical'})),{action:'handoff',reason:'technical_problem'});
+});
+test('ordinary payment questions are not technical incidents',()=>{
+ const c=setup();exchange(c,planDialogueReply(c,assess(c)),'Как оплатить курс?');
+ assert.equal(planDialogueReply(c,assess(c,{}, {intent:'payment'})).action,'reply');
+});
 test('the exact incident: activation cannot deliver program, dates or price even if classifier requests them',()=>{
  const c=setup();
  for(const phrase of [trigger,'  ХОЧУ   программу курса цб  ']) {
@@ -97,4 +112,20 @@ test('instruction, human request, refusal and automation disclosure preserve gua
   const r=planDialogueReply(c,assess(c,{}, {intent}));assert.equal(r.action,intent==='stop'?'stop':'handoff');assert.equal(r.text,undefined);
  }
  const r=planDialogueReply(c,assess(c,{}, {intent:'product_question',question_type:'automation'}));assert.match(r.text,/автоматически/);
+});
+
+
+test('a goal interpreted as a product question must still carry a verified topic before asking about time',()=>{
+ const c=setup();c.firstReply=false;c.lastQuestionId='goals';c.stage='goals';c.history.push({role:'customer',text:'Работаю бухгалтером, хочу лучше разобраться в НДС.'});
+ const r=planDialogueReply(c,assess(c,{experience:'new',goal:'known'},{intent:'product_question',question_type:'topic',fact_ids:['topic_vat']}));
+ assert.equal(r.question_id,'format');assert.deepEqual(r.fact_ids,['topic_vat']);
+ const missing=planDialogueReply(c,assess(c,{experience:'new',goal:'known'},{intent:'product_question',question_type:'topic',fact_ids:[]}));
+ assert.equal(missing.reason,'no_verified_match_for_goal');
+});
+
+
+test('a course question about accounting for a mistaken payment is not a website incident',()=>{
+ const c=setup();c.history.push({role:'customer',text:'На курсе разбирается ошибка отражения оплаты в учете?'});
+ assert.equal(hasExplicitTechnicalProblem(c),false);
+ c.history.push({role:'customer',text:'У меня ошибка оплаты, не могу продолжить'});assert.equal(hasExplicitTechnicalProblem(c),true);
 });

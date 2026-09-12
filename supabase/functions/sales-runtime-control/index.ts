@@ -6,6 +6,7 @@ import {
   operator,
   rpc,
 } from "../_shared/sales-runtime/db.ts";
+import {readAIConfig,AI_MODELS} from '../_shared/sales-runtime/ai.mjs';
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response(null, { headers: cors });
@@ -26,7 +27,10 @@ Deno.serve(async (request) => {
         .eq("business_account_id", body.business_account_id).maybeSingle(),
     );
     if (!campaign) return json({ available: false, can_manage: true });
-    if (body.action && body.action !== "status") {
+    if(body.action==='ai_config') {
+      await rpc(db,'sales_configure_ai',{p_campaign:campaign.id,p_actor:actor.id,
+        p_config:readAIConfig(body.ai_config),p_expected:body.expected_ai_config});
+    } else if (body.action && body.action !== "status") {
       await rpc(db, "sales_control", {
         p_campaign: campaign.id,
         p_action: body.action,
@@ -37,7 +41,7 @@ Deno.serve(async (request) => {
     }
     const fresh = await must(
       db.from("sales_campaigns").select(
-        "id,mode,trigger_phrase,policy_version,knowledge_version,delay_min_seconds,delay_max_seconds",
+        "id,mode,trigger_phrase,policy_version,knowledge_version,delay_min_seconds,delay_max_seconds,ai_config",
       ).eq("id", campaign.id).single(),
     );
     const conversation = await must(
@@ -68,6 +72,7 @@ Deno.serve(async (request) => {
       available: true,
       can_manage: true,
       can_configure: !!owner,
+      ai_models:AI_MODELS,
       campaign: fresh,
       conversation,
       job,

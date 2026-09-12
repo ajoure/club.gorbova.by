@@ -58,7 +58,7 @@ export async function notifyAssignments(db: DB) {
     let delivered = false;
     try {
       const site =
-        (Deno.env.get("CONTACT_CENTER_SITE_URL") || "https://club.gorbova.by")
+        (Deno.env.get("CONTACT_CENTER_SITE_URL") || "https://gorbova.by")
           .replace(/\/+$/, "");
       const response = await fetch(
         `https://api.telegram.org/bot${bot.bot_token_encrypted}/sendMessage`,
@@ -69,8 +69,10 @@ export async function notifyAssignments(db: DB) {
           body: JSON.stringify({
             chat_id: recipient.telegram_user_id,
             text:
-              "Вам назначен вопрос по ЦБ21. Автопродажи приостановлены.\n\n" +
-              String(message.message_text || "[Вложение]").slice(0, 1200),
+              (event.details?.reason === "technical_problem"
+                ? "Техническая проблема при покупке ЦБ21. Автопродажи приостановлены.\n\nПоследнее сообщение клиента:\n"
+                : "Вам назначен вопрос по ЦБ21. Автопродажи приостановлены.\n\n") +
+              String(message.message_text || "[Вложение — откройте переписку]").slice(0, 3500),
             reply_markup: {
               inline_keyboard: [[{
                 text: "Открыть переписку",

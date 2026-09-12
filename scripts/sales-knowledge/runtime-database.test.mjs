@@ -31,6 +31,8 @@ before(async()=>{
  CREATE TABLE payments_v2(id uuid DEFAULT gen_random_uuid(),order_id uuid,status text,amount numeric,is_deleted boolean DEFAULT false,refunded_amount numeric,transaction_type text,currency text DEFAULT 'BYN');`);
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912082931_cb21_dialogue_delivery_windows.sql',import.meta.url),'utf8'));
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912083730_cb21_checkout_capabilities.sql',import.meta.url),'utf8'));
+ for(const name of ['20260912103149_6c915c55-929b-42ba-9cc0-a8d2b4950c1b.sql','20260912103321_bdea673d-1fb3-4974-958c-72349e73c6e0.sql','20260912105739_sales_context_ai.sql'])
+  await db.exec(await readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8'));
 });
 after(async()=>{await db.close()});
 async function fixture(){
@@ -249,4 +251,43 @@ test('pause after invoice order creation still revokes document generation',asyn
  await rpc('sales_consume_checkout_capability',[hash,'admin-invoice-checkout-issue',body]);
  const o=(await one("INSERT INTO orders_v2(user_id,product_id,offer_id,status,final_price,meta) VALUES($1,$2,$3,'pending',1790,$4) RETURNING id",[owner,product,offer,{sales_checkout_operation_id:op,checkout_kind:'invoice',awaits_payment:true}])).id;
  await rpc('sales_control',[p,'pause',owner]);assert.equal(await rpc('sales_authorize_invoice_document',[hash,{order_id:o,mode:'generate',pre_payment_invoice:true}]),null);
+});
+
+
+test('technical incident assigns the latest incoming once, pauses and does not create another checkout',async()=>{
+ await fixture();await msg(499);await msg(500,'Пытаюсь оплатить');const id=await msg(501,'Ссылка на оплату не открывается, ошибка 404');const j=await due();
+ const assignment=await rpc('sales_handoff',[j.id,j.claim_token,'technical_problem']);assert.ok(assignment);
+ assert.equal(await rpc('sales_handoff',[j.id,j.claim_token,'technical_problem']),null);
+ const a=await one('SELECT * FROM contact_center_message_assignments');assert.equal(a.source_message_id,id);assert.equal(a.assignee_user_id,owner);
+ assert.equal((await conversation()).human_hold,true);assert.equal((await conversation()).reason,'technical_problem');
+ assert.equal((await one('SELECT count(*)::int n FROM sales_checkout_operations')).n,0);assert.equal(await due(),null);
+});
+test('AI settings require owner, OFF and hold, exact previous config; invalid or null options fail',async()=>{
+ const p=await fixture();const original=(await one('SELECT ai_config FROM sales_campaigns')).ai_config;const config={...original,model:'google/gemini-3.8-flash'};
+ await assert.rejects(rpc('sales_configure_ai',[p,stranger,config,original]),/owner_required/);
+ await assert.rejects(rpc('sales_configure_ai',[p,owner,config,original]),/disable_and_pause_required/);
+ await rpc('sales_control',[p,'disable',owner]);
+ for(const bad of [{...config,max_tokens:null},{...config,model:null},{...config,max_tokens:3000.5},{...config,url:'https:\/\/attacker.example'}])
+  await assert.rejects(rpc('sales_configure_ai',[p,owner,bad,original]),/invalid_ai_config/);
+ assert.equal(await rpc('sales_configure_ai',[p,owner,config,original]),true);
+ await assert.rejects(rpc('sales_configure_ai',[p,owner,config,original]),/configuration_changed/);
+ assert.equal((await one('SELECT mode FROM sales_campaigns')).mode,'off');assert.equal((await conversation()).human_hold,true);
+ assert.equal((await one("SELECT has_table_privilege('authenticated','sales_media_observations','SELECT') allowed")).allowed,false);
+ assert.equal((await one("SELECT has_function_privilege('authenticated','sales_configure_ai(uuid,uuid,jsonb,jsonb)','EXECUTE') allowed")).allowed,false);
+});
+test('media preprocessing releases claim and resumes without sending; stale token and pause cannot requeue',async()=>{
+ const p=await fixture();await msg(510);const j=await due();
+ assert.equal(await rpc('sales_defer_context',[j.id,j.claim_token,'media_processing_pending']),true);
+ const next=await one('SELECT * FROM sales_jobs');assert.equal(next.status,'queued');assert.equal(next.claim_token,null);assert.equal(next.context_attempts,1);
+ assert.equal(await rpc('sales_begin_send',[j.id,j.claim_token,{}]),false);
+ const j2=await due();await rpc('sales_control',[p,'pause',owner]);
+ assert.equal(await rpc('sales_defer_context',[j2.id,j2.claim_token,'media_processing_pending']),false);assert.equal(await due(),null);
+});
+
+
+test('media-only replacement invalidates a prepared reply even when caption stays the same',async()=>{
+ await fixture();const id=await msg(520);const j=await due();
+ await db.query("UPDATE telegram_messages SET meta=meta||'{\"file_id\":\"replacement\",\"file_type\":\"photo\"}'::jsonb WHERE id=$1",[id]);
+ assert.equal(await rpc('sales_begin_send',[j.id,j.claim_token,{}]),false);
+ assert.equal((await conversation()).human_hold,true);assert.equal((await conversation()).reason,'media_edited');
 });

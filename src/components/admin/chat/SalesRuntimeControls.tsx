@@ -11,11 +11,13 @@ type Status = {
   scope?: { user_id: string; business_account_id: string };
   available: boolean;
   can_configure?: boolean;
+  ai_models?: string[];
   campaign?: {
     mode: string;
     trigger_phrase: string;
     delay_min_seconds: number;
     delay_max_seconds: number;
+    ai_config?: {model:string;max_tokens:number;timeout_seconds:number;max_context_chars:number;vision_enabled:boolean;max_image_bytes:number};
   };
   conversation?: { state: string; started: boolean; reason: string | null };
   job?: { status: string; due_at: string };
@@ -39,6 +41,7 @@ export function SalesRuntimeControls(
     cache = useQueryClient(),
     allowed = access.canAccessSection("communication", "manage");
   const [settings, setSettings] = useState(false),
+    [ai,setAi]=useState<Status['campaign']['ai_config']>(),
     [min, setMin] = useState("60"),
     [max, setMax] = useState("180");
   const queryKey = ["sales-runtime", userId, businessAccountId];
@@ -87,6 +90,7 @@ export function SalesRuntimeControls(
   });
   useEffect(() => {
     setSettings(false);
+    setAi(undefined);
   }, [userId, businessAccountId]);
   useEffect(() => {
     if (query.data?.campaign) {
@@ -97,6 +101,7 @@ export function SalesRuntimeControls(
     query.data?.campaign?.delay_min_seconds,
     query.data?.campaign?.delay_max_seconds,
   ]);
+  useEffect(()=>{if(!settings)setAi(query.data?.campaign?.ai_config)},[settings,query.data?.campaign?.ai_config]);
   if (!allowed || !businessAccountId || query.isLoading) return null;
   if (query.isError) {
     return (
@@ -257,9 +262,26 @@ export function SalesRuntimeControls(
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            Без ответа клиента бот больше не пишет. Продолжение сохраняет
-            контекст.
+            После вопроса бот ждёт клиента. Возможно одно напоминание в разрешённое время.
+            Продолжение сохраняет контекст.
           </p>
+          {ai && <div className="space-y-2 border-t pt-2">
+            <label className="block text-xs">Модель для диалога и скриншотов
+              <select aria-label="Модель автопродаж" className="mt-1 block w-full min-w-0 rounded border bg-background p-2" value={ai.model}
+                disabled={enabled} onChange={e=>setAi({...ai,model:e.target.value})}>
+                {(query.data.ai_models??[ai.model]).map(model=><option key={model} value={model}>{model}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={ai.vision_enabled} disabled={enabled}
+              onChange={e=>setAi({...ai,vision_enabled:e.target.checked})}/>Читать скриншоты клиента</label>
+            <div className="flex flex-wrap gap-2">
+              <label className="text-xs">Лимит ответа ИИ<Input aria-label="Лимит ответа ИИ" type="number" className="w-28" value={ai.max_tokens} min={2000} max={16000} disabled={enabled} onChange={e=>setAi({...ai,max_tokens:+e.target.value})}/></label>
+              <label className="text-xs">Ожидание ИИ, секунд<Input aria-label="Ожидание ИИ" type="number" className="w-28" value={ai.timeout_seconds} min={15} max={90} disabled={enabled} onChange={e=>setAi({...ai,timeout_seconds:+e.target.value})}/></label>
+            </div>
+            <p className="text-xs text-muted-foreground">Для смены модели выключите автопродажи. История сохраняется. Неразборчивое вложение передаётся человеку.</p>
+            <Button size="sm" variant="outline" disabled={enabled||mutation.isPending||conversation?.state!=='HUMAN_HOLD'||!Number.isInteger(ai.max_tokens)||ai.max_tokens<2000||ai.max_tokens>16000||!Number.isInteger(ai.timeout_seconds)||ai.timeout_seconds<15||ai.timeout_seconds>90}
+              onClick={()=>mutation.mutate({action:'ai_config',ai_config:ai,expected_ai_config:campaign.ai_config})}>Сохранить настройки ИИ</Button>
+          </div>}
         </div>
       )}
     </section>

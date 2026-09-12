@@ -1,6 +1,8 @@
 import { loadPublicTariffAccess } from "../public-tariff-access.ts";
 import { DB, read, rpc } from "./db.ts";
 import { DISCLOSURE } from "./replies.mjs";
+import { readFullHistory, describeAttachment } from "./history.mjs";
+import {readAIConfig} from './ai.mjs';
 export type Fact = {
   id: string;
   text: string;
@@ -18,36 +20,38 @@ const visible = (x: any, now: number) =>
   (!x.visible_from || Date.parse(x.visible_from) <= now) &&
   (!x.visible_to || Date.parse(x.visible_to) > now);
 export async function loadContext(db: DB, p: any, c: any) {
-  const salesMessages = await read(
-    db.from("sales_jobs").select("delivery_message_id,candidate,policy_version,kind").eq(
+  const snapshotAt=new Date().toISOString();
+  const salesMessages: any[] = await readFullHistory((from:number,to:number) => read(
+    db.from("sales_jobs").select("id,delivery_message_id,candidate,policy_version,kind").eq(
       "conversation_id",
       c.id,
-    ).eq("status", "sent"),
-  );
+    ).eq("status", "sent").order("id").range(from,to),
+  ));
   const salesMessageIds = new Set(
     salesMessages.map((j: any) => j.delivery_message_id),
   );
-  const history: any[] = [];
-  for (let offset = 0; offset < 2000; offset += 200) {
-    const page = await read(
+  // Fix the newest message boundary before pagination. A later inbound is
+  // handled by the existing revision guard; it cannot shift this snapshot.
+  const newest = await read(db.from("telegram_messages").select("message_id")
+    .eq("user_id", p.test_user_id).eq("bot_id", p.bot_id)
+    .eq("business_account_id", p.business_account_id)
+    .order("message_id", {ascending:false}).limit(1));
+  if (newest.length && !Number.isFinite(newest[0].message_id)) throw Error("history_boundary_unavailable");
+  const allHistory: any[] = newest.length ? await readFullHistory(async (from:number,to:number) => read(
       db.from("telegram_messages").select(
-        "id,direction,message_text,message_id,message_origin,created_at",
+        "id,direction,message_text,message_id,message_origin,created_at,meta",
       )
         .eq("user_id", p.test_user_id).eq("bot_id", p.bot_id).eq(
           "business_account_id",
           p.business_account_id,
         )
-        .order("message_id", { ascending: true }).range(offset, offset + 199),
-    );
-    history.push(
-      ...page.filter((m) =>
+        .lte("message_id",newest[0].message_id)
+        .order("message_id", { ascending: true }).order("id").range(from,to),
+    )) : [];
+  const history = allHistory.filter((m:any) =>
         m.message_origin !== "bot_automation" ||
         salesMessageIds.has(m.message_id)
-      ),
-    );
-    if (page.length < 200) break;
-    if (offset === 1800) throw Error("history_too_large_for_review");
-  }
+      );
   const [profile, product, tariffs, flow, modules, comments, lessons] =
     await Promise.all([
       read(
@@ -75,29 +79,29 @@ export async function loadContext(db: DB, p: any, c: any) {
           p.knowledge.root_module_id,
         ).order("sort_order"),
       ),
-      read(
+      readFullHistory((from:number,to:number) => read(
         db.from("live_event_comments").select(
-          "live_event_id,content,created_at",
-        ).eq("user_id", p.test_user_id).order("created_at", {
+          "id,live_event_id,content,created_at",
+        ).eq("user_id", p.test_user_id).lte("created_at",snapshotAt).order("created_at", {
           ascending: false,
-        }).limit(50),
-      ),
-      read(
-        db.from("lesson_progress").select("lesson_id,completed_at").eq(
+        }).order("id").range(from,to),
+      )),
+      readFullHistory((from:number,to:number) => read(
+        db.from("lesson_progress").select("id,lesson_id,completed_at").eq(
           "user_id",
           p.test_user_id,
-        ).limit(100),
-      ),
+        ).lte("completed_at",snapshotAt).order("id").range(from,to),
+      )),
     ]);
   if (
     !profile || !product.is_active || !flow.is_active ||
     flow.product_id !== p.product_id
   ) throw Error("product_unavailable");
-  const orders = await read(
+  const orders: any[] = await readFullHistory((from:number,to:number) => read(
     db.from("orders_v2").select("id,product_id,status,flow_id,created_at").or(
       `user_id.eq.${p.test_user_id},profile_id.eq.${profile.id}`,
-    ).eq("is_deleted", false).eq("status", "paid").limit(200),
-  );
+    ).eq("is_deleted", false).eq("status", "paid").lte("created_at",snapshotAt).order("id").range(from,to),
+  ));
   const rules = await read(
     db.from("access_rules").select("id,tariff_id,conditions,target_ref").eq(
       "product_id",
@@ -217,7 +221,7 @@ export async function loadContext(db: DB, p: any, c: any) {
     if (
       access?.kind === "course_end_calendar_months" &&
       access.flow_id === flow.id && access.end_date === flow.end_date &&
-      [6, 9, 12].includes(access.months)
+      Number.isInteger(access.months) && access.months > 0
     ) {
       add(
         "access_" + t.id,
@@ -257,10 +261,9 @@ export async function loadContext(db: DB, p: any, c: any) {
     date: o.created_at,
     learner_status: "unknown",
   }));
-  if (JSON.stringify(history).length > 100000) {
-    throw Error("history_too_large_for_review");
-  }
   return {
+    aiConfig:readAIConfig(p.ai_config),
+    historyFingerprint:JSON.stringify(history.map((m:any)=>[m.id,m.message_text,m.direction,m.meta?.file_id,m.meta?.storage_path,m.meta?.upload_status,m.meta?.edited,m.meta?.uploaded_file_id])),
     facts,
     publicTariffIds:tariffs.filter((t:any)=>t.is_public).map((t:any)=>t.id),
     privateFactIds:facts.filter((f:any)=>tariffs.some((t:any)=>!t.is_public&&(f.tariff_id===t.id||f.id==="access_"+t.id))).map((f:any)=>f.id),
@@ -275,11 +278,17 @@ export async function loadContext(db: DB, p: any, c: any) {
       .sort((a: any,b: any) => b.delivery_message_id-a.delivery_message_id)[0]?.candidate?.fact_ids ?? [],
     lastQuestionId: salesMessages.find((j:any)=>j.delivery_message_id===history.filter((m:any)=>m.direction==="outgoing").at(-1)?.message_id && j.policy_version===p.policy_version)?.candidate?.question_id ?? null,
     history: history.map((m) => ({
+      source_message_id: m.id,
       role: m.direction === "incoming" ? "customer" : "seller",
       text: m.message_text || "[вложение]",
       at: m.created_at,
+      attachment_status: describeAttachment(m,p.test_user_id)?.state ?? null,
       question_id: salesMessages.find((j: any) => j.delivery_message_id === m.message_id)?.candidate?.question_id ?? null,
     })),
+    // Server-only descriptors; never spread these into the model request.
+    mediaSources: history.flatMap((m:any)=>{
+      const media=describeAttachment(m,p.test_user_id);return media?[media]:[];
+    }),
     client: {
       purchases,
       alumni_eligibility:alumniEligibility,
@@ -287,7 +296,7 @@ export async function loadContext(db: DB, p: any, c: any) {
       // Purchase proof follows configured prior-product eligibility, not names.
       // Purchase remains distinct from attendance/completion.
       verified_cb_purchase: alumniEligibility.eligible || orders.some((o: any) => o.product_id===p.product_id),
-      purchase_history_complete: orders.length < 200,
+      purchase_history_complete: true,
       webinar_comments: comments.map((x: any) => ({
         text: x.content,
         at: x.created_at,
