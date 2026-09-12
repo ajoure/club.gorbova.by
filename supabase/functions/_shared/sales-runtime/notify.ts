@@ -71,6 +71,8 @@ export async function notifyAssignments(db: DB) {
             text:
               (event.details?.reason === "technical_problem"
                 ? "Техническая проблема при покупке ЦБ21. Автопродажи приостановлены.\n\nПоследнее сообщение клиента:\n"
+                : event.details?.reason === "missing_short_topic_reply"
+                ? "Для подходящей темы курса не подготовлена короткая реплика. Проверьте базу знаний. Автопродажи приостановлены.\n\nПоследнее сообщение клиента:\n"
                 : "Вам назначен вопрос по ЦБ21. Автопродажи приостановлены.\n\n") +
               String(message.message_text || "[Вложение — откройте переписку]").slice(0, 3500),
             reply_markup: {

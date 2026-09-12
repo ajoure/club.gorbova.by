@@ -9,6 +9,24 @@ const snapshot={facts:[fact],knowledge_version:'version-1',facts_sha256:'before-
 const preview={valid:true,errors:[],facts_sha256:'reviewed-sha',added:0,changed:1,removed:0,unchanged:0};
 beforeEach(()=>{mock.invoke.mockReset();mock.invoke.mockImplementation(async(_,req)=>({data:req.body.action==='knowledge_status'?snapshot:req.body.action==='knowledge_apply'?{...preview,applied:true}:preview}))});
 afterEach(cleanup);
+it('keeps detailed knowledge and short reply separate and invalidates approval after a short-reply edit',async()=>{
+ await open();fireEvent.click(screen.getByRole('button',{name:'Деньги'}));
+ fireEvent.change(screen.getByLabelText('Короткая реплика 1'),{target:{value:'Разберём движение денег по документам.'}});
+ fireEvent.click(screen.getByRole('button',{name:'Проверить изменения'}));await screen.findByRole('checkbox');
+ const request=mock.invoke.mock.calls.find(([,req])=>req.body.action==='knowledge_preview')![1].body;
+ expect(request.facts[0].text).toBe(fact.text);expect(request.facts[0].reply_text).toBe('Разберём движение денег по документам.');
+ fireEvent.click(screen.getByRole('checkbox'));fireEvent.change(screen.getByLabelText('Короткая реплика 1'),{target:{value:'Другая короткая реплика.'}});
+ expect(screen.queryByRole('button',{name:'Сохранить проверенную версию'})).toBeNull();
+});
+it('changing a topic to background removes the outgoing reply but preserves the detailed knowledge',async()=>{
+ await open();fireEvent.click(screen.getByRole('button',{name:'Деньги'}));
+ fireEvent.change(screen.getByLabelText('Короткая реплика 1'),{target:{value:'Краткое описание темы.'}});
+ fireEvent.change(screen.getByLabelText('Связь с программой 1'),{target:{value:'background'}});
+ expect(screen.queryByLabelText('Короткая реплика 1')).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Проверить изменения'}));await screen.findByRole('checkbox');
+ const request=mock.invoke.mock.calls.find(([,req])=>req.body.action==='knowledge_preview')![1].body;
+ expect(request.facts[0].text).toBe(fact.text);expect(request.facts[0].reply_text).toBeUndefined();expect(request.facts[0].scope).toBe('background');
+});
 async function open(editable=true){render(<SalesKnowledgeEditor userId="user-1" businessAccountId="business-1" editable={editable}/>);fireEvent.click(screen.getByRole('button',{name:'Открыть базу знаний'}));await screen.findByText('База знаний: 1 описаний')}
 it('shows future-program membership separately from closed lesson and hides technical references',async()=>{
  await open();expect(screen.getByText(/В составе продаваемого продукта.*Урок сейчас закрыт/)).toBeTruthy();

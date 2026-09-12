@@ -8,6 +8,7 @@ import {loadClientEvidence} from './client-evidence.ts';
 export type Fact = {
   id: string;
   text: string;
+  reply_text?: string;
   classification: string;
   source: string;
   kind?: string;
@@ -179,6 +180,7 @@ export async function loadContext(db: DB, p: any, c: any) {
       facts.push({
         id: f.id,
         text: f.text,
+        reply_text: f.reply_text,
         classification: f.classification,
         source: f.source,
         kind: "topic",

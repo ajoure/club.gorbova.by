@@ -1,4 +1,5 @@
 import { DISCLOSURE } from './replies.mjs';
+import { topicReplyText } from './topic-replies.mjs';
 
 // Q IDs refer to the dated, anonymised July message bank, not an invented persona.
 export const DIALOGUE_QUESTIONS = {
@@ -108,7 +109,9 @@ export function hasExplicitTechnicalProblem(context) {
 function compose(questionId, facts = [], {greeting = false, bridge = '', stage} = {}) {
   const question = DIALOGUE_QUESTIONS[questionId];
   if (question === undefined) throw Error('unknown_question');
-  const text = [greeting ? 'Добрый день!' : bridge, ...facts.map(f => f.text), question].filter(Boolean).join('\n\n');
+  const content = facts.map(f => f.kind === 'topic' ? topicReplyText(f) : f.text);
+  if (content.some(text => text === null)) return handoff('missing_short_topic_reply');
+  const text = [greeting ? 'Добрый день!' : bridge, ...content, question].filter(Boolean).join('\n\n');
   if (!text || text.length > 3900) throw Error('invalid_reply_length');
   return {action:/** @type {const} */ ('reply'), text, question_id:questionId, fact_ids:facts.map(f=>f.id), stage:stage || questionId,
     intent:'product_information', new_question_count:question ? 1 : 0, facts_verified:true,
@@ -169,7 +172,7 @@ export function planDialogueReply(context, raw) {
   const topics = chosenTopics.length ? chosenTopics : context.facts.filter(f =>
     context.relevantFactIds?.includes(f.id) && f.kind === 'topic' && f.module_id);
   if (!topics.length) return handoff('no_verified_match_for_goal');
-  if (q === 'format') return compose(q, topics, {bridge:'Благодарю за подробный ответ!'});
+  if (q === 'format') return compose(q, topics);
   // Only offers covering the selected, verified relevant topics can be suggested.
   const offers = context.facts.filter(f => f.kind === 'offer' && Number.isFinite(f.price) &&
     topics.every(t => f.included_module_ids?.includes(t.module_id))).sort((a,b) => a.price-b.price);

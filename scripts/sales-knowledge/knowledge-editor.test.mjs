@@ -28,8 +28,32 @@ before(async()=>{
  CREATE TABLE course_transcription_bindings(source_id uuid,block_id uuid,lesson_id uuid,product_id uuid,block_updated_at timestamptz);
  `);
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912164349_b779cb99-19cf-4ef6-be5a-2753988c1791.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../../supabase/migrations/20260912174145_sales_knowledge_short_replies.sql',import.meta.url),'utf8'));
 });
 after(()=>db.close());
+test('migration preserves exact legacy normalized facts and fingerprint when short reply is absent',async()=>{
+ await fixture();
+ const original=await readFile(new URL('../../supabase/migrations/20260912164349_b779cb99-19cf-4ef6-be5a-2753988c1791.sql',import.meta.url),'utf8');
+ const previous=original.slice(original.indexOf('CREATE FUNCTION public.sales_check_knowledge_facts'),original.indexOf('CREATE FUNCTION public.sales_replace_knowledge_facts')).replace('CREATE FUNCTION','CREATE OR REPLACE FUNCTION');
+ await db.exec(previous);const before=await call('sales_check_knowledge_facts',[id.campaign,[fact()]]);
+ await db.exec(await readFile(new URL('../../supabase/migrations/20260912174145_sales_knowledge_short_replies.sql',import.meta.url),'utf8'));
+ const after=await call('sales_check_knowledge_facts',[id.campaign,[fact()]]);assert.deepEqual(after,before);
+});
+test('short reply is versioned independently without replacing knowledge; changed reply invalidates approval',async()=>{
+ await fixture();const f={...fact(),reply_text:'Разберём движение денег и его связь с документами.'};
+ const p=await replace([f]);assert.equal(p.valid,true);
+ await assert.rejects(replace([{...f,reply_text:'Другая краткая реплика.'}],{apply:true,approved:p.facts_sha256}),/exact_editorial_approval_required/);
+ await replace([f],{apply:true,approved:p.facts_sha256});const stored=(await snapshot()).facts[0];
+ assert.equal(stored.text,f.text);assert.equal(stored.reply_text,f.reply_text);assert.match(stored.reply_text_sha256,/^[a-f0-9]{64}$/);
+ assert.equal((await replace([stored],{apply:true,approved:p.facts_sha256})).noop,true);
+});
+test('short replies reject extra questions, links, controls, contacts, overflow and background use',async()=>{
+ await fixture();for(const reply_text of [null,0,'','x'.repeat(201),'Вопрос?','Вопрос？','Вопрос؟','Две\nстроки','Пишите test@example.com','Ссылка https://example.com','Телефон +375 29 1234567','<b>Текст</b>']){
+  const r=await replace([{...fact(),reply_text}]);assert.equal(r.valid,false,String(reply_text));assert.equal(r.errors[0].reason,'invalid_short_reply');
+ }
+ assert.equal((await replace([{...fact(),scope:'background',reply_text:'Короткая реплика.'}])).valid,false);
+ assert.equal((await replace([{...fact(),reply_text:'Работа в 1С и темы ЦБ 2.0.'}])).valid,true);
+});
 async function fixture(){
  await db.exec('TRUNCATE sales_knowledge_versions,sales_events,sales_jobs,sales_conversations,sales_campaigns,course_transcription_bindings,lesson_blocks,training_lessons,training_modules,course_transcripts,course_transcription_sources,course_caption_gap_audits CASCADE');
  await db.query(`INSERT INTO sales_campaigns VALUES($1,$2,'off','legacy-v1',$3)`,[id.campaign,id.product,{root_module_id:id.root,release_mode:'owner_test',client_release_approved:false,facts:[]}]);
