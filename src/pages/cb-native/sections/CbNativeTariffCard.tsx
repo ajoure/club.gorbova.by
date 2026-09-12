@@ -25,6 +25,7 @@
 import { Button } from "@/components/ui/button";
 import type { PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 import { rec, CB_PALETTE } from "../manifest";
+import { tariffAccessCopy, tariffBenefitCopy } from "../tariffAccessCopy";
 import {
   normalizeCbTariffIdentity,
   resolveCbTariffCardIndex,
@@ -336,13 +337,10 @@ export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTar
   const card = CARDS[resolveCbTariffCardIndex(tariff, index)] ?? CARDS[0];
   // Display the configured access model; publishing code alone must not
   // advertise the 20th-cohort sync before the managed data operation succeeds.
-  const access = tariff.meta?.course_access;
-  const accessItem: FeatureItem | null = access?.kind === "course_end_calendar_months" && Number(access.months) > 0
-    ? { bold: `Доступ ${access.months} месяцев`, text: "после окончания курса" }
-    : tariff.access_days > 0 ? { bold: `Доступ ${tariff.access_days} дней`, text: "с момента покупки" } : null;
+  const accessItem = tariffAccessCopy(tariff);
   const summary = tariff.access_summary;
   const core: FeatureItem[] = summary
-    ? [...(accessItem ? [accessItem] : []), ...summary.benefits.map(b=>({text:`${b.title}${b.days ? ` — ${b.days} дней` : ""}${b.conditional ? " (при выполнении условий тарифа)" : ""}`}))]
+    ? [...(accessItem ? [accessItem] : []), ...summary.benefits.map(b=>({text:tariffBenefitCopy(b)}))]
     : card.core.map(item => item.bold?.startsWith("Доступ ") && !item.bold.includes("клуб") && !item.bold.includes("Клуб") && accessItem ? accessItem : item);
   const programme: FeatureItem[] = summary
     ? summary.modules.map(m=>({text:m.title+(m.conditional ? " (за приобретённый период)" : ""),locked:!m.included}))

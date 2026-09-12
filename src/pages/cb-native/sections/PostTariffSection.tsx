@@ -1,4 +1,6 @@
 import { rec, CB_PALETTE } from "../manifest";
+import type { PublicTariff } from "@/hooks/usePublicProduct";
+import { tariffBonusParagraphs } from "../tariffAccessCopy";
 
 /**
  * Section 10 — Post-tariff narrative and bonuses.
@@ -19,8 +21,13 @@ const RECS = [
   "rec776467187",
 ];
 
-export function PostTariffSection() {
-  const blocks = RECS.map((id) => rec(id));
+export function PostTariffSection({ tariffs = [] }: { tariffs?: PublicTariff[] }) {
+  const bonuses = tariffBonusParagraphs(tariffs);
+  const blocks = RECS.map((id) => rec(id)).flatMap(block => {
+    if (block.id !== "rec1099268301") return [block];
+    return bonuses.length ? [{ ...block, text: ["ДОПОЛНИТЕЛЬНЫЕ ДОСТУПЫ ПО ТАРИФАМ", ...bonuses,
+      "Бонусы зависят от выбранного тарифа и условий покупки. Состав льготных предложений может отличаться."] }] : [];
+  });
   return (
     <section
       className="py-8"

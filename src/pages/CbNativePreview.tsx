@@ -157,10 +157,10 @@ export default function CbNativePreview() {
       </div>
 
       {/* 10. Пост-тарифный блок */}
-      <PostTariffSection />
+      <PostTariffSection tariffs={data?.tariffs} />
 
       {/* 11. FAQ + canonical gorbova.by footer */}
-      <FaqSection />
+      <FaqSection tariffs={data?.tariffs} />
       <UnifiedFooter showAnchorNav={false} />
     </div>
   );
