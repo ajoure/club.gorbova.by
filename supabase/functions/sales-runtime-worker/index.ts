@@ -9,6 +9,7 @@ import { notifyAssignments } from "../_shared/sales-runtime/notify.ts";
 async function draftReply(
   context: Awaited<ReturnType<typeof loadContext>>,
   stage: string,
+  onAssessment?: (selection: any) => void,
 ) {
   const key = Deno.env.get("LOVABLE_API_KEY");
   if (!key) throw Error("provider_not_configured");
@@ -46,8 +47,12 @@ async function draftReply(
   );
   if (!response.ok) throw Error("provider_failed");
   const result = await response.json();
-  const selection = JSON.parse(result.choices?.[0]?.message?.content || "null");
-  return planDialogueReply(context, selection);
+  let selection;
+  try { selection = JSON.parse(result.choices?.[0]?.message?.content || "null"); }
+  catch { throw Error("provider_invalid_json"); }
+  const candidate = planDialogueReply(context, selection);
+  onAssessment?.({intent:selection.intent,question_type:selection.question_type,slots:selection.slots,fact_ids:selection.fact_ids});
+  return candidate;
 }
 Deno.serve(async (request) => {
   if (request.method !== "POST") {
@@ -100,7 +105,7 @@ Deno.serve(async (request) => {
       // Only public product facts are reused. Never leak the owner's CRM/profile
       // into the synthetic learner or let their real purchase alter this test.
       const publicTariffs = new Set(live.publicTariffIds);
-      const context = {...live,history:[] as typeof live.history,client:{purchases:[],verified_cb_purchase:false,
+      const context = {...live,history:[] as typeof live.history,mediaSources:[],client:{purchases:[],verified_cb_purchase:false,
         alumni_eligibility:{eligible:false,offers:[]},current_course_paid:false,purchase_history_complete:true,
         webinar_comments:[],marked_completed_lessons:0,lesson_completion_is_not_attendance_proof:true},
         facts:live.facts.filter((f:any)=>f.id!=="prices"&&(!f.tariff_id||publicTariffs.has(f.tariff_id))&&!live.privateFactIds.includes(f.id)),
@@ -110,12 +115,20 @@ Deno.serve(async (request) => {
       context.checkoutAddons=live.checkoutAddons.filter((a:any)=>context.checkoutOptions.some((o:any)=>o.id===a.parent_offer_id));
       const steps = [];
       for (const [incoming,expected] of SEQUENCE_FIXTURES[fixtureName]) {
-        context.history.push({role:"customer",text:incoming,at:new Date().toISOString(),question_id:null});
-        const candidate = await draftReply(context,context.stage);
+        context.history.push({source_message_id:`synthetic-customer-${steps.length}`,attachment_status:null,role:"customer",text:incoming,at:new Date().toISOString(),question_id:null});
+        let candidate, assessment;
+        try { candidate = await draftReply(context,context.stage,value=>{assessment=value;}); }
+        catch(error) {
+          // Synthetic-only diagnostics. No real transcript, provider body,
+          // credentials or stack trace is returned on a failed model request.
+          const message=error instanceof Error?error.message:"";
+          steps.push({incoming,expected,actual:"error",pass:false,error:/^(invalid_|missing_|unverified_|provider_|history_|unexpected_|database_|required_)[a-z_]+$/.test(message)?message:"runtime_failed"});
+          break;
+        }
         const actual = candidate.action === "reply" ? candidate.question_id : candidate.action;
-        steps.push({incoming,expected,actual,pass:actual===expected,candidate});
+        steps.push({incoming,expected,actual,pass:actual===expected,candidate,assessment});
         if (actual !== expected || candidate.action !== "reply") break;
-        context.history.push({role:"seller",text:candidate.text,at:new Date().toISOString(),question_id:candidate.question_id});
+        context.history.push({source_message_id:`synthetic-seller-${steps.length}`,attachment_status:null,role:"seller",text:candidate.text,at:new Date().toISOString(),question_id:candidate.question_id});
         context.stage=candidate.stage;context.lastQuestionId=candidate.question_id;context.firstReply=false;
         if(candidate.stage==="format") context.relevantFactIds=candidate.fact_ids;
       }
