@@ -113,3 +113,12 @@ test('instruction, human request, refusal and automation disclosure preserve gua
  }
  const r=planDialogueReply(c,assess(c,{}, {intent:'product_question',question_type:'automation'}));assert.match(r.text,/автоматически/);
 });
+
+
+test('a goal interpreted as a product question must still carry a verified topic before asking about time',()=>{
+ const c=setup();c.firstReply=false;c.lastQuestionId='goals';c.stage='goals';c.history.push({role:'customer',text:'Работаю бухгалтером, хочу лучше разобраться в НДС.'});
+ const r=planDialogueReply(c,assess(c,{experience:'new',goal:'known'},{intent:'product_question',question_type:'topic',fact_ids:['topic_vat']}));
+ assert.equal(r.question_id,'format');assert.deepEqual(r.fact_ids,['topic_vat']);
+ const missing=planDialogueReply(c,assess(c,{experience:'new',goal:'known'},{intent:'product_question',question_type:'topic',fact_ids:[]}));
+ assert.equal(missing.reason,'no_verified_match_for_goal');
+});

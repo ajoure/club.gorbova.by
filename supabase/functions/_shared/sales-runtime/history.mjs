@@ -31,7 +31,8 @@ export function describeAttachment(message, userId) {
     && !path.includes('..') && !path.includes('\\') && !path.includes('%') && !/[\u0000-\u001f]/u.test(path);
   const state = meta.upload_status === 'pending' ? 'pending'
     : supported === 'unsupported' ? 'unsupported'
-    : meta.upload_status !== 'ok' || !storageValid ? 'unavailable'
+    : meta.upload_status !== 'ok' || !storageValid || (meta.uploaded_file_id && meta.uploaded_file_id !== meta.file_id)
+      || (meta.edited && meta.uploaded_file_id !== meta.file_id) ? 'unavailable'
     : 'ready';
   return { messageId: message.id, type: supported, mime, state,
     // This identity changes on edits, replacement or re-upload. It is hashed

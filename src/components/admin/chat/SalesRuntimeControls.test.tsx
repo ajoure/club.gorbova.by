@@ -112,3 +112,13 @@ describe("exact-dialog sales controls", () => {
     expect(screen.queryByTestId("sales-runtime-controls")).toBeNull();
   });
 });
+
+
+it("AI settings use the existing owner control and preserve expected config", async () => {
+ const ai={model:'google/gemini-3.1-pro-preview',max_tokens:8000,timeout_seconds:60,max_context_chars:750000,vision_enabled:true,max_image_bytes:8388608};
+ mock.invoke.mockResolvedValue({data:{...base,campaign:{...base.campaign,mode:'off',ai_config:ai},conversation:{state:'HUMAN_HOLD'},job:null,ai_models:[ai.model,'google/gemini-3.8-flash']}});
+ mount();fireEvent.click(await screen.findByRole('button',{name:'Настройки задержки автопродаж'}));
+ fireEvent.change(screen.getByLabelText('Модель автопродаж'),{target:{value:'google/gemini-3.8-flash'}});
+ fireEvent.click(screen.getByRole('button',{name:'Сохранить настройки ИИ'}));
+ await waitFor(()=>expect(mock.invoke).toHaveBeenCalledWith('sales-runtime-control',{body:{action:'ai_config',user_id:'user-scope',business_account_id:'business-scope',ai_config:{...ai,model:'google/gemini-3.8-flash'},expected_ai_config:ai}}));
+});

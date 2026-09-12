@@ -1,7 +1,10 @@
 import { database, json, read, rpc } from "../_shared/sales-runtime/db.ts";
 import { evaluateReply } from "../_shared/sales-runtime/dialogue-policy.mjs";
 import { policyInput } from "../_shared/sales-runtime/replies.mjs";
-import {isActivation, planDialogueReply, SEQUENCE_SYSTEM, slotValues} from "../_shared/sales-runtime/sequence.mjs";
+import {isActivation, hasExplicitTechnicalProblem, planDialogueReply, SEQUENCE_SYSTEM, slotValues} from "../_shared/sales-runtime/sequence.mjs";
+import {readAIConfig, requestAI} from "../_shared/sales-runtime/ai.mjs";
+import {hydrateMedia} from "../_shared/sales-runtime/media.ts";
+import {MEDIA_SYSTEM,validateMediaObservation} from '../_shared/sales-runtime/history.mjs';
 import {SEQUENCE_FIXTURES} from "../_shared/sales-runtime/sequence-fixtures.mjs";
 import { loadContext } from "../_shared/sales-runtime/context.ts";
 import {checkoutReply} from "../_shared/sales-runtime/checkout.ts";
@@ -11,25 +14,12 @@ async function draftReply(
   stage: string,
   onAssessment?: (selection: any) => void,
 ) {
-  const key = Deno.env.get("LOVABLE_API_KEY");
-  if (!key) throw Error("provider_not_configured");
-  const response = await fetch(
-    "https://ai.gateway.lovable.dev/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      signal: AbortSignal.timeout(30000),
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        temperature: 0.2,
-        max_tokens: 1400,
-        response_format: { type: "json_object" },
-        messages: [{ role: "system", content: SEQUENCE_SYSTEM }, {
-          role: "user",
-          content: JSON.stringify({
+  if (!isActivation(context) && hasExplicitTechnicalProblem(context)) {
+    const latest=context.history.filter(m=>m.role==='customer').at(-1)?.text??'';
+    if(/не пишите|не надо (?:мне )?писать|прекратите (?:мне )?писать|отпишите меня/iu.test(latest)) return {action:'stop' as const,reason:'customer_opt_out'};
+    return {action:'handoff' as const,reason:'technical_problem'};
+  }
+  const selection = await requestAI(context.aiConfig, SEQUENCE_SYSTEM, JSON.stringify({
             stage,
             activation: isActivation(context),
             facts: isActivation(context) || context.firstReply ? [] : context.facts,
@@ -40,16 +30,7 @@ async function draftReply(
             checkout_quote: isActivation(context) || context.firstReply ? null : context.lastCheckout,
             checkout_addons: isActivation(context) || context.firstReply ? [] : context.checkoutAddons,
             legal_entities: isActivation(context) || context.firstReply ? [] : context.legalEntities,
-          }),
-        }],
-      }),
-    },
-  );
-  if (!response.ok) throw Error("provider_failed");
-  const result = await response.json();
-  let selection;
-  try { selection = JSON.parse(result.choices?.[0]?.message?.content || "null"); }
-  catch { throw Error("provider_invalid_json"); }
+          }), {key:Deno.env.get('LOVABLE_API_KEY')});
   const candidate = planDialogueReply(context, selection);
   onAssessment?.({intent:selection.intent,question_type:selection.question_type,slots:selection.slots,fact_ids:selection.fact_ids});
   return candidate;
@@ -76,6 +57,18 @@ Deno.serve(async (request) => {
         runtime: "cb21-v2",
       });
     }
+    if(body.action==='preview_image') {
+      const p=await read(db.from('sales_campaigns').select('*').eq('code','cb21-owner-test').single());
+      const c=await read(db.from('sales_conversations').select('human_hold').eq('campaign_id',p.id).single());
+      if(p.mode!=='off'||!c.human_hold) return json({error:'pause_and_disable_required'},409);
+      // Fixed synthetic PNG only. The request cannot supply a customer image,
+      // URL or storage path. This checks gateway vision/JSON without DB writes.
+      const observation=validateMediaObservation(await requestAI(readAIConfig(p.ai_config),MEDIA_SYSTEM,[
+        {type:'text',text:'Служебная одноцветная картинка без текста. Не выдумывай надписей. Если текста нет, status=unreadable, text и problem пустые.'},
+        {type:'image_url',image_url:{url:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII='}},
+      ],{key:Deno.env.get('LOVABLE_API_KEY')}));
+      return json({ok:observation.status==='unreadable'&&!observation.text&&!observation.problem,mode:'synthetic_image_no_send',model:readAIConfig(p.ai_config).model,status:observation.status});
+    }
     if (body.action === "preview") {
       const p = await read(
         db.from("sales_campaigns").select("*").eq("code", "cb21-owner-test")
@@ -86,6 +79,7 @@ Deno.serve(async (request) => {
           .single(),
       );
       const context = await loadContext(db, p, c);
+      if(context.mediaSources.length) return json({ok:false,reason:'use_synthetic_preview_or_guarded_job_for_media'},409);
       // Read-only generation: does not replay a persisted message or create a job.
       const candidate = await draftReply(context, c.stage);
       return json({
@@ -170,6 +164,13 @@ Deno.serve(async (request) => {
         bot.status !== "active"
       ) throw Error("business_unavailable");
       const context = await loadContext(db, p, c);
+      if(job.kind!=='reminder' && !hasExplicitTechnicalProblem(context)) {
+        const media=await hydrateMedia(db,context,readAIConfig(p.ai_config),p);
+        if(!media.ready) {
+          const deferred=await rpc(db,'sales_defer_context',{p_job:job.id,p_token:job.claim_token,p_reason:media.reason});
+          return json({ok:true,action:deferred?'context_pending':'cancelled'});
+        }
+      }
       let candidate: any = job.kind === "reminder" ? {
         action: "reply" as const, text: "Вы меня игнорируете?", question_id: "reengagement",
         fact_ids: [], stage: c.stage, intent: "product_information", new_question_count: 1,
@@ -192,6 +193,7 @@ Deno.serve(async (request) => {
       if (fresh.commercialFingerprint !== context.commercialFingerprint) {
         throw Error("commercial_facts_changed");
       }
+      if (fresh.historyFingerprint !== context.historyFingerprint) throw Error('history_changed_during_generation');
       const current = await read(
         db.from("sales_conversations").select("*").eq("id", c.id).single(),
       );
@@ -239,7 +241,7 @@ Deno.serve(async (request) => {
         p_boundary_message_id: job.inbound_seq,
       });
       return json({ ok: true, action: "sent", job_id: job.id });
-    } catch {
+    } catch(error) {
       if (sending) {
         await rpc(db, "sales_finish_send", {
           p_job: job.id,
@@ -251,7 +253,7 @@ Deno.serve(async (request) => {
         await rpc(db, "sales_handoff", {
           p_job: job.id,
           p_token: job.claim_token,
-          p_reason: "runtime_review_required",
+          p_reason: error instanceof Error && /^(media_|history_model_capacity_)[a-z_]+$/.test(error.message) ? error.message : "runtime_review_required",
         });
         await notifyAssignments(db);
       }

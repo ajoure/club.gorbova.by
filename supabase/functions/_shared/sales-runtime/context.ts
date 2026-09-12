@@ -2,6 +2,7 @@ import { loadPublicTariffAccess } from "../public-tariff-access.ts";
 import { DB, read, rpc } from "./db.ts";
 import { DISCLOSURE } from "./replies.mjs";
 import { readFullHistory, describeAttachment } from "./history.mjs";
+import {readAIConfig} from './ai.mjs';
 export type Fact = {
   id: string;
   text: string;
@@ -219,7 +220,7 @@ export async function loadContext(db: DB, p: any, c: any) {
     if (
       access?.kind === "course_end_calendar_months" &&
       access.flow_id === flow.id && access.end_date === flow.end_date &&
-      [6, 9, 12].includes(access.months)
+      Number.isInteger(access.months) && access.months > 0
     ) {
       add(
         "access_" + t.id,
@@ -260,6 +261,8 @@ export async function loadContext(db: DB, p: any, c: any) {
     learner_status: "unknown",
   }));
   return {
+    aiConfig:readAIConfig(p.ai_config),
+    historyFingerprint:JSON.stringify(history.map((m:any)=>[m.id,m.message_text,m.direction,m.meta?.file_id,m.meta?.storage_path,m.meta?.upload_status,m.meta?.edited,m.meta?.uploaded_file_id])),
     facts,
     publicTariffIds:tariffs.filter((t:any)=>t.is_public).map((t:any)=>t.id),
     privateFactIds:facts.filter((f:any)=>tariffs.some((t:any)=>!t.is_public&&(f.tariff_id===t.id||f.id==="access_"+t.id))).map((f:any)=>f.id),
