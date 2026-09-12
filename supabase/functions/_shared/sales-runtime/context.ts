@@ -1,4 +1,4 @@
-import { DB, read } from "./db.ts";
+import { DB, read, rpc } from "./db.ts";
 import { DISCLOSURE } from "./replies.mjs";
 export type Fact = {
   id: string;
@@ -6,6 +6,11 @@ export type Fact = {
   classification: string;
   source: string;
   kind?: string;
+  module_id?: string;
+  included_module_ids?: string[];
+  price?: number;
+  offer_id?: string;
+  tariff_id?: string;
 };
 const visible = (x: any, now: number) =>
   x.is_active === true &&
@@ -13,7 +18,7 @@ const visible = (x: any, now: number) =>
   (!x.visible_to || Date.parse(x.visible_to) > now);
 export async function loadContext(db: DB, p: any, c: any) {
   const salesMessages = await read(
-    db.from("sales_jobs").select("delivery_message_id").eq(
+    db.from("sales_jobs").select("delivery_message_id,candidate,policy_version,kind").eq(
       "conversation_id",
       c.id,
     ).eq("status", "sent"),
@@ -56,7 +61,7 @@ export async function loadContext(db: DB, p: any, c: any) {
       ),
       read(
         db.from("tariffs").select(
-          "id,name,is_active,is_public,visible_from,visible_to,meta",
+          "id,name,is_active,is_public,visible_from,visible_to,access_days,meta",
         ).eq("product_id", p.product_id),
       ),
       read(
@@ -160,20 +165,25 @@ export async function loadContext(db: DB, p: any, c: any) {
         text: f.text,
         classification: f.classification,
         source: f.source,
+        kind: "topic",
+        module_id: f.module_id,
       });
     }
   }
   const offers = tariffs.length
     ? await read(
       db.from("tariff_offers").select(
-        "id,tariff_id,amount,is_active,visible_from,visible_to,offer_type,payment_method",
+        "id,tariff_id,amount,is_active,visible_from,visible_to,offer_type,payment_method,installment_count,meta",
       ).in("tariff_id", tariffs.map((t: any) => t.id)),
     )
     : [];
+  const alumniEligibility = await rpc(db,"sales_cb_alumni_eligibility",{p_user:p.test_user_id});
+  const isCurrentTariff = (t:any) => t.is_public || (t.id === "dbdb839e-84a0-4c00-8b8c-e60e4c558d94" && alumniEligibility.eligible);
+  const isCurrentOffer = (o:any) => o.tariff_id !== "dbdb839e-84a0-4c00-8b8c-e60e4c558d94" || o.meta?.sales_generation === "cb21-alumni-v2";
   const prices: string[] = [];
-  for (const t of tariffs.filter((t: any) => t.is_public && visible(t, now))) {
+  for (const t of tariffs.filter((t: any) => isCurrentTariff(t) && visible(t, now))) {
     const offer = offers.find((o: any) =>
-      o.tariff_id === t.id && visible(o, now) && o.offer_type === "pay_now" &&
+      o.tariff_id === t.id && isCurrentOffer(o) && visible(o, now) && o.offer_type === "pay_now" &&
       o.payment_method === "full_payment"
     );
     if (!offer || !Number.isFinite(offer.amount) || offer.amount <= 0) continue;
@@ -186,14 +196,16 @@ export async function loadContext(db: DB, p: any, c: any) {
         conditions.allowed_module_ids?.includes(m.id)
       );
       if (included.length) {
-        add(
-          "tariff_" + t.id,
-          `На тарифе «${t.name}» в основной программе доступны темы:\n` +
-            included.map((m: any) => "• " + m.title).join("\n"),
-          "access_rules:" + rule.id,
-        );
+        facts.push({
+          id: "tariff_" + t.id,
+          text: `Тариф «${t.name}». Полная стоимость при оплате одним платежом — ${offer.amount} ${product.currency}.`,
+          source: "access_rules:" + rule.id + ";tariff_offers:" + offer.id,
+          classification: "sales_safe", kind: "offer", price: offer.amount, offer_id:offer.id, tariff_id:t.id,
+          included_module_ids: included.map((m: any) => m.id),
+        });
       }
     }
+    if(!t.meta?.course_access&&t.access_days) add("access_"+t.id,`На тарифе «${t.name}» срок доступа — ${t.access_days} дней с покупки.`,"tariffs:"+t.id);
     const access = t.meta?.course_access;
     if (
       access?.kind === "course_end_calendar_months" &&
@@ -218,8 +230,11 @@ export async function loadContext(db: DB, p: any, c: any) {
       "tariff_offers:live",
     );
   }
-  // No guessed checkout route: /pay?product silently chooses the first tariff.
-  // Exact personal payment links continue through the existing operator workflow.
+  const checkoutOptions = offers.filter((o:any)=>isCurrentOffer(o)&&visible(o,now)&&tariffs.some((t:any)=>t.id===o.tariff_id&&isCurrentTariff(t)&&visible(t,now)))
+    .map((o:any)=>({id:o.id,tariff_id:o.tariff_id,tariff_name:tariffs.find((t:any)=>t.id===o.tariff_id)?.name,amount:o.amount,offer_type:o.offer_type,payment_method:o.payment_method,installment_count:o.installment_count}));
+  const legalRows=await read(db.from("client_legal_details").select("id,client_type,leg_name,ent_name").eq("profile_id",profile.id));
+  const legalEntities=legalRows.map((r:any)=>({id:r.id,client_type:r.client_type,name:r.leg_name||r.ent_name}));
+  const checkoutAddons=checkoutOptions.length?await read(db.from("offer_addons").select("parent_offer_id,addon_offer_id,pricing_mode,discount_percent,fixed_amount,access_delivery_mode,access_opens_at,access_duration_days,visible_from,visible_to,addon_product:products_v2!offer_addons_addon_product_id_fkey(name),addon_offer:tariff_offers!offer_addons_addon_offer_id_fkey(amount,is_active,visible_from,visible_to)").in("parent_offer_id",checkoutOptions.map((o:any)=>o.id)).eq("is_active",true)):[];
   const purchasedIds = [
     ...new Set(orders.map((o: any) => o.product_id).filter(Boolean)),
   ];
@@ -240,13 +255,29 @@ export async function loadContext(db: DB, p: any, c: any) {
   }
   return {
     facts,
+    checkoutOptions,
+    checkoutAddons,
+    legalEntities,
+    lastCheckout: salesMessages.filter((j:any)=>j.policy_version===p.policy_version&&j.kind!=="reminder"&&j.candidate?.checkout_quote)
+      .sort((a:any,b:any)=>b.delivery_message_id-a.delivery_message_id)[0]?.candidate?.checkout_quote ?? null,
+    triggerPhrase: p.trigger_phrase,
+    stage: c.stage,
+    relevantFactIds: salesMessages.filter((j: any) => j.policy_version === p.policy_version && j.kind !== "reminder" && j.candidate?.stage === 'format')
+      .sort((a: any,b: any) => b.delivery_message_id-a.delivery_message_id)[0]?.candidate?.fact_ids ?? [],
+    lastQuestionId: salesMessages.find((j:any)=>j.delivery_message_id===history.filter((m:any)=>m.direction==="outgoing").at(-1)?.message_id && j.policy_version===p.policy_version)?.candidate?.question_id ?? null,
     history: history.map((m) => ({
       role: m.direction === "incoming" ? "customer" : "seller",
       text: m.message_text || "[вложение]",
       at: m.created_at,
+      question_id: salesMessages.find((j: any) => j.delivery_message_id === m.message_id)?.candidate?.question_id ?? null,
     })),
     client: {
       purchases,
+      alumni_eligibility:alumniEligibility,
+      current_course_paid:orders.some((o:any)=>o.product_id===p.product_id),
+      // Exact confirmed CB20/CB21 product IDs, not a product-name inference.
+      // Purchase remains distinct from attendance/completion.
+      verified_cb_purchase: alumniEligibility.eligible || orders.some((o: any) => [p.product_id, "3e43fb28-8322-41bc-bfee-714731bdc630"].includes(o.product_id)),
       purchase_history_complete: orders.length < 200,
       webinar_comments: comments.map((x: any) => ({
         text: x.content,
@@ -263,6 +294,8 @@ export async function loadContext(db: DB, p: any, c: any) {
       offers,
       rules,
       modules,
+      checkoutAddons,
+      alumniEligibility,
     }),
   };
 }

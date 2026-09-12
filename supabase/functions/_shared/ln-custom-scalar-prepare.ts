@@ -12,7 +12,7 @@
 //   • Не пишет в БД, не возвращает значения в audit.
 // ============================================================================
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 export interface LnCustomTokenRequest {
   raw_inside: string;     // 'ln-000015.custom.votes' (без {{}})

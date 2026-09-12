@@ -21,6 +21,7 @@
 // ============================================================================
 
 // deno-lint-ignore-file no-explicit-any
+import {sha256} from "../_shared/sales-runtime/checkout-auth.ts";
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Docxtemplater from 'npm:docxtemplater@3.47.1';
 import PizZip from 'npm:pizzip@3.1.6';
@@ -490,7 +491,12 @@ Deno.serve(async (req) => {
       templateId = packageContext.template_id;
       orderId = null;
     } else {
-      userId = await getCallerUserId(req, 'canonical-document-generate-strict');
+      const salesToken=req.headers.get("x-sales-invoice-capability");
+      if(salesToken) {
+        const auth=await supabase.rpc("sales_authorize_invoice_document",{p_hash:await sha256(salesToken),p_body:body});
+        if(auth.error||!auth.data)return json({error:'invoice_capability_forbidden'},403);
+        userId=auth.data;
+      } else userId = await getCallerUserId(req, 'canonical-document-generate-strict');
       if (!userId) return json({ error: 'unauthorized' }, 401);
 
       const { data: roleRows } = await supabase
@@ -736,7 +742,7 @@ Deno.serve(async (req) => {
       // override, scenario must reflect in the generated document.
       // mergeStandardIntoFields/mergeTypedB97IntoFields preserve manual_override.
       if (order.status === 'paid' || isInvoiceCheckout) {
-        const rebuild = await snapshotOrderDocumentData(supabase, orderId, {
+        const rebuild = await snapshotOrderDocumentData(supabase, ordLoaded.id, {
           mode: 'rebuild',
           allowPrePaymentInvoice: isInvoiceCheckout,
         });

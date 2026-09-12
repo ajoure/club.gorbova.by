@@ -23,11 +23,17 @@ before(async()=>{
  CREATE UNIQUE INDEX ON contact_center_message_assignments(source_message_id) WHERE resolved_at IS NULL;
  CREATE TABLE ai_handoffs(id uuid DEFAULT gen_random_uuid(),bot_id uuid,telegram_user_id bigint,user_id uuid,assigned_to uuid,last_message_id bigint,status text,reason text,meta jsonb);
  `);
+ await db.exec(`CREATE TABLE live_events(id uuid PRIMARY KEY,room_state text,platform_status text,status text,webinar_completed_at timestamptz,event_type text,autoweb_config jsonb); CREATE TABLE live_event_sessions(id uuid DEFAULT gen_random_uuid(),live_event_id uuid,starts_at timestamptz,ends_at timestamptz,status text);`);
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912063632_cb21_telegram_sales_runtime.sql',import.meta.url),'utf8'));
+ await db.exec(`CREATE TABLE profiles(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid); INSERT INTO profiles(user_id) VALUES('${owner}');
+ CREATE TABLE orders_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid,profile_id uuid,product_id uuid,status text,is_deleted boolean DEFAULT false,is_trial boolean DEFAULT false,final_price numeric,deal_date timestamptz,meta jsonb DEFAULT '{}',offer_id uuid);
+ CREATE TABLE payments_v2(id uuid DEFAULT gen_random_uuid(),order_id uuid,status text,amount numeric,is_deleted boolean DEFAULT false,refunded_amount numeric,transaction_type text);`);
+ await db.exec(await readFile(new URL('../../supabase/migrations/20260912082931_cb21_dialogue_delivery_windows.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../../supabase/migrations/20260912083730_cb21_checkout_capabilities.sql',import.meta.url),'utf8'));
 });
 after(async()=>{await db.close()});
 async function fixture(){
- await db.exec('DELETE FROM sales_events; DELETE FROM sales_jobs; DELETE FROM sales_conversations; DELETE FROM sales_campaigns; DELETE FROM contact_center_message_assignments; DELETE FROM ai_handoffs; DELETE FROM notification_outbox; DELETE FROM telegram_messages;');
+ await db.exec('DELETE FROM sales_checkout_operations; DELETE FROM payments_v2; DELETE FROM orders_v2; DELETE FROM live_event_sessions; DELETE FROM live_events; DELETE FROM sales_events; DELETE FROM sales_jobs; DELETE FROM sales_conversations; DELETE FROM sales_campaigns; DELETE FROM contact_center_message_assignments; DELETE FROM ai_handoffs; DELETE FROM notification_outbox; DELETE FROM telegram_messages;');
  const p=(await one(`INSERT INTO sales_campaigns(code,bot_id,business_account_id,test_user_id,assignee_user_id,product_id,trigger_phrase,policy_version,knowledge_version,knowledge) VALUES('pilot',$1,$2,$3,$3,$4,'Хочу программу курса ЦБ','v1','k1','{"release_mode":"owner_test","facts":[{"id":"topic"}]}') RETURNING id`,[bot,connection,owner,product])).id;
  await rpc('sales_control',[p,'enable',owner]);return p;
 }
@@ -125,4 +131,94 @@ test('silent handoff targets the approved owner even if this question already ha
  await fixture();const id=await msg(110);await db.query("INSERT INTO contact_center_message_assignments(source,source_message_id,assignee_user_id,assigned_by_user_id) VALUES('telegram',$1,$2,$2)",[id,stranger]);
  const j=await due();await rpc('sales_handoff',[j.id,j.claim_token,'needs_human']);
  const row=await one('SELECT assignee_user_id FROM contact_center_message_assignments WHERE source_message_id=$1',[id]);assert.equal(row.assignee_user_id,owner);
+});
+test('v2 rearm preserves sent history and outbox, is idempotent, and waits for a fresh activation',async()=>{
+ const p=await fixture();await db.exec("UPDATE sales_campaigns SET code='cb21-owner-test',policy_version='cb21-v1'");
+ await msg(120);const j=await due();await rpc('sales_begin_send',[j.id,j.claim_token,{text:'Отклоненная программа',stage:'consultation',question_id:'none'}]);
+ await rpc('sales_finish_send',[j.id,j.claim_token,121]);await rpc('sales_control',[p,'pause',owner]);
+ const savedJob=await one('SELECT * FROM sales_jobs');const savedOutbox=await one('SELECT * FROM notification_outbox');
+ const rearm=await readFile(new URL('./rearm-cb21-owner-test-v2.sql',import.meta.url),'utf8');
+ await db.exec(rearm);await db.exec(rearm);
+ assert.deepEqual(await one('SELECT * FROM sales_jobs'),savedJob);assert.deepEqual(await one('SELECT * FROM notification_outbox'),savedOutbox);
+ assert.equal((await conversation()).started,false);assert.equal((await conversation()).stage,'qualification');assert.equal((await conversation()).state,'HUMAN_HOLD');
+ assert.equal((await one("SELECT count(*)::int n FROM sales_events WHERE event='policy_rearmed'")).n,1);
+ await rpc('sales_control',[p,'enable',owner]);await rpc('sales_control',[p,'resume',owner]);assert.equal(await due(),null);assert.equal((await conversation()).state,'OFF');
+ await msg(122);assert.equal((await conversation()).started,true);assert.equal((await due()).policy_version,'cb21-v2');
+ await assert.rejects(db.exec(rearm),/precondition_failed/);
+});
+test('v2 rearm fails closed if the expected sent test is absent',async()=>{
+ await fixture();await db.exec("UPDATE sales_campaigns SET code='cb21-owner-test',policy_version='cb21-v1'");
+ const rearm=await readFile(new URL('./rearm-cb21-owner-test-v2.sql',import.meta.url),'utf8');
+ await assert.rejects(db.exec(rearm),/precondition_failed/);assert.equal((await one('SELECT policy_version FROM sales_campaigns')).policy_version,'cb21-v1');
+});
+
+test('broadcast gates claim, survives end, delays again, and checks a newly started event before dispatch',async()=>{
+ await fixture();await db.exec("UPDATE sales_campaigns SET policy_version='cb21-v2'");await msg(200);
+ const ev=randomUUID();await db.query("INSERT INTO live_events(id,room_state,platform_status,status) VALUES($1,'live','live','live')",[ev]);
+ assert.equal(await due(),null);assert.equal((await one("SELECT reason FROM sales_jobs")).reason,'event_active');
+ await db.exec("UPDATE live_events SET room_state='completed',platform_status='ended',status='ended',webinar_completed_at=now()");
+ assert.equal(await due(),null);assert.equal((await one("SELECT reason FROM sales_jobs")).reason,'event_ended_delay');
+ const j=await due();assert.ok(j);
+ await db.exec("UPDATE live_events SET room_state='live',platform_status='live',status='live',webinar_completed_at=NULL");
+ assert.equal(await rpc('sales_begin_send',[j.id,j.claim_token,{}]),false);
+ assert.equal((await one('SELECT count(*)::int n FROM notification_outbox')).n,0);
+ assert.equal((await one('SELECT status FROM sales_jobs')).status,'queued');
+});
+test('recorded playback is blocked through the player duration; missing duration and inconsistent end hold',async()=>{
+ await fixture();const e=randomUUID();await db.query("INSERT INTO live_events(id,event_type,autoweb_config) VALUES($1,'recorded_webinar',$2)",[e,{video:{duration_seconds:7200}}]);
+ await db.query("INSERT INTO live_event_sessions(live_event_id,starts_at,ends_at,status) VALUES($1,'2026-09-12T10:00:00Z','2026-09-12T12:00:00Z','ended')",[e]);
+ assert.equal(await rpc('sales_broadcast_state',['2026-09-12T11:59:00Z']),'active');
+ assert.equal(await rpc('sales_broadcast_state',['2026-09-12T12:01:00Z']),'clear');
+ await db.exec("UPDATE live_events SET autoweb_config='{}'");assert.equal(await rpc('sales_broadcast_state',['2026-09-12T11:59:00Z']),'unknown');
+ await db.exec("UPDATE live_events SET autoweb_config='{\"video\":{\"duration_seconds\":10800}}'");assert.equal(await rpc('sales_broadcast_state',['2026-09-12T12:30:00Z']),'unknown');
+});
+test('one reminder after a question; ordinary WAIT is unchanged; pause and customer response cancel reminder',async()=>{
+ const p=await fixture();await db.exec("UPDATE sales_campaigns SET policy_version='cb21-v2'");await msg(210);const j=await due();
+ await rpc('sales_begin_send',[j.id,j.claim_token,{text:'Вопрос?',question_id:'goals',stage:'goals'}]);await rpc('sales_finish_send',[j.id,j.claim_token,211]);
+ assert.equal((await one("SELECT count(*)::int n FROM sales_jobs WHERE kind='reminder'")).n,1);
+ assert.equal(await rpc('sales_queue_reminder',[(await conversation()).id]),null);
+ assert.equal(await rpc('sales_queue_reply',[(await conversation()).id]),null);
+ await rpc('sales_control',[p,'pause',owner]);assert.equal((await one("SELECT status FROM sales_jobs WHERE kind='reminder'")).status,'cancelled');
+ await msg(212,'Работаю с НДС');await rpc('sales_control',[p,'resume',owner]);
+ assert.equal((await due()).kind,'reply');
+});
+test('reminder time remains in Minsk business hours and before inbound deadline, not outgoing deadline',async()=>{
+ assert.equal((await rpc('sales_reminder_due',['2026-09-12T05:00Z','2026-09-12T05:02Z','2026-09-12T05:02Z',.5])).toISOString(),'2026-09-12T19:59:00.000Z');
+ assert.equal((await rpc('sales_reminder_due',['2026-09-12T20:01Z','2026-09-12T20:03Z','2026-09-12T20:03Z',.5])).toISOString(),'2026-09-13T14:01:00.000Z');
+ assert.equal(await rpc('sales_reminder_due',['2026-09-12T05:00Z','2026-09-13T04:00Z','2026-09-13T04:00Z',.5]),null);
+});
+
+test('checkout capability binds recipient, exact body, endpoint, active revision and one use',async()=>{
+ const p=await fixture();await db.exec("UPDATE sales_campaigns SET policy_version='cb21-v2',knowledge=knowledge||'{\"checkout_enabled\":true}'");await msg(220);const j=await due();const c=await conversation();
+ const body={user_id:owner,responsible_user_id:owner,amount:179000};const hash='a'.repeat(64);
+ await db.query("INSERT INTO sales_checkout_operations(job_id,conversation_id,quote_fingerprint,endpoint,token_hash,request_body) VALUES($1,$2,'quote','admin-create-public-link',$3,$4)",[j.id,c.id,hash,body]);
+ assert.equal(await rpc('sales_consume_checkout_capability',[hash,'public-rr-installment-initiate',body]),null);
+ assert.equal(await rpc('sales_consume_checkout_capability',[hash,'admin-create-public-link',{...body,amount:100}]),null);
+ assert.equal(await rpc('sales_consume_checkout_capability',[hash,'admin-create-public-link',body]),owner);
+ assert.equal(await rpc('sales_consume_checkout_capability',[hash,'admin-create-public-link',body]),null);
+});
+test('pause revokes an unused checkout capability and browser roles cannot access operations',async()=>{
+ const p=await fixture();await db.exec("UPDATE sales_campaigns SET policy_version='cb21-v2',knowledge=knowledge||'{\"checkout_enabled\":true}'");await msg(230);const j=await due();const c=await conversation();const body={user_id:owner,responsible_user_id:owner};
+ await db.query("INSERT INTO sales_checkout_operations(job_id,conversation_id,quote_fingerprint,endpoint,token_hash,request_body) VALUES($1,$2,'quote','admin-create-public-link',$3,$4)",[j.id,c.id,'b'.repeat(64),body]);
+ await rpc('sales_control',[p,'pause',owner]);assert.equal(await rpc('sales_consume_checkout_capability',['b'.repeat(64),'admin-create-public-link',body]),null);
+ for(const role of ['anon','authenticated']){await db.exec(`SET ROLE ${role}`);await assert.rejects(db.exec('SELECT * FROM sales_checkout_operations'),/permission denied/);await assert.rejects(rpc('sales_cb_alumni_eligibility',[owner]),/permission denied/);await db.exec('RESET ROLE');}
+});
+test('alumni evidence excludes gifts, unrelated purchases and refunds; distinguishes imported paid order',async()=>{
+ await fixture();const o=(await one("INSERT INTO orders_v2(user_id,product_id,status,final_price) VALUES($1,'3e43fb28-8322-41bc-bfee-714731bdc630','paid',2650) RETURNING id",[owner])).id;
+ assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).eligible,false);
+ await db.query("INSERT INTO payments_v2(order_id,status,amount) VALUES($1,'succeeded',2650)",[o]);assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).proof,'provider');
+ await db.exec('UPDATE payments_v2 SET refunded_amount=100');assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).eligible,false);
+ await db.exec("DELETE FROM payments_v2; UPDATE orders_v2 SET product_id='7101ed3c-7839-4a74-ad95-aa0660369b22',deal_date='2024-05-14',meta='{\"gc_deal_id\":\"synthetic\",\"import_source\":\"getcourse\"}'");
+ assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).proof,'getcourse_paid_import');
+ await db.exec('UPDATE orders_v2 SET final_price=0');assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).eligible,false);
+});
+test('invoice document capability authorizes only the created order and exact generation body once',async()=>{
+ const p=await fixture();await db.exec("UPDATE sales_campaigns SET policy_version='cb21-v2',knowledge=knowledge||'{\"checkout_enabled\":true}'");await msg(240);const j=await due();const c=await conversation();const offer=randomUUID();const hash='c'.repeat(64),body={target_user_id:owner,responsible_user_id:owner,offer_id:offer};
+ const op=(await one("INSERT INTO sales_checkout_operations(job_id,conversation_id,quote_fingerprint,endpoint,token_hash,request_body) VALUES($1,$2,'invoice','admin-invoice-checkout-issue',$3,$4) RETURNING id",[j.id,c.id,hash,body])).id;
+ await rpc('sales_consume_checkout_capability',[hash,'admin-invoice-checkout-issue',body]);
+ const o=(await one("INSERT INTO orders_v2(user_id,product_id,offer_id,status,final_price,meta) VALUES($1,$2,$3,'pending',1790,$4) RETURNING id",[owner,product,offer,{sales_checkout_operation_id:op,checkout_kind:'invoice',awaits_payment:true}])).id;
+ const gen={order_id:o,mode:'generate',pre_payment_invoice:true};
+ assert.equal(await rpc('sales_authorize_invoice_document',[hash,{...gen,admin_force:true}]),null);
+ assert.equal(await rpc('sales_authorize_invoice_document',[hash,gen]),owner);
+ assert.equal(await rpc('sales_authorize_invoice_document',[hash,gen]),null);
 });

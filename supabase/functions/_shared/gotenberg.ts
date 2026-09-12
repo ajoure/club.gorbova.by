@@ -240,7 +240,7 @@ async function postFormForPdf(cfg: GotenbergConfig, path: string, form: FormData
 // DOCX → PDF (LibreOffice route)
 export async function convertDocxToPdf(cfg: GotenbergConfig, docxBuffer: Uint8Array, fileName = "document.docx"): Promise<Uint8Array> {
   const form = new FormData();
-  form.append("files", new Blob([docxBuffer], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }), fileName);
+  form.append("files", new Blob([new Uint8Array(docxBuffer)], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }), fileName);
   return await postFormForPdf(cfg, "/forms/libreoffice/convert", form);
 }
 

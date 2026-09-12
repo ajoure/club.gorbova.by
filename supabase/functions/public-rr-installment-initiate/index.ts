@@ -56,7 +56,7 @@ import { materializeComposableOrderGroup } from "../_shared/materialize-composab
 import { allocateComposablePayableTotal } from "../_shared/composable-checkout.ts";
 import { referralDiscountMeta, resolveReferralCheckoutDiscount } from "../_shared/referral-checkout-discount.ts";
 import { reserveReferralCustomerCredit } from "../_shared/referral-customer-credit.ts";
-import { requirePaymentsEdit } from "../_shared/admin-section-auth.ts";
+import { requireSalesOrPaymentsEdit, cbAlumniOfferAllowed } from "../_shared/sales-runtime/checkout-auth.ts";
 import { resolveSalesManagerForCreation, SalesManagerSelectionError } from "../_shared/sales-manager-attribution.ts";
 
 const UUID_RE =
@@ -65,6 +65,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface InitiatePayload {
   tariff_offer_id?: string;
+  expected_total?: number;
   addon_offer_ids?: string[];
   target_user_id?: string;
   adjustment_amount?: number;
@@ -285,7 +286,7 @@ Deno.serve(async (req: Request) => {
   let email = String(body.email ?? "").trim().toLowerCase();
 
   if (adminMode) {
-    const access = await requirePaymentsEdit(req, supabaseAdmin);
+    const access = await requireSalesOrPaymentsEdit(req, supabaseAdmin, "public-rr-installment-initiate", body);
     if (!access.ok) {
       return access.status === 500
         ? errorResponse(access.error, 500)
@@ -326,6 +327,7 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  if (!await cbAlumniOfferAllowed(supabaseAdmin,offerId,userId,true)) return errorResponse("alumni_eligibility_required",403);
   if (nameRaw.length < 1) return errorResponse("name_invalid", 400);
   const phoneNorm = normalizePhone(phoneRaw);
   if (phoneNorm.length < 9 || phoneNorm.length > 15) {
@@ -386,6 +388,7 @@ Deno.serve(async (req: Request) => {
     }
     return errorResponse("quote_failed", 500);
   }
+  if(req.headers.has("x-sales-checkout-capability") && (Number(body.adjustment_amount??0)!==0 || body.expected_total!==composableQuote.total))return errorResponse("sales_quote_changed",409);
   let amountNumeric = Number(composableQuote.total);
   if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
     return errorResponse("amount_invalid", 500);

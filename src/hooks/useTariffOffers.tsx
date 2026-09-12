@@ -70,6 +70,8 @@ export interface InstallmentConfig {
 }
 
 export interface OfferMetaConfig {
+  /** Existing payment links still resolve it; new sales use the current generation. */
+  sales_legacy_only?: boolean;
   welcome_message?: {
     enabled: boolean;
     text: string;
@@ -591,6 +593,5 @@ export function useReorderTariffOffers() {
     pendingTariffIds,
   });
 }
-
 
 
