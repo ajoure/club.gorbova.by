@@ -122,3 +122,11 @@ it("AI settings use the existing owner control and preserve expected config", as
  fireEvent.click(screen.getByRole('button',{name:'Сохранить настройки ИИ'}));
  await waitFor(()=>expect(mock.invoke).toHaveBeenCalledWith('sales-runtime-control',{body:{action:'ai_config',user_id:'user-scope',business_account_id:'business-scope',ai_config:{...ai,model:'google/gemini-3.8-flash'},expected_ai_config:ai}}));
 });
+
+
+it("owner selects consultation products through existing control without exposing campaign knowledge", async () => {
+ mock.invoke.mockResolvedValue({data:{...base,campaign:{...base.campaign,mode:'off',consultation_product_ids:[]},conversation:{state:'HUMAN_HOLD'},job:null,catalog_products:[{id:'club-id',name:'Клуб'}]}});
+ mount();fireEvent.click(await screen.findByRole('button',{name:'Настройки задержки автопродаж'}));
+ fireEvent.click(screen.getByLabelText('Консультировать: Клуб'));fireEvent.click(screen.getByRole('button',{name:'Сохранить продукты'}));
+ await waitFor(()=>expect(mock.invoke).toHaveBeenCalledWith('sales-runtime-control',{body:{action:'knowledge_products',user_id:'user-scope',business_account_id:'business-scope',product_ids:['club-id'],expected_product_ids:[]}}));
+});

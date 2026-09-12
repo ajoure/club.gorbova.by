@@ -27,7 +27,10 @@ Deno.serve(async (request) => {
         .eq("business_account_id", body.business_account_id).maybeSingle(),
     );
     if (!campaign) return json({ available: false, can_manage: true });
-    if(body.action==='ai_config') {
+    if(body.action==='knowledge_products') {
+      await rpc(db,'sales_configure_knowledge_products',{p_campaign:campaign.id,p_actor:actor.id,
+        p_ids:body.product_ids,p_expected:body.expected_product_ids});
+    } else if(body.action==='ai_config') {
       await rpc(db,'sales_configure_ai',{p_campaign:campaign.id,p_actor:actor.id,
         p_config:readAIConfig(body.ai_config),p_expected:body.expected_ai_config});
     } else if (body.action && body.action !== "status") {
@@ -41,7 +44,7 @@ Deno.serve(async (request) => {
     }
     const fresh = await must(
       db.from("sales_campaigns").select(
-        "id,mode,trigger_phrase,policy_version,knowledge_version,delay_min_seconds,delay_max_seconds,ai_config",
+        "id,mode,trigger_phrase,policy_version,knowledge_version,delay_min_seconds,delay_max_seconds,ai_config,knowledge",
       ).eq("id", campaign.id).single(),
     );
     const conversation = await must(
@@ -64,6 +67,9 @@ Deno.serve(async (request) => {
       _user_id: actor.id,
       _role_code: "super_admin",
     });
+    const catalogProducts=owner?await must(db.from('products_v2').select('id,name').eq('is_active',true).eq('status','active').neq('id',campaign.product_id).order('name')):[];
+    if(!fresh) throw Error('campaign_unavailable');
+    const {knowledge,...campaignView}=fresh;
     return json({
       scope: {
         user_id: body.user_id,
@@ -73,7 +79,8 @@ Deno.serve(async (request) => {
       can_manage: true,
       can_configure: !!owner,
       ai_models:AI_MODELS,
-      campaign: fresh,
+      catalog_products:catalogProducts,
+      campaign: {...campaignView,consultation_product_ids:knowledge?.consultation_product_ids??[]},
       conversation,
       job,
     });

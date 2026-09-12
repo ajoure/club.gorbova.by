@@ -129,3 +129,12 @@ test('a course question about accounting for a mistaken payment is not a website
  assert.equal(hasExplicitTechnicalProblem(c),false);
  c.history.push({role:'customer',text:'У меня ошибка оплаты, не могу продолжить'});assert.equal(hasExplicitTechnicalProblem(c),true);
 });
+
+
+test('related product consultation uses only its own public facts after qualification',()=>{
+ const c=setup();c.firstReply=false;c.stage='payment';c.history.push({role:'customer',text:'А что входит в клуб?'});c.lastQuestionId='payment';
+ c.facts.push({id:'club_full',text:'Клуб: тариф FULL включает базу знаний.',source:'public-product:club',kind:'related_product',classification:'sales_safe'});
+ const r=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'},{intent:'product_question',question_type:'related_product',fact_ids:['club_full']}));
+ assert.equal(r.action,'reply');assert.equal(r.question_id,'none');assert.match(r.text,/Клуб/);assert.doesNotMatch(r.text,/BYN/);
+ assert.equal(planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'},{intent:'product_question',question_type:'related_product',fact_ids:['prices']})).action,'handoff');
+});
