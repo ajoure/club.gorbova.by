@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAdminAccess } from "@/hooks/useAdminAccess";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Pause, Play, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -137,6 +138,7 @@ export function SalesRuntimeControls(
   const validDelay = Number.isInteger(+min) && +min >= 30 && +min <= 600 &&
     Number.isInteger(+max) && +max >= +min && +max <= 900;
   return (
+    <Dialog open={settings} onOpenChange={setSettings}>
     <section
       data-testid="sales-runtime-controls"
       aria-label="Автопродажи ЦБ21"
@@ -182,14 +184,15 @@ export function SalesRuntimeControls(
             </Button>
           )}
           {query.data.can_configure && (
+            <DialogTrigger asChild>
             <Button
               size="sm"
               variant="ghost"
               aria-label="Настройки задержки автопродаж"
-              onClick={() => setSettings(!settings)}
             >
               <Settings2 className="h-4 w-4" />
             </Button>
+            </DialogTrigger>
           )}
         </div>
       </div>
@@ -214,8 +217,13 @@ export function SalesRuntimeControls(
           Автоответы заблокированы. Проверьте переписку вручную.
         </p>
       )}
-      {settings && (
-        <div className="border-t pt-2 space-y-2">
+    </section>
+    <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl">
+      <DialogHeader className="pr-6">
+        <DialogTitle>Настройки автопродаж</DialogTitle>
+        <DialogDescription>Задержка ответов, модель ИИ и продукты для консультации.</DialogDescription>
+      </DialogHeader>
+        <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
             Случайная задержка перед каждым ответом, в секундах.
           </p>
@@ -300,7 +308,7 @@ export function SalesRuntimeControls(
               onClick={()=>mutation.mutate({action:'knowledge_products',product_ids:productIds,expected_product_ids:campaign.consultation_product_ids??[]})}>Сохранить продукты</Button>
           </div>}
         </div>
-      )}
-    </section>
+    </DialogContent>
+    </Dialog>
   );
 }

@@ -130,3 +130,15 @@ it("owner selects consultation products through existing control without exposin
  fireEvent.click(screen.getByLabelText('Консультировать: Клуб'));fireEvent.click(screen.getByRole('button',{name:'Сохранить продукты'}));
  await waitFor(()=>expect(mock.invoke).toHaveBeenCalledWith('sales-runtime-control',{body:{action:'knowledge_products',user_id:'user-scope',business_account_id:'business-scope',product_ids:['club-id'],expected_product_ids:[]}}));
 });
+
+
+it("settings open outside the composer and close without changing campaign state", async () => {
+ mount();const trigger=await screen.findByRole('button',{name:'Настройки задержки автопродаж'});
+ fireEvent.click(trigger);
+ const dialog=await screen.findByRole('dialog',{name:'Настройки автопродаж'});
+ expect(screen.getByTestId('sales-runtime-controls').contains(dialog)).toBe(false);
+ fireEvent.click(screen.getByRole('button',{name:'Close'}));
+ await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull());
+ await waitFor(()=>expect(document.activeElement).toBe(trigger));
+ expect(mock.invoke.mock.calls.every(([,args])=>args.body.action==='status')).toBe(true);
+});
