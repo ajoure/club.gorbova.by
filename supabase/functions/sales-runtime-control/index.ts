@@ -67,7 +67,7 @@ Deno.serve(async (request) => {
       _user_id: actor.id,
       _role_code: "super_admin",
     });
-    const catalogProducts=owner?await must(db.from('products_v2').select('id,name').eq('is_active',true).eq('status','active').order('name')):[];
+    const catalogProducts=owner?await must(db.from('products_v2').select('id,name').eq('is_active',true).eq('status','active').neq('id',campaign.product_id).order('name')):[];
     if(!fresh) throw Error('campaign_unavailable');
     const {knowledge,...campaignView}=fresh;
     return json({
