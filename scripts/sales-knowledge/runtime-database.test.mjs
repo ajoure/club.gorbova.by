@@ -4,11 +4,20 @@ import {PGlite} from '@electric-sql/pglite';
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 let db;
+const defaultTestNow='2026-09-12T12:00:00Z';
+let testNow=defaultTestNow;
 const owner=randomUUID(), stranger=randomUUID(), bot=randomUUID(), connection=randomUUID(), product=randomUUID();
 const one=async(s,a=[]) => (await db.query(s,a)).rows[0];
 const rpc=async(name,args=[]) => (await one(`SELECT ${name}(${args.map((_,i)=>'$'+(i+1)).join(',')}) r`,args)).r;
 before(async()=>{
  db=new PGlite();await db.exec(`
+ -- These clocks exist only in the disposable offline database. Production
+ -- migrations and the real Minsk delivery window remain unchanged.
+ SELECT set_config('test.sales_now','${defaultTestNow}',false);
+ CREATE OR REPLACE FUNCTION pg_catalog.clock_timestamp() RETURNS timestamptz
+ LANGUAGE sql VOLATILE AS $$ SELECT current_setting('test.sales_now')::timestamptz $$;
+ CREATE OR REPLACE FUNCTION pg_catalog.now() RETURNS timestamptz
+ LANGUAGE sql STABLE AS $$ SELECT current_setting('test.sales_now')::timestamptz $$;
  CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; CREATE SCHEMA auth;
  CREATE TABLE auth.users(id uuid PRIMARY KEY); INSERT INTO auth.users VALUES('${owner}'),('${stranger}');
  CREATE FUNCTION public.has_admin_section_access(uuid,text,text) RETURNS boolean LANGUAGE sql AS $$ SELECT $1='${owner}'::uuid $$;
@@ -35,13 +44,14 @@ before(async()=>{
   await db.exec(await readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8'));
 });
 after(async()=>{await db.close()});
-async function fixture(){
+async function fixture(now=defaultTestNow){
+ testNow=now;await db.query("SELECT set_config('test.sales_now',$1,false)",[testNow]);
  await db.exec('DELETE FROM sales_checkout_operations; DELETE FROM payments_v2; DELETE FROM orders_v2; DELETE FROM live_event_sessions; DELETE FROM live_events; DELETE FROM sales_events; DELETE FROM sales_jobs; DELETE FROM sales_conversations; DELETE FROM sales_campaigns; DELETE FROM contact_center_message_assignments; DELETE FROM ai_handoffs; DELETE FROM notification_outbox; DELETE FROM telegram_messages;');
  const p=(await one(`INSERT INTO sales_campaigns(code,bot_id,business_account_id,test_user_id,assignee_user_id,product_id,trigger_phrase,policy_version,knowledge_version,knowledge) VALUES('pilot',$1,$2,$3,$3,$4,'Хочу программу курса ЦБ','v1','k1','{"release_mode":"owner_test","facts":[{"id":"topic"}]}') RETURNING id`,[bot,connection,owner,product])).id;
  await rpc('sales_control',[p,'enable',owner]);return p;
 }
 async function msg(seq,text='Хочу программу курса ЦБ',extras={}){
- const e={transport:'business',user_id:owner,bot_id:bot,business_account_id:connection,direction:'incoming',message_origin:'client',message_id:seq,message_text:text,meta:{source:'telegram_business',raw:{date:Math.floor(Date.now()/1000)}},...extras};
+ const e={transport:'business',user_id:owner,bot_id:bot,business_account_id:connection,direction:'incoming',message_origin:'client',message_id:seq,message_text:text,meta:{source:'telegram_business',raw:{date:Math.floor(Date.parse(testNow)/1000)}},...extras};
  return (await one(`INSERT INTO telegram_messages(${Object.keys(e).join(',')}) VALUES(${Object.keys(e).map((_,i)=>'$'+(i+1)).join(',')}) RETURNING id`,Object.values(e))).id;
 }
 const conversation=()=>one('SELECT * FROM sales_conversations');
@@ -153,6 +163,15 @@ test('v2 rearm fails closed if the expected sent test is absent',async()=>{
  await fixture();await db.exec("UPDATE sales_campaigns SET code='cb21-owner-test',policy_version='cb21-v1'");
  const rearm=await readFile(new URL('./rearm-cb21-owner-test-v2.sql',import.meta.url),'utf8');
  await assert.rejects(db.exec(rearm),/precondition_failed/);assert.equal((await one('SELECT policy_version FROM sales_campaigns')).policy_version,'cb21-v1');
+});
+
+test('v2 first reply respects Minsk 08:00 and 23:00 boundaries independently of the runner clock',async()=>{
+ for(const [time,allowed] of [['04:59:00',false],['05:00:00',true],['19:59:00',true],['20:00:00',false]]){
+  await fixture(`2026-09-12T${time}Z`);
+  await db.exec("UPDATE sales_campaigns SET policy_version='cb21-v2'");await msg(199);
+  assert.equal(Boolean(await due()),allowed,time);
+  if(!allowed) assert.equal((await one('SELECT reason FROM sales_jobs')).reason,'outside_business_hours');
+ }
 });
 
 test('broadcast gates claim, survives end, delays again, and checks a newly started event before dispatch',async()=>{
