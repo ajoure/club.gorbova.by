@@ -16,7 +16,7 @@ before(async()=>{
  CREATE TABLE telegram_bots(id uuid PRIMARY KEY,bot_id bigint); INSERT INTO telegram_bots VALUES('${bot}',12345);
  CREATE TABLE telegram_business_connections(id uuid PRIMARY KEY,bot_id uuid,can_reply boolean,is_enabled boolean,connection_id text DEFAULT 'business-id');
  INSERT INTO telegram_business_connections (id,bot_id,can_reply,is_enabled) VALUES('${connection}','${bot}',true,true);
- CREATE TABLE products_v2(id uuid PRIMARY KEY); INSERT INTO products_v2 VALUES('${product}');
+ CREATE TABLE products_v2(id uuid PRIMARY KEY,is_active boolean DEFAULT true,status text DEFAULT 'active'); INSERT INTO products_v2 VALUES('${product}');
  CREATE TABLE telegram_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),transport text,user_id uuid,bot_id uuid,business_account_id uuid,direction text,message_text text,message_origin text,meta jsonb DEFAULT '{}',message_id bigint,telegram_user_id bigint DEFAULT 100,status text,is_read boolean,business_connection_id text DEFAULT 'business-id',created_at timestamptz DEFAULT clock_timestamp(),UNIQUE(bot_id,business_connection_id,telegram_user_id,message_id));
  CREATE TABLE notification_outbox(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid,message_type text,idempotency_key text UNIQUE,source text,status text,meta jsonb,sent_at timestamptz,blocked_reason text);
  CREATE TABLE contact_center_message_assignments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),source text,source_message_id uuid,assignee_user_id uuid,assigned_by_user_id uuid,note text,resolved_at timestamptz);
@@ -31,7 +31,7 @@ before(async()=>{
  CREATE TABLE payments_v2(id uuid DEFAULT gen_random_uuid(),order_id uuid,status text,amount numeric,is_deleted boolean DEFAULT false,refunded_amount numeric,transaction_type text,currency text DEFAULT 'BYN');`);
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912082931_cb21_dialogue_delivery_windows.sql',import.meta.url),'utf8'));
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912083730_cb21_checkout_capabilities.sql',import.meta.url),'utf8'));
- for(const name of ['20260912103149_6c915c55-929b-42ba-9cc0-a8d2b4950c1b.sql','20260912103321_bdea673d-1fb3-4974-958c-72349e73c6e0.sql','20260912105739_sales_context_ai.sql'])
+ for(const name of ['20260912103149_6c915c55-929b-42ba-9cc0-a8d2b4950c1b.sql','20260912103321_bdea673d-1fb3-4974-958c-72349e73c6e0.sql','20260912105739_sales_context_ai.sql','20260912112411_sales_consultation_products.sql'])
   await db.exec(await readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8'));
 });
 after(async()=>{await db.close()});
@@ -290,4 +290,26 @@ test('media-only replacement invalidates a prepared reply even when caption stay
  await db.query("UPDATE telegram_messages SET meta=meta||'{\"file_id\":\"replacement\",\"file_type\":\"photo\"}'::jsonb WHERE id=$1",[id]);
  assert.equal(await rpc('sales_begin_send',[j.id,j.claim_token,{}]),false);
  assert.equal((await conversation()).human_hold,true);assert.equal((await conversation()).reason,'media_edited');
+});
+
+
+test('consultation catalog configuration uses existing campaign knowledge and owner gate',async()=>{
+ const p=await fixture();await rpc('sales_control',[p,'disable',owner]);
+ await assert.rejects(rpc('sales_configure_knowledge_products',[p,stranger,[product],[]]),/owner_required/);
+ await assert.rejects(rpc('sales_configure_knowledge_products',[p,owner,[product,product],[]]),/invalid_consultation_products/);
+ await assert.rejects(rpc('sales_configure_knowledge_products',[p,owner,[null],[]]),/consultation_product_unavailable/);
+ await assert.rejects(rpc('sales_configure_knowledge_products',[p,owner,[randomUUID()],[]]),/consultation_product_unavailable/);
+ assert.equal(await rpc('sales_configure_knowledge_products',[p,owner,[product],[]]),true);
+ const row=await one('SELECT mode,knowledge FROM sales_campaigns');assert.equal(row.mode,'off');assert.deepEqual(row.knowledge.consultation_product_ids,[product]);assert.equal(row.knowledge.facts.length,1);
+ await assert.rejects(rpc('sales_configure_knowledge_products',[p,owner,[],[]]),/knowledge_configuration_changed/);
+ assert.equal((await one("SELECT has_function_privilege('authenticated','sales_configure_knowledge_products(uuid,uuid,jsonb,jsonb)','EXECUTE') allowed")).allowed,false);
+});
+
+
+test('failed unnumbered CRM send cannot replace the Telegram history boundary',async()=>{
+ await fixture();await msg(600);await msg(null,'failed draft',{direction:'outgoing',status:'failed',message_origin:'crm_operator'});
+ assert.equal((await one('SELECT message_id FROM telegram_messages ORDER BY message_id DESC LIMIT 1')).message_id,null);
+ const boundary=await one('SELECT message_id FROM telegram_messages WHERE message_id IS NOT NULL ORDER BY message_id DESC NULLS LAST LIMIT 1');assert.equal(boundary.message_id,600);
+ const rows=(await db.query('SELECT message_id FROM telegram_messages WHERE message_id<=$1 ORDER BY message_id',[boundary.message_id])).rows;
+ assert.deepEqual(rows.map(r=>r.message_id),[600]);
 });

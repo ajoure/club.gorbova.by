@@ -12,12 +12,14 @@ type Status = {
   available: boolean;
   can_configure?: boolean;
   ai_models?: string[];
+  catalog_products?: {id:string;name:string}[];
   campaign?: {
     mode: string;
     trigger_phrase: string;
     delay_min_seconds: number;
     delay_max_seconds: number;
     ai_config?: {model:string;max_tokens:number;timeout_seconds:number;max_context_chars:number;vision_enabled:boolean;max_image_bytes:number};
+    consultation_product_ids?: string[];
   };
   conversation?: { state: string; started: boolean; reason: string | null };
   job?: { status: string; due_at: string };
@@ -42,6 +44,7 @@ export function SalesRuntimeControls(
     allowed = access.canAccessSection("communication", "manage");
   const [settings, setSettings] = useState(false),
     [ai,setAi]=useState<Status['campaign']['ai_config']>(),
+    [productIds,setProductIds]=useState<string[]>([]),
     [min, setMin] = useState("60"),
     [max, setMax] = useState("180");
   const queryKey = ["sales-runtime", userId, businessAccountId];
@@ -91,6 +94,7 @@ export function SalesRuntimeControls(
   useEffect(() => {
     setSettings(false);
     setAi(undefined);
+    setProductIds([]);
   }, [userId, businessAccountId]);
   useEffect(() => {
     if (query.data?.campaign) {
@@ -102,6 +106,7 @@ export function SalesRuntimeControls(
     query.data?.campaign?.delay_max_seconds,
   ]);
   useEffect(()=>{if(!settings)setAi(query.data?.campaign?.ai_config)},[settings,query.data?.campaign?.ai_config]);
+  useEffect(()=>{if(!settings)setProductIds(query.data?.campaign?.consultation_product_ids??[])},[settings,query.data?.campaign?.consultation_product_ids]);
   if (!allowed || !businessAccountId || query.isLoading) return null;
   if (query.isError) {
     return (
@@ -281,6 +286,18 @@ export function SalesRuntimeControls(
             <p className="text-xs text-muted-foreground">Для смены модели выключите автопродажи. История сохраняется. Неразборчивое вложение передаётся человеку.</p>
             <Button size="sm" variant="outline" disabled={enabled||mutation.isPending||conversation?.state!=='HUMAN_HOLD'||!Number.isInteger(ai.max_tokens)||ai.max_tokens<2000||ai.max_tokens>16000||!Number.isInteger(ai.timeout_seconds)||ai.timeout_seconds<15||ai.timeout_seconds>90}
               onClick={()=>mutation.mutate({action:'ai_config',ai_config:ai,expected_ai_config:campaign.ai_config})}>Сохранить настройки ИИ</Button>
+          </div>}
+          {!!query.data.catalog_products?.length&&<div className="space-y-2 border-t pt-2">
+            <p className="text-xs font-medium">Другие продукты для консультации</p>
+            <p className="text-xs text-muted-foreground">Выберите до 20 продуктов. Условия читаются из текущих публичных тарифов. Обучающие материалы клиенту не выдаются.</p>
+            <div className="max-h-44 overflow-y-auto space-y-2">
+              {query.data.catalog_products.map(product=><label key={product.id} className="flex items-start gap-2 text-xs break-words">
+                <input type="checkbox" aria-label={`Консультировать: ${product.name}`} checked={productIds.includes(product.id)} disabled={enabled}
+                  onChange={e=>setProductIds(e.target.checked?[...productIds,product.id]:productIds.filter(id=>id!==product.id))}/>{product.name}
+              </label>)}
+            </div>
+            <Button size="sm" variant="outline" disabled={enabled||mutation.isPending||conversation?.state!=='HUMAN_HOLD'||productIds.length>20}
+              onClick={()=>mutation.mutate({action:'knowledge_products',product_ids:productIds,expected_product_ids:campaign.consultation_product_ids??[]})}>Сохранить продукты</Button>
           </div>}
         </div>
       )}

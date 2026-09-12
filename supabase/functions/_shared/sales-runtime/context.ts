@@ -3,6 +3,7 @@ import { DB, read, rpc } from "./db.ts";
 import { DISCLOSURE } from "./replies.mjs";
 import { readFullHistory, describeAttachment } from "./history.mjs";
 import {readAIConfig} from './ai.mjs';
+import {loadRelatedProducts} from './related-products.ts';
 export type Fact = {
   id: string;
   text: string;
@@ -35,7 +36,10 @@ export async function loadContext(db: DB, p: any, c: any) {
   const newest = await read(db.from("telegram_messages").select("message_id")
     .eq("user_id", p.test_user_id).eq("bot_id", p.bot_id)
     .eq("business_account_id", p.business_account_id)
-    .order("message_id", {ascending:false}).limit(1));
+    // Failed CRM sends have no Telegram message ID and are not a delivered
+    // conversation turn. PostgreSQL DESC otherwise puts this NULL first.
+    .not("message_id","is",null)
+    .order("message_id", {ascending:false,nullsFirst:false}).limit(1));
   if (newest.length && !Number.isFinite(newest[0].message_id)) throw Error("history_boundary_unavailable");
   const allHistory: any[] = newest.length ? await readFullHistory(async (from:number,to:number) => read(
       db.from("telegram_messages").select(
@@ -261,6 +265,8 @@ export async function loadContext(db: DB, p: any, c: any) {
     date: o.created_at,
     learner_status: "unknown",
   }));
+  const related=await loadRelatedProducts(p.knowledge,p.product_id);
+  facts.push(...related.facts);
   return {
     aiConfig:readAIConfig(p.ai_config),
     historyFingerprint:JSON.stringify(history.map((m:any)=>[m.id,m.message_text,m.direction,m.meta?.file_id,m.meta?.storage_path,m.meta?.upload_status,m.meta?.edited,m.meta?.uploaded_file_id])),
@@ -315,6 +321,7 @@ export async function loadContext(db: DB, p: any, c: any) {
       checkoutAddons,
       alumniEligibility,
       accessSummary,
+      related:related.fingerprint,
     }),
   };
 }
