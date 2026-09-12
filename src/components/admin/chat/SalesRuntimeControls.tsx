@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Pause, Play, Settings2 } from "lucide-react";
 import { toast } from "sonner";
+import {SalesKnowledgeEditor} from './SalesKnowledgeEditor';
 
 type Status = {
   scope?: { user_id: string; business_account_id: string };
@@ -221,7 +222,7 @@ export function SalesRuntimeControls(
     <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl">
       <DialogHeader className="pr-6">
         <DialogTitle>Настройки автопродаж</DialogTitle>
-        <DialogDescription>Задержка ответов, модель ИИ и продукты для консультации.</DialogDescription>
+        <DialogDescription>Задержка ответов, модель ИИ, продукты и база знаний для консультации.</DialogDescription>
       </DialogHeader>
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
@@ -307,6 +308,7 @@ export function SalesRuntimeControls(
             <Button size="sm" variant="outline" disabled={enabled||mutation.isPending||conversation?.state!=='HUMAN_HOLD'||productIds.length>20}
               onClick={()=>mutation.mutate({action:'knowledge_products',product_ids:productIds,expected_product_ids:campaign.consultation_product_ids??[]})}>Сохранить продукты</Button>
           </div>}
+          {settings&&query.data.can_configure&&<SalesKnowledgeEditor key={userId+businessAccountId} userId={userId} businessAccountId={businessAccountId} editable={!enabled&&!sending&&!blocked&&conversation?.state==='HUMAN_HOLD'}/>}
         </div>
     </DialogContent>
     </Dialog>

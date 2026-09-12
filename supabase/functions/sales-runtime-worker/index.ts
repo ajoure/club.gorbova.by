@@ -23,6 +23,7 @@ async function draftReply(
             stage,
             activation: isActivation(context),
             facts: isActivation(context) || context.firstReply ? [] : context.facts,
+            reference_topics: isActivation(context) || context.firstReply ? [] : context.referenceTopics,
             slot_values: slotValues,
             ...indexedEvidenceHistory(context),
             client: context.client,
@@ -57,6 +58,7 @@ Deno.serve(async (request) => {
         provider_configured: !!Deno.env.get("LOVABLE_API_KEY"),
         runtime: "cb21-v2",
         client_evidence_revision: "v1",
+        knowledge_editor_revision: "v1",
       });
     }
     if(body.action==='preview_image'||body.action==='preview_image_text') {
@@ -79,7 +81,9 @@ Deno.serve(async (request) => {
       return json({ok:true,mode:'context_counts_only_no_model_no_send',client_evidence_revision:'v1',
         counts:{orders:context.client.purchases.length,access_records:context.client.access.length,
           webinar_events:context.client.webinar_activity.length,webinar_comments:context.client.webinar_comments.length,
-          webinar_questions:context.client.webinar_questions.length},
+          webinar_questions:context.client.webinar_questions.length,
+          curriculum_topics:context.facts.filter((f:any)=>f.kind==='topic').length,
+          background_topics:context.referenceTopics.length},
         purchase_history_status:context.client.purchase_history_status,
         attendance_history_status:context.client.attendance_history_status});
     }

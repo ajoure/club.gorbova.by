@@ -7,6 +7,7 @@ import {
   rpc,
 } from "../_shared/sales-runtime/db.ts";
 import {readAIConfig,AI_MODELS} from '../_shared/sales-runtime/ai.mjs';
+import {knowledgeEditor} from '../_shared/sales-runtime/knowledge-editor.ts';
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response(null, { headers: cors });
@@ -27,6 +28,9 @@ Deno.serve(async (request) => {
         .eq("business_account_id", body.business_account_id).maybeSingle(),
     );
     if (!campaign) return json({ available: false, can_manage: true });
+    if(['knowledge_status','knowledge_preview','knowledge_apply','knowledge_version'].includes(body.action)) {
+      return json(await knowledgeEditor(db,campaign,actor.id,body));
+    }
     if(body.action==='knowledge_products') {
       await rpc(db,'sales_configure_knowledge_products',{p_campaign:campaign.id,p_actor:actor.id,
         p_ids:body.product_ids,p_expected:body.expected_product_ids});
