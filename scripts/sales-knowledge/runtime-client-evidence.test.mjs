@@ -31,7 +31,7 @@ test("paid status, a free order and a trial do not establish a paid purchase", (
     "paid_status_without_payment_proof",
   );
   assert.equal(
-    classifyOrder({ ...order, final_price: 0 }, [payment]).classification,
+    classifyOrder({ ...order, final_price: 0 }, []).classification,
     "zero_price_order",
   );
   assert.equal(
@@ -39,6 +39,7 @@ test("paid status, a free order and a trial do not establish a paid purchase", (
     "trial",
   );
   assert.equal(classifyOrder(order, [payment]).classification, "paid_purchase");
+  assert.equal(classifyOrder({...order,final_price:0},[payment]).classification,'payment_review_required');
 });
 test("deleted, foreign-currency, authorization and synthetic payments cannot prove payment", () => {
   for (
@@ -79,6 +80,10 @@ test("partial payment, duplicate receipt and override are reviewable rather than
   );
 });
 test("refund journals are signals, not amounts to sum or new purchase proof", () => {
+  for(const transaction_type of ['возврат средств','ОТМЕНА','void','refund','chargeback']) {
+    const r=classifyOrder(order,[payment,{...payment,id:'reversal',provider_payment_id:'reversal-receipt',transaction_type,status:'succeeded'}]);
+    assert.equal(r.classification,'refund_or_refund_review');
+  }
   for (
     const [o, p, r, a] of [
       [{ ...order, status: "refunded" }, [payment], [], []],

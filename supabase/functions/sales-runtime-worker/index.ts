@@ -278,7 +278,7 @@ Deno.serve(async (request) => {
         await rpc(db, "sales_handoff", {
           p_job: job.id,
           p_token: job.claim_token,
-          p_reason: error instanceof Error && /^(media_|history_model_capacity_)[a-z_]+$/.test(error.message) ? error.message : "runtime_review_required",
+          p_reason: error instanceof Error && /^(media_|history_model_capacity_|client_evidence_)[a-z_]+$/.test(error.message) ? error.message : "runtime_review_required",
         });
         await notifyAssignments(db);
       }

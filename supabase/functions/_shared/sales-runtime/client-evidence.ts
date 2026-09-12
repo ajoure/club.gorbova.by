@@ -103,7 +103,7 @@ export async function loadClientEvidence(
     ),
     ownUser("live_event_reactions", "id,user_id,live_event_id,created_at"),
   ]);
-  for (const rows of [allOrders, ownPayments, entitlements, sources]) {
+  for (const rows of [allOrders.filter((r:any)=>!r.is_deleted), ownPayments.filter((r:any)=>!r.is_deleted), entitlements, sources]) {
     assertClientIdentity(rows, userId, profileId);
   }
   for (const rows of [rooms, proofs, questions, reactions]) {
@@ -125,7 +125,7 @@ export async function loadClientEvidence(
     at,
   );
   for (const row of linkedPayments) {
-    if (row.user_id || row.profile_id) {
+    if (!row.is_deleted && (row.user_id || row.profile_id)) {
       assertClientIdentity([row], userId, profileId);
     }
   }

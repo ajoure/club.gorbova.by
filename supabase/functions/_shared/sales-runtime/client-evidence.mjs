@@ -44,7 +44,7 @@ export function classifyOrder(
   const refund = order.status === "refunded" ||
     rows.some((p) =>
       p.status === "refunded" || positive(p.refunded_amount) ||
-      p.transaction_type === "refund"
+      /refund|возврат|отмен|void|chargeback|reversal/iu.test(String(p.transaction_type ?? ""))
     ) ||
     allocations.some((a) =>
       paymentIds.has(a.payment_id) && positive(a.refunded_amount)
@@ -70,6 +70,7 @@ export function classifyOrder(
   if (order.is_deleted) classification = "deleted_excluded";
   else if (refund || refundRequest) classification = "refund_or_refund_review";
   else if (duplicate || overridden) classification = "payment_review_required";
+  else if (order.final_price === 0 && positive(amount)) classification = "payment_review_required";
   else if (order.is_trial) classification = "trial";
   else if (order.final_price === 0) classification = "zero_price_order";
   else if (

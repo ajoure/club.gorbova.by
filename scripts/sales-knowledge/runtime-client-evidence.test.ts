@@ -128,7 +128,7 @@ Deno.test("linked payment without identity is bound by exact order FK; foreign i
     amount: 100,
     currency: "BYN",
   };
-  const f = fixture({ orders_v2: [order], payments_v2: [pm] });
+  const f = fixture({ orders_v2: [order,{...order,id:'old-deleted',profile_id:'foreign',is_deleted:true}], payments_v2: [pm,{...pm,id:'deleted-payment',profile_id:'foreign',is_deleted:true}] });
   check(
     (await loadClientEvidence(f.db, "user", "profile", "course", at, []))
       .current_course_paid,
