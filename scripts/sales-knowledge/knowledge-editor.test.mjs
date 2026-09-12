@@ -27,7 +27,7 @@ before(async()=>{
  CREATE TABLE lesson_blocks(id uuid PRIMARY KEY,lesson_id uuid,updated_at timestamptz,content jsonb,block_type text);
  CREATE TABLE course_transcription_bindings(source_id uuid,block_id uuid,lesson_id uuid,product_id uuid,block_updated_at timestamptz);
  `);
- await db.exec(await readFile(new URL('../../supabase/migrations/20260912162000_sales_knowledge_editor.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../../supabase/migrations/20260912164349_b779cb99-19cf-4ef6-be5a-2753988c1791.sql',import.meta.url),'utf8'));
 });
 after(()=>db.close());
 async function fixture(){

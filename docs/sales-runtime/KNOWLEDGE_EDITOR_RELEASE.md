@@ -19,7 +19,7 @@
 После merge точного GitHub SHA и зелёных checks:
 
 1. Сверить SHA, чистое дерево, canonical project и состояние OFF/HUMAN_HOLD. Зафиксировать агрегаты knowledge facts, versions, jobs, events, outbox и checkout operations.
-2. Применить только существующий файл `supabase/migrations/20260912162000_sales_knowledge_editor.sql` через managed migration. Не создавать код, коммиты, новые SQL-решения или записи фактов. При drift/missing dependency остановиться.
+2. Канонический файл — `supabase/migrations/20260912164349_b779cb99-19cf-4ef6-be5a-2753988c1791.sql`. Он уже применён в production: ledger version `20260912164349`, name `b779cb99-19cf-4ef6-be5a-2753988c1791`. Повторно не применять. Для нового окружения применяется этот единственный файл. Исходный файл PR472 с версией `20260912162000` не записывался в production ledger и удалён после подтверждения идентичности SQL (кроме завершающего перевода строки), чтобы не было двойного CREATE. Код таблицы и RPC не менялся; repair ledger не требуется. При drift/missing dependency остановиться.
 3. Развернуть только `sales-runtime-control` и `sales-runtime-worker` с этого SHA.
 4. Проверить схему, RLS/grants и read-only owner snapshot / preview текущих фактов. Worker `health` должен вернуть `knowledge_editor_revision=v1`; `preview_context` — только агрегаты, без модели и отправок. Ни одного изменения кампании, сообщений, уведомлений, оплат, доступов и транскриптов.
 5. После PASS опубликовать точный SHA. Проверить опубликованный редактор на ПК и мобильном viewport: открытие, карточки, разворачивание, чтение источника, проверка черновика; сохранение и включение не использовать как smoke.
