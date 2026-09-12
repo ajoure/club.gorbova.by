@@ -257,7 +257,9 @@ BEGIN
  UPDATE public.sales_jobs SET status='held',reason=p_reason WHERE id=j.id;
  INSERT INTO public.contact_center_message_assignments(source,source_message_id,assignee_user_id,assigned_by_user_id,note)
  VALUES('telegram',m.id,p.assignee_user_id,p.assignee_user_id,'Автопродажи: '||left(p_reason,100))
- ON CONFLICT(source_message_id) WHERE resolved_at IS NULL DO NOTHING RETURNING id INTO assignment;
+ ON CONFLICT(source_message_id) WHERE resolved_at IS NULL DO UPDATE SET
+   assignee_user_id=EXCLUDED.assignee_user_id,assigned_by_user_id=EXCLUDED.assigned_by_user_id,note=EXCLUDED.note
+ RETURNING id INTO assignment;
  IF assignment IS NULL THEN SELECT id INTO assignment FROM public.contact_center_message_assignments WHERE source_message_id=m.id AND resolved_at IS NULL; END IF;
  INSERT INTO public.ai_handoffs(bot_id,telegram_user_id,user_id,assigned_to,last_message_id,status,reason,meta)
  VALUES(p.bot_id,m.telegram_user_id,p.test_user_id,p.assignee_user_id,m.message_id,'open',p_reason,jsonb_build_object('sales_conversation_id',c.id,'assignment_id',assignment));

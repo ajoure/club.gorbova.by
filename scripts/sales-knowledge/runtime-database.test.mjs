@@ -121,3 +121,8 @@ test('changing random range enforces bounds and retains current scheduled due ti
  await rpc('sales_control',[p,'delay',owner,120,240]);assert.deepEqual((await one('SELECT due_at FROM sales_jobs')).due_at,j.due_at);
  await msg(101,'Еще');const next=await one("SELECT extract(epoch from due_at-created_at) delay FROM sales_jobs WHERE status='queued'");assert.ok(next.delay>=119&&next.delay<=241);
 });
+test('silent handoff targets the approved owner even if this question already had an assignee',async()=>{
+ await fixture();const id=await msg(110);await db.query("INSERT INTO contact_center_message_assignments(source,source_message_id,assignee_user_id,assigned_by_user_id) VALUES('telegram',$1,$2,$2)",[id,stranger]);
+ const j=await due();await rpc('sales_handoff',[j.id,j.claim_token,'needs_human']);
+ const row=await one('SELECT assignee_user_id FROM contact_center_message_assignments WHERE source_message_id=$1',[id]);assert.equal(row.assignee_user_id,owner);
+});

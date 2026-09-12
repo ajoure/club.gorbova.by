@@ -58,6 +58,10 @@ export function renderSelection(
     !Array.isArray(selection.fact_ids) || selection.fact_ids.length > 3 ||
     new Set(selection.fact_ids).size !== selection.fact_ids.length
   ) throw Error("invalid_fact_selection");
+  if (
+    !Object.hasOwn(QUESTIONS, selection.question_id) ||
+    !Object.hasOwn(BRIDGES, selection.bridge_id)
+  ) throw Error("unknown_template");
   const question = QUESTIONS[selection.question_id],
     bridge = BRIDGES[selection.bridge_id];
   if (question === undefined || bridge === undefined) {

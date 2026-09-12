@@ -19,6 +19,7 @@ BEGIN
  IF NOT EXISTS(SELECT 1 FROM public.sales_jobs WHERE (status='queued' AND due_at<=now()) OR
    (status IN ('claimed','sending') AND claimed_at<now()-interval '3 minutes'))
    AND NOT EXISTS(SELECT 1 FROM public.sales_events e WHERE e.event IN ('handoff','opt_out')
+    AND EXISTS(SELECT 1 FROM public.contact_center_message_assignments a WHERE a.id::text=e.details->>'assignment_id' AND a.resolved_at IS NULL)
     AND NOT EXISTS(SELECT 1 FROM public.notification_outbox o WHERE o.idempotency_key='sales_assignment:'||(e.details->>'assignment_id')))
  THEN RETURN NULL; END IF;
  SELECT decrypted_secret INTO secret FROM vault.decrypted_secrets WHERE name='sales_runtime_cron_secret' LIMIT 1;
