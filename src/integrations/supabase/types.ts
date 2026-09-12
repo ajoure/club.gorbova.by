@@ -26550,6 +26550,15 @@ export type Database = {
         }
         Returns: boolean
       }
+      sales_configure_knowledge_products: {
+        Args: {
+          p_actor: string
+          p_campaign: string
+          p_expected: Json
+          p_ids: Json
+        }
+        Returns: boolean
+      }
       sales_consume_checkout_capability: {
         Args: { p_body: Json; p_endpoint: string; p_hash: string }
         Returns: string
