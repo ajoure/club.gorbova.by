@@ -56,6 +56,7 @@ Deno.serve(async (request) => {
         ok: true,
         provider_configured: !!Deno.env.get("LOVABLE_API_KEY"),
         runtime: "cb21-v2",
+        client_evidence_revision: "v1",
       });
     }
     if(body.action==='preview_image'||body.action==='preview_image_text') {
@@ -69,6 +70,18 @@ Deno.serve(async (request) => {
         {type:'image_url',image_url:{url:body.action==='preview_image_text'?'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOgAAAAsCAIAAADgsmONAAACdklEQVR4nO2YQW4EQQgD5/+fTs4tDZId4x6IXMcRVBuW0z4/ISzk+TpACH8hhxtWksMNK8nhhpXkcMNKcrhhJTncsJLycB8BxdOVBxp+WB43N/fjyHP0KqGRYZReh4d13szj5uZ+HHmOXiU0MozS6/Cwzpt53NzcjyPP0auERoZReh0e1nkzj5ub+3HkOXodUsVT1f9Xjxv24NxzsXlKT1egLo/7UKZ53LCH4p6LzVN6ugJ1edyHMs3jhj0U91xsntLTFajL4z6UaR437KG452LzlJ6uQF0e96FM8zhQMrM1ilPZSQ73Y48DJTNboziVneRwP/Y4UDKzNYpT2UkO92OPAyUzW6M4lZ3Y/2Cf7IEWVNR35emia3ZkXuU7W1P2IlLlh5nsgRZU1Hfl6aJrdmRe5TtbU/YiUuWHmeyBFlTUd+Xpomt2ZF7lO1tT9iJS5YeZ7IEWVNR35emia3ZkXuU7W1P2OqSIh/W7PV3vdu2N5RFAPMi7jjzlu2wgFmSwCZ6ud7v2xoIexRuIB3nXkad8lw3Eggw2wdP1btfeWNCjeAPxIO868pTvsoFYkMEmeLre7dobC3oUbyAe5F1HnvJdNhCLMvxXNUi94y03N/dj73VIWc+0GqTe8Zabm/ux9zqkrGdaDVLveMvNzf3Yex1S1jOtBql3vOXm5n7svYiURQnn9rAzKn6l3oGSmd2PI8/Rq4RGhlGW5fCwMyp+pd6BkpndjyPP0auERoZRluXwsDMqfqXegZKZ3Y8jz9GrhEaGUZbl8LAzKn6l3oGSmd2PI8/RqzwcwlfkcMNKcrhhJTncsJIcblhJDjesJIcbVpLDDSv5BbPW9ySy4VUQAAAAAElFTkSuQmCC':'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII='}},
       ],{key:Deno.env.get('LOVABLE_API_KEY')}));
       return json({ok:body.action==='preview_image_text'?observation.status==='readable'&&/404/.test(observation.text):observation.status==='unreadable'&&!observation.text&&!observation.problem,mode:'synthetic_image_no_send',model:readAIConfig(p.ai_config).model,status:observation.status});
+    }
+    if (body.action === 'preview_context') {
+      const p=await read(db.from('sales_campaigns').select('*').eq('code','cb21-owner-test').single());
+      const c=await read(db.from('sales_conversations').select('*').eq('campaign_id',p.id).single());
+      if(p.mode!=='off'||!c.human_hold) return json({error:'pause_and_disable_required'},409);
+      const context=await loadContext(db,p,c);
+      return json({ok:true,mode:'context_counts_only_no_model_no_send',client_evidence_revision:'v1',
+        counts:{orders:context.client.purchases.length,access_records:context.client.access.length,
+          webinar_events:context.client.webinar_activity.length,webinar_comments:context.client.webinar_comments.length,
+          webinar_questions:context.client.webinar_questions.length},
+        purchase_history_status:context.client.purchase_history_status,
+        attendance_history_status:context.client.attendance_history_status});
     }
     if (body.action === "preview") {
       const p = await read(
@@ -103,7 +116,7 @@ Deno.serve(async (request) => {
       // Only public product facts are reused. Never leak the owner's CRM/profile
       // into the synthetic learner or let their real purchase alter this test.
       const publicTariffs = new Set(live.publicTariffIds);
-      const context = {...live,history:[] as typeof live.history,mediaSources:[],client:{purchases:[],verified_cb_purchase:false,
+      const context = {...live,history:[] as typeof live.history,mediaSources:[],client:{purchases:[],access:[],current_course_checkout_hold:false,purchase_history_status:'synthetic',canonical_read_at:'synthetic',excluded_deleted_orders:0,unlinked_payment_records:0,webinar_activity:[],webinar_questions:[],attendance_history_status:'synthetic',verified_cb_purchase:false,
         alumni_eligibility:{eligible:false,offers:[]},current_course_paid:false,purchase_history_complete:true,
         webinar_comments:[],marked_completed_lessons:0,lesson_completion_is_not_attendance_proof:true},
         facts:live.facts.filter((f:any)=>f.id!=="prices"&&(!f.tariff_id||publicTariffs.has(f.tariff_id))&&!live.privateFactIds.includes(f.id)),
@@ -181,7 +194,14 @@ Deno.serve(async (request) => {
         fact_ids: [], stage: c.stage, intent: "product_information", new_question_count: 1,
         facts_verified: true, contains_paid_instruction: false, offer_verified: true, dialogue_version: "cb21-v2",
       } : await draftReply(context, c.stage);
-      if (candidate.action === "checkout") candidate = await checkoutReply(db,p,c,job,context,candidate.selection);
+      if (candidate.action === "checkout") {
+        // Payment/access may change while the model is running. Re-read before
+        // creating a quote/link, not only after the checkout writer returns.
+        const beforeCheckout=await loadContext(db,p,c);
+        if(beforeCheckout.commercialFingerprint!==context.commercialFingerprint) throw Error('commercial_facts_changed');
+        if(beforeCheckout.historyFingerprint!==context.historyFingerprint) throw Error('history_changed_during_generation');
+        candidate = await checkoutReply(db,p,c,job,{...context,client:beforeCheckout.client},candidate.selection);
+      }
       if (candidate.action !== "reply") {
         await rpc(db, "sales_handoff", {
           p_job: job.id,

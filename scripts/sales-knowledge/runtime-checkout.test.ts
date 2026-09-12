@@ -53,6 +53,11 @@ Deno.test('internal installments disclose rounded actual total; unknown legal en
  f.context.checkoutOptions[0].offer_type='invoice';f.selection.payer_type='legal_entity';f.selection.legal_details_id='forged';
  const stop=await checkoutReply(f.db,f.p,f.c,f.j,f.context,f.selection);if(stop.action!=='handoff')throw Error('expected handoff');eq(stop.reason,'invoice_requisites_required');eq(f.state.ops.length,0);
 });
+Deno.test('an existing uncertain order or access stops checkout before any writer',async()=>{
+ const f=fixture();f.context.client.current_course_checkout_hold=true;
+ const result:any=await checkoutReply(f.db,f.p,f.c,f.j,f.context,f.selection);
+ eq(result.reason,'current_course_existing_record_requires_review');eq(f.state.ops.length,0);eq(f.state.calls.length,0);
+});
 
 Deno.test('a reply to a reminder never confirms the earlier quote',async()=>{
  const f=fixture();const r:any=await checkoutReply(f.db,f.p,f.c,f.j,f.context,f.selection);
