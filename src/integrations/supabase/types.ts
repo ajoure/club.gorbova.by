@@ -18484,6 +18484,7 @@ export type Database = {
       }
       sales_campaigns: {
         Row: {
+          ai_config: Json
           assignee_user_id: string
           bot_id: string
           business_account_id: string
@@ -18502,6 +18503,7 @@ export type Database = {
           trigger_phrase: string
         }
         Insert: {
+          ai_config?: Json
           assignee_user_id: string
           bot_id: string
           business_account_id: string
@@ -18520,6 +18522,7 @@ export type Database = {
           trigger_phrase: string
         }
         Update: {
+          ai_config?: Json
           assignee_user_id?: string
           bot_id?: string
           business_account_id?: string
@@ -18741,6 +18744,7 @@ export type Database = {
           candidate: Json | null
           claim_token: string | null
           claimed_at: string | null
+          context_attempts: number
           conversation_id: string
           created_at: string
           delivery_message_id: number | null
@@ -18759,6 +18763,7 @@ export type Database = {
           candidate?: Json | null
           claim_token?: string | null
           claimed_at?: string | null
+          context_attempts?: number
           conversation_id: string
           created_at?: string
           delivery_message_id?: number | null
@@ -18777,6 +18782,7 @@ export type Database = {
           candidate?: Json | null
           claim_token?: string | null
           claimed_at?: string | null
+          context_attempts?: number
           conversation_id?: string
           created_at?: string
           delivery_message_id?: number | null
@@ -18802,6 +18808,41 @@ export type Database = {
           {
             foreignKeyName: "sales_jobs_inbound_id_fkey"
             columns: ["inbound_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_media_observations: {
+        Row: {
+          created_at: string
+          message_id: string
+          model: string
+          observation: Json
+          source_hash: string
+          version: string
+        }
+        Insert: {
+          created_at?: string
+          message_id: string
+          model: string
+          observation: Json
+          source_hash: string
+          version: string
+        }
+        Update: {
+          created_at?: string
+          message_id?: string
+          model?: string
+          observation?: Json
+          source_hash?: string
+          version?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_media_observations_message_id_fkey"
+            columns: ["message_id"]
             isOneToOne: false
             referencedRelation: "telegram_messages"
             referencedColumns: ["id"]
@@ -26500,6 +26541,15 @@ export type Database = {
       }
       sales_broadcast_state: { Args: { p_now?: string }; Returns: string }
       sales_claim_job: { Args: never; Returns: Json }
+      sales_configure_ai: {
+        Args: {
+          p_actor: string
+          p_campaign: string
+          p_config: Json
+          p_expected: Json
+        }
+        Returns: boolean
+      }
       sales_consume_checkout_capability: {
         Args: { p_body: Json; p_endpoint: string; p_hash: string }
         Returns: string
@@ -26513,6 +26563,10 @@ export type Database = {
           p_min?: number
         }
         Returns: Json
+      }
+      sales_defer_context: {
+        Args: { p_job: string; p_reason: string; p_token: string }
+        Returns: boolean
       }
       sales_delivery_gate: { Args: { p_job: string }; Returns: boolean }
       sales_finish_send: {
