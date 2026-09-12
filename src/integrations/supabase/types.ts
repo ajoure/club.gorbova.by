@@ -18482,6 +18482,269 @@ export type Database = {
         }
         Relationships: []
       }
+      sales_campaigns: {
+        Row: {
+          assignee_user_id: string
+          bot_id: string
+          business_account_id: string
+          code: string
+          created_at: string
+          delay_max_seconds: number
+          delay_min_seconds: number
+          enabled_at: string | null
+          id: string
+          knowledge: Json
+          knowledge_version: string
+          mode: string
+          policy_version: string
+          product_id: string
+          test_user_id: string
+          trigger_phrase: string
+        }
+        Insert: {
+          assignee_user_id: string
+          bot_id: string
+          business_account_id: string
+          code: string
+          created_at?: string
+          delay_max_seconds?: number
+          delay_min_seconds?: number
+          enabled_at?: string | null
+          id?: string
+          knowledge?: Json
+          knowledge_version: string
+          mode?: string
+          policy_version: string
+          product_id: string
+          test_user_id: string
+          trigger_phrase: string
+        }
+        Update: {
+          assignee_user_id?: string
+          bot_id?: string
+          business_account_id?: string
+          code?: string
+          created_at?: string
+          delay_max_seconds?: number
+          delay_min_seconds?: number
+          enabled_at?: string | null
+          id?: string
+          knowledge?: Json
+          knowledge_version?: string
+          mode?: string
+          policy_version?: string
+          product_id?: string
+          test_user_id?: string
+          trigger_phrase?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_campaigns_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_campaigns_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_campaigns_business_account_id_fkey"
+            columns: ["business_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_business_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_campaigns_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_conversations: {
+        Row: {
+          answered_seq: number
+          campaign_id: string
+          human_hold: boolean
+          id: string
+          last_inbound_at: string | null
+          last_inbound_id: string | null
+          last_inbound_seq: number
+          reason: string | null
+          revision: number
+          stage: string
+          started: boolean
+          state: string
+          updated_at: string
+        }
+        Insert: {
+          answered_seq?: number
+          campaign_id: string
+          human_hold?: boolean
+          id?: string
+          last_inbound_at?: string | null
+          last_inbound_id?: string | null
+          last_inbound_seq?: number
+          reason?: string | null
+          revision?: number
+          stage?: string
+          started?: boolean
+          state?: string
+          updated_at?: string
+        }
+        Update: {
+          answered_seq?: number
+          campaign_id?: string
+          human_hold?: boolean
+          id?: string
+          last_inbound_at?: string | null
+          last_inbound_id?: string | null
+          last_inbound_seq?: number
+          reason?: string | null
+          revision?: number
+          stage?: string
+          started?: boolean
+          state?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_conversations_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: true
+            referencedRelation: "sales_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_conversations_last_inbound_id_fkey"
+            columns: ["last_inbound_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_events: {
+        Row: {
+          actor_id: string | null
+          conversation_id: string
+          created_at: string
+          details: Json
+          event: string
+          id: string
+          source_message_id: string | null
+        }
+        Insert: {
+          actor_id?: string | null
+          conversation_id: string
+          created_at?: string
+          details?: Json
+          event: string
+          id?: string
+          source_message_id?: string | null
+        }
+        Update: {
+          actor_id?: string | null
+          conversation_id?: string
+          created_at?: string
+          details?: Json
+          event?: string
+          id?: string
+          source_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_events_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "sales_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_events_source_message_id_fkey"
+            columns: ["source_message_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_jobs: {
+        Row: {
+          candidate: Json | null
+          claim_token: string | null
+          claimed_at: string | null
+          conversation_id: string
+          created_at: string
+          delivery_message_id: number | null
+          due_at: string
+          id: string
+          inbound_id: string
+          inbound_seq: number
+          knowledge_version: string
+          policy_version: string
+          reason: string | null
+          revision: number
+          status: string
+        }
+        Insert: {
+          candidate?: Json | null
+          claim_token?: string | null
+          claimed_at?: string | null
+          conversation_id: string
+          created_at?: string
+          delivery_message_id?: number | null
+          due_at: string
+          id?: string
+          inbound_id: string
+          inbound_seq: number
+          knowledge_version: string
+          policy_version: string
+          reason?: string | null
+          revision: number
+          status?: string
+        }
+        Update: {
+          candidate?: Json | null
+          claim_token?: string | null
+          claimed_at?: string | null
+          conversation_id?: string
+          created_at?: string
+          delivery_message_id?: number | null
+          due_at?: string
+          id?: string
+          inbound_id?: string
+          inbound_seq?: number
+          knowledge_version?: string
+          policy_version?: string
+          reason?: string | null
+          revision?: number
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_jobs_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "sales_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_jobs_inbound_id_fkey"
+            columns: ["inbound_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scheduled_product_access: {
         Row: {
           access_delivery_mode: string
@@ -25461,6 +25724,7 @@ export type Database = {
       }
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
       invoke_process_scheduled_broadcasts: { Args: never; Returns: number }
+      invoke_sales_runtime_worker: { Args: never; Returns: number }
       invoke_telegram_daily_summary: { Args: never; Returns: number }
       is_live_event_presenter: {
         Args: { _live_event_id: string; _user_id: string }
@@ -26163,6 +26427,39 @@ export type Database = {
         Args: { _package_id: string }
         Returns: Json
       }
+      sales_begin_send: {
+        Args: { p_candidate: Json; p_job: string; p_token: string }
+        Returns: boolean
+      }
+      sales_claim_job: { Args: never; Returns: Json }
+      sales_control: {
+        Args: {
+          p_action: string
+          p_actor: string
+          p_campaign: string
+          p_max?: number
+          p_min?: number
+        }
+        Returns: Json
+      }
+      sales_finish_send: {
+        Args: {
+          p_error?: string
+          p_job: string
+          p_message_id: number
+          p_token: string
+        }
+        Returns: boolean
+      }
+      sales_handoff: {
+        Args: {
+          p_job: string
+          p_reason: string
+          p_stop?: boolean
+          p_token: string
+        }
+        Returns: string
+      }
       sales_manager_report_v1: {
         Args: {
           p_from: string
@@ -26191,6 +26488,7 @@ export type Database = {
           tariff_name: string
         }[]
       }
+      sales_queue_reply: { Args: { p_conversation: string }; Returns: string }
       save_session_document_atomic: {
         Args: {
           _expected_template_version_id?: string
@@ -26490,6 +26788,10 @@ export type Database = {
       }
       verify_broadcast_dispatcher_cron_secret: {
         Args: { _candidate: string }
+        Returns: boolean
+      }
+      verify_sales_runtime_cron_secret: {
+        Args: { p_candidate: string }
         Returns: boolean
       }
       verify_telegram_summary_cron_secret: {
