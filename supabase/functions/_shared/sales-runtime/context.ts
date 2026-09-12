@@ -20,6 +20,7 @@ const visible = (x: any, now: number) =>
   (!x.visible_from || Date.parse(x.visible_from) <= now) &&
   (!x.visible_to || Date.parse(x.visible_to) > now);
 export async function loadContext(db: DB, p: any, c: any) {
+  const snapshotAt=new Date().toISOString();
   const salesMessages: any[] = await readFullHistory((from:number,to:number) => read(
     db.from("sales_jobs").select("id,delivery_message_id,candidate,policy_version,kind").eq(
       "conversation_id",
@@ -81,7 +82,7 @@ export async function loadContext(db: DB, p: any, c: any) {
       readFullHistory((from:number,to:number) => read(
         db.from("live_event_comments").select(
           "id,live_event_id,content,created_at",
-        ).eq("user_id", p.test_user_id).order("created_at", {
+        ).eq("user_id", p.test_user_id).lte("created_at",snapshotAt).order("created_at", {
           ascending: false,
         }).order("id").range(from,to),
       )),
@@ -89,7 +90,7 @@ export async function loadContext(db: DB, p: any, c: any) {
         db.from("lesson_progress").select("id,lesson_id,completed_at").eq(
           "user_id",
           p.test_user_id,
-        ).order("id").range(from,to),
+        ).lte("completed_at",snapshotAt).order("id").range(from,to),
       )),
     ]);
   if (
@@ -99,7 +100,7 @@ export async function loadContext(db: DB, p: any, c: any) {
   const orders: any[] = await readFullHistory((from:number,to:number) => read(
     db.from("orders_v2").select("id,product_id,status,flow_id,created_at").or(
       `user_id.eq.${p.test_user_id},profile_id.eq.${profile.id}`,
-    ).eq("is_deleted", false).eq("status", "paid").order("id").range(from,to),
+    ).eq("is_deleted", false).eq("status", "paid").lte("created_at",snapshotAt).order("id").range(from,to),
   ));
   const rules = await read(
     db.from("access_rules").select("id,tariff_id,conditions,target_ref").eq(

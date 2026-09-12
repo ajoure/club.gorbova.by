@@ -81,7 +81,7 @@ const handoff = reason => ({action:/** @type {const} */ ('handoff'), reason});
 export function hasExplicitTechnicalProblem(context) {
   const text = context.history.filter(m => m.role === 'customer').at(-1)?.text ?? '';
   return /(ссылк|страниц|сайт|кнопк|оплат|плат[её]ж|рассроч|сч[её]т|вход|доступ)/iu.test(text)
-    && /(не открывается|не работает|не загружается|не проходит|не могу (?:оплатить|войти|открыть)|не получается (?:оплатить|войти|открыть)|выда[её]т ошибку|ошибка|ошибку|сбой|\b404\b|\b500\b)/iu.test(text);
+    && /(не открывается|не работает|не загружается|не проходит|не могу (?:оплатить|войти|открыть)|не получается (?:оплатить|войти|открыть)|выда[её]т ошибку|ошибка (?:оплаты|при оплате|на сайте)|сбой|\b404\b|\b500\b)/iu.test(text);
 }
 function compose(questionId, facts = [], {greeting = false, bridge = '', stage} = {}) {
   const question = DIALOGUE_QUESTIONS[questionId];

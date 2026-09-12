@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {planDialogueReply, slotValues, DIALOGUE_QUESTIONS} from '../../supabase/functions/_shared/sales-runtime/sequence.mjs';
+import {planDialogueReply, slotValues, DIALOGUE_QUESTIONS, hasExplicitTechnicalProblem} from '../../supabase/functions/_shared/sales-runtime/sequence.mjs';
 const trigger='Хочу программу курса ЦБ';
 const facts=[
  {id:'program',text:'ПОЛНАЯ ПРОГРАММА: 28 модулей',classification:'sales_safe',source:'catalog'},
@@ -121,4 +121,11 @@ test('a goal interpreted as a product question must still carry a verified topic
  assert.equal(r.question_id,'format');assert.deepEqual(r.fact_ids,['topic_vat']);
  const missing=planDialogueReply(c,assess(c,{experience:'new',goal:'known'},{intent:'product_question',question_type:'topic',fact_ids:[]}));
  assert.equal(missing.reason,'no_verified_match_for_goal');
+});
+
+
+test('a course question about accounting for a mistaken payment is not a website incident',()=>{
+ const c=setup();c.history.push({role:'customer',text:'На курсе разбирается ошибка отражения оплаты в учете?'});
+ assert.equal(hasExplicitTechnicalProblem(c),false);
+ c.history.push({role:'customer',text:'У меня ошибка оплаты, не могу продолжить'});assert.equal(hasExplicitTechnicalProblem(c),true);
 });
