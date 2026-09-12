@@ -20,9 +20,9 @@ export async function cbAlumniOfferAllowed(db: SupabaseClient,offerId: string|nu
  const {data:offer,error}=await db.from("tariff_offers").select("meta").eq("id",offerId).maybeSingle();
  if(error||!offer)throw Error("offer_eligibility_unavailable");
  if(forNewSale&&offer.meta?.sales_legacy_only===true)return false;
- if(offer.meta?.sales_eligibility!=="cb2_since_2024")return true;
+ if(!offer.meta?.purchase_eligibility)return true;
  if(!userId)return false;
- const {data,error:eligibilityError}=await db.rpc("sales_cb_alumni_eligibility",{p_user:userId});
+ const {data,error:eligibilityError}=await db.rpc("sales_offer_eligibility",{p_user:userId,p_offer:offerId});
  if(eligibilityError)throw Error("eligibility_unavailable");
  return data?.eligible===true;
 }

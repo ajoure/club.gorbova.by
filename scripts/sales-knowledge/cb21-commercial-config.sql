@@ -95,7 +95,7 @@ BEGIN
    offer_price:=CASE WHEN p.role='gift' THEN 1 ELSE p.price END;
    j:=pg_temp.cb21_map_config(to_jsonb(o))||jsonb_build_object('id',op.target,'tariff_id',p.target,'amount',offer_price);
    j:=jsonb_set(j,'{meta}',(j->'meta')||jsonb_build_object('sales_generation',CASE WHEN p.role='alumni' THEN 'cb21-alumni-v2' ELSE 'cb21-full-sync-v2' END,'source_offer_id',o.id));
-   IF p.role='alumni' THEN j:=jsonb_set(j,'{meta}',j->'meta'||'{"sales_eligibility":"cb2_since_2024","sales_discount_percent":50}'::jsonb); END IF;
+   IF p.role='alumni' THEN j:=jsonb_set(j,'{meta}',j->'meta'||'{"purchase_eligibility":{"kind":"prior_purchase","sources":[{"product_id":"7101ed3c-7839-4a74-ad95-aa0660369b22","purchased_from":"2024-01-01T00:00:00+03:00","allow_paid_import":true,"excluded_tariff_ids":["trf_191190b6-158"]},{"product_id":"3e43fb28-8322-41bc-bfee-714731bdc630","allow_paid_import":false,"excluded_tariff_ids":["04e6c302-f1ff-4d7d-a588-d30681e7a450"]}]}}'::jsonb); END IF;
    IF j->'meta' ? 'document_defaults' THEN
     j:=jsonb_set(j,'{meta,document_defaults}',((j#>'{meta,document_defaults}')-'service_period_from'-'service_period_to')||jsonb_build_object('amount',offer_price,'unit_price',offer_price));
     IF cfg->'document_periods'->p.role IS NOT NULL THEN
@@ -121,10 +121,6 @@ BEGIN
    END IF;
   END LOOP;
  END LOOP;
- UPDATE _cb21_tariffs tt SET meta=tt.meta||jsonb_build_object('sales_sync_source_tariff_id',pp.source,'sales_vip_included',EXISTS(
-  SELECT 1 FROM _cb21_rules rr WHERE rr.tariff_id=tt.id AND rr.target_ref='4365e913-36f1-432e-ab16-748c3ca6826a'
-  AND (rr.conditions->>'access_mode'='full' OR rr.conditions->'allowed_module_ids' @> '["60aa7a27-5346-4ba0-9686-d297e14d49cf","9ce7a575-bbe4-45f1-8c4f-262b432127bf","83544104-b2c1-48c2-a0c9-015ceec012a1"]'::jsonb)))
- FROM _cb21_pairs pp WHERE pp.target=tt.id;
  FOR o IN SELECT * FROM public.tariff_offers WHERE id IN('4d01edc1-6189-4017-ba43-922e7e9479ac','9687b2a8-585d-4770-9505-2a01030a093a','80780ddb-cafd-4427-ae8d-872853596120','e5b64e47-08d0-4ef5-8bed-2524d1ac8170') LOOP
   -- Keep all historical offers resolvable for existing links/obligations. Only
   -- remove them from new-sale selection; never rewrite their amounts/settings.

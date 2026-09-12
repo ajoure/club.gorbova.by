@@ -69,7 +69,13 @@ export interface InstallmentConfig {
   max_charge_attempts?: number;
 }
 
+export interface PurchaseEligibility {
+  kind: "prior_purchase";
+  sources: {product_id:string;purchased_from?:string;allow_paid_import?:boolean;excluded_tariff_ids?:string[]}[];
+}
+
 export interface OfferMetaConfig {
+  purchase_eligibility?: PurchaseEligibility;
   /** Existing payment links still resolve it; new sales use the current generation. */
   sales_legacy_only?: boolean;
   welcome_message?: {

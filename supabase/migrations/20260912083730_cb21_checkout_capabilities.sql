@@ -17,22 +17,29 @@ ALTER TABLE public.sales_checkout_operations ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.sales_checkout_operations FROM PUBLIC,anon,authenticated;
 GRANT ALL ON public.sales_checkout_operations TO service_role;
 
-CREATE FUNCTION public.sales_cb_alumni_eligibility(p_user uuid) RETURNS jsonb
+-- Eligibility is an administrator-edited offer setting. No product IDs or dates
+-- are embedded in the evaluator. The same recipient proof serves every writer.
+CREATE FUNCTION public.sales_offer_eligibility(p_user uuid,p_offer uuid) RETURNS jsonb
 LANGUAGE sql STABLE SECURITY INVOKER SET search_path='' AS $$
- WITH eligible_orders AS (
- SELECT o.* FROM public.orders_v2 o
- WHERE (o.user_id=p_user OR o.profile_id IN (SELECT id FROM public.profiles WHERE user_id=p_user))
+ WITH config AS (
+ SELECT meta->'purchase_eligibility' AS rule FROM public.tariff_offers WHERE id=p_offer
+ ), eligible_orders AS (
+ SELECT o.*,source.value AS source FROM public.orders_v2 o CROSS JOIN config c
+ CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(c.rule->'sources')='array' THEN c.rule->'sources' ELSE '[]'::jsonb END) source
+ WHERE c.rule->>'kind'='prior_purchase' AND p_user IS NOT NULL
+   AND (o.user_id=p_user OR o.profile_id IN (SELECT id FROM public.profiles WHERE user_id=p_user))
    AND NOT o.is_deleted AND NOT o.is_trial AND o.status::text='paid' AND o.final_price>0
-   AND o.product_id IN ('7101ed3c-7839-4a74-ad95-aa0660369b22','3e43fb28-8322-41bc-bfee-714731bdc630')
-   AND (o.product_id<>'7101ed3c-7839-4a74-ad95-aa0660369b22' OR coalesce(o.deal_date,o.created_at)>='2024-01-01'::timestamptz)
-   AND coalesce(o.tariff_id::text,'') NOT IN ('04e6c302-f1ff-4d7d-a588-d30681e7a450','trf_191190b6-158')
+   AND o.product_id::text=source.value->>'product_id'
+   AND (nullif(source.value->>'purchased_from','') IS NULL OR coalesce(o.deal_date,o.created_at)>=(source.value->>'purchased_from')::timestamptz)
+   AND NOT coalesce(source.value->'excluded_tariff_ids','[]'::jsonb) ? coalesce(o.tariff_id::text,'')
    AND NOT EXISTS(SELECT 1 FROM public.payments_v2 pm WHERE pm.order_id=o.id AND NOT pm.is_deleted
      AND (pm.status::text='refunded' OR coalesce(pm.refunded_amount,0)>0 OR pm.transaction_type='refund'))
  ), proofs AS (
  SELECT o.id,
  CASE WHEN (SELECT coalesce(sum(pm.amount),0) FROM public.payments_v2 pm
    WHERE pm.order_id=o.id AND NOT pm.is_deleted AND pm.status::text='succeeded' AND pm.amount>0 AND pm.currency=o.currency)>=o.final_price THEN 'provider'
- WHEN o.product_id='7101ed3c-7839-4a74-ad95-aa0660369b22' AND o.deal_date>='2024-01-01'::timestamptz
+ WHEN o.source->>'allow_paid_import'='true' AND o.deal_date IS NOT NULL
+   AND (nullif(o.source->>'purchased_from','') IS NULL OR o.deal_date>=(o.source->>'purchased_from')::timestamptz)
    AND coalesce(o.meta->>'gc_deal_id','')<>'' AND coalesce(o.meta->>'import_source','')<>'' THEN 'getcourse_paid_import'
  END AS proof FROM eligible_orders o
  )
@@ -61,8 +68,8 @@ BEGIN
  VALUES(c.id,'checkout_authorized',j.inbound_id,jsonb_build_object('operation_id',op.id,'endpoint',p_endpoint));
  RETURN p.assignee_user_id;
 END $$;
-REVOKE ALL ON FUNCTION public.sales_cb_alumni_eligibility(uuid),public.sales_consume_checkout_capability(text,text,jsonb) FROM PUBLIC,anon,authenticated;
-GRANT EXECUTE ON FUNCTION public.sales_cb_alumni_eligibility(uuid),public.sales_consume_checkout_capability(text,text,jsonb) TO service_role;
+REVOKE ALL ON FUNCTION public.sales_offer_eligibility(uuid,uuid),public.sales_consume_checkout_capability(text,text,jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.sales_offer_eligibility(uuid,uuid),public.sales_consume_checkout_capability(text,text,jsonb) TO service_role;
 
 CREATE FUNCTION public.sales_authorize_invoice_document(p_hash text,p_body jsonb) RETURNS uuid
 LANGUAGE plpgsql SECURITY INVOKER SET search_path='' AS $$

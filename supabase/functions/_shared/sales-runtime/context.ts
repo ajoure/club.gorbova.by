@@ -1,3 +1,4 @@
+import { loadPublicTariffAccess } from "../public-tariff-access.ts";
 import { DB, read, rpc } from "./db.ts";
 import { DISCLOSURE } from "./replies.mjs";
 export type Fact = {
@@ -177,9 +178,12 @@ export async function loadContext(db: DB, p: any, c: any) {
       ).in("tariff_id", tariffs.map((t: any) => t.id)),
     )
     : [];
-  const alumniEligibility = await rpc(db,"sales_cb_alumni_eligibility",{p_user:p.test_user_id});
-  const isCurrentTariff = (t:any) => t.is_public || (t.id === "dbdb839e-84a0-4c00-8b8c-e60e4c558d94" && alumniEligibility.eligible);
-  const isCurrentOffer = (o:any) => o.tariff_id !== "dbdb839e-84a0-4c00-8b8c-e60e4c558d94" || o.meta?.sales_generation === "cb21-alumni-v2";
+  const eligibilityResults = await Promise.all(offers.filter((o:any)=>o.meta?.purchase_eligibility && !o.meta?.sales_legacy_only)
+    .map(async(o:any)=>({offer_id:o.id,...await rpc(db,"sales_offer_eligibility",{p_user:p.test_user_id,p_offer:o.id})})));
+  const alumniEligibility = {eligible:eligibilityResults.some((e:any)=>e.eligible),offers:eligibilityResults};
+  const isCurrentOffer = (o:any) => !o.meta?.sales_legacy_only && (!o.meta?.purchase_eligibility || eligibilityResults.some((e:any)=>e.offer_id===o.id&&e.eligible));
+  const isCurrentTariff = (t:any) => t.is_public || offers.some((o:any)=>o.tariff_id===t.id&&o.meta?.purchase_eligibility&&isCurrentOffer(o));
+  const accessSummary = await loadPublicTariffAccess(db,p.product_id,tariffs);
   const prices: string[] = [];
   for (const t of tariffs.filter((t: any) => isCurrentTariff(t) && visible(t, now))) {
     const offer = offers.find((o: any) =>
@@ -204,6 +208,9 @@ export async function loadContext(db: DB, p: any, c: any) {
           included_module_ids: included.map((m: any) => m.id),
         });
       }
+    }
+    for(const [index,benefit] of (accessSummary[t.id]?.benefits ?? []).entries()) {
+      facts.push({id:`benefit_${t.id}_${index}`,tariff_id:t.id,text:`Тариф «${t.name}»: ${benefit.title}${benefit.days ? ` — ${benefit.days} дней` : ""}${benefit.conditional ? " (при выполнении условий тарифа)" : ""}.`,source:"access_rules:live",classification:"sales_safe",kind:"offer"});
     }
     if(!t.meta?.course_access&&t.access_days) add("access_"+t.id,`На тарифе «${t.name}» срок доступа — ${t.access_days} дней с покупки.`,"tariffs:"+t.id);
     const access = t.meta?.course_access;
@@ -255,6 +262,8 @@ export async function loadContext(db: DB, p: any, c: any) {
   }
   return {
     facts,
+    publicTariffIds:tariffs.filter((t:any)=>t.is_public).map((t:any)=>t.id),
+    privateFactIds:facts.filter((f:any)=>tariffs.some((t:any)=>!t.is_public&&(f.tariff_id===t.id||f.id==="access_"+t.id))).map((f:any)=>f.id),
     checkoutOptions,
     checkoutAddons,
     legalEntities,
@@ -275,9 +284,9 @@ export async function loadContext(db: DB, p: any, c: any) {
       purchases,
       alumni_eligibility:alumniEligibility,
       current_course_paid:orders.some((o:any)=>o.product_id===p.product_id),
-      // Exact confirmed CB20/CB21 product IDs, not a product-name inference.
+      // Purchase proof follows configured prior-product eligibility, not names.
       // Purchase remains distinct from attendance/completion.
-      verified_cb_purchase: alumniEligibility.eligible || orders.some((o: any) => [p.product_id, "3e43fb28-8322-41bc-bfee-714731bdc630"].includes(o.product_id)),
+      verified_cb_purchase: alumniEligibility.eligible || orders.some((o: any) => o.product_id===p.product_id),
       purchase_history_complete: orders.length < 200,
       webinar_comments: comments.map((x: any) => ({
         text: x.content,
@@ -296,6 +305,7 @@ export async function loadContext(db: DB, p: any, c: any) {
       modules,
       checkoutAddons,
       alumniEligibility,
+      accessSummary,
     }),
   };
 }

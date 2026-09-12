@@ -26,6 +26,7 @@ before(async()=>{
  await db.exec(`CREATE TABLE live_events(id uuid PRIMARY KEY,room_state text,platform_status text,status text,webinar_completed_at timestamptz,event_type text,autoweb_config jsonb); CREATE TABLE live_event_sessions(id uuid DEFAULT gen_random_uuid(),live_event_id uuid,starts_at timestamptz,ends_at timestamptz,status text);`);
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912063632_cb21_telegram_sales_runtime.sql',import.meta.url),'utf8'));
  await db.exec(`CREATE TABLE profiles(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid); INSERT INTO profiles(user_id) VALUES('${owner}');
+ CREATE TABLE tariff_offers(id uuid PRIMARY KEY,meta jsonb DEFAULT '{}');
  CREATE TABLE orders_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid,profile_id uuid,product_id uuid,status text,is_deleted boolean DEFAULT false,is_trial boolean DEFAULT false,final_price numeric,deal_date timestamptz,meta jsonb DEFAULT '{}',offer_id uuid,tariff_id text,created_at timestamptz DEFAULT now(),currency text DEFAULT 'BYN');
  CREATE TABLE payments_v2(id uuid DEFAULT gen_random_uuid(),order_id uuid,status text,amount numeric,is_deleted boolean DEFAULT false,refunded_amount numeric,transaction_type text,currency text DEFAULT 'BYN');`);
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912082931_cb21_dialogue_delivery_windows.sql',import.meta.url),'utf8'));
@@ -201,17 +202,35 @@ test('pause revokes an unused checkout capability and browser roles cannot acces
  const p=await fixture();await db.exec("UPDATE sales_campaigns SET policy_version='cb21-v2',knowledge=knowledge||'{\"checkout_enabled\":true}'");await msg(230);const j=await due();const c=await conversation();const body={user_id:owner,responsible_user_id:owner};
  await db.query("INSERT INTO sales_checkout_operations(job_id,conversation_id,quote_fingerprint,endpoint,token_hash,request_body) VALUES($1,$2,'quote','admin-create-public-link',$3,$4)",[j.id,c.id,'b'.repeat(64),body]);
  await rpc('sales_control',[p,'pause',owner]);assert.equal(await rpc('sales_consume_checkout_capability',['b'.repeat(64),'admin-create-public-link',body]),null);
- for(const role of ['anon','authenticated']){await db.exec(`SET ROLE ${role}`);await assert.rejects(db.exec('SELECT * FROM sales_checkout_operations'),/permission denied/);await assert.rejects(rpc('sales_cb_alumni_eligibility',[owner]),/permission denied/);await db.exec('RESET ROLE');}
+ for(const role of ['anon','authenticated']){await db.exec(`SET ROLE ${role}`);await assert.rejects(db.exec('SELECT * FROM sales_checkout_operations'),/permission denied/);await assert.rejects(rpc('sales_offer_eligibility',[owner,product]),/permission denied/);await db.exec('RESET ROLE');}
 });
 test('alumni evidence excludes gifts, unrelated purchases and refunds; distinguishes imported paid order',async()=>{
- await fixture();const o=(await one("INSERT INTO orders_v2(user_id,product_id,status,final_price) VALUES($1,'3e43fb28-8322-41bc-bfee-714731bdc630','paid',2650) RETURNING id",[owner])).id;
- assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).eligible,false);
- await db.query("INSERT INTO payments_v2(order_id,status,amount) VALUES($1,'succeeded',2650)",[o]);assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).proof,'provider');
- await db.exec('UPDATE payments_v2 SET refunded_amount=100');assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).eligible,false);
+ await fixture();await db.query("INSERT INTO tariff_offers(id,meta) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET meta=excluded.meta",[product,{purchase_eligibility:{kind:'prior_purchase',sources:[{product_id:'3e43fb28-8322-41bc-bfee-714731bdc630',excluded_tariff_ids:['04e6c302-f1ff-4d7d-a588-d30681e7a450']},{product_id:'7101ed3c-7839-4a74-ad95-aa0660369b22',purchased_from:'2024-01-01',allow_paid_import:true}]}}]);const o=(await one("INSERT INTO orders_v2(user_id,product_id,status,final_price) VALUES($1,'3e43fb28-8322-41bc-bfee-714731bdc630','paid',2650) RETURNING id",[owner])).id;
+ assert.equal((await rpc('sales_offer_eligibility',[owner,product])).eligible,false);
+ await db.query("INSERT INTO payments_v2(order_id,status,amount) VALUES($1,'succeeded',2650)",[o]);assert.equal((await rpc('sales_offer_eligibility',[owner,product])).proof,'provider');
+ await db.exec('UPDATE payments_v2 SET refunded_amount=100');assert.equal((await rpc('sales_offer_eligibility',[owner,product])).eligible,false);
  await db.exec("DELETE FROM payments_v2; UPDATE orders_v2 SET product_id='7101ed3c-7839-4a74-ad95-aa0660369b22',deal_date='2024-05-14',meta='{\"gc_deal_id\":\"synthetic\",\"import_source\":\"getcourse\"}'");
- assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).proof,'getcourse_paid_import');
- await db.exec("UPDATE orders_v2 SET deal_date='2023-01-01'");assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).eligible,false);
- await db.exec('UPDATE orders_v2 SET final_price=0');assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).eligible,false);
+ assert.equal((await rpc('sales_offer_eligibility',[owner,product])).proof,'getcourse_paid_import');
+ await db.exec("UPDATE orders_v2 SET deal_date='2023-01-01'");assert.equal((await rpc('sales_offer_eligibility',[owner,product])).eligible,false);
+ await db.exec('UPDATE orders_v2 SET final_price=0');assert.equal((await rpc('sales_offer_eligibility',[owner,product])).eligible,false);
+});
+test('administrator edits to offer eligibility take effect immediately, with no hardcoded course IDs',async()=>{
+ await fixture();const source=randomUUID(),gift=randomUUID(),offer=randomUUID();
+ const rule={kind:'prior_purchase',sources:[{product_id:source,purchased_from:'2025-01-01',excluded_tariff_ids:[gift]}]};
+ await db.query('INSERT INTO tariff_offers(id,meta) VALUES($1,$2)',[offer,{purchase_eligibility:rule}]);
+ const order=(await one("INSERT INTO orders_v2(user_id,product_id,tariff_id,status,final_price,deal_date) VALUES($1,$2,$3,'paid',100,'2025-06-01') RETURNING id",[owner,source,gift])).id;
+ await db.query("INSERT INTO payments_v2(order_id,status,amount,currency) VALUES($1,'succeeded',100,'USD')",[order]);
+ assert.equal((await rpc('sales_offer_eligibility',[owner,offer])).eligible,false);
+ rule.sources[0].excluded_tariff_ids=[];
+ await db.query('UPDATE tariff_offers SET meta=$2 WHERE id=$1',[offer,{purchase_eligibility:rule}]);
+ assert.equal((await rpc('sales_offer_eligibility',[owner,offer])).eligible,false); // Different currency is not proof.
+ await db.exec("UPDATE payments_v2 SET currency='BYN'");
+ assert.equal((await rpc('sales_offer_eligibility',[owner,offer])).eligible,true);
+ rule.sources[0].purchased_from='2026-01-01';
+ await db.query('UPDATE tariff_offers SET meta=$2 WHERE id=$1',[offer,{purchase_eligibility:rule}]);
+ assert.equal((await rpc('sales_offer_eligibility',[owner,offer])).eligible,false);
+ await db.query('UPDATE tariff_offers SET meta=$2 WHERE id=$1',[offer,{purchase_eligibility:{kind:'unsupported',sources:rule.sources}}]);
+ assert.equal((await rpc('sales_offer_eligibility',[owner,offer])).eligible,false);
 });
 test('invoice document capability authorizes only the created order and exact generation body once',async()=>{
  const p=await fixture();await db.exec("UPDATE sales_campaigns SET policy_version='cb21-v2',knowledge=knowledge||'{\"checkout_enabled\":true}'");await msg(240);const j=await due();const c=await conversation();const offer=randomUUID();const hash='c'.repeat(64),body={target_user_id:owner,responsible_user_id:owner,offer_id:offer};

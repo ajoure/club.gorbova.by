@@ -195,7 +195,7 @@ const resolveVisualPricing = (tariff: PublicTariff) => {
     old,
     // Marketing minimum is configured separately from real installment charges.
     // Preserve the legacy fallback for tariffs without an explicit minimum.
-    monthly: current ? finiteAmount(cardConfig?.installment_from_byn) ?? Math.round(current / 12) : null,
+    monthly: current ? finiteAmount(cardConfig?.installment_from_byn) ?? (tariff.access_summary ? null : Math.round(current / 12)) : null,
     suffix,
   };
 };
@@ -340,10 +340,17 @@ export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTar
   const accessItem: FeatureItem | null = access?.kind === "course_end_calendar_months" && Number(access.months) > 0
     ? { bold: `Доступ ${access.months} месяцев`, text: "после окончания курса" }
     : tariff.access_days > 0 ? { bold: `Доступ ${tariff.access_days} дней`, text: "с момента покупки" } : null;
-  const core = card.core.map(item => item.bold?.startsWith("Доступ ") && !item.bold.includes("клуб") && !item.bold.includes("Клуб") && accessItem ? accessItem : item);
-  const programme = resolveCbTariffCardIndex(tariff,index) === 0 && tariff.meta?.sales_vip_included === true
-    ? [...card.programme.slice(0,2), ...CARDS[1].programme.filter(item=>item.badge === "VIP"), ...card.programme.slice(2)]
+  const summary = tariff.access_summary;
+  const core: FeatureItem[] = summary
+    ? [...(accessItem ? [accessItem] : []), ...summary.benefits.map(b=>({text:`${b.title}${b.days ? ` — ${b.days} дней` : ""}${b.conditional ? " (при выполнении условий тарифа)" : ""}`}))]
+    : card.core.map(item => item.bold?.startsWith("Доступ ") && !item.bold.includes("клуб") && !item.bold.includes("Клуб") && accessItem ? accessItem : item);
+  const programme: FeatureItem[] = summary
+    ? summary.modules.map(m=>({text:m.title+(m.conditional ? " (за приобретённый период)" : ""),locked:!m.included}))
     : card.programme;
+  // Further benefits and descriptions are edited in the existing Tariff Features form.
+  const credentials: FeatureItem[] = summary
+    ? tariff.features.map(f=>({text:f.text}))
+    : card.credentials;
   const pricing = resolveVisualPricing(tariff);
   const offers = selectAndSortCbOffers(tariff.offers ?? []);
 
@@ -362,7 +369,7 @@ export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTar
           className="text-[27px] font-bold uppercase leading-[1.15] tracking-[-0.01em]"
           style={{ color: CB_PALETTE.accent, fontFamily: PRICE_FONT }}
         >
-          {card.title}
+          {summary ? tariff.name : card.title}
         </h3>
 
         <ul
@@ -378,23 +385,21 @@ export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTar
           className="mt-6 rounded-[25px] px-[14px] py-[20px] text-[15px] leading-[1.24] sm:px-[16px]"
           style={{ background: CB_PALETTE.accent, color: "#ffffff" }}
         >
-          <ul className="space-y-[10px]">
-            {programme.map((item, itemIndex) => (
-              <FeatureRow key={itemIndex} item={item} dark />
-            ))}
-          </ul>
+          {summary ? <details><summary className="cursor-pointer font-bold">Программа и модули ({summary.modules.filter(m=>m.included).length})</summary>
+            <ul className="mt-4 space-y-[10px]">{programme.map((item,itemIndex)=><FeatureRow key={itemIndex} item={item} dark/>)}</ul>
+          </details> : <ul className="space-y-[10px]">{programme.map((item,itemIndex)=><FeatureRow key={itemIndex} item={item} dark/>)}</ul>}
         </div>
 
-        <div
+        {credentials.length > 0 && <div
           className="mt-[10px] rounded-[25px] px-[14px] py-[20px] text-[15px] leading-[1.24] sm:px-[16px]"
           style={{ background: "#302c2c", color: "#ffffff" }}
         >
           <ul className="space-y-[11px]">
-            {card.credentials.map((item, itemIndex) => (
+            {credentials.map((item, itemIndex) => (
               <FeatureRow key={itemIndex} item={item} dark />
             ))}
           </ul>
-        </div>
+        </div>}
 
         <div className="mt-auto pt-[66px]" style={{ fontFamily: PRICE_FONT }}>
           {pricing.old ? (
@@ -416,7 +421,7 @@ export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTar
                 ОТ {formatAmount(pricing.monthly)} {pricing.suffix}/МЕС
               </p>
             ) : null}
-            {card.period ? (
+            {!summary && card.period ? (
               <p
                 className="shrink-0 rounded-full px-[15px] py-[3px] text-[12px] leading-none"
                 style={{ background: CB_PALETTE.accent, color: "#ffffff" }}

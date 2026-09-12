@@ -99,11 +99,11 @@ Deno.serve(async (request) => {
       const live = await loadContext(db,p,c);
       // Only public product facts are reused. Never leak the owner's CRM/profile
       // into the synthetic learner or let their real purchase alter this test.
-      const publicTariffs = new Set(["3c749a5d-fa43-5552-b064-c66611dedd58","3b427617-b192-57fa-9ac4-e85c28a7ad2f","c558c63b-dd2f-5cc8-a990-ef4f0b3064c2"]);
+      const publicTariffs = new Set(live.publicTariffIds);
       const context = {...live,history:[] as typeof live.history,client:{purchases:[],verified_cb_purchase:false,
-        alumni_eligibility:{eligible:false},current_course_paid:false,purchase_history_complete:true,
+        alumni_eligibility:{eligible:false,offers:[]},current_course_paid:false,purchase_history_complete:true,
         webinar_comments:[],marked_completed_lessons:0,lesson_completion_is_not_attendance_proof:true},
-        facts:live.facts.filter((f:any)=>f.id!=="prices"&&(!f.tariff_id||publicTariffs.has(f.tariff_id))&&!f.id.includes("dbdb839e")),
+        facts:live.facts.filter((f:any)=>f.id!=="prices"&&(!f.tariff_id||publicTariffs.has(f.tariff_id))&&!live.privateFactIds.includes(f.id)),
         checkoutOptions:live.checkoutOptions.filter((o:any)=>publicTariffs.has(o.tariff_id)),
         legalEntities:[],lastCheckout:null,
         firstReply:true,stage:"qualification",lastQuestionId:null as string|null,relevantFactIds:[] as string[]};

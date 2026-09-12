@@ -81,7 +81,7 @@ Deno.test('bank and invoice capabilities select exact canonical endpoint and kno
 Deno.test('all writers share recipient eligibility, guest denial and existing legacy-link exemption',async()=>{
  let meta:any={};const calls:any[]=[];const db:any={from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{meta},error:null})})})}),rpc:async(_name:string,args:any)=>{calls.push(args.p_user);return {data:{eligible:args.p_user==='eligible'},error:null}}};
  eq(await cbAlumniOfferAllowed(db,'offer',null,true),true);eq(calls.length,0);
- meta={sales_eligibility:'cb2_since_2024'};
+ meta={purchase_eligibility:{kind:'prior_purchase',sources:[]}};
  eq(await cbAlumniOfferAllowed(db,'offer',null,true),false);eq(calls.length,0);
  eq(await cbAlumniOfferAllowed(db,'offer','unverified',true),false);
  eq(await cbAlumniOfferAllowed(db,'offer','eligible',true),true);eq(calls,['unverified','eligible']);

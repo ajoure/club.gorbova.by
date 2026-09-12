@@ -117,7 +117,7 @@ describe("CbNative tariff access matrix", () => {
     const {container,rerender}=render(<CbNativeTariffCard tariff={{...tariff,access_days:180,meta:{course_access:{kind:"course_end_calendar_months",months:6}}}} index={0} onSelectOffer={()=>undefined}/>);
     expect(container.textContent).toContain("после окончания курса");
     expect(container.textContent).not.toContain("«Делегирование»");
-    rerender(<CbNativeTariffCard tariff={{...tariff,access_days:180,meta:{sales_vip_included:true}}} index={0} onSelectOffer={()=>undefined}/>);
+    rerender(<CbNativeTariffCard tariff={{...tariff,access_days:180,meta:{},access_summary:{modules:["«Делегирование»","«Найм, адаптация и удержание персонала»","«Таймлайн месяца»"].map(title=>({id:title,title,included:true,conditional:false})),benefits:[]}}} index={0} onSelectOffer={()=>undefined}/>);
     expect(container.textContent).toContain("Доступ 180 дней");
     expect(container.textContent).toContain("с момента покупки");
     expect(container.textContent).not.toContain("после окончания курса");
