@@ -24,6 +24,7 @@
  *   • Stage E (selective regeneration) — НЕ здесь.
  */
 import { useMemo, useState } from "react";
+import { packageDocumentTotal } from '@/utils/documentFunctionError';
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -284,7 +285,7 @@ function BatchRowItem({ batch, defaultOpen = false }: { batch: BatchRow; default
   const [open, setOpen] = useState(defaultOpen);
   const runMode = (batch.meta as any)?.run_mode as string | undefined;
   const generated = (batch.meta as any)?.generated ?? 0;
-  const total = (batch.meta as any)?.total_items ?? "—";
+  const total = packageDocumentTotal(batch.meta ?? {});
   const errs = (batch.meta as any)?.errors ?? 0;
   const blocked = (batch.meta as any)?.blocked ?? 0;
   return (

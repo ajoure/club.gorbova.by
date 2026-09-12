@@ -9,6 +9,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { documentFunctionError } from '@/utils/documentFunctionError';
 
 export interface GenerationResult {
   success: boolean;
@@ -50,16 +51,18 @@ export function useCorporatePackageGeneration() {
       );
 
       if (error) {
+        const safeError = await documentFunctionError(error, data);
         const errorResult: GenerationResult = {
           success: false,
-          error: error.message || 'Generation failed',
+          error: safeError.message,
         };
         setResult(errorResult);
-        toast.error('Ошибка генерации: ' + (error.message || 'Неизвестная ошибка'));
+        toast.error(safeError.message);
         return errorResult;
       }
 
-      const genResult = data as GenerationResult;
+      const genResult = { ...data } as GenerationResult;
+      if (!genResult.success) genResult.error = (await documentFunctionError(null, data)).message;
       setResult(genResult);
 
       if (genResult.success) {
@@ -72,10 +75,10 @@ export function useCorporatePackageGeneration() {
     } catch (err: unknown) {
       const errorResult: GenerationResult = {
         success: false,
-        error: err instanceof Error ? err.message : 'Unknown error',
+        error: (await documentFunctionError(err)).message,
       };
       setResult(errorResult);
-      toast.error('Ошибка генерации');
+      toast.error(errorResult.error);
       return errorResult;
     } finally {
       setIsGenerating(false);
