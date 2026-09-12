@@ -1,13 +1,10 @@
 import { database, json, read, rpc } from "../_shared/sales-runtime/db.ts";
 import { evaluateReply } from "../_shared/sales-runtime/dialogue-policy.mjs";
-import {
-  BRIDGES,
-  policyInput,
-  QUESTIONS,
-  renderSelection,
-  SALES_SYSTEM,
-} from "../_shared/sales-runtime/replies.mjs";
+import { policyInput } from "../_shared/sales-runtime/replies.mjs";
+import {isActivation, planDialogueReply, SEQUENCE_SYSTEM, slotValues} from "../_shared/sales-runtime/sequence.mjs";
+import {SEQUENCE_FIXTURES} from "../_shared/sales-runtime/sequence-fixtures.mjs";
 import { loadContext } from "../_shared/sales-runtime/context.ts";
+import {checkoutReply} from "../_shared/sales-runtime/checkout.ts";
 import { notifyAssignments } from "../_shared/sales-runtime/notify.ts";
 async function draftReply(
   context: Awaited<ReturnType<typeof loadContext>>,
@@ -27,17 +24,21 @@ async function draftReply(
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
         temperature: 0.2,
-        max_tokens: 600,
+        max_tokens: 1400,
         response_format: { type: "json_object" },
-        messages: [{ role: "system", content: SALES_SYSTEM }, {
+        messages: [{ role: "system", content: SEQUENCE_SYSTEM }, {
           role: "user",
           content: JSON.stringify({
             stage,
-            facts: context.facts,
-            questions: QUESTIONS,
-            bridges: BRIDGES,
+            activation: isActivation(context),
+            facts: isActivation(context) || context.firstReply ? [] : context.facts,
+            slot_values: slotValues,
             history: context.history,
             client: context.client,
+            checkout_options: isActivation(context) || context.firstReply ? [] : context.checkoutOptions,
+            checkout_quote: isActivation(context) || context.firstReply ? null : context.lastCheckout,
+            checkout_addons: isActivation(context) || context.firstReply ? [] : context.checkoutAddons,
+            legal_entities: isActivation(context) || context.firstReply ? [] : context.legalEntities,
           }),
         }],
       }),
@@ -46,9 +47,7 @@ async function draftReply(
   if (!response.ok) throw Error("provider_failed");
   const result = await response.json();
   const selection = JSON.parse(result.choices?.[0]?.message?.content || "null");
-  return renderSelection(selection, context.facts, {
-    firstReply: context.firstReply,
-  });
+  return planDialogueReply(context, selection);
 }
 Deno.serve(async (request) => {
   if (request.method !== "POST") {
@@ -69,7 +68,7 @@ Deno.serve(async (request) => {
       return json({
         ok: true,
         provider_configured: !!Deno.env.get("LOVABLE_API_KEY"),
-        runtime: "cb21-v1",
+        runtime: "cb21-v2",
       });
     }
     if (body.action === "preview") {
@@ -90,6 +89,37 @@ Deno.serve(async (request) => {
         fact_count: context.facts.length,
         candidate,
       });
+    }
+    if (body.action === "preview_scenario") {
+      const fixtureName = body.scenario as keyof typeof SEQUENCE_FIXTURES;
+      if (!Object.hasOwn(SEQUENCE_FIXTURES, fixtureName)) return json({error:"unknown_scenario"},400);
+      const p = await read(db.from("sales_campaigns").select("*").eq("code","cb21-owner-test").single());
+      const c = await read(db.from("sales_conversations").select("*").eq("campaign_id",p.id).single());
+      if (p.mode !== "off" || !c.human_hold) return json({error:"pause_and_disable_required"},409);
+      const live = await loadContext(db,p,c);
+      // Only public product facts are reused. Never leak the owner's CRM/profile
+      // into the synthetic learner or let their real purchase alter this test.
+      const publicTariffs = new Set(live.publicTariffIds);
+      const context = {...live,history:[] as typeof live.history,client:{purchases:[],verified_cb_purchase:false,
+        alumni_eligibility:{eligible:false,offers:[]},current_course_paid:false,purchase_history_complete:true,
+        webinar_comments:[],marked_completed_lessons:0,lesson_completion_is_not_attendance_proof:true},
+        facts:live.facts.filter((f:any)=>f.id!=="prices"&&(!f.tariff_id||publicTariffs.has(f.tariff_id))&&!live.privateFactIds.includes(f.id)),
+        checkoutOptions:live.checkoutOptions.filter((o:any)=>publicTariffs.has(o.tariff_id)),
+        legalEntities:[],lastCheckout:null,
+        firstReply:true,stage:"qualification",lastQuestionId:null as string|null,relevantFactIds:[] as string[]};
+      context.checkoutAddons=live.checkoutAddons.filter((a:any)=>context.checkoutOptions.some((o:any)=>o.id===a.parent_offer_id));
+      const steps = [];
+      for (const [incoming,expected] of SEQUENCE_FIXTURES[fixtureName]) {
+        context.history.push({role:"customer",text:incoming,at:new Date().toISOString(),question_id:null});
+        const candidate = await draftReply(context,context.stage);
+        const actual = candidate.action === "reply" ? candidate.question_id : candidate.action;
+        steps.push({incoming,expected,actual,pass:actual===expected,candidate});
+        if (actual !== expected || candidate.action !== "reply") break;
+        context.history.push({role:"seller",text:candidate.text,at:new Date().toISOString(),question_id:candidate.question_id});
+        context.stage=candidate.stage;context.lastQuestionId=candidate.question_id;context.firstReply=false;
+        if(candidate.stage==="format") context.relevantFactIds=candidate.fact_ids;
+      }
+      return json({ok:steps.length===SEQUENCE_FIXTURES[fixtureName].length&&steps.every(s=>s.pass),mode:"synthetic_preview_no_send",scenario:fixtureName,steps});
     }
     const job = await rpc(db, "sales_claim_job");
     if (!job) {
@@ -127,7 +157,12 @@ Deno.serve(async (request) => {
         bot.status !== "active"
       ) throw Error("business_unavailable");
       const context = await loadContext(db, p, c);
-      const candidate = await draftReply(context, c.stage);
+      let candidate: any = job.kind === "reminder" ? {
+        action: "reply" as const, text: "Вы меня игнорируете?", question_id: "reengagement",
+        fact_ids: [], stage: c.stage, intent: "product_information", new_question_count: 1,
+        facts_verified: true, contains_paid_instruction: false, offer_verified: true, dialogue_version: "cb21-v2",
+      } : await draftReply(context, c.stage);
+      if (candidate.action === "checkout") candidate = await checkoutReply(db,p,c,job,context,candidate.selection);
       if (candidate.action !== "reply") {
         await rpc(db, "sales_handoff", {
           p_job: job.id,

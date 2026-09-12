@@ -24,6 +24,7 @@
  * AUTH: JWT optional. Если передан — link.user_id = auth user (has_target_user
  * на /pay/:token, без повторного email). Гость — user_id=NULL, резолвится по email.
  */
+import {cbAlumniOfferAllowed} from '../_shared/sales-runtime/checkout-auth.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import {
@@ -103,6 +104,7 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (!offer) return errorResponse('offer_not_found', 404);
     if (!offer.is_active) return errorResponse('offer_inactive', 400);
+    if (!await cbAlumniOfferAllowed(supabase,offer.id,authUserId,true)) return errorResponse('alumni_eligibility_required',403);
     if ((offer as any).offer_type === 'invoice') return errorResponse('offer_type_invoice_not_chargeable', 400);
     if (offer.offer_type !== 'pay_now') return errorResponse('offer_not_pay_now', 400);
 

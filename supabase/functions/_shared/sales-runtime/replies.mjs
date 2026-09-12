@@ -117,6 +117,7 @@ export function policyInput(p, c, j, b, candidate, now) {
       require_activation: true,
       version: p.policy_version,
       knowledge_version: p.knowledge_version,
+      reengagement_approved: p.policy_version === "cb21-v2",
       bot_ids: [p.bot_id],
       conversation_ids: [c.id],
       campaign_ids: [p.id],
@@ -144,6 +145,8 @@ export function policyInput(p, c, j, b, candidate, now) {
     },
     candidate: {
       ...candidate,
+      kind: j.kind || "reply",
+      due_at: j.due_at,
       product_id: p.product_id,
       policy_version: j.policy_version,
       knowledge_version: j.knowledge_version,

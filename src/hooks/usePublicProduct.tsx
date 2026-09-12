@@ -56,6 +56,10 @@ export interface TariffOffer {
 }
 
 export interface PublicTariff {
+  access_summary?: {
+    modules:{id:string;title:string;included:boolean;conditional:boolean}[];
+    benefits:{title:string;days:number|null;conditional:boolean}[];
+  } | null;
   id: string;
   code: string;
   name: string;

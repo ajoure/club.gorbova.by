@@ -64,10 +64,15 @@ export function evaluateReply({ policy, conversation, candidate, now }) {
     conversation.delivery_uncertain !== false ||
     conversation.inflight_reply !== false
   ) return deny("delivery_in_progress_or_unknown");
+  const reminder = candidate.kind === "reminder";
+  if (reminder && (policy.reengagement_approved !== true || conversation.state !== "WAIT_CUSTOMER" ||
+      conversation.last_inbound_seq !== conversation.last_answered_inbound_seq ||
+      !Number.isFinite(time(candidate.due_at)) || time(candidate.due_at) > nowMs ||
+      nowMs - inboundTime >= 85500000)) return deny("reminder_not_eligible");
   if (
     !seq(conversation.last_inbound_seq) ||
     !seq(conversation.last_answered_inbound_seq) ||
-    conversation.last_inbound_seq <= conversation.last_answered_inbound_seq ||
+    (!reminder && conversation.last_inbound_seq <= conversation.last_answered_inbound_seq) ||
     conversation.last_inbound_actor !== "customer"
   ) return deny("wait_customer");
   if (
