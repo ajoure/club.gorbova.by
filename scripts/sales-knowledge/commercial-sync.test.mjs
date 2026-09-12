@@ -10,7 +10,12 @@ async function fixture(){
  const db=new PGlite();
  for(const table of ['tariffs','tariff_offers','offer_addons','access_rules']) {
   const block=types.split(`      ${table}: {\n        Row: {\n`)[1].split('\n        }')[0];
-  const columns=[...block.matchAll(/^          (\w+): ([^\n]+)/gm)].map(([,name,type])=>`${name} ${name==='id'||name.endsWith('_id')&&!['public_id','getcourse_offer_id'].includes(name)?'uuid':type.includes('Json')?'jsonb':type.includes('boolean')?'boolean':type.includes('number')?'numeric':'text'}${name==='id'?' PRIMARY KEY DEFAULT gen_random_uuid()':''}`);
+  const columns=[...block.matchAll(/^          (\w+): ([^\n]+)/gm)].map(([,name,type])=>{
+   const sqlType=name==='id'||name.endsWith('_id')&&!['public_id','getcourse_offer_id'].includes(name)?'uuid':name.endsWith('_at')?'timestamptz':type.includes('Json')?'jsonb':type.includes('boolean')?'boolean':type.includes('number')?'numeric':'text';
+   const fallback=sqlType==='uuid'?'gen_random_uuid()':sqlType==='timestamptz'?'now()':sqlType==='jsonb'?"'{}'::jsonb":sqlType==='boolean'?'false':sqlType==='numeric'?'0':"''";
+   const constraint=name==='id'?' PRIMARY KEY DEFAULT gen_random_uuid()':type.includes('null')?'':` NOT NULL DEFAULT ${fallback}`;
+   return `${name} ${sqlType}${constraint}`;
+  });
   await db.exec(`CREATE TABLE ${table}(${columns.join(',')})`);
  }
  await db.exec(`CREATE TABLE sales_jobs(conversation_id uuid,status text); CREATE TABLE sales_conversations(id uuid,campaign_id uuid); CREATE TABLE audit_logs(actor_type text,action text,meta jsonb); CREATE TABLE sales_campaigns(code text,mode text,id uuid DEFAULT gen_random_uuid()); INSERT INTO sales_campaigns(code,mode) VALUES('cb21-owner-test','off'); CREATE TABLE training_modules(id uuid PRIMARY KEY,parent_module_id uuid,title text);`);

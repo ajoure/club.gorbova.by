@@ -114,7 +114,7 @@ BEGIN
      SELECT * INTO aa FROM public.offer_addons WHERE parent_offer_id=op.target AND addon_offer_id=src_addon.addon_offer_id AND is_active;
      IF (SELECT count(*) FROM public.offer_addons WHERE parent_offer_id=op.target AND addon_offer_id=src_addon.addon_offer_id AND is_active)>1 THEN RAISE EXCEPTION 'duplicate_target_addon'; END IF;
      j:=to_jsonb(src_addon)||jsonb_build_object('id',coalesce(aa.id,md5('cb21-full-sync-v2:'||op.target||':'||src_addon.id)::uuid),'parent_offer_id',op.target,
-      'access_delivery_mode','fixed_date','access_opens_at',cfg->>'addon_opens_at','created_at',aa.created_at,'updated_at',aa.updated_at,
+      'access_delivery_mode','fixed_date','access_opens_at',cfg->>'addon_opens_at','created_at',coalesce(aa.created_at,now()),'updated_at',coalesce(aa.updated_at,now()),
       'meta',src_addon.meta||jsonb_build_object('sales_generation','cb21-full-sync-v2','source_addon_id',src_addon.id));
      INSERT INTO _cb21_addons SELECT * FROM jsonb_populate_record(null::public.offer_addons,j);
     END LOOP;
