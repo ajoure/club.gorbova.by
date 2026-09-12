@@ -4,11 +4,11 @@ import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {Textarea} from '@/components/ui/textarea';
 
-type Fact = {id:string;title?:string;text:string;scope?:'curriculum'|'background';source_id:string;source_revision:string;source_sha256:string;module_id?:string;binding_block_id?:string};
+type Fact = {id:string;title?:string;text:string;reply_text?:string;scope?:'curriculum'|'background';source_id:string;source_revision:string;source_sha256:string;module_id?:string;binding_block_id?:string};
 type Source = {id:string;title:string;source_revision:string;source_sha256:string;ready:boolean;targets:{block_id:string;module_id:string;title:string;open_now:boolean;in_product:boolean}[]};
 type Snapshot = {facts:Fact[];knowledge_version:string;facts_sha256:string;product_id:string;sources:Source[];versions:{id:string;created_at:string;facts_count:number;approval_scope:string}[]};
 type Preview = {valid:boolean;facts_sha256:string;added:number;changed:number;removed:number;unchanged:number;errors:{fact_id:string;reason:string}[];applied?:boolean;noop?:boolean};
-const reasons:Record<string,string>={module_not_in_product:'Модуль не включён действующими правилами продукта',source_unavailable_or_stale:'Источник изменён или недоступен',source_binding_stale:'Изменилась привязка видео',source_gap_unresolved:'Источник требует проверки пропусков',target_video_not_verified:'Видео не совпадает с источником',target_outside_curriculum:'Урок не относится к программе',target_reference_required:'Выберите урок программы',invalid_summary_text:'Проверьте описание: до 600 символов, без ссылок и контактных данных',invalid_or_duplicate_id:'Повторяющаяся или некорректная карточка',invalid_source_reference:'Не указан проверенный источник',invalid_title:'Проверьте название темы'};
+const reasons:Record<string,string>={invalid_short_reply:'Короткая реплика: от 1 до 200 символов, без вопросов, ссылок и контактов; только для темы программы',module_not_in_product:'Модуль не включён действующими правилами продукта',source_unavailable_or_stale:'Источник изменён или недоступен',source_binding_stale:'Изменилась привязка видео',source_gap_unresolved:'Источник требует проверки пропусков',target_video_not_verified:'Видео не совпадает с источником',target_outside_curriculum:'Урок не относится к программе',target_reference_required:'Выберите урок программы',invalid_summary_text:'Проверьте описание: до 600 символов, без ссылок и контактных данных',invalid_or_duplicate_id:'Повторяющаяся или некорректная карточка',invalid_source_reference:'Не указан проверенный источник',invalid_title:'Проверьте название темы'};
 
 export function SalesKnowledgeEditor({userId,businessAccountId,editable}:{userId:string;businessAccountId:string;editable:boolean}) {
   const [data,setData]=useState<Snapshot|null>(null),[facts,setFacts]=useState<Fact[]>([]),[preview,setPreview]=useState<Preview|null>(null);
@@ -22,7 +22,11 @@ export function SalesKnowledgeEditor({userId,businessAccountId,editable}:{userId
   async function run(work:()=>Promise<void>){setBusy(true);setError('');try{await work()}catch(e){setPreview(null);setApproved(false);setError(e instanceof Error?e.message:'Операция не выполнена')}finally{setBusy(false)}}
   async function load(){const d=await invoke<Snapshot>('knowledge_status');setData(d);setFacts(d.facts);setPreview(null);setApproved(false);setExpanded(null)}
   function change(next:Fact[]){setFacts(next);setPreview(null);setApproved(false);setNotice('')}
-  function update(index:number,patch:Partial<Fact>){change(facts.map((f,i)=>i===index?{...f,...patch}:f))}
+  function update(index:number,patch:Partial<Fact>){change(facts.map((f,i)=>{
+    if(i!==index)return f;
+    const next={...f,...patch};if(next.scope==='background')delete next.reply_text;
+    return next;
+  }))}
   function targetFor(f:Fact,source:Source){
     const targets=source.targets.filter(t=>t.in_product);
     const target=targets.find(t=>t.block_id===f.binding_block_id)??(targets.length===1?targets[0]:undefined);
@@ -34,10 +38,12 @@ export function SalesKnowledgeEditor({userId,businessAccountId,editable}:{userId
     if(packet.target_product_id!==data.product_id||!Array.isArray(packet.facts)||packet.facts.length>100)throw Error('Пакет не соответствует продукту или содержит больше 100 карточек.');
     const next=packet.facts.map((f:any)=>{
       const source=data.sources.find(s=>s.id===f.source_id);
-      if(!source||typeof f.id!=='string'||typeof f.text!=='string')throw Error('В пакете есть неизвестный источник или некорректная карточка.');
-      const draft:Fact={id:f.id,title:f.title,text:f.text,source_id:f.source_id,source_revision:f.source_revision,source_sha256:f.source_sha256,
+      if(!source||typeof f.id!=='string'||typeof f.text!=='string'||(f.reply_text!==undefined&&typeof f.reply_text!=='string'))throw Error('В пакете есть неизвестный источник или некорректная карточка.');
+      const draft:Fact={id:f.id,title:f.title,text:f.text,...(f.reply_text===undefined?{}:{reply_text:f.reply_text}),source_id:f.source_id,source_revision:f.source_revision,source_sha256:f.source_sha256,
         binding_block_id:f.binding_block_id??f.existing_target_reference?.binding_block_id};
-      return {...draft,...targetFor(draft,source)};
+      const mapped={...draft,...targetFor(draft,source)};
+      if(mapped.scope==='background')delete mapped.reply_text;
+      return mapped;
     });
     change(next);setNotice('Пакет загружен в черновик. Проверьте описания и связи перед сохранением.');
   }
@@ -83,12 +89,17 @@ export function SalesKnowledgeEditor({userId,businessAccountId,editable}:{userId
               onChange={e=>{const s=data.sources.find(s=>s.id===e.target.value)!;update(index,{source_id:s.id,source_revision:s.source_revision,source_sha256:s.source_sha256,...targetFor({...f,binding_block_id:undefined},s)})}}>
               {data.sources.map(s=><option key={s.id} value={s.id} disabled={!s.ready}>{s.title}{!s.ready?' — требует проверки':''}</option>)}</select></label>
             <label className="block text-xs">Связь с программой<select aria-label={`Связь с программой ${index+1}`} value={f.scope==='background'?'background':f.binding_block_id??''} disabled={!editable||busy} className="block mt-1 w-full min-w-0 rounded border bg-background p-2"
-              onChange={e=>{const t=source?.targets.find(t=>t.block_id===e.target.value);update(index,t?{scope:'curriculum',module_id:t.module_id,binding_block_id:t.block_id}:{scope:'background',module_id:undefined,binding_block_id:undefined})}}>
+              onChange={e=>{const t=source?.targets.find(t=>t.block_id===e.target.value);update(index,t?{scope:'curriculum',module_id:t.module_id,binding_block_id:t.block_id}:{scope:'background',module_id:undefined,binding_block_id:undefined,reply_text:undefined})}}>
               <option value="background">Только исторический контекст</option>{!target&&f.scope!=='background'&&<option value="">Выберите связь</option>}
               {source?.targets.map(t=><option key={t.block_id} value={t.block_id} disabled={!t.in_product}>{t.title}{!t.in_product?' — не включено в продукт':''}</option>)}</select></label>
             {before&&before.text!==f.text&&<details className="text-xs"><summary>Прежнее описание</summary><p className="mt-1 whitespace-pre-wrap break-words">{before.text}</p></details>}
-            <label className="block text-xs">Описание для консультации<Textarea aria-label={`Описание ${index+1}`} rows={5} value={f.text} maxLength={600} disabled={!editable||busy} onChange={e=>update(index,{text:e.target.value})}/></label>
+            <label className="block text-xs">Подробное описание для понимания ИИ<Textarea aria-label={`Описание ${index+1}`} rows={5} value={f.text} maxLength={600} disabled={!editable||busy} onChange={e=>update(index,{text:e.target.value})}/></label>
             <p className="text-xs text-muted-foreground">{f.text.length}/600 символов</p>
+            {f.scope!=='background'&&<>
+              <label className="block text-xs">Короткая реплика клиенту<Textarea aria-label={`Короткая реплика ${index+1}`} rows={3} value={f.reply_text??''} maxLength={200} disabled={!editable||busy} onChange={e=>update(index,{reply_text:e.target.value||undefined})}/></label>
+              <p className="text-xs text-muted-foreground">{[...(f.reply_text??'')].length}/200 символов. Без вопросов: следующий вопрос бот добавит сам. Подробное описание клиенту не отправляется.</p>
+              {!f.reply_text&&<p className="text-xs text-amber-700">Добавьте короткую реплику, иначе при выборе этой темы бот передаст разговор человеку.</p>}
+            </>}
             <Button size="sm" variant="outline" disabled={!editable||busy} onClick={()=>change(facts.filter((_,i)=>i!==index))}>Убрать описание</Button>
           </div>}
         </div>;

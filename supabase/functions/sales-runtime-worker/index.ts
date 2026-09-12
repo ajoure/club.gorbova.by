@@ -6,6 +6,7 @@ import {readAIConfig, requestAI} from "../_shared/sales-runtime/ai.mjs";
 import {hydrateMedia} from "../_shared/sales-runtime/media.ts";
 import {MEDIA_SYSTEM,validateMediaObservation} from '../_shared/sales-runtime/history.mjs';
 import {SEQUENCE_FIXTURES} from "../_shared/sales-runtime/sequence-fixtures.mjs";
+import {topicReplyText} from "../_shared/sales-runtime/topic-replies.mjs";
 import { loadContext } from "../_shared/sales-runtime/context.ts";
 import {checkoutReply} from "../_shared/sales-runtime/checkout.ts";
 import { notifyAssignments } from "../_shared/sales-runtime/notify.ts";
@@ -59,6 +60,7 @@ Deno.serve(async (request) => {
         runtime: "cb21-v2",
         client_evidence_revision: "v1",
         knowledge_editor_revision: "v1",
+        short_topic_reply_revision: "v1",
       });
     }
     if(body.action==='preview_image'||body.action==='preview_image_text') {
@@ -83,6 +85,7 @@ Deno.serve(async (request) => {
           webinar_events:context.client.webinar_activity.length,webinar_comments:context.client.webinar_comments.length,
           webinar_questions:context.client.webinar_questions.length,
           curriculum_topics:context.facts.filter((f:any)=>f.kind==='topic').length,
+          short_reply_topics:context.facts.filter((f:any)=>f.kind==='topic'&&topicReplyText(f)!==null).length,
           background_topics:context.referenceTopics.length},
         purchase_history_status:context.client.purchase_history_status,
         attendance_history_status:context.client.attendance_history_status});

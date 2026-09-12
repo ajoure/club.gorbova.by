@@ -6,11 +6,30 @@ const facts=[
  {id:'program',text:'ПОЛНАЯ ПРОГРАММА: 28 модулей',classification:'sales_safe',source:'catalog'},
  {id:'dates',text:'Даты потока',classification:'sales_safe',source:'catalog'},
  {id:'prices',text:'Действующие цены',classification:'sales_safe',source:'catalog'},
- {id:'topic_vat',text:'В теме НДС рассматриваются объекты налогообложения и налоговая база.',classification:'sales_safe',source:'source-hash',kind:'topic',module_id:'vat'},
+ {id:'topic_vat',reply_text:'По НДС разберём налоговую базу и объекты налогообложения.',text:'В теме НДС рассматриваются объекты налогообложения и налоговая база.',classification:'sales_safe',source:'source-hash',kind:'topic',module_id:'vat'},
  {id:'offer_wrong',text:'Не включает нужную тему',classification:'sales_safe',source:'catalog',kind:'offer',price:1,included_module_ids:['other']},
  {id:'offer_fit',text:'Подходящий тариф. Полная стоимость — 2000 BYN.',classification:'sales_safe',source:'catalog',kind:'offer',price:2000,included_module_ids:['vat']},
  {id:'offer_costly',text:'Дорогой тариф',classification:'sales_safe',source:'catalog',kind:'offer',price:3000,included_module_ids:['vat','other']},
 ];
+test('topic pitches use reviewed short replies in qualification and direct questions, keeping detail in context',()=>{
+ const c=setup();c.firstReply=false;c.stage='goals';c.lastQuestionId='goals';c.history.push({role:'customer',text:'Хочу разобраться в НДС.'});
+ c.facts=[...facts,{...facts[3],id:'vat-practice',text:'Подробности учебного описания. '.repeat(20),reply_text:'Закрепим тему на практическом задании.'}];
+ c.facts=c.facts.map(f=>f.id==='topic_vat'?{...f,text:'Длинное описание урока. '.repeat(20)}:f);
+ const selected=['topic_vat','vat-practice'];
+ const r=planDialogueReply(c,assess(c,{experience:'new',goal:'known'},{fact_ids:selected}));
+ assert.equal(r.question_id,'format');assert.equal(r.new_question_count,1);assert.ok(r.text.length<=404);assert.doesNotMatch(r.text,/Подробности|Длинное|Благодарю/);
+ assert.ok(c.facts.find(f=>f.id==='topic_vat').text.length>400);
+ c.stage='payment';c.lastQuestionId='payment';
+ const direct=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'},{intent:'product_question',question_type:'topic',fact_ids:selected}));
+ assert.equal(direct.question_id,'none');assert.doesNotMatch(direct.text,/Подробности|Длинное/);assert.ok(direct.text.length<=402);
+});
+test('missing, empty, instructional-question or excessive short reply never falls back to knowledge text',()=>{
+ for(const reply_text of [undefined,'','Короткий вопрос?','Ссылка https://example.com','x'.repeat(201)]){
+  const c=setup();c.firstReply=false;c.stage='goals';c.lastQuestionId='goals';c.history.push({role:'customer',text:'Хочу разобраться в НДС.'});
+  c.facts=facts.map(f=>f.id==='topic_vat'?{...f,reply_text}:f);
+  assert.deepEqual(planDialogueReply(c,assess(c,{experience:'new',goal:'known'},{fact_ids:['topic_vat']})),{action:'handoff',reason:'missing_short_topic_reply'});
+ }
+});
 function setup() {return {history:[{role:'customer',text:trigger}],triggerPhrase:trigger,firstReply:true,stage:'qualification',lastQuestionId:null,facts,client:{verified_cb_purchase:false}};}
 function assess(context, values={}, {intent='answer',question_type='none',fact_ids=[]}={}) {
  const index=context.history.length-1;

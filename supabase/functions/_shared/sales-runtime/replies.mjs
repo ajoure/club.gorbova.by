@@ -1,4 +1,5 @@
 /** The model selects IDs, never writes customer-facing text or instructional answers. */
+import { topicReplyText } from './topic-replies.mjs';
 export const QUESTIONS = {
   experience:
     "Подскажите, вы уже учились на курсе ЦБ или рассматриваете участие впервые?",
@@ -10,7 +11,6 @@ export const QUESTIONS = {
 };
 export const BRIDGES = {
   none: "",
-  thanks: "Благодарю за подробный ответ!",
   welcome: "Добрый день!",
   done: "Договорились. Если будут вопросы и уточнения, смело пишите🫶🏻",
 };
@@ -81,7 +81,9 @@ export function renderSelection(
     ) throw Error("unknown_or_unverified_fact");
     return fact;
   });
-  const text = [bridge, ...selected.map((f) => f.text), question].filter(
+  const content = selected.map(f => f.kind === 'topic' ? topicReplyText(f) : f.text);
+  if (content.some(text => text === null)) return {action:'handoff',reason:'missing_short_topic_reply'};
+  const text = [bridge, ...content, question].filter(
     Boolean,
   ).join("\n\n");
   if (!text || text.length > 3900) throw Error("invalid_reply_length");
