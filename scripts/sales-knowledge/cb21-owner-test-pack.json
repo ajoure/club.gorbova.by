@@ -1,0 +1,581 @@
+{
+  "release_mode": "owner_test",
+  "client_release_approved": false,
+  "description": "Пакет для теста с Сергеем. Тексты по темам — редакторские адаптации, не дословные цитаты. Полные уроки не включены.",
+  "root_module_id": "4365e913-36f1-432e-ab16-748c3ca6826a",
+  "flow_id": "b10e15c5-51c3-5df5-ba83-a42416da5902",
+  "facts": [
+    {
+      "id": "cb-draft-32",
+      "text": "В уроке «Классификация имущества» разбираем, чем отличаются товары, основные средства и материалы, как связать их учёт с тем, для чего компания их использует. Отдельно рассматриваем группы материалов, инвентарный объект и первоначальную стоимость. Это помогает систематизировать решения по имуществу, с которыми бухгалтер сталкивается в работе.",
+      "classification": "sales_safe",
+      "source": "c3d99987bffd19acea409a651a9d732842fb203ee4ace81594293bd995ce19b1",
+      "module_id": "2d55e2eb-6c33-4efa-b27c-d9ad23896921",
+      "source_id": "137779cb-aa1b-4720-988f-592878e6cf09",
+      "review_scope": "full_topic_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "eec40664c51d34160e0c3296176e2629cfb9320e89f4d4abd163cf51855aeb2d",
+      "source_revision": "ec8c9333440cdaae15c397d30e4b57a604cc32d949e836fa6c4e8e7d4a1963c9",
+      "binding_block_id": "efafa40f-7968-4234-9f6d-fefa3263decb"
+    },
+    {
+      "id": "cb-draft-64",
+      "text": "В уроке «Расходы компании» разбираем, как различать себестоимость, управленческие расходы, расходы на реализацию и другие группы расходов. Показываем связь с деятельностью компании на примерах торговли, производства и услуг. Урок даёт основу для классификации, а практические ситуации дальше разбираются на созвонах.",
+      "classification": "sales_safe",
+      "source": "95f748f7a78994d3119e2b270f434d0fa4259fa5f1f096f938d48d1f6630901b",
+      "module_id": "a7dcbff1-e37f-4783-9b12-a142e2c96c66",
+      "source_id": "2600462b-8197-4b55-8004-62f6c50bf73d",
+      "review_scope": "full_topic_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "8e264e169f87f68ed87eb1222ae48e04f7894752027f478a542bf11197c5b60e",
+      "source_revision": "68b5c274650c9332d280e3b51fa71d49064ecb03ad9fb02a1ec43c7b611f97d9",
+      "binding_block_id": "780e10f5-51cd-4479-9487-dc5eedc4321c"
+    },
+    {
+      "id": "cb-draft-44",
+      "text": "В уроке «Нематериальные активы» разбираем, что относится к таким активам, а что нет. Есть темы программ и баз данных, создания сайтов, товарных знаков и прав на их использование. Отдельно рассматриваем первоначальную стоимость, приобретение и ввод в эксплуатацию. Урок помогает связать условия договоров и затраты компании с вопросами учёта.",
+      "classification": "sales_safe",
+      "source": "d19d9380d45d6f9382901174086564e6780f98a8a5f86e02d437fd6a78a728ce",
+      "module_id": "a955008a-2780-4ae8-8808-36d7812e9d5d",
+      "source_id": "b2549fb6-54f7-463d-905e-134f5a818746",
+      "review_scope": "full_topic_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "356f1062f28e3957b7a1369fc1dc127bc33ff98e9dd8b4fe2fb40455174ad349",
+      "source_revision": "5fe4a0a8543a52a7826d151a13df1ec1366ac9547ea950e73ef9873185046fb7",
+      "binding_block_id": "637407a6-eac0-4fb7-9b4a-f3ff589be96b"
+    },
+    {
+      "id": "cb-draft-50",
+      "text": "В уроке «Деньги организации» разбираем наличные и безналичные операции: кассу организации, операционную кассу и банковские счета. Есть темы электронных денег, покупки и продажи валюты, перевода поставщику с конвертацией. Урок помогает связать движение денег с документами и записями в учёте. Эквайринг рассматривается вводно; подробности вынесены в модуль по рознице.",
+      "classification": "sales_safe",
+      "source": "d3f4904c4e3086f8cbf2298b3e454b0db1e105a66cbe601ca1556dc139baf313",
+      "module_id": "f7c5f3c2-1a66-4a4d-a722-3fa87ecaf219",
+      "source_id": "69a13e36-0e45-4558-b9af-e3c3bc60b6af",
+      "review_scope": "full_topic_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "f7431429a414b04933e7841180c5fe59244ab4a29df5ebe8b190d24e8cebd815",
+      "source_revision": "9f8fe6122235e9d88aa3f0782ecdc3ba2b999c0f5c16d5d8a081b07473eecb71",
+      "binding_block_id": "051df364-eb75-45fa-a3f1-a4a4cd2958f4"
+    },
+    {
+      "id": "cb-draft-02",
+      "text": "В уроке «Заёмные средства» разбираем кредиты, кредитные линии, полученные и выданные займы: как различать эти операции и учитывать основной долг и проценты. Отдельно обращаем внимание на условия возврата и вопросы, которые бухгалтеру нужно проверять в договорах и нормативных материалах.",
+      "classification": "sales_safe",
+      "source": "482afa3862b060294e3f926ea680efad9f9266c14eb2143ec625ec87039d8f06",
+      "module_id": "d5db41ac-2e9b-444e-bbeb-90ed28f857cb",
+      "source_id": "79da04f2-c3aa-4aee-a262-de80d61db0b7",
+      "review_scope": "full_topic_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "be5b29f0143bdd667b115b2157e38da2d47b818d81ca46e3db1246cdac5441e9",
+      "source_revision": "f194c035930a0c8cecbfc8e87acc2b9237ded317d5c5c2f8a03634e1a7f607a1",
+      "binding_block_id": "577999c6-708d-4da6-85e2-3003a7fefed4"
+    },
+    {
+      "id": "cb-draft-53",
+      "text": "В уроке «Расчёты с контрагентами» разбираем расчёты с покупателями, поставщиками и другими сторонами договоров. Есть примеры страхования, претензий и комиссии, отдельный разбор авансов и закрытия взаиморасчётов. Также рассматриваем аккредитивы и даём обзор расчётов в валюте. Это помогает связать условия договора с учётом и проверкой задолженности.",
+      "classification": "sales_safe",
+      "source": "50f3d11aba432cf1ee504c317c42500b6c3044666b315bc65ed1b912d3035f0f",
+      "module_id": "2d727a6e-e780-4ccc-aa4c-c78704e9baaf",
+      "source_id": "489f22bd-88e1-4c89-8ee8-2c9b203ec619",
+      "review_scope": "full_topic_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "ddd407c9d1d6e4018e61fc026463808cc8a0a62d01fd333c0401ed27e2b32a75",
+      "source_revision": "0195a0485c3fd021455e85b9207cf226ed94ac87ea9758a5b989c89d36513d01",
+      "binding_block_id": "355d47cc-0e18-4e85-9ce0-982515200e22"
+    },
+    {
+      "id": "cb-draft-66",
+      "text": "В уроке «Расчёты с бюджетом» даём обзор налогов, сборов и других бюджетных платежей и разбираем, как они отражаются в бухгалтерском учёте. Есть примеры начисления и погашения задолженности. Это вводный урок по учёту расчётов; подробный расчёт каждого перечисленного налога в нём не разбирается.",
+      "classification": "sales_safe",
+      "source": "1d98d78d369b6554b4086e18e076278b320d043aae9d87cf3caf0a0c737a7ae7",
+      "module_id": "1c35e6c7-36aa-45d9-b918-958eecb43555",
+      "source_id": "2c54da25-bcb2-4b20-918a-3ff65e9f8214",
+      "review_scope": "full_topic_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "edd7ee0d7234115fb567f822bf190104be0f1149c3b9eef3c8b2617783fe3939",
+      "source_revision": "a31c50805d337f58792da56c2b7956317b7d61dd10fac8864556b576e53c9517",
+      "binding_block_id": "ebcbfebc-ba5c-427b-abcf-144bb823021b"
+    },
+    {
+      "id": "cb-draft-61",
+      "text": "В уроке «Импорт» разбираются этапы ввоза товаров: договор и оплата, поступление и документы, формирование стоимости и расчёты с поставщиком. Есть обзор маркировки и обязательных платежей при ввозе из ЕАЭС и других стран, а также ситуации с возвратом аванса при непоставке. В связанном уроке про НДС рассматривается роль ЭСЧФ для вычетов; техническое заполнение предложено изучить отдельно.",
+      "classification": "sales_safe",
+      "source": "d877b3a27ecb992a1b12479cd26dfa7e4a5069025315aae8874ed4e152adcf95",
+      "module_id": "136ae313-92ec-4887-b208-3bd169aec423",
+      "source_id": "b2209693-9219-4a57-a506-31240b46ddac",
+      "review_scope": "full_topic_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "3523ceaedd0874ed2323619c85433d82715e34ea4c23def8eac665d43153933a",
+      "source_revision": "b65b2ffb92c78a95c21da5b15eb0307c1d67c72626894efc36298f976fb9612e",
+      "binding_block_id": "c4247d02-0164-40a6-b30e-64703c720ca6"
+    },
+    {
+      "id": "cb-draft-40",
+      "text": "В уроке про НДС разбираются входящий и исходящий НДС, признание и применение вычетов, сумма к уплате и сверка с бухгалтерским учётом. Есть примеры покупок внутри страны, импорта и отдельных операций с нерезидентами. Также объясняется роль ЭСЧФ и документов для вычетов. Техническое заполнение ЭСЧФ и очередность вычетов предложено отдельно изучить по дополнительным материалам.",
+      "classification": "sales_safe",
+      "source": "c20c01ce2ce56c8cc5c1f371a5fc09b18b6c45c046e994414c91a3617b138705",
+      "module_id": "f347b61f-c92e-4696-a85b-fc5338a60b20",
+      "source_id": "c7af62ad-1448-4fca-84af-98931f34d39d",
+      "review_scope": "full_topic_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "860327e6cc09794b1b880eb6cc17faaa52bd6ce0a43e4d67e926939f54c5e72a",
+      "source_revision": "3b23bca49dc4d40b7ac2583ac8ff004b8aad44477df2bc8d9f82ae0095ef2bf9",
+      "binding_block_id": "89ed6e9a-2c73-448e-b60b-a10ebcb99883"
+    },
+    {
+      "id": "cb-draft-47",
+      "text": "В уроке «Расчёты с персоналом» рассматриваются темы: Расчёты с работниками, Подоходный налог, ФСЗН.",
+      "classification": "sales_safe",
+      "source": "6f6095d8a2b6f3158bca655a15cca60ffbb5a9b891e7cadb84b8c618276c9329",
+      "module_id": "6a76354f-76b5-49a3-b96c-258c651a8498",
+      "source_id": "c3d09a11-fc97-48e8-9f42-c4af2c3a5573",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "6f6095d8a2b6f3158bca655a15cca60ffbb5a9b891e7cadb84b8c618276c9329",
+      "source_revision": "0848d0da343a0767fa81ff3ca11545184c78b2960eaaa66bbce867a0a22ca05b",
+      "binding_block_id": "18e774a5-f5b2-4e19-b210-a181eb314f12"
+    },
+    {
+      "id": "cb-draft-42",
+      "text": "В уроке «Доходы организации» рассматриваются темы: Доходы, Выручка.",
+      "classification": "sales_safe",
+      "source": "22760cce84e90c212445a986f41892fdeb729c1aba1446d7ff3122fc85afe089",
+      "module_id": "eb1e5f4c-9acd-4037-941d-11467a5ea48f",
+      "source_id": "9dac56f2-a00d-440e-83ba-2e45ff9f7293",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "22760cce84e90c212445a986f41892fdeb729c1aba1446d7ff3122fc85afe089",
+      "source_revision": "6fbf69f43577878afebd84c2385f232e5925f10bdc52b05ef8b7d67403242a5b",
+      "binding_block_id": "61730e1d-7a86-4a61-b624-c2899977f8a5"
+    },
+    {
+      "id": "cb-draft-56",
+      "text": "В уроке «Все счета бухгалтерского учёта» рассматриваются темы: Обзор счетов бухгалтерского учёта.",
+      "classification": "sales_safe",
+      "source": "1868d418d8bd976f7e0ded4ff842e4069a35cb0ac11fa591c0c93373b53f1c13",
+      "module_id": "d336bee3-73ab-4de6-8239-904a32631e6f",
+      "source_id": "626e0dd0-dee6-4b88-a1a2-c5a1f66f56b6",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "1868d418d8bd976f7e0ded4ff842e4069a35cb0ac11fa591c0c93373b53f1c13",
+      "source_revision": "bd32c9d4dc34f076077b0eb61b460a2d19d433674fa3e932441394048b95a416",
+      "binding_block_id": "2ad0fb90-68c1-4b0b-840a-16e5fc9741c3"
+    },
+    {
+      "id": "cb-draft-35",
+      "text": "В уроке «Баланс» рассматриваются темы: Практическое задание по бухгалтерской отчётности.",
+      "classification": "sales_safe",
+      "source": "fddf8f1d7996dcde59cbe48bc0932d8605a9b36520420cf6ab9e4f05a9251c23",
+      "module_id": "f0be2810-2c87-4235-a245-4a092c4da1cc",
+      "source_id": "5925ee87-1d2a-403a-a493-170b2ca9fe06",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "fddf8f1d7996dcde59cbe48bc0932d8605a9b36520420cf6ab9e4f05a9251c23",
+      "source_revision": "c59db9d2d5b41a332f40f46925f5af7d16c062070d5a469d24b71ba442f83015",
+      "binding_block_id": "44c5ab25-3ccf-44a2-befd-ab365830e50e"
+    },
+    {
+      "id": "cb-draft-17",
+      "text": "В уроке «Первичные учётные документы» рассматриваются темы: Первичные документы, Реквизиты, Электронные документы.",
+      "classification": "sales_safe",
+      "source": "52581cc22c69ff27745be29eaab9f744f72920d1e47010c5b4e3bb49ff689068",
+      "module_id": "71a356fb-6ea5-4408-be45-cab1e3aa1040",
+      "source_id": "aa4ed32e-a56a-4529-be2e-3293dba1a18a",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "52581cc22c69ff27745be29eaab9f744f72920d1e47010c5b4e3bb49ff689068",
+      "source_revision": "d97bb8e47c04f49fcba15af4e7dcb5b5efe40da57e818d936b34e1e472ddd7f1",
+      "binding_block_id": "cac5b529-c845-4b8b-bb14-e12eeb81c44b"
+    },
+    {
+      "id": "cb-draft-54",
+      "text": "В уроке «Учётная политика» рассматриваются темы: Учётная политика организации.",
+      "classification": "sales_safe",
+      "source": "3928d6c20af870098b377c8f41253327e2203331954ce39ae9288b3847dd1b0e",
+      "module_id": "2cbda008-4b07-424a-bfd4-3634358cc8b6",
+      "source_id": "f6ffcb77-ffb2-49e6-b816-23ca3ff5c1b1",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "3928d6c20af870098b377c8f41253327e2203331954ce39ae9288b3847dd1b0e",
+      "source_revision": "8a85ea8fdc214129d525a37f35ff71a39329fbd6aa72a70a1ff215d7610442a2",
+      "binding_block_id": "ad3e9d8a-0a41-4d0b-b296-aa681a8268e3"
+    },
+    {
+      "id": "cb-draft-18",
+      "text": "В уроке «Делегирование» рассматриваются темы: Передача задач, Регламенты, Контроль выполнения.",
+      "classification": "sales_safe",
+      "source": "6e28141249c2cabf2d74372a738c7788180c666a8d42ea9dfb9ff5bf876b8ba5",
+      "module_id": "60aa7a27-5346-4ba0-9686-d297e14d49cf",
+      "source_id": "3c69e7d1-c937-4cdb-9dd0-df0876dc5a4a",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "excluded"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "6e28141249c2cabf2d74372a738c7788180c666a8d42ea9dfb9ff5bf876b8ba5",
+      "source_revision": "fbfe741246e52e62349f4208773951b49e6c645fa7f481561fda4a837e30d5c9",
+      "binding_block_id": "16c672c3-0619-4b97-b894-f6fd06a24d77"
+    },
+    {
+      "id": "cb-draft-21",
+      "text": "В уроке «Таймлайн месяца» рассматриваются темы: Организация работы в течение месяца, Документы и отчётность, Контроль работы.",
+      "classification": "sales_safe",
+      "source": "1195ad06a9a557e913c9555dd9d7f4a9d4dfc71d7f51e10ae5e581c46867a80d",
+      "module_id": "83544104-b2c1-48c2-a0c9-015ceec012a1",
+      "source_id": "23a673a4-838e-4f37-8a8e-64b8ae0cdb3c",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "excluded"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "1195ad06a9a557e913c9555dd9d7f4a9d4dfc71d7f51e10ae5e581c46867a80d",
+      "source_revision": "529d58dccfff3507ae1a6830e8c47efa3fbaebab7206b459d88239a7135b6b6d",
+      "binding_block_id": "905fe472-3671-47d6-8f2b-b101b8ada09e"
+    },
+    {
+      "id": "cb-draft-41",
+      "text": "В уроке «Восстановление учёта» рассматриваются темы: Восстановление учёта, Документы, Остатки.",
+      "classification": "sales_safe",
+      "source": "afd30839fb1bbd9f2b2998943e43e3f0059b19b8ac317df216fefee030624f6f",
+      "module_id": "a6ed8367-5ecd-4c56-be83-79c665309e05",
+      "source_id": "77d96294-1feb-4f85-8a0d-8e7eb9db5a17",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "excluded"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "excluded"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "afd30839fb1bbd9f2b2998943e43e3f0059b19b8ac317df216fefee030624f6f",
+      "source_revision": "815481a5210266a332ddccf2f811c068f02676d054e8f8ccb0b08db62e06aeb9",
+      "binding_block_id": "6a6b9214-e3be-4069-abab-902eee555745"
+    },
+    {
+      "id": "cb-draft-16",
+      "text": "В уроке «Курсовые разницы» рассматриваются темы: Курсовые разницы.",
+      "classification": "sales_safe",
+      "source": "0742de574cac4b25a8fb891acf03d09ad9a15f13c37726515d66b9fe8db7ad75",
+      "module_id": "e3435dee-3869-4377-916d-f29b707b435f",
+      "source_id": "18c41c89-4cf5-44dd-b7b7-534214e19f2c",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "0742de574cac4b25a8fb891acf03d09ad9a15f13c37726515d66b9fe8db7ad75",
+      "source_revision": "7b4b7837c9ed9c6e185e8bb5340b5844c4b5aa6560cafe70011b517f9ad5186a",
+      "binding_block_id": "ad5d9596-b1a0-4a1c-9708-aba94c420cbe"
+    },
+    {
+      "id": "cb-draft-57",
+      "text": "В уроке «Закрытие года» рассматриваются темы: Закрытие года.",
+      "classification": "sales_safe",
+      "source": "8d154d616ef36b73f96c8c386c1209ed4ea311365f80f1f9cdec3922a087d510",
+      "module_id": "8691f447-6cb2-4821-9b3b-81bfc99be2d5",
+      "source_id": "c67014c4-8c79-4f31-adcf-fb16d05fa90d",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "8d154d616ef36b73f96c8c386c1209ed4ea311365f80f1f9cdec3922a087d510",
+      "source_revision": "bec124a38c838de7dee74eafd69804b186e2862a8876528a1d89451af482e897",
+      "binding_block_id": "530e9ccc-70eb-4452-81a1-f651557e8fc5"
+    },
+    {
+      "id": "cb-draft-65",
+      "text": "В уроке «Найм, адаптация и удержание персонала» рассматриваются темы: Найм, Адаптация, Удержание персонала.",
+      "classification": "sales_safe",
+      "source": "815fab699fbb80f7de6dc6c1a74324b52669fbb0ab5e54063e797242bf0f8575",
+      "module_id": "9ce7a575-bbe4-45f1-8c4f-262b432127bf",
+      "source_id": "55edd056-cf67-460a-a07f-d0e3275cdca2",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "excluded"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "815fab699fbb80f7de6dc6c1a74324b52669fbb0ab5e54063e797242bf0f8575",
+      "source_revision": "b3899ee59f59cfada3015999eb92e80cc4242a92eed2318458cf3e132d3a4cf1",
+      "binding_block_id": "4db148f4-fe7c-41f7-8223-31bb3ffe168f"
+    },
+    {
+      "id": "cb-draft-67",
+      "text": "В уроке «Закрытие месяца» рассматриваются темы: Полнота учёта доходов и расходов месяца, Взаиморасчёты и курсовые разницы при закрытии, Финансовый результат месяца.",
+      "classification": "sales_safe",
+      "source": "7f86f7eacaf174a0ab652f40594cc9bd7ed0f4a2431967a025d9a237ce8c1b86",
+      "module_id": "6e18ad0a-fde0-4b3f-8060-4d9a512d2faf",
+      "source_id": "1122d6f8-c938-41c8-a24e-d51efaace8c9",
+      "review_scope": "topic_context_review",
+      "tariff_scope": {
+        "accountant": {
+          "tariff_id": "3c749a5d-fa43-5552-b064-c66611dedd58",
+          "configuration_status": "included"
+        },
+        "chief": {
+          "tariff_id": "3b427617-b192-57fa-9ac4-e85c28a7ad2f",
+          "configuration_status": "included"
+        },
+        "business": {
+          "tariff_id": "c558c63b-dd2f-5cc8-a990-ef4f0b3064c2",
+          "configuration_status": "included"
+        }
+      },
+      "source_sha256": "7f86f7eacaf174a0ab652f40594cc9bd7ed0f4a2431967a025d9a237ce8c1b86",
+      "source_revision": "c201ff62e41b84156af972b338785ccd5008519b607e36ee8035bfbbcfab8430",
+      "binding_block_id": "38382b1d-cc46-488e-b22d-145acb5e0ff5"
+    }
+  ]
+}

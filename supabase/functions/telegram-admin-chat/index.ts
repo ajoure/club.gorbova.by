@@ -600,6 +600,21 @@ Deno.serve(async (req) => {
         let botToken: string | null = null;
         let usedBotId: string | null = null;
 
+        // Cancel delayed/generated sales replies before a human sends via the same bot.
+        // Fail closed if a configured dialogue cannot be paused.
+        if (businessAccountId && businessBotId) {
+          const { data: salesCampaign, error: salesScopeError } = await supabase.from("sales_campaigns")
+            .select("id").eq("business_account_id", businessAccountId).eq("bot_id", businessBotId)
+            .eq("test_user_id", user_id).maybeSingle();
+          if (salesScopeError) throw new Error("sales_pause_scope_failed");
+          if (salesCampaign) {
+            const { error: salesPauseError } = await supabase.rpc("sales_control", {
+              p_campaign: salesCampaign.id, p_action: "pause", p_actor: user.id,
+            });
+            if (salesPauseError) throw new Error("sales_pause_failed");
+          }
+        }
+
         const requestedBotId = businessConnectionId ? businessBotId : bot_id;
         if (requestedBotId) {
           const { data: bot } = await supabase
