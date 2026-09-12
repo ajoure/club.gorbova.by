@@ -95,7 +95,7 @@ BEGIN
    offer_price:=CASE WHEN p.role='gift' THEN 1 ELSE p.price END;
    j:=pg_temp.cb21_map_config(to_jsonb(o))||jsonb_build_object('id',op.target,'tariff_id',p.target,'amount',offer_price);
    j:=jsonb_set(j,'{meta}',(j->'meta')||jsonb_build_object('sales_generation',CASE WHEN p.role='alumni' THEN 'cb21-alumni-v2' ELSE 'cb21-full-sync-v2' END,'source_offer_id',o.id));
-   IF p.role='alumni' THEN j:=jsonb_set(j,'{meta}',j->'meta'||'{"purchase_eligibility":{"kind":"prior_purchase","sources":[{"product_id":"7101ed3c-7839-4a74-ad95-aa0660369b22","purchased_from":"2024-01-01T00:00:00+03:00","allow_paid_import":true,"excluded_tariff_ids":["trf_191190b6-158"]},{"product_id":"3e43fb28-8322-41bc-bfee-714731bdc630","allow_paid_import":false,"excluded_tariff_ids":["04e6c302-f1ff-4d7d-a588-d30681e7a450"]}]}}'::jsonb); END IF;
+   IF p.role='alumni' THEN j:=jsonb_set(j,'{meta}',j->'meta'||'{"purchase_eligibility":{"kind":"prior_purchase","sources":[{"product_id":"7101ed3c-7839-4a74-ad95-aa0660369b22","purchased_from":"2024-01-01T00:00:00+03:00","allow_paid_import":true,"excluded_tariff_ids":["04e6c302-f1ff-4d7d-a588-d30681e7a450","trf_191190b6-158"]},{"product_id":"3e43fb28-8322-41bc-bfee-714731bdc630","allow_paid_import":false,"excluded_tariff_ids":["04e6c302-f1ff-4d7d-a588-d30681e7a450","trf_191190b6-158"]}]}}'::jsonb); END IF;
    IF j->'meta' ? 'document_defaults' THEN
     j:=jsonb_set(j,'{meta,document_defaults}',((j#>'{meta,document_defaults}')-'service_period_from'-'service_period_to')||jsonb_build_object('amount',offer_price,'unit_price',offer_price));
     IF cfg->'document_periods'->p.role IS NOT NULL THEN
