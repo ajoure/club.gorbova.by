@@ -1,7 +1,7 @@
 import { database, json, read, rpc } from "../_shared/sales-runtime/db.ts";
 import { evaluateReply } from "../_shared/sales-runtime/dialogue-policy.mjs";
 import { policyInput } from "../_shared/sales-runtime/replies.mjs";
-import {isActivation, hasExplicitTechnicalProblem, planDialogueReply, SEQUENCE_SYSTEM, slotValues} from "../_shared/sales-runtime/sequence.mjs";
+import {isActivation, hasExplicitTechnicalProblem, planDialogueReply, SEQUENCE_SYSTEM, slotValues, indexedEvidenceHistory, assessmentTrace} from "../_shared/sales-runtime/sequence.mjs";
 import {readAIConfig, requestAI} from "../_shared/sales-runtime/ai.mjs";
 import {hydrateMedia} from "../_shared/sales-runtime/media.ts";
 import {MEDIA_SYSTEM,validateMediaObservation} from '../_shared/sales-runtime/history.mjs';
@@ -24,15 +24,15 @@ async function draftReply(
             activation: isActivation(context),
             facts: isActivation(context) || context.firstReply ? [] : context.facts,
             slot_values: slotValues,
-            history: context.history,
+            ...indexedEvidenceHistory(context),
             client: context.client,
             checkout_options: isActivation(context) || context.firstReply ? [] : context.checkoutOptions,
             checkout_quote: isActivation(context) || context.firstReply ? null : context.lastCheckout,
             checkout_addons: isActivation(context) || context.firstReply ? [] : context.checkoutAddons,
             legal_entities: isActivation(context) || context.firstReply ? [] : context.legalEntities,
           }), {key:Deno.env.get('LOVABLE_API_KEY')});
+  onAssessment?.(assessmentTrace(selection,context));
   const candidate = planDialogueReply(context, selection);
-  onAssessment?.({intent:selection.intent,question_type:selection.question_type,slots:selection.slots,fact_ids:selection.fact_ids});
   return candidate;
 }
 Deno.serve(async (request) => {
@@ -120,7 +120,7 @@ Deno.serve(async (request) => {
           // Synthetic-only diagnostics. No real transcript, provider body,
           // credentials or stack trace is returned on a failed model request.
           const message=error instanceof Error?error.message:"";
-          steps.push({incoming,expected,actual:"error",pass:false,error:/^(invalid_|missing_|unverified_|provider_|history_|unexpected_|database_|required_)[a-z_]+$/.test(message)?message:"runtime_failed"});
+          steps.push({incoming,expected,actual:"error",pass:false,assessment,error:/^(invalid_|missing_|unverified_|provider_|history_|unexpected_|database_|required_)[a-z_]+$/.test(message)?message:"runtime_failed"});
           break;
         }
         const actual = candidate.action === "reply" ? candidate.question_id : candidate.action;
