@@ -19,10 +19,30 @@ test('public catalog supplies live features and prices without private tariffs o
 });
 test('conflicting, restricted and absent offers never become a public price promise',()=>{
  for(const kind of ['mismatch','eligibility','missing']) {
-  const data=snapshot();if(kind==='mismatch')data.tariffs[0].current_price=200;
+  const data=snapshot();if(kind==='mismatch')data.tariffs[0].offers.push({id:'primary-other',is_primary:true,offer_type:'pay_now',payment_method:'installment',amount:200});
   if(kind==='eligibility')data.tariffs[0].offers[0].meta={purchase_eligibility:{kind:'prior_purchase'}};
   if(kind==='missing')data.tariffs[0].offers=[];
   assert.equal(compileRelatedProduct(data,id).length,1);
  }
  assert.throws(()=>compileRelatedProduct(snapshot(),'other'),/unavailable/);
+});
+
+test('live club null legacy price uses storefront primary offer and suffix without duplicate currency',()=>{
+ const data=snapshot();const t=data.tariffs[0];t.current_price=null;t.original_price=999;t.period_label='BYN/мес';
+ assert.match(compileRelatedProduct(data,id)[1].text,/150 BYN\/мес/);
+ assert.doesNotMatch(compileRelatedProduct(data,id)[1].text,/BYN BYN|999/);
+ t.current_price=999;t.meta={card_config:{price_suffix:'BYN за 30 дней'}};
+ assert.match(compileRelatedProduct(data,id)[1].text,/150 BYN за 30 дней/);
+ t.offers[0].is_active=false;assert.equal(compileRelatedProduct(data,id).length,1);
+});
+test('hidden, expired, future and invalid features are excluded at a fixed date',()=>{
+ const data=snapshot();data.tariffs[0].features=[
+ {text:'ALWAYS',visibility_mode:'always'},
+ {text:'CURRENT',visibility_mode:'date_range',active_from:'2026-09-01',active_to:'2026-09-30'},
+ {text:'EXPIRED',visibility_mode:'until_date',active_to:'2026-09-01'},
+ {text:'FUTURE',visibility_mode:'date_range',active_from:'2026-10-01'},
+ {text:'INVALID',visibility_mode:'until_date',active_to:'bad'},
+ {text:'HIDDEN',visibility_mode:'hidden'}];
+ const text=compileRelatedProduct(data,id,Date.parse('2026-09-12'))[0].text;
+ assert.match(text,/ALWAYS/);assert.match(text,/CURRENT/);assert.doesNotMatch(text,/EXPIRED|FUTURE|INVALID|HIDDEN/);
 });

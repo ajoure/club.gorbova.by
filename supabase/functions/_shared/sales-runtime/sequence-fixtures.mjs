@@ -9,7 +9,7 @@ const NEW_CLIENT = [
   ];
 export const SEQUENCE_FIXTURES = {
   new_client: NEW_CLIENT,
-  club_consultation: [...NEW_CLIENT.slice(0,5),['Что входит в тариф FULL клуба?','none']],
+  club_consultation: [...NEW_CLIENT.slice(0,5),['Что входит в тариф FULL клуба и сколько он стоит?','none']],
   graduate: [
     ['Хочу программу курса ЦБ','experience'],
     ['Уже училась у вас.','feedback'],
