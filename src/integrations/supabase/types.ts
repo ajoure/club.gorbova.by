@@ -18814,6 +18814,60 @@ export type Database = {
           },
         ]
       }
+      sales_knowledge_versions: {
+        Row: {
+          approval_scope: string
+          campaign_id: string
+          created_at: string
+          facts: Json
+          facts_count: number
+          facts_sha256: string
+          id: string
+          knowledge_version: string
+          parent_id: string | null
+          recorded_by: string
+        }
+        Insert: {
+          approval_scope: string
+          campaign_id: string
+          created_at?: string
+          facts: Json
+          facts_count: number
+          facts_sha256: string
+          id?: string
+          knowledge_version: string
+          parent_id?: string | null
+          recorded_by: string
+        }
+        Update: {
+          approval_scope?: string
+          campaign_id?: string
+          created_at?: string
+          facts?: Json
+          facts_count?: number
+          facts_sha256?: string
+          id?: string
+          knowledge_version?: string
+          parent_id?: string | null
+          recorded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_knowledge_versions_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "sales_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_knowledge_versions_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "sales_knowledge_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sales_media_observations: {
         Row: {
           created_at: string
@@ -26540,6 +26594,10 @@ export type Database = {
         Returns: boolean
       }
       sales_broadcast_state: { Args: { p_now?: string }; Returns: string }
+      sales_check_knowledge_facts: {
+        Args: { p_campaign: string; p_facts: Json }
+        Returns: Json
+      }
       sales_claim_job: { Args: never; Returns: Json }
       sales_configure_ai: {
         Args: {
@@ -26596,6 +26654,10 @@ export type Database = {
         }
         Returns: string
       }
+      sales_knowledge_snapshot: {
+        Args: { p_actor: string; p_campaign: string }
+        Returns: Json
+      }
       sales_manager_report_v1: {
         Args: {
           p_from: string
@@ -26641,6 +26703,18 @@ export type Database = {
           p_seller: string
         }
         Returns: string
+      }
+      sales_replace_knowledge_facts: {
+        Args: {
+          p_actor: string
+          p_apply?: boolean
+          p_approved_facts_sha?: string
+          p_campaign: string
+          p_expected_facts_sha: string
+          p_expected_knowledge_version: string
+          p_facts: Json
+        }
+        Returns: Json
       }
       save_session_document_atomic: {
         Args: {
