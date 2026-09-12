@@ -20,6 +20,21 @@ function exchange(context, reply, incoming) {
  context.history.push({role:'seller',text:reply.text,question_id:reply.question_id},{role:'customer',text:incoming});
  context.firstReply=false;context.stage=reply.stage;context.lastQuestionId=reply.question_id;
 }
+test('technical checkout trouble always assigns the last message instead of creating another payment link',()=>{
+ for (const text of ['Ссылка не открывается','При оплате ошибка 500','Не получается оплатить по ссылке','Кнопка рассрочки не работает']) {
+  const c=setup();exchange(c,planDialogueReply(c,assess(c)),text);
+  const result=planDialogueReply(c,assess(c,{experience:'new',goal:'known',format:'accepted',interest:'accepted'},{intent:'payment'}));
+  assert.deepEqual(result,{action:'handoff',reason:'technical_problem'});
+ }
+});
+test('AI recognizes screenshot-only or paraphrased technical problems and hands them off silently',()=>{
+ const c=setup();exchange(c,planDialogueReply(c,assess(c)),'Вот скрин, дальше не пускает');
+ assert.deepEqual(planDialogueReply(c,assess(c,{}, {intent:'technical'})),{action:'handoff',reason:'technical_problem'});
+});
+test('ordinary payment questions are not technical incidents',()=>{
+ const c=setup();exchange(c,planDialogueReply(c,assess(c)),'Как оплатить курс?');
+ assert.equal(planDialogueReply(c,assess(c,{}, {intent:'payment'})).action,'reply');
+});
 test('the exact incident: activation cannot deliver program, dates or price even if classifier requests them',()=>{
  const c=setup();
  for(const phrase of [trigger,'  ХОЧУ   программу курса цб  ']) {
