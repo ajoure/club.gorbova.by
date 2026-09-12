@@ -80,3 +80,10 @@ test('dry-run catches preserved primary-offer collision before any permanent wri
   assert.equal((await db.query("SELECT count(*)::int n FROM audit_logs")).rows[0].n,0);
  }finally{await db.close();}
 });
+
+test('new administrator source button requires refreshed mapping instead of silently incomplete sync',async()=>{
+ const {db,pairs}=await fixture();try{
+  await db.query("INSERT INTO tariff_offers(tariff_id,is_active,offer_type,is_primary,meta) VALUES($1,true,'pay_now',false,'{\"slot_role\":\"button_6\"}')",[pairs[0].source]);
+  await assert.rejects(run(db,options),/source_offer_catalog_changed/);await db.exec('ROLLBACK');
+ }finally{await db.close();}
+});

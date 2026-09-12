@@ -63,7 +63,18 @@ DO $$
 DECLARE p record; a public.tariffs; b public.tariffs; o public.tariff_offers; op record; r public.access_rules;
  cfg jsonb:=(SELECT v FROM _cb21_options); j jsonb; dest uuid; ar record; src_addon public.offer_addons; aa public.offer_addons; offer_price numeric;
 BEGIN
+ IF coalesce((cfg->>'apply')::boolean,false) THEN PERFORM 1 FROM public.sales_campaigns WHERE code='cb21-owner-test' FOR UPDATE; END IF;
  IF NOT EXISTS(SELECT 1 FROM public.sales_campaigns WHERE code='cb21-owner-test' AND mode='off') THEN RAISE EXCEPTION 'campaign_must_be_off'; END IF;
+ IF coalesce((cfg->>'apply')::boolean,false) THEN
+  -- Lock only the ten participating tariff rows and their configuration while
+  -- computing the reviewed diff. Parent locks also prevent concurrent inserts
+  -- through their foreign keys. Administrator edits cannot be overwritten.
+  PERFORM 1 FROM public.tariffs WHERE id IN(SELECT source FROM _cb21_pairs UNION SELECT target FROM _cb21_pairs) ORDER BY id FOR UPDATE;
+  PERFORM 1 FROM public.tariff_offers WHERE tariff_id IN(SELECT source FROM _cb21_pairs UNION SELECT target FROM _cb21_pairs) ORDER BY id FOR UPDATE;
+  PERFORM 1 FROM public.offer_addons WHERE parent_offer_id IN(SELECT source FROM _cb21_offer_pairs UNION SELECT target FROM _cb21_offer_pairs) ORDER BY id FOR UPDATE;
+  PERFORM 1 FROM public.access_rules WHERE tariff_id IN(SELECT source FROM _cb21_pairs UNION SELECT target FROM _cb21_pairs) ORDER BY id FOR UPDATE;
+ END IF;
+ IF (SELECT count(*) FROM public.tariff_offers WHERE tariff_id IN(SELECT source FROM _cb21_pairs) AND is_active)<>20 THEN RAISE EXCEPTION 'source_offer_catalog_changed'; END IF;
  IF EXISTS(SELECT 1 FROM public.sales_jobs j JOIN public.sales_conversations c ON c.id=j.conversation_id JOIN public.sales_campaigns sc ON sc.id=c.campaign_id WHERE sc.code='cb21-owner-test' AND j.status IN('claimed','sending')) THEN RAISE EXCEPTION 'inflight_sales_job'; END IF;
  IF (SELECT count(*) FROM public.tariffs WHERE id IN(SELECT source FROM _cb21_pairs) AND product_id='3e43fb28-8322-41bc-bfee-714731bdc630')<>5
  OR (SELECT count(*) FROM public.tariffs WHERE id IN(SELECT target FROM _cb21_pairs) AND product_id='2b7bf6d4-ad8d-46ad-9399-7f96c307c596')<>5 THEN RAISE EXCEPTION 'tariff_scope_changed'; END IF;
