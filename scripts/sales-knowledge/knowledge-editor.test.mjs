@@ -28,7 +28,7 @@ before(async()=>{
  CREATE TABLE course_transcription_bindings(source_id uuid,block_id uuid,lesson_id uuid,product_id uuid,block_updated_at timestamptz);
  `);
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912164349_b779cb99-19cf-4ef6-be5a-2753988c1791.sql',import.meta.url),'utf8'));
- await db.exec(await readFile(new URL('../../supabase/migrations/20260912174145_sales_knowledge_short_replies.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../../supabase/migrations/20260912175835_f1784ad8-aa21-4407-ac1c-72260894cf6f.sql',import.meta.url),'utf8'));
 });
 after(()=>db.close());
 test('migration preserves exact legacy normalized facts and fingerprint when short reply is absent',async()=>{
@@ -36,7 +36,7 @@ test('migration preserves exact legacy normalized facts and fingerprint when sho
  const original=await readFile(new URL('../../supabase/migrations/20260912164349_b779cb99-19cf-4ef6-be5a-2753988c1791.sql',import.meta.url),'utf8');
  const previous=original.slice(original.indexOf('CREATE FUNCTION public.sales_check_knowledge_facts'),original.indexOf('CREATE FUNCTION public.sales_replace_knowledge_facts')).replace('CREATE FUNCTION','CREATE OR REPLACE FUNCTION');
  await db.exec(previous);const before=await call('sales_check_knowledge_facts',[id.campaign,[fact()]]);
- await db.exec(await readFile(new URL('../../supabase/migrations/20260912174145_sales_knowledge_short_replies.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../../supabase/migrations/20260912175835_f1784ad8-aa21-4407-ac1c-72260894cf6f.sql',import.meta.url),'utf8'));
  const after=await call('sales_check_knowledge_facts',[id.campaign,[fact()]]);assert.deepEqual(after,before);
 });
 test('short reply is versioned independently without replacing knowledge; changed reply invalidates approval',async()=>{
