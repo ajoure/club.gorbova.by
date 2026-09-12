@@ -18568,6 +18568,66 @@ export type Database = {
           },
         ]
       }
+      sales_checkout_operations: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          document_started_at: string | null
+          endpoint: string
+          expires_at: string
+          id: string
+          job_id: string
+          quote_fingerprint: string
+          request_body: Json
+          result_url: string | null
+          status: string
+          token_hash: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          document_started_at?: string | null
+          endpoint: string
+          expires_at?: string
+          id?: string
+          job_id: string
+          quote_fingerprint: string
+          request_body: Json
+          result_url?: string | null
+          status?: string
+          token_hash: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          document_started_at?: string | null
+          endpoint?: string
+          expires_at?: string
+          id?: string
+          job_id?: string
+          quote_fingerprint?: string
+          request_body?: Json
+          result_url?: string | null
+          status?: string
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_checkout_operations_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "sales_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_checkout_operations_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "sales_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sales_conversations: {
         Row: {
           answered_seq: number
@@ -18688,6 +18748,7 @@ export type Database = {
           id: string
           inbound_id: string
           inbound_seq: number
+          kind: string
           knowledge_version: string
           policy_version: string
           reason: string | null
@@ -18705,6 +18766,7 @@ export type Database = {
           id?: string
           inbound_id: string
           inbound_seq: number
+          kind?: string
           knowledge_version: string
           policy_version: string
           reason?: string | null
@@ -18722,6 +18784,7 @@ export type Database = {
           id?: string
           inbound_id?: string
           inbound_seq?: number
+          kind?: string
           knowledge_version?: string
           policy_version?: string
           reason?: string | null
@@ -26427,11 +26490,20 @@ export type Database = {
         Args: { _package_id: string }
         Returns: Json
       }
+      sales_authorize_invoice_document: {
+        Args: { p_body: Json; p_hash: string }
+        Returns: string
+      }
       sales_begin_send: {
         Args: { p_candidate: Json; p_job: string; p_token: string }
         Returns: boolean
       }
+      sales_broadcast_state: { Args: { p_now?: string }; Returns: string }
       sales_claim_job: { Args: never; Returns: Json }
+      sales_consume_checkout_capability: {
+        Args: { p_body: Json; p_endpoint: string; p_hash: string }
+        Returns: string
+      }
       sales_control: {
         Args: {
           p_action: string
@@ -26442,6 +26514,7 @@ export type Database = {
         }
         Returns: Json
       }
+      sales_delivery_gate: { Args: { p_job: string }; Returns: boolean }
       sales_finish_send: {
         Args: {
           p_error?: string
@@ -26488,7 +26561,24 @@ export type Database = {
           tariff_name: string
         }[]
       }
+      sales_offer_eligibility: {
+        Args: { p_offer: string; p_user: string }
+        Returns: Json
+      }
+      sales_queue_reminder: {
+        Args: { p_conversation: string }
+        Returns: string
+      }
       sales_queue_reply: { Args: { p_conversation: string }; Returns: string }
+      sales_reminder_due: {
+        Args: {
+          p_inbound: string
+          p_now?: string
+          p_random?: number
+          p_seller: string
+        }
+        Returns: string
+      }
       save_session_document_atomic: {
         Args: {
           _expected_template_version_id?: string
