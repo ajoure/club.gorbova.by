@@ -141,9 +141,18 @@ export async function loadContext(db: DB, p: any, c: any) {
       "flows:" + flow.id,
     );
   }
+  let knowledgeFacts=p.knowledge.facts??[];
+  let knowledgeFingerprint='legacy';
+  if(p.knowledge.editorial_schema===1) {
+    const checked=await rpc(db,'sales_check_knowledge_facts',{p_campaign:p.id,p_facts:knowledgeFacts});
+    if(!checked.valid||checked.facts_sha256!==p.knowledge.facts_sha256) throw Error('knowledge_source_changed');
+    knowledgeFacts=checked.facts;
+    knowledgeFingerprint=checked.facts_sha256;
+  }
+  const referenceTopics=knowledgeFacts.filter((f:any)=>f.scope==='background').map((f:any)=>({title:f.title,text:f.text}));
   const sourceIds = [
     ...new Set<string>(
-      (p.knowledge.facts ?? []).map((f: any) => String(f.source_id)),
+      knowledgeFacts.map((f: any) => String(f.source_id)),
     ),
   ];
   const transcriptMetadata = sourceIds.length
@@ -154,7 +163,8 @@ export async function loadContext(db: DB, p: any, c: any) {
     )
     : [];
   // Metadata only: no transcript_text is loaded, logged or submitted to the model.
-  for (const f of p.knowledge.facts ?? []) {
+  for (const f of knowledgeFacts) {
+    if(f.scope==='background') continue;
     if (
       !transcriptMetadata.some((t: any) =>
         t.source_id === f.source_id &&
@@ -189,6 +199,13 @@ export async function loadContext(db: DB, p: any, c: any) {
   const isCurrentOffer = (o:any) => !o.meta?.sales_legacy_only && (!o.meta?.purchase_eligibility || eligibilityResults.some((e:any)=>e.offer_id===o.id&&e.eligible));
   const isCurrentTariff = (t:any) => t.is_public || offers.some((o:any)=>o.tariff_id===t.id&&o.meta?.purchase_eligibility&&isCurrentOffer(o));
   const accessSummary = await loadPublicTariffAccess(db,p.product_id,tariffs);
+  // Selling a future course is distinct from opening its lessons today.
+  // Membership comes from the same access resolver as the public tariff cards.
+  const programModuleIds=new Set(tariffs.filter((t:any)=>isCurrentTariff(t)&&visible(t,now))
+    .flatMap((t:any)=>(accessSummary[t.id]?.modules??[]).filter((m:any)=>m.included).map((m:any)=>m.id)));
+  for(let i=facts.length-1;i>=0;i--)if(facts[i].kind==='topic'&&!programModuleIds.has(facts[i].module_id))facts.splice(i,1);
+  const program=facts.find(f=>f.id==='program');
+  if(program) program.text=`В программе «Ценный бухгалтер» есть такие темы:\n${modules.filter((m:any)=>programModuleIds.has(m.id)).map((m:any)=>'• '+m.title).join('\n')}\n\nСостав доступных модулей зависит от выбранного тарифа.`;
   const prices: string[] = [];
   for (const t of tariffs.filter((t: any) => isCurrentTariff(t) && visible(t, now))) {
     const offer = offers.find((o: any) =>
@@ -253,6 +270,7 @@ export async function loadContext(db: DB, p: any, c: any) {
     aiConfig:readAIConfig(p.ai_config),
     historyFingerprint:JSON.stringify(history.map((m:any)=>[m.id,m.message_text,m.direction,m.meta?.file_id,m.meta?.storage_path,m.meta?.upload_status,m.meta?.edited,m.meta?.uploaded_file_id])),
     facts,
+    referenceTopics,
     publicTariffIds:tariffs.filter((t:any)=>t.is_public).map((t:any)=>t.id),
     privateFactIds:facts.filter((f:any)=>tariffs.some((t:any)=>!t.is_public&&(f.tariff_id===t.id||f.id==="access_"+t.id))).map((f:any)=>f.id),
     checkoutOptions,
@@ -302,6 +320,7 @@ export async function loadContext(db: DB, p: any, c: any) {
       checkoutAddons,
       alumniEligibility,
       accessSummary,
+      knowledgeFingerprint,
       related:related.fingerprint,
     }),
   };
