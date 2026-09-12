@@ -4,6 +4,7 @@ import { DISCLOSURE } from "./replies.mjs";
 import { readFullHistory, describeAttachment } from "./history.mjs";
 import {readAIConfig} from './ai.mjs';
 import {loadRelatedProducts} from './related-products.ts';
+import {loadClientEvidence} from './client-evidence.ts';
 export type Fact = {
   id: string;
   text: string;
@@ -101,11 +102,7 @@ export async function loadContext(db: DB, p: any, c: any) {
     !profile || !product.is_active || !flow.is_active ||
     flow.product_id !== p.product_id
   ) throw Error("product_unavailable");
-  const orders: any[] = await readFullHistory((from:number,to:number) => read(
-    db.from("orders_v2").select("id,product_id,status,flow_id,created_at").or(
-      `user_id.eq.${p.test_user_id},profile_id.eq.${profile.id}`,
-    ).eq("is_deleted", false).eq("status", "paid").lte("created_at",snapshotAt).order("id").range(from,to),
-  ));
+  const clientEvidence = await loadClientEvidence(db,p.test_user_id,profile.id,p.product_id,snapshotAt,comments);
   const rules = await read(
     db.from("access_rules").select("id,tariff_id,conditions,target_ref").eq(
       "product_id",
@@ -250,21 +247,6 @@ export async function loadContext(db: DB, p: any, c: any) {
   const legalRows=await read(db.from("client_legal_details").select("id,client_type,leg_name,ent_name").eq("profile_id",profile.id));
   const legalEntities=legalRows.map((r:any)=>({id:r.id,client_type:r.client_type,name:r.leg_name||r.ent_name}));
   const checkoutAddons=checkoutOptions.length?await read(db.from("offer_addons").select("parent_offer_id,addon_offer_id,pricing_mode,discount_percent,fixed_amount,access_delivery_mode,access_opens_at,access_duration_days,visible_from,visible_to,addon_product:products_v2!offer_addons_addon_product_id_fkey(name),addon_offer:tariff_offers!offer_addons_addon_offer_id_fkey(amount,is_active,visible_from,visible_to)").in("parent_offer_id",checkoutOptions.map((o:any)=>o.id)).eq("is_active",true)):[];
-  const purchasedIds = [
-    ...new Set(orders.map((o: any) => o.product_id).filter(Boolean)),
-  ];
-  const purchasedProducts = purchasedIds.length
-    ? await read(
-      db.from("products_v2").select("id,name").in("id", purchasedIds),
-    )
-    : [];
-  const purchases = orders.map((o: any) => ({
-    status: "paid",
-    product: purchasedProducts.find((x: any) => x.id === o.product_id)?.name ??
-      "unknown",
-    date: o.created_at,
-    learner_status: "unknown",
-  }));
   const related=await loadRelatedProducts(p.knowledge,p.product_id);
   facts.push(...related.facts);
   return {
@@ -296,14 +278,13 @@ export async function loadContext(db: DB, p: any, c: any) {
       const media=describeAttachment(m,p.test_user_id);return media?[media]:[];
     }),
     client: {
-      purchases,
+      ...clientEvidence,
       alumni_eligibility:alumniEligibility,
-      current_course_paid:orders.some((o:any)=>o.product_id===p.product_id),
       // Purchase proof follows configured prior-product eligibility, not names.
       // Purchase remains distinct from attendance/completion.
-      verified_cb_purchase: alumniEligibility.eligible || orders.some((o: any) => o.product_id===p.product_id),
-      purchase_history_complete: true,
+      verified_cb_purchase: alumniEligibility.eligible || clientEvidence.current_course_paid,
       webinar_comments: comments.map((x: any) => ({
+        event_id: x.live_event_id,
         text: x.content,
         at: x.created_at,
       })),

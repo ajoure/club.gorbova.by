@@ -9,6 +9,7 @@ function reply(text:string,question_id:string,stage:string,extra:Record<string,u
 }
 export async function checkoutReply(db:DB,p:any,c:any,job:any,context:any,selection:any) {
  if(context.client?.current_course_paid)return held('current_course_already_purchased');
+ if(context.client?.current_course_checkout_hold)return held('current_course_existing_record_requires_review');
  const options=context.checkoutOptions??[];
  if(!selection?.offer_id) return reply('Планируете оплатить одним платежом, частями на платформе или оформить рассрочку банка «Ресурс развития»?','payment_kind','payment');
  const offer=options.find((o:any)=>o.id===selection.offer_id);
