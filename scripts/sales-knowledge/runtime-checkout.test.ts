@@ -1,3 +1,4 @@
+import {cbAlumniOfferAllowed} from '../../supabase/functions/_shared/sales-runtime/checkout-auth.ts';
 import {checkoutReply} from '../../supabase/functions/_shared/sales-runtime/checkout.ts';
 function eq(a:unknown,b:unknown){if(JSON.stringify(a)!==JSON.stringify(b))throw Error(`mismatch: ${JSON.stringify(a)} / ${JSON.stringify(b)}`);}
 function fixture(){
@@ -75,4 +76,16 @@ Deno.test('bank and invoice capabilities select exact canonical endpoint and kno
    if(kind==='invoice')eq(f.state.calls[0].body.legal_details_id,'legal');
   } finally {globalThis.fetch=original;Deno.env.delete('SUPABASE_URL');Deno.env.delete('SUPABASE_SERVICE_ROLE_KEY');}
  }
+});
+
+Deno.test('all writers share recipient eligibility, guest denial and existing legacy-link exemption',async()=>{
+ let meta:any={};const calls:any[]=[];const db:any={from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{meta},error:null})})})}),rpc:async(_name:string,args:any)=>{calls.push(args.p_user);return {data:{eligible:args.p_user==='eligible'},error:null}}};
+ eq(await cbAlumniOfferAllowed(db,'offer',null,true),true);eq(calls.length,0);
+ meta={sales_eligibility:'cb2_since_2024'};
+ eq(await cbAlumniOfferAllowed(db,'offer',null,true),false);eq(calls.length,0);
+ eq(await cbAlumniOfferAllowed(db,'offer','unverified',true),false);
+ eq(await cbAlumniOfferAllowed(db,'offer','eligible',true),true);eq(calls,['unverified','eligible']);
+ meta={sales_legacy_only:true};
+ eq(await cbAlumniOfferAllowed(db,'old-offer','eligible',true),false);
+ eq(await cbAlumniOfferAllowed(db,'old-offer','eligible'),true);
 });

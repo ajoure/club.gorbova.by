@@ -46,7 +46,7 @@ CREATE TEMP TABLE _cb21_diff(table_name text,id uuid,before_row jsonb,after_row 
 -- Translation is checked by title plus exact course-root parent, never array order.
 CREATE TEMP TABLE _cb21_modules ON COMMIT DROP AS
  SELECT a.id AS source,b.id AS target FROM public.training_modules a JOIN public.training_modules b
- ON regexp_replace(lower(trim(a.title)),'^(20|21) поток[ :]*','','g')=regexp_replace(lower(trim(b.title)),'^(20|21) поток[ :]*','','g')
+ ON regexp_replace(lower(trim(a.title)),'(20|21) поток[ :]*','','g')=regexp_replace(lower(trim(b.title)),'(20|21) поток[ :]*','','g')
  WHERE a.parent_module_id='2e5cbc7b-bbaf-4384-b894-bbd98d7f524e' AND b.parent_module_id='4365e913-36f1-432e-ab16-748c3ca6826a';
 CREATE OR REPLACE FUNCTION pg_temp.cb21_map_config(j jsonb) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE s text:=coalesce(j,'{}')::text; m record;
@@ -67,6 +67,7 @@ BEGIN
  IF EXISTS(SELECT 1 FROM public.sales_jobs j JOIN public.sales_conversations c ON c.id=j.conversation_id JOIN public.sales_campaigns sc ON sc.id=c.campaign_id WHERE sc.code='cb21-owner-test' AND j.status IN('claimed','sending')) THEN RAISE EXCEPTION 'inflight_sales_job'; END IF;
  IF (SELECT count(*) FROM public.tariffs WHERE id IN(SELECT source FROM _cb21_pairs) AND product_id='3e43fb28-8322-41bc-bfee-714731bdc630')<>5
  OR (SELECT count(*) FROM public.tariffs WHERE id IN(SELECT target FROM _cb21_pairs) AND product_id='2b7bf6d4-ad8d-46ad-9399-7f96c307c596')<>5 THEN RAISE EXCEPTION 'tariff_scope_changed'; END IF;
+ IF (SELECT count(*) FROM _cb21_modules)<>28 THEN RAISE EXCEPTION 'expected_28_module_pairs'; END IF;
  IF EXISTS(SELECT source FROM _cb21_modules GROUP BY source HAVING count(*)<>1) OR EXISTS(SELECT target FROM _cb21_modules GROUP BY target HAVING count(*)<>1) THEN RAISE EXCEPTION 'ambiguous_module_mapping'; END IF;
  FOR p IN SELECT * FROM _cb21_pairs LOOP
   SELECT * INTO STRICT a FROM public.tariffs WHERE id=p.source;

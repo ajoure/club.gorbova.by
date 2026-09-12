@@ -22,6 +22,7 @@
  * с теми же product_id/tariff_id/offer_id/amount/currency и current_uses=0 и
  * не истёк — возвращаем существующий url_token.
  */
+import {cbAlumniOfferAllowed} from '../_shared/sales-runtime/checkout-auth.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { SAVED_CARDS_DISABLED, savedCardsDisabledResponse } from '../_shared/saved-cards-disabled.ts';
@@ -171,6 +172,8 @@ Deno.serve(async (req) => {
       resolvedOfferId = primary.id;
       canonicalAmountByn = Number(primary.amount);
     }
+
+    if (!await cbAlumniOfferAllowed(supabase,resolvedOfferId,authUser.id,true)) return errorResponse('alumni_eligibility_required',403);
 
     if (!Number.isFinite(canonicalAmountByn) || canonicalAmountByn < 1) {
       return errorResponse('invalid_canonical_amount', 500);

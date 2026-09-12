@@ -18,7 +18,7 @@ async function fixture(){
  const pairs=[...sql.matchAll(/\('(accountant|chief|business|alumni|gift)','([^']+)','([^']+)',(\d+),(\d+|NULL),(\d+)\)/g)].map(([,role,source,target,price,old,days])=>({role,source,target,price:+price,old:old==='NULL'?null:+old,days:+days}));
  const sourceOffers=[...sql.split('INSERT INTO _cb21_offer_pairs VALUES\n')[1].split(';')[0].matchAll(/\('([^']+)',/g)].map(x=>x[1]);
  const destOffers=[...sql.split('INSERT INTO _cb21_offer_pairs VALUES\n')[1].split(';')[0].matchAll(/\('[^']+','([^']+)'\)/g)].map(x=>x[1]);
- const m20=[],m21=[];for(let i=0;i<26;i++){m20.push(randomUUID());m21.push(randomUUID());await insert('training_modules',{id:m20[i],parent_module_id:root20,title:`Модуль ${i}`});await insert('training_modules',{id:m21[i],parent_module_id:root21,title:`Модуль ${i}`});}
+ const m20=[],m21=[];for(let i=0;i<28;i++){m20.push(randomUUID());m21.push(randomUUID());await insert('training_modules',{id:m20[i],parent_module_id:root20,title:i===0?`Конференции | 20 поток |`:`Модуль ${i}`});await insert('training_modules',{id:m21[i],parent_module_id:root21,title:i===0?`КОНФЕРЕНЦИИ | 21 поток |`:`Модуль ${i}`});}
  for(const [i,p] of pairs.entries()) {
   const sourcePrice=[1650,1950,2650,1325,0][i];
   for(const source of [true,false])await insert('tariffs',{id:source?p.source:p.target,product_id:source?p20:p21,name:p.role,code:randomUUID(),public_id:randomUUID(),is_active:true,is_public:i<3,access_days:p.days,price_monthly:source?null:i<3?p.price:null,original_price:source?null:p.old,meta:{card_config:{price_display:source?sourcePrice:p.price,old_price:source?2000:p.old},...(source?{}:{site_slot_key:p.role,course_access:{months:6}})}});
@@ -61,4 +61,8 @@ test('wrong reviewed fingerprint or missing owner dates cannot apply',async()=>{
   const dry=await run(db);const plan=dry.flatMap(r=>r.rows??[]).find(r=>r.fingerprint);
   await assert.rejects(run(db,{apply:true,expected_fingerprint:plan.fingerprint}),/owner_dates_required/);await db.exec('ROLLBACK');assert.deepEqual(await snapshot(db),before);
  }finally{await db.close();}
+});
+
+test('missing source-to-target module pair aborts before public writes',async()=>{
+ const {db}=await fixture();try{const before=await snapshot(db);await db.exec("DELETE FROM training_modules WHERE id=(SELECT id FROM training_modules WHERE parent_module_id='4365e913-36f1-432e-ab16-748c3ca6826a' LIMIT 1)");await assert.rejects(run(db,options),/expected_28_module_pairs/);await db.exec('ROLLBACK');assert.deepEqual(await snapshot(db),before);}finally{await db.close();}
 });
