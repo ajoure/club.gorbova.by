@@ -89,7 +89,7 @@ export async function normalizeEdgeFunctionErrorAsync(
   return normalizeEdgeFunctionError(error);
 }
 
-async function readResponseLikeBody(ctx: any): Promise<unknown | undefined> {
+export async function readResponseLikeBody(ctx: any): Promise<unknown | undefined> {
   try {
     const jsonResponse = typeof ctx.clone === "function" ? ctx.clone() : ctx;
     if (typeof jsonResponse.json === "function") return await jsonResponse.json();

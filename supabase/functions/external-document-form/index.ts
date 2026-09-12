@@ -5,6 +5,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getCallerUserId } from "../_shared/caller-user.ts";
+import { recordExternalGeneration } from "../_shared/document-generation-outcome.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -271,7 +272,7 @@ Deno.serve(async (req) => {
       const formIds = (packageForms ?? []).map((form: any) => form.id);
       if (!formIds.length) return json({ submissions: [] });
       const { data: submissions, error: submissionsError } = await admin.from("document_package_external_submissions")
-        .select("id, status, submitted_at, generated_at, generated_document_ids")
+        .select("id, status, submitted_at, generated_at, generated_document_ids, error_code")
         .eq("owner_profile_id", profile.id)
         .in("external_form_id", formIds)
         .order("submitted_at", { ascending: false })
@@ -515,17 +516,19 @@ Deno.serve(async (req) => {
       const meta = attachments.map((a: any) => ({ submission_id: submission.id, storage_path: scalar(a.path), file_name: scalar(a.file_name).slice(0, 180), mime_type: scalar(a.mime_type) || null, byte_size: Number(a.byte_size) || null }));
       const { error } = await admin.from("document_package_external_submission_attachments").insert(meta); if (error) throw error;
     }
-    const result = await fetch(`${url}/functions/v1/ai-generate-document-package`, {
+    const outcome = await recordExternalGeneration(() => fetch(`${url}/functions/v1/ai-generate-document-package`, {
       method: "POST", headers: { "Content-Type": "application/json", apikey: service, Authorization: `Bearer ${service}`, "x-internal-call": "external-document-form" },
       body: JSON.stringify({ package_session_id: session.id, package_template_item_id: ctx.item.id, run_mode: "external_submit" }),
+    }), async (patch) => {
+      const { data: saved, error: saveError } = await admin.from("document_package_external_submissions")
+        .update(patch).eq("id", submission.id).select("id").single();
+      return !saveError && saved?.id === submission.id;
     });
-    const generated = await result.json().catch(() => ({}));
-    const docs = Array.isArray(generated?.results) ? generated.results.filter((r: any) => r.document_id).map((r: any) => r.document_id) : [];
-    await admin.from("document_package_external_submissions").update({
-      status: result.ok && docs.length ? "generated" : "failed", generated_document_ids: docs,
-      generated_at: result.ok ? new Date().toISOString() : null, error_code: result.ok ? null : (generated?.error || `generation_http_${result.status}`),
-    }).eq("id", submission.id);
-    if (!result.ok || docs.length === 0) return json({ error: "generation_failed", submission_id: submission.id }, 502);
+    const docs = outcome.documentIds;
+    if (!outcome.canDeliver) return json({
+      error: "generation_failed", error_code: outcome.errorCode, stage: "generation",
+      generation_status: outcome.generationStatus, submission_id: submission.id,
+    }, outcome.httpStatus === 503 ? 503 : 502);
 
     // Генерация закончена — доставку делает существующий канонический sender.
     // В него передаётся только ID созданного документа, а не storage-пути.
@@ -567,7 +570,9 @@ Deno.serve(async (req) => {
         status: "delivery_partial", error_code: "one_or_more_delivery_channels_failed",
       }).eq("id", submission.id);
     }
-    return json({ success: true, submission_id: submission.id, document_ids: docs, delivery: sendResults });
+    return json({ success: true, submission_id: submission.id, document_ids: docs, delivery: sendResults,
+      generation_status: outcome.generationStatus, error_code: outcome.errorCode,
+      delivery_complete: deliveryComplete });
   } catch (e) {
     console.error("[external-document-form]", e);
     return json({ error: "internal_error" }, 500);

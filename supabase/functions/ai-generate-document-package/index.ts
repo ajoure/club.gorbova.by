@@ -963,9 +963,8 @@ Deno.serve(async (req) => {
       results,
     };
     console.log('[ai-generate-document-package] final-response', JSON.stringify({
-      session: packageSessionId, status: finalStatus, total_documents: totalDocuments,
-      generated, errors_count: errors?.length ?? 0, blocked_count: blocked?.length ?? 0,
-      results_summary: (results || []).map((r: any) => ({ item_id: r.item_id, status: r.status, errors: r.errors, document_id: r.document_id })),
+      status: finalStatus, total_items: items.length, total_documents: totalDocuments,
+      generated, errors_count: errors, blocked_count: blocked,
     }));
     return j(responsePayload);
   } catch (e: any) {
