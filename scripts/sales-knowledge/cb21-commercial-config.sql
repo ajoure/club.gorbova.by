@@ -121,6 +121,10 @@ BEGIN
    END IF;
   END LOOP;
  END LOOP;
+ UPDATE _cb21_tariffs tt SET meta=tt.meta||jsonb_build_object('sales_sync_source_tariff_id',pp.source,'sales_vip_included',EXISTS(
+  SELECT 1 FROM _cb21_rules rr WHERE rr.tariff_id=tt.id AND rr.target_ref='4365e913-36f1-432e-ab16-748c3ca6826a'
+  AND (rr.conditions->>'access_mode'='full' OR rr.conditions->'allowed_module_ids' @> '["60aa7a27-5346-4ba0-9686-d297e14d49cf","9ce7a575-bbe4-45f1-8c4f-262b432127bf","83544104-b2c1-48c2-a0c9-015ceec012a1"]'::jsonb)))
+ FROM _cb21_pairs pp WHERE pp.target=tt.id;
  FOR o IN SELECT * FROM public.tariff_offers WHERE id IN('4d01edc1-6189-4017-ba43-922e7e9479ac','9687b2a8-585d-4770-9505-2a01030a093a','80780ddb-cafd-4427-ae8d-872853596120','e5b64e47-08d0-4ef5-8bed-2524d1ac8170') LOOP
   -- Keep all historical offers resolvable for existing links/obligations. Only
   -- remove them from new-sale selection; never rewrite their amounts/settings.

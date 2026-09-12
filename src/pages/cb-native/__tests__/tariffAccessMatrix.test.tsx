@@ -113,6 +113,22 @@ describe("CbNative tariff access matrix", () => {
     }
   });
 
+  it("shows synchronized source access days and accountant VIP modules only after the configuration arrives", () => {
+    const {container,rerender}=render(<CbNativeTariffCard tariff={{...tariff,access_days:180,meta:{course_access:{kind:"course_end_calendar_months",months:6}}}} index={0} onSelectOffer={()=>undefined}/>);
+    expect(container.textContent).toContain("после окончания курса");
+    expect(container.textContent).not.toContain("«Делегирование»");
+    rerender(<CbNativeTariffCard tariff={{...tariff,access_days:180,meta:{sales_vip_included:true}}} index={0} onSelectOffer={()=>undefined}/>);
+    expect(container.textContent).toContain("Доступ 180 дней");
+    expect(container.textContent).toContain("с момента покупки");
+    expect(container.textContent).not.toContain("после окончания курса");
+    for(const name of ["«Делегирование»","«Найм, адаптация и удержание персонала»","«Таймлайн месяца»"])expect(container.textContent).toContain(name);
+    for(const [index,days] of [[1,240],[2,300]]){
+      rerender(<CbNativeTariffCard tariff={{...tariff,access_days:days}} index={index} onSelectOffer={()=>undefined}/>);
+      expect(container.textContent).toContain(`Доступ ${days} дней`);
+      expect(container.textContent).not.toContain("после окончания курса");
+    }
+  });
+
   it.each([[1790, 139], [2190, 183], [2990, 249]])(
     "uses the configured marketing minimum for price %s, without computing billing amounts",
     (price, monthly) => {

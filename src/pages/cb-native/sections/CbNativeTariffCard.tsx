@@ -334,6 +334,16 @@ interface CbNativeTariffCardProps {
 
 export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTariffCardProps) {
   const card = CARDS[resolveCbTariffCardIndex(tariff, index)] ?? CARDS[0];
+  // Display the configured access model; publishing code alone must not
+  // advertise the 20th-cohort sync before the managed data operation succeeds.
+  const access = tariff.meta?.course_access;
+  const accessItem: FeatureItem | null = access?.kind === "course_end_calendar_months" && Number(access.months) > 0
+    ? { bold: `Доступ ${access.months} месяцев`, text: "после окончания курса" }
+    : tariff.access_days > 0 ? { bold: `Доступ ${tariff.access_days} дней`, text: "с момента покупки" } : null;
+  const core = card.core.map(item => item.bold?.startsWith("Доступ ") && !item.bold.includes("клуб") && !item.bold.includes("Клуб") && accessItem ? accessItem : item);
+  const programme = resolveCbTariffCardIndex(tariff,index) === 0 && tariff.meta?.sales_vip_included === true
+    ? [...card.programme.slice(0,2), ...CARDS[1].programme.filter(item=>item.badge === "VIP"), ...card.programme.slice(2)]
+    : card.programme;
   const pricing = resolveVisualPricing(tariff);
   const offers = selectAndSortCbOffers(tariff.offers ?? []);
 
@@ -359,7 +369,7 @@ export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTar
           className="mt-6 space-y-[10px] text-[16px] leading-[1.32]"
           style={{ color: "#1b1b1b" }}
         >
-          {card.core.map((item, itemIndex) => (
+          {core.map((item, itemIndex) => (
             <FeatureRow key={itemIndex} item={item} />
           ))}
         </ul>
@@ -369,7 +379,7 @@ export function CbNativeTariffCard({ tariff, index, onSelectOffer }: CbNativeTar
           style={{ background: CB_PALETTE.accent, color: "#ffffff" }}
         >
           <ul className="space-y-[10px]">
-            {card.programme.map((item, itemIndex) => (
+            {programme.map((item, itemIndex) => (
               <FeatureRow key={itemIndex} item={item} dark />
             ))}
           </ul>
