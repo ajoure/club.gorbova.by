@@ -1,3 +1,4 @@
+import { SalesRuntimeControls } from './chat/SalesRuntimeControls';
 import { operationalSupabase } from "@/integrations/supabase/operational-client";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -2032,6 +2033,7 @@ function TelegramChannelChat({
             родитель уже ограничен по высоте (Telegram-вкладка),
             поэтому композер всегда виден внизу карточки. */}
         <div className="shrink-0 border-t bg-background px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)]">
+        <SalesRuntimeControls userId={userId} businessAccountId={selectedBusinessAccountId} />
           {(botsFailed || (!selectedBotId && !selectedBusinessAccountId)) && (
             <TelegramSenderNotice loading={botsFetching} failed={botsFailed} onRetry={() => { void refetchBots(); }} />
           )}

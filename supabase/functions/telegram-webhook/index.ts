@@ -830,7 +830,8 @@ Deno.serve(async (req) => {
         : msgAny.document ? 'document'
         : msgAny.sticker ? 'sticker'
         : null;
-      const messageOrigin = isOwnerMessage ? 'owner_manual' : 'client';
+      const isConnectedBotEcho = isOwnerMessage && bot.bot_id != null && String(msgAny.sender_business_bot?.id || '') === String(bot.bot_id);
+      const messageOrigin = isOwnerMessage ? (isConnectedBotEcho ? 'bot_automation' : 'owner_manual') : 'client';
       const messageRow = {
         user_id: effectiveUserId,
         telegram_user_id: telegramUserId,

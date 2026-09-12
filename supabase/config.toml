@@ -273,3 +273,11 @@ verify_jwt = false
 # Exact server key checked by the handler; no user/browser access.
 [functions.admin-merge-archived-login]
 verify_jwt = false
+
+# Controller validates the operator JWT and exact Business-dialog scope itself.
+[functions.sales-runtime-control]
+verify_jwt = false
+
+# Scheduler-only endpoint; dedicated Vault secret is verified by a service-only RPC.
+[functions.sales-runtime-worker]
+verify_jwt = false
