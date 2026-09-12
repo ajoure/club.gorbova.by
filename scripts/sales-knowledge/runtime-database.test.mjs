@@ -26,8 +26,8 @@ before(async()=>{
  await db.exec(`CREATE TABLE live_events(id uuid PRIMARY KEY,room_state text,platform_status text,status text,webinar_completed_at timestamptz,event_type text,autoweb_config jsonb); CREATE TABLE live_event_sessions(id uuid DEFAULT gen_random_uuid(),live_event_id uuid,starts_at timestamptz,ends_at timestamptz,status text);`);
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912063632_cb21_telegram_sales_runtime.sql',import.meta.url),'utf8'));
  await db.exec(`CREATE TABLE profiles(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid); INSERT INTO profiles(user_id) VALUES('${owner}');
- CREATE TABLE orders_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid,profile_id uuid,product_id uuid,status text,is_deleted boolean DEFAULT false,is_trial boolean DEFAULT false,final_price numeric,deal_date timestamptz,meta jsonb DEFAULT '{}',offer_id uuid);
- CREATE TABLE payments_v2(id uuid DEFAULT gen_random_uuid(),order_id uuid,status text,amount numeric,is_deleted boolean DEFAULT false,refunded_amount numeric,transaction_type text);`);
+ CREATE TABLE orders_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid,profile_id uuid,product_id uuid,status text,is_deleted boolean DEFAULT false,is_trial boolean DEFAULT false,final_price numeric,deal_date timestamptz,meta jsonb DEFAULT '{}',offer_id uuid,tariff_id text,created_at timestamptz DEFAULT now(),currency text DEFAULT 'BYN');
+ CREATE TABLE payments_v2(id uuid DEFAULT gen_random_uuid(),order_id uuid,status text,amount numeric,is_deleted boolean DEFAULT false,refunded_amount numeric,transaction_type text,currency text DEFAULT 'BYN');`);
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912082931_cb21_dialogue_delivery_windows.sql',import.meta.url),'utf8'));
  await db.exec(await readFile(new URL('../../supabase/migrations/20260912083730_cb21_checkout_capabilities.sql',import.meta.url),'utf8'));
 });
@@ -210,6 +210,7 @@ test('alumni evidence excludes gifts, unrelated purchases and refunds; distingui
  await db.exec('UPDATE payments_v2 SET refunded_amount=100');assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).eligible,false);
  await db.exec("DELETE FROM payments_v2; UPDATE orders_v2 SET product_id='7101ed3c-7839-4a74-ad95-aa0660369b22',deal_date='2024-05-14',meta='{\"gc_deal_id\":\"synthetic\",\"import_source\":\"getcourse\"}'");
  assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).proof,'getcourse_paid_import');
+ await db.exec("UPDATE orders_v2 SET deal_date='2023-01-01'");assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).eligible,false);
  await db.exec('UPDATE orders_v2 SET final_price=0');assert.equal((await rpc('sales_cb_alumni_eligibility',[owner])).eligible,false);
 });
 test('invoice document capability authorizes only the created order and exact generation body once',async()=>{
@@ -221,4 +222,12 @@ test('invoice document capability authorizes only the created order and exact ge
  assert.equal(await rpc('sales_authorize_invoice_document',[hash,{...gen,admin_force:true}]),null);
  assert.equal(await rpc('sales_authorize_invoice_document',[hash,gen]),owner);
  assert.equal(await rpc('sales_authorize_invoice_document',[hash,gen]),null);
+});
+
+test('pause after invoice order creation still revokes document generation',async()=>{
+ const p=await fixture();await db.exec("UPDATE sales_campaigns SET policy_version='cb21-v2',knowledge=knowledge||'{\"checkout_enabled\":true}'");await msg(250);const j=await due();const c=await conversation();const offer=randomUUID();const hash='d'.repeat(64),body={target_user_id:owner,responsible_user_id:owner,offer_id:offer};
+ const op=(await one("INSERT INTO sales_checkout_operations(job_id,conversation_id,quote_fingerprint,endpoint,token_hash,request_body) VALUES($1,$2,'invoice','admin-invoice-checkout-issue',$3,$4) RETURNING id",[j.id,c.id,hash,body])).id;
+ await rpc('sales_consume_checkout_capability',[hash,'admin-invoice-checkout-issue',body]);
+ const o=(await one("INSERT INTO orders_v2(user_id,product_id,offer_id,status,final_price,meta) VALUES($1,$2,$3,'pending',1790,$4) RETURNING id",[owner,product,offer,{sales_checkout_operation_id:op,checkout_kind:'invoice',awaits_payment:true}])).id;
+ await rpc('sales_control',[p,'pause',owner]);assert.equal(await rpc('sales_authorize_invoice_document',[hash,{order_id:o,mode:'generate',pre_payment_invoice:true}]),null);
 });
