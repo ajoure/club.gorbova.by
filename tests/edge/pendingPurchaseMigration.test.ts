@@ -7,13 +7,14 @@ import { isPaymentCheckoutAlive, PAYMENT_CHECKOUT_LIFETIME_MS } from '../../supa
 const order = { user_id: '00000000-0000-4000-8000-000000000001', product_id: '00000000-0000-4000-8000-000000000002', tariff_id: '00000000-0000-4000-8000-000000000003', status: 'pending', base_price: 250, final_price: 250, currency: 'BYN', paid_amount: 0, meta: {} };
 const bootstrap = `
 CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
+CREATE TYPE payment_status AS ENUM ('pending','processing','succeeded','failed','refunded','canceled');
 CREATE TYPE order_status AS ENUM ('pending','paid','partial','refunded','failed','canceled');
 CREATE TABLE orders_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),order_number text,user_id uuid,profile_id uuid,
 product_id uuid,tariff_id uuid,offer_id uuid,responsible_user_id uuid,company_id uuid,base_price numeric,final_price numeric,
 paid_amount numeric,currency text,status order_status,provider text,provider_payment_id text,payer_type text,reconcile_source text,customer_ip text,customer_email text,customer_phone text,
 is_trial boolean DEFAULT false,trial_end_at timestamptz,created_at timestamptz DEFAULT now(),deal_date timestamptz,meta jsonb,pipeline_id uuid,pipeline_stage_id uuid,purchase_snapshot jsonb,is_deleted boolean DEFAULT false);
 CREATE TABLE payments_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),order_id uuid REFERENCES orders_v2(id),
-provider text,provider_payment_id text,amount numeric,currency text,status text,is_deleted boolean DEFAULT false,transaction_type text,paid_at timestamptz,meta jsonb);
+provider text,provider_payment_id text,amount numeric,refunded_amount numeric,currency text,status payment_status,is_deleted boolean DEFAULT false,transaction_type text,paid_at timestamptz,meta jsonb);
 CREATE TABLE subscriptions_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),order_id uuid,status text,auto_renew boolean,meta jsonb);
 CREATE TABLE provider_subscriptions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),subscription_v2_id uuid,provider_subscription_id text,order_id uuid,provider text,state text,meta jsonb);
 CREATE TABLE audit_logs(id uuid DEFAULT gen_random_uuid(),actor_type text,action text,entity_type text,entity_id uuid,meta jsonb);
@@ -40,6 +41,8 @@ describe('pending purchase contract', () => {
     try {
       await db.exec(bootstrap);
       await db.exec(readFileSync('supabase/migrations/20260913112356_crm_pending_purchase_claim.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913115920_crm_empty_deal_archive.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913153500_crm_payment_status_compatibility.sql','utf8'));
       const claim = async (provider='bepaid', proposal=order) => {
         const r=await db.query<{result:any}>(`SELECT crm_claim_pending_purchase($1,$2,$3,'') AS result`,[JSON.stringify(proposal),JSON.stringify(pendingPurchaseContext(proposal,'one_time')),provider]);
         return r.rows[0].result;
@@ -70,6 +73,8 @@ describe('pending purchase contract', () => {
     try {
       await db.exec(bootstrap);
       await db.exec(readFileSync('supabase/migrations/20260913112356_crm_pending_purchase_claim.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913115920_crm_empty_deal_archive.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913153500_crm_payment_status_compatibility.sql','utf8'));
       const cases = [order,
         {...order, payer_type:'individual', is_trial:null, meta:{cohort_id:null}},
         {...order, meta:{composable_checkout:{items:[{...order, role:'primary', quantity:1}]}}},
@@ -97,6 +102,8 @@ describe('pending purchase contract', () => {
     try {
       await db.exec(bootstrap);
       await db.exec(readFileSync('supabase/migrations/20260913112356_crm_pending_purchase_claim.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913115920_crm_empty_deal_archive.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913153500_crm_payment_status_compatibility.sql','utf8'));
       const claim=async(kind='charge')=>(await db.query<{r:any}>(`SELECT crm_claim_pending_purchase($1,$2,'bepaid','',$3) r`,
         [JSON.stringify(order),JSON.stringify(pendingPurchaseContext(order,'one_time')),kind])).rows[0].r;
       const first=await claim();
@@ -121,6 +128,8 @@ describe('pending purchase contract', () => {
     try {
       await db.exec(bootstrap);
       await db.exec(readFileSync('supabase/migrations/20260913112356_crm_pending_purchase_claim.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913115920_crm_empty_deal_archive.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913153500_crm_payment_status_compatibility.sql','utf8'));
       const proposal = { ...order, meta: { marker:'preserved' } };
       const claimArgs = [JSON.stringify(proposal), JSON.stringify(pendingPurchaseContext(proposal,'subscription'))];
       const claimed = (await db.query<{r:any}>(`SELECT crm_claim_pending_purchase($1,$2,'stripe','poland') r`, claimArgs)).rows[0].r;
@@ -154,6 +163,8 @@ describe('pending purchase contract', () => {
     try {
       await db.exec(bootstrap);
       await db.exec(readFileSync('supabase/migrations/20260913112356_crm_pending_purchase_claim.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913115920_crm_empty_deal_archive.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913153500_crm_payment_status_compatibility.sql','utf8'));
       const id=(await db.query<{id:string}>(`INSERT INTO orders_v2(final_price,paid_amount,currency,status,is_deleted) VALUES(250,0,'BYN','failed',true) RETURNING id`)).rows[0].id;
       await db.query(`INSERT INTO payments_v2(order_id,amount,currency,status,transaction_type,is_deleted) VALUES
         ($1,100,'BYN','succeeded','payment',false),($1,150,'BYN','succeeded','Платеж',false),
@@ -170,6 +181,8 @@ describe('pending purchase contract', () => {
     try {
       await db.exec(bootstrap);
       await db.exec(readFileSync('supabase/migrations/20260913112356_crm_pending_purchase_claim.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913115920_crm_empty_deal_archive.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20260913153500_crm_payment_status_compatibility.sql','utf8'));
       const offer='00000000-0000-4000-8000-000000000004';
       const rrClaim=async()=> (await db.query<{order_id:string;was_reused:boolean}>(
         `SELECT * FROM rr_get_or_create_pending_order($1,$2,NULL,NULL,$3,$4,250,'BYN',NULL,NULL,NULL,$5,NULL,NULL,NULL,'same-composition')`,
@@ -184,4 +197,29 @@ describe('pending purchase contract', () => {
     } finally { await db.close(); }
   },20000);
 
+});
+
+
+describe('production payment enum compatibility',()=>{
+ it('reproduces the enum failure, restores the contained trigger and accepts every payment state after commit',async()=>{
+  const db=new PGlite();
+  try {
+    await db.exec(bootstrap);
+    await db.exec(readFileSync('supabase/migrations/20260913112356_crm_pending_purchase_claim.sql','utf8'));
+    await db.exec(readFileSync('supabase/migrations/20260913115920_crm_empty_deal_archive.sql','utf8'));
+    const args=[JSON.stringify(order),JSON.stringify(pendingPurchaseContext(order,'one_time'))];
+    await expect(db.query(`SELECT crm_claim_pending_purchase($1,$2,'bepaid')`,args)).rejects.toThrow('invalid input value for enum payment_status');
+    await expect(db.query(`INSERT INTO payments_v2(status,amount) VALUES('succeeded',1)`)).rejects.toThrow('invalid input value for enum payment_status');
+    await db.exec('DROP TRIGGER crm_restore_archived_payment_money ON payments_v2');
+    await db.exec(readFileSync('supabase/migrations/20260913153500_crm_payment_status_compatibility.sql','utf8'));
+    const claimed=(await db.query<{r:any}>(`SELECT crm_claim_pending_purchase($1,$2,'bepaid') r`,args)).rows[0].r;
+    expect(claimed.order.id).toBeTruthy();
+    for(const status of ['pending','processing','succeeded','failed','refunded','canceled','partially_refunded']) {
+      await db.query(`INSERT INTO payments_v2(status,amount) VALUES($1,1)`,[status]);
+    }
+    expect((await db.query(`SELECT count(*)::int n FROM payments_v2`)).rows).toEqual([{n:7}]);
+    await db.exec(readFileSync('supabase/migrations/20260913153500_crm_payment_status_compatibility.sql','utf8'));
+    expect((await db.query(`SELECT count(*)::int n FROM pg_trigger WHERE tgname='crm_restore_archived_payment_money'`)).rows).toEqual([{n:1}]);
+  } finally {await db.close();}
+ },20000);
 });
