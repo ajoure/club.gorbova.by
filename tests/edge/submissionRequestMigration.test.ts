@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { expect, it } from 'vitest';
 
@@ -7,7 +7,13 @@ it('claims only one request per link and preserves historical rows', async () =>
   try {
     await db.exec(`CREATE TABLE document_package_external_submissions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), external_link_id uuid NOT NULL, status text NOT NULL);
       INSERT INTO document_package_external_submissions (external_link_id,status) VALUES ('00000000-0000-4000-8000-000000000001','failed');`);
-    await db.exec(readFileSync('supabase/migrations/20260913082426_neural_submission_idempotency.sql', 'utf8'));
+    // Replay every migration that adds this contract in repository order.
+    // A duplicate managed receipt must not silently break fresh databases.
+    const migrations = readdirSync('supabase/migrations').filter(name => name.endsWith('.sql')).sort()
+      .map(name => readFileSync(`supabase/migrations/${name}`, 'utf8'))
+      .filter(sql => sql.includes('document_package_external_submissions') && /ADD COLUMN request_id uuid/i.test(sql));
+    expect(migrations.length).toBeGreaterThan(0);
+    for (const sql of migrations) await db.exec(sql);
     const claim = () => db.query(`INSERT INTO document_package_external_submissions (external_link_id,status,request_id,request_fingerprint)
       VALUES ($1,'generating',$2,$3) RETURNING id`, ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', 'a'.repeat(64)]);
     const results = await Promise.allSettled([claim(), claim()]);
