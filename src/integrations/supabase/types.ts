@@ -23407,6 +23407,10 @@ export type Database = {
         Returns: string
       }
       admin_archived_login_merge_g9: { Args: { _phase: string }; Returns: Json }
+      admin_confirm_historical_cb_date: {
+        Args: { _mode?: string; _payload: Json }
+        Returns: Json
+      }
       admin_create_contact: {
         Args: {
           p_city?: string
