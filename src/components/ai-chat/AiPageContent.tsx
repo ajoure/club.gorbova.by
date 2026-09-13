@@ -28,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useRbac } from "@/hooks/useRbac";
 import { useAiChat, type ChatScenario } from "@/hooks/useAiChat";
-import { useAiAccess } from "@/hooks/useAiAccess";
+import { useAiAccess, formatQuotaSlot } from "@/hooks/useAiAccess";
 import { toast } from "sonner";
 import { useAiUserPrompts, type AiUserPrompt } from "@/hooks/useAiUserPrompts";
 import { ChatMessageBubble } from "@/components/ai-chat/ChatMessage";
@@ -814,7 +814,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
               <span>Нажми Enter для отправки, Shift+Enter для новой строки</span>
               {chatAllowed && chatQuota && (
                 <span className="text-muted-foreground/80">
-                  · Остаток чата сегодня: <b className="text-foreground">{chatQuota.remaining}</b> / {chatQuota.limit}
+                  · Чат сегодня: <b className="text-foreground">{formatQuotaSlot(chatQuota)}</b>
                 </span>
               )}
             </div>

@@ -32,7 +32,7 @@ function generateDocumentNumber(prefix = "AI"): string {
   const y = now.getFullYear().toString().slice(-2);
   const m = String(now.getMonth() + 1).padStart(2, "0");
   const d = String(now.getDate()).padStart(2, "0");
-  const r = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+  const r = crypto.randomUUID();
   return `${prefix}-${y}${m}${d}-${r}`;
 }
 
@@ -147,7 +147,9 @@ serve(async (req) => {
         .from("client_legal_details")
         .select("*")
         .eq("id", legal_details_id)
+        .eq("profile_id", profileId)
         .single();
+      if (!data) return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       entity = data;
     }
 
@@ -158,7 +160,9 @@ serve(async (req) => {
         .from("legal_details_persons")
         .select("*")
         .eq("id", person_id)
+        .eq("profile_id", profileId)
         .single();
+      if (!data) return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       person = data;
     }
 
@@ -175,7 +179,11 @@ serve(async (req) => {
           position:legal_details_positions_catalog(label)
         `)
         .eq("id", signer_link_id)
+        .eq("profile_id", profileId)
         .single();
+      if (!linkData || (legal_details_id && linkData.legal_details_id !== legal_details_id) || (linkData as any).person?.profile_id !== profileId) {
+        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       if (linkData) {
         link = linkData;
         signerPerson = (linkData as any).person || null;
@@ -409,7 +417,7 @@ serve(async (req) => {
       .upload(filePath, generatedDoc, {
         contentType:
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        upsert: true,
+        upsert: false,
       });
     if (upErr) {
       console.error("Upload error:", upErr);
@@ -420,9 +428,13 @@ serve(async (req) => {
     }
 
     // 11. Create signed URL
-    const { data: signedUrlData } = await supabase.storage
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
       .from("documents")
       .createSignedUrl(filePath, 86400);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      return new Response(JSON.stringify({ error: "document_download_unavailable" }), { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
 
     // 12. Save record
     const { data: savedDoc, error: saveErr } = await supabase
@@ -447,8 +459,8 @@ serve(async (req) => {
       .select()
       .single();
 
-    if (saveErr) {
-      console.error("Save record error:", saveErr);
+    if (saveErr || !savedDoc?.id) {
+      return new Response(JSON.stringify({ error: "document_save_failed" }), { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     return new Response(

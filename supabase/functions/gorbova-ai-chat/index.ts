@@ -1,3 +1,4 @@
+import { persistAiChatExchange } from '../_shared/ai-chat-persistence.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import {
   resolveAiAccess,
@@ -430,23 +431,11 @@ Deno.serve(async (req) => {
       const blockedContent = blockedByUnsupportedReason[firstReason]
         ?? 'Формат файла не поддерживается. Загрузите файл в другом формате (PDF, .docx, изображение).';
 
-      const lastUserMsg = messages[messages.length - 1];
-      if (lastUserMsg) {
-        await serviceClient.from('ai_chat_messages').insert({
-          conversation_id: convId,
-          user_id: user.id,
-          role: 'user',
-          content: lastUserMsg.content,
-          metadata: fileNames ? { file_names: fileNames } : null,
-        });
-      }
-
-      await serviceClient.from('ai_chat_messages').insert({
-        conversation_id: convId,
-        user_id: user.id,
-        role: 'assistant',
-        content: blockedContent,
-        metadata,
+      await persistAiChatExchange(serviceClient, {
+        conversationId: convId, userId: user.id,
+        userContent: messages[messages.length - 1]?.content,
+        userMetadata: fileNames ? { file_names: fileNames } : null,
+        assistantContent: blockedContent, assistantMetadata: metadata,
       });
 
       return new Response(JSON.stringify({
@@ -492,23 +481,11 @@ Deno.serve(async (req) => {
         (promptData?.type ? blockedByType[promptData.type] : undefined) ??
         defaultBlockedMsg;
 
-      const lastUserMsg = messages[messages.length - 1];
-      if (lastUserMsg) {
-        await serviceClient.from('ai_chat_messages').insert({
-          conversation_id: convId,
-          user_id: user.id,
-          role: 'user',
-          content: lastUserMsg.content,
-          metadata: fileNames ? { file_names: fileNames } : null,
-        });
-      }
-
-      await serviceClient.from('ai_chat_messages').insert({
-        conversation_id: convId,
-        user_id: user.id,
-        role: 'assistant',
-        content: blockedContent,
-        metadata,
+      await persistAiChatExchange(serviceClient, {
+        conversationId: convId, userId: user.id,
+        userContent: messages[messages.length - 1]?.content,
+        userMetadata: fileNames ? { file_names: fileNames } : null,
+        assistantContent: blockedContent, assistantMetadata: metadata,
       });
 
       return new Response(JSON.stringify({
@@ -621,13 +598,10 @@ Deno.serve(async (req) => {
         const convId = conversation_id || crypto.randomUUID();
         const reply = 'Я помогаю по вопросам бизнеса, налогов и бухгалтерии РБ. Для общих и бытовых вопросов воспользуйтесь, пожалуйста, другим сервисом.';
 
-        await serviceClient.from('ai_chat_messages').insert({
-          conversation_id: convId, user_id: user.id, role: 'user', content: lastUserContent,
-          metadata: { ai_mode: 'chat' },
-        });
-        await serviceClient.from('ai_chat_messages').insert({
-          conversation_id: convId, user_id: user.id, role: 'assistant', content: reply,
-          metadata: { ...metadata, processing_time_ms: Date.now() - startTime },
+        await persistAiChatExchange(serviceClient, {
+          conversationId: convId, userId: user.id, userContent: lastUserContent,
+          userMetadata: { ai_mode: 'chat' }, assistantContent: reply,
+          assistantMetadata: { ...metadata, processing_time_ms: Date.now() - startTime },
         });
 
         return new Response(JSON.stringify({ content: reply, conversation_id: convId, metadata }), {
@@ -711,28 +685,12 @@ Deno.serve(async (req) => {
     const convId = conversation_id || crypto.randomUUID();
     metadata.processing_time_ms = Date.now() - startTime;
 
-    const lastUserMsg = messages[messages.length - 1];
-    if (lastUserMsg) {
-      await serviceClient.from('ai_chat_messages').insert({
-        conversation_id: convId,
-        user_id: user.id,
-        role: 'user',
-        content: lastUserMsg.content,
-        metadata: {
-          ai_mode: metadata.ai_mode,
-          scenario_code: metadata.scenario_code || null,
-          ...(fileNames ? { file_names: fileNames } : {}),
-        },
-      });
-    }
-
-
-    await serviceClient.from('ai_chat_messages').insert({
-      conversation_id: convId,
-      user_id: user.id,
-      role: 'assistant',
-      content: assistantContent,
-      metadata,
+    await persistAiChatExchange(serviceClient, {
+      conversationId: convId, userId: user.id,
+      userContent: messages[messages.length - 1]?.content,
+      userMetadata: { ai_mode: metadata.ai_mode, scenario_code: metadata.scenario_code || null,
+        ...(fileNames ? { file_names: fileNames } : {}) },
+      assistantContent, assistantMetadata: metadata,
     });
 
     return new Response(JSON.stringify({

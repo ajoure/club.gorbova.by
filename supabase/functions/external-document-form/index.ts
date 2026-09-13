@@ -5,6 +5,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getCallerUserId } from "../_shared/caller-user.ts";
+import { isSubmissionRequestId, submissionFingerprint, submissionReplay } from "../_shared/document-submission-request.ts";
 import { recordExternalGeneration } from "../_shared/document-generation-outcome.ts";
 
 const cors = {
@@ -333,6 +334,20 @@ Deno.serve(async (req) => {
     if (!token) return json({ error: "token_required" }, 400);
     const ctx: any = await loadLink(admin, token);
     if (ctx.error) return json({ error: ctx.error }, ctx.error === "owner_access_expired" ? 403 : 404);
+    const readAttempt = async (requestId: string) => {
+      const { data, error } = await admin.from("document_package_external_submissions")
+        .select("id, status, error_code, generated_document_ids, metadata, request_fingerprint")
+        .eq("external_link_id", ctx.link.id).eq("request_id", requestId).maybeSingle();
+      if (error) throw new Error("submission_status_unavailable");
+      return data;
+    };
+    if (action === "submission_status") {
+      if (!isSubmissionRequestId(body.request_id)) return json({ error: "submission_request_id_required" }, 400);
+      const existing = await readAttempt(body.request_id);
+      if (!existing) return json({ found: false });
+      const replay = submissionReplay(existing);
+      return json(replay.body, replay.status);
+    }
     const fields = await loadFormFields(admin, ctx.form.id);
 
     const groupSettings = safeGroupSettings(ctx.form.repeat_group_settings);
@@ -390,6 +405,7 @@ Deno.serve(async (req) => {
     }
 
     if (action !== "submit") return json({ error: "unknown_action" }, 400);
+    if (!isSubmissionRequestId(body.request_id)) return json({ error: "submission_request_id_required" }, 400);
     const scalarValues = body.fields && typeof body.fields === "object" ? body.fields as Record<string, unknown> : {};
     const rowValues = body.repeat_groups && typeof body.repeat_groups === "object" ? body.repeat_groups as Record<string, unknown> : {};
     const attachments = Array.isArray(body.attachments) ? body.attachments : [];
@@ -422,18 +438,34 @@ Deno.serve(async (req) => {
     }
     if (attachments.length > 20) return json({ error: "too_many_attachments" }, 400);
 
+    // Validate attachment ownership before claiming an attempt or writing any rows.
+    if (attachments.some((a: any) => !scalar(a.path).startsWith(`links/${ctx.link.id}/`))) {
+      return json({ error: "attachment_path_forbidden" }, 400);
+    }
+    const fingerprint = await submissionFingerprint({ fields: scalarValues, repeat_groups: rowValues, attachments });
     const { data: submission, error: subErr } = await admin.from("document_package_external_submissions").insert({
       external_link_id: ctx.link.id, external_form_id: ctx.form.id, owner_profile_id: ctx.link.owner_profile_id, status: "generating",
+      request_id: body.request_id, request_fingerprint: fingerprint,
     }).select("id").single();
-    if (subErr) throw subErr;
+    if (subErr?.code === '23505') {
+      const existing = await readAttempt(body.request_id);
+      if (!existing) return json({ error: "submission_status_unavailable" }, 503);
+      if (existing.request_fingerprint !== fingerprint) return json({ error: "submission_request_conflict" }, 409);
+      const replay = submissionReplay(existing);
+      return json(replay.body, replay.status);
+    }
+    if (subErr || !submission) return json({ error: "submission_save_failed" }, 503);
     const { data: owner } = await admin.from("profiles").select("user_id").eq("id", ctx.link.owner_profile_id).single();
+    if (!owner?.user_id) return json({ error: "profile_not_found", submission_id: submission.id }, 503);
     const { data: session, error: sessionErr } = await admin.from("document_package_sessions").insert({
       profile_id: ctx.link.owner_profile_id, user_id: owner?.user_id ?? null, package_template_id: ctx.item.package_template_id,
       selected_legal_entity_id: ctx.link.selected_legal_entity_id, external_submission_id: submission.id, status: "ready",
       metadata: { external_submission_id: submission.id, external_form_id: ctx.form.id, external_link_id: ctx.link.id },
     }).select("id").single();
     if (sessionErr) throw sessionErr;
-    await admin.from("document_package_external_submissions").update({ package_session_id: session.id }).eq("id", submission.id);
+    const { data: linkedSubmission, error: linkError } = await admin.from("document_package_external_submissions")
+      .update({ package_session_id: session.id }).eq("id", submission.id).select('id').single();
+    if (linkError || !linkedSubmission) return json({ error: "submission_save_failed", submission_id: submission.id }, 503);
     const values = ordinary.map((binding) => ({ session_id: session.id, package_template_item_id: ctx.item.id, field_catalog_id: binding.field.id, ...valueColumns(binding.field, scalarValues[binding.field.id]) }));
     if (values.length) { const { error } = await admin.from("document_package_session_field_values").insert(values); if (error) throw error; }
     const rowsToInsert: any[] = [];
@@ -454,10 +486,11 @@ Deno.serve(async (req) => {
     // sessions get one active assignment; existing admin-assigned rows for the
     // same (session,item,role) are left untouched.
     try {
-      const { data: pkgRoles } = await admin.from("document_package_role_catalog")
+      const { data: pkgRoles, error: rolesError } = await admin.from("document_package_role_catalog")
         .select("id, role_key, metadata")
         .eq("package_template_id", ctx.item.package_template_id)
         .eq("is_active", true);
+      if (rolesError || !pkgRoles) throw new Error("role_binding_failed");
       const bindingByPublicId = new Map<string, typeof ordinary[number]>();
       for (const b of ordinary) bindingByPublicId.set(b.field.public_id, b);
       for (const role of pkgRoles ?? []) {
@@ -477,7 +510,7 @@ Deno.serve(async (req) => {
           ? bindingByPublicId.get(scalar(bind.department_public_id)) : null;
         const department = departmentBinding ? scalar(scalarValues[departmentBinding.field.id]) : "";
         // Idempotency: skip if this session/item/role already has an active row.
-        const { data: existing } = await admin
+        const { data: existing, error: existingError } = await admin
           .from("document_package_item_role_assignments")
           .select("id")
           .eq("package_session_id", session.id)
@@ -485,6 +518,7 @@ Deno.serve(async (req) => {
           .eq("role_catalog_id", role.id)
           .eq("is_active", true)
           .maybeSingle();
+        if (existingError) throw new Error("role_binding_failed");
         if (existing?.id) continue;
         const { data: person, error: pErr } = await admin.from("legal_details_persons").insert({
           profile_id: ctx.link.owner_profile_id,
@@ -492,11 +526,11 @@ Deno.serve(async (req) => {
           is_active: false,
           notes: `external_submission:${submission.id}`,
         }).select("id").single();
-        if (pErr) throw pErr;
+        if (pErr || !person?.id) throw new Error("role_binding_failed");
         const assignmentMeta: Record<string, unknown> = {};
         if (position) assignmentMeta.position = position;
         if (department && departmentKey) assignmentMeta.custom = { [departmentKey]: department };
-        await admin.from("document_package_item_role_assignments").insert({
+        const { data: savedAssignment, error: assignmentError } = await admin.from("document_package_item_role_assignments").insert({
           package_session_id: session.id,
           package_template_item_id: ctx.item.id,
           role_catalog_id: role.id,
@@ -504,10 +538,14 @@ Deno.serve(async (req) => {
           metadata: assignmentMeta,
           sort_order: 10,
           is_active: true,
-        });
+        }).select("id").single();
+        if (assignmentError || !savedAssignment) throw new Error("role_binding_failed");
       }
     } catch (bindErr) {
-      console.error("[external-document-form] role auto-bind failed", bindErr);
+      console.error("[external-document-form] role auto-bind failed");
+      const { error: bindSaveError } = await admin.from("document_package_external_submissions")
+        .update({ status: "failed", error_code: "role_binding_failed", metadata: { stage: "role_binding" } }).eq("id", submission.id);
+      return json({ error: bindSaveError ? "submission_save_failed" : "role_binding_failed", submission_id: submission.id }, 503);
     }
     // -----------------------------------------------------------------------
     if (attachments.length) {
@@ -565,11 +603,13 @@ Deno.serve(async (req) => {
       sendResults.push(await sent.json().catch(() => ({ error: `delivery_http_${sent.status}` })));
     }
     const deliveryComplete = sendResults.every((result: any) => result?.success === true);
-    if (!deliveryComplete) {
-      await admin.from("document_package_external_submissions").update({
-        status: "delivery_partial", error_code: "one_or_more_delivery_channels_failed",
-      }).eq("id", submission.id);
-    }
+    const { data: deliveryCheckpoint, error: deliverySaveError } = await admin.from("document_package_external_submissions")
+      .update({
+        ...(!deliveryComplete ? { status: "delivery_partial", error_code: "one_or_more_delivery_channels_failed" } : {}),
+        metadata: { generation_status: outcome.generationStatus, generation_error_code: outcome.errorCode,
+          stage: "delivery", delivery_complete: deliveryComplete },
+      }).eq("id", submission.id).select('id').single();
+    if (deliverySaveError || !deliveryCheckpoint) return json({ error: "submission_save_failed", submission_id: submission.id }, 503);
     return json({ success: true, submission_id: submission.id, document_ids: docs, delivery: sendResults,
       generation_status: outcome.generationStatus, error_code: outcome.errorCode,
       delivery_complete: deliveryComplete });

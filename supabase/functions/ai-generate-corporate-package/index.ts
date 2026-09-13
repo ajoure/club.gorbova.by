@@ -59,15 +59,17 @@ interface PersonRecord {
 async function batchFetchPersons(
   supabase: ReturnType<typeof createClient>,
   personIds: string[],
+  profileId: string,
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   const uniqueIds = [...new Set(personIds.filter(Boolean))];
   if (uniqueIds.length === 0) return map;
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('legal_details_persons')
     .select('id, full_name')
-    .in('id', uniqueIds);
+    .in('id', uniqueIds).eq('profile_id', profileId);
+  if (error || !data || data.length !== uniqueIds.length) throw new Error('forbidden');
 
   if (data) {
     for (const p of data as PersonRecord[]) {
@@ -128,7 +130,6 @@ function buildCorporateScalarPayload(
   personMap: Map<string, string>,
 ): Record<string, string> {
   const now = new Date();
-  const docNumber = generateDocumentNumber("CORP");
   const data: Record<string, string> = {};
 
   // Layer 1: Canonical scalar fields from Layer A (entity)
@@ -182,10 +183,9 @@ function buildCorporateScalarPayload(
   // Document metadata
   data["document.date"] = dateToRussianFormat(now);
   data["document.date_short"] = now.toLocaleDateString("ru-RU");
-  data["document.number"] = docNumber;
+  // The per-document number is assigned inside the generation loop.
   // Legacy aliases
   data["document_date"] = data["document.date"];
-  data["document_number"] = data["document.number"];
 
   return data;
 }
@@ -449,7 +449,8 @@ serve(async (req) => {
       // ── Fetch entity (Layer A) ──
       let entity: Record<string, unknown> | null = null;
       if (session.legal_details_id) {
-        const { data } = await supabase.from("client_legal_details").select("*").eq("id", session.legal_details_id).single();
+        const { data } = await supabase.from("client_legal_details").select("*").eq("id", session.legal_details_id).eq("profile_id", profileId).single();
+        if (!data) return errorResponse("forbidden", 403);
         entity = data;
       }
 
@@ -466,14 +467,15 @@ serve(async (req) => {
       }
 
       // ── Fix #1: NOW set status='generating' — AFTER successful pre-flight ──
-      await supabase.from("corporate_draft_sessions").update({
+      const { data: claimedSession, error: claimError } = await supabase.from("corporate_draft_sessions").update({
         status: "generating",
         updated_by: userId,
-      }).eq("id", corporate_draft_session_id);
+      }).eq("id", corporate_draft_session_id).eq("status", "confirmed").select("id").single();
+      if (claimError || !claimedSession) return errorResponse("session_save_failed", 503);
 
       // ── Fix #3: Batch-fetch all persons from Layer B by person_id ──
       const allPersonIds = collectPersonIds(params);
-      const personMap = await batchFetchPersons(supabase, allPersonIds);
+      const personMap = await batchFetchPersons(supabase, allPersonIds, profileId);
 
       // ── Build payload (3 layers, data from A/B/C/D, computed E) ──
       const scalarData = buildCorporateScalarPayload(entity, session, params, personMap);
@@ -527,9 +529,11 @@ serve(async (req) => {
         const itemName = item.title;
         const safeItemName = sanitizeFileName(itemName);
 
+        const itemScalarData = { ...scalarData, "document.number": docNumber, document_number: docNumber };
+
         // Merge all payload layers
         const renderData: Record<string, unknown> = {
-          ...scalarData,
+          ...itemScalarData,
           ...booleanFlags,
         };
         for (const [key, arr] of Object.entries(arrayData)) {
@@ -605,7 +609,7 @@ serve(async (req) => {
           .from("documents")
           .upload(filePath, generatedDoc, {
             contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            upsert: true,
+            upsert: false,
           });
         if (upErr) {
           const uploadErrMsg = `Upload failed: ${upErr.message || JSON.stringify(upErr)}`;
@@ -621,7 +625,7 @@ serve(async (req) => {
             title: `${itemName} — ${docNumber}`,
             status: "error",
             legal_details_id: session.legal_details_id || null,
-            snapshot: buildEnhancedSnapshot(scalarData, arrayData, booleanFlags, session, params, item.template_code, manifestSnapshotData),
+            snapshot: buildEnhancedSnapshot(itemScalarData, arrayData, booleanFlags, session, params, item.template_code, manifestSnapshotData),
             missing_tokens: [],
             generation_error: uploadErrMsg,
             generation_batch_id: batch.id,
@@ -653,7 +657,7 @@ serve(async (req) => {
             file_path: filePath,
             file_name: fileName,
             storage_bucket: "documents",
-            snapshot: buildEnhancedSnapshot(scalarData, arrayData, booleanFlags, session, params, item.template_code, manifestSnapshotData),
+            snapshot: buildEnhancedSnapshot(itemScalarData, arrayData, booleanFlags, session, params, item.template_code, manifestSnapshotData),
             missing_tokens: [],
             generation_error: signedUrlErrMsg,
             generation_batch_id: batch.id,
@@ -666,12 +670,12 @@ serve(async (req) => {
 
         // Build enhanced snapshot (Layer F) — Fix #5
         const enhancedSnapshot = buildEnhancedSnapshot(
-          scalarData, arrayData, booleanFlags, session, params,
+          itemScalarData, arrayData, booleanFlags, session, params,
           item.template_code, manifestSnapshotData,
         );
 
         // Save record in ai_generated_documents (reuse pattern)
-        const { data: savedDoc } = await supabase
+        const { data: savedDoc, error: saveError } = await supabase
           .from("ai_generated_documents")
           .insert({
             profile_id: profileId,
@@ -708,6 +712,11 @@ serve(async (req) => {
           .select()
           .single();
 
+        if (saveError || !savedDoc?.id) {
+          errorCount++;
+          results.push({ template_code: item.template_code, title: itemName, status: 'error', error: 'document_save_failed' });
+          continue;
+        }
         successCount++;
         results.push({
           template_code: item.template_code,
@@ -724,14 +733,17 @@ serve(async (req) => {
       if (errorCount > 0 && successCount > 0) batchStatus = "partial";
       else if (errorCount > 0 && successCount === 0) batchStatus = "error";
 
-      await supabase.from("ai_document_generation_batches").update({ status: batchStatus }).eq("id", batch.id);
+      const { data: savedBatch, error: batchSaveError } = await supabase.from("ai_document_generation_batches")
+        .update({ status: batchStatus }).eq("id", batch.id).select('id').single();
+      if (batchSaveError || !savedBatch) return errorResponse('batch_save_failed', 503);
 
       // ── Update session status ──
       const newSessionStatus = batchStatus === "error" ? "confirmed" : "generated";
-      await supabase.from("corporate_draft_sessions").update({
+      const { data: savedSession, error: sessionSaveError } = await supabase.from("corporate_draft_sessions").update({
         status: newSessionStatus,
         updated_by: userId,
-      }).eq("id", corporate_draft_session_id);
+      }).eq("id", corporate_draft_session_id).select("id").single();
+      if (sessionSaveError || !savedSession) return errorResponse("session_save_failed", 503);
 
       return jsonResponse({
         success: batchStatus !== "error",

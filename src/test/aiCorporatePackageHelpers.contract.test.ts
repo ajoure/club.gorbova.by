@@ -78,6 +78,6 @@ describe("ai-generate-corporate-package boot helpers", () => {
       "protokol_obschego_sobraniya",
     );
     expect(sanitizeFileName("", ".docx")).toBe("file.docx");
-    expect(generateDocumentNumber("CORP")).toMatch(/^CORP-\d{6}-\d{3}$/);
+    expect(generateDocumentNumber("CORP")).toMatch(/^CORP-\d{6}-[0-9a-f-]{36}$/);
   });
 });
