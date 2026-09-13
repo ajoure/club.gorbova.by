@@ -233,6 +233,16 @@ Deno.serve(async (req) => {
   const url = Deno.env.get("SUPABASE_URL")!;
   const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(url, service, { auth: { persistSession: false } });
+  let claimedSubmissionId: string | null = null;
+  let generationStarted = false;
+  const failPreparation = async (errorCode: string) => {
+    const { data, error } = await admin.from('document_package_external_submissions')
+      .update({ status: 'failed', error_code: errorCode,
+        metadata: { stage: 'preparation', safe_to_retry: true } })
+      .eq('id', claimedSubmissionId).select('id').single();
+    return json({ error: error || !data ? 'submission_save_failed' : errorCode,
+      submission_id: claimedSubmissionId }, 503);
+  };
   try {
     const body = await req.json().catch(() => ({}));
     const action = String(body?.action || "read");
@@ -456,17 +466,18 @@ Deno.serve(async (req) => {
       return json(replay.body, replay.status);
     }
     if (subErr || !submission) return json({ error: "submission_save_failed" }, 503);
+    claimedSubmissionId = submission.id;
     const { data: owner } = await admin.from("profiles").select("user_id").eq("id", ctx.link.owner_profile_id).single();
-    if (!owner?.user_id) return json({ error: "profile_not_found", submission_id: submission.id }, 503);
+    if (!owner?.user_id) return await failPreparation("profile_not_found");
     const { data: session, error: sessionErr } = await admin.from("document_package_sessions").insert({
       profile_id: ctx.link.owner_profile_id, user_id: owner?.user_id ?? null, package_template_id: ctx.item.package_template_id,
       selected_legal_entity_id: ctx.link.selected_legal_entity_id, external_submission_id: submission.id, status: "ready",
       metadata: { external_submission_id: submission.id, external_form_id: ctx.form.id, external_link_id: ctx.link.id },
     }).select("id").single();
-    if (sessionErr) throw sessionErr;
+    if (sessionErr || !session?.id) return await failPreparation("submission_preparation_failed");
     const { data: linkedSubmission, error: linkError } = await admin.from("document_package_external_submissions")
       .update({ package_session_id: session.id }).eq("id", submission.id).select('id').single();
-    if (linkError || !linkedSubmission) return json({ error: "submission_save_failed", submission_id: submission.id }, 503);
+    if (linkError || !linkedSubmission) return await failPreparation("submission_preparation_failed");
     const values = ordinary.map((binding) => ({ session_id: session.id, package_template_item_id: ctx.item.id, field_catalog_id: binding.field.id, ...valueColumns(binding.field, scalarValues[binding.field.id]) }));
     if (values.length) { const { error } = await admin.from("document_package_session_field_values").insert(values); if (error) throw error; }
     const rowsToInsert: any[] = [];
@@ -544,9 +555,7 @@ Deno.serve(async (req) => {
       }
     } catch (bindErr) {
       console.error("[external-document-form] role auto-bind failed");
-      const { error: bindSaveError } = await admin.from("document_package_external_submissions")
-        .update({ status: "failed", error_code: "role_binding_failed", metadata: { stage: "role_binding" } }).eq("id", submission.id);
-      return json({ error: bindSaveError ? "submission_save_failed" : "role_binding_failed", submission_id: submission.id }, 503);
+      return await failPreparation("role_binding_failed");
     }
     // -----------------------------------------------------------------------
     if (attachments.length) {
@@ -555,6 +564,7 @@ Deno.serve(async (req) => {
       const meta = attachments.map((a: any) => ({ submission_id: submission.id, storage_path: scalar(a.path), file_name: scalar(a.file_name).slice(0, 180), mime_type: scalar(a.mime_type) || null, byte_size: Number(a.byte_size) || null }));
       const { error } = await admin.from("document_package_external_submission_attachments").insert(meta); if (error) throw error;
     }
+    generationStarted = true;
     const outcome = await recordExternalGeneration(() => fetch(`${url}/functions/v1/ai-generate-document-package`, {
       method: "POST", headers: { "Content-Type": "application/json", apikey: service, Authorization: `Bearer ${service}`, "x-internal-call": "external-document-form" },
       body: JSON.stringify({ package_session_id: session.id, package_template_item_id: ctx.item.id, run_mode: "external_submit" }),
@@ -617,6 +627,10 @@ Deno.serve(async (req) => {
       delivery_complete: deliveryComplete, delivery_skipped: deliverySkipped });
   } catch (e) {
     console.error("[external-document-form]", e);
+    if (claimedSubmissionId && !generationStarted) {
+      try { return await failPreparation('submission_preparation_failed'); }
+      catch { return json({ error: 'submission_save_failed', submission_id: claimedSubmissionId }, 503); }
+    }
     return json({ error: "internal_error" }, 500);
   }
 });

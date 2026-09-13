@@ -16,7 +16,7 @@ const codes = new Set([
   'gotenberg_http_error', 'pdf_conversion_failed', 'render_failed', 'upload_failed',
   'delivery_format_not_selected', 'one_or_more_delivery_channels_failed',
   'generation_failed', 'generation_partial', 'generation_blocked', 'blocked',
-  'generation_outcome_unknown', 'submission_save_failed', 'document_request_failed',
+  'generation_outcome_unknown', 'submission_preparation_failed', 'submission_save_failed', 'document_request_failed',
   'role_binding_failed', 'generation_in_progress', 'submission_status_unavailable', 'submission_request_conflict', 'submission_request_id_required',
   'internal_error', 'document_save_failed', 'document_download_unavailable', 'batch_save_failed', 'session_save_failed',
 ]);

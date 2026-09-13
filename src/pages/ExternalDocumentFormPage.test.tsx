@@ -53,6 +53,14 @@ describe('external document form submission states', () => {
     expect(screen.queryByRole('button', { name: 'Сохранить и сформировать' })).not.toBeInTheDocument();
     expect(mocks.submit).not.toHaveBeenCalled();
   });
+  it('lets an explicitly safe preparation failure return to the form with a new attempt', async () => {
+    mocks.status.mockResolvedValueOnce({ data: { found: true, success: false, error: 'submission_preparation_failed', can_start_new_attempt: true } });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Вернуться к анкете' }));
+    expect(await screen.findByRole('button', { name: 'Сохранить и сформировать' })).toBeEnabled();
+    expect(mocks.status.mock.calls[0][0].request_id).not.toBe(mocks.status.mock.calls.at(-1)?.[0].request_id);
+    expect(mocks.submit).not.toHaveBeenCalled();
+  });
   it('shows a known validation failure and allows correcting it', async () => {
     mocks.submit.mockResolvedValueOnce({ data: null,
       error: { message: 'non-2xx', context: Response.json({ error: 'required_field_missing' }, { status: 400 }) } });

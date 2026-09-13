@@ -69,7 +69,8 @@ async function batchFetchPersons(
     .from('legal_details_persons')
     .select('id, full_name')
     .in('id', uniqueIds).eq('profile_id', profileId);
-  if (error || !data || data.length !== uniqueIds.length) throw new Error('forbidden');
+  if (error) throw new Error('person_lookup_failed');
+  if (!data || data.length !== uniqueIds.length) throw new Error('forbidden');
 
   if (data) {
     for (const p of data as PersonRecord[]) {
@@ -605,7 +606,7 @@ serve(async (req) => {
 
         // Upload (reuse pattern)
         const fileName = `${batchNumber}_${idx + 1}_${safeItemName}_${docNumber}.docx`;
-        const filePath = `ai-generated/${profileId}/${fileName}`;
+        const filePath = `ai-generated/${profileId}/${crypto.randomUUID()}/${fileName}`;
         const { error: upErr } = await supabase.storage
           .from("documents")
           .upload(filePath, generatedDoc, {
@@ -768,6 +769,6 @@ serve(async (req) => {
   } catch (error: unknown) {
     console.error("ai-generate-corporate-package error:", error);
     const msg = error instanceof Error ? error.message : "Internal server error";
-    return errorResponse(msg, 500);
+    return errorResponse(msg, msg === "forbidden" ? 403 : 500);
   }
 });

@@ -6,7 +6,7 @@ import { recordExternalGeneration } from '../../supabase/functions/_shared/docum
 
 const requestId = '00000000-0000-4000-8000-000000000007';
 const documentId = '00000000-0000-4000-8000-000000000008';
-function harness(holdGeneration = false, failLinkSave = false, noDelivery = false) {
+function harness(holdGeneration = false, failLinkSave = false, noDelivery = false, failInsert = "") {
   let handler!: (req: Request) => Promise<Response>;
   const submissions: any[] = []; const sessions: any[] = [];
   let finish!: () => void;
@@ -27,6 +27,11 @@ function harness(holdGeneration = false, failLinkSave = false, noDelivery = fals
     profiles: [{ id: 'profile', user_id: 'user' }],
     document_package_external_submissions: submissions, document_package_sessions: sessions,
   };
+  if (failInsert === 'document_package_session_field_values' || failInsert === 'document_package_external_submission_rows') {
+    rows.document_package_external_form_fields.push({ external_form_id: 'form', field_catalog_id: 'field', repeat_group_key: failInsert.endsWith('_rows') ? 'expenses' : null });
+    rows.document_package_field_catalog = [{ id: 'field', public_id: 'pf-test', is_active: true, data_type: 'text', required: false }];
+    rows[failInsert] = [];
+  }
   const db = {
     rpc: async () => ({ data: true, error: null }),
     from: (table: string) => {
@@ -34,6 +39,7 @@ function harness(holdGeneration = false, failLinkSave = false, noDelivery = fals
       const execute = (single: boolean) => {
         if (!rows[table]) throw new Error(`Unexpected table ${table}`);
         let data = rows[table].filter(row => Object.entries(filters).every(([key, value]) => row[key] === value));
+        if (insert && table === failInsert) return { data: null, error: { code: 'test_insert_failure' } };
         if (insert) {
           if (table === 'document_package_external_submissions' && submissions.some(s => s.external_link_id === insert.external_link_id && s.request_id === insert.request_id)) return { data: null, error: { code: '23505' } };
           const row = { id: crypto.randomUUID(), metadata: {}, ...insert }; rows[table].push(row); data = [row];
@@ -44,7 +50,7 @@ function harness(holdGeneration = false, failLinkSave = false, noDelivery = fals
         }
         return { data: single ? data[0] ?? null : data, error: null };
       };
-      const q: any = { select: () => q, eq: (key: string, value: unknown) => { filters[key] = value; return q; }, order: () => q,
+      const q: any = { select: () => q, in: () => q, eq: (key: string, value: unknown) => { filters[key] = value; return q; }, order: () => q,
         insert: (value: any) => { insert = value; return q; }, update: (value: any) => { update = value; return q; },
         single: async () => execute(true), maybeSingle: async () => execute(true), then: (resolve: any) => resolve(execute(false)) };
       return q;
@@ -94,7 +100,7 @@ it('does not generate when the session checkpoint cannot be saved', async () => 
   const h = harness(false, true);
   expect((await h.call()).status).toBe(503);
   expect(h.fetch).not.toHaveBeenCalled();
-  expect((await (await h.call()).json()).error).toBe('generation_in_progress');
+  expect(await (await h.call()).json()).toMatchObject({ error: 'submission_preparation_failed', can_start_new_attempt: true });
   expect(h.sessions).toHaveLength(1);
 });
 
@@ -115,4 +121,13 @@ it('saves a generated document without invoking any sender when both channels ar
   expect(h.fetch.mock.calls[0][0]).toContain('/ai-generate-document-package');
   expect(await (await h.call()).json()).toMatchObject({ replayed: true, delivery_skipped: true });
   expect(h.fetch).toHaveBeenCalledTimes(1);
+});
+
+it.each(['document_package_sessions', 'document_package_session_field_values', 'document_package_external_submission_rows'])('records a retry-safe failure when preparation insert fails: %s', async table => {
+  const h = harness(false, false, false, table);
+  const payload = { repeat_groups: table.endsWith('_rows') ? { expenses: [{ field: 'test' }] } : {} };
+  expect((await h.call(payload)).status).toBe(503);
+  expect(h.submissions[0]).toMatchObject({ status: 'failed', error_code: 'submission_preparation_failed' });
+  expect(await (await h.call(payload)).json()).toMatchObject({ can_start_new_attempt: true, error: 'submission_preparation_failed' });
+  expect(h.fetch).not.toHaveBeenCalled();
 });

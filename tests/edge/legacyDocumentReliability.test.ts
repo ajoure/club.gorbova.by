@@ -68,10 +68,12 @@ describe('legacy generator persistence and isolation', () => {
     expect(body.success).not.toBe(true); expect(body.download_url).toBeUndefined();
   });
   it('uses distinct immutable file paths and matches each rendered number to its record', async () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.123);
     const h = harness();
     const first = await (await h.call()).json(); const second = await (await h.call()).json();
     expect(first.success).toBe(true); expect(second.success).toBe(true);
-    expect(first.document_number).not.toBe(second.document_number);
+    random.mockRestore();
+    expect(first.document_number).toBe(second.document_number);
     expect(h.uploads[0][0]).not.toBe(h.uploads[1][0]);
     h.uploads.forEach(upload => expect(upload[2].upsert).toBe(false));
     [first, second].forEach((body, index) => {

@@ -102,15 +102,20 @@ function ExternalDocumentForm({ token }: { token: string }) {
       if (error) throw await documentFunctionError(error, data, 'read');
       if (typeof data?.found !== 'boolean') throw await documentFunctionError(null, { error: 'submission_status_unavailable' }, 'read');
       if (data?.error && data?.found !== true) throw await documentFunctionError(null, data, 'read');
-      return data as { found: boolean; success?: boolean; error?: string; generation_status?: string; delivery_complete?: boolean; delivery_skipped?: boolean };
+      return data as { found: boolean; success?: boolean; error?: string; generation_status?: string; delivery_complete?: boolean; delivery_skipped?: boolean; can_start_new_attempt?: boolean };
     },
   });
   const startNewReport = () => {
     const id = crypto.randomUUID();
     try { localStorage.setItem(`document_submission_request:${token}`, id); } catch { /* Current-tab attempt still works. */ }
-    setRequestId(id); setCompleted(null); setAttachments([]);
+    setRequestId(id); setCompleted(null); setAttachments([]); submit.reset();
     setFields(defaultDateValues(form?.regular_fields ?? [], form?.today ?? ''));
     setGroups(Object.fromEntries(Object.entries(form?.repeat_groups ?? {}).map(([key, group]) => [key, [defaultDateValues(group.fields, form?.today ?? '')]])));
+  };
+  const retryPreparation = () => {
+    const id = crypto.randomUUID();
+    try { localStorage.setItem(`document_submission_request:${token}`, id); } catch { /* Use current-tab identity. */ }
+    setRequestId(id); setCompleted(null); submit.reset();
   };
   const maxDate = useMemo(() => form?.today || undefined, [form?.today]);
   useEffect(() => {
@@ -201,6 +206,7 @@ function ExternalDocumentForm({ token }: { token: string }) {
     <AlertCircle className="h-9 w-9 mx-auto text-primary" />
     <h1 className="text-lg font-semibold">Проверка предыдущей попытки</h1>
     <p className="text-sm text-muted-foreground">{attemptQuery.isError ? 'Не удалось проверить статус. Повторите проверку позже, чтобы не создать дубликат.' : documentErrorMessage(restored?.error ?? 'generation_outcome_unknown')}</p>
+    {!attemptQuery.isError && restored?.can_start_new_attempt === true ? <Button type="button" onClick={retryPreparation}>Вернуться к анкете</Button> : null}
     <Button type="button" variant="outline" disabled={attemptQuery.isFetching} onClick={() => void attemptQuery.refetch()}>Проверить статус</Button>
   </GlassCard></PageShell>;
 

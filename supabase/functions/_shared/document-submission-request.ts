@@ -39,6 +39,7 @@ export function submissionReplay(row: Record<string, any>): { body: Record<strin
   }
   return { status: 200, body: {
     found: true, success: false, replayed: true, submission_id: row.id,
+    can_start_new_attempt: row.status === 'failed' && row.metadata?.stage === 'preparation' && row.metadata?.safe_to_retry === true,
     error: row.status === 'failed' ? (safeDocumentErrorCode(row.error_code) ?? 'generation_outcome_unknown') : 'generation_in_progress',
   } };
 }

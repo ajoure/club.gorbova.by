@@ -32,7 +32,7 @@ function generateDocumentNumber(prefix = "AI"): string {
   const y = now.getFullYear().toString().slice(-2);
   const m = String(now.getMonth() + 1).padStart(2, "0");
   const d = String(now.getDate()).padStart(2, "0");
-  const r = crypto.randomUUID();
+  const r = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
   return `${prefix}-${y}${m}${d}-${r}`;
 }
 
@@ -411,7 +411,7 @@ serve(async (req) => {
 
     // 10. Upload to storage
     const fileName = `${docNumber}.docx`;
-    const filePath = `ai-generated/${profileId}/${fileName}`;
+    const filePath = `ai-generated/${profileId}/${crypto.randomUUID()}/${fileName}`;
     const { error: upErr } = await supabase.storage
       .from("documents")
       .upload(filePath, generatedDoc, {

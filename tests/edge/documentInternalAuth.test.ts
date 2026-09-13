@@ -37,3 +37,22 @@ it('rejects a forged service role before reading any package session in the real
   }));
   expect(response.status).toBe(401); expect(reads).toBe(0);
 });
+
+it('rejects a trusted request with no session owner before any batch or audit write', async () => {
+  let handler!: (req: Request) => Promise<Response>;
+  const tables: string[] = [];
+  const db = { from: (table: string) => {
+    tables.push(table);
+    if (!['document_package_sessions', 'profiles'].includes(table)) throw new Error('Unexpected access');
+    const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: table === 'profiles' ? null : { id: 'session', profile_id: 'missing-owner' } }) };
+    return q;
+  } };
+  const source = readFileSync('supabase/functions/ai-generate-document-package/index.ts', 'utf8').replace(/^import[^;]+;\s*/gm, '');
+  const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+  new Function('Deno', 'createClient', 'isTrustedDocumentServiceCall', js)(
+    { env: { get: () => key }, serve: (fn: typeof handler) => { handler = fn; } }, () => db, isTrustedDocumentServiceCall,
+  );
+  const response = await handler(new Request('https://test.invalid', { method: 'POST', headers: { authorization: `Bearer ${key}`, 'x-internal-call': marker }, body: JSON.stringify({ package_session_id: 'session', run_mode: 'external_submit' }) }));
+  expect(response.status).toBe(400); expect(await response.json()).toEqual({ error: 'profile_not_found' });
+  expect(tables).toEqual(['document_package_sessions', 'profiles']);
+});
