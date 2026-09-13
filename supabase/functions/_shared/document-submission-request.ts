@@ -34,6 +34,7 @@ export function submissionReplay(row: Record<string, any>): { body: Record<strin
       found: true, success: true, replayed: true, submission_id: row.id, document_ids: documentIds,
       generation_status: row.metadata?.generation_status === 'partial' ? 'partial' : 'generated',
       delivery_complete: row.metadata?.delivery_complete === true,
+      delivery_skipped: row.metadata?.delivery_skipped === true,
     } };
   }
   return { status: 200, body: {

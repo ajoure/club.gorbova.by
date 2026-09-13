@@ -6,7 +6,7 @@ import { recordExternalGeneration } from '../../supabase/functions/_shared/docum
 
 const requestId = '00000000-0000-4000-8000-000000000007';
 const documentId = '00000000-0000-4000-8000-000000000008';
-function harness(holdGeneration = false, failLinkSave = false) {
+function harness(holdGeneration = false, failLinkSave = false, noDelivery = false) {
   let handler!: (req: Request) => Promise<Response>;
   const submissions: any[] = []; const sessions: any[] = [];
   let finish!: () => void;
@@ -21,7 +21,7 @@ function harness(holdGeneration = false, failLinkSave = false) {
   });
   const rows: Record<string, any[]> = {
     document_package_external_links: [{ id: 'link', public_token: 'test-link', is_active: true, external_form_id: 'form', owner_profile_id: 'profile', selected_legal_entity_id: 'entity', metadata: {} }],
-    document_package_external_forms: [{ id: 'form', is_active: true, package_template_item_id: 'item', delivery: { email: false, telegram: false } }],
+    document_package_external_forms: [{ id: 'form', is_active: true, package_template_item_id: 'item', delivery: { email: !noDelivery, telegram: !noDelivery } }],
     document_package_template_items: [{ id: 'item', package_template_id: 'package' }],
     document_package_external_form_fields: [], document_package_role_catalog: [],
     profiles: [{ id: 'profile', user_id: 'user' }],
@@ -105,4 +105,14 @@ it('supports already-open legacy pages without a request ID and deduplicates the
   expect(first.success).toBe(true); expect(replay.replayed).toBe(true);
   expect(h.submissions).toHaveLength(1); expect(h.sessions).toHaveLength(1);
   expect(h.fetch).toHaveBeenCalledTimes(2);
+});
+
+it('saves a generated document without invoking any sender when both channels are disabled', async () => {
+  const h = harness(false, false, true);
+  expect(await (await h.call()).json()).toMatchObject({ success: true, document_ids: [documentId], delivery_complete: false, delivery_skipped: true });
+  expect(h.submissions[0].status).toBe('generated');
+  expect(h.fetch).toHaveBeenCalledTimes(1);
+  expect(h.fetch.mock.calls[0][0]).toContain('/ai-generate-document-package');
+  expect(await (await h.call()).json()).toMatchObject({ replayed: true, delivery_skipped: true });
+  expect(h.fetch).toHaveBeenCalledTimes(1);
 });

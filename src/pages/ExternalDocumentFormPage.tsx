@@ -78,7 +78,7 @@ function ExternalDocumentForm({ token }: { token: string }) {
   const [fields, setFields] = useState<Record<string, unknown>>({});
   const [groups, setGroups] = useState<Record<string, Array<Record<string, unknown>>>>({});
   const [attachments, setAttachments] = useState<File[]>([]);
-  const [completed, setCompleted] = useState<{ partial: boolean; deliveryComplete: boolean } | null>(null);
+  const [completed, setCompleted] = useState<{ partial: boolean; deliveryComplete: boolean; deliverySkipped: boolean } | null>(null);
   const [mnsLookupState, setMnsLookupState] = useState<Record<string, { loading?: boolean; message?: string; error?: boolean }>>({});
   const formQuery = useQuery({
     queryKey: ["external-document-form", token],
@@ -102,7 +102,7 @@ function ExternalDocumentForm({ token }: { token: string }) {
       if (error) throw await documentFunctionError(error, data, 'read');
       if (typeof data?.found !== 'boolean') throw await documentFunctionError(null, { error: 'submission_status_unavailable' }, 'read');
       if (data?.error && data?.found !== true) throw await documentFunctionError(null, data, 'read');
-      return data as { found: boolean; success?: boolean; error?: string; generation_status?: string; delivery_complete?: boolean };
+      return data as { found: boolean; success?: boolean; error?: string; generation_status?: string; delivery_complete?: boolean; delivery_skipped?: boolean };
     },
   });
   const startNewReport = () => {
@@ -185,7 +185,7 @@ function ExternalDocumentForm({ token }: { token: string }) {
       }
     },
     onSettled: () => { void attemptQuery.refetch(); },
-    onSuccess: (data) => setCompleted({ partial: data.generation_status === 'partial',
+    onSuccess: (data) => setCompleted({ deliverySkipped: data.delivery_skipped === true, partial: data.generation_status === 'partial',
       deliveryComplete: data.delivery_complete ?? (Array.isArray(data.delivery) && data.delivery.every((item: { success?: boolean }) => item?.success === true)) }),
   });
 
@@ -193,9 +193,9 @@ function ExternalDocumentForm({ token }: { token: string }) {
   if (formQuery.isError || !form) return <PageShell><GlassCard className="max-w-lg p-6 text-center space-y-2"><AlertCircle className="h-8 w-8 mx-auto text-destructive" /><h1 className="font-semibold">Не удалось открыть анкету</h1><p className="text-sm text-muted-foreground">{formQuery.error instanceof DocumentFunctionError ? formQuery.error.message : 'Не удалось загрузить анкету. Обновите страницу или обратитесь к владельцу ссылки.'}</p></GlassCard></PageShell>;
   const restored = attemptQuery.data;
   const confirmed = completed ?? (restored?.found && restored.success ? {
-    partial: restored.generation_status === 'partial', deliveryComplete: restored.delivery_complete === true,
+    deliverySkipped: restored.delivery_skipped === true, partial: restored.generation_status === 'partial', deliveryComplete: restored.delivery_complete === true,
   } : null);
-  if (confirmed) return <PageShell><GlassCard className="max-w-lg p-7 text-center space-y-3"><CheckCircle2 className="h-11 w-11 mx-auto text-emerald-500" /><h1 className="text-lg font-semibold">{confirmed.partial ? 'Документы сформированы частично' : 'Документ сформирован'}</h1><p className="text-sm text-muted-foreground">{confirmed.deliveryComplete ? 'Отправка готовых документов по выбранным каналам подтверждена.' : 'Отправка подтверждена не по всем каналам. Уточните результат у владельца ссылки.'}{confirmed.partial ? ' Для проверки недостающих документов обратитесь к владельцу пакета.' : ''} Не отправляйте эту анкету повторно.</p><Button type="button" variant="outline" onClick={startNewReport}>Заполнить новый отчёт</Button></GlassCard></PageShell>;
+  if (confirmed) return <PageShell><GlassCard className="max-w-lg p-7 text-center space-y-3"><CheckCircle2 className="h-11 w-11 mx-auto text-emerald-500" /><h1 className="text-lg font-semibold">{confirmed.partial ? 'Документы сформированы частично' : 'Документ сформирован'}</h1><p className="text-sm text-muted-foreground">{confirmed.deliverySkipped ? 'Документ сохранён. Доставка по email и Telegram отключена владельцем ссылки.' : confirmed.deliveryComplete ? 'Отправка готовых документов по выбранным каналам подтверждена.' : 'Отправка подтверждена не по всем каналам. Уточните результат у владельца ссылки.'}{confirmed.partial ? ' Для проверки недостающих документов обратитесь к владельцу пакета.' : ''} Не отправляйте эту анкету повторно.</p><Button type="button" variant="outline" onClick={startNewReport}>Заполнить новый отчёт</Button></GlassCard></PageShell>;
   if (attemptQuery.isLoading) return <PageShell><Loader2 className="h-7 w-7 animate-spin text-primary" /></PageShell>;
   if (attemptQuery.isError || restored?.found) return <PageShell><GlassCard className="max-w-lg p-7 text-center space-y-3">
     <AlertCircle className="h-9 w-9 mx-auto text-primary" />

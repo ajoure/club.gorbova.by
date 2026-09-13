@@ -78,6 +78,16 @@ describe('external document form submission states', () => {
     expect(screen.getByText(/Отправка подтверждена не по всем каналам/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Сохранить и сформировать' })).not.toBeInTheDocument();
   });
+  it.each(['submit', 'restore'])('reports disabled delivery without claiming a send (%s)', async (mode) => {
+    const data = { found: true, success: true, document_ids: ['00000000-0000-4000-8000-000000000001'], generation_status: 'generated', delivery_complete: false, delivery_skipped: true };
+    if (mode === 'restore') mocks.status.mockResolvedValue({ data });
+    else mocks.submit.mockResolvedValue({ data });
+    mount();
+    if (mode === 'submit') fireEvent.click(await screen.findByRole('button', { name: 'Сохранить и сформировать' }));
+    expect(await screen.findByText('Документ сформирован')).toBeInTheDocument();
+    expect(screen.getByText(/Доставка по email и Telegram отключена владельцем ссылки/)).toBeInTheDocument();
+    expect(screen.queryByText(/Отправка готовых документов по выбранным каналам подтверждена/)).not.toBeInTheDocument();
+  });
   it('does not accept HTTP 200 without document IDs as completed', async () => {
     mocks.submit.mockResolvedValueOnce({ error: null, data: { success: true, document_ids: [] } });
     mount(); fireEvent.click(await screen.findByRole('button', { name: 'Сохранить и сформировать' }));

@@ -581,8 +581,9 @@ Deno.serve(async (req) => {
       }).eq("id", submission.id);
       return json({ error: "delivery_format_not_selected", submission_id: submission.id }, 422);
     }
+    const deliverySkipped = !wantsEmail && !wantsTelegram;
     const sendResults: unknown[] = [];
-    for (const documentId of docs) {
+    for (const documentId of deliverySkipped ? [] : docs) {
       const sent = await fetch(`${url}/functions/v1/canonical-document-send`, {
         method: "POST",
         headers: {
@@ -603,17 +604,17 @@ Deno.serve(async (req) => {
       });
       sendResults.push(await sent.json().catch(() => ({ error: `delivery_http_${sent.status}` })));
     }
-    const deliveryComplete = sendResults.every((result: any) => result?.success === true);
+    const deliveryComplete = !deliverySkipped && sendResults.every((result: any) => result?.success === true);
     const { data: deliveryCheckpoint, error: deliverySaveError } = await admin.from("document_package_external_submissions")
       .update({
-        ...(!deliveryComplete ? { status: "delivery_partial", error_code: "one_or_more_delivery_channels_failed" } : {}),
+        ...(!deliveryComplete && !deliverySkipped ? { status: "delivery_partial", error_code: "one_or_more_delivery_channels_failed" } : {}),
         metadata: { generation_status: outcome.generationStatus, generation_error_code: outcome.errorCode,
-          stage: "delivery", delivery_complete: deliveryComplete },
+          stage: "delivery", delivery_complete: deliveryComplete, delivery_skipped: deliverySkipped },
       }).eq("id", submission.id).select('id').single();
     if (deliverySaveError || !deliveryCheckpoint) return json({ error: "submission_save_failed", submission_id: submission.id }, 503);
     return json({ success: true, submission_id: submission.id, document_ids: docs, delivery: sendResults,
       generation_status: outcome.generationStatus, error_code: outcome.errorCode,
-      delivery_complete: deliveryComplete });
+      delivery_complete: deliveryComplete, delivery_skipped: deliverySkipped });
   } catch (e) {
     console.error("[external-document-form]", e);
     return json({ error: "internal_error" }, 500);
