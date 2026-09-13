@@ -27,7 +27,7 @@ import {
 import { allocateComposablePayableTotal } from "../_shared/composable-checkout.ts";
 import { materializeComposableOrderGroup } from "../_shared/materialize-composable-order-group.ts";
 import { buildPurchaseCompositionTitle } from "../_shared/purchase-composition-title.ts";
-import { requirePaymentsEdit } from "../_shared/admin-section-auth.ts";
+import {requireSalesOrPaymentsEdit,cbAlumniOfferAllowed} from "../_shared/sales-runtime/checkout-auth.ts";
 import { resolveSalesManagerForCreation, SalesManagerSelectionError } from "../_shared/sales-manager-attribution.ts";
 
 const CORS = {
@@ -46,6 +46,7 @@ function json(body: unknown, status = 200) {
 
 interface IssueBody {
   target_user_id: string;
+  expected_total?: number;
   product_id: string;
   offer_id: string;
   addon_offer_ids?: string[];
@@ -80,7 +81,7 @@ Deno.serve(async (req) => {
   const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const authHeader = req.headers.get("Authorization") ?? "";
   const admin: SupabaseClient = createClient(url, service);
-  const access = await requirePaymentsEdit(req, admin);
+  const access = await requireSalesOrPaymentsEdit(req, admin, "admin-invoice-checkout-issue");
   if (!access.ok) return json({ error: access.error }, access.status);
   const actor = access.actor;
 
@@ -169,6 +170,8 @@ Deno.serve(async (req) => {
     if (error instanceof ComposableCheckoutError) return json({ error: error.code }, error.status);
     return json({ error: "quote_failed" }, 500);
   }
+  if(access.salesOperationId && (requestedAdjustment!==0||body.expected_total!==composableQuote.total))return json({error:"sales_quote_changed"},409);
+  if(!await cbAlumniOfferAllowed(admin,body.offer_id,body.target_user_id,true))return json({error:"alumni_eligibility_required"},403);
   const primary = composableQuote.items[0];
   if (primary.product_id !== body.product_id) {
     return json({ error: "quote_product_mismatch" }, 400);
@@ -227,6 +230,7 @@ Deno.serve(async (req) => {
 
   const orderMeta: Record<string, unknown> = {
     source: "admin_invoice_checkout",
+    ...(access.salesOperationId ? {sales_checkout_operation_id:access.salesOperationId} : {}),
     checkout_kind: "invoice",
     awaits_payment: true,
     invoice_number: invoiceNumber,
@@ -347,6 +351,7 @@ Deno.serve(async (req) => {
           "Content-Type": "application/json",
           Authorization: authHeader,
           apikey: anon,
+          ...(access.salesOperationId ? {"x-sales-invoice-capability":req.headers.get("x-sales-checkout-capability")!} : {}),
         },
         body: JSON.stringify({
           order_id: newOrder.id,
@@ -411,7 +416,7 @@ Deno.serve(async (req) => {
   // document_id сразу после генерации PDF, но canonical-document-send вообще
   // не вызывал — UI закономерно завершал polling статусом
   // delivery_not_started для обоих каналов.
-  if (documentId) {
+  if (documentId && !access.salesOperationId) {
     const sendPromise = (async () => {
       try {
         const sendResp = await fetch(

@@ -38,6 +38,8 @@ import {
 } from "@/hooks/useAiDocumentPackageGeneration";
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 import { toast } from "sonner";
+import { documentErrorMessage, packageDocumentTotal } from '@/utils/documentFunctionError';
+import { safeDocumentErrorCode } from '../../../../supabase/functions/_shared/document-generation-outcome';
 import { PackageGenerationHistory } from "./PackageGenerationHistory";
 import { usePackageSessionFields } from "@/hooks/usePackageSessionFields";
 
@@ -136,7 +138,7 @@ export function PackageGenerationPanel({ packageTemplateId, packageName }: Props
 
   /**
    * Превращает технический код ошибки backend-а в человекочитаемое сообщение.
-   * Технический код остаётся доступен через `title` для саппорта.
+   * Произвольные подробности backend-а не выводятся в интерфейс.
    */
   function humanizeGenError(code: string): string {
     const m = code.match(/^([a-z_]+):?(.*)$/);
@@ -153,9 +155,9 @@ export function PackageGenerationPanel({ packageTemplateId, packageName }: Props
       case "role_person_not_found":
         return `Не найдено физлицо для роли «${lnLabel ?? ln ?? ""}». Проверьте, что назначенный человек существует и активен.`;
       case "ln_token_unknown":
-        return `Шаблон ссылается на неизвестную роль «${ln ?? arg}».`;
+        return ln ? `Шаблон ссылается на неизвестную роль «${ln}».` : "Шаблон ссылается на неизвестную роль.";
       case "ln_token_outside_bound_package":
-        return `Роль «${lnLabel ?? ln ?? arg}» принадлежит другому пакету.`;
+        return ln ? `Роль «${lnLabel ?? ln}» принадлежит другому пакету.` : "Роль принадлежит другому пакету.";
       case "per_role_no_active_recipients":
         return "Для режима «отдельный документ для каждого физлица с ролью» нет активных назначений выбранной роли.";
       case "per_role_role_not_configured":
@@ -169,7 +171,7 @@ export function PackageGenerationPanel({ packageTemplateId, packageName }: Props
       case "package_fl_role_context_missing":
         return "Для документа не назначено физлицо (или назначено несколько — допустимо ровно одно).";
       default:
-        return code;
+        return documentErrorMessage(safeDocumentErrorCode(code) ?? 'generation_failed');
     }
   }
 
@@ -453,7 +455,7 @@ export function PackageGenerationPanel({ packageTemplateId, packageName }: Props
               {lastResult.status === "pending" && "в работе"}
             </Badge>
             <span className="text-[11px] text-muted-foreground">
-              {lastResult.generated} из {lastResult.total} сформировано
+              {lastResult.generated} из {packageDocumentTotal(lastResult)} сформировано
               {lastResult.errors ? ` · ошибок: ${lastResult.errors}` : ""}
               {lastResult.blocked ? ` · блокировок: ${lastResult.blocked}` : ""}
             </span>
@@ -485,7 +487,7 @@ export function PackageGenerationPanel({ packageTemplateId, packageName }: Props
                     {humanErrors.length > 0 && (
                       <ul className="text-[10px] text-rose-700 dark:text-rose-400 mt-0.5 space-y-0.5">
                         {humanErrors.map((he, i) => (
-                          <li key={i} title={he.code} className="flex items-start gap-1">
+                          <li key={i} className="flex items-start gap-1">
                             <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
                             <span>{he.text}</span>
                           </li>

@@ -5575,6 +5575,207 @@ export type Database = {
           },
         ]
       }
+      course_caption_gap_audits: {
+        Row: {
+          caption_sha256: string
+          classification: string
+          created_at: string
+          expected_parts: number
+          id: string
+          manifest_sha256: string
+          quality_status: string
+          raw_vtt: string
+          requested_by: string
+          source_id: string
+          source_revision: string
+          status: string
+        }
+        Insert: {
+          caption_sha256: string
+          classification?: string
+          created_at?: string
+          expected_parts: number
+          id?: string
+          manifest_sha256: string
+          quality_status?: string
+          raw_vtt: string
+          requested_by: string
+          source_id: string
+          source_revision: string
+          status?: string
+        }
+        Update: {
+          caption_sha256?: string
+          classification?: string
+          created_at?: string
+          expected_parts?: number
+          id?: string
+          manifest_sha256?: string
+          quality_status?: string
+          raw_vtt?: string
+          requested_by?: string
+          source_id?: string
+          source_revision?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_caption_gap_audits_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "course_transcription_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_caption_gap_parts: {
+        Row: {
+          asr_text: string | null
+          attempts: number
+          audio_sha256: string
+          audit_id: string
+          claim_token: string | null
+          end_ms: number
+          error_code: string | null
+          gap_index: number
+          lease_until: string | null
+          part_index: number
+          start_ms: number
+          status: string
+          text_sha256: string | null
+          updated_at: string
+        }
+        Insert: {
+          asr_text?: string | null
+          attempts?: number
+          audio_sha256: string
+          audit_id: string
+          claim_token?: string | null
+          end_ms: number
+          error_code?: string | null
+          gap_index: number
+          lease_until?: string | null
+          part_index: number
+          start_ms: number
+          status?: string
+          text_sha256?: string | null
+          updated_at?: string
+        }
+        Update: {
+          asr_text?: string | null
+          attempts?: number
+          audio_sha256?: string
+          audit_id?: string
+          claim_token?: string | null
+          end_ms?: number
+          error_code?: string | null
+          gap_index?: number
+          lease_until?: string | null
+          part_index?: number
+          start_ms?: number
+          status?: string
+          text_sha256?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_caption_gap_parts_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: false
+            referencedRelation: "course_caption_gap_audits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_gap_continuations: {
+        Row: {
+          approval_sha256: string
+          audit_context: Json
+          audit_id: string
+          created_at: string
+          held_part_snapshot: Json
+          id: string
+          reason: string
+          reviewed_by: string
+          selected_parts: number[]
+          status: string
+        }
+        Insert: {
+          approval_sha256: string
+          audit_context: Json
+          audit_id: string
+          created_at?: string
+          held_part_snapshot: Json
+          id?: string
+          reason?: string
+          reviewed_by: string
+          selected_parts?: number[]
+          status?: string
+        }
+        Update: {
+          approval_sha256?: string
+          audit_context?: Json
+          audit_id?: string
+          created_at?: string
+          held_part_snapshot?: Json
+          id?: string
+          reason?: string
+          reviewed_by?: string
+          selected_parts?: number[]
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_gap_continuations_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: true
+            referencedRelation: "course_caption_gap_audits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_gap_evidence_annotations: {
+        Row: {
+          alphabet_flag: string
+          audit_id: string
+          continuation_id: string
+          evidence_kind: string
+          part_index: number
+          text_sha256: string
+        }
+        Insert: {
+          alphabet_flag: string
+          audit_id: string
+          continuation_id: string
+          evidence_kind?: string
+          part_index: number
+          text_sha256: string
+        }
+        Update: {
+          alphabet_flag?: string
+          audit_id?: string
+          continuation_id?: string
+          evidence_kind?: string
+          part_index?: number
+          text_sha256?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_gap_evidence_annotations_audit_id_part_index_fkey"
+            columns: ["audit_id", "part_index"]
+            isOneToOne: true
+            referencedRelation: "course_caption_gap_parts"
+            referencedColumns: ["audit_id", "part_index"]
+          },
+          {
+            foreignKeyName: "course_gap_evidence_annotations_continuation_id_fkey"
+            columns: ["continuation_id"]
+            isOneToOne: false
+            referencedRelation: "course_gap_continuations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       course_preregistrations: {
         Row: {
           consent: boolean
@@ -5625,6 +5826,270 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: []
+      }
+      course_transcription_bindings: {
+        Row: {
+          block_id: string
+          block_updated_at: string
+          lesson_id: string
+          product_id: string
+          source_id: string
+          verified_at: string
+        }
+        Insert: {
+          block_id: string
+          block_updated_at: string
+          lesson_id: string
+          product_id: string
+          source_id: string
+          verified_at?: string
+        }
+        Update: {
+          block_id?: string
+          block_updated_at?: string
+          lesson_id?: string
+          product_id?: string
+          source_id?: string
+          verified_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_transcription_bindings_block_id_fkey"
+            columns: ["block_id"]
+            isOneToOne: false
+            referencedRelation: "lesson_blocks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "course_transcription_bindings_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "training_lessons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "course_transcription_bindings_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "course_transcription_bindings_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "course_transcription_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_transcription_jobs: {
+        Row: {
+          created_at: string
+          duration_ms: number
+          id: string
+          requested_by: string
+          source_id: string
+          status: string
+          total_parts: number
+          updated_at: string
+          window_ms: number
+        }
+        Insert: {
+          created_at?: string
+          duration_ms: number
+          id?: string
+          requested_by: string
+          source_id: string
+          status?: string
+          total_parts: number
+          updated_at?: string
+          window_ms?: number
+        }
+        Update: {
+          created_at?: string
+          duration_ms?: number
+          id?: string
+          requested_by?: string
+          source_id?: string
+          status?: string
+          total_parts?: number
+          updated_at?: string
+          window_ms?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_transcription_jobs_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: true
+            referencedRelation: "course_transcription_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_transcription_parts: {
+        Row: {
+          attempts: number
+          audio_sha256: string | null
+          claim_token: string | null
+          end_ms: number
+          error_code: string | null
+          job_id: string
+          lease_until: string | null
+          part_index: number
+          start_ms: number
+          status: string
+          transcript_text: string | null
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          audio_sha256?: string | null
+          claim_token?: string | null
+          end_ms: number
+          error_code?: string | null
+          job_id: string
+          lease_until?: string | null
+          part_index: number
+          start_ms: number
+          status?: string
+          transcript_text?: string | null
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          audio_sha256?: string | null
+          claim_token?: string | null
+          end_ms?: number
+          error_code?: string | null
+          job_id?: string
+          lease_until?: string | null
+          part_index?: number
+          start_ms?: number
+          status?: string
+          transcript_text?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_transcription_parts_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "course_transcription_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_transcription_sources: {
+        Row: {
+          audio_bytes: number | null
+          audio_track_id: string | null
+          caption_sha256: string | null
+          created_at: string
+          created_by: string
+          duration_ms: number
+          enabled: boolean
+          id: string
+          provider: string
+          revision_basis: string
+          source_revision: string
+          verified_at: string
+          video_id: string
+        }
+        Insert: {
+          audio_bytes?: number | null
+          audio_track_id?: string | null
+          caption_sha256?: string | null
+          created_at?: string
+          created_by: string
+          duration_ms: number
+          enabled?: boolean
+          id?: string
+          provider: string
+          revision_basis?: string
+          source_revision: string
+          verified_at?: string
+          video_id: string
+        }
+        Update: {
+          audio_bytes?: number | null
+          audio_track_id?: string | null
+          caption_sha256?: string | null
+          created_at?: string
+          created_by?: string
+          duration_ms?: number
+          enabled?: boolean
+          id?: string
+          provider?: string
+          revision_basis?: string
+          source_revision?: string
+          verified_at?: string
+          video_id?: string
+        }
+        Relationships: []
+      }
+      course_transcripts: {
+        Row: {
+          caption_provenance: Json | null
+          char_count: number
+          classification: string
+          content_sha256: string
+          created_at: string
+          duration_ms: number
+          job_id: string | null
+          origin: string
+          quality_status: string
+          source_id: string
+          source_revision: string
+          subtitle_metadata: Json | null
+          transcript_text: string
+        }
+        Insert: {
+          caption_provenance?: Json | null
+          char_count: number
+          classification?: string
+          content_sha256: string
+          created_at?: string
+          duration_ms: number
+          job_id?: string | null
+          origin?: string
+          quality_status?: string
+          source_id: string
+          source_revision: string
+          subtitle_metadata?: Json | null
+          transcript_text: string
+        }
+        Update: {
+          caption_provenance?: Json | null
+          char_count?: number
+          classification?: string
+          content_sha256?: string
+          created_at?: string
+          duration_ms?: number
+          job_id?: string | null
+          origin?: string
+          quality_status?: string
+          source_id?: string
+          source_revision?: string
+          subtitle_metadata?: Json | null
+          transcript_text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_transcripts_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "course_transcription_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "course_transcripts_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: true
+            referencedRelation: "course_transcription_sources"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       crm_activity_log: {
         Row: {
@@ -7105,6 +7570,8 @@ export type Database = {
           metadata: Json
           owner_profile_id: string
           package_session_id: string | null
+          request_fingerprint: string | null
+          request_id: string | null
           status: string
           submitted_at: string
         }
@@ -7118,6 +7585,8 @@ export type Database = {
           metadata?: Json
           owner_profile_id: string
           package_session_id?: string | null
+          request_fingerprint?: string | null
+          request_id?: string | null
           status?: string
           submitted_at?: string
         }
@@ -7131,6 +7600,8 @@ export type Database = {
           metadata?: Json
           owner_profile_id?: string
           package_session_id?: string | null
+          request_fingerprint?: string | null
+          request_id?: string | null
           status?: string
           submitted_at?: string
         }
@@ -18017,6 +18488,427 @@ export type Database = {
         }
         Relationships: []
       }
+      sales_campaigns: {
+        Row: {
+          ai_config: Json
+          assignee_user_id: string
+          bot_id: string
+          business_account_id: string
+          code: string
+          created_at: string
+          delay_max_seconds: number
+          delay_min_seconds: number
+          enabled_at: string | null
+          id: string
+          knowledge: Json
+          knowledge_version: string
+          mode: string
+          policy_version: string
+          product_id: string
+          test_user_id: string
+          trigger_phrase: string
+        }
+        Insert: {
+          ai_config?: Json
+          assignee_user_id: string
+          bot_id: string
+          business_account_id: string
+          code: string
+          created_at?: string
+          delay_max_seconds?: number
+          delay_min_seconds?: number
+          enabled_at?: string | null
+          id?: string
+          knowledge?: Json
+          knowledge_version: string
+          mode?: string
+          policy_version: string
+          product_id: string
+          test_user_id: string
+          trigger_phrase: string
+        }
+        Update: {
+          ai_config?: Json
+          assignee_user_id?: string
+          bot_id?: string
+          business_account_id?: string
+          code?: string
+          created_at?: string
+          delay_max_seconds?: number
+          delay_min_seconds?: number
+          enabled_at?: string | null
+          id?: string
+          knowledge?: Json
+          knowledge_version?: string
+          mode?: string
+          policy_version?: string
+          product_id?: string
+          test_user_id?: string
+          trigger_phrase?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_campaigns_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_campaigns_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_campaigns_business_account_id_fkey"
+            columns: ["business_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_business_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_campaigns_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_checkout_operations: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          document_started_at: string | null
+          endpoint: string
+          expires_at: string
+          id: string
+          job_id: string
+          quote_fingerprint: string
+          request_body: Json
+          result_url: string | null
+          status: string
+          token_hash: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          document_started_at?: string | null
+          endpoint: string
+          expires_at?: string
+          id?: string
+          job_id: string
+          quote_fingerprint: string
+          request_body: Json
+          result_url?: string | null
+          status?: string
+          token_hash: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          document_started_at?: string | null
+          endpoint?: string
+          expires_at?: string
+          id?: string
+          job_id?: string
+          quote_fingerprint?: string
+          request_body?: Json
+          result_url?: string | null
+          status?: string
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_checkout_operations_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "sales_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_checkout_operations_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "sales_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_conversations: {
+        Row: {
+          answered_seq: number
+          campaign_id: string
+          human_hold: boolean
+          id: string
+          last_inbound_at: string | null
+          last_inbound_id: string | null
+          last_inbound_seq: number
+          reason: string | null
+          revision: number
+          stage: string
+          started: boolean
+          state: string
+          updated_at: string
+        }
+        Insert: {
+          answered_seq?: number
+          campaign_id: string
+          human_hold?: boolean
+          id?: string
+          last_inbound_at?: string | null
+          last_inbound_id?: string | null
+          last_inbound_seq?: number
+          reason?: string | null
+          revision?: number
+          stage?: string
+          started?: boolean
+          state?: string
+          updated_at?: string
+        }
+        Update: {
+          answered_seq?: number
+          campaign_id?: string
+          human_hold?: boolean
+          id?: string
+          last_inbound_at?: string | null
+          last_inbound_id?: string | null
+          last_inbound_seq?: number
+          reason?: string | null
+          revision?: number
+          stage?: string
+          started?: boolean
+          state?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_conversations_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: true
+            referencedRelation: "sales_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_conversations_last_inbound_id_fkey"
+            columns: ["last_inbound_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_events: {
+        Row: {
+          actor_id: string | null
+          conversation_id: string
+          created_at: string
+          details: Json
+          event: string
+          id: string
+          source_message_id: string | null
+        }
+        Insert: {
+          actor_id?: string | null
+          conversation_id: string
+          created_at?: string
+          details?: Json
+          event: string
+          id?: string
+          source_message_id?: string | null
+        }
+        Update: {
+          actor_id?: string | null
+          conversation_id?: string
+          created_at?: string
+          details?: Json
+          event?: string
+          id?: string
+          source_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_events_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "sales_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_events_source_message_id_fkey"
+            columns: ["source_message_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_jobs: {
+        Row: {
+          candidate: Json | null
+          claim_token: string | null
+          claimed_at: string | null
+          context_attempts: number
+          conversation_id: string
+          created_at: string
+          delivery_message_id: number | null
+          due_at: string
+          id: string
+          inbound_id: string
+          inbound_seq: number
+          kind: string
+          knowledge_version: string
+          policy_version: string
+          reason: string | null
+          revision: number
+          status: string
+        }
+        Insert: {
+          candidate?: Json | null
+          claim_token?: string | null
+          claimed_at?: string | null
+          context_attempts?: number
+          conversation_id: string
+          created_at?: string
+          delivery_message_id?: number | null
+          due_at: string
+          id?: string
+          inbound_id: string
+          inbound_seq: number
+          kind?: string
+          knowledge_version: string
+          policy_version: string
+          reason?: string | null
+          revision: number
+          status?: string
+        }
+        Update: {
+          candidate?: Json | null
+          claim_token?: string | null
+          claimed_at?: string | null
+          context_attempts?: number
+          conversation_id?: string
+          created_at?: string
+          delivery_message_id?: number | null
+          due_at?: string
+          id?: string
+          inbound_id?: string
+          inbound_seq?: number
+          kind?: string
+          knowledge_version?: string
+          policy_version?: string
+          reason?: string | null
+          revision?: number
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_jobs_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "sales_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_jobs_inbound_id_fkey"
+            columns: ["inbound_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_knowledge_versions: {
+        Row: {
+          approval_scope: string
+          campaign_id: string
+          created_at: string
+          facts: Json
+          facts_count: number
+          facts_sha256: string
+          id: string
+          knowledge_version: string
+          parent_id: string | null
+          recorded_by: string
+        }
+        Insert: {
+          approval_scope: string
+          campaign_id: string
+          created_at?: string
+          facts: Json
+          facts_count: number
+          facts_sha256: string
+          id?: string
+          knowledge_version: string
+          parent_id?: string | null
+          recorded_by: string
+        }
+        Update: {
+          approval_scope?: string
+          campaign_id?: string
+          created_at?: string
+          facts?: Json
+          facts_count?: number
+          facts_sha256?: string
+          id?: string
+          knowledge_version?: string
+          parent_id?: string | null
+          recorded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_knowledge_versions_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "sales_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_knowledge_versions_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "sales_knowledge_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_media_observations: {
+        Row: {
+          created_at: string
+          message_id: string
+          model: string
+          observation: Json
+          source_hash: string
+          version: string
+        }
+        Insert: {
+          created_at?: string
+          message_id: string
+          model: string
+          observation: Json
+          source_hash: string
+          version: string
+        }
+        Update: {
+          created_at?: string
+          message_id?: string
+          model?: string
+          observation?: Json
+          source_hash?: string
+          version?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_media_observations_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scheduled_product_access: {
         Row: {
           access_delivery_mode: string
@@ -22520,6 +23412,11 @@ export type Database = {
         Args: { p_order_ids: string[]; p_selected_payment_ids: string[] }
         Returns: string
       }
+      admin_archived_login_merge_g9: { Args: { _phase: string }; Returns: Json }
+      admin_confirm_historical_cb_date: {
+        Args: { _mode?: string; _payload: Json }
+        Returns: Json
+      }
       admin_create_contact: {
         Args: {
           p_city?: string
@@ -22846,6 +23743,10 @@ export type Database = {
           user_id: string
         }[]
       }
+      admin_import_historical_cb_17_18: {
+        Args: { _mode?: string; _payload: Json }
+        Returns: Json
+      }
       admin_lookup_contact_duplicate: {
         Args: {
           p_email?: string
@@ -22898,6 +23799,14 @@ export type Database = {
         }
         Returns: Json
       }
+      admin_repair_historical_cb_dates: {
+        Args: { _mode?: string; _payload: Json }
+        Returns: Json
+      }
+      admin_repair_historical_cb_scope: {
+        Args: { _mode?: string; _payload: Json }
+        Returns: Json
+      }
       admin_reset_user_telegram: {
         Args: { _profile_id: string }
         Returns: Json
@@ -22906,6 +23815,7 @@ export type Database = {
         Args: { p_product_id: string; p_tariff_id?: string; p_user_id: string }
         Returns: Json
       }
+      admin_retire_merged_login_g10: { Args: { _phase: string }; Returns: Json }
       admin_safe_delete_profile: {
         Args: { _dry_run?: boolean; _profile_id: string }
         Returns: Json
@@ -23481,6 +24391,114 @@ export type Database = {
       contact_note_delete: { Args: { _note_id: string }; Returns: boolean }
       convert_preorder_on_pay_atomic: {
         Args: { p_paid_order_id: string }
+        Returns: Json
+      }
+      course_gap_audit_create: {
+        Args: {
+          _actor: string
+          _caption_sha256: string
+          _manifest_sha256: string
+          _parts: Json
+          _raw_vtt: string
+          _source_id: string
+          _source_revision: string
+        }
+        Returns: Json
+      }
+      course_gap_claim: {
+        Args: {
+          _audio_sha256: string
+          _audit_id: string
+          _manifest_sha256: string
+          _part_index: number
+        }
+        Returns: Json
+      }
+      course_gap_continue_authorize: {
+        Args: {
+          _actor: string
+          _approval_sha256: string
+          _audit_id: string
+          _caption_sha256: string
+          _held_text_sha256: string
+          _manifest_sha256: string
+          _source_revision: string
+        }
+        Returns: Json
+      }
+      course_gap_continue_claim: {
+        Args: {
+          _approval_sha256: string
+          _audio_sha256: string
+          _continuation_id: string
+          _part_index: number
+        }
+        Returns: Json
+      }
+      course_gap_continue_finish: {
+        Args: {
+          _claim_token: string
+          _continuation_id: string
+          _error_code?: string
+          _part_index: number
+          _text: string
+        }
+        Returns: Json
+      }
+      course_gap_finish: {
+        Args: {
+          _audit_id: string
+          _claim_token: string
+          _error_code?: string
+          _part_index: number
+          _text: string
+        }
+        Returns: Json
+      }
+      course_transcription_claim_part: {
+        Args: {
+          _audio_sha256: string
+          _job_id: string
+          _part_index: number
+          _source_revision: string
+        }
+        Returns: Json
+      }
+      course_transcription_create_job: {
+        Args: { _actor: string; _duration_ms: number; _source_id: string }
+        Returns: Json
+      }
+      course_transcription_finalize: {
+        Args: { _job_id: string; _source_revision: string }
+        Returns: Json
+      }
+      course_transcription_finish_part: {
+        Args: {
+          _claim_token: string
+          _error_code?: string
+          _job_id: string
+          _part_index: number
+          _text: string
+        }
+        Returns: Json
+      }
+      course_transcription_import_reviewed_captions: {
+        Args: {
+          _metadata: Json
+          _provenance: Json
+          _source_id: string
+          _source_revision: string
+          _text: string
+        }
+        Returns: Json
+      }
+      course_transcription_import_subtitles: {
+        Args: {
+          _metadata: Json
+          _source_id: string
+          _source_revision: string
+          _text: string
+        }
         Returns: Json
       }
       create_composable_refund_intent: {
@@ -24809,6 +25827,19 @@ export type Database = {
         Args: { p_club_id: string; p_user_id: string }
         Returns: boolean
       }
+      historical_business_source_is_current: {
+        Args: {
+          _meta: Json
+          _product_code?: string
+          _product_id: string
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      historical_lesson_access_guard: {
+        Args: { _lesson_id: string; _user_id: string }
+        Returns: boolean
+      }
       instagram_outbox_pull_v1: {
         Args: { p_account_id: string; p_limit: number; p_lock_id: string }
         Returns: {
@@ -24861,6 +25892,7 @@ export type Database = {
       }
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
       invoke_process_scheduled_broadcasts: { Args: never; Returns: number }
+      invoke_sales_runtime_worker: { Args: never; Returns: number }
       invoke_telegram_daily_summary: { Args: never; Returns: number }
       is_live_event_presenter: {
         Args: { _live_event_id: string; _user_id: string }
@@ -25563,6 +26595,79 @@ export type Database = {
         Args: { _package_id: string }
         Returns: Json
       }
+      sales_authorize_invoice_document: {
+        Args: { p_body: Json; p_hash: string }
+        Returns: string
+      }
+      sales_begin_send: {
+        Args: { p_candidate: Json; p_job: string; p_token: string }
+        Returns: boolean
+      }
+      sales_broadcast_state: { Args: { p_now?: string }; Returns: string }
+      sales_check_knowledge_facts: {
+        Args: { p_campaign: string; p_facts: Json }
+        Returns: Json
+      }
+      sales_claim_job: { Args: never; Returns: Json }
+      sales_configure_ai: {
+        Args: {
+          p_actor: string
+          p_campaign: string
+          p_config: Json
+          p_expected: Json
+        }
+        Returns: boolean
+      }
+      sales_configure_knowledge_products: {
+        Args: {
+          p_actor: string
+          p_campaign: string
+          p_expected: Json
+          p_ids: Json
+        }
+        Returns: boolean
+      }
+      sales_consume_checkout_capability: {
+        Args: { p_body: Json; p_endpoint: string; p_hash: string }
+        Returns: string
+      }
+      sales_control: {
+        Args: {
+          p_action: string
+          p_actor: string
+          p_campaign: string
+          p_max?: number
+          p_min?: number
+        }
+        Returns: Json
+      }
+      sales_defer_context: {
+        Args: { p_job: string; p_reason: string; p_token: string }
+        Returns: boolean
+      }
+      sales_delivery_gate: { Args: { p_job: string }; Returns: boolean }
+      sales_finish_send: {
+        Args: {
+          p_error?: string
+          p_job: string
+          p_message_id: number
+          p_token: string
+        }
+        Returns: boolean
+      }
+      sales_handoff: {
+        Args: {
+          p_job: string
+          p_reason: string
+          p_stop?: boolean
+          p_token: string
+        }
+        Returns: string
+      }
+      sales_knowledge_snapshot: {
+        Args: { p_actor: string; p_campaign: string }
+        Returns: Json
+      }
       sales_manager_report_v1: {
         Args: {
           p_from: string
@@ -25590,6 +26695,36 @@ export type Database = {
           tariff_id: string
           tariff_name: string
         }[]
+      }
+      sales_offer_eligibility: {
+        Args: { p_offer: string; p_user: string }
+        Returns: Json
+      }
+      sales_queue_reminder: {
+        Args: { p_conversation: string }
+        Returns: string
+      }
+      sales_queue_reply: { Args: { p_conversation: string }; Returns: string }
+      sales_reminder_due: {
+        Args: {
+          p_inbound: string
+          p_now?: string
+          p_random?: number
+          p_seller: string
+        }
+        Returns: string
+      }
+      sales_replace_knowledge_facts: {
+        Args: {
+          p_actor: string
+          p_apply?: boolean
+          p_approved_facts_sha?: string
+          p_campaign: string
+          p_expected_facts_sha: string
+          p_expected_knowledge_version: string
+          p_facts: Json
+        }
+        Returns: Json
       }
       save_session_document_atomic: {
         Args: {
@@ -25890,6 +27025,10 @@ export type Database = {
       }
       verify_broadcast_dispatcher_cron_secret: {
         Args: { _candidate: string }
+        Returns: boolean
+      }
+      verify_sales_runtime_cron_secret: {
+        Args: { p_candidate: string }
         Returns: boolean
       }
       verify_telegram_summary_cron_secret: {

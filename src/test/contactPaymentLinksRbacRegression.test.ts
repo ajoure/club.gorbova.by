@@ -31,9 +31,13 @@ describe("contact payment-link RBAC and RR regression contract", () => {
     expect(auth).toContain('_min_level: minLevel');
     expect(auth).toContain('return await requireAdminSectionAccess(req, admin, "payments", "edit")');
 
-    for (const writer of [direct, publicLink, updateLink, invalidateLink, invoice, quote, rr]) {
+    for (const writer of [direct, updateLink, invalidateLink, quote]) {
       expect(writer).toContain("requirePaymentsEdit");
     }
+    for (const writer of [publicLink, invoice, rr]) expect(writer).toContain("requireSalesOrPaymentsEdit");
+    const capabilityAuth = read("supabase/functions/_shared/sales-runtime/checkout-auth.ts");
+    expect(capabilityAuth).toContain("if (!token) return requirePaymentsEdit(req,db)");
+    expect(capabilityAuth).toContain('"sales_consume_checkout_capability"');
     expect(direct).not.toContain("entitlements.manage");
     expect(invoice).not.toContain('["admin", "super_admin", "menedzher", "manager"]');
     expect(quote).not.toContain('["manager", "menedzher", "admin", "super_admin"]');

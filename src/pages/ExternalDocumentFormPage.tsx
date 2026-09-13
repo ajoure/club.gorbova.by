@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { AlertCircle, Camera, CheckCircle2, FileUp, Loader2, Plus, Send, Trash2 } from "lucide-react";
+import { documentFunctionError, documentErrorMessage, DocumentFunctionError } from '@/utils/documentFunctionError';
 
 type PublicField = { id: string; public_id: string; label: string; description: string | null; data_type: string; options: any; required: boolean; input_rules: Record<string, unknown> };
 type MnsUnpLookup = { unp_field_id?: string; company_name_field_id?: string; company_address_field_id?: string };
@@ -56,24 +57,66 @@ function supplierShortName(data: { short_name?: unknown; full_name?: unknown }):
   return looksLikeFullName ? `ИП ${name}` : name;
 }
 
+function readSubmissionRequestId(token: string): string {
+  const key = `document_submission_request:${token}`;
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved && /^[0-9a-f-]{36}$/i.test(saved)) return saved;
+    const id = crypto.randomUUID();
+    localStorage.setItem(key, id);
+    return id;
+  } catch { return crypto.randomUUID(); }
+}
+
 export default function ExternalDocumentFormPage() {
   const { token = "" } = useParams();
+  return <ExternalDocumentForm key={token} token={token} />;
+}
+
+function ExternalDocumentForm({ token }: { token: string }) {
+  const [requestId, setRequestId] = useState(() => readSubmissionRequestId(token));
   const [fields, setFields] = useState<Record<string, unknown>>({});
   const [groups, setGroups] = useState<Record<string, Array<Record<string, unknown>>>>({});
   const [attachments, setAttachments] = useState<File[]>([]);
-  const [completed, setCompleted] = useState(false);
+  const [completed, setCompleted] = useState<{ partial: boolean; deliveryComplete: boolean; deliverySkipped: boolean } | null>(null);
   const [mnsLookupState, setMnsLookupState] = useState<Record<string, { loading?: boolean; message?: string; error?: boolean }>>({});
   const formQuery = useQuery({
     queryKey: ["external-document-form", token],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke("external-document-form", { body: { action: "read", token } });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      if (error || data?.error) throw await documentFunctionError(error, data, 'read');
       return data as FormData;
     },
     enabled: !!token,
   });
   const form = formQuery.data;
+  const attemptQuery = useQuery({
+    queryKey: ['document-submission-status', token, requestId],
+    enabled: !!form && !!token,
+    retry: false,
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke('external-document-form', {
+        body: { action: 'submission_status', token, request_id: requestId },
+      });
+      if (error) throw await documentFunctionError(error, data, 'read');
+      if (typeof data?.found !== 'boolean') throw await documentFunctionError(null, { error: 'submission_status_unavailable' }, 'read');
+      if (data?.error && data?.found !== true) throw await documentFunctionError(null, data, 'read');
+      return data as { found: boolean; success?: boolean; error?: string; generation_status?: string; delivery_complete?: boolean; delivery_skipped?: boolean; can_start_new_attempt?: boolean };
+    },
+  });
+  const startNewReport = () => {
+    const id = crypto.randomUUID();
+    try { localStorage.setItem(`document_submission_request:${token}`, id); } catch { /* Current-tab attempt still works. */ }
+    setRequestId(id); setCompleted(null); setAttachments([]); submit.reset();
+    setFields(defaultDateValues(form?.regular_fields ?? [], form?.today ?? ''));
+    setGroups(Object.fromEntries(Object.entries(form?.repeat_groups ?? {}).map(([key, group]) => [key, [defaultDateValues(group.fields, form?.today ?? '')]])));
+  };
+  const retryPreparation = () => {
+    const id = crypto.randomUUID();
+    try { localStorage.setItem(`document_submission_request:${token}`, id); } catch { /* Use current-tab identity. */ }
+    setRequestId(id); setCompleted(null); submit.reset();
+  };
   const maxDate = useMemo(() => form?.today || undefined, [form?.today]);
   useEffect(() => {
     if (!form) return;
@@ -123,25 +166,50 @@ export default function ExternalDocumentFormPage() {
   const removeRow = (group: string, index: number) => setGroups((prev) => ({ ...prev, [group]: (prev[group] ?? []).filter((_, i) => i !== index) }));
 
   const submit = useMutation({
+    retry: false,
     mutationFn: async () => {
-      const uploaded: Array<Record<string, unknown>> = [];
-      for (const file of attachments) {
-        const { data: ticket, error } = await supabase.functions.invoke("external-document-form", { body: { action: "issue_upload", token, file_name: file.name, mime_type: file.type, byte_size: file.size } });
-        if (error || ticket?.error) throw new Error(ticket?.error ?? error?.message ?? "Не удалось подготовить файл");
-        const { error: uploadError } = await supabase.storage.from("document-external-attachments").uploadToSignedUrl(ticket.path, ticket.token, file);
-        if (uploadError) throw uploadError;
-        uploaded.push({ path: ticket.path, file_name: file.name, mime_type: file.type, byte_size: file.size });
+      let operation: 'upload' | 'submit' = 'upload';
+      try {
+        const uploaded: Array<Record<string, unknown>> = [];
+        for (const file of attachments) {
+          const { data: ticket, error } = await supabase.functions.invoke("external-document-form", { body: { action: "issue_upload", token, file_name: file.name, mime_type: file.type, byte_size: file.size } });
+          if (error || ticket?.error) throw await documentFunctionError(error, ticket, 'upload');
+          const { error: uploadError } = await supabase.storage.from("document-external-attachments").uploadToSignedUrl(ticket.path, ticket.token, file);
+          if (uploadError) throw uploadError;
+          uploaded.push({ path: ticket.path, file_name: file.name, mime_type: file.type, byte_size: file.size });
+        }
+        operation = 'submit';
+        const { data, error } = await supabase.functions.invoke("external-document-form", { body: { action: "submit", token, request_id: requestId, fields, repeat_groups: groups, attachments: uploaded } });
+        if (error || data?.error) throw await documentFunctionError(error, data, 'submit');
+        if (data?.success !== true || !Array.isArray(data.document_ids) || !data.document_ids.length) {
+          throw await documentFunctionError(null, undefined, 'submit');
+        }
+        return data;
+      } catch (error) {
+        throw await documentFunctionError(error, undefined, operation);
       }
-      const { data, error } = await supabase.functions.invoke("external-document-form", { body: { action: "submit", token, fields, repeat_groups: groups, attachments: uploaded } });
-      if (error || data?.error) throw new Error(data?.error ?? error?.message ?? "Не удалось отправить анкету");
-      return data;
     },
-    onSuccess: () => setCompleted(true),
+    onSettled: () => { void attemptQuery.refetch(); },
+    onSuccess: (data) => setCompleted({ deliverySkipped: data.delivery_skipped === true, partial: data.generation_status === 'partial',
+      deliveryComplete: data.delivery_complete ?? (Array.isArray(data.delivery) && data.delivery.every((item: { success?: boolean }) => item?.success === true)) }),
   });
 
   if (formQuery.isLoading) return <PageShell><Loader2 className="h-7 w-7 animate-spin text-primary" /></PageShell>;
-  if (formQuery.isError || !form) return <PageShell><GlassCard className="max-w-lg p-6 text-center space-y-2"><AlertCircle className="h-8 w-8 mx-auto text-destructive" /><h1 className="font-semibold">Ссылка недоступна</h1><p className="text-sm text-muted-foreground">Доступ владельца к генерации документов мог закончиться, либо ссылка была отключена.</p></GlassCard></PageShell>;
-  if (completed) return <PageShell><GlassCard className="max-w-lg p-7 text-center space-y-3"><CheckCircle2 className="h-11 w-11 mx-auto text-emerald-500" /><h1 className="text-lg font-semibold">Отчёт отправлен</h1><p className="text-sm text-muted-foreground">Документ формируется автоматически. Готовые PDF и DOCX будут направлены владельцу по выбранным каналам.</p></GlassCard></PageShell>;
+  if (formQuery.isError || !form) return <PageShell><GlassCard className="max-w-lg p-6 text-center space-y-2"><AlertCircle className="h-8 w-8 mx-auto text-destructive" /><h1 className="font-semibold">Не удалось открыть анкету</h1><p className="text-sm text-muted-foreground">{formQuery.error instanceof DocumentFunctionError ? formQuery.error.message : 'Не удалось загрузить анкету. Обновите страницу или обратитесь к владельцу ссылки.'}</p></GlassCard></PageShell>;
+  const restored = attemptQuery.data;
+  const confirmed = completed ?? (restored?.found && restored.success ? {
+    deliverySkipped: restored.delivery_skipped === true, partial: restored.generation_status === 'partial', deliveryComplete: restored.delivery_complete === true,
+  } : null);
+  if (confirmed) return <PageShell><GlassCard className="max-w-lg p-7 text-center space-y-3"><CheckCircle2 className="h-11 w-11 mx-auto text-emerald-500" /><h1 className="text-lg font-semibold">{confirmed.partial ? 'Документы сформированы частично' : 'Документ сформирован'}</h1><p className="text-sm text-muted-foreground">{confirmed.deliverySkipped ? 'Документ сохранён. Доставка по email и Telegram отключена владельцем ссылки.' : confirmed.deliveryComplete ? 'Отправка готовых документов по выбранным каналам подтверждена.' : 'Отправка подтверждена не по всем каналам. Уточните результат у владельца ссылки.'}{confirmed.partial ? ' Для проверки недостающих документов обратитесь к владельцу пакета.' : ''} Не отправляйте эту анкету повторно.</p><Button type="button" variant="outline" onClick={startNewReport}>Заполнить новый отчёт</Button></GlassCard></PageShell>;
+  if (attemptQuery.isLoading) return <PageShell><Loader2 className="h-7 w-7 animate-spin text-primary" /></PageShell>;
+  if (attemptQuery.isError || restored?.found) return <PageShell><GlassCard className="max-w-lg p-7 text-center space-y-3">
+    <AlertCircle className="h-9 w-9 mx-auto text-primary" />
+    <h1 className="text-lg font-semibold">Проверка предыдущей попытки</h1>
+    <p className="text-sm text-muted-foreground">{attemptQuery.isError ? 'Не удалось проверить статус. Повторите проверку позже, чтобы не создать дубликат.' : documentErrorMessage(restored?.error ?? 'generation_outcome_unknown')}</p>
+    {!attemptQuery.isError && restored?.can_start_new_attempt === true ? <Button type="button" onClick={retryPreparation}>Вернуться к анкете</Button> : null}
+    <Button type="button" variant="outline" disabled={attemptQuery.isFetching} onClick={() => void attemptQuery.refetch()}>Проверить статус</Button>
+  </GlassCard></PageShell>;
+
 
   return <PageShell>
     <div className="w-full max-w-3xl space-y-4">
@@ -154,8 +222,8 @@ export default function ExternalDocumentFormPage() {
         return <GlassCard key={group} className="p-5 sm:p-6 space-y-4"><div><h2 className="font-semibold">{groupConfig.label}</h2><p className="text-xs text-muted-foreground mt-1">{groupConfig.description || "Добавьте отдельную строку для каждого расхода."}</p></div>{rows.map((row, index) => <div key={index} className="rounded-2xl border border-border/50 bg-background/35 p-4 space-y-4"><div className="flex justify-between items-center"><span className="text-sm font-medium">Расход {index + 1}</span>{rows.length > 1 ? <Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => removeRow(group, index)}><Trash2 className="h-3.5 w-3.5 mr-1" /> Удалить</Button> : null}</div>{groupConfig.fields.filter((field) => isVisible(field, row)).map((field) => <PublicFieldControl key={field.id} field={field} value={row[field.id]} onChange={(v) => updateRow(group, index, field.id, v)} maxDate={maxDate} onBlur={field.id === groupConfig.mns_unp_lookup?.unp_field_id ? (value) => void lookupSupplierByUnp(group, index, value, groupConfig.mns_unp_lookup) : undefined} lookupState={field.id === groupConfig.mns_unp_lookup?.unp_field_id ? mnsLookupState[`${group}:${index}`] : undefined} />)}</div>)}<Button type="button" variant="outline" onClick={() => addRow(group)}><Plus className="h-4 w-4 mr-1" /> Добавить ещё расход</Button></GlassCard>;
       })}
       {form.allow_attachments ? <GlassCard className="p-5 sm:p-6 space-y-3"><div><h2 className="font-semibold">Подтверждающие файлы</h2><p className="text-xs text-muted-foreground mt-1">После заполнения приложите фото чека с камеры или из галереи, а также PDF. Файлы уйдут вместе с отчётом владельцу.</p></div><div className="flex flex-wrap gap-2"><label><input className="sr-only" type="file" accept="image/jpeg,image/png,image/heic,image/webp" capture="environment" multiple onChange={(e) => setAttachments((p) => [...p, ...Array.from(e.target.files ?? [])])} /><Button type="button" variant="outline" asChild><span><Camera className="h-4 w-4 mr-1" /> Снять чек</span></Button></label><label><input className="sr-only" type="file" accept="application/pdf,image/jpeg,image/png,image/heic,image/webp" multiple onChange={(e) => setAttachments((p) => [...p, ...Array.from(e.target.files ?? [])])} /><Button type="button" variant="outline" asChild><span><FileUp className="h-4 w-4 mr-1" /> Выбрать файлы</span></Button></label></div>{attachments.length ? <ul className="text-xs text-muted-foreground space-y-1">{attachments.map((file, i) => <li key={`${file.name}-${i}`} className="flex justify-between gap-3"><span className="truncate">{file.name}</span><button className="text-destructive" onClick={() => setAttachments((p) => p.filter((_, j) => j !== i))}>убрать</button></li>)}</ul> : null}</GlassCard> : null}
-      {submit.error ? <GlassCard className="p-3 text-sm text-destructive">{submit.error.message}</GlassCard> : null}
-      <div className="pb-8 flex justify-end"><Button size="lg" onClick={() => submit.mutate()} disabled={submit.isPending}>{submit.isPending ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Формируем…</> : <><Send className="h-4 w-4 mr-2" /> Сохранить и сформировать</>}</Button></div>
+      {submit.error ? <GlassCard role="alert" className="p-3 text-sm text-destructive">{submit.error.message}{submit.error instanceof DocumentFunctionError && submit.error.retryUnsafe ? <p className="mt-2">Повторная отправка отключена. Уточните результат у владельца ссылки.</p> : null}</GlassCard> : null}
+      <div className="pb-8 flex justify-end"><Button size="lg" onClick={() => submit.mutate()} disabled={submit.isPending || (submit.error instanceof DocumentFunctionError && submit.error.retryUnsafe)}>{submit.isPending ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Формируем…</> : <><Send className="h-4 w-4 mr-2" /> Сохранить и сформировать</>}</Button></div>
     </div>
   </PageShell>;
 }

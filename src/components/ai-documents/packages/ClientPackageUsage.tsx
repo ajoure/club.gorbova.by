@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Copy, ExternalLink, FileDown, FileText, History, Loader2, Mail, Send, Building2 } from "lucide-react";
 import { toast } from "sonner";
+import { documentFunctionError, documentErrorMessage } from '@/utils/documentFunctionError';
 
 type ExternalForm = {
   id: string;
@@ -32,6 +33,7 @@ type HistoryDocument = {
 type HistoryRow = {
   id: string;
   status: string;
+  error_code?: string | null;
   submitted_at: string;
   generated_at: string | null;
   documents: HistoryDocument[];
@@ -136,8 +138,7 @@ export function ClientPackageUsage({
       const { data, error } = await supabase.functions.invoke("external-document-form", {
         body: { action: "owner_forms", package_template_id: packageTemplateId },
       });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      if (error || data?.error) throw await documentFunctionError(error, data, 'read');
       return (data?.forms ?? []) as ExternalForm[];
     },
   });
@@ -193,15 +194,19 @@ export function ClientPackageUsage({
           },
         },
       });
-      if (error) throw error;
-      if (!data?.token) throw new Error(data?.error || "Не удалось создать ссылку");
+      if (error || !data?.token) throw await documentFunctionError(error, data, 'create_link');
       const nextUrl = `${window.location.origin}/document-form/${data.token}`;
       setUrl(nextUrl);
-      await navigator.clipboard?.writeText(nextUrl);
-      toast.success("Ссылка создана и скопирована");
+      try {
+        if (!navigator.clipboard) throw new Error("clipboard_unavailable");
+        await navigator.clipboard.writeText(nextUrl);
+        toast.success("Ссылка создана и скопирована");
+      } catch {
+        toast.success("Ссылка создана. Скопируйте её из поля ниже.");
+      }
       await queryClient.invalidateQueries({ queryKey: ["client-package-external-history", packageTemplateId] });
     } catch (error: any) {
-      toast.error(error?.message || "Не удалось создать ссылку");
+      toast.error((await documentFunctionError(error, undefined, 'create_link')).message);
     } finally {
       setCreating(false);
     }
@@ -224,6 +229,11 @@ export function ClientPackageUsage({
 
         {formsQuery.isLoading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Проверяем доступную анкету…</div>
+        ) : formsQuery.isError ? (
+          <div role="alert" className="rounded-xl border border-destructive/30 px-3 py-2 text-sm text-destructive space-y-2">
+            <p>Не удалось загрузить доступные анкеты.</p>
+            <Button size="sm" variant="outline" disabled={formsQuery.isFetching} onClick={() => void formsQuery.refetch()}>Повторить загрузку</Button>
+          </div>
         ) : !form ? (
           <div className="rounded-xl border border-amber-400/30 bg-amber-500/5 px-3 py-2 text-sm text-muted-foreground">
             Для этого пакета администратор ещё не включил внешнюю анкету.
@@ -271,7 +281,7 @@ export function ClientPackageUsage({
       <GlassCard className="p-4 sm:p-5 space-y-3">
         <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><History className="h-4 w-4 text-primary" /><h2 className="text-base font-semibold">Готовые отчёты</h2></div><Badge variant="outline">{historyQuery.data?.length ?? 0}</Badge></div>
         {historyQuery.isLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : historyQuery.isError ? <p className="text-sm text-destructive">Не удалось загрузить историю. Обновите страницу.</p> : (historyQuery.data?.length ?? 0) === 0 ? <p className="text-sm text-muted-foreground">Здесь появятся отчёты, которые заполнят сотрудники по вашим ссылкам.</p> : <div className="space-y-2">
-          {historyQuery.data!.map((item) => <div key={item.id} className="rounded-xl border border-border/50 p-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between"><div><p className="text-sm font-medium">{historyLabel(item.status)}</p><p className="text-xs text-muted-foreground">Получен {new Date(item.submitted_at).toLocaleString("ru-BY")}</p></div><div className="flex flex-wrap gap-2">{item.documents.map((document) => document.url ? <Button key={document.id} variant="outline" size="sm" asChild><a href={document.url} target="_blank" rel="noreferrer"><FileDown className="h-3.5 w-3.5 mr-1" />{document.file_name || document.title}</a></Button> : null)}</div></div>)}
+          {historyQuery.data!.map((item) => <div key={item.id} className="rounded-xl border border-border/50 p-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between"><div><p className="text-sm font-medium">{historyLabel(item.status)}</p>{item.error_code ? <p className="text-xs text-destructive">{documentErrorMessage(item.error_code)}</p> : null}<p className="text-xs text-muted-foreground">Получен {new Date(item.submitted_at).toLocaleString("ru-BY")}</p></div><div className="flex flex-wrap gap-2">{item.documents.map((document) => document.url ? <Button key={document.id} variant="outline" size="sm" asChild><a href={document.url} target="_blank" rel="noreferrer"><FileDown className="h-3.5 w-3.5 mr-1" />{document.file_name || document.title}</a></Button> : null)}</div></div>)}
         </div>}
       </GlassCard>
     </div>

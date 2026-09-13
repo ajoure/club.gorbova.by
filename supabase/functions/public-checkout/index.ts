@@ -4,6 +4,7 @@
  * Legacy and recipient-prebound links retain their historical behaviour.
  */
 
+import { cbAlumniOfferAllowed } from '../_shared/sales-runtime/checkout-auth.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
@@ -341,6 +342,7 @@ Deno.serve(async (req) => {
       return errorResponse('identity_required', 400);
     }
 
+    if (!await cbAlumniOfferAllowed(supabase,link.offer_id,userId)) return errorResponse('alumni_eligibility_required',403);
     console.log('[public-checkout] target_user_resolved', { userId, resolvedVia, link_id: link.id });
 
     // Canonical by default; only the exact alternate access contour may keep

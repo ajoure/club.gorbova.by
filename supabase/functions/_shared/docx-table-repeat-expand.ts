@@ -17,7 +17,7 @@
 //   • Audit/report НЕ содержит значений ячеек, ФИО, паспорта, custom values.
 // ============================================================================
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import {
   readTableRepeats,
   validateTableRepeatConfig,
@@ -554,8 +554,9 @@ export async function applyTableRepeatExpansion(
     }
 
     // load assignments
-    assignments = assignmentsCache.get(roleId);
-    if (!assignments) {
+    const cachedAssignments = assignmentsCache.get(roleId);
+    if (cachedAssignments) assignments = cachedAssignments;
+    else {
       const { data: asgs } = await input.supabase
         .from('document_package_item_role_assignments')
         .select('person_id, metadata, sort_order, created_at, id')

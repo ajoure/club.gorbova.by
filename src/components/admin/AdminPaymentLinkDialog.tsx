@@ -268,9 +268,10 @@ export function AdminPaymentLinkDialog({
 
   const { data: products, isLoading: productsLoading } = useProductsV2();
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
-  const { data: allOffers, isLoading: offersLoading } = useTariffOffers(
+  const { data: loadedOffers, isLoading: offersLoading } = useTariffOffers(
     selectedTariffId || undefined
   );
+  const allOffers = useMemo(() => loadedOffers?.filter(offer => !offer.meta?.sales_legacy_only), [loadedOffers]);
 
   // Phase 4.1 — список активных Stripe-подключений для селектора account_code.
   // PATCH 4.1.1 — добавлен capabilities_snapshot для disabled-стейтов валют.

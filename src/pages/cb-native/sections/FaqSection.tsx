@@ -1,4 +1,6 @@
 import { rec, CB_PALETTE } from "../manifest";
+import type { PublicTariff } from "@/hooks/usePublicProduct";
+import { tariffAccessCopy, tariffBonusParagraphs } from "../tariffAccessCopy";
 
 /**
  * Section 11a — Q&A (rec776467188 header + rec776467189 items).
@@ -6,7 +8,7 @@ import { rec, CB_PALETTE } from "../manifest";
  * Text tokens alternate: a question (ends with ?, short) followed by one or
  * more answer paragraphs, in exact cbold order.
  */
-export function FaqSection() {
+export function FaqSection({ tariffs = [] }: { tariffs?: PublicTariff[] }) {
   const header = rec("rec776467188").text[0] ?? "АКТУАЛЬНЫЕ ВОПРОСЫ";
   const src = rec("rec776467189").text;
 
@@ -24,10 +26,23 @@ export function FaqSection() {
 
   const accessQuestion = items.find((item) => item.q === "На какое время выдается доступ к курсу?");
   if (accessQuestion) {
+    const durations = tariffs.filter(t => t.is_public !== false).flatMap(t => {
+      const access = tariffAccessCopy(t);
+      return access ? [`«${t.name}»: ${access.bold.toLowerCase()} ${access.text}.`] : [];
+    });
     accessQuestion.a = [
-      "После окончания курса доступ сохраняется: на тарифе «Бухгалтер» — 6 месяцев, «Главный бухгалтер» — 9 месяцев, «Бизнес-леди» — 12 месяцев. Для ранее оплаченных покупок сохраняются условия, действовавшие при покупке.",
+      ...(durations.length ? durations : ["Срок доступа указан в карточке выбранного тарифа."]),
+      "Для ранее оплаченных покупок сохраняются условия, действовавшие при покупке.",
     ];
   }
+  const paceQuestion = items.find(item => item.q === "Могу ли я двигаться в своем темпе?");
+  if (paceQuestion) paceQuestion.a = ["Да, материалы можно изучать в своём темпе в течение срока доступа по выбранному тарифу."];
+  const chatQuestion = items.find(item => item.q === "Как долго доступны чаты и обратная связь?");
+  if (chatQuestion) chatQuestion.a = [
+    "Обратная связь по курсу доступна на время обучения. Дополнительные доступы зависят от выбранного тарифа и условий покупки:",
+    ...tariffBonusParagraphs(tariffs),
+    "Состав и сроки указаны в карточках тарифов. Льготные предложения могут отличаться по бонусам.",
+  ];
 
   return (
     <section

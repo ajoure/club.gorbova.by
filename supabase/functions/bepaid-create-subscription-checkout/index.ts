@@ -1,3 +1,4 @@
+import {cbAlumniOfferAllowed} from '../_shared/sales-runtime/checkout-auth.ts';
 import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
@@ -116,6 +117,10 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    // Restricted course offers are resolved only for an existing recipient.
+    // Reject before any guest user/profile creation or provider call.
+    if (!await cbAlumniOfferAllowed(supabase,offerId,existingUserId,true)) return new Response(JSON.stringify({error:'alumni_eligibility_required'}), {status:403,headers:{...corsHeaders,'Content-Type':'application/json'}});
 
     // Find or create user
     let userId = existingUserId;
@@ -293,6 +298,7 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (!offerData) return new Response(JSON.stringify({error:'offer_not_found'}), {status:400,headers:{...corsHeaders,'Content-Type':'application/json'}});
     const offerMeta = (offerData.meta || {}) as Record<string, any>;
     const recurringConfig = offerMeta.recurring || {};
     const amount = offerData.auto_charge_amount || offerData.amount;

@@ -246,6 +246,7 @@ Deno.serve(async (req) => {
         file_size: fileSize,
         storage_bucket: storageBucket,
         storage_path: storagePath,
+        uploaded_file_id: job.telegram_file_id,
         upload_status: "ok",
         upload_error: null,
         webhook_stage: "worker_uploaded",
@@ -254,7 +255,8 @@ Deno.serve(async (req) => {
       await supabase
         .from("telegram_messages")
         .update({ meta: nextMeta })
-        .eq("id", job.message_db_id);
+        .eq("id", job.message_db_id)
+        .eq("meta->>file_id",job.telegram_file_id);
 
     } catch (e: unknown) {
       status = "error";
@@ -279,7 +281,8 @@ Deno.serve(async (req) => {
         await supabase
           .from("telegram_messages")
           .update({ meta: nextMeta })
-          .eq("id", job.message_db_id);
+          .eq("id", job.message_db_id)
+          .eq("meta->>file_id",job.telegram_file_id);
       } catch (updateErr) {
         console.error("[WORKER] Failed to update message meta on error:", updateErr);
       }

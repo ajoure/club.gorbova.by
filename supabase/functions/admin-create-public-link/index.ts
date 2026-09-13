@@ -24,7 +24,7 @@ import {
   type ResolvedComposableCheckout,
 } from '../_shared/resolve-composable-checkout.ts';
 import { resolveBusinessStream } from '../_shared/acquiring/business-stream-resolver.ts';
-import { requirePaymentsEdit } from '../_shared/admin-section-auth.ts';
+import { requireSalesOrPaymentsEdit, cbAlumniOfferAllowed } from '../_shared/sales-runtime/checkout-auth.ts';
 import { resolveSalesManagerForCreation, SalesManagerSelectionError } from '../_shared/sales-manager-attribution.ts';
 import { handleInstallmentRepaymentLink, type RepaymentLinkRequest } from '../_shared/installment-repayment-link.ts';
 import { RepaymentPlanError } from '../_shared/installment-repayment-plan.ts';
@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    const access = await requirePaymentsEdit(req, supabase);
+    const access = await requireSalesOrPaymentsEdit(req, supabase, 'admin-create-public-link');
     if (!access.ok) return errorResponse(access.error, access.status);
     const user = access.actor;
     const { data: isSuperRole } = await supabase.rpc('has_role_v2', {
@@ -206,6 +206,7 @@ Deno.serve(async (req) => {
       if (!loadedOffer.is_active) return errorResponse('Offer is not active', 400);
       if ((loadedOffer as any).offer_type === 'invoice') return errorResponse('offer_type_invoice_not_chargeable', 400);
       if (loadedOffer.offer_type !== 'pay_now') return errorResponse('Offer is not a pay_now offer', 400);
+      if (!await cbAlumniOfferAllowed(supabase,offer_id,user_id,true)) return errorResponse('alumni_eligibility_required',403);
       resolvedOffer = loadedOffer;
       offerIsRecurring = !!(resolvedOffer as any).meta?.recurring?.is_recurring;
       offerPaymentMethod = (resolvedOffer as any).payment_method ?? null;
@@ -741,6 +742,7 @@ Deno.serve(async (req) => {
       }
     }
 
+    if(access.salesOperationId && (!canonicalComposableQuote || canonicalComposableQuote.adjustment_amount!==0 || canonicalComposableQuote.total!==amount/100)) return errorResponse('sales_quote_changed',409);
     const linkAmountKopecks =
       installmentLinkAmountKopecks !== null ? installmentLinkAmountKopecks : amount;
     const linkMeta: Record<string, unknown> = {

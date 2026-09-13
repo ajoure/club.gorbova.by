@@ -12,6 +12,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { documentFunctionError, packageDocumentTotal } from '@/utils/documentFunctionError';
 
 export interface PackageGenerationItemResult {
   item_id: string;
@@ -29,7 +30,9 @@ export interface PackageGenerationResult {
   success: boolean;
   batch_id: string;
   status: "pending" | "generated" | "partial" | "failed" | "blocked";
-  total: number;
+  total?: number;
+  total_items?: number;
+  total_documents?: number;
   generated: number;
   blocked?: number;
   errors: number;
@@ -44,23 +47,6 @@ export interface GeneratePackageParams {
    * admin_test — явно в body.
    */
   run_mode?: "user_generate" | "admin_test";
-}
-
-/** Sprint 3I-C: маппинг технических кодов ошибок в человекочитаемые фразы. */
-function humanizePackageGenerationError(raw: string): string {
-  const code = (raw || "").trim();
-  const map: Record<string, string> = {
-    package_session_id_required: "Сначала сохраните анкету пакета.",
-    role_assignment_missing: "Не для всех документов выбраны исполнители ролей.",
-    ln_token_not_found: "В шаблоне есть роль, которой нет в пакете.",
-    ln_token_outside_bound_package: "В шаблоне есть роль из другого пакета.",
-    blocked: "Запуск заблокирован настройками пакета.",
-    invalid_legacy_role_placeholder: "В шаблоне используется устаревший формат роли.",
-  };
-  if (map[code]) return map[code];
-  // Если backend вернул уже русскую фразу — отдаём как есть.
-  if (/[А-Яа-яЁё]/.test(code)) return code;
-  return "Не удалось сформировать пакет документов. Попробуйте ещё раз.";
 }
 
 export function useAiDocumentPackageGeneration() {
@@ -84,8 +70,8 @@ export function useAiDocumentPackageGeneration() {
         "ai-generate-document-package",
         { body }
       );
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      if (error || data?.error) throw await documentFunctionError(error, data);
+      if (!data || !Array.isArray(data.results)) throw await documentFunctionError(null);
       return data as PackageGenerationResult;
     },
     onSuccess: (data) => {
@@ -95,16 +81,15 @@ export function useAiDocumentPackageGeneration() {
       if (data.status === "generated") {
         toast.success(`Пакет сформирован: ${data.generated} документ(ов)`);
       } else if (data.status === "partial") {
-        toast.warning(`Пакет частично сформирован: ${data.generated} из ${data.total}`);
+        toast.warning(`Пакет частично сформирован: ${data.generated} из ${packageDocumentTotal(data)}`);
       } else if (data.status === "blocked") {
         toast.error("Запуск заблокирован: проверьте состав, роли и анкеты пакета.");
       } else {
         toast.error("Не удалось сформировать пакет документов.");
       }
     },
-    onError: (error: Error) => {
-      console.error("Package generation error:", error);
-      toast.error(humanizePackageGenerationError(error?.message));
+    onError: async (error: Error) => {
+      toast.error((await documentFunctionError(error)).message);
     },
   });
 

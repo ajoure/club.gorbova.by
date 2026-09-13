@@ -1,3 +1,4 @@
+import { loadPublicTariffAccess } from "../_shared/public-tariff-access.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -172,11 +173,13 @@ Deno.serve(async (req) => {
     }
 
     // Map features and offers to tariffs
+    const publicAccess = await loadPublicTariffAccess(supabase,product.id,tariffs || []);
     const tariffsWithOffers = tariffs?.map((tariff) => ({
       ...tariff,
+      access_summary: publicAccess[tariff.id] ?? null,
       features: tariffFeatures.filter((f) => f.tariff_id === tariff.id),
       offers: offers
-        .filter((o) => o.tariff_id === tariff.id)
+        .filter((o) => o.tariff_id === tariff.id && (o.meta as any)?.sales_legacy_only !== true)
         .map((offer) => {
           if (isReentryPricing && offer.reentry_amount) {
             return { ...offer, original_amount: offer.amount, amount: offer.reentry_amount, is_reentry_price: true };

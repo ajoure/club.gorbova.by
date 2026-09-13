@@ -23,6 +23,7 @@
  *   #15 audit `payment.saved_card_charge.idempotency_hit` written on guard hit
  */
 
+import {cbAlumniOfferAllowed} from '../_shared/sales-runtime/checkout-auth.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
@@ -116,6 +117,8 @@ Deno.serve(async (req) => {
     if (link.user_id !== null && link.user_id !== authUser.id) {
       return errorResponse('forbidden_link_owner_mismatch', 403);
     }
+
+    if (!await cbAlumniOfferAllowed(supabase,link.offer_id,authUser.id)) return errorResponse('alumni_eligibility_required',403);
 
     // --- 5. Scope guard: v1 supports only one_time ------------------------
     if (link.payment_type !== 'one_time') {

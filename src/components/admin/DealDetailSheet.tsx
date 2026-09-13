@@ -11,7 +11,7 @@ import { format, parse } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
+import { formatEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 import { getDealCommercialAmount } from "@/lib/payments/composableDealAmount";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
@@ -712,10 +712,10 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                   </button>
                 </SheetTitle>
                 {(() => {
-                  const effectiveDate = getEffectiveDealDate(deal, payments);
+                  const effectiveDate = formatEffectiveDealDate(deal, "dd MMMM yyyy, HH:mm");
                   return (
                     <p className="text-xs sm:text-sm text-muted-foreground">
-                      {format(new Date(effectiveDate), "dd MMMM yyyy, HH:mm", { locale: ru })}
+                      {effectiveDate}
                     </p>
                   );
                 })()}

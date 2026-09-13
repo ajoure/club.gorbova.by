@@ -118,6 +118,7 @@ async function findClaimableLegacyProfile(
     .select("id, email, first_name, last_name, full_name, phone, status, user_id, created_at")
     .ilike("email", normalized)
     .is("user_id", null)
+    .is("merged_to_profile_id", null)
     .in("status", ["active", "imported", "archived", "blocked"])
     .order("created_at", { ascending: false })
     .limit(20);

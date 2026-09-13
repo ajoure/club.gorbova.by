@@ -1,4 +1,5 @@
 // @ts-nocheck
+import {cbAlumniOfferAllowed} from '../_shared/sales-runtime/checkout-auth.ts';
 import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
@@ -350,6 +351,9 @@ Deno.serve(async (req) => {
       
       offer = tariffOffer;
     }
+
+    if (offer && offer.tariff_id !== tariff.id) return new Response(JSON.stringify({error:'offer_tariff_mismatch'}), {status:400,headers:{...corsHeaders,'Content-Type':'application/json'}});
+    if (!await cbAlumniOfferAllowed(supabase,offer?.id,user.id,true)) return new Response(JSON.stringify({error:'alumni_eligibility_required'}), {status:403,headers:{...corsHeaders,'Content-Type':'application/json'}});
 
     // Reject invoice-only offers — этот путь только для эквайринга.
     if (offer?.offer_type === 'invoice') {

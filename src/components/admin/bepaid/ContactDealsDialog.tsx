@@ -18,7 +18,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
-import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
+import { formatEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -81,11 +81,12 @@ export default function ContactDealsDialog({
           customer_phone,
           payer_type,
           user_id,
-          purchase_snapshot
+          purchase_snapshot,
+          meta
         `)
         .eq("user_id", userId)
         .eq("is_deleted", false) // Stage 4R.1
-        .order("deal_date", { ascending: false });
+        .order("deal_date", { ascending: false, nullsFirst: false });
 
       if (error) throw error;
 
@@ -236,7 +237,7 @@ export default function ContactDealsDialog({
                             {deal.order_number}
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">
-                            {format(new Date(getEffectiveDealDate(deal, dealPayments)), "dd.MM.yyyy", { locale: ru })}
+                            {formatEffectiveDealDate(deal, "dd.MM.yyyy")}
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-0.5">

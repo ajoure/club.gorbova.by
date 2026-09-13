@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ContactTelegramChat } from "../ContactTelegramChat";
 
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), invoke: vi.fn(), callbacks: [] as Array<{ event: string; cb: (payload: any) => void }> }));
+vi.mock("@/hooks/useAdminAccess", () => ({ useAdminAccess: () => ({canAccessSection: () => false}) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {
   rpc: mocks.rpc, functions: { invoke: mocks.invoke },
   from: () => {

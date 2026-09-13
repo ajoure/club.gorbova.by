@@ -24,9 +24,7 @@
  *   - Находится в одном из TERMINAL_STATUSES.
  */
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
-
-type SupabaseClient = ReturnType<typeof createClient>;
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 /**
  * Статусы subscriptions_v2, которые могут означать «живая платёжная связь».

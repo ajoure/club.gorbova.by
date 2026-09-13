@@ -1,3 +1,4 @@
+import { OfferPurchaseEligibilitySettings, validatePurchaseEligibility } from "@/components/admin/products/OfferPurchaseEligibilitySettings";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -592,6 +593,8 @@ export default function AdminProductDetailV2() {
         return;
       }
     }
+    const eligibilityError = validatePurchaseEligibility(offerForm.meta?.purchase_eligibility);
+    if (eligibilityError) { toast.error(eligibilityError); return; }
     // CRM routing semantic validation (UI mirrors server)
     const crmError = validateCrmRoutingForSave(offerForm.meta?.crm_routing);
     if (crmError) {
@@ -2653,6 +2656,7 @@ export default function AdminProductDetailV2() {
             )}
 
 
+            <OfferPurchaseEligibilitySettings value={offerForm.meta || {}} onChange={meta=>setOfferForm({...offerForm,meta})}/>
             {/* Phase 5-B + PATCH 5-B.2 — Offer Acquiring Settings (bePaid / Stripe).
                 Sprint A: скрыто для bank_installment — банковская рассрочка (РР) не проходит
                 через карточный эквайринг bePaid/Stripe. */}

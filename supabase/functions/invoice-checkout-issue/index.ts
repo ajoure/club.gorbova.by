@@ -29,10 +29,11 @@
  * `legal_details_id` — legacy alias на переходный период (клиент шлёт только
  * legal_details_id).
  */
+import {cbAlumniOfferAllowed} from '../_shared/sales-runtime/checkout-auth.ts';
 import {
   createClient,
   SupabaseClient,
-} from "https://esm.sh/@supabase/supabase-js@2.45.0";
+} from "npm:@supabase/supabase-js@2";
 import { resolveOfferRouting } from "../_shared/crm-routing.ts";
 import {
   ComposableCheckoutError,
@@ -131,6 +132,8 @@ Deno.serve(async (req) => {
   if (!body?.product_id || !body?.offer_id || !legalDetailsId) {
     return json({ error: "missing_fields" }, 400);
   }
+
+  if (!await cbAlumniOfferAllowed(admin,body.offer_id,user.id,true)) return json({error:'alumni_eligibility_required'},403);
 
   let composableQuote;
   try {

@@ -79,7 +79,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { exportToExcel, exportToCSV, ExportColumn } from "@/utils/exportTableData";
 import { copyToClipboard, getDealUrl } from "@/utils/clipboardUtils";
-import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
+import { getEffectiveDealDate, formatEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
@@ -728,7 +728,7 @@ export default function AdminDeals() {
 
   // Export columns
   const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
-    { header: "Дата", getValue: (d) => format(new Date(getEffectiveDealDate(d)), "dd.MM.yyyy HH:mm") },
+    { header: "Дата", getValue: (d) => formatEffectiveDealDate(d, "dd.MM.yyyy HH:mm") },
     { header: "Номер", getValue: (d) => d.order_number || "" },
     { header: "Контакт", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return p?.full_name || getLatestPayerName(d) || ""; } },
     { header: "Email", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return d.customer_email || p?.email || ""; } },
@@ -1485,7 +1485,7 @@ export default function AdminDeals() {
                     <TableCell>
                       <div className="flex items-center gap-2 text-sm">
                         <Calendar className="h-3 w-3 text-muted-foreground" />
-                        {format(new Date(getEffectiveDealDate(deal)), "dd.MM.yy")}
+                        {formatEffectiveDealDate(deal, "dd.MM.yy")}
                       </div>
                       <button 
                         onClick={(e) => {

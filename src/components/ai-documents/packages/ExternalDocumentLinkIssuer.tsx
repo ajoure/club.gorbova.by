@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Copy, ExternalLink, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { documentFunctionError } from '@/utils/documentFunctionError';
 
 type ExternalForm = {
   id: string;
@@ -55,6 +56,7 @@ export function ExternalDocumentLinkIssuer({
     if (forms.length === 1 && !formId) setFormId(forms[0].id);
   }, [forms, formId]);
   const currentTitle = useMemo(() => forms.find((form) => form.id === formId)?.title, [formId, forms]);
+  if (formsQuery.isError) return <p role="alert" className="text-sm text-destructive">Не удалось загрузить доступные анкеты.</p>;
   if (!formsQuery.isLoading && forms.length === 0) return null;
 
   const create = async () => {
@@ -64,14 +66,18 @@ export function ExternalDocumentLinkIssuer({
       const { data, error } = await supabase.functions.invoke("external-document-form", {
         body: { action: "create_link", form_id: formId, legal_entity_id: legalEntityId },
       });
-      if (error) throw error;
-      if (!data?.token) throw new Error(data?.error || "Не удалось создать ссылку");
+      if (error || !data?.token) throw await documentFunctionError(error, data, 'create_link');
       const nextUrl = `${window.location.origin}/document-form/${data.token}`;
       setUrl(nextUrl);
-      await navigator.clipboard?.writeText(nextUrl);
-      toast.success("Ссылка скопирована в буфер обмена");
+      try {
+        if (!navigator.clipboard) throw new Error("clipboard_unavailable");
+        await navigator.clipboard.writeText(nextUrl);
+        toast.success("Ссылка скопирована в буфер обмена");
+      } catch {
+        toast.success("Ссылка создана. Скопируйте её из поля ниже.");
+      }
     } catch (error: any) {
-      toast.error(error?.message || "Не удалось создать ссылку");
+      toast.error((await documentFunctionError(error, undefined, 'create_link')).message);
     } finally {
       setCreating(false);
     }

@@ -1,3 +1,4 @@
+import { isTrustedDocumentServiceCall } from '../_shared/document-internal-auth.ts';
 // ============================================================================
 // ai-generate-document-package — Sprint 3I-A thin orchestrator.
 //
@@ -106,37 +107,21 @@ Deno.serve(async (req) => {
     // ── auth ─────────────────────────────────────────────────────────────
     const body = await req.json().catch(() => ({}));
     const packageSessionId: string | undefined = body?.package_session_id;
-    // HOTFIX 2026-07-27: after signing-key rotation the raw-string Bearer
-    // comparison against SERVICE_KEY became fragile across isolates. We now
-    // require the x-internal-call marker AND a JWT whose `role` claim equals
-    // `service_role`. Signature is not re-verified here — the gateway already
-    // validated it upstream; we only decode the payload to read the claim.
-    const authHeaderRaw = req.headers.get('Authorization') || '';
-    const internalMarker = req.headers.get('x-internal-call');
-    function decodeJwtRole(h: string): string | null {
-      if (!h.startsWith('Bearer ')) return null;
-      const parts = h.slice(7).split('.');
-      if (parts.length < 2) return null;
-      try {
-        const pad = parts[1] + '==='.slice((parts[1].length + 3) % 4);
-        const json = atob(pad.replace(/-/g, '+').replace(/_/g, '/'));
-        const claims = JSON.parse(json);
-        return typeof claims?.role === 'string' ? claims.role : null;
-      } catch { return null; }
-    }
-    const jwtRole = decodeJwtRole(authHeaderRaw);
-    // Fallback: sb_secret_* API keys are opaque, not JWTs. In that case we
-    // accept an exact match against our own SUPABASE_SERVICE_ROLE_KEY.
-    const tokenMatchesLocalServiceKey =
-      authHeaderRaw.startsWith('Bearer ') && !!SERVICE_KEY && authHeaderRaw.slice(7) === SERVICE_KEY;
-    const trustedExternalCall =
-      internalMarker === 'external-document-form' &&
-      (jwtRole === 'service_role' || tokenMatchesLocalServiceKey);
+    const trustedExternalCall = isTrustedDocumentServiceCall(req.headers, SERVICE_KEY, 'external-document-form');
     const runMode: 'user_generate' | 'admin_test' | 'external_submit' =
       body?.run_mode === 'admin_test'
         ? 'admin_test'
         : (trustedExternalCall && body?.run_mode === 'external_submit' ? 'external_submit' : 'user_generate');
     if (!packageSessionId) return j({ error: 'package_session_id_required' }, 400);
+    let authenticatedUserId: string | null = null;
+    if (!trustedExternalCall) {
+      const auth = req.headers.get('Authorization');
+      if (!auth?.startsWith('Bearer ')) return j({ error: 'unauthorized' }, 401);
+      const { data: ud, error: authError } = await supabase.auth.getUser(auth.slice(7));
+      if (authError || !ud?.user) return j({ error: 'unauthorized' }, 401);
+      authenticatedUserId = ud.user.id;
+    }
+
 
     // ── load session + ownership ─────────────────────────────────────────
     const { data: session } = await supabase
@@ -155,11 +140,7 @@ Deno.serve(async (req) => {
       userId = owner.user_id;
       prof = { id: owner.id };
     } else {
-      const auth = req.headers.get('Authorization');
-      if (!auth?.startsWith('Bearer ')) return j({ error: 'unauthorized' }, 401);
-      const { data: ud } = await supabase.auth.getUser(auth.slice(7));
-      if (!ud?.user) return j({ error: 'unauthorized' }, 401);
-      userId = ud.user.id;
+      userId = authenticatedUserId!;
       const { data: ownProfile } = await supabase
         .from('profiles').select('id').eq('user_id', userId).maybeSingle();
       if (!ownProfile) return j({ error: 'profile_not_found' }, 400);
@@ -916,7 +897,7 @@ Deno.serve(async (req) => {
     // (generated + errors + blocked). Раздельные счётчики не пересекаются.
     const totalDocuments = generated + errors + blocked;
 
-    await supabase
+    const { data: savedBatch, error: batchSaveError } = await supabase
       .from('ai_document_generation_batches')
       .update({
         status: finalStatus,
@@ -932,7 +913,8 @@ Deno.serve(async (req) => {
           results,
         },
       })
-      .eq('id', batch.id);
+      .eq('id', batch.id).select('id').single();
+    if (batchSaveError || !savedBatch) return j({ error: 'batch_save_failed', batch_id: batch.id }, 503);
 
     await supabase.from('audit_logs').insert({
       actor_user_id: userId,
@@ -963,9 +945,8 @@ Deno.serve(async (req) => {
       results,
     };
     console.log('[ai-generate-document-package] final-response', JSON.stringify({
-      session: packageSessionId, status: finalStatus, total_documents: totalDocuments,
-      generated, errors_count: errors?.length ?? 0, blocked_count: blocked?.length ?? 0,
-      results_summary: (results || []).map((r: any) => ({ item_id: r.item_id, status: r.status, errors: r.errors, document_id: r.document_id })),
+      status: finalStatus, total_items: items.length, total_documents: totalDocuments,
+      generated, errors_count: errors, blocked_count: blocked,
     }));
     return j(responsePayload);
   } catch (e: any) {

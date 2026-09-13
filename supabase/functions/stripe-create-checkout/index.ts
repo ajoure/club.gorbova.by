@@ -9,6 +9,7 @@
 //   4) call stripeAdapter.createCheckout via resolveAdapter('stripe')
 //   5) return {url, session_id}
 
+import {cbAlumniOfferAllowed} from '../_shared/sales-runtime/checkout-auth.ts';
 import { handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
 import { resolveAdapter } from '../_shared/acquiring/index.ts';
@@ -82,6 +83,8 @@ Deno.serve(async (req) => {
     if (!['pending', 'processing'].includes(order.status)) {
       return errorResponse(`order_invalid_status:${order.status}`, 400);
     }
+
+    if (!await cbAlumniOfferAllowed(supabase,body.offer_id??order.offer_id,order.user_id)) return errorResponse('alumni_eligibility_required',403);
 
     // MP-A2-1: business_stream via SOT resolver (offer → product → body override → 'unspecified').
     let bs: string | null = body.business_stream ?? null;

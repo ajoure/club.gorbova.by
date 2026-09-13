@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { documentFunctionError } from '@/utils/documentFunctionError';
 
 export interface AiGeneratedDocument {
   id: string;
@@ -99,8 +100,7 @@ export function useAiDocuments() {
       const { data, error } = await supabase.functions.invoke("ai-generate-document", {
         body: params,
       });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      if (error || data?.error) throw await documentFunctionError(error, data);
       return data as {
         success: boolean;
         document_id: string;
@@ -113,9 +113,8 @@ export function useAiDocuments() {
       queryClient.invalidateQueries({ queryKey: ["ai-generated-documents", profileId] });
       toast.success("Документ сформирован");
     },
-    onError: (error: Error) => {
-      console.error("Generate document error:", error);
-      toast.error(`Ошибка генерации: ${error.message}`);
+    onError: async (error: Error) => {
+      toast.error((await documentFunctionError(error)).message);
     },
   });
 

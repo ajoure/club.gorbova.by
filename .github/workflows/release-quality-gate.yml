@@ -32,6 +32,8 @@ jobs:
         run: npm run verify:edge-functions
       - name: Unit and integration contracts
         run: npx vitest run
+      - name: Sales knowledge and dialogue contracts (offline)
+        run: node --test scripts/sales-knowledge/*.test.mjs
       - name: Browser application types
         run: npx tsc -p tsconfig.app.json --noEmit
       - name: Production build

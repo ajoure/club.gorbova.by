@@ -139,3 +139,7 @@ document-field-resolver-v2-snapshot
 invoice-delivery-status
 invoice-delivery-retry
 invoice-pdf-retry
+
+# CB21 single-dialog sales pilot (Lovable managed deploy only)
+sales-runtime-control
+sales-runtime-worker
