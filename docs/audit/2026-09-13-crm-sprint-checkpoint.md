@@ -71,3 +71,9 @@ stripe-webhook
 subscription-renewal-reminders
 telegram-send-reminders
 ```
+
+## Контракт TTL провайдера (проверен 13.09.2026)
+
+- bePaid payment token: https://docs.bepaid.by/en/integration/widget/payment_token/ — order.expired_at; default 24 часа. В one-time запросе передаётся явный +24h.
+- bePaid subscriptions: https://docs.bepaid.by/en/payment_management/subscriptions/subscriptions/ — redirect_url использует payment widget, expired означает истечение токена до начала транзакции. Отдельного параметра TTL в subscription create нет; не добавлять выдуманные поля. Подписочная ссылка переиспользуется по GET провайдера, локальный TTL 24h. Реальное runtime подтверждение ещё обязательно при выпуске.
+- Промежуточные состояния provider (processing/tokenizing/getting_status/rescuing и т.п.) тоже блокируют второй мандат, до подтверждения terminal.

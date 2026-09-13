@@ -41,7 +41,7 @@ export const CONFLICTING_STATUSES = ['active', 'trial'] as const;
  * получает несколько sbs_* и после оплаты старой ссылки возможны двойные
  * списания. failed_attempt — активный retry-цикл bePaid.
  */
-export const BLOCKING_PROVIDER_STATES = ['active', 'trial', 'pending', 'redirecting', 'past_due', 'failed_attempt'] as const;
+export const BLOCKING_PROVIDER_STATES = ['active', 'trial', 'pending', 'redirecting', 'past_due', 'failed_attempt', 'tokenizing', 'trial_get_status', 'getting_status', 'trial_processing', 'processing', 'notified', 'rescuing', 'error'] as const;
 
 /** Финальные статусы, разрешённые для заменяемой подписки (из живого enum). */
 export const TERMINAL_STATUSES = ['canceled', 'superseded', 'expired', 'expired_reentry'] as const;
