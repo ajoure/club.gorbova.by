@@ -27393,6 +27393,7 @@ export type Database = {
         | "failed"
         | "refunded"
         | "canceled"
+        | "partially_refunded"
       pricing_stage_type:
         | "early_bird"
         | "stage1"
@@ -27608,6 +27609,7 @@ export const Constants = {
         "failed",
         "refunded",
         "canceled",
+        "partially_refunded",
       ],
       pricing_stage_type: [
         "early_bird",
