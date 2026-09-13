@@ -16,6 +16,16 @@ export async function submissionFingerprint(value: unknown): Promise<string> {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+/** Old open pages have no request_id. Derive a stable, link-scoped attempt.
+ * Upload paths are excluded from its identity because old pages re-upload on retry;
+ * the full fingerprint still detects changed attachments instead of silently replaying them.
+ */
+export async function legacySubmissionRequestId(fields: unknown, repeatGroups: unknown, attachments: any[]): Promise<string> {
+  const hash = await submissionFingerprint({ fields, repeat_groups: repeatGroups,
+    attachments: attachments.map(a => ({ file_name: a.file_name, mime_type: a.mime_type, byte_size: a.byte_size })) });
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
 /** Replays are read-only: never start another generation or delivery. */
 export function submissionReplay(row: Record<string, any>): { body: Record<string, unknown>; status: number } {
   const documentIds = Array.isArray(row.generated_document_ids) ? row.generated_document_ids : [];

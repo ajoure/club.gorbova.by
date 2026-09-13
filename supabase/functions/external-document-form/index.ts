@@ -5,7 +5,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getCallerUserId } from "../_shared/caller-user.ts";
-import { isSubmissionRequestId, submissionFingerprint, submissionReplay } from "../_shared/document-submission-request.ts";
+import { isSubmissionRequestId, legacySubmissionRequestId, submissionFingerprint, submissionReplay } from "../_shared/document-submission-request.ts";
 import { recordExternalGeneration } from "../_shared/document-generation-outcome.ts";
 
 const cors = {
@@ -405,7 +405,7 @@ Deno.serve(async (req) => {
     }
 
     if (action !== "submit") return json({ error: "unknown_action" }, 400);
-    if (!isSubmissionRequestId(body.request_id)) return json({ error: "submission_request_id_required" }, 400);
+    if (body.request_id != null && !isSubmissionRequestId(body.request_id)) return json({ error: "submission_request_id_required" }, 400);
     const scalarValues = body.fields && typeof body.fields === "object" ? body.fields as Record<string, unknown> : {};
     const rowValues = body.repeat_groups && typeof body.repeat_groups === "object" ? body.repeat_groups as Record<string, unknown> : {};
     const attachments = Array.isArray(body.attachments) ? body.attachments : [];
@@ -443,12 +443,13 @@ Deno.serve(async (req) => {
       return json({ error: "attachment_path_forbidden" }, 400);
     }
     const fingerprint = await submissionFingerprint({ fields: scalarValues, repeat_groups: rowValues, attachments });
+    const requestId = body.request_id ?? await legacySubmissionRequestId(scalarValues, rowValues, attachments);
     const { data: submission, error: subErr } = await admin.from("document_package_external_submissions").insert({
       external_link_id: ctx.link.id, external_form_id: ctx.form.id, owner_profile_id: ctx.link.owner_profile_id, status: "generating",
-      request_id: body.request_id, request_fingerprint: fingerprint,
+      request_id: requestId, request_fingerprint: fingerprint,
     }).select("id").single();
     if (subErr?.code === '23505') {
-      const existing = await readAttempt(body.request_id);
+      const existing = await readAttempt(requestId);
       if (!existing) return json({ error: "submission_status_unavailable" }, 503);
       if (existing.request_fingerprint !== fingerprint) return json({ error: "submission_request_conflict" }, 409);
       const replay = submissionReplay(existing);

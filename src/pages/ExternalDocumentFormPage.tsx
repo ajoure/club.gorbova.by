@@ -70,8 +70,11 @@ function readSubmissionRequestId(token: string): string {
 
 export default function ExternalDocumentFormPage() {
   const { token = "" } = useParams();
+  return <ExternalDocumentForm key={token} token={token} />;
+}
+
+function ExternalDocumentForm({ token }: { token: string }) {
   const [requestId, setRequestId] = useState(() => readSubmissionRequestId(token));
-  useEffect(() => { setRequestId(readSubmissionRequestId(token)); }, [token]);
   const [fields, setFields] = useState<Record<string, unknown>>({});
   const [groups, setGroups] = useState<Record<string, Array<Record<string, unknown>>>>({});
   const [attachments, setAttachments] = useState<File[]>([]);

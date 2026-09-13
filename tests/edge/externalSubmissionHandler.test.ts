@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import { expect, it, vi } from 'vitest';
-import { isSubmissionRequestId, submissionFingerprint, submissionReplay } from '../../supabase/functions/_shared/document-submission-request';
+import { isSubmissionRequestId, legacySubmissionRequestId, submissionFingerprint, submissionReplay } from '../../supabase/functions/_shared/document-submission-request';
 import { recordExternalGeneration } from '../../supabase/functions/_shared/document-generation-outcome';
 
 const requestId = '00000000-0000-4000-8000-000000000007';
@@ -52,9 +52,9 @@ function harness(holdGeneration = false, failLinkSave = false) {
   };
   const source = readFileSync('supabase/functions/external-document-form/index.ts', 'utf8').replace(/^import[^;]+;\s*/gm, '');
   const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
-  new Function('Deno', 'createClient', 'isSubmissionRequestId', 'submissionFingerprint', 'submissionReplay', 'recordExternalGeneration', 'fetch', js)(
+  new Function('Deno', 'createClient', 'isSubmissionRequestId', 'legacySubmissionRequestId', 'submissionFingerprint', 'submissionReplay', 'recordExternalGeneration', 'fetch', js)(
     { env: { get: () => 'https://test.invalid' }, serve: (fn: typeof handler) => { handler = fn; } }, () => db,
-    isSubmissionRequestId, submissionFingerprint, submissionReplay, recordExternalGeneration, fetch,
+    isSubmissionRequestId, legacySubmissionRequestId, submissionFingerprint, submissionReplay, recordExternalGeneration, fetch,
   );
   return { fetch, submissions, sessions, finish, call: (extra: any = {}) => handler(new Request('https://test.invalid', {
     method: 'POST', body: JSON.stringify({ action: 'submit', token: 'test-link', request_id: requestId, fields: {}, repeat_groups: {}, attachments: [], ...extra }),
@@ -84,9 +84,9 @@ it('rejects changed payload for the same attempt without starting another genera
   expect(await response.json()).toEqual({ error: 'submission_request_conflict' });
   expect(h.submissions).toHaveLength(1); expect(h.fetch).toHaveBeenCalledTimes(2);
 });
-it('rejects missing attempt IDs and foreign attachment paths before writes', async () => {
+it('rejects malformed attempt IDs and foreign attachment paths before writes', async () => {
   const h = harness();
-  expect((await h.call({ request_id: null })).status).toBe(400);
+  expect((await h.call({ request_id: 'invalid' })).status).toBe(400);
   expect((await h.call({ attachments: [{ path: 'links/foreign/file' }] })).status).toBe(400);
   expect(h.submissions).toHaveLength(0); expect(h.fetch).not.toHaveBeenCalled();
 });
@@ -96,4 +96,13 @@ it('does not generate when the session checkpoint cannot be saved', async () => 
   expect(h.fetch).not.toHaveBeenCalled();
   expect((await (await h.call()).json()).error).toBe('generation_in_progress');
   expect(h.sessions).toHaveLength(1);
+});
+
+it('supports already-open legacy pages without a request ID and deduplicates their retries', async () => {
+  const h = harness();
+  const first = await (await h.call({ request_id: null })).json();
+  const replay = await (await h.call({ request_id: null })).json();
+  expect(first.success).toBe(true); expect(replay.replayed).toBe(true);
+  expect(h.submissions).toHaveLength(1); expect(h.sessions).toHaveLength(1);
+  expect(h.fetch).toHaveBeenCalledTimes(2);
 });

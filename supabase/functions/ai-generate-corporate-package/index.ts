@@ -300,6 +300,7 @@ function buildEnhancedSnapshot(
 
   return {
     used_scalar_keys: usedScalarKeys,
+    document_number: scalarData['document.number'] ?? null,
     array_summary: arraySummary,
     boolean_flags: booleanFlags,
     procedure_mode: session.procedure_mode,
