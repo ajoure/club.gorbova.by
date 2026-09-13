@@ -3,13 +3,14 @@ import {PGlite} from '@electric-sql/pglite';
 import {describe,it,expect} from 'vitest';
 const bootstrap = `
 CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
+CREATE TYPE payment_status AS ENUM ('pending','processing','succeeded','failed','refunded','canceled');
 CREATE TYPE order_status AS ENUM ('pending','paid','partial','refunded','failed','canceled');
 CREATE TABLE orders_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),order_number text,user_id uuid,profile_id uuid,
 product_id uuid,tariff_id uuid,offer_id uuid,responsible_user_id uuid,company_id uuid,base_price numeric,final_price numeric,
 paid_amount numeric,currency text,status order_status,provider text,provider_payment_id text,payer_type text,reconcile_source text,customer_ip text,customer_email text,customer_phone text,
 created_at timestamptz DEFAULT now(),deal_date timestamptz,meta jsonb,pipeline_id uuid,pipeline_stage_id uuid,purchase_snapshot jsonb,is_deleted boolean DEFAULT false);
 CREATE TABLE payments_v2(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),order_id uuid REFERENCES orders_v2(id),
-provider text,provider_payment_id text,amount numeric,refunded_amount numeric,currency text,status text,is_deleted boolean DEFAULT false,transaction_type text,paid_at timestamptz,meta jsonb);
+provider text,provider_payment_id text,amount numeric,refunded_amount numeric,currency text,status payment_status,is_deleted boolean DEFAULT false,transaction_type text,paid_at timestamptz,meta jsonb);
 CREATE TABLE audit_logs(id uuid DEFAULT gen_random_uuid(),actor_type text,action text,entity_type text,entity_id uuid,meta jsonb);
 CREATE FUNCTION generate_order_number() RETURNS text LANGUAGE sql AS 'SELECT gen_random_uuid()::text';`;
 
@@ -17,6 +18,7 @@ const batch='00000000-0000-4000-8000-000000000099';
 async function fixture() {
   const db=new PGlite(); await db.exec(bootstrap);
   await db.exec(readFileSync('supabase/migrations/20260913115920_crm_empty_deal_archive.sql','utf8'));
+  await db.exec(readFileSync('supabase/migrations/20260913153500_crm_payment_status_compatibility.sql','utf8'));
   const insert=async(age:string)=> (await db.query<{id:string}>(`INSERT INTO orders_v2(user_id,product_id,tariff_id,final_price,paid_amount,currency,status,created_at,meta)
     VALUES('00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003',250,0,'BYN','pending',now()-$1::interval,'{}') RETURNING id`,[age])).rows[0].id;
   const source=await insert('3 days'),canonical=await insert('2 days');
