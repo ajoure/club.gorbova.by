@@ -7570,6 +7570,8 @@ export type Database = {
           metadata: Json
           owner_profile_id: string
           package_session_id: string | null
+          request_fingerprint: string | null
+          request_id: string | null
           status: string
           submitted_at: string
         }
@@ -7583,6 +7585,8 @@ export type Database = {
           metadata?: Json
           owner_profile_id: string
           package_session_id?: string | null
+          request_fingerprint?: string | null
+          request_id?: string | null
           status?: string
           submitted_at?: string
         }
@@ -7596,6 +7600,8 @@ export type Database = {
           metadata?: Json
           owner_profile_id?: string
           package_session_id?: string | null
+          request_fingerprint?: string | null
+          request_id?: string | null
           status?: string
           submitted_at?: string
         }
