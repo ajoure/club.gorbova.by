@@ -6153,6 +6153,136 @@ export type Database = {
           },
         ]
       }
+      crm_archived_deal_duplicates: {
+        Row: {
+          archived_at: string
+          batch_id: string
+          canonical_order_id: string
+          identity_key: string
+          restored_at: string | null
+          row_fingerprint: string
+          source_order_id: string
+        }
+        Insert: {
+          archived_at?: string
+          batch_id: string
+          canonical_order_id: string
+          identity_key: string
+          restored_at?: string | null
+          row_fingerprint: string
+          source_order_id: string
+        }
+        Update: {
+          archived_at?: string
+          batch_id?: string
+          canonical_order_id?: string
+          identity_key?: string
+          restored_at?: string | null
+          row_fingerprint?: string
+          source_order_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_archived_deal_duplicates_canonical_order_id_fkey"
+            columns: ["canonical_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_archived_deal_duplicates_source_order_id_fkey"
+            columns: ["source_order_id"]
+            isOneToOne: true
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_checkout_attempts: {
+        Row: {
+          account_code: string
+          attempt_kind: string
+          created_at: string
+          expires_at: string
+          id: string
+          order_id: string
+          provider: string
+          result: Json | null
+          state: string
+          updated_at: string
+        }
+        Insert: {
+          account_code?: string
+          attempt_kind?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          order_id: string
+          provider: string
+          result?: Json | null
+          state?: string
+          updated_at?: string
+        }
+        Update: {
+          account_code?: string
+          attempt_kind?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          order_id?: string
+          provider?: string
+          result?: Json | null
+          state?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_checkout_attempts_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_checkout_discount_intents: {
+        Row: {
+          contract: Json
+          created_at: string
+          expires_at: string
+          id: string
+          identity_key: string
+          order_id: string | null
+          result: Json | null
+        }
+        Insert: {
+          contract: Json
+          created_at?: string
+          expires_at?: string
+          id?: string
+          identity_key: string
+          order_id?: string | null
+          result?: Json | null
+        }
+        Update: {
+          contract?: Json
+          created_at?: string
+          expires_at?: string
+          id?: string
+          identity_key?: string
+          order_id?: string | null
+          result?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_checkout_discount_intents_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       crm_deal_action_batches: {
         Row: {
           action: string
@@ -6191,6 +6321,62 @@ export type Database = {
           skipped_count?: number
         }
         Relationships: []
+      }
+      crm_deal_routing_repairs: {
+        Row: {
+          applied_snapshot: Json
+          applied_stage_id: string
+          batch_id: string
+          config_fingerprint: string
+          order_id: string
+          previous_pipeline_id: string | null
+          previous_snapshot: Json | null
+          previous_stage_id: string | null
+          repaired_at: string
+          restored_at: string | null
+          source_fingerprint: string
+          source_paid_amount: number | null
+          source_status: string
+        }
+        Insert: {
+          applied_snapshot: Json
+          applied_stage_id: string
+          batch_id: string
+          config_fingerprint: string
+          order_id: string
+          previous_pipeline_id?: string | null
+          previous_snapshot?: Json | null
+          previous_stage_id?: string | null
+          repaired_at?: string
+          restored_at?: string | null
+          source_fingerprint: string
+          source_paid_amount?: number | null
+          source_status: string
+        }
+        Update: {
+          applied_snapshot?: Json
+          applied_stage_id?: string
+          batch_id?: string
+          config_fingerprint?: string
+          order_id?: string
+          previous_pipeline_id?: string | null
+          previous_snapshot?: Json | null
+          previous_stage_id?: string | null
+          repaired_at?: string
+          restored_at?: string | null
+          source_fingerprint?: string
+          source_paid_amount?: number | null
+          source_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_deal_routing_repairs_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: true
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       crm_pipeline_automation_jobs: {
         Row: {
@@ -14376,6 +14562,7 @@ export type Database = {
           base_price: number
           bepaid_subscription_id: string | null
           campaign_key: string | null
+          checkout_purchase_key: string | null
           company_id: string | null
           created_at: string
           creation_batch_id: string | null
@@ -14424,6 +14611,7 @@ export type Database = {
           base_price: number
           bepaid_subscription_id?: string | null
           campaign_key?: string | null
+          checkout_purchase_key?: string | null
           company_id?: string | null
           created_at?: string
           creation_batch_id?: string | null
@@ -14472,6 +14660,7 @@ export type Database = {
           base_price?: number
           bepaid_subscription_id?: string | null
           campaign_key?: string | null
+          checkout_purchase_key?: string | null
           company_id?: string | null
           created_at?: string
           creation_batch_id?: string | null
@@ -24580,6 +24769,18 @@ export type Database = {
             }
             Returns: Json
           }
+      crm_apply_reviewed_routes: {
+        Args: {
+          p_batch_id: string
+          p_candidates: Json
+          p_config_fingerprint: string
+        }
+        Returns: Json
+      }
+      crm_archive_empty_deal_duplicates: {
+        Args: { p_batch_id: string; p_candidates: Json }
+        Returns: Json
+      }
       crm_bulk_create_deals: {
         Args: {
           _campaign_key?: string
@@ -24602,6 +24803,20 @@ export type Database = {
           _pipeline_id: string
           _request_id: string
           _stage_id: string
+        }
+        Returns: Json
+      }
+      crm_checkout_context_from_order: {
+        Args: { kind: string; o: Json }
+        Returns: Json
+      }
+      crm_claim_pending_purchase: {
+        Args: {
+          p_account_code?: string
+          p_attempt_kind?: string
+          p_context: Json
+          p_order: Json
+          p_provider: string
         }
         Returns: Json
       }
@@ -24826,9 +25041,28 @@ export type Database = {
         Args: { _body: string; _deal_id: string }
         Returns: string
       }
+      crm_empty_order_blocker: { Args: { p_order_id: string }; Returns: string }
       crm_enqueue_from_source_change: {
         Args: { _cld_id: string; _reason: string }
         Returns: string
+      }
+      crm_finish_checkout_attempt: {
+        Args: { p_attempt_id: string; p_result: Json; p_state: string }
+        Returns: boolean
+      }
+      crm_legacy_pending_identity: { Args: { p_order: Json }; Returns: string }
+      crm_lookup_pending_checkout: {
+        Args: {
+          p_account_code?: string
+          p_context: Json
+          p_order: Json
+          p_provider: string
+        }
+        Returns: Json
+      }
+      crm_merge_checkout_metadata: {
+        Args: { p_history_entry?: Json; p_order_id: string; p_patch: Json }
+        Returns: boolean
       }
       crm_normalize_company_phone:
         | { Args: { _arr: Json }; Returns: Json }
@@ -24904,6 +25138,66 @@ export type Database = {
       crm_pipeline_automation_skip_job: {
         Args: { _job_id: string; _reason: string; _result?: Json }
         Returns: undefined
+      }
+      crm_preview_empty_deal_duplicates: {
+        Args: { p_source_ids?: string[] }
+        Returns: {
+          blocked_reason: string
+          canonical_order_id: string
+          identity_key: string
+          row_fingerprint: string
+          source_order_id: string
+        }[]
+      }
+      crm_refresh_paid_purchase: {
+        Args: { p_order_id: string }
+        Returns: boolean
+      }
+      crm_reserve_checkout_discounts: {
+        Args: {
+          p_bonus: number
+          p_context: Json
+          p_credit: number
+          p_cycles?: number
+          p_order: Json
+        }
+        Returns: Json
+      }
+      crm_restore_empty_deal_archive: {
+        Args: { p_batch_id: string }
+        Returns: number
+      }
+      crm_restore_routing_batch: {
+        Args: { p_batch_id: string }
+        Returns: number
+      }
+      crm_routing_config_fingerprint: { Args: never; Returns: string }
+      crm_routing_review_page: {
+        Args: { p_after?: string; p_limit?: number }
+        Returns: {
+          offer_id: string
+          order_id: string
+          paid_amount: number
+          pipeline_id: string
+          pipeline_stage_id: string
+          product_id: string
+          row_fingerprint: string
+          snapshot: Json
+          status: string
+          tariff_id: string
+        }[]
+      }
+      crm_settle_stripe_invoice: {
+        Args: { p_order: Json; p_payment: Json; p_pending_order_id: string }
+        Returns: Json
+      }
+      crm_sync_expired_pending_checkout: {
+        Args: {
+          p_provider_row_id: string
+          p_provider_subscription_id: string
+          p_terminal_state: string
+        }
+        Returns: boolean
       }
       crm_task_apply_automation: {
         Args: { _context?: Json; _deal_id: string; _offer_id: string }
