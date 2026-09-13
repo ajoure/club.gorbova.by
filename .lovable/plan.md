@@ -1,132 +1,154 @@
-# Нейросеть: Авансовый отчёт — консолидированный аудит (PLAN-ONLY / READ-ONLY)
+# План: Продукты3 — уточнения владельца 13.09.2026 (PLAN-ONLY / READ-ONLY)
 
-Выполнено только чтение. Ни кода, ни SQL-записей, ни генераций, ни отправок, ни deploy/Publish.
+Ничего не изменено: ни код, ни коммиты, ни миграции, ни данные, ни доступы, ни Auth,
+ни платежи, ни Telegram, ни Publish. Выполнены только SELECT и чтение файлов.
 
-## 0. Состояние среды
+## 0. Сверка main
 
-- HEAD sandbox: `ec3f8fe51a9ce04f3ba41b8bae2a3d1d6f630444` (managed sync поверх `f191e5d9`), дерево чистое.
-- Canonical production backend ref: `hdjgkjceownmmnrqqtuz` (один инстанс preview + published).
-- Опубликованный frontend: `ea81d44f` (PR476, F01/F02/F04/F05/F14). F03/F06–F13, S01/S02 открыты.
-- `supabase/functions/_shared/document-generation-outcome.ts` присутствует в дереве.
+- HEAD рабочего дерева = `origin/main` = `ea81d44f7dd504ef2892fa3cf17fbe19f36fd784`, дерево чистое.
+- Прошлый scope PR447–453 в коде присутствует: RPC `admin_repair_historical_cb_dates`
+  (15 фиксированных payload-хэшей) и `admin_repair_historical_cb_scope`
+  (1 фиксированный payload-хэш) живы в БД, оба `service_role only`.
 
-## 1. Актуальная внешняя форма Авансового отчёта
+## 1. Три подтверждённых клиента (live, sanitized)
 
-Пакет `91b330d5-ed52-4fec-b790-0cf8c18fd820` содержит **ровно один** активный item.
+Объединение между собой и с phone-other карточками не предлагается; телефон не переносится.
 
-| Объект | ID / значение |
-|---|---|
-| package item | `08de6ac6-1cf9-4d68-9082-8922ad4ccee5`, `generation_mode=single`, `is_required=true`, `repeat_role_catalog_id=NULL` |
-| шаблон | `b5ad9e1f-266f-4fdf-ad51-7aeadbfbd0a0`, active |
-| текущая версия | `3aa13a52-7604-44f8-82bd-5ea8b595ee6d`, version 10, файл в storage есть, 27 токенов |
-| внешняя форма | `b5b2b3fc-8773-4a66-88dd-b8b59da45c9a`, active, attachments=on, delivery `{docx, pdf, email, telegram}` = true |
-| ссылки | 50 всего по этой форме; у всех проверенных есть owner_profile_id и selected_legal_entity_id, активны |
-| роли | единственная роль `ln-000018` «Подотчётное лицо», 40 назначений item↔роль |
+| строка | profile | user | status | archived | merged_to | ban_case | normalized email SHA256 |
+|---|---|---|---|---|---|---|---|
+| 17:22 | 3fbf50d7… | c9e8dd78… | active | нет | нет | нет | `0fc32d349fa6c2e183c0976a8070c8559b9d80632835a7e44a610fd966ef6fe3` |
+| 17:53 | 4bf084ed… | 0b7efe20… | active | нет | нет | нет | `6545cfe2358ad815c6b071ba224ded2929dcfbff9e1c5d8b075804e13c307812` |
+| 17:85 | d80e20b1… | f1ea9093… | active | нет | нет | нет | `2dcf257ce1e62118f25047d03051261701092207e2b1d33e36a422cb505093ec` |
 
-Поля формы: 19 (4 обычных + 15 в repeat-группе `expenses`).
+Email/ФИО/телефоны не возвращаются. Хэш = sha256(lower(btrim(email))).
 
-- Обычные: `pf-000014` (req), `pf-000015` (req), `pf-000016`, `pf-000032` (date, req).
-- Repeat `expenses`: `pf-000017,18,19,20,21,22,23,24,25,26,27,28,29,30,33` (обязательные — все кроме `pf-000019`, `pf-000022`, `pf-000033`).
-- `repeat_group_settings.expenses` содержит `mns_unp_lookup` (UNP → name/address), т.е. внешний справочник участвует в заполнении.
-- `document_package_item_field_assignments` для item = **0**: поля формы привязаны через каталог/токены шаблона, не через item-field assignments. Это нормально для текущего рендера, но означает, что совместимость «поле ↔ токен» не валидируется на уровне БД.
-- Токены шаблона включают `ln-000018|format=full` и `|format=signature_short`, `tableRepeat:TR-000001`, `tableTotal:TT-000001..3` (в т.ч. `|format=words`), реквизиты юрлица `package.ul.*` / `package.ip.*`, `field:FLD-000069`.
-- `metadata.external_form_person_binding` в каталоге полей формы: **не задан ни у одного из 19 полей** (все NULL). Привязка подотчётного лица идёт только через роль `ln-000018`. Это кандидат на причину `role_assignment_missing:ln-000018` в исторических ошибках.
+## 2. Source historical coverage (оплаченные, не удалённые заказы по 9 продуктам)
 
-PII (email в metadata ссылок, ФИО) не выносится в отчёт.
+- 17:22 (c9e8dd78…): 3 продукта — `7101ed3c` (курс, tariff `543940b1`), `d7effaf4`, `064dd768`.
+  Источник: `reconcile_source=getcourse_historical`, deal_date 2024-05-16 / 09-12 / 11-04.
+- 17:53 (0b7efe20…): 3 продукта — `7101ed3c` (курс, tariff `9bc81736`), `d7effaf4`, `9187db54`.
+  Источник: `getcourse_historical`, deal_date 2024-05-23 / 09-03 / 11-04.
+- 17:85 (f1ea9093…): 9 продуктов (курс + все 8 модулей), отдельные заказы 2024-05-25.
 
-## 2. История submissions / documents
+Заказов с `reconcile_source='owner_confirmed_historical'` у этих трёх пользователей нет —
+их покупки уже подтверждены более ранними историческими источниками.
 
-Агрегаты `document_package_external_submissions` (вся таблица, 65 строк) — baseline подтверждён:
+## 3. Existing grants (entitlements по 9 продуктам)
 
-| status | error_code | generated_at | count | окно |
-|---|---|---|---|---|
-| generated | NULL | есть | 39 | 27.07 – 10.09 |
-| failed | NULL | **есть** | 21 | 27.07 07:39 – 27.07 18:28 |
-| failed | unauthorized | нет | 5 | 26.07 22:13 – 27.07 07:38 |
+- 17:22: 3 записи (`7101ed3c`, `d7effaf4`, `064dd768`), все `expired`, expires_at 2026-05-08 20:59:59.
+- 17:53: 4 записи — 3 `active` до 2026-09-26 12:00 (`7101ed3c`, `d7effaf4`, `9187db54`)
+  и 1 `expired` `ea98d043` (src `historical_backfill`, покупкой не подтверждён).
+- 17:85: 9 записей, все `active` до 2026-10-04 12:00.
 
-Документы по шаблону: 42 записи, 42 уникальных номера, **39 с файлом → 3 номера израсходованы без файла** (все 27.07). Это подтверждает расход номера при неуспешном рендере — целевой дефект для PR479 (номер/upload).
+## 4. Club Business prior_purchase preview (rule `1b497fba…`)
 
-**Ключевой факт по 27.08:** ссылка на форму создана 27.08 06:42 (`55ad7ca0-…`), но за 27.08 **нет ни одной submission, ни одного документа, ни одной новой сессии**. Submissions идут 25.08 → 28.08 без разрыва в данных, значит запись просто не создавалась.
+Правило проверено live: `is_active=true`, product `11c9f1b8…`, tariff `7c748940…`,
+`condition_type=prior_purchase`, `match_mode=per_product`, 9 required = 9 target продуктов.
 
-Вывод: причина обращения 27.08 — **UNKNOWN**. Недостающее звено точно названо: отказ произошёл **до вставки submission** (открытие/валидация формы, MNS-lookup, клиентский сбой или ранний отказ edge-функции), и сегодня в системе нет ни одной артефакт-записи попытки. Ошибка «ссылка не найдена» из smoke-теста PR476 к этому не относится и не может считаться проверкой генерации.
+Квалифицирующая подписка = current finite, start<=now<end, status active/past_due/canceled,
+не trial, заказ paid/не удалён/не trial, tariff совпадает, NET BYN >= 250.
 
-Новых отказов после deploy 13.09 нет: последняя submission — 10.09 11:32 (generated). Отдельный отсчёт «после 13.09» = 0 submissions, 0 failed, 0 documents.
+| user | всего Business-подписок | квалифицирующих current | max current end |
+|---|---|---|---|
+| c9e8dd78… (17:22) | 9 | 0 | — (текущая активная подписка NET 100 BYN < 250) |
+| 0b7efe20… (17:53) | 9 | 1 | 2026-09-26 12:00:00Z |
+| f1ea9093… (17:85) | 5 | 1 | 2026-10-04 12:00:00Z |
 
-## 3. S01/S02 — auth/gateway/credentials
+Preview действий по правилам владельца:
 
-- В `supabase/config.toml` нет секций для `external-document-form`, `ai-generate-document`, `ai-generate-document-package`, `canonical-document-generate-strict` → по конфигу действует дефолт `verify_jwt=true`. Это **исходник, не доказательство deployed-состояния**.
-- Доступного инструмента чтения deployed-метаданных (version, verify_jwt, дата деплоя, набор секретов) в этом окружении нет; значения/хэши секретов читать нельзя и не требуется.
-- Итог: **S01/S02 = UNKNOWN**. Рассинхронизацию service-credential между внешней формой, orchestrator и strict после ротации подтвердить или опровергнуть чтением нельзя.
-- Что закроет UNKNOWN без ослабления Auth: (a) deploy-receipt/version трёх функций из одного SHA; (b) негативные пробы без записи — `external-document-form` `action=read` с несуществующим токеном (ожидание 404 `link_not_found`), `ai-generate-document-package` без Authorization (401) и с неверным internal secret (401/403), `canonical-document-generate-strict` без JWT (401); (c) сравнение только факта наличия и совпадения имён секретов, без значений. Ослаблять JWT/Auth ради «успешного» ответа запрещено.
+| user | купленные продукты | целевой expiry | требуемых действий |
+|---|---|---|---|
+| c9e8dd78… | 3 | нет квалифицирующей подписки → выдача запрещена | **0** |
+| 0b7efe20… | 3 | 2026-09-26 12:00:00Z | **0** (все 3 entitlements уже active ровно до этой даты) |
+| f1ea9093… | 9 | 2026-10-04 12:00:00Z | **0** (все 9 entitlements уже active ровно до этой даты) |
 
-## 4. PR479 — совместимость со схемой
+**Ожидаемый итог preview: 0 grant/extend действий, 0 revoke, 0 shorten, 0 новых
+пользователей/контактов.** Ни одна чужая/manual/revoked/foreign запись не затрагивается;
+`ea98d043` у 17:53 остаётся expired, т.к. покупка этого модуля источником не подтверждена.
+Подписки status `pending`/`superseded` с NET 0 и trial исключены, 20/21 потоки не затрагиваются.
 
-Точный diff не ревизирую (ветка зеркалу недоступна) — только совместимость предложенной миграции с live.
+Поэтому execute-этап для prior_purchase не требуется вовсе; при вашем согласии достаточно
+зафиксировать «no-op verified» и не запускать никаких записей.
 
-Текущая `document_package_external_submissions`: `id, external_link_id, external_form_id, owner_profile_id, package_session_id, status, error_code, generated_document_ids, submitted_at, generated_at, metadata`. Колонок `request_id` / `request_fingerprint` нет — конфликта имён нет.
+## 5. Прочие строки
 
-Предложенная миграция совместима, при условиях:
+- 18:31 — новых фактов/доступов/пользователей не предлагается.
+- 18:9 — ban сохраняется, действий нет.
+- 17:42 — отозванный ИП не трогаем.
+- G9 — HOLD, без email и без операций Auth.
 
-- `request_id uuid NULL`, `request_fingerprint text NULL` — add-only, без NOT NULL и без backfill (65 существующих строк остаются NULL).
-- `CREATE UNIQUE INDEX … ON (external_link_id, request_id) WHERE request_id IS NOT NULL` — частичный индекс не затрагивает старые строки.
-- `CHECK (request_fingerprint IS NULL OR request_fingerprint ~ '^[0-9a-f]{64}$')` — как `NOT VALID` + отдельная валидация, чтобы не блокировать таблицу.
-- GRANT не меняются (таблица уже существует), RLS-политики не трогаются.
-- Совместимость старых страниц: семантический ключ (link + нормализованный fingerprint полей) обязан давать replay только для чтения статуса; он не должен подменять уникальность по `request_id`.
-- Replay должен возвращать **существующую** submission и её `generated_document_ids`, никогда не запускать повторный рендер и не выделять новый номер.
-- Внутренняя авторизация package-функции — только точный service secret, без фолбэка на anon/JWT.
+## 6. Строка 17:87 — точная дата от владельца
 
-Внедрение: миграция → deploy ровно затронутых функций из merged SHA → read-only проверки → Publish фронтенда, если менялся UI статуса.
+Фактическая строка `orders_v2` id `16472b5c-9a11-8805-836c-4484ec9ccbe4` (без ПД):
 
-## 5. Контролируемый end-to-end тест (спланирован, не запускается)
+- profile `1eb42e6f-6af2-4f34-a0ee-c37534c2a085`, user `6164fa9e-36cc-4477-b882-4612a8f90379`
+- product `abee24cd…` (модуль «Розничная торговля»), tariff `NULL`, flow `NULL`
+- status `paid`, `is_deleted=false`, `is_trial=false`
+- `deal_date = NULL`; `meta.deal_month` отсутствует (месяц не открыт)
+- base_price / final_price / paid_amount = `0.00`, currency BYN
+- created_at = updated_at = 2026-09-11 13:20:10.714919Z
+- reconcile_source `owner_confirmed_historical`
+- meta: batch `hist-cb17-18-20260911-v1`, `history_only=true`, `owner_confirmed_paid=true`,
+  `source_refs=["17:87"]`, `source_amount_unknown=true`, `source_purchase_date_unknown=true`,
+  spreadsheet `1dw8ljnBwfyNn26…`, idempotency_key `…:17:1eb42e6f…:abee24cd…:module`
+- purchase_snapshot: `historical_purchase_type=module_only_standalone`,
+  `import_source=owner_confirmed_sheet_17_18`, `module_list_mapped=[abee24cd…]`
 
-Цель: доказать, что действующая форма реально формирует Авансовый отчёт, а не только корректно показывает ошибку.
+### Можно ли существующим admin/editor API?
 
-Подготовка
-1. Использовать **существующего** владельца/профиль и существующее юрлицо. Новых пользователей и CRM-контактов не создавать.
-2. Создать одну одноразовую тестовую ссылку по форме `b5b2b3fc…` с `metadata.delivery = {email:false, telegram:false}` и меткой `test_run=true` — доставка отключена на уровне ссылки, а не правкой кода.
-3. Синтетические данные: подотчётное лицо — тестовое ФИО, 2 строки `expenses` с суммами, дающими проверяемый итог (например 12.34 + 87.66 = 100.00), даты в прошлом, UNP из справочника МНС.
+Технически да — админ-диалог редактирования сделки пишет `orders_v2.deal_date` и
+логирует `deal.deal_date.updated` в `audit_logs`. Но как канонический путь он не подходит:
 
-Ожидаемые записи (минимум и точно)
-- `document_package_external_submissions`: **+1** строка, `status=generated`, `generated_at` не NULL, `error_code` NULL, `generated_document_ids` длиной 1, `package_session_id` не NULL.
-- `document_package_sessions`: **+1**.
-- `ai_generated_documents`: **+1**, `template_id=b5ad9e1f…`, `template_version_id=3aa13a52…`, `file_path` не NULL, ровно один новый `document_number`.
-- Никаких изменений в `orders_v2`, `payments_v2`, entitlements, access-таблицах и рассылках: delta = 0.
+- тем же UPDATE он переписывает `status`, `base_price`/`final_price`, `product_id`,
+  `tariff_id`, `offer_id`, `profile_id`, `user_id` значениями формы — риск тихой порчи
+  history-only записи с нулевыми суммами и `tariff_id=NULL`;
+- нет идемпотентности (повтор перезапишет дату), нет проверки batch/refs/provenance;
+- не снимает `source_purchase_date_unknown` и не фиксирует `source='user_confirmed'`.
 
-Проверка файлов
-- Скачивание только через edge `document-download` (blob), без signed URL в отчёте.
-- DOCX: 2 строки таблицы расходов, итог 100.00, сумма прописью совпадает с итогом, номер в документе = `document_number` записи, подотчётное лицо подставлено в `ln-000018` (full и signature_short).
-- PDF (если конвертер включён) — те же номер и итог.
+Существующий `admin_repair_historical_cb_dates` использовать нельзя: его 15 whitelists
+покрывают только 285 фактов с источником D, и расширять их без source provenance запрещено.
 
-Повтор без второй генерации
-- Повторный submit той же ссылки с тем же payload → та же submission (replay), `documents` delta = 0, новый номер не выделяется, `generated_document_ids` совпадает.
-- Изменённый payload → новый `request_fingerprint` → новая submission (ожидаемо, отмечается в отчёте).
+### Рекомендуемый минимальный путь: новый узкий fixed RPC (код готовит Codex)
 
-Auth-проверки
-- Положительные: чтение формы по валидному тестовому токену → 200; owner-просмотр статуса под ролью владельца → 200.
-- Отрицательные: несуществующий токен → 404; отозванная ссылка → 403/404; package-функция без Authorization → 401; с неверным internal secret → 401/403; strict без JWT → 401.
+Контракт `public.admin_set_historical_purchase_date_user_confirmed(_payload jsonb, _mode text default 'dry-run')`:
 
-Read-back и завершение
-- Агрегаты submissions/documents/sessions до и после, с отдельным учётом посторонней активности.
-- Архивация: тестовая ссылка отзывается, тестовая submission помечена как тестовая (без удаления данных).
-- Скриншоты ПК 1280×900 и mobile 390×844 — только после Publish, без ПД.
+- `security definer`, `set search_path=public`, `lock_timeout=5s`, `auth.role()='service_role'`;
+- `_mode in ('dry-run','rollback','execute')`; ровно один закреплённый sha256(payload::text);
+- размер payload = 1 элемент: `{id, refs:["17:87"], product_id, profile_id, user_id,
+  deal_date:"2026…"→"2024-05-15T09:17:17Z", source:"user_confirmed", repair_id}`;
+- preconditions (иначе RAISE и откат всего вызова): `reconcile_source='owner_confirmed_historical'`,
+  `meta.historical_batch_id='hist-cb17-18-20260911-v1'`, `meta.history_only='true'`,
+  `meta.source_spreadsheet_id` совпадает, `meta.source_refs = ["17:87"]`,
+  `product_id`/`profile_id`/`user_id` совпадают, `status='paid'`, `is_deleted=false`,
+  `tariff_id IS NULL`, `base_price=final_price=paid_amount=0`,
+  `meta->>'deal_month' IS NULL`, `deal_date IS NULL OR deal_date = целевой`;
+- патч ровно: `deal_date := '2024-05-15T09:17:17Z'`,
+  `meta := meta || {source_purchase_date_unknown:false, source_purchase_date:'2024-05-15T12:17:17+03:00',
+  source_purchase_date_source:'user_confirmed', source_date_repair_id:'…-17-87-user-confirmed-v1',
+  source_date_repaired_at:now()}`; `deal_month` не создаётся;
+- запрещено менять `created_at`, `profile_id`/`user_id`, любые суммы, `status`,
+  `purchase_snapshot`, entitlements, подписки, платежи, доступы;
+- идемпотентность: если `deal_date` уже равен целевому и `source_date_repair_id` совпадает —
+  `CONTINUE`, `changes=0`;
+- `rollback`-режим выполняет те же проверки и откатывает транзакцию (RAISE + capture);
+- аудит: одна запись в `audit_logs` (`action='deal.deal_date.source_repair'`,
+  `actor_label='historical_cb_user_confirmed'`, meta: order_id, refs, old/new deal_date,
+  repair_id, mode) — без ПД;
+- возврат: `{repair_id, mode, matched:1, changes:0|1, replay:0|1, before/after deal_date}`.
 
-## 6. Причины, UNKNOWN, блокеры
+Порядок применения (после вашего разрешения): merged migration → `dry-run` (ожидание
+`matched=1, changes=1`) → `rollback` (проверка, что дата не изменилась) → `execute`
+(`changes=1`) → повторный `execute` (`changes=0, replay=1`) → read-back строки:
+`deal_date=2024-05-15T09:17:17Z`, created_at/суммы/owner/status неизменны, `deal_month`
+отсутствует, 0 новых платежей/подписок/доступов.
 
-Подтверждено
-- Форма, шаблон v10, роль `ln-000018` и repeat-группа `expenses` активны и консистентны; генерация работала вплоть до 10.09 (39 успехов).
-- 3 номера израсходованы без файла (27.07) — дефект «номер до успеха/upload» реален.
-- `external_form_person_binding` не задан ни у одного поля формы.
-- Новых отказов после 13.09 нет (нет вообще обращений после 10.09).
+## 7. Фактические counts
 
-UNKNOWN
-- Причина 27.08: нет ни submission, ни документа, ни сессии за этот день → отказ до вставки записи. Недостающее звено — журнал попытки (request_id/fingerprint + errors-history), которого сегодня нет.
-- 21 июльский `failed` без `error_code`, но с `generated_at` — семантика статуса неоднозначна; коррелировать причину нечем.
-- S01/S02: deployed availability/auth/credential-синхронность не читается доступными средствами.
+- клиентов проверено: 3; активных/не banned/не merged: 3/3
+- historical products покрыто: 3 + 3 + 9 = 15 связей
+- existing entitlements по 9 продуктам: 3 + 4 + 9 = 16 (active 3 + 9 = 12, expired 4)
+- квалифицирующих Business-подписок: 0 + 1 + 1 = 2
+- предлагаемых grant/extend/revoke действий: **0**
+- строк 17:87 к исправлению даты: 1 (whitelists 285 не расширяются)
 
-Блокеры
-1. Точный diff PR479 недоступен зеркалу — ревизия кода невозможна, приложите diff.
-2. Нет доступа к deployed-метаданным функций и логам edge за 27.08 (за пределами окна хранения).
-3. Для end-to-end теста нужна отдельная команда EXECUTE: создание тестовой ссылки и один реальный submit (записи в БД).
-
-Необходимое для закрытия
-- Миграция: два nullable-поля + частичный unique + CHECK (раздел 4).
-- Deploy из одного merged SHA: `external-document-form`, `ai-generate-document-package`, `canonical-document-generate-strict` (+ shared `document-generation-outcome.ts`); `ai-generate-document` — только если PR479 его затрагивает.
+Execute не выполняется. Жду вашего решения по разделу 6.

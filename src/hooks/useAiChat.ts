@@ -15,6 +15,8 @@ export interface ChatMessage {
 }
 
 export interface AiChatMetadata {
+  /** Local transport errors are displayed but never sent as model history. */
+  is_error?: boolean;
   prompt_id?: string;
   prompt_title_snapshot?: string;
   launcher_title_snapshot?: string;
@@ -75,6 +77,22 @@ export function useAiChat() {
   const [scenariosLoading, setScenariosLoading] = useState(false);
   const [activeScenarioContext, setActiveScenarioContext] = useState<ScenarioContext | null>(null);
   const initRef = useRef(false);
+  const requestEpoch = useRef(0);
+  const requestPending = useRef(false);
+  const currentUserId = useRef(user?.id);
+  currentUserId.current = user?.id;
+
+  useEffect(() => {
+    initRef.current = false;
+    setMessages([INITIAL_MESSAGE]);
+    setConversationId(null);
+    setActiveScenarioContext(null);
+    setIsLoading(false);
+    return () => {
+      requestEpoch.current++;
+      requestPending.current = false;
+    };
+  }, [user?.id]);
 
   // On mount: restore last conversation from localStorage
   useEffect(() => {
@@ -96,6 +114,9 @@ export function useAiChat() {
   const loadConversation = useCallback(async (convId: string): Promise<{ loaded: boolean; scenarioContext: ScenarioContext | null }> => {
     if (!user?.id) return { loaded: false, scenarioContext: null };
 
+    const epoch = ++requestEpoch.current;
+    requestPending.current = false;
+    setIsLoading(false);
     try {
       const { data, error } = await supabase
         .from("ai_chat_messages")
@@ -104,6 +125,7 @@ export function useAiChat() {
         .eq("user_id", user.id)
         .order("created_at", { ascending: true });
 
+      if (epoch !== requestEpoch.current || currentUserId.current !== user.id) return { loaded: false, scenarioContext: null };
       if (error || !data || data.length === 0) return { loaded: false, scenarioContext: null };
 
       const loaded: ChatMessage[] = data.map((row: any) => ({
@@ -173,7 +195,10 @@ export function useAiChat() {
       unsupportedFiles?: UnsupportedFileInfo[];
     }
   ) => {
-    if (!content.trim() && !options?.fileContents) return;
+    if ((!content.trim() && !options?.fileContents) || requestPending.current) return;
+    const epoch = requestEpoch.current;
+    const isCurrent = () => epoch === requestEpoch.current && currentUserId.current === user?.id;
+    requestPending.current = true;
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
@@ -187,7 +212,7 @@ export function useAiChat() {
     setIsLoading(true);
 
     try {
-      const allMessages = [...messages.filter(m => m.id !== "welcome"), userMsg].map(m => ({
+      const allMessages = [...messages.filter(m => m.id !== "welcome" && !m.metadata?.is_error), userMsg].map(m => ({
         role: m.role,
         content: m.content,
       }));
@@ -205,8 +230,10 @@ export function useAiChat() {
         },
       });
 
+      if (!isCurrent()) return;
       if (error) {
         const errMsg = await normalizeEdgeFunctionErrorAsync(error, data);
+        if (!isCurrent()) return;
         
         if (errMsg.includes("Слишком много")) {
           toast({ title: "Слишком много запросов", description: "Попробуйте позже", variant: "destructive" });
@@ -247,6 +274,7 @@ export function useAiChat() {
 
       setMessages(prev => [...prev, assistantMsg]);
     } catch (err) {
+      if (!isCurrent()) return;
       console.error("Chat error:", err);
       const message = err instanceof Error ? err.message : "Произошла ошибка при обработке запроса. Попробуйте ещё раз.";
       setMessages(prev => [...prev, {
@@ -254,15 +282,22 @@ export function useAiChat() {
         role: "assistant",
         content: message,
         timestamp: new Date(),
+        metadata: { is_error: true },
       }]);
     } finally {
-      setIsLoading(false);
+      if (isCurrent()) {
+        requestPending.current = false;
+        setIsLoading(false);
+      }
     }
   }, [messages, conversationId, toast, user?.id]);
 
   const runAssetClassifier = useCallback(async (content: string) => {
     const query = content.trim();
-    if (!query) return;
+    if (!query || requestPending.current) return;
+    const epoch = requestEpoch.current;
+    const isCurrent = () => epoch === requestEpoch.current && currentUserId.current === user?.id;
+    requestPending.current = true;
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
@@ -286,8 +321,10 @@ export function useAiChat() {
         },
       });
 
+      if (!isCurrent()) return;
       if (error) {
         const message = await normalizeEdgeFunctionErrorAsync(error, data);
+        if (!isCurrent()) return;
         toast({
           title: "Не удалось определить шифр ОС",
           description: message,
@@ -316,6 +353,7 @@ export function useAiChat() {
       // инструмент в меню возможностей помощника.
       setActiveScenarioContext(null);
     } catch (error) {
+      if (!isCurrent()) return;
       console.error("Asset classifier error:", error);
       const message = error instanceof Error
         ? error.message
@@ -325,13 +363,20 @@ export function useAiChat() {
         role: "assistant",
         content: message,
         timestamp: new Date(),
+        metadata: { is_error: true },
       }]);
     } finally {
-      setIsLoading(false);
+      if (isCurrent()) {
+        requestPending.current = false;
+        setIsLoading(false);
+      }
     }
   }, [conversationId, toast, user?.id]);
 
   const clearChat = useCallback(() => {
+    requestEpoch.current++;
+    requestPending.current = false;
+    setIsLoading(false);
     setMessages([INITIAL_MESSAGE]);
     setConversationId(null);
     setActiveScenarioContext(null);

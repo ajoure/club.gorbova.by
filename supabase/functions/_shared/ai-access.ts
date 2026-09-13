@@ -262,31 +262,38 @@ export async function resolveAiAccessStatus(
   };
 }
 
+/** Minsk has a fixed UTC+3 offset; compute calendar boundaries in that zone. */
+export function minskQuotaBoundaries(now = new Date()): { dayStart: string; monthStart: string } {
+  const offset = 3 * 60 * 60 * 1000;
+  const local = new Date(now.getTime() + offset);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth();
+  return {
+    dayStart: new Date(Date.UTC(year, month, local.getUTCDate()) - offset).toISOString(),
+    monthStart: new Date(Date.UTC(year, month, 1) - offset).toISOString(),
+  };
+}
+
 export async function countUserMessages(
   supabase: any,
   userId: string,
   filter: { ai_mode?: AiMode; scenario_code?: string },
 ): Promise<{ daily: number; monthly: number }> {
-  const minskNow = new Date();
-  const dayStart = new Date(minskNow); dayStart.setUTCHours(21, 0, 0, 0); // ~Minsk midnight (UTC+3 → 21:00 UTC prev day)
-  if (dayStart > minskNow) dayStart.setUTCDate(dayStart.getUTCDate() - 1);
-  const monthStart = new Date(Date.UTC(minskNow.getUTCFullYear(), minskNow.getUTCMonth(), 1, 21, 0, 0));
-
-  let q = supabase
-    .from('ai_chat_messages')
-    .select('id, created_at, metadata', { count: 'exact', head: false })
-    .eq('user_id', userId)
-    .eq('role', 'user')
-    .gte('created_at', monthStart.toISOString());
-
-  if (filter.ai_mode) q = q.eq('metadata->>ai_mode', filter.ai_mode);
-  if (filter.scenario_code) q = q.eq('metadata->>scenario_code', filter.scenario_code);
-
-  const { data } = await q;
-  const rows = (data || []) as Array<{ created_at: string; metadata: any }>;
-  const filtered = rows.filter(r => !r.metadata?.denial_reason);
-  const monthly = filtered.length;
-  const daily = filtered.filter(r => new Date(r.created_at) >= dayStart).length;
+  const { dayStart, monthStart } = minskQuotaBoundaries();
+  async function countSince(since: string): Promise<number> {
+    let q = supabase.from('ai_chat_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId).eq('role', 'user')
+      .gte('created_at', since).is('metadata->>denial_reason', null);
+    if (filter.ai_mode) q = q.eq('metadata->>ai_mode', filter.ai_mode);
+    if (filter.scenario_code) q = q.eq('metadata->>scenario_code', filter.scenario_code);
+    const { count, error } = await q;
+    if (error || !Number.isSafeInteger(count) || count < 0) {
+      throw new Error('Не удалось проверить лимит AI. Попробуйте позже.');
+    }
+    return count;
+  }
+  const [daily, monthly] = await Promise.all([countSince(dayStart), countSince(monthStart)]);
   return { daily, monthly };
 }
 
@@ -335,33 +342,32 @@ export function truncateHistory(
 
 /** Сумма metadata.context_chars за сегодня по assistant-сообщениям юзера в mode='chat'. */
 export async function sumChatContextCharsToday(supabase: any, userId: string): Promise<number> {
-  const minskNow = new Date();
-  const dayStart = new Date(minskNow); dayStart.setUTCHours(21, 0, 0, 0);
-  if (dayStart > minskNow) dayStart.setUTCDate(dayStart.getUTCDate() - 1);
-
-  const { data } = await supabase
-    .from('ai_chat_messages')
-    .select('metadata')
-    .eq('user_id', userId)
-    .eq('role', 'assistant')
-    .gte('created_at', dayStart.toISOString())
-    .eq('metadata->>ai_mode', 'chat');
-
-  const rows = (data || []) as Array<{ metadata: any }>;
-  return rows.reduce((s, r) => s + (parseInt(r.metadata?.context_chars, 10) || 0), 0);
+  const { dayStart } = minskQuotaBoundaries();
+  let total = 0;
+  const pageSize = 1000;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase.from('ai_chat_messages')
+      .select('metadata').eq('user_id', userId).eq('role', 'assistant')
+      .gte('created_at', dayStart).eq('metadata->>ai_mode', 'chat')
+      .order('id').range(offset, offset + pageSize - 1);
+    if (error || !Array.isArray(data)) throw new Error('Не удалось проверить лимит AI. Попробуйте позже.');
+    total += data.reduce((sum: number, row: any) => sum + (parseInt(row.metadata?.context_chars, 10) || 0), 0);
+    if (data.length < pageSize) return total;
+  }
 }
 
 /** Количество user-сообщений юзера в mode='chat' за последние 60 секунд (для антифлуда). */
 export async function countChatMessagesLastMinute(supabase: any, userId: string): Promise<number> {
   const sinceIso = new Date(Date.now() - 60_000).toISOString();
-  const { count } = await supabase
+  const { count, error } = await supabase
     .from('ai_chat_messages')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
     .eq('role', 'user')
     .eq('metadata->>ai_mode', 'chat')
     .gte('created_at', sinceIso);
-  return count || 0;
+  if (error || !Number.isSafeInteger(count) || count < 0) throw new Error('Не удалось проверить лимит AI. Попробуйте позже.');
+  return count;
 }
 
 const OFFTOPIC_SYSTEM = `Ты — строгий классификатор тематики запросов для бизнес-AI для предпринимателей РБ/РФ.
