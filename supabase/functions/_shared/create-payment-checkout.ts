@@ -1,3 +1,7 @@
+import { reserveCheckoutDiscounts } from './checkout-discounts.ts';
+import { reusePendingSubscriptionCheckout } from './pending-subscription-checkout.ts';
+import { requestCheckoutProvider, claimPendingPurchase, finishCheckoutAttempt, lookupPendingCheckout } from './pending-purchase.ts';
+import { paymentCheckoutExpiresAt } from './payment-checkout-lifetime.ts';
 import { courseAccessEnd } from './course-access-window.ts';
 /**
  * Shared helper: create bePaid payment checkout (one_time or subscription)
@@ -31,7 +35,6 @@ import {
   serializeChargeNotificationPolicy,
 } from './charge-notification-policy.ts';
 import { referralDiscountMeta, resolveReferralCheckoutDiscount } from './referral-checkout-discount.ts';
-import { reserveReferralCustomerCredit } from './referral-customer-credit.ts';
 import { resolvePublicReturnOrigin } from './access-alias-origin.ts';
 
 export interface CreateCheckoutParams {
@@ -155,67 +158,25 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   if (requestedCreditMinor > 0 && !allowsImmediateDiscount) {
     return { success: false, error: 'Customer credit cannot be used for recurring subscriptions' };
   }
-  if (requestedCreditMinor > 0) {
-    try {
-      const creditCycles = isFiniteInstallment
-        ? Math.max(2, Math.round(Number((extraMeta as any)?.installment?.billing_cycles ?? 2)))
-        : 1;
-      const maxCreditAcrossCharges = Math.max(0, (amount - 100) * creditCycles);
-      const reservableCreditMinor = Math.min(
-        Math.floor(requestedCreditMinor / creditCycles) * creditCycles,
-        maxCreditAcrossCharges,
-      );
-      const reservation = await reserveReferralCustomerCredit({
-        supabase,
-        userId: user_id,
-        chargeAmountMinor: amount * creditCycles,
-        requestedMinor: reservableCreditMinor,
-        checkoutKey: `checkout:${params.customer_credit_checkout_key || crypto.randomUUID()}`,
-      });
-      const perChargeCreditMinor = Math.floor(reservation.appliedMinor / creditCycles);
-      amount -= perChargeCreditMinor;
-      if (reservation.appliedMinor > 0) {
-        extraMeta = {
-          ...extraMeta,
-          referral_customer_credit_applied_minor: reservation.appliedMinor,
-          referral_customer_credit_per_charge_minor: perChargeCreditMinor,
-          referral_customer_credit_charge_count: creditCycles,
-          referral_customer_credit_reservation_id: reservation.reservationId,
-        };
-      }
-    } catch (error) {
-      console.error('[create-payment-checkout] customer credit reservation failed; checkout stopped', error);
-      return { success: false, error: 'Could not safely reserve customer discount credit' };
-    }
-  }
   const requestedPartnerBonusMinor = Math.max(0, Math.round(Number(params.partner_bonus_requested_minor ?? 0)));
-  if (requestedPartnerBonusMinor > 0 && !allowsImmediateDiscount) {
-    return { success: false, error: 'Partner bonus cannot be used for recurring subscriptions' };
-  }
-  if (requestedPartnerBonusMinor > 0) {
-    try {
-      const bonusReservation = await supabase.rpc('referral_reserve_partner_bonus', {
-        p_user_id: user_id,
-        p_requested_minor: requestedPartnerBonusMinor,
-        p_charge_amount_minor: amount,
-        p_checkout_key: `checkout:partner-bonus:${params.partner_bonus_checkout_key || crypto.randomUUID()}`,
-        p_product_id: product_id,
-      });
-      if (bonusReservation.error) throw bonusReservation.error;
-      const appliedMinor = Math.max(0, Math.round(Number(bonusReservation.data?.applied_minor ?? 0)));
-      amount = Math.max(100, amount - appliedMinor);
-      if (appliedMinor > 0) {
-        extraMeta = {
-          ...extraMeta,
-          referral_partner_bonus_applied_minor: appliedMinor,
-          referral_partner_bonus_reservation_id: bonusReservation.data?.reservation_id,
-        };
-      }
-    } catch (error) {
-      console.error('[create-payment-checkout] partner bonus reservation failed; checkout stopped', error);
-      return { success: false, error: 'Could not safely reserve partner bonus' };
-    }
-  }
+  if(requestedPartnerBonusMinor>0 && !allowsImmediateDiscount) return {success:false,error:'Partner bonus cannot be used for recurring subscriptions'};
+  const creditCycles=isFiniteInstallment ? Math.max(2,Math.round(Number((extraMeta as any)?.installment?.billing_cycles ?? 2))) : 1;
+  const discounts=await reserveCheckoutDiscounts(supabase,{
+    user_id,product_id,tariff_id,offer_id:offer_id ?? null,final_price:amount/100,currency:params.currency ?? 'BYN',meta:extraMeta,
+  },payment_type,requestedCreditMinor,requestedPartnerBonusMinor,creditCycles);
+  amount=Math.max(100,amount-discounts.creditPerChargeMinor-discounts.bonusMinor);
+  extraMeta={...extraMeta,
+    ...(discounts.intentId ? {checkout_discount_intent_id:discounts.intentId} : {}),
+    ...(discounts.creditMinor>0 ? {
+      referral_customer_credit_applied_minor:discounts.creditMinor,
+      referral_customer_credit_per_charge_minor:discounts.creditPerChargeMinor,
+      referral_customer_credit_charge_count:creditCycles,
+      referral_customer_credit_reservation_id:discounts.creditReservationId,
+    } : {}),
+    ...(discounts.bonusMinor>0 ? {referral_partner_bonus_applied_minor:discounts.bonusMinor,
+      referral_partner_bonus_reservation_id:discounts.bonusReservationId} : {}),
+  };
+
   // ============================================================
   // Phase 4.1 — provider dispatch (default 'bepaid' = байт-в-байт legacy path).
   // Stripe-ветка короткозамыкается ДО любых bePaid creds и DB-операций bepaid-flow.
@@ -237,6 +198,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       payment_type, description, offer_id, origin,
       actor_user_id: actor_user_id ?? null,
       actor_type,
+      responsible_user_id,
       account_code: params.account_code ?? null,
       payment_link_id: (extraMeta as any)?.payment_link_id ?? null,
       replacement_of_subscription_v2_id,
@@ -314,87 +276,6 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   if (payment_type === 'one_time') {
     // === ONE-TIME PAYMENT ===
 
-    // PATCH F1: Dedup one_time — strict key: user/product/tariff/amount/flow/currency/3d
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let existingOrderQuery = (supabase as any)
-      .from('orders_v2')
-      .select('id, meta, created_at')
-      .eq('user_id', user_id)
-      .eq('product_id', product_id)
-      .eq('tariff_id', tariff_id)
-      .eq('status', 'pending')
-      .eq('currency', 'BYN')
-      .eq('final_price', amountByn)
-      .filter('meta->>payment_flow', 'eq', paymentFlow);
-    existingOrderQuery = responsible_user_id
-      ? existingOrderQuery.eq('responsible_user_id', responsible_user_id)
-      : existingOrderQuery.is('responsible_user_id', null);
-    const { data: existingOrder } = await existingOrderQuery
-      .is('meta->>checkout_expired', null)
-      .gte('created_at', new Date(Date.now() - 3 * 86400000).toISOString())
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (existingOrder?.id) {
-      const existingMeta = (existingOrder.meta || {}) as Record<string, any>;
-      const existingToken = existingMeta.bepaid_checkout_token;
-      if (existingToken) {
-        // PATCH-PAYLINK-v2: Time-based TTL validation (bePaid HPP API returns 'expired' immediately, so API check is unreliable)
-        const TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
-        const orderCreatedAt = new Date(existingOrder.created_at).getTime();
-        const orderAge = Date.now() - orderCreatedAt;
-        const tokenAlive = orderAge > 0 && orderAge < TOKEN_TTL_MS;
-        const expiredReason = tokenAlive ? null : 'token_ttl_exceeded_15min';
-
-        if (tokenAlive) {
-          // Token within TTL — reuse
-          const existingUrl = `https://checkout.bepaid.by/v2/checkout?token=${existingToken}`;
-          console.log('[create-payment-checkout] Reusing existing pending one_time order (TTL alive, age=' + Math.round(orderAge / 1000) + 's):', existingOrder.id);
-
-          const { error: auditReusedErr } = await supabase.from('audit_logs').insert({
-            actor_type: 'system',
-            actor_user_id: null,
-            action: 'payment_checkout.reused',
-            actor_label: 'payment_checkout',
-            created_at: new Date().toISOString(),
-            meta: { reused_order_id: existingOrder.id, payment_type: 'one_time', reuse_reason: 'pending_dedup', token_age_s: Math.round(orderAge / 1000) },
-          });
-          if (auditReusedErr) console.error('[payment_checkout] audit insert failed', { action: 'payment_checkout.reused', order_id: existingOrder.id, payment_type: 'one_time', error: auditReusedErr });
-
-          return {
-            success: true,
-            redirect_url: existingUrl,
-            order_id: existingOrder.id,
-            payment_type: 'one_time',
-          };
-        }
-
-        // Token TTL exceeded — mark meta (add-only, no status change) and fall through to create new
-        console.log('[create-payment-checkout] Token TTL exceeded for one_time order, age=' + Math.round(orderAge / 1000) + 's, will create new:', existingOrder.id);
-        const { error: metaExpErr } = await supabase.from('orders_v2').update({
-          meta: {
-            ...existingMeta,
-            checkout_expired: true,
-            checkout_expired_at: new Date().toISOString(),
-            checkout_expired_reason: expiredReason,
-          },
-        }).eq('id', existingOrder.id).is('meta->>checkout_expired', null);
-        if (metaExpErr) console.error('[payment_checkout] order meta update failed', { order_id: existingOrder.id, reason: expiredReason, error: metaExpErr });
-
-        const { error: auditExpErr } = await supabase.from('audit_logs').insert({
-          actor_type: 'system',
-          actor_user_id: null,
-          action: 'payment_checkout.token_expired',
-          actor_label: 'payment_checkout',
-          created_at: new Date().toISOString(),
-          meta: { order_id: existingOrder.id, payment_type: 'one_time', reason: expiredReason },
-        });
-        if (auditExpErr) console.error('[payment_checkout] audit insert failed', { action: 'payment_checkout.token_expired', order_id: existingOrder.id, payment_type: 'one_time', error: auditExpErr });
-        // Fall through — create new order + checkout below
-      }
-    }
-
     const { data: orderNumberData } = await supabase.rpc('generate_order_number');
     const orderNumber: string = (orderNumberData as string | null) || `ORD-LINK-${Date.now()}`;
 
@@ -427,12 +308,10 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           candidates_count: oneTimeRouting.candidates_count ?? 0,
           primary_reason: oneTimeRouting.primary_reason ?? null,
         });
-    const oneTimeMetaWithRouting = { ...orderMeta, crm_routing_snapshot: oneTimeCrmSnapshot };
+    let oneTimeMetaWithRouting: Record<string, any> = { ...orderMeta, crm_routing_snapshot: oneTimeCrmSnapshot };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: order, error: orderError } = await (supabase as any)
-      .from('orders_v2')
-      .insert({
+    const checkoutClaim = await claimPendingPurchase(supabase, {
         order_number: orderNumber,
         user_id,
         responsible_user_id: responsible_user_id || null,
@@ -468,14 +347,10 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           is_trial: false,
           extra: { payment_flow: paymentFlow },
         }),
-      })
-      .select('id')
-      .single();
-
-    if (orderError) {
-      console.error('[create-payment-checkout] Order creation error:', orderError);
-      return { success: false, error: 'Failed to create order' };
-    }
+      }, 'one_time', 'bepaid');
+    if (checkoutClaim.reusedResult) return checkoutClaim.reusedResult as CreateCheckoutSuccess;
+    const order = checkoutClaim.order;
+    oneTimeMetaWithRouting = { ...oneTimeMetaWithRouting, ...order.meta };
 
     // B.0: audit negative snapshot post-INSERT (non-blocking)
     if (!oneTimeRouting.ok) {
@@ -509,6 +384,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           // No save_card_toggle for one-time: avoid creating recurring contracts
         },
         order: {
+          expired_at: paymentCheckoutExpiresAt(),
           amount,
           currency: 'BYN',
           description: description || `${product.name} — ${tariff.name}`,
@@ -531,17 +407,18 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       product: product.name,
     });
 
-    const checkoutResponse = await fetch('https://checkout.bepaid.by/ctp/api/checkouts', {
+    const checkoutResponse = await requestCheckoutProvider(supabase,checkoutClaim.attemptId,()=>fetch('https://checkout.bepaid.by/ctp/api/checkouts', {
       method: 'POST',
       headers: {
         'Authorization': bepaidAuth,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        'RequestID': checkoutClaim.attemptId,
       },
       body: JSON.stringify(checkoutPayload),
-    });
+    }));
 
-    const checkoutResult = await checkoutResponse.json();
+    const checkoutResult = await requestCheckoutProvider(supabase,checkoutClaim.attemptId,()=>checkoutResponse.json());
 
     if (!checkoutResponse.ok || !checkoutResult.checkout?.redirect_url) {
       // PATCH PAYMENTS+REMINDERS v3 S3: persist provider decline reason for diagnostics.
@@ -581,12 +458,17 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         },
       });
 
+      await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, (checkoutResponse.status >= 500 || [408,409,429].includes(checkoutResponse.status)) ? 'unknown' : 'failed', { success: false, error: 'bepaid_checkout_rejected' });
       return {
         success: false,
         error: checkoutResult.message || checkoutResult.errors?.base?.[0] || 'bePaid checkout creation failed',
       };
     }
 
+    if(!checkoutResult.checkout?.token || !/^https:\/\//.test(checkoutResult.checkout?.redirect_url || '')) {
+      await finishCheckoutAttempt(supabase,checkoutClaim.attemptId,'unknown',{success:false,error:'checkout_response_incomplete'});
+      return {success:false,error:'checkout_response_incomplete'};
+    }
     const redirectUrl = checkoutResult.checkout.redirect_url;
 
     // PATCH RENEWAL+PAYMENTS.1 C3 + CRM-ROUTING fix:
@@ -604,15 +486,11 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       amount: amountByn,
       reason: 'initial_checkout',
     };
-    const { error: metaMergeErr } = await supabase.from('orders_v2').update({
-      meta: {
-        ...oneTimeMetaWithRouting,
-        bepaid_checkout_token: newCheckoutToken,
-        active_checkout_token: newCheckoutToken,
-        checkout_created_at: new Date().toISOString(),
-        checkout_tokens_history: [tokenHistoryEntry],
-      },
-    }).eq('id', order.id);
+    const { error: metaMergeErr } = await supabase.rpc('crm_merge_checkout_metadata', {
+      p_order_id:order.id, p_history_entry:tokenHistoryEntry,
+      p_patch:{ bepaid_checkout_token:newCheckoutToken, active_checkout_token:newCheckoutToken,
+        checkout_created_at:new Date().toISOString() },
+    });
     if (metaMergeErr) console.error('[payment_checkout] order meta merge failed', { order_id: order.id, payment_type: 'one_time', error: metaMergeErr });
 
     // Audit log
@@ -632,16 +510,26 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     });
     if (auditCreatedErr1) console.error('[payment_checkout] audit insert failed', { action: 'payment_link.created', order_id: order.id, payment_type: 'one_time', error: auditCreatedErr1 });
 
-    return {
-      success: true,
-      redirect_url: redirectUrl,
-      order_id: order.id,
-      order_number: orderNumber,
-      payment_type: 'one_time',
+    const readyResult: CreateCheckoutSuccess = {
+      success: true, redirect_url: redirectUrl, order_id: order.id,
+      order_number: order.order_number, payment_type: 'one_time',
     };
+    if (metaMergeErr) throw new Error('checkout_metadata_persist_failed');
+    await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'ready', readyResult);
+    return readyResult;
 
   } else if (payment_type === 'subscription') {
     // === SUBSCRIPTION ===
+    const pendingProposal = {
+      user_id, product_id, tariff_id, offer_id: offer_id ?? null,
+      final_price: amount / 100, currency: params.currency ?? 'BYN',
+      meta: {...extraMeta,replacement_of_subscription_v2_id:replacement_of_subscription_v2_id ?? null},
+      purchase_snapshot: {access_days:tariff.access_days || 30,is_trial:false},
+    };
+    const recoveredCheckout = await reusePendingSubscriptionCheckout(supabase,pendingProposal,'bepaid');
+    if(recoveredCheckout) return recoveredCheckout as CreateCheckoutSuccess;
+    const reusedCheckout = await lookupPendingCheckout(supabase,pendingProposal,'subscription','bepaid');
+    if (reusedCheckout) return reusedCheckout as CreateCheckoutSuccess;
 
     // === PATCH H3.x-a (B-2 root-fix) ===
     // Различаем legitimate extend (same tariff) vs replacement (other tariff)
@@ -748,103 +636,6 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     }
 
 
-    // PATCH F3: Dedup subscription — strict key: user/product/tariff/amount/flow/currency/3d
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let existingSubOrderQuery = (supabase as any)
-      .from('orders_v2')
-      .select('id, meta, created_at')
-      .eq('user_id', user_id)
-      .eq('product_id', product_id)
-      .eq('tariff_id', tariff_id)
-      .eq('status', 'pending')
-      .eq('currency', 'BYN')
-      .eq('final_price', amountByn)
-      .filter('meta->>payment_flow', 'eq', paymentFlow);
-    existingSubOrderQuery = responsible_user_id
-      ? existingSubOrderQuery.eq('responsible_user_id', responsible_user_id)
-      : existingSubOrderQuery.is('responsible_user_id', null);
-    const { data: existingSubOrder } = await existingSubOrderQuery
-      .is('meta->>checkout_expired', null)
-      .gte('created_at', new Date(Date.now() - 3 * 86400000).toISOString())
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (existingSubOrder?.id) {
-      // PATCH F3: Strict provider_subscriptions search by order_id + state
-      const { data: reusableProvSub } = await supabase
-        .from('provider_subscriptions')
-        .select('meta')
-        .eq('user_id', user_id)
-        .eq('state', 'pending')
-        .filter('meta->>order_id', 'eq', existingSubOrder.id)
-        .limit(1)
-        .maybeSingle();
-
-      // STOP-guard: only reuse if checkout_url is present and valid
-      const reusableCheckoutUrl = reusableProvSub
-        ? (reusableProvSub.meta as Record<string, any>)?.checkout_url
-        : null;
-
-      if (reusableCheckoutUrl && typeof reusableCheckoutUrl === 'string' && reusableCheckoutUrl.startsWith('http')) {
-        // PATCH-PAYLINK-v2: Time-based TTL validation (bePaid subscription checkout URLs may also expire quickly)
-        const SUB_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-        const subCreatedAt = new Date(existingSubOrder.created_at).getTime();
-        const subAge = Date.now() - subCreatedAt;
-        const checkoutAlive = subAge > 0 && subAge < SUB_TOKEN_TTL_MS;
-        const subExpiredReason = checkoutAlive ? null : 'token_ttl_exceeded_24h';
-
-        if (checkoutAlive) {
-          // Checkout URL within TTL — reuse
-          console.log('[create-payment-checkout] Reusing existing pending subscription order (TTL alive, age=' + Math.round(subAge / 1000) + 's):', existingSubOrder.id);
-
-          const { error: auditSubReusedErr } = await supabase.from('audit_logs').insert({
-            actor_type: 'system',
-            actor_user_id: null,
-            action: 'payment_checkout.reused',
-            actor_label: 'payment_checkout',
-            created_at: new Date().toISOString(),
-            meta: { reused_order_id: existingSubOrder.id, payment_type: 'subscription', reuse_reason: 'pending_dedup', token_age_s: Math.round(subAge / 1000) },
-          });
-          if (auditSubReusedErr) console.error('[payment_checkout] audit insert failed', { action: 'payment_checkout.reused', order_id: existingSubOrder.id, payment_type: 'subscription', error: auditSubReusedErr });
-
-          return {
-            success: true,
-            redirect_url: reusableCheckoutUrl,
-            order_id: existingSubOrder.id,
-            payment_type: 'subscription',
-          };
-        }
-
-        // Checkout URL TTL exceeded — mark meta (add-only) and fall through
-        console.log('[create-payment-checkout] Subscription checkout TTL exceeded, age=' + Math.round(subAge / 1000) + 's, will create new:', existingSubOrder.id);
-        const existingSubMeta = (existingSubOrder.meta || {}) as Record<string, any>;
-        const { error: subMetaExpErr } = await supabase.from('orders_v2').update({
-          meta: {
-            ...existingSubMeta,
-            checkout_expired: true,
-            checkout_expired_at: new Date().toISOString(),
-            checkout_expired_reason: subExpiredReason,
-          },
-        }).eq('id', existingSubOrder.id).is('meta->>checkout_expired', null);
-        if (subMetaExpErr) console.error('[payment_checkout] order meta update failed', { order_id: existingSubOrder.id, reason: subExpiredReason, error: subMetaExpErr });
-
-        const { error: auditSubExpErr } = await supabase.from('audit_logs').insert({
-          actor_type: 'system',
-          actor_user_id: null,
-          action: 'payment_checkout.token_expired',
-          actor_label: 'payment_checkout',
-          created_at: new Date().toISOString(),
-          meta: { order_id: existingSubOrder.id, payment_type: 'subscription', reason: subExpiredReason },
-        });
-        if (auditSubExpErr) console.error('[payment_checkout] audit insert failed', { action: 'payment_checkout.token_expired', order_id: existingSubOrder.id, payment_type: 'subscription', error: auditSubExpErr });
-      } else {
-        // No valid checkout_url — fall through to create new order+subscription
-        console.log('[create-payment-checkout] Found pending sub order but no valid checkout_url, creating new');
-      }
-    }
-
-    // ============================================================================
     // PATCH INSTALLMENT-RETRY-POLICY (Sprint A · A1+A2+A3):
     //   Capability gate ДО любых INSERT в orders_v2 / subscriptions_v2 / provider_subscriptions.
     //   При unlimited_requested без proven capability возвращаем controlled error
@@ -940,6 +731,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       created_by: actorUserId,
       payment_flow: paymentFlow,
       ...extraMeta,
+      replacement_of_subscription_v2_id:replacement_of_subscription_v2_id ?? null,
     };
 
     const accessDaysSub = tariff.access_days || 30;
@@ -959,12 +751,10 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           candidates_count: subRouting.candidates_count ?? 0,
           primary_reason: subRouting.primary_reason ?? null,
         });
-    const subMetaWithRouting = { ...subOrderMeta, crm_routing_snapshot: subCrmSnapshot };
+    let subMetaWithRouting: Record<string, any> = { ...subOrderMeta, crm_routing_snapshot: subCrmSnapshot };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: order, error: orderError } = await (supabase as any)
-      .from('orders_v2')
-      .insert({
+    const checkoutClaim = await claimPendingPurchase(supabase, {
         order_number: orderNumber,
         user_id,
         responsible_user_id: responsible_user_id || null,
@@ -1000,14 +790,10 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           is_trial: false,
           extra: { payment_flow: paymentFlow },
         }),
-      })
-      .select('id')
-      .single();
-
-    if (orderError) {
-      console.error('[create-payment-checkout] Order creation error:', orderError);
-      return { success: false, error: 'Failed to create order' };
-    }
+      }, 'subscription', 'bepaid');
+    if (checkoutClaim.reusedResult) return checkoutClaim.reusedResult as CreateCheckoutSuccess;
+    const order = checkoutClaim.order;
+    subMetaWithRouting = { ...subMetaWithRouting, ...order.meta };
 
     // B.0: audit negative snapshot post-INSERT
     if (!subRouting.ok) {
@@ -1055,6 +841,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           status: 'failed',
           meta: { ...subMetaWithRouting, race_insert_avoided: true, race_insert_avoided_at: new Date().toISOString() },
         }).eq('id', order.id);
+        await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'failed', { success: false, error: 'already_has_active_subscription' });
         return {
           success: false,
           error: 'already_has_active_subscription',
@@ -1161,7 +948,10 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       preSubMeta.retry_policy_mode = retryPolicySnapshotPre?.mode ?? null;
       preSubMeta.max_charge_attempts_configured = installmentExtra.max_charge_attempts ?? null;
     }
-    const { data: preSub, error: preSubError } = await supabase
+    const { data: priorPreSub, error: priorPreSubError } = await supabase.from('subscriptions_v2')
+      .select('id').eq('order_id', order.id).eq('status', 'past_due').limit(1).maybeSingle();
+    if (priorPreSubError) throw new Error('checkout_subscription_read_failed');
+    const { data: preSub, error: preSubError } = priorPreSub ? { data: priorPreSub, error: null } : await supabase
       .from('subscriptions_v2')
       .insert({
         user_id,
@@ -1211,6 +1001,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           provider_error: safeErrPayload,
         },
       });
+      await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'failed', { success: false, error: 'subscription_precreate_failed' });
       return { success: false, error: 'subscription_precreate_failed' };
     }
     const subscriptionV2Id = preSub.id as string;
@@ -1280,17 +1071,18 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       amount,
     });
 
-    const bepaidResponse = await fetch('https://api.bepaid.by/subscriptions', {
+    const bepaidResponse = await requestCheckoutProvider(supabase,checkoutClaim.attemptId,()=>fetch('https://api.bepaid.by/subscriptions', {
       method: 'POST',
       headers: {
         'Authorization': bepaidAuth,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        'RequestID': checkoutClaim.attemptId,
       },
       body: JSON.stringify(bepaidPayload),
-    });
+    }));
 
-    const bepaidResult = await bepaidResponse.json();
+    const bepaidResult = await requestCheckoutProvider(supabase,checkoutClaim.attemptId,()=>bepaidResponse.json());
 
     if (!bepaidResponse.ok || bepaidResult.errors) {
       // PATCH PAYMENTS+REMINDERS v3 S3: persist provider decline reason for diagnostics (subscription branch).
@@ -1342,6 +1134,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         },
       });
 
+      await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, (bepaidResponse.status >= 500 || [408,409,429].includes(bepaidResponse.status)) ? 'unknown' : 'failed', { success: false, error: 'bepaid_subscription_create_failed' });
       return {
         success: false,
         error: bepaidResult.message || bepaidResult.errors?.base?.[0] || 'bePaid subscription creation failed',
@@ -1365,6 +1158,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           meta: { ...preSubMeta, rollback_reason: 'bepaid_no_subscription_or_redirect_url', rollback_at: new Date().toISOString() },
         })
         .eq('id', subscriptionV2Id);
+      await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'unknown', { success: false, error: 'bepaid_subscription_response_incomplete' });
       return { success: false, error: 'bePaid did not return a subscription URL' };
     }
 
@@ -1382,6 +1176,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       currency: 'BYN',
       interval_days: intervalDays,
       meta: {
+        checkout_attempt_id:checkoutClaim.attemptId,
         tracking_id: trackingId,
         checkout_url: redirectUrl,
         checkout_created_at: new Date().toISOString(),
@@ -1432,14 +1227,13 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       amount: amountByn,
       reason: 'initial_subscription',
     };
-    const { error: subMetaActiveErr } = await supabase.from('orders_v2').update({
-      meta: {
-        ...subMetaWithRouting,
+    const { error: subMetaActiveErr } = await supabase.rpc('crm_merge_checkout_metadata', {
+      p_order_id:order.id, p_history_entry:subTokenHistoryEntry,
+      p_patch: {
         bepaid_subscription_id: String(bepaidSubId),
         active_checkout_token: String(bepaidSubId),
         active_checkout_kind: 'bepaid_subscription_id',
         checkout_created_at: new Date().toISOString(),
-        checkout_tokens_history: [subTokenHistoryEntry],
         // B2 corrective. Explicit orders_v2 snapshot — не полагаемся на spread.
         charge_notifications: chargeNotifSnapshot,
         charge_notifications_source: chargeNotifPolicy.source,
@@ -1457,7 +1251,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             }
           : {}),
       },
-    }).eq('id', order.id);
+    });
     if (subMetaActiveErr) console.error('[payment_checkout] subscription order meta merge failed', { order_id: order.id, payment_type: 'subscription', error: subMetaActiveErr });
 
     // PATCH INSTALLMENT-PUBLIC-LINK: связать pre-created subscriptions_v2 с bepaid_subscription_id.
@@ -1513,12 +1307,13 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       if (replaceAuditErr) console.error('[payment_checkout] subscription.replaced audit insert failed', { order_id: order.id, replacement_of_subscription_v2_id, error: replaceAuditErr });
     }
 
-    return {
-      success: true,
-      redirect_url: redirectUrl,
-      order_id: order.id,
-      payment_type: 'subscription',
+    const readyResult: CreateCheckoutSuccess = {
+      success: true, redirect_url: redirectUrl, order_id: order.id,
+      order_number: order.order_number, payment_type: 'subscription', subscription_v2_id: subscriptionV2Id,
     };
+    if (subMetaActiveErr || subLinkErr || provSubError) throw new Error('checkout_subscription_persist_failed');
+    await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'ready', readyResult);
+    return readyResult;
 
   } else {
     return { success: false, error: 'Invalid payment_type. Expected: one_time or subscription' };

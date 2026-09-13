@@ -1,3 +1,4 @@
+import { isPaymentCheckoutAlive, paymentCheckoutExpiresAt } from './payment-checkout-lifetime.ts';
 /* eslint-disable @typescript-eslint/no-explicit-any -- provider payloads and generated Supabase rows are runtime-validated below */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { createBepaidAuthHeader, getBepaidCredsStrict, isBepaidCredsError } from './bepaid-credentials.ts';
@@ -10,8 +11,7 @@ function checkoutUrlFrom(link: PaymentLink): string | null {
   const repayment = link?.meta?.repayment;
   if (repayment?.checkout_state !== 'ready') return null;
   const url = String(repayment?.checkout_url || '');
-  const issued = Date.parse(String(repayment?.checkout_created_at || ''));
-  return /^https:\/\/checkout\.bepaid\.by\//.test(url) && Number.isFinite(issued) && Date.now() - issued < 15 * 60_000
+  return /^https:\/\/checkout\.bepaid\.by\//.test(url) && isPaymentCheckoutAlive(repayment?.checkout_created_at)
     ? url
     : null;
 }
@@ -132,7 +132,7 @@ export async function createExistingInstallmentCheckout(input: {
           settings: { success_url: successUrl, decline_url: `${origin}/pay/${link.url_token}?status=decline`,
             fail_url: `${origin}/pay/${link.url_token}?status=fail`, notification_url: notificationUrl,
             language: 'ru', customer_fields: { read_only: ['email'] } },
-          order: { amount: schedule[0], currency: 'BYN', description, tracking_id: trackingId,
+          order: { expired_at: paymentCheckoutExpiresAt(), amount: schedule[0], currency: 'BYN', description, tracking_id: trackingId,
             additional_data: { repayment_link_id: link.id, original_order_id: context.order.id } },
           customer: { email: profile.email, first_name: profile.full_name?.split(' ')[0] || undefined,
             last_name: profile.full_name?.split(' ').slice(1).join(' ') || undefined },

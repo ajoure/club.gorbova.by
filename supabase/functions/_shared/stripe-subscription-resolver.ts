@@ -18,25 +18,16 @@
 //   customer.subscription.deleted  = sync lifecycle only
 //   invoice.payment_failed         = grace lifecycle only (no revoke, no CRM fail).
 //
-// STOP-GATE:
-//   - НЕ менять grant-access-for-order (только вызывать).
-//   - НЕ трогать entitlements / access_rules напрямую.
-//   - НЕ revoke доступ.
-//   - НЕ трогать bePaid.
-//   - НЕ создавать новых таблиц / RPC / cron.
-//   - HTTP 200 + manual_review при любом conflict; никаких INSERT.
-//
-// Idempotency:
-//   - Уровень event = provider_events_idem_unique (вне резолвера, в webhook).
-//   - Уровень activation (invoice.paid) = SELECT-before-INSERT по
-//     orders_v2.meta->stripe.invoice_id (см. B-2, утверждённый default).
+// Invoice and payment persistence is atomic in crm_settle_stripe_invoice.
+// Receipt identity is (Stripe account, invoice), independent of event ordering
+// and the metadata of later receipts attached to the same purchase.
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { readAcquiringSecret } from './acquiring/vault.ts';
 import { consumePaymentLinkForOrder } from './consume-payment-link.ts';
+import { resolveOrderRouting, buildNegativeSnapshot, applyCrmStageOnTerminal } from './crm-routing.ts';
 import { materializeStripeDocumentLinks } from './stripe-receipt-materialize.ts';
 
-type SupabaseClient = ReturnType<typeof createClient>;
 
 export interface StripeEvent {
   id: string;
@@ -165,7 +156,7 @@ async function findPendingSub(supabase: SupabaseClient, subv2Id: string) {
 async function loadSubV2(supabase: SupabaseClient, subv2Id: string) {
   const { data, error } = await supabase
     .from('subscriptions_v2')
-    .select('id, user_id, product_id, tariff_id, status, meta, access_start_at, access_end_at, billing_type')
+    .select('id, user_id, product_id, tariff_id, status, meta, order_id, access_start_at, access_end_at, billing_type')
     .eq('id', subv2Id)
     .maybeSingle();
   if (error) throw new Error(`loadSubV2: ${error.message}`);
@@ -650,7 +641,7 @@ export async function onInvoicePaid(
   const linesData0 = ((((invoice.lines as any) ?? {}).data ?? [])[0] ?? null) as any;
   const parentSubDetails = ((invoice.parent as any)?.subscription_details ?? null) as any;
   const stripeSubId =
-    ((invoice.subscription as string | null) ?? null)
+    (invoice.subscription as string | null)
     ?? (parentSubDetails?.subscription as string | null)
     ?? (linesData0?.parent?.subscription_item_details?.subscription as string | null)
     ?? null;
@@ -671,27 +662,6 @@ export async function onInvoicePaid(
       extra: { invoice_id },
     });
     return { note: 'unknown_invoice_no_subscription', manual_review: true };
-  }
-
-  // ---- Idempotency: invoice.id already materialized? ----
-  const { data: existingOrders, error: existErr } = await supabase
-    .from('orders_v2')
-    .select('id, status, paid_amount')
-    .filter('meta->stripe->>invoice_id', 'eq', invoice_id)
-    .limit(1);
-  if (existErr) {
-    throw new Error(`invoice_paid_idem_check: ${existErr.message}`);
-  }
-  if (existingOrders && existingOrders.length > 0) {
-    const existingOrder = existingOrders[0] as any;
-    await writeAudit(supabase, {
-      event, account_code,
-      action: 'stripe.invoice.paid.duplicate',
-      result: 'noop',
-      subscription_v2_id: null, provider_subscription_id: stripeSubId,
-      extra: { invoice_id, existing_order_id: existingOrder.id },
-    });
-    return { order_id: existingOrder.id, note: 'invoice_paid_duplicate' };
   }
 
   // ---- Resolve subv2 (order-independent: tolerate invoice.paid arriving BEFORE customer.subscription.created) ----
@@ -863,6 +833,15 @@ export async function onInvoicePaid(
   const isSubscriptionCreate = (invoice.billing_reason ?? null) === 'subscription_create';
   const isActivationInvoice = wasPendingBeforeActivation || isSubscriptionCreate;
 
+  // Renewals also belong to the product pipeline. Existing pending purchases
+  // retain their original snapshot and manual-stage protection.
+  offer_id ??= (subMetaStripe.tariff_offer_id as string | null) ?? null;
+  const routing = await resolveOrderRouting(supabase, { offer_id, tariff_id:subv2.tariff_id, product_id:subv2.product_id });
+  const routingSnapshot = routing.ok && routing.snapshot ? routing.snapshot : buildNegativeSnapshot({
+    reason:routing.reason || 'unknown', offer_id, tariff_id:subv2.tariff_id, product_id:subv2.product_id,
+    resolved_via:routing.resolved_via ?? 'none', candidates_count:routing.candidates_count ?? 0,
+  });
+
   // ---- Materialize orders_v2 (activation write-path) ----
   const order_number = `STRIPE-${invoice_id}`.slice(0, 64);
   const orderInsert = {
@@ -879,7 +858,10 @@ export async function onInvoicePaid(
     provider: 'stripe',
     provider_payment_id: pi_id ?? invoice_id,
     payer_type: 'individual',
+    pipeline_id: routing.ok ? routing.snapshot?.pipeline_id : null,
+    pipeline_stage_id: routing.ok ? routing.snapshot?.stage_on_success : null,
     meta: {
+      crm_routing_snapshot:routingSnapshot,
       stripe: {
         invoice_id,
         subscription_id: stripeSubId,
@@ -900,23 +882,6 @@ export async function onInvoicePaid(
       ...(md_pli && isActivationInvoice ? { payment_link_id: md_pli } : {}),
     },
   };
-
-  const { data: orderCreated, error: orderErr } = await supabase
-    .from('orders_v2')
-    .insert(orderInsert)
-    .select('id')
-    .single();
-  if (orderErr || !orderCreated) {
-    await writeAudit(supabase, {
-      event, account_code,
-      action: 'stripe.invoice.paid.order_insert_failed',
-      result: 'error',
-      subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
-      extra: { invoice_id, error: orderErr?.message ?? 'unknown' },
-    });
-    throw new Error(`orders_v2 insert failed: ${orderErr?.message}`);
-  }
-  const order_id = (orderCreated as any).id as string;
 
   // ---- payments_v2 ----
   // Stripe API 2026-04+: invoice.payment_intent is null. Fall back to Stripe API GET /v1/invoices/{id}/payments.
@@ -948,36 +913,24 @@ export async function onInvoicePaid(
     }
   }
 
-  let payment_id: string | undefined;
-  const provider_payment_id = pi_id ?? charge_id_from_api ?? invoice_id; // last-resort: invoice_id keeps row 1:1 with invoice
-  {
-    const { data: existingP } = await supabase
-      .from('payments_v2')
-      .select('id')
-      .eq('provider_payment_id', provider_payment_id)
-      .maybeSingle();
-    if (existingP) {
-      payment_id = (existingP as any).id;
-    } else {
-      const { data: pIns } = await supabase
-        .from('payments_v2')
-        .insert({
-          order_id,
-          provider: 'stripe',
-          provider_payment_id,
-          amount: amount_major,
-          currency,
-          status: 'succeeded',
-          paid_at: new Date().toISOString(),
-          meta: {
-            stripe: { invoice_id, subscription_id: stripeSubId, payment_intent_id: pi_id, charge_id: charge_id_from_api, account_code, source: 'invoice.paid', api_2026_04_fallback: !pi_id },
-          },
-        })
-        .select('id')
-        .maybeSingle();
-      payment_id = (pIns as any)?.id;
-    }
+  const provider_payment_id = pi_id ?? charge_id_from_api ?? invoice_id;
+  const pendingOrderId = (isSubscriptionCreate || (subv2.status === 'pending' && invoice.billing_reason !== 'subscription_cycle')) ? ((subv2 as any).order_id ?? ps.order_id ?? null) : null;
+  const { data: settlement, error: settlementError } = await supabase.rpc('crm_settle_stripe_invoice', {
+    p_order: { ...orderInsert, provider_payment_id },
+    p_pending_order_id: pendingOrderId,
+    p_payment: {
+      provider: 'stripe', provider_payment_id, amount: amount_major, currency,
+      status: 'succeeded', paid_at: new Date().toISOString(),
+      meta: { stripe: { invoice_id, subscription_id: stripeSubId, payment_intent_id: pi_id,
+        charge_id: charge_id_from_api, account_code, source: 'invoice.paid', api_2026_04_fallback: !pi_id } },
+    },
+  });
+  if (settlementError || !settlement?.order_id || !settlement?.payment_id) {
+    throw new Error('stripe_invoice_settlement_failed');
   }
+  const order_id = settlement.order_id as string;
+  const payment_id = settlement.payment_id as string;
+  await applyCrmStageOnTerminal(supabase, order_id, 'success', 'stripe_invoice_paid');
 
   // Phase 8-C: materialize subscription invoice document links into
   // payments_v2.meta.stripe.{hosted_invoice_url,invoice_pdf}.
@@ -1162,7 +1115,7 @@ export async function onInvoicePaid(
   return {
     order_id, payment_id,
     subscription_v2_id: subv2.id, provider_subscription_id: stripeSubId,
-    note: 'activated',
+    note: settlement.duplicate ? 'invoice_paid_duplicate' : 'activated',
   };
 }
 
@@ -1178,9 +1131,7 @@ async function onInvoicePaymentFailed(
   const invoice = event.data.object as Record<string, unknown>;
   const invoice_id = invoice.id as string;
   const stripeSubId =
-    ((invoice.subscription as string | null) ?? null)
-    ?? (((invoice.parent as any)?.subscription_details?.subscription as string | null) ?? null)
-    ?? null;
+    (invoice.subscription as string | null) ?? (invoice.parent as any)?.subscription_details?.subscription ?? null;
 
   if (!stripeSubId) {
     await writeAudit(supabase, {
@@ -1221,15 +1172,10 @@ async function onInvoicePaymentFailed(
   // ---- Phase 3.4 B: dunning snapshot ----------------------------------------
   // Извлекаем сигналы failure из invoice.
   const pi_id_failed =
-    ((invoice.payment_intent as string | null) ?? null)
+    (invoice.payment_intent as string | null)
     ?? null;
-  const last_failure_reason =
-    ((((invoice as any).last_finalization_error?.message) as string | null) ?? null)
-    ?? (((((invoice as any).charge_attempts ?? [])[0]?.failure_message) as string | null) ?? null)
-    ?? ((((invoice as any).payment_settings?.payment_method_options) as unknown)
-      ? null
-      : null)
-    ?? null;
+  const last_failure_reason = (invoice as any).last_finalization_error?.message
+    ?? (invoice as any).charge_attempts?.[0]?.failure_message ?? null;
   const attempt_count_raw = (invoice.attempt_count as number | null) ?? null;
   const next_payment_attempt_raw = (invoice.next_payment_attempt as number | null) ?? null;
   const next_payment_attempt_iso = (typeof next_payment_attempt_raw === 'number' && next_payment_attempt_raw > 0)

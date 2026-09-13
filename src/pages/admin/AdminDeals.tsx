@@ -1,3 +1,4 @@
+import { dealStatusLabel } from "@/lib/deals/dealFinancialKind";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
@@ -195,6 +196,7 @@ function buildDealsQuery(
       customer_email,
       customer_phone,
       final_price,
+      paid_amount,
       currency,
       discount_percent,
       is_trial,
@@ -212,12 +214,10 @@ function buildDealsQuery(
       products_v2(id, name, code, category),
       tariffs(id, name),
       profiles:profile_id(id, user_id, full_name, email, phone, avatar_url),
-      payments_v2(id, status, paid_at, created_at, card_holder, meta)
+      payments_v2(id, status, amount, refunded_amount, transaction_type, is_deleted, paid_at, created_at, card_holder, meta)
     `, { count: "estimated" })
-    // Cap the embedded payments to the latest one only — table only needs
-    // the payer name from the most recent payment (see getLatestPayerName).
+    // All receipts are needed to distinguish a gift from later attached money.
     .order("paid_at", { referencedTable: "payments_v2", ascending: false, nullsFirst: false })
-    .limit(1, { referencedTable: "payments_v2" })
     // Stage 4R.1: hide soft-deleted orders from the active admin deals list
     .eq("is_deleted", false);
 
@@ -804,6 +804,7 @@ export default function AdminDeals() {
           customer_email,
           customer_phone,
           final_price,
+          paid_amount,
           currency,
           discount_percent,
           is_trial,
@@ -820,7 +821,7 @@ export default function AdminDeals() {
           products_v2(id, name, code, category),
           tariffs(id, name),
           profiles:profile_id(id, user_id, full_name, email, phone, avatar_url),
-          payments_v2(id, status, paid_at, created_at, card_holder, meta)
+          payments_v2(id, status, amount, refunded_amount, transaction_type, is_deleted, paid_at, created_at, card_holder, meta)
         `)
         .eq("id", selectedDealId)
         .maybeSingle();
@@ -1442,7 +1443,7 @@ export default function AdminDeals() {
             <TableBody>
               {visibleDeals.map((deal) => {
                 const profile = resolveDealProfile(deal, fallbackProfilesMap);
-                const statusConfig = getStatusConfig(deal.status);
+                const statusConfig = { ...getStatusConfig(deal.status), label: dealStatusLabel(deal, getStatusConfig(deal.status).label) };
                 const StatusIcon = statusConfig.icon;
                 const payments = (deal.payments_v2 as any[]) || [];
                 const paidPayments = payments.filter(p => p.status === "paid");

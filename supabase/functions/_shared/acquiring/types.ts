@@ -12,6 +12,8 @@ export interface AcquiringContext {
 }
 
 export interface CheckoutRequest {
+  /** Stable ID of the attempt; permits a new session after the previous one expires. */
+  checkout_attempt_id?: string;
   order_id: string;
   amount: number;          // minor units (kopecks/cents)
   currency: string;
@@ -32,6 +34,7 @@ export interface CheckoutRequest {
 }
 
 export interface CheckoutResponse {
+  outcome_unknown?: boolean;
   ok: boolean;
   redirect_url?: string;
   session_id?: string;

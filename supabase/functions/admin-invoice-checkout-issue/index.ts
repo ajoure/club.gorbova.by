@@ -1,3 +1,4 @@
+import { claimPendingPurchase, finishCheckoutAttempt } from '../_shared/pending-purchase.ts';
 /**
  * admin-invoice-checkout-issue
  * ────────────────────────────────────────────────────────────────────────────
@@ -209,7 +210,7 @@ Deno.serve(async (req) => {
   const { data: numData, error: numErr } = await admin.rpc("generate_order_number");
   if (numErr || !numData) return json({ error: "generate_order_number_failed", message: numErr?.message }, 500);
   const orderNumber = numData as string;
-  const invoiceNumber = orderNumber;
+  let invoiceNumber = orderNumber;
 
   const payerType: "legal_entity" | "entrepreneur" | "individual" =
     ld?.client_type === "entrepreneur"
@@ -273,7 +274,8 @@ Deno.serve(async (req) => {
     base_price: composableQuote.subtotal,
     final_price: composableQuote.total,
     currency: composableQuote.currency || product.currency || "BYN",
-    status: "draft",
+    status: "pending",
+    paid_amount: 0,
     payer_type: payerType,
     customer_email: targetProfile.email,
     reconcile_source: "admin_invoice_checkout",
@@ -284,14 +286,10 @@ Deno.serve(async (req) => {
     orderInsert.pipeline_stage_id = routingSnapshot.stage_on_pending;
   }
 
-  const { data: newOrder, error: orderErr } = await admin
-    .from("orders_v2")
-    .insert(orderInsert)
-    .select("id, order_number")
-    .single();
-  if (orderErr || !newOrder) {
-    return json({ error: "create_order_failed", message: orderErr?.message }, 500);
-  }
+  const checkoutClaim = await claimPendingPurchase(admin, orderInsert, 'invoice', 'bank');
+  if (checkoutClaim.reusedResult) return json(checkoutClaim.reusedResult);
+  const newOrder = checkoutClaim.order;
+  invoiceNumber = (newOrder.meta?.invoice_number as string) || newOrder.order_number;
 
   let orderGroupId: string | null = null;
   if (composableQuote.items.length > 1 || composableQuote.adjustment_amount !== 0) {
@@ -300,17 +298,18 @@ Deno.serve(async (req) => {
         primaryOrderId: newOrder.id,
         quote: composableQuote,
         source: "admin_invoice_checkout",
-        idempotencyKey: `admin-invoice:${newOrder.id}`,
+        idempotencyKey: `invoice:${newOrder.id}`,
       });
     } catch (error) {
       await admin.from("orders_v2").update({
-        status: "cancelled",
+        status: "failed",
         meta: {
           ...orderMeta,
           composable_materialization_error: (error as Error).message,
           manual_review_required: true,
         },
       }).eq("id", newOrder.id);
+      await finishCheckoutAttempt(admin, checkoutClaim.attemptId, 'failed', {success:false,error:'composable_order_materialization_failed'});
       return json({ error: "composable_order_materialization_failed" }, 500);
     }
   }
@@ -489,7 +488,8 @@ Deno.serve(async (req) => {
     }
   }
 
-  return json({
+  const readyResult = {
+    success: true,
     order_id: newOrder.id,
     order_group_id: orderGroupId,
     order_number: newOrder.order_number,
@@ -501,5 +501,7 @@ Deno.serve(async (req) => {
     payer_type: payerType,
     total: composableQuote.total,
     currency: composableQuote.currency,
-  });
+  };
+  await finishCheckoutAttempt(admin, checkoutClaim.attemptId, documentId ? 'ready' : 'failed', readyResult);
+  return json(readyResult);
 });

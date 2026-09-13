@@ -1,3 +1,4 @@
+import type { DealFinancialEvidence } from '@/lib/deals/dealFinancialKind';
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { moveDealToStage } from "@/services/pipelineService";
@@ -26,6 +27,10 @@ export interface BoardDeal {
   responsible_user_id: string | null;
   responsible_name: string | null;
   is_trial: boolean;
+  meta?: unknown;
+  paid_amount?: number | null;
+  reconcile_source?: string | null;
+  payments_v2?: DealFinancialEvidence["payments_v2"];
 }
 
 interface UseDealsBoardOpts {
@@ -52,7 +57,8 @@ export function useDealsBoard({ pipelineId, search, productId, tariffIds, dateFr
         .select(`
           id, order_number, status, final_price, currency, company_id, responsible_user_id,
           updated_at, created_at, pipeline_stage_id, pipeline_id,
-          is_trial,
+          is_trial, meta, paid_amount, reconcile_source,
+          payments_v2(status, amount, refunded_amount, transaction_type, is_deleted),
           products_v2(name),
           tariffs(name),
           profiles:profile_id(full_name, email, avatar_url)
@@ -134,6 +140,10 @@ export function useDealsBoard({ pipelineId, search, productId, tariffIds, dateFr
         responsible_user_id: d.responsible_user_id || null,
         responsible_name: d.responsible_user_id ? responsibleNames.get(d.responsible_user_id) || null : null,
         is_trial: d.is_trial || false,
+        meta: d.meta,
+        paid_amount: d.paid_amount,
+        reconcile_source: d.reconcile_source,
+        payments_v2: d.payments_v2,
       }));
     },
     enabled: !!pipelineId,

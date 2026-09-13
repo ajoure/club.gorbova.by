@@ -335,9 +335,9 @@ async function audit(
  *   is_active = true AND offer_type = 'pay_now' AND meta->crm_routing->>'enabled' = 'true'
  *
  * Outcomes:
- *  - exactly 1 candidate → resolve via that offer_id, returns positive snapshot.
+ *  - one distinct validated routing tuple → resolve a deterministic offer.
  *  - 0 candidates → { ok:false, reason:'no_offer_for_tariff', resolved_via:'tariff_fallback', candidates_count:0 }
- *  - >1 candidates → { ok:false, reason:'ambiguous_offers_for_tariff', resolved_via:'tariff_fallback', candidates_count:N }
+ *  - >1 distinct routes or malformed duplicate configs → { ok:false, reason:'ambiguous_offers_for_tariff', resolved_via:'tariff_fallback', candidates_count:N }
  *
  * NOTE: writes nothing to DB; pure resolver. Snapshot persistence is the caller's job
  * via buildNegativeSnapshot() + INSERT into orders_v2.
@@ -378,11 +378,18 @@ export async function resolveOfferRoutingWithFallback(
     return { ok: false, reason: 'no_offer_for_tariff', resolved_via: 'tariff_fallback', candidates_count: 0 };
   }
   if (enabledCandidates.length > 1) {
-    return { ok: false, reason: 'ambiguous_offers_for_tariff', resolved_via: 'tariff_fallback', candidates_count: enabledCandidates.length };
+    const signatures = new Set(enabledCandidates.map((candidate:any) => {
+      const c=candidate.meta.crm_routing;
+      const tuple=[c.pipeline_id,c.stage_on_pending,c.stage_on_success,c.stage_on_failed];
+      return tuple.every(isUuid) ? JSON.stringify(tuple) : `invalid:${candidate.id}`;
+    }));
+    if (signatures.size !== 1) {
+      return { ok: false, reason: 'ambiguous_offers_for_tariff', resolved_via: 'tariff_fallback', candidates_count: enabledCandidates.length };
+    }
   }
-
-  const r = await resolveOfferRouting(supabase, enabledCandidates[0].id as string);
-  return { ...r, resolved_via: 'tariff_fallback', candidates_count: 1 };
+  const selected=[...enabledCandidates].sort((a:any,b:any)=>String(a.id).localeCompare(String(b.id)))[0];
+  const r = await resolveOfferRouting(supabase, selected.id as string);
+  return { ...r, resolved_via: 'tariff_fallback', candidates_count: enabledCandidates.length };
 }
 
 /**

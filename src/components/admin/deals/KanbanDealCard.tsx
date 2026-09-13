@@ -1,3 +1,4 @@
+import { isFreeDeal } from "@/lib/deals/dealFinancialKind";
 import { memo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
@@ -247,6 +248,7 @@ export const KanbanDealCard = memo(function KanbanDealCard({
             {formatCurrency(Number(deal.final_price || 0), deal.currency)}
           </span>
 
+          {isFreeDeal(deal) && <Badge variant="outline" className="text-xs">Бесплатно</Badge>}
           {highValue && (
             <TrendingUp className="h-3 w-3 text-emerald-500" />
           )}

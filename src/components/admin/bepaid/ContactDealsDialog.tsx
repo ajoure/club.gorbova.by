@@ -1,3 +1,4 @@
+import { dealStatusLabel } from "@/lib/deals/dealFinancialKind";
 import { useState, useMemo } from "react";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { resolveModuleDisplayMetaBatch } from "@/lib/deals/resolveModuleDisplayMeta";
@@ -223,7 +224,8 @@ export default function ContactDealsDialog({
                   </TableHeader>
                   <TableBody>
                     {deals.map((deal) => {
-                      const statusConfig = STATUS_CONFIG[deal.status] || STATUS_CONFIG.pending;
+                      const rawStatusConfig = STATUS_CONFIG[deal.status] || STATUS_CONFIG.pending;
+                      const statusConfig = { ...rawStatusConfig, label: dealStatusLabel(deal, rawStatusConfig.label) };
                       const StatusIcon = statusConfig.icon;
                       const dealPayments = payments?.filter(p => p.order_id === deal.id) || [];
                       

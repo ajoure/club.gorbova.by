@@ -1,3 +1,6 @@
+import { reusePendingSubscriptionCheckout } from '../_shared/pending-subscription-checkout.ts';
+import { requestCheckoutProvider, claimPendingPurchase, lookupPendingCheckout, finishCheckoutAttempt } from '../_shared/pending-purchase.ts';
+import { resolveOrderRouting, buildNegativeSnapshot } from '../_shared/crm-routing.ts';
 import {cbAlumniOfferAllowed} from '../_shared/sales-runtime/checkout-auth.ts';
 import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -343,6 +346,16 @@ Deno.serve(async (req) => {
     amountCents = referralQuote.finalAmountMinor;
     const referralMeta = referralDiscountMeta(referralQuote);
 
+    const pendingProposal = {
+      user_id:userId, product_id:productId, tariff_id:tariff.id, offer_id:effectiveOfferId || null,
+      final_price:amountCents/100, currency, meta:{...referralMeta, replacement_of_subscription_v2_id:replacement_of_subscription_v2_id ?? null},
+      purchase_snapshot: {access_days:tariff.access_days || 30,is_trial:false},
+    };
+    const recoveredCheckout = await reusePendingSubscriptionCheckout(supabase,pendingProposal,'bepaid');
+    if(recoveredCheckout) return new Response(JSON.stringify(recoveredCheckout), {headers:{...corsHeaders,'Content-Type':'application/json'}});
+    const reusedCheckout = await lookupPendingCheckout(supabase,pendingProposal,'subscription','bepaid');
+    if (reusedCheckout) return new Response(JSON.stringify(reusedCheckout), {headers:{...corsHeaders,'Content-Type':'application/json'}});
+
     // === PATCH PAYMENT-CONFLICT: shared exact-pair guard + replacement validation ===
     if (!userId || !productId || !tariff?.id) {
       console.error('[bepaid-sub-checkout] STOP-guard: missing user/product/tariff for conflict check', {
@@ -463,9 +476,12 @@ Deno.serve(async (req) => {
 
     const orderNumber = generateOrderNumber();
     const amountMoney = amountCents / 100;
-    const { data: order, error: orderError } = await supabase
-      .from('orders_v2')
-      .insert({
+    const routing = await resolveOrderRouting(supabase, {offer_id:effectiveOfferId,tariff_id:tariff.id,product_id:productId});
+    const routingSnapshot = routing.ok && routing.snapshot ? routing.snapshot : buildNegativeSnapshot({
+      reason:routing.reason || 'unknown',offer_id:effectiveOfferId || null,tariff_id:tariff.id,product_id:productId,
+      resolved_via:routing.resolved_via ?? 'none', candidates_count:routing.candidates_count ?? 0,
+    });
+    const checkoutClaim = await claimPendingPurchase(supabase, {
         user_id: userId,
         profile_id: profileId,
         product_id: productId,
@@ -479,7 +495,11 @@ Deno.serve(async (req) => {
         currency,
         status: 'pending',
         deal_date: new Date().toISOString(),
+        pipeline_id:routing.ok ? routing.snapshot?.pipeline_id : null,
+        pipeline_stage_id:routing.ok ? routing.snapshot?.stage_on_pending : null,
         meta: {
+          crm_routing_snapshot:routingSnapshot,
+          replacement_of_subscription_v2_id:replacement_of_subscription_v2_id ?? null,
           payment_type: 'subscription',
           payment_flow: 'provider_managed_checkout',
           source: 'bepaid-create-subscription-checkout',
@@ -503,17 +523,10 @@ Deno.serve(async (req) => {
           planned_access_end_at: subCheckoutPlannedEnd.toISOString(),
           extra: { payment_flow: 'provider_managed_checkout' },
         }),
-      })
-      .select('id')
-      .single();
+      }, 'subscription', 'bepaid');
+    if (checkoutClaim.reusedResult) return new Response(JSON.stringify(checkoutClaim.reusedResult), {headers:{...corsHeaders,'Content-Type':'application/json'}});
+    const order = checkoutClaim.order;
 
-    if (orderError) {
-      console.error('[bepaid-sub-checkout] Order creation error:', orderError);
-      return new Response(JSON.stringify({ error: 'Failed to create order' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
 
     // STOP-guard: order must have an id before creating subscription
     if (!order?.id) {
@@ -561,6 +574,7 @@ Deno.serve(async (req) => {
           status: 'failed',
           meta: { source: 'bepaid-create-subscription-checkout', race_insert_avoided: true, race_insert_avoided_at: new Date().toISOString() },
         }).eq('id', order.id);
+        await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'failed', {success:false,error:'already_has_active_subscription'});
         return new Response(JSON.stringify({
           success: false,
           error: 'already_has_active_subscription',
@@ -630,6 +644,7 @@ Deno.serve(async (req) => {
           error: subError.message,
         },
       }).eq('id', order.id);
+      await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'failed', {success:false,error:'subscription_precreate_failed'});
       return new Response(JSON.stringify({ error: 'Failed to create subscription' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -726,17 +741,18 @@ Deno.serve(async (req) => {
     });
 
     const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
-    const bepaidResponse = await fetch('https://api.bepaid.by/subscriptions', {
+    const bepaidResponse = await requestCheckoutProvider(supabase,checkoutClaim.attemptId,()=>fetch('https://api.bepaid.by/subscriptions', {
       method: 'POST',
       headers: {
         'Authorization': bepaidAuth,
+        'RequestID': checkoutClaim.attemptId,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
       body: JSON.stringify(bepaidPayload),
-    });
+    }));
 
-    const bepaidResult = await bepaidResponse.json();
+    const bepaidResult = await requestCheckoutProvider(supabase,checkoutClaim.attemptId,()=>bepaidResponse.json());
     
     // PATCH-2: Log without PII - safe subset only
     console.log('[bepaid-sub-checkout] bePaid response:', {
@@ -757,6 +773,7 @@ Deno.serve(async (req) => {
       // subscription_status enum uses 'canceled' (one L)
       await supabase.from('subscriptions_v2').update({ status: 'canceled' }).eq('id', subscription.id);
       
+      await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, (bepaidResponse.status >= 500 || [408,409,429].includes(bepaidResponse.status)) ? 'unknown' : 'failed', {success:false,error:'bepaid_subscription_create_failed'});
       return new Response(JSON.stringify({ 
         error: 'Failed to create bePaid subscription',
         details: bepaidResult.message || bepaidResult.errors?.base?.[0] || 'Unknown error',
@@ -770,7 +787,8 @@ Deno.serve(async (req) => {
     const bepaidSubId = bepaidSubscription.id;
     const redirectUrl = bepaidSubscription.checkout_url || bepaidSubscription.redirect_url;
 
-    if (!bepaidSubId) {
+    if (!bepaidSubId || !redirectUrl) {
+      await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'unknown', {success:false,error:'bepaid_subscription_response_incomplete'});
       console.error('[bepaid-sub-checkout] No subscription ID in response');
       return new Response(JSON.stringify({ error: 'No subscription ID returned from bePaid' }), {
         status: 500,
@@ -807,6 +825,7 @@ Deno.serve(async (req) => {
           checkout_url_present: !!redirectUrl,
         },
         meta: {
+          checkout_attempt_id:checkoutClaim.attemptId,checkout_url:redirectUrl,checkout_created_at:new Date().toISOString(),
           tracking_id: trackingId,
           display_title: planTitle,
           display_description: planDescription,
@@ -866,7 +885,7 @@ Deno.serve(async (req) => {
 
     console.log(`[bepaid-sub-checkout] Created subscription checkout for user ${userId}`);
 
-    return new Response(JSON.stringify({
+    const readyResult = {
       success: true,
       bepaid_subscription_id: bepaidSubId,
       redirect_url: redirectUrl,
@@ -875,7 +894,11 @@ Deno.serve(async (req) => {
       amount: amountCents / 100,
       currency,
       interval_days: intervalDays,
-    }), {
+
+    };
+    if (provSubError) throw new Error('provider_subscription_persist_failed');
+    await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'ready', readyResult);
+    return new Response(JSON.stringify(readyResult), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 

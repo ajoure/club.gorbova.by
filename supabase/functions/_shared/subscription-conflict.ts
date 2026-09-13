@@ -41,7 +41,7 @@ export const CONFLICTING_STATUSES = ['active', 'trial'] as const;
  * получает несколько sbs_* и после оплаты старой ссылки возможны двойные
  * списания. failed_attempt — активный retry-цикл bePaid.
  */
-export const BLOCKING_PROVIDER_STATES = ['active', 'trial', 'pending', 'past_due', 'failed_attempt'] as const;
+export const BLOCKING_PROVIDER_STATES = ['active', 'trial', 'pending', 'redirecting', 'past_due', 'failed_attempt'] as const;
 
 /** Финальные статусы, разрешённые для заменяемой подписки (из живого enum). */
 export const TERMINAL_STATUSES = ['canceled', 'superseded', 'expired', 'expired_reentry'] as const;
@@ -241,6 +241,13 @@ export async function validateReplacementSubscription(
       error: `Заменяемая подписка ещё не отменена (статус: ${oldSub.status}). Сначала отмените её у провайдера.`,
     };
   }
+
+  // A terminal local row alone does not authorize another recurring mandate.
+  const conflict = await checkSubscriptionConflict(supabase, { user_id, product_id });
+  if (conflict.status === 'error') return conflict;
+  if (conflict.status === 'conflict') return {
+    status: 'error', error: 'У провайдера остаётся действующая подписка или незавершённая оплата. Требуется сверка подписки.',
+  };
 
   console.log('[subscription-conflict] replacement validated (product-level, tariff-agnostic)', {
     replacement_of_subscription_v2_id, user_id, product_id,

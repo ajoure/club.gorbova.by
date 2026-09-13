@@ -10,7 +10,6 @@
  *   либо локально: deno test supabase/functions/_shared/crm-routing.test.ts --allow-env
  */
 
-import "https://deno.land/std@0.224.0/dotenv/load.ts";
 import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { resolveOfferRouting, applyCrmStageOnTerminal, resolveOfferRoutingWithFallback, buildNegativeSnapshot } from "./crm-routing.ts";
 
@@ -56,6 +55,7 @@ function makeSupabase(state: MockState): any {
           return { data: state.offer ?? null, error: null };
         }
         if (table === "crm_pipelines") return { data: state.pipeline ?? null, error: null };
+        if (table === "crm_pipeline_stages") return {data:(state.stages ?? defaultStages()).find(s=>s.id===_eqs.find(([key])=>key==="id")?.[1]) ?? null,error:null};
         if (table === "orders_v2") return { data: state.order ?? null, error: null };
         return { data: null, error: null };
       },
@@ -248,7 +248,7 @@ Deno.test("applyCrmStageOnTerminal: failed happy path", async () => {
   assertEquals(state.audits[0].action, "crm_stage_applied_failed");
 });
 
-Deno.test("applyCrmStageOnTerminal: manual pipeline change → skip", async () => {
+Deno.test("applyCrmStageOnTerminal: financial terminal stage overrides an interim manual pipeline move", async () => {
   const otherPipeline = "99999999-9999-9999-9999-999999999999";
   const state: MockState = {
     order: {
@@ -259,13 +259,13 @@ Deno.test("applyCrmStageOnTerminal: manual pipeline change → skip", async () =
   };
   const sb = makeSupabase(state);
   const r = await applyCrmStageOnTerminal(sb, ORDER_ID, "success", "webhook_paid");
-  assertEquals(r.applied, false);
-  assertEquals(r.reason, "manual_pipeline_change");
-  assertEquals(state.updates.length, 0);
-  assertEquals(state.audits[0].action, "crm_stage_apply_skipped_manual_override");
+  assertEquals(r.applied, true);
+  assertEquals(state.updates[0].values.pipeline_id, PIPELINE_ID);
+  assertEquals(state.updates[0].values.pipeline_stage_id, STAGE_SUCCESS);
+  assertEquals(state.audits[0].meta.manual_override_enforced, true);
 });
 
-Deno.test("applyCrmStageOnTerminal: manual stage change → skip", async () => {
+Deno.test("applyCrmStageOnTerminal: financial terminal stage overrides an interim manual open stage", async () => {
   const state: MockState = {
     order: {
       id: ORDER_ID, pipeline_id: PIPELINE_ID, pipeline_stage_id: STAGE_OTHER_OPEN,
@@ -275,9 +275,9 @@ Deno.test("applyCrmStageOnTerminal: manual stage change → skip", async () => {
   };
   const sb = makeSupabase(state);
   const r = await applyCrmStageOnTerminal(sb, ORDER_ID, "success", "webhook_paid");
-  assertEquals(r.applied, false);
-  assertEquals(r.reason, "manual_stage_change");
-  assertEquals(state.updates.length, 0);
+  assertEquals(r.applied, true);
+  assertEquals(state.updates[0].values.pipeline_stage_id, STAGE_SUCCESS);
+  assertEquals(state.audits[0].meta.manual_override_enforced, true);
 });
 
 Deno.test("applyCrmStageOnTerminal: idempotent — already at target", async () => {
@@ -379,4 +379,23 @@ Deno.test("B.0 buildNegativeSnapshot: structural fields", () => {
   assertEquals(ns.resolved_via, "tariff_fallback");
   assertEquals(ns.candidates_count, 0);
   assert(typeof ns.resolved_at === "string" && ns.resolved_at.length > 0);
+});
+
+Deno.test("Equivalent enabled offers resolve once without changing the offers", async () => {
+  const state:MockState={
+    offersById:{[OFFER_ID]:{id:OFFER_ID,meta:{crm_routing:validRouting()},tariff_id:TARIFF_ID}},
+    tariffOfferCandidates:[{id:OFFER_ID_2,meta:{crm_routing:validRouting()}},{id:OFFER_ID,meta:{crm_routing:validRouting()}}],
+    pipeline:{id:PIPELINE_ID,name:'Sales'},stages:defaultStages(),updates:[],audits:[],
+  };
+  const result=await resolveOfferRoutingWithFallback(makeSupabase(state),{tariff_id:TARIFF_ID});
+  assertEquals(result.ok,true); assertEquals(result.candidates_count,2);
+  assertEquals(result.snapshot?.stage_on_pending,STAGE_PENDING); assertEquals(state.updates,[]);
+});
+Deno.test("Different installment and full-payment stages remain ambiguous without the offer", async () => {
+  const sb=makeSupabase({tariffOfferCandidates:[
+    {id:OFFER_ID,meta:{crm_routing:validRouting()}},
+    {id:OFFER_ID_2,meta:{crm_routing:{...validRouting(),stage_on_pending:STAGE_OTHER_OPEN}}},
+  ],updates:[],audits:[]});
+  const result=await resolveOfferRoutingWithFallback(sb,{tariff_id:TARIFF_ID});
+  assertEquals(result.ok,false); assertEquals(result.reason,'ambiguous_offers_for_tariff');
 });

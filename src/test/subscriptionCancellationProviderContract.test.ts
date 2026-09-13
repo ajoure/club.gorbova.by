@@ -71,7 +71,7 @@ describe("provider-backed subscription cancellation", () => {
 
   it("blocks another checkout while a same-product provider subscription is pending", () => {
     expect(subscriptionConflict).toContain(
-      "['active', 'trial', 'pending', 'past_due', 'failed_attempt']",
+      "['active', 'trial', 'pending', 'redirecting', 'past_due', 'failed_attempt']",
     );
   });
 

@@ -5074,98 +5074,43 @@ Deno.serve(async (req) => {
         });
       }
 
-      // IDEMPOTENCY: order already paid
+      // Idempotency belongs to the receipt, not the order or latest checkout
+      // token. A different successful receipt on an already-paid purchase is
+      // still money and must reach the ledger.
       if (linkOrderV2.status === 'paid') {
-        console.log('[WEBHOOK-LINK] Order already paid (idempotency):', parsedOrderId);
+        const { data: recordedReceipt, error: receiptLookupError } = await supabase
+          .from('payments_v2').select('id, status')
+          .eq('order_id', linkOrderV2.id).eq('provider', 'bepaid')
+          .eq('provider_payment_id', transactionUid).maybeSingle();
+        if (receiptLookupError) throw new Error('link_receipt_lookup_failed');
+        if (!isLinkSuccessful || recordedReceipt?.status === 'succeeded') {
+          await recordWebhookEvent(supabase, {
+            provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+            tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
+            outcome: 'already_processed', http_status: 200, processing_ms: Date.now() - startTime,
+          });
+          return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
+            status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      // Never suppress confirmed money from an older checkout. Unknown UIDs
+      // are not assigned to the latest token: tracking_id proves the order,
+      // but does not prove which session issued an otherwise unknown receipt.
+      const linkTokenMeta = (linkOrderV2.meta || {}) as Record<string, any>;
+      const tokenHistory = Array.isArray(linkTokenMeta.checkout_tokens_history) ? linkTokenMeta.checkout_tokens_history : [];
+      const observedToken = tokenHistory.find((entry: any) => entry?.observed_uids?.includes(transactionUid))?.token;
+      if (!isLinkSuccessful && observedToken && linkTokenMeta.active_checkout_token && observedToken !== linkTokenMeta.active_checkout_token) {
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
           tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
-          outcome: 'already_processed', http_status: 200,
-          processing_ms: Date.now() - startTime,
+          outcome: 'stale_token_ignored', http_status: 200, processing_ms: Date.now() - startTime,
         });
-        return new Response(JSON.stringify({ ok: true, status: 'already_processed', reason: 'order_already_paid' }), {
+        return new Response(JSON.stringify({ ok: true, status: 'stale_token_ignored' }), {
           status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-
-      // ====================================================================
-      // STEP A: STALE-TOKEN GUARD (one-time link_order)
-      // Контекст: после внедрения reuse (Шаг B) по одному order_id может быть
-      // несколько checkout-попыток (T1, T2…). Каждая попытка создаёт свой
-      // transaction_uid на стороне bePaid. Актуальной считается ТОЛЬКО
-      // последняя — meta.active_checkout_token.
-      //
-      // Алгоритм:
-      //   1. Если в order.meta.checkout_tokens_history НЕТ массива → legacy/чистый
-      //      сценарий (нет reuse) → guard SKIP, обычная обработка.
-      //   2. Иначе ищем transactionUid в history[].observed_uids[]:
-      //      - если найден под токеном == active_checkout_token → актуальный, пропускаем;
-      //      - если найден под другим (старым) токеном → STALE → audit + return 200;
-      //      - если впервые встречается → привязываем к active_checkout_token (append).
-      // ====================================================================
-      try {
-        const linkMeta = (linkOrderV2.meta || {}) as Record<string, any>;
-        const activeToken: string | null = linkMeta.active_checkout_token || null;
-        const tokensHistory: any[] = Array.isArray(linkMeta.checkout_tokens_history) ? linkMeta.checkout_tokens_history : [];
-
-        if (activeToken && tokensHistory.length > 0 && transactionUid) {
-          let foundUnderToken: string | null = null;
-          for (const entry of tokensHistory) {
-            const observed: string[] = Array.isArray(entry?.observed_uids) ? entry.observed_uids : [];
-            if (observed.includes(transactionUid)) {
-              foundUnderToken = entry.token || null;
-              break;
-            }
-          }
-
-          if (foundUnderToken && foundUnderToken !== activeToken) {
-            // STALE: callback от устаревшего checkout-token'а
-            console.warn('[WEBHOOK-LINK] STALE TOKEN: ignoring callback', { order_id: parsedOrderId, transactionUid, foundUnderToken, activeToken });
-            await supabase.from('audit_logs').insert({
-              actor_type: 'system',
-              actor_label: 'bepaid-webhook',
-              action: 'webhook_stale_token_ignored',
-              created_at: new Date().toISOString(),
-              meta: {
-                order_id: parsedOrderId,
-                transaction_uid: transactionUid,
-                stale_token: foundUnderToken,
-                active_token: activeToken,
-                bepaid_status: transactionStatus,
-                tracking_id: rawTrackingId,
-              },
-            });
-            await recordWebhookEvent(supabase, {
-              provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-              tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
-              outcome: 'stale_token_ignored', http_status: 200,
-              processing_ms: Date.now() - startTime,
-            });
-            return new Response(JSON.stringify({ ok: true, status: 'stale_token_ignored' }), {
-              status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-          }
-
-          if (!foundUnderToken) {
-            // Впервые видим этот uid → привязываем к active_checkout_token
-            const updatedHistory = tokensHistory.map((entry: any) => {
-              if (entry?.token === activeToken) {
-                const obs: string[] = Array.isArray(entry.observed_uids) ? entry.observed_uids : [];
-                return { ...entry, observed_uids: [...obs, transactionUid] };
-              }
-              return entry;
-            });
-            await supabase.from('orders_v2').update({
-              meta: { ...linkMeta, checkout_tokens_history: updatedHistory },
-            }).eq('id', linkOrderV2.id);
-            (linkOrderV2 as any).meta = { ...linkMeta, checkout_tokens_history: updatedHistory };
-          }
-        }
-      } catch (guardErr) {
-        console.error('[WEBHOOK-LINK] Stale-token guard error (non-fatal):', guardErr);
-      }
-      // END STEP A guard
-      // ====================================================================
 
       // Handle non-successful statuses
       if (!isLinkSuccessful) {
@@ -5449,17 +5394,10 @@ Deno.serve(async (req) => {
       console.log('[WEBHOOK-LINK] payments_v2', linkPayResult.action, linkPayResult.id);
 
 
-      // 5. Update orders_v2 → paid
-      const linkOrderMeta = (linkOrderV2.meta && typeof linkOrderV2.meta === 'object') ? linkOrderV2.meta : {};
-      await supabase.from('orders_v2').update({
-        status: 'paid',
-        paid_amount: linkPaymentAmount,
-        meta: { ...linkOrderMeta, bepaid_transaction_uid: transactionUid,
-          // PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-BACKFILL
-          ...( !linkOrderMeta?.payment_flow ? { payment_flow: 'bepaid_link_payment' } : {} ),
-        },
-        updated_at: new Date().toISOString(),
-      }).eq('id', linkOrderV2.id);
+      // Roll up all confirmed receipts under the order lock so concurrent
+      // successful sessions cannot overwrite one another's paid amount.
+      const { error: settleError } = await supabase.rpc('crm_refresh_paid_purchase', { p_order_id: linkOrderV2.id });
+      if (settleError) throw new Error('link_purchase_settlement_failed');
       console.log('[WEBHOOK-LINK] Order updated to paid:', linkOrderV2.id);
       // CRM routing — Layer A: применить closed_won (если есть snapshot и не было manual override)
       try { await applyCrmStageOnTerminal(supabase, linkOrderV2.id, 'success', 'webhook_link_paid'); }

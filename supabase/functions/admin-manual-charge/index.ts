@@ -1,3 +1,6 @@
+import { claimPendingPurchase, finishCheckoutAttempt } from '../_shared/pending-purchase.ts';
+import { chargeAttemptState, chargeRequest } from '../_shared/pending-charge.ts';
+import { resolveOrderRouting, buildNegativeSnapshot, applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
@@ -90,6 +93,7 @@ Deno.serve(async (req) => {
 
     type ChargeCardResult = {
       success: boolean;
+      outcome_unknown?: boolean;
       uid?: string;
       error?: string;
       response?: any;
@@ -106,7 +110,7 @@ Deno.serve(async (req) => {
       currency: string,
       description: string,
       trackingId: string,
-      meta?: { order_id?: string; payment_id?: string },
+      meta?: { order_id?: string; payment_id?: string; checkout_attempt_id?: string },
     ): Promise<ChargeCardResult> {
       // Canonical origin — ВСЕГДА https://gorbova.by (admin может быть в Lovable preview).
       const origin = 'https://gorbova.by';
@@ -149,18 +153,28 @@ Deno.serve(async (req) => {
         currency: chargePayload.request.currency,
       });
 
-      const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
+      const sendCharge = () => fetch('https://gateway.bepaid.by/transactions/payments', {
         method: 'POST',
         headers: {
           'Authorization': bepaidAuth,
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'X-API-Version': '2',
+          ...(meta?.checkout_attempt_id ? {'RequestID':meta.checkout_attempt_id} : {}),
         },
         body: JSON.stringify(chargePayload),
       });
 
-      const chargeResult = await chargeResponse.json();
+      const chargeResponse = meta?.checkout_attempt_id ? await chargeRequest(supabase,meta.checkout_attempt_id,sendCharge) : await sendCharge();
+      const chargeResult = meta?.checkout_attempt_id ? await chargeRequest(supabase,meta.checkout_attempt_id,()=>chargeResponse.json()) : await chargeResponse.json();
+      if(meta?.checkout_attempt_id) {
+        const state=chargeAttemptState(chargeResponse.status,chargeResult.transaction);
+        await finishCheckoutAttempt(supabase,meta.checkout_attempt_id,state,state==='ready' ? {
+          success:true,status:'processing',order_id:meta.order_id,payment_id:trackingId,
+          requires_3ds:chargeResult.transaction?.status==='incomplete',redirect_url:chargeResult.transaction?.redirect_url ?? null,
+        } : {success:false,error:state==='failed'?'payment_declined':'charge_outcome_unknown'});
+        if(state==='unknown') return {success:false,outcome_unknown:true,error:'charge_outcome_unknown'};
+      }
       console.log('bePaid response received', {
         status: chargeResponse.status,
         transactionStatus: chargeResult?.transaction?.status ?? null,
@@ -310,9 +324,8 @@ Deno.serve(async (req) => {
       const manualPlannedEnd = new Date(manualNow);
       manualPlannedEnd.setDate(manualPlannedEnd.getDate() + manualAccessDays);
 
-      const { data: order, error: orderError } = await supabase
-        .from('orders_v2')
-        .insert({
+      const routing=await resolveOrderRouting(supabase,{product_id,tariff_id});
+      const proposedOrder={
           order_number: orderNumber,
           user_id,
           product_id,
@@ -349,17 +362,20 @@ Deno.serve(async (req) => {
             reconcile_source: 'admin_manual',
             extra: { charged_by: user.id },
           }),
-        })
-        .select()
-        .single();
-
-      if (orderError) {
-        console.error('Order creation error:', orderError);
-        return new Response(JSON.stringify({ success: false, error: 'Failed to create order' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
+        };
+      const checkoutClaim=await claimPendingPurchase(supabase,{
+        ...proposedOrder,
+        pipeline_id:routing.ok ? routing.snapshot?.pipeline_id ?? null : null,
+        pipeline_stage_id:routing.ok ? routing.snapshot?.stage_on_pending ?? null : null,
+        meta:{...proposedOrder.meta,crm_routing_snapshot:routing.ok && routing.snapshot ? routing.snapshot : buildNegativeSnapshot({
+          reason:routing.reason || 'unknown',offer_id:null,tariff_id,product_id,resolved_via:routing.resolved_via ?? 'none',
+          candidates_count:routing.candidates_count ?? 0,primary_reason:routing.primary_reason ?? null,
+        })},
+      },'one_time','bepaid','','charge');
+      if(checkoutClaim.reusedResult) return new Response(JSON.stringify(checkoutClaim.reusedResult),{
+        headers:{...corsHeaders,'Content-Type':'application/json'},
+      });
+      const order=checkoutClaim.order;
 
       // Create payment record
       const { data: payment, error: paymentError } = await supabase
@@ -374,6 +390,7 @@ Deno.serve(async (req) => {
           payment_token: paymentMethod.provider_token,
           is_recurring: false,
           meta: { 
+            checkout_attempt_id:checkoutClaim.attemptId,
             type: 'admin_manual_charge',
             description,
             charged_by: user.id,
@@ -385,8 +402,7 @@ Deno.serve(async (req) => {
 
       if (paymentError) {
         console.error('Payment record error:', paymentError);
-        // Cleanup the order
-        await supabase.from('orders_v2').delete().eq('id', order.id);
+        await finishCheckoutAttempt(supabase,checkoutClaim.attemptId,'failed',{success:false,error:'payment_record_failed'});
         return new Response(JSON.stringify({ success: false, error: 'Failed to create payment record' }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -400,9 +416,18 @@ Deno.serve(async (req) => {
         'BYN',
         description || 'Ручное списание',
         payment.id,
-        { order_id: order.id, payment_id: payment.id },
+        { order_id: order.id, payment_id: payment.id,checkout_attempt_id:checkoutClaim.attemptId },
       );
 
+      if(chargeResult.outcome_unknown) return new Response(JSON.stringify({success:false,error:'charge_outcome_unknown',order_id:order.id}),{
+        status:503,headers:{...corsHeaders,'Content-Type':'application/json'},
+      });
+      if(!chargeResult.success && !chargeResult.requires_3ds && ['incomplete','pending','processing'].includes(chargeResult.status || '')) {
+        await supabase.from('payments_v2').update({provider_payment_id:chargeResult.uid || chargeResult.response?.transaction?.uid}).eq('id',payment.id).eq('status','processing');
+        return new Response(JSON.stringify({success:true,status:'processing',order_id:order.id,payment_id:payment.id}),{
+          headers:{...corsHeaders,'Content-Type':'application/json'},
+        });
+      }
       if (chargeResult.success) {
         // Update payment as succeeded
         await supabase
@@ -415,16 +440,11 @@ Deno.serve(async (req) => {
             card_brand: paymentMethod.brand,
             card_last4: paymentMethod.last4,
           })
-          .eq('id', payment.id);
+          .eq('id', payment.id).eq('status','processing');
 
-        // Update order as paid/completed
-        await supabase
-          .from('orders_v2')
-          .update({
-            status: 'paid',
-            paid_amount: amount / 100,
-          })
-          .eq('id', order.id);
+        const {error:moneyError}=await supabase.rpc('crm_refresh_paid_purchase',{p_order_id:order.id});
+        if(moneyError) throw new Error('manual_charge_money_rollup_failed');
+        await applyCrmStageOnTerminal(supabase,order.id,'success','admin_manual_charge_paid');
 
         // Phase 1: Calculate access dates using calendar month from config
         const now = new Date();
@@ -551,7 +571,7 @@ Deno.serve(async (req) => {
               provider_response: chargeResult.response,
               error_message: chargeResult.error,
             })
-            .eq('id', payment.id);
+            .eq('id', payment.id).eq('status','processing');
 
           await supabase
             .from('orders_v2')
@@ -602,18 +622,18 @@ Deno.serve(async (req) => {
             error_message: chargeResult.error,
             provider_response: chargeResult.response,
           })
-          .eq('id', payment.id);
+          .eq('id', payment.id).eq('status','processing');
 
         await supabase
           .from('orders_v2')
           .update({
-            status: 'cancelled',
+            status: 'failed',
             meta: {
               ...order.meta,
               error: chargeResult.error,
             },
           })
-          .eq('id', order.id);
+          .eq('id', order.id).eq('status','pending');
 
         // Audit log for failed charge
         await supabase.from('audit_logs').insert({

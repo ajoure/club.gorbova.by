@@ -50,11 +50,17 @@ export type StripePreCreateSubscriptionParams = {
   tariff_id: string;
   tariff_offer_id: string;
   account_code: string;
+  test_mode: boolean;
+  expected_amount_major: number;
+  expected_currency: string;
   business_stream: string | null;
   /** Только для Checkout Session — кладётся в customer_email, если customer_id не нужен. */
   customer_email?: string | null;
   /** Public-link path — пробрасываем в metadata Session и subscription_data. */
   payment_link_id?: string | null;
+  /** Canonical pending purchase; omitted by legacy callers. */
+  order_id?: string | null;
+  checkout_attempt_id?: string;
   /** Произвольный helper-вызвавший (для audit и lifecycle.created_by). */
   lifecycle_created_by: string;
   /** Stripe credentials + redirect URLs — резолвит вызывающий (он уже сделал test_mode guard). */
@@ -97,6 +103,7 @@ export interface StripePreCreateSubscriptionError {
   detail?: unknown;
   stripe_error?: unknown;
   rollback_done?: boolean;
+  outcome_unknown?: boolean;
 }
 
 export type StripePreCreateSubscriptionResult =
@@ -242,6 +249,7 @@ export async function stripePreCreateSubscription(
       };
 
   const subInsert = {
+    ...(params.order_id ? { order_id: params.order_id } : {}),
     user_id,
     product_id,
     tariff_id,
@@ -274,6 +282,7 @@ export async function stripePreCreateSubscription(
 
   // ---- 2) Pre-create provider_subscriptions(pending placeholder) ----
   const provInsert = {
+    ...(params.order_id ? { order_id: params.order_id } : {}),
     provider: 'stripe',
     provider_subscription_id: `pending:${subscription_v2_id}`,
     user_id,
@@ -281,6 +290,7 @@ export async function stripePreCreateSubscription(
     state: 'pending',
     currency: inline_price ? inline_price.currency.toUpperCase() : 'BYN',
     meta: {
+      ...(params.checkout_attempt_id ? {checkout_attempt_id:params.checkout_attempt_id} : {}),
       stripe: stripeMetaSnapshot,
       stage: 'pending_pre_create',
       business_stream,
@@ -308,8 +318,10 @@ export async function stripePreCreateSubscription(
     const p = priceCheck.data;
     const drift: string[] = [];
     if (!p.active) drift.push('inactive');
-    // NOTE: drift на livemode сохраняется как в исходной логике (legacy test offers).
-    if (p.livemode !== false) drift.push('livemode');
+    // Saved prices must match this purchase and the configured account mode.
+    if (p.livemode !== !params.test_mode) drift.push('livemode');
+    if (String(p.currency).toUpperCase() !== params.expected_currency.toUpperCase()) drift.push('currency');
+    if (Number(p.unit_amount) !== toStripeMinorUnits(params.expected_amount_major,params.expected_currency)) drift.push('amount');
     if (!p.recurring) drift.push('not_recurring');
     if (drift.length > 0) {
       await rollbackPending(supabase, subscription_v2_id, provider_subscription_row_id, 'price_drift', actor_user_id, lifecycle_created_by);
@@ -318,7 +330,7 @@ export async function stripePreCreateSubscription(
   }
 
   // ---- 4) Stripe Checkout Session create (mode=subscription) ----
-  const idempotencyKey = `subv2:${subscription_v2_id}:create`;
+  const idempotencyKey = params.checkout_attempt_id ? `checkout-attempt:${params.checkout_attempt_id}` : `subv2:${subscription_v2_id}:create`;
   const metaForm: Record<string, string> = {
     'metadata[subscription_v2_id]': subscription_v2_id,
     'metadata[provider_subscription_row_id]': provider_subscription_row_id,
@@ -337,6 +349,10 @@ export async function stripePreCreateSubscription(
     'subscription_data[metadata][business_stream]': business_stream ?? '',
     'subscription_data[metadata][price_id]': price_id ?? '',
   };
+  if (params.order_id) {
+    metaForm['metadata[order_id]'] = params.order_id;
+    metaForm['subscription_data[metadata][order_id]'] = params.order_id;
+  }
   if (inline_price) {
     const inlineMeta: Record<string, string> = {
       'metadata[inline_price]': '1',
@@ -381,7 +397,12 @@ export async function stripePreCreateSubscription(
   }
   if (customer_email) checkoutPayload.customer_email = customer_email;
 
-  const csRes = await stripeForm(stripe_secret_key, 'checkout/sessions', checkoutPayload, idempotencyKey);
+  let csRes;
+  try { csRes=await stripeForm(stripe_secret_key,'checkout/sessions',checkoutPayload,idempotencyKey); }
+  catch { return {ok:false,error:'stripe_checkout_outcome_unknown',outcome_unknown:true}; }
+  if (!csRes.ok && (csRes.status >= 500 || [408,409,429].includes(csRes.status))) {
+    return { ok: false, error: 'stripe_checkout_outcome_unknown', outcome_unknown: true };
+  }
   if (!csRes.ok) {
     // PATCH-SUB-PRICE-2: safe diagnostic log (без секретов / PAN).
     console.error('[stripe-pre-create-subscription] checkout_session_failed', {
@@ -422,7 +443,7 @@ export async function stripePreCreateSubscription(
       checkout_session_id: cs.id,
     },
   };
-  await supabase
+  const { error: subSaveError } = await supabase
     .from('subscriptions_v2')
     .update({ meta: subMetaUpdate })
     .eq('id', subscription_v2_id);
@@ -435,10 +456,12 @@ export async function stripePreCreateSubscription(
     },
     stage: 'pending_checkout_created',
   };
-  await supabase
+  const { error: providerSaveError } = await supabase
     .from('provider_subscriptions')
     .update({ meta: provMetaUpdate })
     .eq('id', provider_subscription_row_id);
+
+  if (subSaveError || providerSaveError) return { ok: false, error: 'stripe_checkout_persist_failed', outcome_unknown: true };
 
   // ---- 6) Audit ----
   await supabase.from('audit_logs').insert({

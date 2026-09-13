@@ -1,3 +1,4 @@
+import { paymentCheckoutExpiresAt } from '../_shared/payment-checkout-lifetime.ts';
 /**
  * payment-dialog-create-bridge-link (PAY-K)
  *
@@ -241,13 +242,13 @@ Deno.serve(async (req) => {
     crypto.getRandomValues(tokenBytes);
     const url_token = Array.from(tokenBytes).map((b) => b.toString(16).padStart(2, '0')).join('');
     const public_url = `${canonicalOrigin}/pay/${url_token}`;
-    const expires_at = new Date(Date.now() + 15 * 60_000).toISOString();
+    const expires_at = paymentCheckoutExpiresAt();
 
     const meta = {
       source: 'payment_dialog_saved_card_bridge',
       internal: true,
       created_for_user: authUser.id,
-      expires_reason: 'saved_card_bridge_15min',
+      expires_reason: 'saved_card_bridge_24h',
     };
 
     const { data: link, error: insertErr } = await supabase

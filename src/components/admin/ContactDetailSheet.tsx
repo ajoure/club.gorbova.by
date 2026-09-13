@@ -1,3 +1,4 @@
+import { isContactMoneyDeal } from "@/lib/deals/dealFinancialKind";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { getSubscriptionChargeCount } from "@/utils/subscriptionChargeCount";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
@@ -509,8 +510,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
   );
   const openTasksCount = contact?.id ? (openTasksForContact?.length ?? 0) : 0;
 
-  // Fetch deals for this contact - only paid/trial/cancelled (not pending/failed payment attempts)
-  // Deals = successful transactions. Payment attempts go to Payments tab.
+  // Contact deals show settled money and explicitly confirmed historical purchases.
   const { data: deals, isLoading: dealsLoading } = useQuery({
     queryKey: ["contact-deals", contact?.id, resolvedUserId],
     queryFn: async () => {
@@ -522,22 +522,28 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         userIds.push(resolvedUserId);
       }
       
-      // Query deals by profile_id OR user_id to catch ghost contact deals
-      // Only include valid deal statuses (not pending/failed payment attempts)
-      const { data, error } = await supabase
-        .from("orders_v2")
-        .select(`
-          *,
-          products_v2(id, name, code, category, public_id),
-          tariffs(id, name, code),
-          payments_v2(id, status, paid_at, created_at, provider_response)
-        `)
-        .or(`profile_id.eq.${contact.id},user_id.in.(${userIds.join(',')})`)
-        .eq("is_deleted", false)
-        .in("status", ['paid', 'partial', 'pending', 'canceled', 'refunded'] as const)
-        .order("deal_date", { ascending: false });
-      if (error) throw error;
-      const rows = data ?? [];
+      // Read all pages before applying the monetary filter: failed/pending
+      // states may still have settled money in the ledger.
+      const moneyRows = [];
+      for (let offset = 0; ; offset += 500) {
+        const { data, error } = await supabase
+          .from("orders_v2")
+          .select(`
+            *,
+            products_v2(id, name, code, category, public_id),
+            tariffs(id, name, code),
+            payments_v2(id, status, amount, refunded_amount, transaction_type, is_deleted, paid_at, created_at, provider_response)
+          `)
+          .or(`profile_id.eq.${contact.id},user_id.in.(${userIds.join(',')})`)
+          .eq("is_deleted", false)
+          .order("deal_date", { ascending: false })
+          .order("id")
+          .range(offset, offset + 499);
+        if (error) throw error;
+        moneyRows.push(...(data ?? []).filter(isContactMoneyDeal));
+        if (!data || data.length < 500) break;
+      }
+      const rows = moneyRows;
       const orderIds = rows.map((deal) => deal.id);
       if (orderIds.length === 0) return rows;
 
@@ -1552,7 +1558,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
         created_at: accessStart.toISOString(), // Use access start date as deal date
         deal_date: accessStart.toISOString(),
         meta: { 
-          source: createDealOnly ? "admin_deal_only" : "admin_grant", 
+          source: createDealOnly ? "admin_deal_only" : "admin_grant",
+          financial_kind: "free_grant",
           granted_by: currentUser?.id,
           granted_by_email: currentUser?.email,
           comment: grantComment || null,
@@ -2044,7 +2051,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo, onOp
                 Доступы {totalActiveAccess > 0 && <Badge variant="secondary" className="ml-1 text-xs">{totalActiveAccess}</Badge>}
               </TabsTrigger>
               <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">
-                Сделки {deals && deals.filter(d => d.status === "paid").length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.filter(d => d.status === "paid").length}</Badge>}
+                Сделки {deals && deals.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.length}</Badge>}
               </TabsTrigger>
               <TabsTrigger value="tasks" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Задачи {openTasksCount > 0 && <Badge variant="secondary" className="ml-1 text-xs">{openTasksCount}</Badge>}
