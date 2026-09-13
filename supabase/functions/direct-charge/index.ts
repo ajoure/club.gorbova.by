@@ -1,4 +1,7 @@
 // @ts-nocheck
+import { claimPendingPurchase, finishCheckoutAttempt } from '../_shared/pending-purchase.ts';
+import { chargeAttemptState, chargeRequest } from '../_shared/pending-charge.ts';
+import { resolveOrderRouting, buildNegativeSnapshot, applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 import {cbAlumniOfferAllowed} from '../_shared/sales-runtime/checkout-auth.ts';
 import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -528,9 +531,8 @@ Deno.serve(async (req) => {
     const fixedCourseEnd = isTrial ? null : courseAccessEnd(tariff.meta);
     const dcPlannedEnd = fixedCourseEnd || new Date(dcNow.getTime() + (isTrial ? effectiveTrialDays : dcAccessDays) * 86_400_000);
 
-    const { data: order, error: orderError } = await supabase
-      .from('orders_v2')
-      .insert({
+    const routing = await resolveOrderRouting(supabase, {offer_id:offer?.id,tariff_id:tariff.id,product_id:productId});
+    const proposedOrder = {
         order_number: orderNumber,
         user_id: user.id,
         product_id: productId,
@@ -580,17 +582,23 @@ Deno.serve(async (req) => {
             installment_count: isInternalInstallment ? installmentCount : null,
           },
         }),
-      })
-      .select()
-      .single();
-
-    if (orderError) {
-      console.error('Order creation error:', orderError);
-      return new Response(JSON.stringify({ success: false, error: 'Failed to create order' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+      };
+    proposedOrder.meta.crm_routing_snapshot = routing.ok && routing.snapshot ? routing.snapshot : buildNegativeSnapshot({
+      reason:routing.reason || 'unknown',offer_id:offer?.id ?? null,tariff_id:tariff.id,product_id:productId,
+      resolved_via:routing.resolved_via ?? 'none',candidates_count:routing.candidates_count ?? 0,primary_reason:routing.primary_reason ?? null,
+    });
+    proposedOrder.pipeline_id=routing.ok ? routing.snapshot?.pipeline_id ?? null : null;
+    proposedOrder.pipeline_stage_id=routing.ok ? routing.snapshot?.stage_on_pending ?? null : null;
+    // Zero-price trial is an access grant, with the existing trial guard above.
+    const checkoutClaim = totalAmount > 0 ? await claimPendingPurchase(supabase, proposedOrder,
+      isInternalInstallment ? 'internal_installment' : 'one_time', 'bepaid', '', 'charge') : null;
+    if (checkoutClaim?.reusedResult) return new Response(JSON.stringify(checkoutClaim.reusedResult), {
+      headers:{...corsHeaders,'Content-Type':'application/json'},
+    });
+    const {data:trialOrder,error:orderError}=checkoutClaim ? {data:null,error:null}
+      : await supabase.from('orders_v2').insert(proposedOrder).select().single();
+    const order=checkoutClaim?.order ?? trialOrder;
+    if(orderError || !order) throw new Error('Failed to create order');
 
     console.log(`Created order ${order.id}`);
 
@@ -790,6 +798,7 @@ Deno.serve(async (req) => {
         is_recurring: isInternalInstallment, // Mark as recurring for installments
         installment_number: isInternalInstallment ? 1 : null,
         meta: { 
+          checkout_attempt_id: checkoutClaim.attemptId,
           payment_method_id: paymentMethod.id,
           is_installment: isInternalInstallment,
           total_installments: isInternalInstallment ? installmentCount : null,
@@ -800,6 +809,7 @@ Deno.serve(async (req) => {
 
     if (paymentError) {
       console.error('Payment record error:', paymentError);
+      await finishCheckoutAttempt(supabase,checkoutClaim.attemptId,'failed',{success:false,error:'payment_record_failed'});
       return new Response(JSON.stringify({ success: false, error: 'Failed to create payment' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -864,26 +874,36 @@ Deno.serve(async (req) => {
       has_saved_payment_token: Boolean(chargePayload.request.credit_card.token),
     });
 
-    const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
+    const chargeResponse = await chargeRequest(supabase,checkoutClaim.attemptId,()=>fetch('https://gateway.bepaid.by/transactions/payments', {
       method: 'POST',
       headers: {
-        'Authorization': `Basic ${bepaidAuth}`,
+        'Authorization': bepaidAuth,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
         'X-API-Version': '2',
+        'RequestID': checkoutClaim.attemptId,
       },
       body: JSON.stringify(chargePayload),
-    });
+    }));
 
     // Log response status for debugging
     console.log(`bePaid charge response status: ${chargeResponse.status}`);
     
-    const chargeResult = await chargeResponse.json();
+    const chargeResult = await chargeRequest(supabase,checkoutClaim.attemptId,()=>chargeResponse.json());
     console.log('[direct-charge] bePaid charge response summary', {
       http_status: chargeResponse.status,
       transaction_status: chargeResult.transaction?.status ?? null,
       transaction_uid: chargeResult.transaction?.uid ?? null,
       requires_redirect: Boolean(chargeResult.transaction?.redirect_url),
+    });
+
+    const attemptState=chargeAttemptState(chargeResponse.status,chargeResult.transaction);
+    await finishCheckoutAttempt(supabase,checkoutClaim.attemptId,attemptState,attemptState==='ready' ? {
+      success:true,order_id:order.id,orderId:order.id,paymentId:payment.id,status:'processing',
+      requiresRedirect:!!chargeResult.transaction?.redirect_url,redirectUrl:chargeResult.transaction?.redirect_url ?? null,
+    } : {success:false,error:attemptState==='failed'?'payment_declined':'charge_outcome_unknown'});
+    if(attemptState==='unknown') return new Response(JSON.stringify({success:false,error:'charge_outcome_unknown',orderId:order.id}),{
+      status:503,headers:{...corsHeaders,'Content-Type':'application/json'},
     });
 
     // Handle non-200 responses from bePaid
@@ -903,12 +923,12 @@ Deno.serve(async (req) => {
           error_message: errorMessage,
           provider_response: chargeResult,
         })
-        .eq('id', payment.id);
+        .eq('id', payment.id).eq('status','processing');
 
       await supabase
         .from('orders_v2')
         .update({ status: 'failed' })
-        .eq('id', order.id);
+        .eq('id', order.id).eq('status','pending');
 
       return new Response(JSON.stringify({
         success: false,
@@ -939,7 +959,7 @@ Deno.serve(async (req) => {
           provider_response: chargeResult,
           error_message: chargeResult.transaction?.message || null,
         })
-        .eq('id', payment.id);
+        .eq('id', payment.id).eq('status','processing');
 
       await supabase
         .from('orders_v2')
@@ -981,29 +1001,20 @@ Deno.serve(async (req) => {
           card_last4: chargeResult.transaction.credit_card?.last_4 || paymentMethod.last4,
           card_brand: chargeResult.transaction.credit_card?.brand || paymentMethod.brand,
         })
-        .eq('id', payment.id);
+        .eq('id', payment.id).eq('status','processing');
 
       if (payUpdateError) {
         console.error('Payment update error:', payUpdateError);
       }
 
-      // Update order
-      const { error: orderPaidError } = await supabase
-        .from('orders_v2')
-        .update({
-          status: 'paid',
-          paid_amount: amount,
-          meta: {
-            ...(order.meta || {}),
-            bepaid_uid: txUid,
-            payment_id: payment.id,
-          },
-        })
-        .eq('id', order.id);
-
-      if (orderPaidError) {
-        console.error('Order paid update error:', orderPaidError);
-      }
+      if(payUpdateError) throw new Error('charge_receipt_persist_failed');
+      const {error:moneyError}=await supabase.rpc('crm_refresh_paid_purchase',{p_order_id:order.id});
+      if(moneyError) throw new Error('charge_money_rollup_failed');
+      const {error:chargeMetaError}=await supabase.rpc('crm_merge_checkout_metadata',{
+        p_order_id:order.id,p_patch:{bepaid_uid:txUid,payment_id:payment.id},
+      });
+      if(chargeMetaError) throw new Error('charge_metadata_persist_failed');
+      await applyCrmStageOnTerminal(supabase,order.id,'success','direct_charge_paid');
 
       // Create or update subscription
       // Apply proration bonus days if upgrading/downgrading tariff
@@ -1123,22 +1134,11 @@ Deno.serve(async (req) => {
           console.log(`[direct-charge] Installment schedule already existed (${scheduleResult.existing_count} rows) — no-op`);
         }
 
-        // Update order to show only first payment as paid
-        const perPaymentAmount = Math.round((totalAmount / installmentCount) * 100) / 100;
-        await supabase
-          .from('orders_v2')
-          .update({
-            paid_amount: perPaymentAmount,
-            meta: {
-              ...(order.meta || {}),
-              bepaid_uid: txUid,
-              payment_id: payment.id,
-              is_installment: true,
-              installment_count: installmentCount,
-              total_amount: totalAmount,
-            },
-          })
-          .eq('id', order.id);
+        // The ledger rollup above owns paid_amount, including concurrent receipts.
+        await supabase.rpc('crm_merge_checkout_metadata',{
+          p_order_id:order.id,p_patch:{bepaid_uid:txUid,payment_id:payment.id,is_installment:true,
+            installment_count:installmentCount,total_amount:totalAmount},
+        });
       }
 
       // Grant Telegram access
@@ -1255,6 +1255,10 @@ Deno.serve(async (req) => {
       );
     }
 
+    if (attemptState==='ready') return new Response(JSON.stringify({success:true,status:'processing',orderId:order.id,paymentId:payment.id}),{
+      headers:{...corsHeaders,'Content-Type':'application/json'},
+    });
+
     // Treat all other statuses as failure (but respond with 200 so the UI doesn't blank-screen)
     const errorMessage =
       chargeResult.transaction?.message || chargeResult.errors?.base?.[0] || 'Payment failed';
@@ -1267,12 +1271,12 @@ Deno.serve(async (req) => {
         provider_response: chargeResult,
         provider_payment_id: txUid || null,
       })
-      .eq('id', payment.id);
+      .eq('id', payment.id).eq('status','processing');
 
     await supabase
       .from('orders_v2')
       .update({ status: 'failed' })
-      .eq('id', order.id);
+      .eq('id', order.id).eq('status','pending');
 
     console.error('Payment failed:', errorMessage);
 

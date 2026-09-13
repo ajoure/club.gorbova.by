@@ -1,3 +1,4 @@
+import { pendingPurchaseContext } from "../../supabase/functions/_shared/pending-purchase";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -58,9 +59,10 @@ describe("sales manager creation and UI contract", () => {
     expect(checkout.match(/responsible_user_id: responsible_user_id \|\| null/g)).toHaveLength(2);
   });
 
-  it("does not reuse a pending checkout owned by another manager", () => {
-    expect(checkout.match(/existingOrderQuery\.eq\('responsible_user_id'/g)).toHaveLength(1);
-    expect(checkout.match(/existingSubOrderQuery\.eq\('responsible_user_id'/g)).toHaveLength(1);
+  it("does not turn a different manager into a second purchase", () => {
+    const first = { offer_id: "offer", responsible_user_id: "manager-a", meta: {} };
+    const second = { ...first, responsible_user_id: "manager-b" };
+    expect(pendingPurchaseContext(first, "one_time")).toEqual(pendingPurchaseContext(second, "one_time"));
   });
 
   it("authorizes service-role payment writers before bypassing RLS", () => {

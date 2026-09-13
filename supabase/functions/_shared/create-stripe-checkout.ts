@@ -1,19 +1,9 @@
+import { reusePendingSubscriptionCheckout } from './pending-subscription-checkout.ts';
+import { claimPendingPurchase, finishCheckoutAttempt, lookupPendingCheckout } from './pending-purchase.ts';
 import { courseAccessEnd } from './course-access-window.ts';
-// Phase 4.1 — Stripe branch for shared public-payment checkout.
-//
-// Cалled from `_shared/create-payment-checkout.ts` ТОЛЬКО когда provider==='stripe'.
-// bePaid-ветка не затрагивается ни на байт.
-//
-// Контракт совпадает с архитектурой bePaid public link:
-//   one_time     → создаём orders_v2 pending provider='stripe', потом Stripe Checkout
-//                  (mode=payment) через _shared/acquiring/stripe-adapter.ts.
-//   subscription → orders_v2 НЕ создаём (Phase 3.1/3.2 канон: orders_v2 материализуется
-//                  только из invoice.paid в stripe-webhook). Создаём только pending
-//                  subscriptions_v2 + provider_subscriptions через
-//                  stripe-pre-create-subscription helper. payment_link_id уходит в
-//                  Stripe Session metadata, чтобы webhook мог записать его в order.
-//
-// На ошибку Stripe — FAIL (controlled). НИКАКОГО bePaid fallback.
+// Shared Stripe checkout: one pending CRM purchase owns checkout attempts.
+// First subscription invoice settles that purchase; renewals remain distinct.
+// Activation and access are still owned exclusively by the verified webhook.
 
 import {
   resolveOrderRouting,
@@ -24,7 +14,6 @@ import { buildPurchaseSnapshot } from './build-purchase-snapshot.ts';
 import {
   classifySameProductState,
   validateReplacementSubscription,
-  checkPendingCheckoutConflict,
   type SubscriptionConflict as SharedSubscriptionConflict,
 } from './subscription-conflict.ts';
 import { resolveAdapter } from './acquiring/index.ts';
@@ -49,19 +38,20 @@ export interface StripeBranchParams {
   description?: string;
   offer_id?: string;
   origin?: string;
+  responsible_user_id?: string | null;
   actor_user_id?: string | null;
   actor_type?: 'admin' | 'system';
   account_code?: string | null;
   payment_link_id?: string | null;
   replacement_of_subscription_v2_id?: string;
-  /** Произвольные ключи в orders_v2.meta (для one_time). Subscription orders_v2 не создаёт. */
+  /** Trusted purchase metadata copied at first creation. */
   meta_extra?: Record<string, unknown>;
 }
 
 export interface StripeBranchSuccess {
   success: true;
   redirect_url: string;
-  /** Для one_time — UUID созданного pending orders_v2. Для subscription — null (order ещё не создан). */
+  /** Canonical purchase ID; legacy callers may still return null. */
   order_id: string | null;
   order_number?: string;
   payment_type: 'one_time' | 'subscription';
@@ -189,7 +179,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     const nowD = new Date();
     const plannedEnd = courseAccessEnd(tariff.meta) || new Date(nowD.getTime() + accessDays * 86_400_000);
 
-    const orderMeta: Record<string, unknown> = {
+    let orderMeta: Record<string, unknown> = {
       type: 'public_payment_link_stripe',
       description: description ?? null,
       created_by: actor_user_id ?? null,
@@ -205,12 +195,11 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
       ...(meta_extra ?? {}),
     };
 
-    const { data: order, error: orderError } = await supabase
-      .from('orders_v2')
-      .insert({
+    const checkoutClaim = await claimPendingPurchase(supabase, {
         order_number: orderNumber,
         user_id,
         profile_id: profileId,
+        responsible_user_id: params.responsible_user_id ?? null,
         product_id,
         tariff_id,
         offer_id: offer_id || null,
@@ -243,14 +232,12 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
           is_trial: false,
           extra: { payment_flow: paymentFlow, provider: 'stripe' },
         }),
-      })
-      .select('id')
-      .single();
+      }, 'one_time', 'stripe', resolved_account_code);
+    if (checkoutClaim.reusedResult) return checkoutClaim.reusedResult as StripeBranchSuccess;
+    const order = checkoutClaim.order;
+    orderMeta = { ...orderMeta, ...order.meta };
 
-    if (orderError || !order) {
-      console.error('[create-stripe-checkout] order insert failed', orderError);
-      return { success: false, provider: 'stripe', error: 'order_insert_failed', detail: orderError?.message };
-    }
+
 
     if (!routing.ok) {
       await auditNegativeSnapshot(supabase, {
@@ -293,6 +280,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     const adapter = resolveAdapter('stripe', resolved_account_code);
     const adapterResult = await adapter.createCheckout({
       order_id: order.id,
+      checkout_attempt_id: checkoutClaim.attemptId,
       amount: amountMinor,
       currency: currency.toLowerCase(),
       description: description ?? `${product.name} — ${tariff.name}`,
@@ -339,23 +327,16 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
           account_code: resolved_account_code,
         },
       });
+      await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, adapterResult.outcome_unknown ? 'unknown' : 'failed', { success: false, error: 'stripe_checkout_failed' });
       return { success: false, provider: 'stripe', error: adapterResult.error ?? 'stripe_checkout_failed' };
     }
 
     // Update meta with session_id + customer_id (sticky)
-    await supabase
-      .from('orders_v2')
-      .update({
-        meta: {
-          ...orderMeta,
-          stripe: {
-            account_code: resolved_account_code,
-            checkout_session_id: adapterResult.session_id ?? null,
-            customer_id: customer_id ?? null,
-          },
-        },
-      })
-      .eq('id', order.id);
+    const { error: sessionMetaError } = await supabase.rpc('crm_merge_checkout_metadata', {
+      p_order_id:order.id, p_patch:{ stripe:{ account_code:resolved_account_code,
+        checkout_session_id:adapterResult.session_id ?? null, customer_id:customer_id ?? null } },
+    });
+    if (sessionMetaError) throw new Error('stripe_checkout_metadata_persist_failed');
 
     await supabase.from('audit_logs').insert({
       actor_type: auditActorType,
@@ -376,20 +357,22 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
       },
     });
 
-    return {
+    const readyResult: StripeBranchSuccess = {
       success: true,
       provider: 'stripe',
       payment_type: 'one_time',
       redirect_url: adapterResult.redirect_url ?? '',
       order_id: order.id,
-      order_number: orderNumber,
+      order_number: order.order_number,
       checkout_session_id: adapterResult.session_id ?? undefined,
       account_code: resolved_account_code,
     };
+    await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'ready', readyResult);
+    return readyResult;
   }
 
   // ============================================================
-  // SUBSCRIPTION (orders_v2 НЕ создаём — Phase 3.1/3.2 контракт)
+  // SUBSCRIPTION — the pending purchase is settled by invoice.paid
   // ============================================================
   if (!offer_id) {
     return { success: false, provider: 'stripe', error: 'subscription_requires_offer_id' };
@@ -473,6 +456,17 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
   }
 
 
+  const pendingProposal = {
+    user_id, product_id, tariff_id, offer_id, final_price: amountMajor,
+    currency: currency.toUpperCase(),
+    meta: { ...(meta_extra ?? {}), replacement_of_subscription_v2_id: replacement_of_subscription_v2_id ?? null },
+    purchase_snapshot: {access_days:tariff.access_days || 30,is_trial:false},
+    };
+    const recoveredCheckout = await reusePendingSubscriptionCheckout(supabase,pendingProposal,'stripe', resolved_account_code);
+    if(recoveredCheckout) return recoveredCheckout as StripeBranchSuccess;
+    const reusedCheckout = await lookupPendingCheckout(supabase,pendingProposal,'subscription','stripe', resolved_account_code);
+  if (reusedCheckout) return reusedCheckout as StripeBranchSuccess;
+
   // Replacement vs duplicate guards (same contract as bePaid subscription branch).
   if (replacement_of_subscription_v2_id) {
     const repl = await validateReplacementSubscription(supabase, {
@@ -533,37 +527,39 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     }
   }
 
-  // Provider-aware pending checkout guard.
-  const pendingCheck = await checkPendingCheckoutConflict(supabase, {
-    user_id, product_id, tariff_id, provider: 'stripe',
-  });
-  if (pendingCheck.status === 'error') {
-    return { success: false, provider: 'stripe', error: 'pending_check_failed' };
-  }
-  if (pendingCheck.status === 'pending_conflict' && pendingCheck.pending) {
-    // Re-use checkout_url if pending session still present (same pattern as admin).
-    const url = (pendingCheck.pending as any).checkout_url as string | undefined;
-    if (url && typeof url === 'string' && url.startsWith('http')) {
-      return {
-        success: true,
-        provider: 'stripe',
-        payment_type: 'subscription',
-        redirect_url: url,
-        order_id: null,
-        subscription_v2_id: (pendingCheck.pending as any).subscription_v2_id,
-        account_code: resolved_account_code,
-      };
-    }
-    // Otherwise return controlled conflict.
-    return { success: false, provider: 'stripe', error: 'pending_conflict' };
-  }
-
   let secret: string;
   try {
     secret = await readAcquiringSecret('stripe', resolved_account_code, 'secret_key');
   } catch (e) {
     return { success: false, provider: 'stripe', error: 'stripe_secret_read_failed', detail: String((e as Error)?.message ?? e) };
   }
+
+  const routing = await resolveOrderRouting(supabase, { offer_id, tariff_id, product_id });
+  const crmSnapshot = routing.ok && routing.snapshot ? routing.snapshot : buildNegativeSnapshot({
+    reason: routing.reason || 'unknown', offer_id, tariff_id, product_id,
+    resolved_via: routing.resolved_via ?? 'none', candidates_count: routing.candidates_count ?? 0,
+    primary_reason: routing.primary_reason ?? null,
+  });
+  const checkoutClaim = await claimPendingPurchase(supabase, {
+    user_id, profile_id: profileId, product_id, tariff_id, offer_id,
+    responsible_user_id: params.responsible_user_id ?? null,
+    base_price: amountMajor, final_price: amountMajor, paid_amount: 0,
+    currency: currency.toUpperCase(), status: 'pending', provider: 'stripe',
+    customer_email: customerEmail, deal_date: new Date().toISOString(),
+    pipeline_id: routing.ok ? routing.snapshot?.pipeline_id : null,
+    pipeline_stage_id: routing.ok ? routing.snapshot?.stage_on_pending : null,
+    meta: { ...(meta_extra ?? {}), payment_flow: paymentFlow, business_stream,
+      crm_routing_snapshot: crmSnapshot,
+      replacement_of_subscription_v2_id: replacement_of_subscription_v2_id ?? null,
+      ...(payment_link_id ? { payment_link_id } : {}),
+    },
+    purchase_snapshot: buildPurchaseSnapshot({
+      product_id, product_public_id: product.public_id, product_name: product.name, product_code: product.code,
+      tariff_id, tariff_public_id: tariff.public_id, tariff_name: tariff.name, tariff_code: tariff.code,
+      offer_id, price: amountMajor, currency: currency.toUpperCase(), access_days: tariff.access_days || 30,
+    }),
+  }, 'subscription', 'stripe', resolved_account_code);
+  if (checkoutClaim.reusedResult) return checkoutClaim.reusedResult as StripeBranchSuccess;
 
   const sharedPreParams = {
     supabase,
@@ -572,9 +568,12 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
     tariff_id,
     tariff_offer_id: offer_id,
     account_code: resolved_account_code,
+    test_mode:acct.test_mode,expected_amount_major:amountMajor,expected_currency:currency,
     business_stream,
     customer_email: customerEmail,
     payment_link_id: payment_link_id ?? null,
+    order_id: checkoutClaim.order.id,
+    checkout_attempt_id: checkoutClaim.attemptId,
     lifecycle_created_by: actor_type === 'admin' ? 'admin:public-checkout' : 'public-checkout',
     stripe_secret_key: secret,
     success_url: urls.success_url,
@@ -607,6 +606,7 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
   );
 
   if (!preResult.ok) {
+    await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, preResult.outcome_unknown ? 'unknown' : 'failed', { success: false, error: preResult.error });
     return {
       success: false,
       provider: 'stripe',
@@ -633,19 +633,22 @@ export async function createStripeCheckout(params: StripeBranchParams): Promise<
       price_source: useInlinePrice ? 'inline_payment_link' : 'offer_saved_price_id',
       inline_amount_major: useInlinePrice ? amountMajor : null,
       inline_currency: useInlinePrice ? currency.toUpperCase() : null,
-      note: 'orders_v2_deferred_to_invoice_paid',
+      order_id: checkoutClaim.order.id,
     },
   });
 
-  return {
+  const readyResult: StripeBranchSuccess = {
     success: true,
     provider: 'stripe',
     payment_type: 'subscription',
     redirect_url: preResult.checkout_session.url,
-    order_id: null,
+    order_id: checkoutClaim.order.id,
+    order_number: checkoutClaim.order.order_number,
     subscription_v2_id: preResult.subscription_v2_id,
     provider_subscription_row_id: preResult.provider_subscription_row_id,
     checkout_session_id: preResult.checkout_session.id,
     account_code: resolved_account_code,
   };
+  await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'ready', readyResult);
+  return readyResult;
 }

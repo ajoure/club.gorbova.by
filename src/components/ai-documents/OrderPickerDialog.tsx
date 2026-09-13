@@ -1,3 +1,4 @@
+import { dealStatusLabel, type DealFinancialEvidence } from "@/lib/deals/dealFinancialKind";
 /**
  * OrderPickerDialog — Sprint 8
  *
@@ -14,7 +15,7 @@ import { Loader2, Search, Package } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
-export interface OrderPickResult {
+export interface OrderPickResult extends DealFinancialEvidence {
   id: string;
   order_number: string;
   customer_email: string | null;
@@ -50,7 +51,7 @@ export function OrderPickerDialog({ open, onOpenChange, onSelect }: Props) {
       const term = q.trim();
       let query = supabase
         .from("orders_v2")
-        .select("id, order_number, customer_email, final_price, currency, status, created_at, product_id, products:product_id(name)")
+        .select("id, order_number, customer_email, final_price, currency, status, meta, paid_amount, reconcile_source, created_at, product_id, products:product_id(name)")
         .order("created_at", { ascending: false })
         .limit(40);
 
@@ -71,6 +72,7 @@ export function OrderPickerDialog({ open, onOpenChange, onSelect }: Props) {
         final_price: Number(r.final_price ?? 0),
         currency: r.currency,
         status: r.status,
+        meta: r.meta, paid_amount: r.paid_amount, reconcile_source: r.reconcile_source,
         created_at: r.created_at,
       })) as OrderPickResult[];
     },
@@ -124,7 +126,7 @@ export function OrderPickerDialog({ open, onOpenChange, onSelect }: Props) {
                       : "text-muted-foreground"
                     }
                   >
-                    {STATUS_LABEL[r.status] ?? r.status}
+                    {dealStatusLabel(r, STATUS_LABEL[r.status] ?? r.status)}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
                     {format(new Date(r.created_at), "d MMM yyyy", { locale: ru })}

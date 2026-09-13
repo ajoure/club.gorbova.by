@@ -1,3 +1,4 @@
+import { isFreeDeal } from "@/lib/deals/dealFinancialKind";
 import { useState } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -201,6 +202,9 @@ export function OrderListItem({ order }: OrderListItemProps) {
           Возврат
         </Badge>
       );
+    }
+    if (isFreeDeal(order)) {
+      return <Badge variant="outline" className="text-xs">Бесплатно</Badge>;
     }
     if (order.is_trial && isPaid) {
       return (

@@ -1,3 +1,4 @@
+import { dealStatusLabel } from "@/lib/deals/dealFinancialKind";
 import { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -106,9 +107,10 @@ function groupDealsByProduct(deals: AnyDeal[], moduleMetaMap?: Map<string, any>)
     // For everything else — group by d.product_id, falling back to fullName.
     const isModuleStandalone =
       moduleMeta?.resolutionType === "direct_module" && !!moduleMeta.resolvedModuleProductId;
-    const groupKey = isModuleStandalone
+    const productKey = isModuleStandalone
       ? (moduleMeta!.resolvedModuleProductId as string)
       : (d.product_id || fullName);
+    const groupKey = `${productKey}:${d.currency || "BYN"}`;
     const groupProductId = isModuleStandalone
       ? (moduleMeta!.resolvedModuleProductId as string)
       : (d.product_id || null);
@@ -407,7 +409,7 @@ function DealRow({
         )}
 
         <Badge variant="outline" className={`text-[10px] px-1.5 py-0 h-5 ${statusBadgeClass(deal.status)}`}>
-          {STATUS_LABELS[deal.status] || deal.status}
+          {dealStatusLabel(deal, STATUS_LABELS[deal.status] || deal.status)}
         </Badge>
 
         <span className="text-xs font-medium flex items-center gap-1 whitespace-nowrap">

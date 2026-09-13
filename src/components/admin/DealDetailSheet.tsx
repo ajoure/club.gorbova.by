@@ -1,3 +1,4 @@
+import { dealStatusLabel } from "@/lib/deals/dealFinancialKind";
 import { useEffect, useState, useMemo } from "react";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
@@ -677,7 +678,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
     && refundTotals.paidSum > 0
     && refundTotals.refundedSum + 0.01 >= refundTotals.paidSum;
 
-  const baseStatusConfig = STATUS_CONFIG[deal.status] || { label: deal.status, color: "bg-muted", icon: Clock };
+  const rawStatusConfig = STATUS_CONFIG[deal.status] || { label: deal.status, color: "bg-muted", icon: Clock };
+  const baseStatusConfig = { ...rawStatusConfig, label: dealStatusLabel(deal, rawStatusConfig.label) };
   const statusConfig = isPartialRefund
     ? { label: "Частичный возврат", color: "bg-amber-500/20 text-amber-600", icon: Undo2 }
     : isFullRefund

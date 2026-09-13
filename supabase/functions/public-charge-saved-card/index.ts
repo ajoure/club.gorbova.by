@@ -1,3 +1,6 @@
+import { reserveCheckoutDiscounts } from '../_shared/checkout-discounts.ts';
+import { chargeAttemptState, chargeRequest } from '../_shared/pending-charge.ts';
+import { claimPendingPurchase, finishCheckoutAttempt } from '../_shared/pending-purchase.ts';
 /**
  * public-charge-saved-card — Pay a public payment_link with a saved card token (MIT).
  *
@@ -35,7 +38,6 @@ import {
   auditNegativeSnapshot,
 } from '../_shared/crm-routing.ts';
 import { referralDiscountMeta, resolveReferralCheckoutDiscount } from '../_shared/referral-checkout-discount.ts';
-import { reserveReferralCustomerCredit } from '../_shared/referral-customer-credit.ts';
 import { SAVED_CARDS_DISABLED, savedCardsDisabledResponse } from '../_shared/saved-cards-disabled.ts';
 
 // Active (non-final) payment statuses — verified against payments_v2 enum on 2026-04-26.
@@ -271,24 +273,14 @@ Deno.serve(async (req) => {
       allowImmediateDiscount: true,
     });
     let amountKopecks = referralQuote.finalAmountMinor;
-    const reservation = await reserveReferralCustomerCredit({
-      supabase,
-      userId: targetUserId,
-      chargeAmountMinor: amountKopecks,
-      requestedMinor: Math.max(0, Math.round(Number(customer_credit_requested_minor ?? 0))),
-      checkoutKey: `saved-card:${idempotency_key || crypto.randomUUID()}`,
-    });
-    amountKopecks -= reservation.appliedMinor;
-    const bonusReservation = await supabase.rpc('referral_reserve_partner_bonus', {
-      p_user_id: targetUserId,
-      p_requested_minor: Math.max(0, Math.round(Number(partner_bonus_requested_minor ?? 0))),
-      p_charge_amount_minor: amountKopecks,
-      p_checkout_key: `saved-card:partner-bonus:${partner_bonus_checkout_key || idempotency_key || crypto.randomUUID()}`,
-      p_product_id: link.product_id,
-    });
-    if (bonusReservation.error) return errorResponse('partner_bonus_reservation_failed', 400);
-    const bonusAppliedMinor = Math.max(0, Math.round(Number(bonusReservation.data?.applied_minor ?? 0)));
-    amountKopecks = Math.max(100, amountKopecks - bonusAppliedMinor);
+    const discounts=await reserveCheckoutDiscounts(supabase,{
+      user_id:targetUserId,product_id:link.product_id,tariff_id:link.tariff_id,offer_id:link.offer_id || null,
+      final_price:amountKopecks/100,currency:link.currency,meta:{},
+    },'one_time',Number(customer_credit_requested_minor ?? 0),Number(partner_bonus_requested_minor ?? 0));
+    const reservation={appliedMinor:discounts.creditMinor,reservationId:discounts.creditReservationId};
+    const bonusAppliedMinor=discounts.bonusMinor;
+    const bonusReservation={data:{reservation_id:discounts.bonusReservationId}};
+    amountKopecks=Math.max(100,amountKopecks-discounts.creditPerChargeMinor-discounts.bonusMinor);
     const amountByn = amountKopecks / 100;
     const accessDays = tariff.access_days || 30;
     const nowDt = new Date();
@@ -319,6 +311,7 @@ Deno.serve(async (req) => {
 
     const orderMeta: Record<string, any> = {
       type: 'system_payment_link',
+      ...(discounts.intentId ? {checkout_discount_intent_id:discounts.intentId} : {}),
       description: link.description || null,
       ...(bonusAppliedMinor > 0 ? { referral_partner_bonus_reservation_id: bonusReservation.data?.reservation_id, referral_partner_bonus_applied_minor: bonusAppliedMinor } : {}),
       created_by: null,
@@ -338,9 +331,7 @@ Deno.serve(async (req) => {
       crm_routing_snapshot: crmSnapshot,
     };
 
-    const { data: order, error: orderErr } = await (supabase as any)
-      .from('orders_v2')
-      .insert({
+    const checkoutClaim = await claimPendingPurchase(supabase, {
         order_number: orderNumber,
         user_id: targetUserId,
         profile_id: profileId,
@@ -375,14 +366,10 @@ Deno.serve(async (req) => {
           is_trial: false,
           extra: { payment_flow: 'renewal_one_time', source: 'saved_card_public_pay' },
         }),
-      })
-      .select('id, order_number')
-      .single();
+      }, 'one_time', 'bepaid', '', 'charge');
+    if (checkoutClaim.reusedResult) return jsonResponse(checkoutClaim.reusedResult);
+    const order = checkoutClaim.order;
 
-    if (orderErr || !order) {
-      console.error('[public-charge-saved-card] order insert failed:', orderErr);
-      return errorResponse('order_create_failed', 500);
-    }
 
     if (!routing.ok) {
       await auditNegativeSnapshot(supabase, {
@@ -399,6 +386,7 @@ Deno.serve(async (req) => {
 
     // --- 12. INSERT payment (status=processing pre-gateway) -------------
     const paymentMeta: Record<string, any> = {
+      checkout_attempt_id:checkoutClaim.attemptId,
       payment_link_id: link.id,
       payment_method_id,
       source: 'saved_card_public_pay',
@@ -429,6 +417,7 @@ Deno.serve(async (req) => {
 
     if (payErr || !payment) {
       console.error('[public-charge-saved-card] payment insert failed:', payErr);
+      await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'failed', {success:false,error:'payment_create_failed'});
       return errorResponse('payment_create_failed', 500);
     }
 
@@ -522,19 +511,25 @@ Deno.serve(async (req) => {
     });
 
     const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
-    const chargeResp = await fetch('https://gateway.bepaid.by/transactions/payments', {
+    const chargeResp = await chargeRequest(supabase,checkoutClaim.attemptId,()=>fetch('https://gateway.bepaid.by/transactions/payments', {
       method: 'POST',
       headers: {
         Authorization: bepaidAuth,
         'Content-Type': 'application/json',
         Accept: 'application/json',
         'X-API-Version': '2',
+        'RequestID':checkoutClaim.attemptId,
       },
       body: JSON.stringify(chargePayload),
-    });
-    const chargeResult = await chargeResp.json().catch(() => ({} as any));
+    }));
+    const chargeResult = await chargeRequest(supabase,checkoutClaim.attemptId,()=>chargeResp.json());
 
-    if (!chargeResp.ok) {
+    const attemptState=chargeAttemptState(chargeResp.status,chargeResult?.transaction);
+    if(attemptState==='unknown') {
+      await finishCheckoutAttempt(supabase,checkoutClaim.attemptId,'unknown',{success:false,error:'charge_outcome_unknown'});
+      return errorResponse('charge_outcome_unknown',503);
+    }
+    if (attemptState==='failed') {
       const errMsg = chargeResult?.message || chargeResult?.errors?.base?.[0] || `bePaid error ${chargeResp.status}`;
       console.error('[public-charge-saved-card] gateway error', {
         status: chargeResp.status,
@@ -548,8 +543,8 @@ Deno.serve(async (req) => {
           error_message: errMsg,
           provider_response: sanitizeProviderResponse(chargeResult),
         })
-        .eq('id', payment.id);
-      await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
+        .eq('id', payment.id).eq('status','processing');
+      await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id).eq('status','pending');
 
       await safeAudit(supabase, {
         action: 'payment.saved_card_charge.failed',
@@ -563,6 +558,7 @@ Deno.serve(async (req) => {
         },
       });
 
+      await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'failed', {success:false,error:'payment_declined'});
       return jsonResponse(
         { success: false, error: 'payment_declined', message: errMsg, order_id: order.id },
         400,
@@ -581,7 +577,7 @@ Deno.serve(async (req) => {
         provider_response: sanitizeProviderResponse(chargeResult),
         status: 'processing',
       })
-      .eq('id', payment.id);
+      .eq('id', payment.id).eq('status', 'processing');
 
     // Audit: created (always).
     await safeAudit(supabase, {
@@ -615,7 +611,7 @@ Deno.serve(async (req) => {
     }
 
     // Response: never includes provider_token.
-    return jsonResponse({
+    const readyResult = {
       success: true,
       status: txStatus || 'processing',
       order_id: order.id,
@@ -625,7 +621,13 @@ Deno.serve(async (req) => {
       message: redirectUrl
         ? 'Требуется подтверждение банка. Сейчас откроется страница подтверждения.'
         : 'Платёж создан. Финальный статус подтвердит банк.',
-    });
+    };
+    if (!txUid) {
+      await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'unknown', {success:false,error:'charge_outcome_unknown'});
+      return errorResponse('charge_outcome_unknown', 503);
+    }
+    await finishCheckoutAttempt(supabase, checkoutClaim.attemptId, 'ready', readyResult);
+    return jsonResponse(readyResult);
   } catch (err) {
     console.error('[public-charge-saved-card] unexpected', err);
     return errorResponse('internal_error', 500);

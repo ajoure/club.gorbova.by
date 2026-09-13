@@ -10,6 +10,7 @@ import { buildStripeMetadata, metadataToFormPairs } from './stripe-metadata.ts';
 export const stripeAdapter: AcquiringAdapter = {
   provider: 'stripe',
   async createCheckout(req: CheckoutRequest): Promise<CheckoutResponse> {
+    let submitted = false;
     try {
       // MP-A2-1: account_code is a hard requirement from the caller.
       // No `?? 'stripe_poland'` fallback — callers MUST resolve account via
@@ -80,17 +81,19 @@ export const stripeAdapter: AcquiringAdapter = {
         form.push([pair[0].replace('metadata[', 'payment_intent_data[metadata]['), pair[1]]);
       }
 
+      submitted = true;
       const res = await stripeFetch<{ id: string; url: string }>('/checkout/sessions', {
         secret_key,
         method: 'POST',
         formBody: form,
-        idempotencyKey: `order:${req.order_id}`,
+        idempotencyKey: req.checkout_attempt_id ? `checkout-attempt:${req.checkout_attempt_id}` : `order:${req.order_id}`,
       });
 
       if (!res.ok || !res.data) {
         return {
           ok: false,
           fallback: true,
+          outcome_unknown: res.status >= 500 || res.status === 0,
           error: res.error?.message ?? `stripe_http_${res.status}`,
         };
       }
@@ -103,6 +106,7 @@ export const stripeAdapter: AcquiringAdapter = {
       return {
         ok: false,
         fallback: true,
+        outcome_unknown: submitted,
         error: e instanceof Error ? e.message : 'stripe_unknown_error',
       };
     }

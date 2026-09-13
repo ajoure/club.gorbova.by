@@ -1,3 +1,4 @@
+import { dealStatusLabel } from "@/lib/deals/dealFinancialKind";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -155,8 +156,9 @@ export default function AdminOrdersV2() {
           products_v2(id, name, code),
           tariffs(id, name, code),
           flows(id, name, code),
-          payments_v2(id, provider, provider_payment_id, receipt_url, refunded_amount, refunds, amount, status, meta)
+          payments_v2(id, transaction_type, is_deleted, provider, provider_payment_id, receipt_url, refunded_amount, refunds, amount, status, meta)
         `)
+        .eq("is_deleted", false)
         .order("created_at", { ascending: false })
         .limit(100);
 
@@ -477,7 +479,7 @@ export default function AdminOrdersV2() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={statusConfig.variant}>{statusConfig.label}</Badge>
+                          <Badge variant={statusConfig.variant}>{dealStatusLabel(order, statusConfig.label)}</Badge>
                         </TableCell>
                         {/* Receipt column */}
                         <TableCell>

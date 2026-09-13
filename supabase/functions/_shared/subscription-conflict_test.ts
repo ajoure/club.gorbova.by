@@ -138,19 +138,18 @@ Deno.test("classifySameProductState — replace_other_tariff when active+provide
 });
 
 // =====================================================================
-// PATCH PAYMENT-CONFLICT v4 — unpaid trash MUST NOT block checkout
+// Redirecting is a live provider checkout: reuse it after a provider read.
 // =====================================================================
 
-Deno.test("v4: past_due + redirecting provider → no_existing", async () => {
-  // Ирина-like: локальный past_due с незавершённым redirecting у провайдера
-  // не блокирует; решение определяется provider state, а не локальным статусом.
+Deno.test("past_due + redirecting provider blocks a second mandate", async () => {
+  // Локальный past_due не доказывает истечение ссылки у провайдера.
   const supabase = makeMock({
     subs: [{ id: "v2-pastdue", status: "past_due", tariff_id: TARIFF_A }],
     providerSubByV2: { "v2-pastdue": { provider_subscription_id: "sbs_pd", state: "redirecting" } },
   });
   const r = await classifySameProductState(supabase, { user_id: USER, product_id: PRODUCT, tariff_id: TARIFF_A });
   assertEquals(r.status, "ok");
-  if (r.status === "ok") assertEquals(r.decision, "no_existing");
+  if (r.status === "ok") assertEquals(r.decision, "extend_same_tariff");
 });
 
 Deno.test("pending provider subscription blocks a duplicate same-product checkout", async () => {

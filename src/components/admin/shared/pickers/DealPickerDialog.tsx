@@ -1,3 +1,4 @@
+import { dealStatusLabel, type DealFinancialEvidence } from "@/lib/deals/dealFinancialKind";
 import { useState, useEffect, useCallback } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisp
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { orderStatusRu } from "@/lib/orderStatusLabel";
 
-export interface PickedDeal {
+export interface PickedDeal extends DealFinancialEvidence {
   id: string;
   order_number: string | null;
   status: string | null;
@@ -61,7 +62,7 @@ interface DealContactRow {
   phone?: string | null;
 }
 
-interface DealQueryRow {
+interface DealQueryRow extends DealFinancialEvidence {
   id: string;
   order_number: string | null;
   status: string | null;
@@ -107,6 +108,7 @@ export function DealPickerDialog({
       id: o.id,
       order_number: o.order_number,
       status: o.status,
+      meta: o.meta, paid_amount: o.paid_amount, reconcile_source: o.reconcile_source,
       final_price: Number(o.final_price),
       currency: o.currency,
       created_at: o.created_at,
@@ -128,7 +130,7 @@ export function DealPickerDialog({
       const looksLikeOrderNumber = ORDER_NUM_RE.test(searchTerm) || /^\d/.test(searchTerm);
 
       const baseSelect = `id, order_number, status, final_price, currency, created_at, profile_id, user_id,
-         purchase_snapshot,
+         purchase_snapshot, meta, paid_amount, reconcile_source,
          tariff:tariffs(name),
          product:products_v2(name, category),
          profile:profiles!orders_v2_profile_id_fkey(id, full_name, email, phone)`;
@@ -317,7 +319,7 @@ export function DealPickerDialog({
                             </span>
                             {order.status && (
                               <Badge variant="outline" className="shrink-0 max-w-[92px] truncate text-[10px] px-1.5 py-0 font-normal">
-                                {orderStatusRu(order.status)}
+                                {dealStatusLabel(order, orderStatusRu(order.status))}
                               </Badge>
                             )}
                           </div>
