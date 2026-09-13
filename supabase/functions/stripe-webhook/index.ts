@@ -193,7 +193,7 @@ async function mergeStripeMetaOnOrder(
 
 
 
-async function dispatch(event: StripeEvent, account_code: string): Promise<{ order_id?: string; payment_id?: string; note?: string }> {
+async function dispatch(event: StripeEvent, account_code: string): Promise<{ order_id?: string; payment_id?: string; note?: string; rpc?: { processed: number; results: unknown[] } }> {
   const supabase = svc();
 
   // Phase 3.1 Stage 2 — subscription lifecycle (add-only).

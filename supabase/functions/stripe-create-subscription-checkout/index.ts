@@ -20,7 +20,7 @@
 // На ошибку Stripe API — rollback pending rows.
 // На успех — pending rows остаются, ждут Stage 2 webhook lifecycle.
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors';
 import { requireSuperAdmin } from '../_shared/acquiring/auth-guard.ts';
 import { resolveDefaultStripeAccount } from '../_shared/acquiring/default-account.ts';
@@ -86,7 +86,7 @@ async function stripeGet(secret: string, path: string): Promise<{ ok: boolean; s
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
-  let admin: ReturnType<typeof createClient> | null = null;
+  let admin: SupabaseClient | null = null;
   let actor_user_id: string | null = null;
 
   try {
@@ -432,7 +432,7 @@ Deno.serve(async (req) => {
 });
 
 async function rollbackPending(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseClient,
   subscription_v2_id: string,
   provider_subscription_row_id: string,
   reason: string,

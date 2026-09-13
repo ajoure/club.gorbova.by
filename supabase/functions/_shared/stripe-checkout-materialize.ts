@@ -21,11 +21,10 @@
 //
 // При mismatch → audit + manual_review; никаких INSERT.
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { readAcquiringSecret } from './acquiring/vault.ts';
 import { onInvoicePaid, type StripeEvent, type ResolveResult } from './stripe-subscription-resolver.ts';
 
-type SupabaseClient = ReturnType<typeof createClient>;
 
 export interface ActivateCheckoutInput {
   session: Record<string, unknown>;
