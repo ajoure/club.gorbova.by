@@ -40,4 +40,9 @@ describe('CRM money and free grant presentation', () => {
     ]) expect(isContactMoneyDeal({status:'failed',payments_v2:[payment]})).toBe(false);
   });
 
+  it('does not treat a stale positive order amount on a failed attempt as money', () => {
+    expect(isContactMoneyDeal({ status: 'failed', paid_amount: 250, final_price: 250,
+      payments_v2: [{ status: 'failed', amount: 250 }] })).toBe(false);
+  });
+
 });

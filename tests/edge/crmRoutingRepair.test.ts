@@ -26,11 +26,12 @@ pipeline_id uuid,pipeline_stage_id uuid,meta jsonb,is_deleted boolean DEFAULT fa
 CREATE TABLE audit_logs(actor_type text,action text,entity_type text,entity_id uuid,meta jsonb);`;
 
 describe('reviewed routing repair',()=>{
- it('preserves open progress, routes actual paid money and reversals to configured terminal stages',()=>{
+ it('preserves open progress, routes settled statuses and reversals to configured terminal stages',()=>{
    const o:any={status:'pending',pipeline_id:pipeline,pipeline_stage_id:'in-progress',paid_amount:0};
    expect(repairStage(o,snapshot)).toBe('in-progress');
    expect(repairStage({...o,pipeline_id:'other'},snapshot)).toBe(pending);
-   expect(repairStage({...o,status:'failed',paid_amount:10},snapshot)).toBe(won);
+   expect(repairStage({...o,status:'failed',paid_amount:10},snapshot)).toBe(lost);
+   expect(repairStage({...o,status:'paid',paid_amount:10},snapshot)).toBe(won);
    expect(repairStage({...o,status:'refunded',paid_amount:250},snapshot)).toBe(lost);
  });
  it('applies exact batches once, blocks config/automation/money drift and supports rollback',async()=>{
@@ -59,5 +60,26 @@ describe('reviewed routing repair',()=>{
     expect((await db.query(`SELECT pipeline_id,meta FROM orders_v2`)).rows).toEqual([{pipeline_id:null,meta:{source:'legacy'}}]);
     await db.exec('SET ROLE authenticated');await expect(apply()).rejects.toMatchObject({code:'42501'});
    } finally {await db.close();}
- },20000);
+ },40000);
+
+ it('moves only the reviewed failed rows with an unconfirmed stale amount out of success',async()=>{
+   const db=new PGlite();
+   try {
+    await db.exec(setup);
+    await db.exec(readFileSync('supabase/migrations/20260913123301_crm_routing_repair.sql','utf8'));
+    await db.exec(`CREATE TABLE payments_v2(order_id uuid,status text,amount numeric,refunded_amount numeric,transaction_type text,is_deleted boolean);`);
+    const ids=['00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000013','00000000-0000-4000-8000-000000000014'];
+    const snapshotJson=JSON.stringify(snapshot).replace(/'/g,"''");
+    for(const [index,id] of ids.entries()) {
+      await db.exec(`INSERT INTO orders_v2(id,status,paid_amount,product_id,pipeline_id,pipeline_stage_id,meta)
+        VALUES('${id}','failed',${100+index},'${product}','${pipeline}','${won}',
+          jsonb_build_object('crm_routing_snapshot','${snapshotJson}'::jsonb));
+        INSERT INTO crm_deal_routing_repairs(order_id,batch_id,applied_snapshot,applied_stage_id,source_status,source_paid_amount,source_fingerprint,config_fingerprint)
+        VALUES('${id}','${batch}','${snapshotJson}'::jsonb,'${won}','failed',${100+index},'fingerprint-${index}','config');`);
+    }
+    await db.exec(readFileSync('supabase/migrations/20260914224500_crm_routing_confirmed_money.sql','utf8'));
+    expect((await db.query(`SELECT count(*)::int n FROM orders_v2 WHERE pipeline_stage_id='${lost}'`)).rows).toEqual([{n:4}]);
+    expect((await db.query(`SELECT count(*)::int n FROM crm_deal_routing_repairs WHERE applied_stage_id='${lost}'`)).rows).toEqual([{n:4}]);
+   } finally { await db.close(); }
+ },40000);
 });

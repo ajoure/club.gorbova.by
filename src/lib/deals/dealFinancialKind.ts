@@ -20,7 +20,12 @@ function metadata(deal: DealFinancialEvidence): Record<string, unknown> {
 }
 
 export function hasSettledDealMoney(deal: DealFinancialEvidence): boolean {
-  return Number(deal.paid_amount) > 0 || (deal.payments_v2 ?? []).some(payment =>
+  // `paid_amount` is a denormalized order field. It is useful only after the
+  // order itself reached a settled state; a failed order may retain a stale
+  // positive amount from an unsuccessful provider attempt.
+  const settledOrderAmount = ['paid', 'partial', 'refunded'].includes(deal.status ?? '') &&
+    Number(deal.paid_amount) > 0;
+  return settledOrderAmount || (deal.payments_v2 ?? []).some(payment =>
     payment.is_deleted !== true && !['void', 'Отмена', 'authorization', 'tokenization'].includes(payment.transaction_type ?? '') &&
     settled.has(payment.status ?? '') && (Math.abs(Number(payment.amount)) > 0 || Number(payment.refunded_amount) > 0),
   );
