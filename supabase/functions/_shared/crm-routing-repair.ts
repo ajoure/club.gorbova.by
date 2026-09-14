@@ -7,7 +7,10 @@ export interface RepairOrder {
 
 export function repairStage(order:RepairOrder,snapshot:any):string|null {
   if(order.status==='refunded') return snapshot.stage_on_failed ?? null;
-  if(['paid','partial'].includes(order.status) || Number(order.paid_amount)>0) return snapshot.stage_on_success ?? null;
+  // `paid_amount` alone is not a settlement proof: historic failed attempts
+  // can retain it without a successful ledger payment. Correct checkout flows
+  // transition the order to paid/partial before routing is repaired.
+  if(['paid','partial'].includes(order.status)) return snapshot.stage_on_success ?? null;
   if(['failed','canceled'].includes(order.status)) return snapshot.stage_on_failed ?? null;
   return (order.pipeline_id===snapshot.pipeline_id ? order.pipeline_stage_id : null) || snapshot.stage_on_pending || null;
 }
