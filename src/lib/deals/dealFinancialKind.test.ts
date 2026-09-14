@@ -24,6 +24,13 @@ describe('CRM money and free grant presentation', () => {
       expect(isFreeDeal({ status: 'paid', final_price: 0, meta })).toBe(false);
     }
   });
+  it('labels an explicitly classified trial without payment as free', () => {
+    const deal = { status: 'paid', final_price: 0, paid_amount: 0,
+      meta: { source: 'trial_no_card', financial_kind: 'free_grant' } };
+    expect(isFreeDeal(deal)).toBe(true);
+    expect(isContactMoneyDeal(deal)).toBe(false);
+    expect(dealStatusLabel(deal, 'Оплачен')).toBe('Бесплатно');
+  });
   it('recognizes settled ledger money despite a stale order state or grant marker', () => {
     const deal = { status: 'pending', final_price: 0, meta: { source: 'admin_grant' },
       payments_v2: [{ status: 'succeeded', amount: 250 }] };
