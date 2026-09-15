@@ -24,6 +24,9 @@ const statementImportSource = await Deno.readTextFile(
 const statementQueueSource = await Deno.readTextFile(
   new URL("../_shared/bepaid-reconcile-queue.ts", import.meta.url),
 );
+const syncOrchestratorSource = await Deno.readTextFile(
+  new URL("../bepaid-sync-orchestrator/index.ts", import.meta.url),
+);
 const statementUiSource = await Deno.readTextFile(
   new URL(
     "../../../src/components/admin/payments/BepaidStatementTabContent.tsx",
@@ -249,6 +252,31 @@ Deno.test("CSV import and statement sync enqueue successful orphan payments", ()
   );
   assertStringIncludes(statementSyncSource, '"statement_sync_new_payment"');
   assertStringIncludes(statementSyncSource, '"statement_sync_updated_payment"');
+});
+
+Deno.test("bePaid API sync queues successful payments that remain without an order", () => {
+  assertStringIncludes(
+    syncOrchestratorSource,
+    'import { ensureExistingBepaidPaymentQueued }',
+  );
+  assertStringIncludes(
+    syncOrchestratorSource,
+    'normalized.status === "succeeded"',
+  );
+  assertStringIncludes(
+    syncOrchestratorSource,
+    'normalized.transaction_type === "payment"',
+  );
+  assertStringIncludes(syncOrchestratorSource, "!existing?.order_id");
+  assertStringIncludes(syncOrchestratorSource, "!existing.order_id");
+  assertStringIncludes(
+    syncOrchestratorSource,
+    '"bepaid_api_sync"',
+  );
+  assertStringIncludes(
+    syncOrchestratorSource,
+    "if (!dry_run) {\n              await queueSuccessfulUnlinkedPayment",
+  );
 });
 
 Deno.test("bePaid statement defaults to the full current year", () => {
