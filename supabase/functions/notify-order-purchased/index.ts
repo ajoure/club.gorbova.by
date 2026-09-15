@@ -14,6 +14,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts'
+import { sendProductPurchasedEmail } from './send-product-purchased-email.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
