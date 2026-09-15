@@ -7238,6 +7238,65 @@ export type Database = {
           },
         ]
       }
+      crm_user_confirmed_product_mapping_repairs: {
+        Row: {
+          applied_fingerprint: string | null
+          applied_pipeline_id: string
+          applied_product_id: string
+          applied_stage_id: string
+          batch_id: string
+          order_id: string
+          previous_meta: Json
+          previous_offer_id: string | null
+          previous_pipeline_id: string | null
+          previous_product_id: string | null
+          previous_stage_id: string | null
+          previous_tariff_id: string | null
+          repaired_at: string
+          restored_at: string | null
+        }
+        Insert: {
+          applied_fingerprint?: string | null
+          applied_pipeline_id: string
+          applied_product_id: string
+          applied_stage_id: string
+          batch_id: string
+          order_id: string
+          previous_meta: Json
+          previous_offer_id?: string | null
+          previous_pipeline_id?: string | null
+          previous_product_id?: string | null
+          previous_stage_id?: string | null
+          previous_tariff_id?: string | null
+          repaired_at?: string
+          restored_at?: string | null
+        }
+        Update: {
+          applied_fingerprint?: string | null
+          applied_pipeline_id?: string
+          applied_product_id?: string
+          applied_stage_id?: string
+          batch_id?: string
+          order_id?: string
+          previous_meta?: Json
+          previous_offer_id?: string | null
+          previous_pipeline_id?: string | null
+          previous_product_id?: string | null
+          previous_stage_id?: string | null
+          previous_tariff_id?: string | null
+          repaired_at?: string
+          restored_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_user_confirmed_product_mapping_repairs_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: true
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       deploy_logs: {
         Row: {
           commit_sha: string
@@ -25168,6 +25227,10 @@ export type Database = {
         Returns: number
       }
       crm_restore_routing_batch: {
+        Args: { p_batch_id: string }
+        Returns: number
+      }
+      crm_restore_user_confirmed_product_mapping: {
         Args: { p_batch_id: string }
         Returns: number
       }
