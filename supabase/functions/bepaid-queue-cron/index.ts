@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { authorizeQueueCronRequest } from "./auth.ts";
+import {
+  authorizeQueueCronRequest,
+  authorizeWebhookRealtimeQueueCronRequest,
+} from "./auth.ts";
 import {
   isStaleProcessingItem,
   normalizeQueueRunOptions,
@@ -10,7 +13,7 @@ import {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret, x-internal-key",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret, x-internal-key, x-bepaid-webhook-realtime-cron-secret",
 };
 
 /**
@@ -45,10 +48,25 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const cronSecret = Deno.env.get("CRON_SECRET") || "";
-    const authorization = authorizeQueueCronRequest(req, {
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const standardAuthorization = authorizeQueueCronRequest(req, {
       serviceRoleKey: supabaseServiceKey,
       cronSecret,
     });
+    const hasRealtimeCredential = Boolean(
+      req.headers.get("x-bepaid-webhook-realtime-cron-secret")?.trim(),
+    );
+    const realtimeAuthorization = !standardAuthorization.ok && hasRealtimeCredential &&
+      await authorizeWebhookRealtimeQueueCronRequest(req, async (candidate) => {
+        const { data, error } = await supabase.rpc(
+          "verify_bepaid_webhook_realtime_queue_cron_secret",
+          { _candidate: candidate },
+        );
+        return !error && data === true;
+      });
+    const authorization = realtimeAuthorization
+      ? { ok: true as const, mode: "webhook_realtime_cron" as const }
+      : standardAuthorization;
     if (!authorization.ok) {
       return new Response(
         JSON.stringify({ success: false, error: authorization.error }),
@@ -59,9 +77,6 @@ serve(async (req) => {
       );
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-
     const body = await req.json().catch(() => ({}));
     const {
       dryRun,
@@ -71,8 +86,9 @@ serve(async (req) => {
       excludeFileImport,
       excludeCancelled,
     } = normalizeQueueRunOptions(body);
+    const webhookRealtime = !queueItemId && body?.webhookRealtime === true;
 
-    console.log(`[bepaid-queue-cron] Starting queue processing, batch size: ${batchSize}, max attempts: ${maxAttempts}, excludeFileImport: ${excludeFileImport}`);
+    console.log(`[bepaid-queue-cron] Starting queue processing, batch size: ${batchSize}, max attempts: ${maxAttempts}, excludeFileImport: ${excludeFileImport}, webhookRealtime: ${webhookRealtime}`);
 
     const now = new Date().toISOString();
     const processingCutoff = staleProcessingCutoff(new Date(now));
@@ -97,6 +113,18 @@ serve(async (req) => {
         .or(
           `and(status.in.(pending,error),attempts.lt.${maxAttempts},or(next_retry_at.is.null,next_retry_at.lte.${now})),and(status.eq.processing,updated_at.lt.${processingCutoff})`,
         );
+
+      // The frequent fallback is intentionally a narrow safety net. It may
+      // process only a fresh, provider-originated webhook and can never pick
+      // up an old import or a historical reconciliation backlog.
+      if (webhookRealtime) {
+        const freshWebhookCutoff = new Date(
+          Date.now() - 60 * 60 * 1000,
+        ).toISOString();
+        query = query
+          .eq("source", "webhook")
+          .gte("created_at", freshWebhookCutoff);
+      }
     }
     
     // Exclude file_import by default - these need manual cleanup
@@ -223,15 +251,20 @@ serve(async (req) => {
     console.log(`[bepaid-queue-cron] Processing complete:`, results);
 
     // Check for items that exceeded max attempts and need attention
-    const { data: stuckItems } = await supabase
-      .from("payment_reconcile_queue")
-      .select("id, bepaid_uid, customer_email, amount, currency, last_error, source")
-      .gte("attempts", maxAttempts)
-      .eq("status", "error")
-      .neq("source", "file_import") // Don't count file_import as stuck - they're excluded
-      .limit(10);
+    // A frequent fresh-webhook run must never turn a historical stuck-item
+    // alert into a repeated notification loop. The ordinary worker retains
+    // the existing global alert behaviour.
+    const { data: stuckItems } = webhookRealtime
+      ? { data: null as null }
+      : await supabase
+        .from("payment_reconcile_queue")
+        .select("id, bepaid_uid, customer_email, amount, currency, last_error, source")
+        .gte("attempts", maxAttempts)
+        .eq("status", "error")
+        .neq("source", "file_import")
+        .limit(10);
 
-    if (stuckItems && stuckItems.length > 0) {
+    if (!webhookRealtime && stuckItems && stuckItems.length > 0) {
       console.log(`[bepaid-queue-cron] Found ${stuckItems.length} stuck items that need manual attention`);
       
       const stuckAmount = stuckItems.reduce((sum, item) => sum + (item.amount || 0), 0);
@@ -276,6 +309,7 @@ serve(async (req) => {
         stuck_items: stuckItems?.length || 0,
         errors_sample: results.errors.slice(0, 3),
         priority_order: 'webhook > api_sync > csv > file_import (explicit)',
+        scope: webhookRealtime ? 'fresh_webhook_only' : 'standard_queue',
         timestamp: new Date().toISOString(),
       },
     });
@@ -293,6 +327,7 @@ serve(async (req) => {
         stale_terminal: results.stale_terminal,
         webhook_processed: results.webhook_processed,
         by_source: results.by_source,
+        scope: webhookRealtime ? 'fresh_webhook_only' : 'standard_queue',
         errors: results.errors,
         stuckItems: stuckItems?.length || 0,
       }),

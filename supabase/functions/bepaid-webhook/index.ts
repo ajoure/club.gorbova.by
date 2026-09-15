@@ -146,6 +146,104 @@ async function upsertPaymentV2(supabase: any, payload: Record<string, any>, logP
   return { id: created?.id || null, action: 'created' };
 }
 
+type ImmediateQueueRecoveryOutcome =
+  | 'reconciled'
+  | 'already_materialized'
+  | 'claim_conflict'
+  | 'recovery_rejected'
+  | 'recovery_transport_failed';
+
+interface ImmediateCanonicalRecoveryResponse {
+  success?: boolean;
+  claim_conflicts?: number;
+  results?: { orders_reconciled?: number };
+}
+
+interface ImmediateRecoveryClient {
+  functions: {
+    invoke: (
+      name: string,
+      options: { body: Record<string, unknown> },
+    ) => Promise<{
+      data: ImmediateCanonicalRecoveryResponse | null;
+      error: unknown;
+    }>;
+  };
+  from: (table: string) => {
+    insert: (row: Record<string, unknown>) => PromiseLike<unknown>;
+  };
+}
+
+/**
+ * A successful provider webhook is the primary, low-latency trigger. It uses
+ * the same exact-row CAS recovery as the guarded queue worker: no blind
+ * payment, order, access, CRM or notification writes live in this webhook.
+ */
+async function triggerImmediateCanonicalRecovery(
+  supabase: ImmediateRecoveryClient,
+  input: {
+    queueItemId: string;
+    expectedUpdatedAt: string | null;
+    providerSubscriptionId: string | null;
+  },
+): Promise<ImmediateQueueRecoveryOutcome> {
+  const startedAt = Date.now();
+  let outcome: ImmediateQueueRecoveryOutcome = 'recovery_transport_failed';
+  let ordersReconciled = 0;
+  let claimConflicts = 0;
+
+  try {
+    const { data, error } = await supabase.functions.invoke('payments-reconcile', {
+      body: {
+        queueItemId: input.queueItemId,
+        expectedUpdatedAt: input.expectedUpdatedAt || undefined,
+        providerSubscriptionId: input.providerSubscriptionId || undefined,
+        // A transient inline failure stays pending for the narrow, frequent
+        // fallback instead of converting a new webhook into an hour-long wait.
+        recordPreflightFailure: false,
+      },
+    });
+
+    ordersReconciled = Number(data?.results?.orders_reconciled || 0);
+    claimConflicts = Number(data?.claim_conflicts || 0);
+    if (error) {
+      outcome = 'recovery_transport_failed';
+    } else if (data?.success !== true) {
+      outcome = 'recovery_rejected';
+    } else if (ordersReconciled > 0) {
+      outcome = 'reconciled';
+    } else if (claimConflicts > 0) {
+      outcome = 'claim_conflict';
+    } else {
+      outcome = 'already_materialized';
+    }
+  } catch {
+    outcome = 'recovery_transport_failed';
+  }
+
+  // This is observability only: no UID, email, card, provider payload or
+  // customer identifier is duplicated into the audit log.
+  await supabase.from('audit_logs').insert({
+    actor_type: 'system',
+    actor_user_id: null,
+    actor_label: 'bepaid-webhook',
+    action: 'bepaid.webhook.immediate_canonical_recovery',
+    meta: {
+      queue_row_id: input.queueItemId,
+      outcome,
+      orders_reconciled: ordersReconciled,
+      claim_conflicts: claimConflicts,
+      duration_ms: Date.now() - startedAt,
+    },
+  });
+
+  console.info('[WEBHOOK-QUEUE] immediate canonical recovery', {
+    outcome,
+    duration_ms: Date.now() - startedAt,
+  });
+  return outcome;
+}
+
 // Send order to GetCourse
 // Now uses getcourse_offer_id from tariffs table instead of hardcoded mapping
 interface GetCourseUserData {
@@ -790,7 +888,12 @@ Deno.serve(async (req) => {
   const startTime = Date.now();
   let bodyText = '';
   // P3.0.1a: Local trace object — NO globalThis (race-condition safe)
-  const trace = { bodyHash: null as string | null, queueWriteOk: false, queueRowId: null as string | null };
+  const trace = {
+    bodyHash: null as string | null,
+    queueWriteOk: false,
+    queueRowId: null as string | null,
+    queueUpdatedAt: null as string | null,
+  };
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -1087,7 +1190,7 @@ Deno.serve(async (req) => {
         // P3.0.1d: Manual idempotency (SELECT→INSERT) to avoid 42P10 with partial unique index
         const { data: existingRow } = await supabase
           .from('payment_reconcile_queue')
-          .select('id, source, bepaid_uid')
+          .select('id, source, bepaid_uid, updated_at')
           .eq('bepaid_uid', webhookTransaction.uid)
           .maybeSingle();
 
@@ -1133,7 +1236,7 @@ Deno.serve(async (req) => {
             error_category: errorCategory,
             three_d_secure: webhookTransaction.three_d_secure_verification?.status === 'successful',
           })
-            .select('id, source, bepaid_uid, created_at')
+            .select('id, source, bepaid_uid, created_at, updated_at')
             .maybeSingle();
           queueRow = data;
           queueError = error;
@@ -1160,10 +1263,12 @@ Deno.serve(async (req) => {
         // P3.0.1d: Store in local trace
         trace.queueWriteOk = !queueError && !!queueRow;
         trace.queueRowId = queueRow?.id || null;
+        trace.queueUpdatedAt = queueRow?.updated_at || null;
       } catch (queueErr) {
         console.error('[WEBHOOK-QUEUE] JS exception saving to queue:', queueErr);
         trace.queueWriteOk = false;
         trace.queueRowId = null;
+        trace.queueUpdatedAt = null;
         // Continue processing even if queue save fails
       }
     }
@@ -1321,6 +1426,24 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+    }
+
+    // IMMEDIATE-CANONICAL-RECOVERY: real successful webhooks receive the
+    // same exact queue-row recovery that scheduled reconciliation uses. This
+    // closes the previous 12-hour gap without replaying imports or bypassing
+    // provider-event and repayment guards above.
+    if (
+      queueSource === 'webhook' &&
+      webhookNormalizedStatus === 'successful' &&
+      !isWebhookRefund &&
+      trace.queueWriteOk &&
+      trace.queueRowId
+    ) {
+      await triggerImmediateCanonicalRecovery(supabase, {
+        queueItemId: trace.queueRowId,
+        expectedUpdatedAt: trace.queueUpdatedAt,
+        providerSubscriptionId: subscriptionId ? String(subscriptionId) : null,
+      });
     }
 
     // =====================================================================

@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { ensureExistingBepaidPaymentQueued } from '../_shared/bepaid-reconcile-queue.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -80,6 +81,13 @@ interface SyncStats {
   db_count?: number;
   missing_in_db?: number;
   missing_uids_sample?: string[];
+  // Successful provider payments that have no payment→order link at the
+  // moment of this sync. In execute mode they are handed to the canonical,
+  // idempotent reconciliation queue; dry runs only count them.
+  reconciliation_candidates?: number;
+  queued_for_reconciliation?: number;
+  reconciliation_reactivated?: number;
+  reconciliation_skipped?: number;
 }
 
 interface EndpointAttempt {
@@ -287,6 +295,47 @@ function normalizeTx(raw: any): { tx: NormalizedTx | null; error?: string } {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     return { tx: null, error: `Parse error: ${message}` };
+  }
+}
+
+async function queueSuccessfulUnlinkedPayment(
+  supabase: SupabaseClient,
+  normalized: NormalizedTx,
+  stats: SyncStats,
+): Promise<void> {
+  try {
+    const queueResult = await ensureExistingBepaidPaymentQueued(
+      supabase,
+      {
+        uid: normalized.uid,
+        tracking_id: normalized.provider_response?.tracking_id || null,
+        amount: normalized.amount,
+        currency: normalized.currency,
+        email: normalized.customer_email,
+        phone: normalized.customer_phone,
+        card_holder: normalized.card_holder,
+        card_masked: normalized.card_last4 || null,
+        description: normalized.product_title || normalized.product_description,
+        status: normalized.status,
+        transaction_type: normalized.transaction_type,
+        paid_at: normalized.paid_at,
+        created_at_bepaid: normalized.provider_response?.created_at || null,
+        raw_data: normalized.provider_response,
+      },
+      "bepaid_api_sync",
+    );
+
+    if (queueResult.action === "inserted") stats.queued_for_reconciliation!++;
+    else if (queueResult.action === "reactivated") stats.reconciliation_reactivated!++;
+    else stats.reconciliation_skipped!++;
+  } catch (error) {
+    stats.errors++;
+    if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+      stats.error_samples.push({
+        uid: normalized.uid,
+        error: `reconciliation queue: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
   }
 }
 
@@ -727,6 +776,10 @@ serve(async (req) => {
       amount_sum_api: 0,
       diff_count: 0,
       diff_amount: 0,
+      reconciliation_candidates: 0,
+      queued_for_reconciliation: 0,
+      reconciliation_reactivated: 0,
+      reconciliation_skipped: 0,
       auth_mode: authMode,
     };
 
@@ -839,7 +892,7 @@ serve(async (req) => {
         while (uidSet.size < Math.min(limit, MAX_TRANSACTIONS)) {
           const { data: rows, error: rowsErr } = await supabase
             .from('payments_v2')
-            .select('id, provider_payment_id, amount, status, transaction_type, paid_at, card_last4, card_brand, meta')
+            .select('id, provider_payment_id, amount, status, transaction_type, paid_at, card_last4, card_brand, order_id, meta')
             .eq('provider', 'bepaid')
             .eq('origin', 'bepaid')  // CRITICAL: Only real bePaid transactions
             .not('provider_payment_id', 'is', null)
@@ -1117,6 +1170,13 @@ serve(async (req) => {
             }
           }
 
+          if (normalized.status === "succeeded" && normalized.transaction_type === "payment" && !existing.order_id) {
+            stats.reconciliation_candidates!++;
+            if (!dry_run) {
+              await queueSuccessfulUnlinkedPayment(supabase, normalized, stats);
+            }
+          }
+
           // progress
           if ((i + 1) % 100 === 0) {
             const progress = total > 0 ? Math.round(((i + 1) / total) * 100) : 0;
@@ -1182,7 +1242,7 @@ serve(async (req) => {
           const batchUids = uids.slice(i, i + batchSize);
           const { data: batchPayments } = await supabase
             .from("payments_v2")
-            .select("id, provider_payment_id, amount, status, transaction_type, paid_at, card_last4, card_brand, meta")
+            .select("id, provider_payment_id, amount, status, transaction_type, paid_at, card_last4, card_brand, order_id, meta")
             .in("provider_payment_id", batchUids);
 
           if (batchPayments) {
@@ -1260,53 +1320,51 @@ serve(async (req) => {
 
             if (!needsUpdate) {
               stats.unchanged++;
-              continue;
-            }
-
-            if (diff > 0.01) {
-              stats.diff_count++;
-              stats.diff_amount += (apiAmount - dbAmount);
-            }
-
-            if (dry_run) {
-              stats.updated++;
-              continue;
-            }
-
-            // F13.ADD GUARD: order_id, profile_id, contact_id, product_id
-            // are NOT in this update payload — fill-only safe by omission.
-            // Do NOT add link fields without explicit fill-only check.
-            const { error: updateError } = await supabase
-              .from("payments_v2")
-              .update({
-                amount: normalized.amount,
-                status: normalized.status,
-                transaction_type: normalized.transaction_type,
-                paid_at: normalized.paid_at,
-                card_last4: normalized.card_last4 || existing.card_last4,
-                card_brand: normalized.card_brand || existing.card_brand,
-                customer_email: normalized.customer_email || existing.meta?.customer_email,
-                updated_at: new Date().toISOString(),
-                meta: {
-                  ...existing.meta,
-                  last_synced_at: new Date().toISOString(),
-                  sync_run_id: runId,
-                  previous_amount: dbAmount,
-                  sync_source: 'bepaid_api',
-                  selected_host: stats.selected_host,
-                },
-              })
-              .eq("id", existing.id);
-
-            if (updateError) {
-              stats.errors++;
-              if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
-                stats.error_samples.push({ uid: normalized.uid, error: updateError.message });
+            } else {
+              if (diff > 0.01) {
+                stats.diff_count++;
+                stats.diff_amount += (apiAmount - dbAmount);
               }
-              continue;
-            }
 
-            stats.updated++;
+              if (dry_run) {
+                stats.updated++;
+              } else {
+                // F13.ADD GUARD: order_id, profile_id, contact_id, product_id
+                // are NOT in this update payload — fill-only safe by omission.
+                // Do NOT add link fields without explicit fill-only check.
+                const { error: updateError } = await supabase
+                  .from("payments_v2")
+                  .update({
+                    amount: normalized.amount,
+                    status: normalized.status,
+                    transaction_type: normalized.transaction_type,
+                    paid_at: normalized.paid_at,
+                    card_last4: normalized.card_last4 || existing.card_last4,
+                    card_brand: normalized.card_brand || existing.card_brand,
+                    customer_email: normalized.customer_email || existing.meta?.customer_email,
+                    updated_at: new Date().toISOString(),
+                    meta: {
+                      ...existing.meta,
+                      last_synced_at: new Date().toISOString(),
+                      sync_run_id: runId,
+                      previous_amount: dbAmount,
+                      sync_source: 'bepaid_api',
+                      selected_host: stats.selected_host,
+                    },
+                  })
+                  .eq("id", existing.id);
+
+                if (updateError) {
+                  stats.errors++;
+                  if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+                    stats.error_samples.push({ uid: normalized.uid, error: updateError.message });
+                  }
+                  continue;
+                }
+
+                stats.updated++;
+              }
+            }
 
           } else {
             // ========== INSERT NEW ==========
@@ -1346,6 +1404,13 @@ serve(async (req) => {
             }
 
             stats.inserted++;
+          }
+
+          if (normalized.status === "succeeded" && normalized.transaction_type === "payment" && !existing?.order_id) {
+            stats.reconciliation_candidates!++;
+            if (!dry_run) {
+              await queueSuccessfulUnlinkedPayment(supabase, normalized, stats);
+            }
           }
 
           // Update progress periodically

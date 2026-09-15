@@ -24,6 +24,12 @@ const statementImportSource = await Deno.readTextFile(
 const statementQueueSource = await Deno.readTextFile(
   new URL("../_shared/bepaid-reconcile-queue.ts", import.meta.url),
 );
+const syncOrchestratorSource = await Deno.readTextFile(
+  new URL("../bepaid-sync-orchestrator/index.ts", import.meta.url),
+);
+const webhookSource = await Deno.readTextFile(
+  new URL("../bepaid-webhook/index.ts", import.meta.url),
+);
 const statementUiSource = await Deno.readTextFile(
   new URL(
     "../../../src/components/admin/payments/BepaidStatementTabContent.tsx",
@@ -182,6 +188,32 @@ Deno.test("queue cron requires service or cron authorization", () => {
   assertStringIncludes(queueCronSource, "status: authorization.status");
 });
 
+Deno.test("successful live webhooks trigger only exact canonical recovery", () => {
+  assertStringIncludes(webhookSource, "IMMEDIATE-CANONICAL-RECOVERY");
+  assertStringIncludes(webhookSource, "queueSource === 'webhook'");
+  assertStringIncludes(webhookSource, "webhookNormalizedStatus === 'successful'");
+  assertStringIncludes(webhookSource, "!isWebhookRefund");
+  assertStringIncludes(webhookSource, "queueItemId: trace.queueRowId");
+  assertStringIncludes(webhookSource, "expectedUpdatedAt: trace.queueUpdatedAt");
+  assertStringIncludes(webhookSource, "recordPreflightFailure: false");
+  assert(
+    webhookSource.indexOf("replay_trace_only") <
+      webhookSource.indexOf("IMMEDIATE-CANONICAL-RECOVERY"),
+    "trace-only replays must exit before immediate recovery",
+  );
+});
+
+Deno.test("frequent queue fallback stays bounded to fresh webhook rows", () => {
+  assertStringIncludes(queueCronSource, "webhookRealtime");
+  assertStringIncludes(queueCronSource, '.eq("source", "webhook")');
+  assertStringIncludes(queueCronSource, '.gte("created_at", freshWebhookCutoff)');
+  assertStringIncludes(queueCronSource, "fresh_webhook_only");
+  assertStringIncludes(
+    queueCronSource,
+    "verify_bepaid_webhook_realtime_queue_cron_secret",
+  );
+});
+
 Deno.test("queue cron does not treat unresolved skips as success", () => {
   assert(!queueCronSource.includes("processResult?.results?.skipped > 0"));
   assertStringIncludes(
@@ -249,6 +281,31 @@ Deno.test("CSV import and statement sync enqueue successful orphan payments", ()
   );
   assertStringIncludes(statementSyncSource, '"statement_sync_new_payment"');
   assertStringIncludes(statementSyncSource, '"statement_sync_updated_payment"');
+});
+
+Deno.test("bePaid API sync queues successful payments that remain without an order", () => {
+  assertStringIncludes(
+    syncOrchestratorSource,
+    'import { ensureExistingBepaidPaymentQueued }',
+  );
+  assertStringIncludes(
+    syncOrchestratorSource,
+    'normalized.status === "succeeded"',
+  );
+  assertStringIncludes(
+    syncOrchestratorSource,
+    'normalized.transaction_type === "payment"',
+  );
+  assertStringIncludes(syncOrchestratorSource, "!existing?.order_id");
+  assertStringIncludes(syncOrchestratorSource, "!existing.order_id");
+  assertStringIncludes(
+    syncOrchestratorSource,
+    '"bepaid_api_sync"',
+  );
+  assertStringIncludes(
+    syncOrchestratorSource,
+    "if (!dry_run) {\n              await queueSuccessfulUnlinkedPayment",
+  );
 });
 
 Deno.test("bePaid statement defaults to the full current year", () => {
