@@ -1,5 +1,5 @@
 // Registry of transactional email templates.
-// Add every new template here so send-transactional-email can find it by name.
+// Add every new template here so the send helper can find it by name.
 
 import * as React from 'npm:react@18.3.1'
 
