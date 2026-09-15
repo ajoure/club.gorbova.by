@@ -14,6 +14,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts'
+import { sendProductPurchasedEmail } from './send-product-purchased-email.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -324,30 +325,24 @@ Deno.serve(async (req) => {
         const subject = overrides.email?.subject_override || `Оплата получена: ${productName}`
         const previewText = `Спасибо! Мы получили оплату по заказу ${order.order_number || ''}`.trim()
 
-        const { data: sendRes, error: sendErr } = await supabase.functions.invoke(
-          'send-transactional-email',
-          {
-            body: {
-              templateName: 'product-purchased',
-              recipientEmail,
-              idempotencyKey: `product-purchased:${orderId}`,
-              templateData,
-            },
-          },
-        )
-        if (sendErr) throw sendErr
+        const sendRes = await sendProductPurchasedEmail(supabase as any, {
+          templateName: 'product-purchased',
+          recipientEmail,
+          idempotencyKey: `product-purchased:${orderId}`,
+          templateData,
+        })
 
         const auditMeta = {
           subject,
           preview_text: previewText,
-          message_text: (sendRes as any)?.rendered_text || null,
-          rendered_html: (sendRes as any)?.rendered_html || null,
+          message_text: sendRes.text || null,
+          rendered_html: sendRes.html || null,
           template_code: 'product-purchased',
           product_name: productName,
           tariff_name: tariffName,
         }
 
-        if ((sendRes as any)?.reason === 'email_suppressed') {
+        if (!sendRes.sent) {
           await markDelivery(row.id, { status: 'skipped', error: 'email_suppressed', metadata: { ...auditMeta, skip_reason: 'email_suppressed' } })
           results.email = { skipped: 'email_suppressed', delivery_id: row.id }
         } else {

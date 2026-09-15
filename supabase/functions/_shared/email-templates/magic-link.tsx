@@ -4,65 +4,41 @@ import * as React from 'npm:react@18.3.1'
 
 import {
   Body,
+  Button,
   Container,
   Head,
   Heading,
   Html,
-  Link,
   Preview,
-  Section,
   Text,
 } from 'npm:@react-email/components@0.0.22'
 
 interface MagicLinkEmailProps {
   siteName: string
   confirmationUrl: string
-  /** 6-digit OTP — primary way to sign in. */
-  token?: string
 }
 
-/**
- * OTP-first magic-link email (PATCH-INLINE-AUTH-EMAIL-OTP-FLOW Phase 2).
- *
- * Same UX as signup email: large monospace code + plain-text line for
- * iOS/macOS AutoFill; link kept only as fallback.
- */
 export const MagicLinkEmail = ({
   siteName,
   confirmationUrl,
-  token,
 }: MagicLinkEmailProps) => (
-  <Html lang="ru" dir="ltr">
-    <Head />
-    <Preview>{token ? `Ваш код: ${token}` : `Ссылка для входа в ${siteName}`}</Preview>
+  <Html lang="en" dir="ltr">
+    <Head>
+      <style>{darkModeCss}</style>
+    </Head>
+    <Preview>Your login link for {siteName}</Preview>
     <Body style={main}>
       <Container style={container}>
-        <Heading style={h1}>Вход в {siteName}</Heading>
+        <Heading style={h1}>Your login link</Heading>
         <Text style={text}>
-          Введите этот код на странице, с которой вы запросили вход —
-          возвращаться на другую вкладку не нужно.
+          Click the button below to log in to {siteName}. This link will expire
+          shortly.
         </Text>
-
-        {token ? (
-          <>
-            <Section style={codeBox}>
-              <Text style={codeText}>{token}</Text>
-            </Section>
-            {/* Plain-text line — важно для iOS/macOS Mail one-time-code AutoFill */}
-            <Text style={plainCode}>Ваш код подтверждения: {token}</Text>
-            <Text style={text}>
-              Код действителен 10 минут. Никому его не сообщайте.
-            </Text>
-          </>
-        ) : null}
-
-        <Text style={fallbackNote}>
-          Если поле для кода недоступно, можно войти по{' '}
-          <Link href={confirmationUrl} style={link}>ссылке</Link>.
-        </Text>
-
+        <Button className="dm-btn" style={button} href={confirmationUrl}>
+          Log In
+        </Button>
         <Text style={footer}>
-          Если вы не запрашивали вход, просто проигнорируйте это письмо.
+          If you didn't request this link, you can safely ignore this email.
         </Text>
       </Container>
     </Body>
@@ -72,45 +48,34 @@ export const MagicLinkEmail = ({
 export default MagicLinkEmail
 
 const main = { backgroundColor: '#ffffff', fontFamily: 'Arial, sans-serif' }
-const container = { padding: '24px 25px', maxWidth: '520px' }
+const container = { padding: '20px 25px' }
 const h1 = {
   fontSize: '22px',
   fontWeight: 'bold' as const,
   color: '#000000',
-  margin: '0 0 16px',
+  margin: '0 0 20px',
 }
 const text = {
   fontSize: '14px',
   color: '#55575d',
   lineHeight: '1.5',
-  margin: '0 0 16px',
+  margin: '0 0 25px',
 }
-const link = { color: 'inherit', textDecoration: 'underline' }
-const codeBox = {
-  backgroundColor: '#F4F6FA',
-  borderRadius: '12px',
-  padding: '20px 12px',
-  textAlign: 'center' as const,
-  margin: '20px 0 12px',
+const button = {
+  backgroundColor: '#000000',
+  color: '#ffffff',
+  fontSize: '14px',
+  border: '1px solid #000000',
+  borderRadius: '8px',
+  padding: '12px 20px',
+  textDecoration: 'none',
 }
-const codeText = {
-  fontFamily: 'Menlo, Consolas, "Courier New", monospace',
-  fontSize: '44px',
-  fontWeight: 'bold' as const,
-  color: '#111111',
-  letterSpacing: '10px',
-  margin: '0',
-  lineHeight: '1.2',
-}
-const plainCode = {
-  fontSize: '13px',
-  color: '#111111',
-  textAlign: 'center' as const,
-  margin: '0 0 20px',
-}
-const fallbackNote = {
-  fontSize: '12px',
-  color: '#777777',
-  margin: '16px 0 0',
-}
-const footer = { fontSize: '12px', color: '#999999', margin: '24px 0 0' }
+const footer = { fontSize: '12px', color: '#999999', margin: '30px 0 0' }
+// Rendered as a text child, which React may HTML-escape: keep this CSS free of >, &, and quotes.
+const darkModeCss = `
+  @media (prefers-color-scheme: dark) {
+    .dm-btn { background-color: #ffffff !important; color: #000000 !important; }
+  }
+  [data-ogsc] .dm-btn { background-color: #ffffff !important; color: #000000 !important; }
+  [data-ogsb] .dm-btn { background-color: #ffffff !important; color: #000000 !important; }
+`

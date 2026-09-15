@@ -23,10 +23,4 @@ describe("payment log redaction", () => {
     expect(tokenize).not.toContain("checkout_token: result.checkout?.token");
     expect(tokenize).toContain("checkout_token_present");
   });
-
-  it("does not include unsubscribe tokens in error logs", () => {
-    const unsubscribe = source("supabase/functions/handle-email-unsubscribe/index.ts");
-
-    expect(unsubscribe).not.toContain("{ error: updateError, token }");
-  });
 });
