@@ -27,6 +27,9 @@ const statementQueueSource = await Deno.readTextFile(
 const syncOrchestratorSource = await Deno.readTextFile(
   new URL("../bepaid-sync-orchestrator/index.ts", import.meta.url),
 );
+const webhookSource = await Deno.readTextFile(
+  new URL("../bepaid-webhook/index.ts", import.meta.url),
+);
 const statementUiSource = await Deno.readTextFile(
   new URL(
     "../../../src/components/admin/payments/BepaidStatementTabContent.tsx",
@@ -183,6 +186,32 @@ Deno.test("queue cron recovers stale processing rows with a CAS claim", () => {
 Deno.test("queue cron requires service or cron authorization", () => {
   assertStringIncludes(queueCronSource, "authorizeQueueCronRequest(req");
   assertStringIncludes(queueCronSource, "status: authorization.status");
+});
+
+Deno.test("successful live webhooks trigger only exact canonical recovery", () => {
+  assertStringIncludes(webhookSource, "IMMEDIATE-CANONICAL-RECOVERY");
+  assertStringIncludes(webhookSource, "queueSource === 'webhook'");
+  assertStringIncludes(webhookSource, "webhookNormalizedStatus === 'successful'");
+  assertStringIncludes(webhookSource, "!isWebhookRefund");
+  assertStringIncludes(webhookSource, "queueItemId: trace.queueRowId");
+  assertStringIncludes(webhookSource, "expectedUpdatedAt: trace.queueUpdatedAt");
+  assertStringIncludes(webhookSource, "recordPreflightFailure: false");
+  assert(
+    webhookSource.indexOf("replay_trace_only") <
+      webhookSource.indexOf("IMMEDIATE-CANONICAL-RECOVERY"),
+    "trace-only replays must exit before immediate recovery",
+  );
+});
+
+Deno.test("frequent queue fallback stays bounded to fresh webhook rows", () => {
+  assertStringIncludes(queueCronSource, "webhookRealtime");
+  assertStringIncludes(queueCronSource, '.eq("source", "webhook")');
+  assertStringIncludes(queueCronSource, '.gte("created_at", freshWebhookCutoff)');
+  assertStringIncludes(queueCronSource, "fresh_webhook_only");
+  assertStringIncludes(
+    queueCronSource,
+    "verify_bepaid_webhook_realtime_queue_cron_secret",
+  );
 });
 
 Deno.test("queue cron does not treat unresolved skips as success", () => {

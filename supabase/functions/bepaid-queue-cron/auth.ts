@@ -56,3 +56,16 @@ export function authorizeQueueCronRequest(
 
   return { ok: false, status: 401, error: "unauthorized" };
 }
+
+/** Dedicated Vault-backed credential for the bounded fresh-webhook fallback. */
+export async function authorizeWebhookRealtimeQueueCronRequest(
+  req: Request,
+  verifyCandidate: (candidate: string) => Promise<boolean>,
+): Promise<boolean> {
+  const candidate = (
+    req.headers.get("x-bepaid-webhook-realtime-cron-secret") || ""
+  ).trim();
+  return Boolean(
+    candidate && candidate.length <= 256 && await verifyCandidate(candidate),
+  );
+}

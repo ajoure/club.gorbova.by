@@ -65,6 +65,15 @@ describe("bePaid stale processing recovery policy", () => {
     });
   });
 
+  it("keeps the frequent fallback limited to fresh provider webhooks", () => {
+    const source = readFileSync("supabase/functions/bepaid-queue-cron/index.ts", "utf8");
+    expect(source).toContain("body?.webhookRealtime === true");
+    expect(source).toContain('.eq("source", "webhook")');
+    expect(source).toContain('.gte("created_at", freshWebhookCutoff)');
+    expect(source).toContain("verify_bepaid_webhook_realtime_queue_cron_secret");
+    expect(source).toContain("fresh_webhook_only");
+  });
+
   it("previews both dry-run spellings before any queue mutation or worker call", () => {
     expect(normalizeQueueRunOptions({ dry_run: true }).dryRun).toBe(true);
     expect(normalizeQueueRunOptions({ dryRun: true }).dryRun).toBe(true);

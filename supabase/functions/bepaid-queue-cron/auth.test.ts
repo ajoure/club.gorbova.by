@@ -1,5 +1,8 @@
 import { assertEquals } from "jsr:@std/assert";
-import { authorizeQueueCronRequest } from "./auth.ts";
+import {
+  authorizeQueueCronRequest,
+  authorizeWebhookRealtimeQueueCronRequest,
+} from "./auth.ts";
 
 const secrets = {
   serviceRoleKey: "service-role-test-key",
@@ -24,6 +27,19 @@ Deno.test("queue cron accepts the exact cron secret", () => {
     ok: true,
     mode: "cron_secret",
   });
+});
+
+Deno.test("queue cron accepts only a Vault-verified realtime secret", async () => {
+  const req = new Request("https://example.test", {
+    headers: { "x-bepaid-webhook-realtime-cron-secret": "realtime-test-key" },
+  });
+  assertEquals(
+    await authorizeWebhookRealtimeQueueCronRequest(
+      req,
+      async (candidate) => candidate === "realtime-test-key",
+    ),
+    true,
+  );
 });
 
 Deno.test("queue cron rejects user JWTs and wrong secrets", () => {
