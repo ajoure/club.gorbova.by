@@ -26248,6 +26248,7 @@ export type Database = {
         }[]
       }
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
+      invoke_bepaid_webhook_realtime_queue: { Args: never; Returns: number }
       invoke_process_scheduled_broadcasts: { Args: never; Returns: number }
       invoke_sales_runtime_worker: { Args: never; Returns: number }
       invoke_telegram_daily_summary: { Args: never; Returns: number }
@@ -27379,6 +27380,10 @@ export type Database = {
           resolved_product_id: string
           valid: boolean
         }[]
+      }
+      verify_bepaid_webhook_realtime_queue_cron_secret: {
+        Args: { _candidate: string }
+        Returns: boolean
       }
       verify_broadcast_dispatcher_cron_secret: {
         Args: { _candidate: string }
