@@ -3,6 +3,7 @@ import {
   BANK_STATEMENT_ANALYZER_SECTION_CODE,
   resolveSectionAccess,
 } from "../_shared/ai-access.ts";
+import { compareCounterpartyNames } from "../_shared/bank-statement-matching.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -41,34 +42,6 @@ function text(value: unknown): string {
 function normalizeUnp(value: unknown): string | null {
   const digits = text(value).replace(/\D/g, "");
   return /^\d{9}$/.test(digits) ? digits : null;
-}
-
-function normalizeName(value: string | null | undefined): string {
-  return (value || "")
-    .toLocaleLowerCase("ru-RU")
-    .replace(/ё/g, "е")
-    .replace(/[«»"'`]/g, " ")
-    .replace(/\b(ооо|зао|одо|чуп|уп|ип|республиканское|унитарное|общество|с ограниченной ответственностью|с дополнительной ответственностью|закрытое|акционерное|индивидуальный предприниматель)\b/g, " ")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Conservative comparison: a missing / badly extracted name is reviewable,
- * not a fraud assertion. A materially different name is marked as a mismatch.
- */
-function compareNames(statementName: string | null | undefined, officialName: string): "match" | "mismatch" | "needs_review" {
-  const left = normalizeName(statementName);
-  const right = normalizeName(officialName);
-  if (left.length < 3 || right.length < 3) return "needs_review";
-  if (left === right || left.includes(right) || right.includes(left)) return "match";
-
-  const a = new Set(left.split(" ").filter((word) => word.length > 2));
-  const b = new Set(right.split(" ").filter((word) => word.length > 2));
-  if (!a.size || !b.size) return "needs_review";
-  const overlap = [...a].filter((word) => b.has(word)).length;
-  return overlap / Math.min(a.size, b.size) >= 0.7 ? "match" : "mismatch";
 }
 
 function cleanCell(value: unknown, fallback = "—"): string {
@@ -209,7 +182,7 @@ Deno.serve(async (req) => {
       if (result == null) return { ...payment, outcome: "unavailable" as const, official_name: null };
       if (!result.found || !result.data?.full_name) return { ...payment, outcome: "not_found" as const, official_name: null };
       const officialName = result.data.full_name;
-      return { ...payment, official_name: officialName, outcome: compareNames(payment.recipient_name, officialName) };
+      return { ...payment, official_name: officialName, outcome: compareCounterpartyNames(payment.recipient_name, officialName) };
     });
     const metadata = {
       scenario_code: "bank_statement_analysis",
