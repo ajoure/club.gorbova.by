@@ -25345,10 +25345,6 @@ export type Database = {
         }
         Returns: Json
       }
-      delete_email: {
-        Args: { message_id: number; queue_name: string }
-        Returns: boolean
-      }
       delete_session_field_value: {
         Args: {
           _field_catalog_id: string
@@ -25358,11 +25354,6 @@ export type Database = {
         Returns: Json
       }
       diag_broadcast_cron_state: { Args: never; Returns: Json }
-      email_queue_dispatch: { Args: never; Returns: undefined }
-      enqueue_email: {
-        Args: { payload: Json; queue_name: string }
-        Returns: number
-      }
       expire_stale_entitlements: {
         Args: { p_batch_limit?: number }
         Returns: Json
@@ -26403,15 +26394,6 @@ export type Database = {
         }
         Returns: string
       }
-      move_to_dlq: {
-        Args: {
-          dlq_name: string
-          message_id: number
-          payload: Json
-          source_queue: string
-        }
-        Returns: number
-      }
       next_public_id: { Args: { p_entity_type: string }; Returns: string }
       norm_email: { Args: { _val: string }; Returns: string }
       norm_phone: { Args: { _val: string }; Returns: string }
@@ -26458,14 +26440,6 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
-      }
-      read_email_batch: {
-        Args: { batch_size: number; queue_name: string; vt: number }
-        Returns: {
-          message: Json
-          msg_id: number
-          read_ct: number
-        }[]
       }
       recalc_order_totals: {
         Args: {
