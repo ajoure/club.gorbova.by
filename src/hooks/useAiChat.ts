@@ -17,6 +17,8 @@ export interface ChatMessage {
 export interface AiChatMetadata {
   /** Local transport errors are displayed but never sent as model history. */
   is_error?: boolean;
+  /** Sensitive one-off tool output stays only in the current UI session. */
+  exclude_from_ai_history?: boolean;
   prompt_id?: string;
   prompt_title_snapshot?: string;
   launcher_title_snapshot?: string;
@@ -212,7 +214,7 @@ export function useAiChat() {
     setIsLoading(true);
 
     try {
-      const allMessages = [...messages.filter(m => m.id !== "welcome" && !m.metadata?.is_error), userMsg].map(m => ({
+      const allMessages = [...messages.filter(m => m.id !== "welcome" && !m.metadata?.is_error && !m.metadata?.exclude_from_ai_history), userMsg].map(m => ({
         role: m.role,
         content: m.content,
       }));
@@ -388,7 +390,12 @@ export function useAiChat() {
       role: "user",
       content: `Анализ выписки: ${(payload.fileNames || []).join(", ")}`,
       timestamp: new Date(),
-      metadata: { file_names: payload.fileNames, scenario_code: "bank_statement_analysis", scenario_type: "file_analysis" },
+      metadata: {
+        file_names: payload.fileNames,
+        scenario_code: "bank_statement_analysis",
+        scenario_type: "file_analysis",
+        exclude_from_ai_history: true,
+      },
     }]);
     setIsLoading(true);
 
@@ -412,7 +419,7 @@ export function useAiChat() {
         role: "assistant",
         content: data?.content || "Не удалось сформировать отчёт по выписке.",
         timestamp: new Date(),
-        metadata: data?.metadata,
+        metadata: { ...(data?.metadata || {}), exclude_from_ai_history: true },
       }]);
       setActiveScenarioContext(null);
     } catch (error) {
