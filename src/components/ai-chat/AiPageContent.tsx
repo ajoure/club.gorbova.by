@@ -461,7 +461,8 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
     if (
       scenario.type === "file_analysis" ||
       scenario.type === "document_review" ||
-      scenario.code === "asset_classifier"
+      scenario.code === "asset_classifier" ||
+      scenario.code === "bank_statement_analysis"
     ) {
       setActiveScenario(scenario);
     } else {
@@ -492,6 +493,17 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
     );
 
     const payload = await prepareFilesPayload(uploadedFiles);
+
+    if (activeScenario.code === "bank_statement_analysis") {
+      await aiChat.runBankStatementAnalyzer({
+        fileContents: payload.fileContents,
+        fileNames: payload.fileNames,
+        images: payload.images,
+        unsupportedFiles: payload.unsupportedFiles,
+      });
+      setActiveScenario(null);
+      return;
+    }
 
     await aiChat.sendMessage(
       `Анализ файлов: ${files.map((f) => f.name).join(", ")}`,
