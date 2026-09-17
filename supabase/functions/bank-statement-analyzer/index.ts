@@ -5,6 +5,7 @@ import {
 } from "../_shared/ai-access.ts";
 import { compareCounterpartyNames } from "../_shared/bank-statement-matching.ts";
 import { validateBankStatementInput } from "../_shared/bank-statement-input.ts";
+import { lookupWithConcurrency } from "../_shared/bank-statement-registry.ts";
 import {
   renderBankStatementReport,
   type BankStatementReportRow,
@@ -18,6 +19,7 @@ const corsHeaders = {
 
 const MAX_TEXT_CHARS = 120_000;
 const MAX_UNP_LOOKUPS = 300;
+const MNS_LOOKUP_CONCURRENCY = 6;
 
 type IncomingImage = { base64: string; filename: string; mimeType?: string };
 type Payment = {
@@ -100,14 +102,19 @@ async function extractPaymentsWithAi(
 }
 
 async function lookupUnp(supabaseUrl: string, serviceKey: string, unp: string): Promise<RegistryResult | null> {
-  const response = await fetch(`${supabaseUrl}/functions/v1/grp-lookup`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${serviceKey}`, apikey: serviceKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ unp }),
-  });
-  if (!response.ok) return null;
-  const result = await response.json().catch(() => null);
-  return result && typeof result === "object" ? result as RegistryResult : null;
+  try {
+    const response = await fetch(`${supabaseUrl}/functions/v1/grp-lookup`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${serviceKey}`, apikey: serviceKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ unp }),
+    });
+    if (!response.ok) return null;
+    const result = await response.json().catch(() => null);
+    return result && typeof result === "object" ? result as RegistryResult : null;
+  } catch {
+    // One unavailable registry lookup must not discard the whole statement.
+    return null;
+  }
 }
 
 Deno.serve(async (req) => {
@@ -141,8 +148,11 @@ Deno.serve(async (req) => {
 
     const payments = await extractPaymentsWithAi(aiKey, fileContents, images);
     const uniqueUnps = [...new Set(payments.map((row) => row.recipient_unp).filter((unp): unp is string => !!unp))].slice(0, MAX_UNP_LOOKUPS);
-    const registry = new Map<string, RegistryResult | null>();
-    for (const unp of uniqueUnps) registry.set(unp, await lookupUnp(supabaseUrl, serviceKey, unp));
+    const registry = await lookupWithConcurrency(
+      uniqueUnps,
+      MNS_LOOKUP_CONCURRENCY,
+      (unp) => lookupUnp(supabaseUrl, serviceKey, unp),
+    );
 
     const rows: BankStatementReportRow[] = payments.map((payment) => {
       if (!payment.recipient_unp) return { ...payment, outcome: "needs_review" as const, official_name: null };
