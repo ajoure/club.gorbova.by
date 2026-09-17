@@ -29,4 +29,10 @@ describe("bank statement report", () => {
     expect(report).toContain("МНС временно недоступен: **1**");
     expect(report).toContain("#### Требует ручной проверки");
   });
+
+  it("does not present an empty recognised statement as a clean reconciliation", () => {
+    const report = renderBankStatementReport([]);
+    expect(report).toContain("Исходящие платежи в распознанной выписке не найдены");
+    expect(report).not.toContain("Несовпадений между названием получателя");
+  });
 });

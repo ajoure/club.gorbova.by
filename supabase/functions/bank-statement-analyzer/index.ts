@@ -7,6 +7,10 @@ import { compareCounterpartyNames } from "../_shared/bank-statement-matching.ts"
 import { validateBankStatementInput } from "../_shared/bank-statement-input.ts";
 import { lookupWithConcurrency } from "../_shared/bank-statement-registry.ts";
 import {
+  parseBankStatementExtraction,
+  type ExtractedBankStatementPayment,
+} from "../_shared/bank-statement-extraction.ts";
+import {
   renderBankStatementReport,
   type BankStatementReportRow,
 } from "../_shared/bank-statement-report.ts";
@@ -22,58 +26,18 @@ const MAX_UNP_LOOKUPS = 300;
 const MNS_LOOKUP_CONCURRENCY = 6;
 
 type IncomingImage = { base64: string; filename: string; mimeType?: string };
-type Payment = {
-  date?: string | null;
-  time?: string | null;
-  amount?: string | number | null;
-  currency?: string | null;
-  purpose?: string | null;
-  recipient_unp?: string | null;
-  recipient_name?: string | null;
-  recipient_account?: string | null;
-  source_ref?: string | null;
-};
 type RegistryResult = { found: boolean; data?: { full_name?: string; short_name?: string; unp?: string } };
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-function text(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function normalizeUnp(value: unknown): string | null {
-  const digits = text(value).replace(/\D/g, "");
-  return /^\d{9}$/.test(digits) ? digits : null;
-}
-
-function parseModelJson(raw: string): Payment[] {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] || raw;
-  const parsed = JSON.parse(fenced.trim()) as { payments?: unknown };
-  if (!Array.isArray(parsed.payments)) return [];
-  return parsed.payments
-    .filter((value): value is Record<string, unknown> => !!value && typeof value === "object")
-    .map((row) => ({
-      date: text(row.date) || null,
-      time: text(row.time) || null,
-      amount: typeof row.amount === "number" ? row.amount : text(row.amount) || null,
-      currency: text(row.currency) || null,
-      purpose: text(row.purpose) || null,
-      recipient_unp: normalizeUnp(row.recipient_unp),
-      recipient_name: text(row.recipient_name) || null,
-      recipient_account: text(row.recipient_account) || null,
-      source_ref: text(row.source_ref) || null,
-    }))
-    .filter((row) => row.recipient_unp || row.recipient_name || row.purpose);
-}
-
 async function extractPaymentsWithAi(
   apiKey: string,
   fileContents: string,
   images: IncomingImage[],
-): Promise<Payment[]> {
-  const system = `Ты извлекаешь только исходящие платежи из банковской выписки Республики Беларусь. Верни строго JSON без Markdown: {"payments":[...]}. Каждый элемент: date, time, amount, currency, purpose, recipient_unp, recipient_name, recipient_account, source_ref. УНП — только 9 цифр или null. Не выдумывай значения. Название получателя бери именно из выписки, не исправляй его. source_ref — номер строки/документа, если виден. Не оценивай добросовестность и не делай выводов о мошенничестве.`;
+): Promise<{ statement_recognized: boolean; payments: ExtractedBankStatementPayment[] }> {
+  const system = `Ты извлекаешь только исходящие платежи из банковской выписки Республики Беларусь. Верни строго JSON без Markdown: {"statement_recognized":true|false,"payments":[...]}. statement_recognized=true только если файл действительно читается как банковская выписка; иначе false и payments=[]. Каждый элемент payments: date, time, amount, currency, purpose, recipient_unp, recipient_name, recipient_account, source_ref. УНП — только 9 цифр или null. Не выдумывай значения. Название получателя бери именно из выписки, не исправляй его. source_ref — номер строки/документа, если виден. Не оценивай добросовестность и не делай выводов о мошенничестве.`;
   const userContent: Array<Record<string, unknown>> = [{
     type: "text",
     text: `Извлеки платежи из следующей выписки.\n\n${fileContents || "Текст не извлечён; используй приложенное изображение."}`,
@@ -98,7 +62,7 @@ async function extractPaymentsWithAi(
   if (!response.ok) throw new Error(`AI gateway error ${response.status}`);
   const content = JSON.parse(body)?.choices?.[0]?.message?.content;
   if (typeof content !== "string" || !content.trim()) throw new Error("AI returned an empty extraction");
-  return parseModelJson(content);
+  return parseBankStatementExtraction(content);
 }
 
 async function lookupUnp(supabaseUrl: string, serviceKey: string, unp: string): Promise<RegistryResult | null> {
@@ -146,7 +110,11 @@ Deno.serve(async (req) => {
       return json({ error: "Сервис «Анализ выписки» не входит в ваши активные продукты.", denial_reason: "bank_statement_analysis_not_in_products" }, 403);
     }
 
-    const payments = await extractPaymentsWithAi(aiKey, fileContents, images);
+    const extraction = await extractPaymentsWithAi(aiKey, fileContents, images);
+    if (!extraction.statement_recognized) {
+      return json({ error: "Не удалось надёжно распознать банковскую выписку. Проверьте файл или загрузите экспорт в PDF, XLSX, CSV, XML либо изображение." }, 422);
+    }
+    const payments = extraction.payments;
     const uniqueUnps = [...new Set(payments.map((row) => row.recipient_unp).filter((unp): unp is string => !!unp))].slice(0, MAX_UNP_LOOKUPS);
     const registry = await lookupWithConcurrency(
       uniqueUnps,
