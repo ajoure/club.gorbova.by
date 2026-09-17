@@ -4,11 +4,11 @@ import {
   resolveSectionAccess,
 } from "../_shared/ai-access.ts";
 import { compareCounterpartyNames } from "../_shared/bank-statement-matching.ts";
+import { validateBankStatementInput } from "../_shared/bank-statement-input.ts";
 import {
-  BANK_STATEMENT_MAX_FILES,
-  BANK_STATEMENT_MAX_IMAGES,
-  validateBankStatementInput,
-} from "../_shared/bank-statement-input.ts";
+  renderBankStatementReport,
+  type BankStatementReportRow,
+} from "../_shared/bank-statement-report.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,11 +44,6 @@ function text(value: unknown): string {
 function normalizeUnp(value: unknown): string | null {
   const digits = text(value).replace(/\D/g, "");
   return /^\d{9}$/.test(digits) ? digits : null;
-}
-
-function cleanCell(value: unknown, fallback = "—"): string {
-  const rendered = value === null || value === undefined ? "" : String(value).trim();
-  return rendered ? rendered.replace(/\|/g, "\\|").replace(/\n+/g, " ") : fallback;
 }
 
 function parseModelJson(raw: string): Payment[] {
@@ -115,42 +110,6 @@ async function lookupUnp(supabaseUrl: string, serviceKey: string, unp: string): 
   return result && typeof result === "object" ? result as RegistryResult : null;
 }
 
-function renderReport(rows: Array<Payment & { official_name?: string | null; outcome: "match" | "mismatch" | "needs_review" | "not_found" | "unavailable" }>) {
-  const mismatches = rows.filter((row) => row.outcome === "mismatch");
-  const review = rows.filter((row) => row.outcome === "needs_review" || row.outcome === "not_found");
-  const unavailable = rows.filter((row) => row.outcome === "unavailable");
-  const lines = [
-    "### Анализ выписки",
-    `Проверено платежей: **${rows.length}**. Несовпадений: **${mismatches.length}**. Нужна ручная проверка: **${review.length}**. МНС временно недоступен: **${unavailable.length}**.`,
-    "",
-  ];
-  if (!mismatches.length) {
-    lines.push("Несовпадений между названием получателя в выписке и официальным названием по УНП не найдено.");
-  } else {
-    lines.push("#### Несовпадения", "", "| Дата и время | Сумма | Название в выписке | УНП | Официальное название МНС | Назначение / реквизиты / строка |", "|---|---:|---|---|---|---|");
-    for (const row of mismatches) {
-      lines.push(`| ${cleanCell([row.date, row.time].filter(Boolean).join(" "))} | ${cleanCell([row.amount, row.currency].filter(Boolean).join(" "))} | ${cleanCell(row.recipient_name)} | ${cleanCell(row.recipient_unp)} | ${cleanCell(row.official_name)} | ${cleanCell([row.purpose, row.recipient_account, row.source_ref].filter(Boolean).join("; "))} |`);
-    }
-  }
-  if (review.length) {
-    lines.push(
-      "",
-      "#### Требует ручной проверки",
-      "",
-      "| Дата и время | Сумма | УНП | Реквизиты / причина |",
-      "|---|---:|---|---|",
-    );
-    for (const row of review) {
-      const reason = row.outcome === "not_found"
-        ? "МНС не вернул плательщика по указанному УНП"
-        : `В выписке нет или неполно распознано название получателя; МНС: ${cleanCell(row.official_name)}`;
-      lines.push(`| ${cleanCell([row.date, row.time].filter(Boolean).join(" "))} | ${cleanCell([row.amount, row.currency].filter(Boolean).join(" "))} | ${cleanCell(row.recipient_unp)} | ${cleanCell([row.purpose, row.recipient_account, row.source_ref, reason].filter(Boolean).join("; "))} |`);
-    }
-  }
-  lines.push("", "Это контроль совпадения реквизитов, а не вывод о нарушении. Перед решением проверьте первичный платёжный документ.");
-  return lines.join("\n");
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Метод не поддерживается" }, 405);
@@ -185,7 +144,7 @@ Deno.serve(async (req) => {
     const registry = new Map<string, RegistryResult | null>();
     for (const unp of uniqueUnps) registry.set(unp, await lookupUnp(supabaseUrl, serviceKey, unp));
 
-    const rows = payments.map((payment) => {
+    const rows: BankStatementReportRow[] = payments.map((payment) => {
       if (!payment.recipient_unp) return { ...payment, outcome: "needs_review" as const, official_name: null };
       const result = registry.get(payment.recipient_unp);
       if (result == null) return { ...payment, outcome: "unavailable" as const, official_name: null };
@@ -205,7 +164,7 @@ Deno.serve(async (req) => {
       // Deliberately no statement data, counterparties or file contents in audit/history.
       source_retained: false,
     };
-    return json({ content: renderReport(rows), metadata });
+    return json({ content: renderBankStatementReport(rows), metadata });
   } catch (error) {
     console.error("bank-statement-analyzer error", error instanceof Error ? error.message : "unknown");
     return json({ error: "Не удалось обработать выписку. Попробуйте другой файл или повторите позже." }, 500);
