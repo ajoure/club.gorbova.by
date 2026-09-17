@@ -7,6 +7,7 @@ import { resolveAdminProfileName } from '../_shared/admin-profile-name.ts';
 import { getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
 import { isRetryExhausted, resolveEffectiveRetryPolicy } from '../_shared/renewal-retry-policy.ts';
 
@@ -321,8 +322,7 @@ Deno.serve(async (req) => {
 
       const manualAccessDays = tariff?.access_days || tariff?.access_duration_days || tariff?.duration_days || 30;
       const manualNow = new Date();
-      const manualPlannedEnd = new Date(manualNow);
-      manualPlannedEnd.setDate(manualPlannedEnd.getDate() + manualAccessDays);
+      const manualPlannedEnd = courseAccessEnd(tariff?.meta) || new Date(manualNow.getTime() + manualAccessDays * 86_400_000);
 
       const routing=await resolveOrderRouting(supabase,{product_id,tariff_id});
       const proposedOrder={

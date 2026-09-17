@@ -18,9 +18,9 @@ describe("future-sales FAQ", () => {
     expect(question).toHaveTextContent("«Главный бухгалтер»: доступ 240 дней с момента покупки");
     expect(question).toHaveTextContent("«Бизнес-леди»: доступ 300 дней с момента покупки");
     expect(question).toHaveTextContent("Для ранее оплаченных покупок сохраняются условия");
-    rerender(<FaqSection tariffs={[tariff("Новый тариф", 100, {meta:{course_access:{kind:"course_end_calendar_months",months:7}}})]} />);
-    expect(accessQuestion(container)).toHaveTextContent("«Новый тариф»: доступ 7 месяцев после окончания курса");
-    expect(accessQuestion(container)).not.toHaveTextContent("180 дней");
+    rerender(<FaqSection tariffs={[tariff("Новый тариф", 180, {meta:{course_access:{kind:"course_start_duration_days",start_date:"2026-10-23",days:180,timezone:"Europe/Minsk"}}})]} />);
+    expect(accessQuestion(container)).toHaveTextContent("«Новый тариф»: доступ 180 дней с начала обучения — с 23.10.2026");
+    expect(accessQuestion(container)).not.toHaveTextContent("с момента покупки");
   });
   it("does not fabricate durations or unconditional club access when data is unavailable", () => {
     const { container } = render(<><FaqSection /><PostTariffSection /></>);

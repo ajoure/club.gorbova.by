@@ -253,6 +253,19 @@ export async function loadContext(db: DB, p: any, c: any) {
         "tariffs:" + t.id,
       );
     }
+    if (
+      access?.kind === "course_start_duration_days" &&
+      access.flow_id === flow.id && access.start_date === flow.start_date &&
+      Number.isInteger(access.days) && access.days > 0
+    ) {
+      add(
+        "access_" + t.id,
+        `На тарифе «${t.name}» доступ сохраняется ${access.days} дней с начала потока ${
+          new Date(flow.start_date).toLocaleDateString("ru-RU", { timeZone: "UTC" })
+        }.`,
+        "tariffs:" + t.id,
+      );
+    }
   }
   if (prices.length) {
     add(

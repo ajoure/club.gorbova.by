@@ -1,9 +1,10 @@
 -- Managed, parameterized data operation. GitHub is the sole code source.
 -- Default is DRY RUN: only transaction-local tables are written.
 -- Managed runner sets cb21.sync_options JSON in the SAME SQL session before BEGIN:
--- {"apply":false,"expected_fingerprint":null,"addon_opens_at":null,"document_periods":null}
--- document_periods: {accountant:{from,to},chief:{from,to},business:{from,to},alumni:{from,to},gift:{from,to}}.
--- Date values require owner input. No guessed shifting of legal periods.
+-- {"apply":false,"expected_fingerprint":null,"addon_opens_at":null,
+--  "course_start_date":null,"course_end_date":null}
+-- Course dates are checked against the real target flow. Document service periods
+-- are calculated from course_start_date + tariff access_days, inclusively.
 -- On execute set apply=true with the reviewed dry-run fingerprint and approved dates.
 BEGIN;
 CREATE TEMP TABLE _cb21_options ON COMMIT DROP AS SELECT coalesce(nullif(current_setting('cb21.sync_options',true),''),'{}')::jsonb AS v;
@@ -61,7 +62,7 @@ BEGIN
 END $$;
 DO $$
 DECLARE p record; a public.tariffs; b public.tariffs; o public.tariff_offers; op record; r public.access_rules;
- cfg jsonb:=(SELECT v FROM _cb21_options); j jsonb; dest uuid; ar record; src_addon public.offer_addons; aa public.offer_addons; offer_price numeric;
+ cfg jsonb:=(SELECT v FROM _cb21_options); j jsonb; dest uuid; ar record; src_addon public.offer_addons; aa public.offer_addons; offer_price numeric; service_period_to date;
 BEGIN
  IF coalesce((cfg->>'apply')::boolean,false) THEN PERFORM 1 FROM public.sales_campaigns WHERE code='cb21-owner-test' FOR UPDATE; END IF;
  IF NOT EXISTS(SELECT 1 FROM public.sales_campaigns WHERE code='cb21-owner-test' AND mode='off') THEN RAISE EXCEPTION 'campaign_must_be_off'; END IF;
@@ -80,15 +81,23 @@ BEGIN
  OR (SELECT count(*) FROM public.tariffs WHERE id IN(SELECT target FROM _cb21_pairs) AND product_id='2b7bf6d4-ad8d-46ad-9399-7f96c307c596')<>5 THEN RAISE EXCEPTION 'tariff_scope_changed'; END IF;
  IF (SELECT count(*) FROM _cb21_modules)<>28 THEN RAISE EXCEPTION 'expected_28_module_pairs'; END IF;
  IF EXISTS(SELECT source FROM _cb21_modules GROUP BY source HAVING count(*)<>1) OR EXISTS(SELECT target FROM _cb21_modules GROUP BY target HAVING count(*)<>1) THEN RAISE EXCEPTION 'ambiguous_module_mapping'; END IF;
+ IF coalesce((cfg->>'apply')::boolean,false) AND (cfg->>'course_start_date' IS NULL OR cfg->>'course_end_date' IS NULL) THEN RAISE EXCEPTION 'course_dates_required'; END IF;
  FOR p IN SELECT * FROM _cb21_pairs LOOP
   SELECT * INTO STRICT a FROM public.tariffs WHERE id=p.source;
   SELECT * INTO STRICT b FROM public.tariffs WHERE id=p.target;
   IF a.access_days<>p.days OR b.access_days<>p.days OR NOT a.is_active OR NOT b.is_active THEN RAISE EXCEPTION 'tariff_access_changed'; END IF;
   IF p.role IN('accountant','chief','business') AND ((b.meta->'card_config'->>'price_display')::numeric<>p.price OR b.price_monthly<>p.price) THEN RAISE EXCEPTION 'cb21_price_changed'; END IF;
+  IF cfg->>'course_start_date' IS NOT NULL AND cfg->>'course_end_date' IS NOT NULL AND (b.meta->'course_access'->>'flow_id' IS NULL OR NOT EXISTS(
+    SELECT 1 FROM public.flows f
+    WHERE f.id=(b.meta->'course_access'->>'flow_id')::uuid
+      AND f.product_id=b.product_id
+      AND f.start_date=(cfg->>'course_start_date')::date
+      AND f.end_date=(cfg->>'course_end_date')::date
+  )) THEN RAISE EXCEPTION 'course_flow_window_changed'; END IF;
   -- Preserve identifiers/site wiring/current price. Copy behavior and presentation from20.
   j:=to_jsonb(a)||jsonb_build_object('id',b.id,'product_id',b.product_id,'code',b.code,'public_id',b.public_id,'created_at',b.created_at,'updated_at',b.updated_at,
    'price_monthly',b.price_monthly,'original_price',b.original_price,'getcourse_offer_id',b.getcourse_offer_id,'getcourse_offer_code',b.getcourse_offer_code,
-   'meta',(coalesce(b.meta,'{}')-'course_access')||jsonb_build_object('card_config',coalesce(a.meta->'card_config','{}')||jsonb_build_object('price_display',p.price,'old_price',p.old_price)));
+   'meta',(coalesce(b.meta,'{}')-'course_access')||jsonb_build_object('course_access',jsonb_build_object('kind','course_start_duration_days','flow_id',b.meta->'course_access'->>'flow_id','start_date',cfg->>'course_start_date','days',p.days,'timezone','Europe/Minsk'),'card_config',coalesce(a.meta->'card_config','{}')||jsonb_build_object('price_display',p.price,'old_price',p.old_price)));
   -- Do not advertise a club entitlement absent from BOTH source and target rules.
   IF p.role='accountant' THEN j:=jsonb_set(j,'{description}',to_jsonb(replace(coalesce(a.description,''),'Доступ к клубу «Буква закона»'||chr(10),''))); END IF;
   INSERT INTO _cb21_tariffs SELECT * FROM jsonb_populate_record(null::public.tariffs,j);
@@ -96,6 +105,10 @@ BEGIN
    j:=pg_temp.cb21_map_config(to_jsonb(r));
    SELECT id INTO dest FROM public.access_rules WHERE tariff_id=p.target AND is_active AND grant_target_type=r.grant_target_type AND target_ref=j->>'target_ref';
    IF dest IS NULL OR (SELECT count(*) FROM public.access_rules WHERE tariff_id=p.target AND is_active AND grant_target_type=r.grant_target_type AND target_ref=j->>'target_ref')<>1 THEN RAISE EXCEPTION 'access_rule_mapping_changed'; END IF;
+   IF p.role='accountant' AND r.target_ref='2e5cbc7b-bbaf-4384-b894-bbd98d7f524e' AND r.conditions->>'access_mode'='partial' THEN
+    j:=jsonb_set(j,'{conditions}',(SELECT conditions FROM public.access_rules WHERE id=dest));
+    IF jsonb_array_length(j#>'{conditions,allowed_module_ids}')<>21 THEN RAISE EXCEPTION 'accountant_target_matrix_changed'; END IF;
+   END IF;
    IF r.target_ref='2e5cbc7b-bbaf-4384-b894-bbd98d7f524e' AND r.conditions->>'access_mode'='partial' AND EXISTS(
     SELECT 1 FROM jsonb_array_elements_text(j->'conditions'->'allowed_module_ids') x WHERE NOT EXISTS(SELECT 1 FROM public.training_modules m WHERE m.id=x.value::uuid AND m.parent_module_id='4365e913-36f1-432e-ab16-748c3ca6826a')) THEN RAISE EXCEPTION 'unmapped_course_module'; END IF;
    INSERT INTO _cb21_rules SELECT * FROM jsonb_populate_record(null::public.access_rules,j||jsonb_build_object('id',dest,'created_at',(SELECT created_at FROM public.access_rules WHERE id=dest),'updated_at',(SELECT updated_at FROM public.access_rules WHERE id=dest)));
@@ -108,10 +121,9 @@ BEGIN
    j:=jsonb_set(j,'{meta}',(j->'meta')||jsonb_build_object('sales_generation',CASE WHEN p.role='alumni' THEN 'cb21-alumni-v2' ELSE 'cb21-full-sync-v2' END,'source_offer_id',o.id));
    IF p.role='alumni' THEN j:=jsonb_set(j,'{meta}',j->'meta'||'{"purchase_eligibility":{"kind":"prior_purchase","sources":[{"product_id":"7101ed3c-7839-4a74-ad95-aa0660369b22","purchased_from":"2024-01-01T00:00:00+03:00","allow_paid_import":true,"excluded_tariff_ids":["04e6c302-f1ff-4d7d-a588-d30681e7a450","trf_191190b6-158"]},{"product_id":"3e43fb28-8322-41bc-bfee-714731bdc630","allow_paid_import":false,"excluded_tariff_ids":["04e6c302-f1ff-4d7d-a588-d30681e7a450","trf_191190b6-158"]}]}}'::jsonb); END IF;
    IF j->'meta' ? 'document_defaults' THEN
+    service_period_to:=(cfg->>'course_start_date')::date + (p.days - 1);
     j:=jsonb_set(j,'{meta,document_defaults}',((j#>'{meta,document_defaults}')-'service_period_from'-'service_period_to')||jsonb_build_object('amount',offer_price,'unit_price',offer_price));
-    IF cfg->'document_periods'->p.role IS NOT NULL THEN
-     j:=jsonb_set(j,'{meta,document_defaults}',j#>'{meta,document_defaults}'||jsonb_build_object('service_period_from',cfg->'document_periods'->p.role->>'from','service_period_to',cfg->'document_periods'->p.role->>'to'));
-    END IF;
+    j:=jsonb_set(j,'{meta,document_defaults}',j#>'{meta,document_defaults}'||jsonb_build_object('service_period_from',cfg->>'course_start_date','service_period_to',service_period_to::text));
    END IF;
    j:=j||coalesce((SELECT jsonb_build_object('created_at',created_at,'updated_at',updated_at) FROM public.tariff_offers WHERE id=op.target),jsonb_build_object('created_at',null,'updated_at',null));
    INSERT INTO _cb21_offers SELECT * FROM jsonb_populate_record(null::public.tariff_offers,j);
@@ -161,7 +173,7 @@ INSERT INTO _cb21_diff SELECT 'access_rules',d.id,to_jsonb(b)-'updated_at'-'crea
 CREATE TEMP TABLE _cb21_plan ON COMMIT DROP AS SELECT md5(coalesce(jsonb_agg(to_jsonb(d) ORDER BY table_name,id)::text,'[]')) AS fingerprint FROM _cb21_diff d;
 SELECT p.fingerprint,(SELECT count(*) FROM _cb21_diff) AS changed_rows,
  (SELECT jsonb_object_agg(table_name,n) FROM(SELECT table_name,count(*) n FROM _cb21_diff GROUP BY table_name)s) AS rowcounts,
- (SELECT v->'document_periods' IS NOT NULL AND v->>'addon_opens_at' IS NOT NULL FROM _cb21_options) AS dates_supplied
+ (SELECT v->>'course_start_date' IS NOT NULL AND v->>'course_end_date' IS NOT NULL AND v->>'addon_opens_at' IS NOT NULL FROM _cb21_options) AS schedule_supplied
  FROM _cb21_plan p;
 -- Review changed field names without personal data or payment URLs.
 SELECT table_name,id,ARRAY(SELECT k FROM jsonb_object_keys(after_row) k WHERE before_row->k IS DISTINCT FROM after_row->k ORDER BY k) AS changed_fields FROM _cb21_diff ORDER BY table_name,id;
@@ -170,11 +182,7 @@ DECLARE cfg jsonb:=(SELECT v FROM _cb21_options); p record;
 BEGIN
  IF coalesce((cfg->>'apply')::boolean,false) IS NOT TRUE THEN RETURN; END IF;
  IF cfg->>'expected_fingerprint' IS DISTINCT FROM (SELECT fingerprint FROM _cb21_plan) THEN RAISE EXCEPTION 'dry_run_fingerprint_changed'; END IF;
- IF cfg->>'addon_opens_at' IS NULL OR cfg->'document_periods' IS NULL THEN RAISE EXCEPTION 'owner_dates_required'; END IF;
- FOR p IN SELECT role FROM _cb21_pairs LOOP
-  IF (cfg->'document_periods'->p.role->>'from')::date IS NULL OR (cfg->'document_periods'->p.role->>'to')::date IS NULL
-   OR (cfg->'document_periods'->p.role->>'to')::date < (cfg->'document_periods'->p.role->>'from')::date THEN RAISE EXCEPTION 'invalid_document_period'; END IF;
- END LOOP;
+ IF cfg->>'addon_opens_at' IS NULL OR cfg->>'course_start_date' IS NULL OR cfg->>'course_end_date' IS NULL THEN RAISE EXCEPTION 'course_schedule_required'; END IF;
  UPDATE public.tariffs b SET name=d.name,badge=d.badge,features=d.features,subtitle=d.subtitle,is_active=d.is_active,is_public=d.is_public,is_popular=d.is_popular,sort_order=d.sort_order,trial_days=d.trial_days,visible_to=d.visible_to,access_days=d.access_days,description=d.description,trial_price=d.trial_price,period_label=d.period_label,visible_from=d.visible_from,display_order=d.display_order,document_params=d.document_params,discount_enabled=d.discount_enabled,discount_percent=d.discount_percent,trial_auto_charge=d.trial_auto_charge,trial_enabled=d.trial_enabled,meta=d.meta,updated_at=now() FROM _cb21_tariffs d WHERE b.id=d.id AND EXISTS(SELECT 1 FROM _cb21_diff WHERE table_name='tariffs' AND id=d.id);
  UPDATE public.tariff_offers b SET amount=d.amount,auto_charge_after_trial=d.auto_charge_after_trial,auto_charge_amount=d.auto_charge_amount,auto_charge_delay_days=d.auto_charge_delay_days,auto_charge_offer_id=d.auto_charge_offer_id,button_label=d.button_label,first_payment_delay_days=d.first_payment_delay_days,getcourse_offer_id=d.getcourse_offer_id,installment_count=d.installment_count,installment_interval_days=d.installment_interval_days,is_active=d.is_active,is_installment=d.is_installment,is_primary=d.is_primary,meta=d.meta,offer_type=d.offer_type,payment_method=d.payment_method,reentry_amount=d.reentry_amount,reject_virtual_cards=d.reject_virtual_cards,requires_card_tokenization=d.requires_card_tokenization,sort_order=d.sort_order,tariff_id=d.tariff_id,trial_days=d.trial_days,visible_from=d.visible_from,visible_to=d.visible_to,updated_at=now() FROM _cb21_offers d WHERE b.id=d.id AND EXISTS(SELECT 1 FROM _cb21_diff WHERE table_name='tariff_offers' AND id=d.id);
  INSERT INTO public.tariff_offers (id,amount,auto_charge_after_trial,auto_charge_amount,auto_charge_delay_days,auto_charge_offer_id,button_label,first_payment_delay_days,getcourse_offer_id,installment_count,installment_interval_days,is_active,is_installment,is_primary,meta,offer_type,payment_method,reentry_amount,reject_virtual_cards,requires_card_tokenization,sort_order,tariff_id,trial_days,visible_from,visible_to) SELECT d.id,d.amount,d.auto_charge_after_trial,d.auto_charge_amount,d.auto_charge_delay_days,d.auto_charge_offer_id,d.button_label,d.first_payment_delay_days,d.getcourse_offer_id,d.installment_count,d.installment_interval_days,d.is_active,d.is_installment,d.is_primary,d.meta,d.offer_type,d.payment_method,d.reentry_amount,d.reject_virtual_cards,d.requires_card_tokenization,d.sort_order,d.tariff_id,d.trial_days,d.visible_from,d.visible_to FROM _cb21_offers d WHERE NOT EXISTS(SELECT 1 FROM public.tariff_offers b WHERE b.id=d.id);

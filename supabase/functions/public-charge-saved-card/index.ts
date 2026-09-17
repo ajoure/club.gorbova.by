@@ -32,6 +32,7 @@ import { resolvePublicReturnOrigin } from '../_shared/access-alias-origin.ts';
 import { corsHeaders, handleCorsPreflightRequest, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import { courseAccessEnd } from '../_shared/course-access-window.ts';
 import {
   resolveOrderRouting,
   buildNegativeSnapshot,
@@ -257,7 +258,7 @@ Deno.serve(async (req) => {
     // --- 9. Load product / tariff / profile (canonical 1:1 with public-checkout) ---
     const [productRes, tariffRes, profileRes] = await Promise.all([
       supabase.from('products_v2').select('id, name, code, public_id, primary_domain').eq('id', link.product_id).maybeSingle(),
-      supabase.from('tariffs').select('id, name, code, access_days, public_id').eq('id', link.tariff_id).maybeSingle(),
+      supabase.from('tariffs').select('id, name, code, access_days, public_id, meta').eq('id', link.tariff_id).maybeSingle(),
       supabase.from('profiles').select('id, email, full_name').eq('user_id', targetUserId).maybeSingle(),
     ]);
     if (!productRes.data) return errorResponse('product_not_found', 404);
@@ -284,8 +285,7 @@ Deno.serve(async (req) => {
     const amountByn = amountKopecks / 100;
     const accessDays = tariff.access_days || 30;
     const nowDt = new Date();
-    const plannedEnd = new Date(nowDt);
-    plannedEnd.setDate(plannedEnd.getDate() + accessDays);
+    const plannedEnd = courseAccessEnd(tariff.meta) || new Date(nowDt.getTime() + accessDays * 86_400_000);
 
     // --- 10. CRM routing snapshot (B.0 invariant) -------------------------
     const routing = await resolveOrderRouting(supabase, {

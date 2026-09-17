@@ -113,9 +113,11 @@ describe("CbNative tariff access matrix", () => {
     }
   });
 
-  it("shows synchronized source access days and accountant VIP modules only after the configuration arrives", () => {
-    const {container,rerender}=render(<CbNativeTariffCard tariff={{...tariff,access_days:180,meta:{course_access:{kind:"course_end_calendar_months",months:6}}}} index={0} onSelectOffer={()=>undefined}/>);
-    expect(container.textContent).toContain("после окончания курса");
+  it("shows the configured CB21 start-based access window and accountant matrix", () => {
+    const {container,rerender}=render(<CbNativeTariffCard tariff={{...tariff,access_days:180,meta:{course_access:{kind:"course_start_duration_days",start_date:"2026-10-23",days:180,timezone:"Europe/Minsk"}}}} index={0} onSelectOffer={()=>undefined}/>);
+    expect(container.textContent).toContain("Доступ 180 дней");
+    expect(container.textContent).toContain("с начала обучения — с 23.10.2026");
+    expect(container.textContent).not.toContain("с момента покупки");
     expect(container.textContent).not.toContain("«Делегирование»");
     rerender(<CbNativeTariffCard tariff={{...tariff,access_days:180,meta:{},access_summary:{modules:["«Делегирование»","«Найм, адаптация и удержание персонала»","«Таймлайн месяца»"].map(title=>({id:title,title,included:true,conditional:false})),benefits:[]}}} index={0} onSelectOffer={()=>undefined}/>);
     expect(container.textContent).toContain("Доступ 180 дней");
