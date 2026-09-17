@@ -12,7 +12,9 @@ interface PromptRunFlowProps {
   isLoading: boolean;
 }
 
-const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt", ".jpg", ".jpeg", ".png", ".webp"];
+// Text-based bank exports are deliberately accepted alongside office formats.
+// Binary formats still go through the extraction guard before the analysis starts.
+const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx", ".rtf", ".xls", ".xlsx", ".csv", ".xml", ".json", ".sta", ".txt", ".jpg", ".jpeg", ".png", ".webp"];
 const MAX_FILES = 5;
 
 export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: PromptRunFlowProps) {
@@ -57,13 +59,13 @@ export function PromptRunFlow({ scenario, onSubmit, onCancel, isLoading }: Promp
           >
             <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
             <p className="text-xs text-muted-foreground">Перетащите файлы или нажмите для выбора</p>
-            <p className="text-[10px] text-muted-foreground/60 mt-1">PDF, Excel, CSV, Word, изображения (макс. {MAX_FILES})</p>
+            <p className="text-[10px] text-muted-foreground/60 mt-1">PDF, Excel/CSV, XML/JSON/MT940, Word, текст, изображения (макс. {MAX_FILES})</p>
           </div>
           <input
             ref={inputRef}
             type="file"
             multiple
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp"
+            accept=".pdf,.doc,.docx,.rtf,.xls,.xlsx,.csv,.xml,.json,.sta,.txt,.jpg,.jpeg,.png,.webp"
             className="hidden"
             onChange={e => handleFiles(e.target.files)}
           />

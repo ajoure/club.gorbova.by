@@ -160,6 +160,14 @@ export async function extractAllFilesContent(
       } else if (extracted && extracted.text && extracted.text.trim().length > 0) {
         textParts.push(`--- Содержимое файла: ${file.name} ---\n${extracted.text}\n--- Конец файла ---`);
       } else {
+        // A blank extraction must never turn into an apparently clean report
+        // with zero payments. The specialised bank analyser returns this as a
+        // clear retry/conversion instruction before it calls the AI model.
+        unsupportedFiles.push({
+          name: file.name,
+          reason: "content_not_extracted",
+          extension: ext,
+        });
         textParts.push(`[PARSE_EMPTY: ${file.name}]`);
       }
     } else if (type === "pdf") {
@@ -174,6 +182,11 @@ export async function extractAllFilesContent(
         textParts.push(`[Изображение: ${file.name}]`);
       } catch (e) {
         console.error("Failed to read PDF as base64:", e);
+        unsupportedFiles.push({
+          name: file.name,
+          reason: "content_not_extracted",
+          extension: ext,
+        });
         textParts.push(`[PARSE_EMPTY: ${file.name}]`);
       }
     }
