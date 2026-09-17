@@ -679,8 +679,20 @@ body.impersonation-active .impersonation-offset {
 }
 
 @media (max-width: 767px) {
+  .contact-chat-view [data-testid="contact-source-picker"] {
+    display: flex;
+    gap: 0.25rem;
+    padding-block: 0.125rem;
+  }
+  .contact-chat-view .contact-source-button {
+    height: 2rem;
+    padding-inline: 0.625rem;
+  }
+  .contact-chat-photo-control {
+    display: none;
+  }
   .contact-chat-composer {
-    padding-bottom: max(0.375rem, env(safe-area-inset-bottom, 0px));
+    padding: 0.25rem max(0.375rem, env(safe-area-inset-right, 0px)) max(0.25rem, env(safe-area-inset-bottom, 0px)) max(0.375rem, env(safe-area-inset-left, 0px));
   }
   .contact-chat-emoji-trigger {
     display: none;
@@ -693,16 +705,97 @@ body.impersonation-active .impersonation-offset {
     min-height: 0;
   }
   [data-testid="telegram-chat-panel"] > .relative {
-    min-height: 3.5rem;
+    min-height: 5rem;
+  }
+  .contact-chat-history {
+    padding-block: 0.25rem;
+  }
+  .contact-chat-message-list {
+    gap: 0.375rem;
+    padding-inline: 0.5rem;
+  }
+  .contact-chat-date-separator {
+    margin-block: 0.375rem;
+  }
+  .telegram-message-bubble > div {
+    max-width: 88%;
+  }
+  .telegram-message-content:not(.bg-transparent) {
+    padding: 0.5rem 0.625rem;
+  }
+  .telegram-message-sender {
+    margin-bottom: 0.125rem;
+  }
+  .telegram-message-meta {
+    margin-top: 0.125rem;
+  }
+  .message-primary-actions {
+    position: absolute;
+    bottom: -0.5rem;
+    margin-top: 0;
+    gap: 0.125rem;
+    transform: scale(0.82);
+    transform-origin: bottom right;
+  }
+  .contact-unanswered-banner {
+    left: 0.5rem;
+    right: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.5rem;
+  }
+  .contact-unanswered-banner p {
+    margin-top: 0;
+  }
+  .contact-chat-reply-context {
+    align-items: center;
+    gap: 0.375rem;
+    margin-bottom: 0.25rem;
+    padding: 0.25rem 0.375rem;
+  }
+  .contact-chat-reply-context > div > div:last-child {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    overflow: hidden;
+  }
+  .contact-chat-message-input {
+    min-height: 2.75rem;
+    max-height: 4.5rem;
+    padding: 0.5rem 0.625rem;
+  }
+  .contact-chat-send {
+    height: 2.75rem;
+    width: 2.75rem;
   }
   html[data-viewport-keyboard] [data-testid="contact-source-picker"],
   html[data-viewport-keyboard] [data-testid="telegram-channel-sender"],
   html[data-viewport-keyboard] .composer-token-hint,
-  html[data-viewport-keyboard] .contact-chat-optional-controls {
+  html[data-viewport-keyboard] .contact-chat-optional-controls,
+  html[data-viewport-keyboard] main:has([data-testid="telegram-chat-panel"]) > header,
+  html[data-viewport-keyboard] .contact-center-top-tabs {
+    display: none;
+  }
+  .contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus) [data-testid="contact-source-picker"],
+  .contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus) [data-testid="telegram-channel-sender"],
+  .contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus) .composer-token-hint,
+  .contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus) .contact-chat-optional-controls,
+  .contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus) .contact-unanswered-banner {
     display: none;
   }
   html[data-viewport-keyboard] .contact-chat-composer {
-    padding-top: 0.375rem;
+    padding-top: 0.25rem;
+  }
+  html[data-viewport-keyboard] .contact-unanswered-banner {
+    display: none;
+  }
+  html[data-viewport-keyboard] .contact-chat-message-input {
+    min-height: 2.5rem;
+    max-height: 3.75rem;
+    padding-block: 0.375rem;
+  }
+  html[data-viewport-keyboard] .contact-chat-send {
+    height: 2.5rem;
+    width: 2.5rem;
   }
   html[data-viewport-keyboard] [data-testid="telegram-message-list"] {
     padding-bottom: 0.75rem;

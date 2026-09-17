@@ -85,7 +85,7 @@ function TelegramMessageBubbleImpl(props: MessageBubbleProps) {
       id={`tg-msg-${data.id}`}
       data-message-id={data.id}
       className={cn(
-        "flex w-full min-w-0 group transition-colors duration-700 rounded-lg",
+        "telegram-message-bubble flex w-full min-w-0 group transition-colors duration-700 rounded-lg",
         isOutgoing ? "justify-end pr-1" : "justify-start",
         isHighlighted && "bg-yellow-200/40"
       )}
@@ -95,7 +95,7 @@ function TelegramMessageBubbleImpl(props: MessageBubbleProps) {
           <div className="relative">
             <div
               className={cn(
-                "break-words overflow-hidden",
+                "telegram-message-content break-words overflow-hidden",
                 transparentBubble
                   ? "p-0 bg-transparent rounded-none"
                   : cn(
@@ -104,7 +104,7 @@ function TelegramMessageBubbleImpl(props: MessageBubbleProps) {
                     )
               )}
             >
-              <div className="flex items-center gap-1.5 mb-1">
+              <div className="telegram-message-sender flex items-center gap-1.5 mb-1">
                 {senderAvatar ? (
                   <img
                     src={senderAvatar}
@@ -204,7 +204,7 @@ function TelegramMessageBubbleImpl(props: MessageBubbleProps) {
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-1 mt-1">
+              <div className="telegram-message-meta flex items-center justify-end gap-1 mt-1">
                 {data.automated && (
                   <span
                     className="text-[10px] opacity-80 mr-1 px-1 rounded bg-primary-foreground/20"

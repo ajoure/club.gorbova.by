@@ -148,7 +148,7 @@ export default function AdminCommunication() {
     <AdminLayout fullHeight>
       <div className="h-full min-h-0 flex flex-col overflow-hidden">
         {/* Compact Glass Tabs - Bitrix24 style */}
-        <div className="px-3 md:px-4 pt-1 pb-1.5 shrink-0">
+        <div className="contact-center-top-tabs px-3 md:px-4 pt-1 pb-1.5 shrink-0">
           <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20">
             {visibleTabs.map((tab) => {
               const Icon = tab.icon;
