@@ -43,6 +43,7 @@ async function fixture(){
  for(const id of ['4d01edc1-6189-4017-ba43-922e7e9479ac','9687b2a8-585d-4770-9505-2a01030a093a','80780ddb-cafd-4427-ae8d-872853596120','e5b64e47-08d0-4ef5-8bed-2524d1ac8170'])await insert('tariff_offers',{id,tariff_id:pairs[3].target,amount:1325,is_active:true,meta:{slot_role:'old_'+id.slice(0,8)},button_label:'Старая ссылка'});
  for(let k=0;k<4;k++)for(let a=0;a<9;a++){
   const product=randomUUID(),tariff=randomUUID(),offer=randomUUID();
+  await insert('tariff_offers',{id:offer,tariff_id:tariff,amount:400,is_active:true,is_primary:false,button_label:'Модуль',offer_type:'pay_now',meta:{slot_role:`addon_${a}`}});
   for(const source of [true,false])await insert('offer_addons',{id:randomUUID(),parent_offer_id:source?sourceOffers[8+k]:destOffers[8+k],addon_product_id:product,addon_tariff_id:tariff,addon_offer_id:offer,is_active:true,pricing_mode:'percent_discount',discount_percent:50,is_required:false,is_default_selected:false,allow_repurchase_after_expiry:true,access_delivery_mode:source?'fixed_date':'manual',access_opens_at:source?'2026-09-30T21:00:00Z':null,meta:{},sort_order:a});
  }
  return {db,pairs};
@@ -61,6 +62,10 @@ test('full sync dry run, exact fingerprint apply, existing financial terms and i
   const documentPeriods=(await db.query("SELECT meta->'document_defaults' AS defaults FROM tariff_offers WHERE tariff_id=ANY($1::uuid[]) ORDER BY tariff_id,sort_order",[pairs.slice(0,3).map(p=>p.target)])).rows.map(r=>r.defaults);assert.deepEqual([...new Set(documentPeriods.map(x=>`${x.service_period_from}:${x.service_period_to}`))].sort(),['2026-10-23:2027-04-20','2026-10-23:2027-06-19','2026-10-23:2027-08-18']);
   const offers=(await db.query("SELECT amount,meta,installment_count FROM tariff_offers WHERE tariff_id=$1",[pairs[3].target])).rows;assert.equal(offers.filter(o=>o.meta.sales_generation==='cb21-alumni-v2').length,4);assert.ok(offers.filter(o=>o.meta.sales_generation==='cb21-alumni-v2').every(o=>Number(o.amount)===1495));assert.equal(offers.filter(o=>o.meta.sales_legacy_only&&Number(o.amount)===1325).length,4);
   assert.equal((await db.query('SELECT count(*)::int n FROM offer_addons')).rows[0].n,108); // 36 source + 72 target.
+  const paidAddons=(await db.query('SELECT ad.parent_offer_id,ad.pricing_mode,ad.discount_percent,ad.is_required,ad.is_default_selected,ad.access_delivery_mode,ad.access_opens_at FROM offer_addons ad JOIN tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id=ANY($1::uuid[])',[pairs.filter(p=>['business','alumni'].includes(p.role)).map(p=>p.target)])).rows;
+  assert.equal(paidAddons.length,72);
+  assert.ok(paidAddons.every(a=>a.pricing_mode==='percent_discount'&&Number(a.discount_percent)===50&&!a.is_required&&!a.is_default_selected&&a.access_delivery_mode==='fixed_date'&&Date.parse(a.access_opens_at)===Date.parse('2026-12-09T21:00:00Z')));
+  assert.equal((await db.query('SELECT count(*)::int n FROM offer_addons ad JOIN tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id=ANY($1::uuid[])',[pairs.filter(p=>['accountant','chief','gift'].includes(p.role)).map(p=>p.target)])).rows[0].n,0);
   const second=await run(db,options);assert.equal(second.flatMap(r=>r.rows??[]).find(r=>r.fingerprint).changed_rows,0);
  }finally{await db.close();}
 });
@@ -88,5 +93,13 @@ test('new administrator source button requires refreshed mapping instead of sile
  const {db,pairs}=await fixture();try{
   await db.query("INSERT INTO tariff_offers(tariff_id,is_active,offer_type,is_primary,meta) VALUES($1,true,'pay_now',false,'{\"slot_role\":\"button_6\"}')",[pairs[0].source]);
   await assert.rejects(run(db,options),/source_offer_catalog_changed/);await db.exec('ROLLBACK');
+ }finally{await db.close();}
+});
+
+test('a paid add-on cannot be copied when an administrator makes it automatic or free',async()=>{
+ const {db,pairs}=await fixture();try{
+  const parent=(await db.query("SELECT id FROM tariff_offers WHERE tariff_id=$1 ORDER BY id LIMIT 1",[pairs[2].source])).rows[0].id;
+  await db.query("UPDATE offer_addons SET is_default_selected=true WHERE id=(SELECT id FROM offer_addons WHERE parent_offer_id=$1 LIMIT 1)",[parent]);
+  await assert.rejects(run(db,options),/paid_addon_not_explicit/);await db.exec('ROLLBACK');
  }finally{await db.close();}
 });
