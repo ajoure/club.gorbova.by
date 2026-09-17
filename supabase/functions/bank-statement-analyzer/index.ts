@@ -4,6 +4,11 @@ import {
   resolveSectionAccess,
 } from "../_shared/ai-access.ts";
 import { compareCounterpartyNames } from "../_shared/bank-statement-matching.ts";
+import {
+  BANK_STATEMENT_MAX_FILES,
+  BANK_STATEMENT_MAX_IMAGES,
+  validateBankStatementInput,
+} from "../_shared/bank-statement-input.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,10 +16,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const MAX_FILES = 5;
 const MAX_TEXT_CHARS = 120_000;
-const MAX_IMAGES = 5;
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_UNP_LOOKUPS = 300;
 
 type IncomingImage = { base64: string; filename: string; mimeType?: string };
@@ -125,18 +127,24 @@ function renderReport(rows: Array<Payment & { official_name?: string | null; out
   if (!mismatches.length) {
     lines.push("Несовпадений между названием получателя в выписке и официальным названием по УНП не найдено.");
   } else {
-    lines.push("#### Несовпадения", "", "| Дата и время | Сумма | Название в выписке | УНП | Официальное название МНС | Назначение / реквизиты |", "|---|---:|---|---|---|---|");
+    lines.push("#### Несовпадения", "", "| Дата и время | Сумма | Название в выписке | УНП | Официальное название МНС | Назначение / реквизиты / строка |", "|---|---:|---|---|---|---|");
     for (const row of mismatches) {
-      lines.push(`| ${cleanCell([row.date, row.time].filter(Boolean).join(" "))} | ${cleanCell([row.amount, row.currency].filter(Boolean).join(" "))} | ${cleanCell(row.recipient_name)} | ${cleanCell(row.recipient_unp)} | ${cleanCell(row.official_name)} | ${cleanCell([row.purpose, row.recipient_account].filter(Boolean).join("; "))} |`);
+      lines.push(`| ${cleanCell([row.date, row.time].filter(Boolean).join(" "))} | ${cleanCell([row.amount, row.currency].filter(Boolean).join(" "))} | ${cleanCell(row.recipient_name)} | ${cleanCell(row.recipient_unp)} | ${cleanCell(row.official_name)} | ${cleanCell([row.purpose, row.recipient_account, row.source_ref].filter(Boolean).join("; "))} |`);
     }
   }
   if (review.length) {
-    lines.push("", "#### Требует ручной проверки", "", "| Дата и время | УНП | Что не удалось надёжно сопоставить |", "|---|---|---|");
+    lines.push(
+      "",
+      "#### Требует ручной проверки",
+      "",
+      "| Дата и время | Сумма | УНП | Реквизиты / причина |",
+      "|---|---:|---|---|",
+    );
     for (const row of review) {
       const reason = row.outcome === "not_found"
         ? "МНС не вернул плательщика по указанному УНП"
         : `В выписке нет или неполно распознано название получателя; МНС: ${cleanCell(row.official_name)}`;
-      lines.push(`| ${cleanCell([row.date, row.time].filter(Boolean).join(" "))} | ${cleanCell(row.recipient_unp)} | ${reason} |`);
+      lines.push(`| ${cleanCell([row.date, row.time].filter(Boolean).join(" "))} | ${cleanCell([row.amount, row.currency].filter(Boolean).join(" "))} | ${cleanCell(row.recipient_unp)} | ${cleanCell([row.purpose, row.recipient_account, row.source_ref, reason].filter(Boolean).join("; "))} |`);
     }
   }
   lines.push("", "Это контроль совпадения реквизитов, а не вывод о нарушении. Перед решением проверьте первичный платёжный документ.");
@@ -160,11 +168,12 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const fileContents = typeof body.file_contents === "string" ? body.file_contents.trim() : "";
-    const fileNames = Array.isArray(body.file_names) ? body.file_names.filter((name: unknown) => typeof name === "string").slice(0, MAX_FILES) : [];
-    const images = Array.isArray(body.images) ? body.images.slice(0, MAX_IMAGES).filter((image: unknown): image is IncomingImage => !!image && typeof image === "object" && typeof (image as IncomingImage).base64 === "string") : [];
-    if (!fileNames.length || fileNames.length > MAX_FILES || (!fileContents && !images.length)) return json({ error: "Загрузите выписку в поддерживаемом формате" }, 400);
+    const inputError = validateBankStatementInput({ fileNames: body.file_names, images: body.images, unsupportedFiles: body.unsupported_files });
+    if (inputError) return json({ error: inputError }, 400);
+    const fileNames = body.file_names as string[];
+    const images = (body.images || []) as IncomingImage[];
+    if (!fileContents && !images.length) return json({ error: "Загрузите выписку в поддерживаемом формате" }, 400);
     if (fileContents.length > MAX_TEXT_CHARS) return json({ error: `Выписка слишком объёмная для одного анализа (максимум ${MAX_TEXT_CHARS.toLocaleString("ru-RU")} символов)` }, 413);
-    if (images.some((image) => image.base64.length * 0.75 > MAX_IMAGE_BYTES)) return json({ error: "Один из файлов слишком большой" }, 413);
 
     const service = createClient(supabaseUrl, serviceKey);
     if (!await resolveSectionAccess(service, user.id, BANK_STATEMENT_ANALYZER_SECTION_CODE)) {
