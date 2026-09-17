@@ -667,9 +667,25 @@ body.impersonation-active .impersonation-offset {
   [data-viewport-sheet="bottom"]:not([class~="p-0"]) {
     padding-bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));
   }
+  .message-touch-actions {
+    opacity: 1;
+  }
 }
 
 @media (max-width: 767px) {
+  .contact-chat-composer {
+    padding-bottom: max(0.375rem, env(safe-area-inset-bottom, 0px));
+  }
+  html[data-viewport-keyboard] [data-testid="contact-source-picker"],
+  html[data-viewport-keyboard] .contact-chat-optional-controls {
+    display: none;
+  }
+  html[data-viewport-keyboard] .contact-chat-composer {
+    padding-top: 0.375rem;
+  }
+  html[data-viewport-keyboard] [data-testid="telegram-message-list"] {
+    padding-bottom: 0.75rem;
+  }
   .member-content {
     padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
   }
