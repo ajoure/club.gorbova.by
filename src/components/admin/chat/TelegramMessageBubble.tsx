@@ -233,7 +233,7 @@ function TelegramMessageBubbleImpl(props: MessageBubbleProps) {
             {/* Touch devices keep these controls visible; pointer devices reveal them on hover/focus. */}
             <div
               className={cn(
-                "message-touch-actions absolute -bottom-3 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
+                "message-primary-actions absolute -bottom-3 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
                 isOutgoing ? "left-0" : "right-0"
               )}
               data-testid="telegram-message-actions"
@@ -304,7 +304,7 @@ function TelegramMessageBubbleImpl(props: MessageBubbleProps) {
         </div>
 
         {isOutgoing && (data.canEdit || data.canDelete) && (
-          <div className="message-touch-actions absolute -left-9 top-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <div className="message-secondary-actions absolute -left-9 top-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0" aria-label="Действия с сообщением">

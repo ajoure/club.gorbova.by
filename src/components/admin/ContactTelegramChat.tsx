@@ -1892,7 +1892,7 @@ function TelegramChannelChat({
       <div className="flex flex-col h-full min-h-0" data-testid="telegram-chat-panel">
         {/* Header - only show if photo button is visible */}
         {!hidePhotoButton && (
-          <div className="flex items-center justify-end pb-2 border-b border-border/30 shrink-0">
+          <div className="contact-chat-optional-controls flex items-center justify-end pb-2 border-b border-border/30 shrink-0">
             <Button
               variant="ghost"
               size="sm"
@@ -2103,7 +2103,7 @@ function TelegramChannelChat({
           <div className="flex shrink-0 flex-row gap-1 sm:flex-col">
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-10 w-10 p-0 shrink-0" aria-label="Добавить эмодзи">
+                <Button variant="ghost" size="sm" className="contact-chat-emoji-trigger h-10 w-10 p-0 shrink-0" aria-label="Добавить эмодзи">
                   <Smile className="w-4 h-4" />
                 </Button>
               </PopoverTrigger>

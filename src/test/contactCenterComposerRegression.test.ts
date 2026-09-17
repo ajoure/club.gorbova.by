@@ -45,7 +45,7 @@ describe("contact center composer regressions", () => {
     expect(messageBubble).toContain('data-testid="telegram-message-actions"');
     expect(messageBubble).toContain('aria-label="Ответить на сообщение"');
     expect(globalCss).toContain("html[data-viewport-keyboard] [data-testid=\"contact-source-picker\"]");
-    expect(globalCss).toContain(".message-touch-actions");
+    expect(globalCss).toContain(".message-primary-actions");
   });
 
   it("offers only resolvable canonical message tokens and product fields in broadcasts", () => {
