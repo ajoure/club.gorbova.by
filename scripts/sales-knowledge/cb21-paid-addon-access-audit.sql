@@ -29,6 +29,7 @@ catalogue AS (
     rule.is_default_selected,
     rule.access_delivery_mode,
     rule.access_opens_at,
+    parent.tariff_id AS parent_tariff_id,
     parent.is_active AS parent_offer_active,
     addon_offer.is_active AS addon_offer_active,
     addon_offer.amount AS addon_offer_amount,
@@ -43,6 +44,48 @@ catalogue AS (
   LEFT JOIN public.products_v2 addon_product ON addon_product.id = rule.addon_product_id
   LEFT JOIN public.tariffs addon_tariff ON addon_tariff.id = rule.addon_tariff_id
 ),
+addon_products AS (
+  SELECT DISTINCT addon_product_id
+  FROM catalogue
+  WHERE addon_product_id IS NOT NULL
+),
+course_tariffs AS (
+  SELECT DISTINCT parent_tariff_id AS tariff_id
+  FROM catalogue
+  WHERE parent_tariff_id IS NOT NULL
+),
+course_products AS (
+  SELECT DISTINCT tariff.product_id
+  FROM public.tariffs tariff
+  JOIN course_tariffs course_tariff ON course_tariff.tariff_id = tariff.id
+  WHERE tariff.product_id IS NOT NULL
+),
+paid_training_modules AS (
+  SELECT module.id, module.product_id
+  FROM public.training_modules module
+  JOIN addon_products addon ON addon.addon_product_id = module.product_id
+  WHERE module.is_active
+),
+base_tariff_module_access_leaks AS (
+  SELECT module_access.module_id, module_access.tariff_id
+  FROM public.module_access module_access
+  JOIN paid_training_modules module ON module.id = module_access.module_id
+  JOIN course_tariffs course_tariff ON course_tariff.tariff_id = module_access.tariff_id
+),
+base_tariff_cross_product_rule_leaks AS (
+  SELECT DISTINCT access_rule.id
+  FROM public.access_rules access_rule
+  JOIN course_products course_product ON course_product.product_id = access_rule.product_id
+  JOIN paid_training_modules module ON (
+    access_rule.target_ref = module.id::text
+    OR (access_rule.conditions ? 'allowed_module_ids'
+        AND (access_rule.conditions->'allowed_module_ids') ? module.id::text)
+    OR (access_rule.grant_target_type = 'product_access'
+        AND access_rule.target_ref = module.product_id::text)
+  )
+  WHERE access_rule.is_active
+    AND (access_rule.tariff_id IS NULL OR access_rule.tariff_id IN (SELECT tariff_id FROM course_tariffs))
+),
 per_parent AS (
   SELECT
     expected_parent_offer_id,
@@ -50,11 +93,6 @@ per_parent AS (
     count(addon_rule_id)::int AS active_addon_rows
   FROM catalogue
   GROUP BY expected_parent_offer_id, audience
-),
-addon_products AS (
-  SELECT DISTINCT addon_product_id
-  FROM catalogue
-  WHERE addon_product_id IS NOT NULL
 ),
 paid_orders AS (
   SELECT DISTINCT o.user_id, o.product_id
@@ -85,6 +123,9 @@ catalogue_summary AS (
     'business_active_addon_rows', (SELECT count(*) FROM catalogue WHERE addon_rule_id IS NOT NULL AND audience = 'business'),
     'alumni_active_addon_rows', (SELECT count(*) FROM catalogue WHERE addon_rule_id IS NOT NULL AND audience = 'alumni'),
     'parent_offers_with_exactly_nine_addons', (SELECT count(*) FROM per_parent WHERE active_addon_rows = 9),
+    'paid_product_training_modules', (SELECT count(*) FROM paid_training_modules),
+    'base_tariff_module_access_leaks', (SELECT count(*) FROM base_tariff_module_access_leaks),
+    'base_tariff_cross_product_rule_leaks', (SELECT count(*) FROM base_tariff_cross_product_rule_leaks),
     'cardinality_mismatches', (SELECT count(*) FROM per_parent WHERE active_addon_rows <> 9),
     'invalid_active_addon_rules', (
       SELECT count(*)
