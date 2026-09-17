@@ -5,7 +5,7 @@ import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 const sql=await readFile(new URL('./cb21-commercial-config.sql',import.meta.url),'utf8');
 const types=await readFile(new URL('../../src/integrations/supabase/types.ts',import.meta.url),'utf8');
-const p20='3e43fb28-8322-41bc-bfee-714731bdc630',p21='2b7bf6d4-ad8d-46ad-9399-7f96c307c596',root20='2e5cbc7b-bbaf-4384-b894-bbd98d7f524e',root21='4365e913-36f1-432e-ab16-748c3ca6826a';
+const p20='3e43fb28-8322-41bc-bfee-714731bdc630',p21='2b7bf6d4-ad8d-46ad-9399-7f96c307c596',root20='2e5cbc7b-bbaf-4384-b894-bbd98d7f524e',root21='4365e913-36f1-432e-ab16-748c3ca6826a',flow21='b10e15c5-51c3-5df5-ba83-a42416da5902';
 async function fixture(){
  const db=new PGlite();
  for(const table of ['tariffs','tariff_offers','offer_addons','access_rules']) {
@@ -19,7 +19,8 @@ async function fixture(){
   await db.exec(`CREATE TABLE ${table}(${columns.join(',')})`);
  }
  await db.exec(`CREATE UNIQUE INDEX ON tariff_offers(tariff_id) WHERE is_primary=true AND offer_type='pay_now'; CREATE UNIQUE INDEX ON tariff_offers(tariff_id,((meta->>'slot_role'))) WHERE nullif(meta->>'slot_role','') IS NOT NULL; CREATE UNIQUE INDEX ON offer_addons(parent_offer_id,addon_offer_id);`);
- await db.exec(`CREATE TABLE sales_jobs(conversation_id uuid,status text); CREATE TABLE sales_conversations(id uuid,campaign_id uuid); CREATE TABLE audit_logs(actor_type text,action text,meta jsonb); CREATE TABLE sales_campaigns(code text,mode text,id uuid DEFAULT gen_random_uuid()); INSERT INTO sales_campaigns(code,mode) VALUES('cb21-owner-test','off'); CREATE TABLE training_modules(id uuid PRIMARY KEY,parent_module_id uuid,title text);`);
+ await db.exec(`CREATE TABLE sales_jobs(conversation_id uuid,status text); CREATE TABLE sales_conversations(id uuid,campaign_id uuid); CREATE TABLE audit_logs(actor_type text,action text,meta jsonb); CREATE TABLE sales_campaigns(code text,mode text,id uuid DEFAULT gen_random_uuid()); INSERT INTO sales_campaigns(code,mode) VALUES('cb21-owner-test','off'); CREATE TABLE training_modules(id uuid PRIMARY KEY,parent_module_id uuid,title text); CREATE TABLE flows(id uuid PRIMARY KEY,product_id uuid,start_date date,end_date date);`);
+ await db.query("INSERT INTO flows(id,product_id,start_date,end_date) VALUES($1,$2,'2026-10-23','2026-12-10')",[flow21,p21]);
  const insert=async(table,row)=>db.query(`INSERT INTO ${table}(${Object.keys(row).join(',')}) VALUES(${Object.keys(row).map((_,i)=>'$'+(i+1)).join(',')})`,Object.values(row));
  const pairs=[...sql.matchAll(/\('(accountant|chief|business|alumni|gift)','([^']+)','([^']+)',(\d+),(\d+|NULL),(\d+)\)/g)].map(([,role,source,target,price,old,days])=>({role,source,target,price:+price,old:old==='NULL'?null:+old,days:+days}));
  const sourceOffers=[...sql.split('INSERT INTO _cb21_offer_pairs VALUES\n')[1].split(';')[0].matchAll(/\('([^']+)',/g)].map(x=>x[1]);
@@ -27,7 +28,7 @@ async function fixture(){
  const m20=[],m21=[];for(let i=0;i<28;i++){m20.push(randomUUID());m21.push(randomUUID());await insert('training_modules',{id:m20[i],parent_module_id:root20,title:i===0?`Конференции | 20 поток |`:`Модуль ${i}`});await insert('training_modules',{id:m21[i],parent_module_id:root21,title:i===0?`КОНФЕРЕНЦИИ | 21 поток |`:`Модуль ${i}`});}
  for(const [i,p] of pairs.entries()) {
   const sourcePrice=[1650,1950,2650,1325,0][i];
-  for(const source of [true,false])await insert('tariffs',{id:source?p.source:p.target,product_id:source?p20:p21,name:p.role,code:randomUUID(),public_id:randomUUID(),is_active:true,is_public:i<3,access_days:p.days,price_monthly:source?null:i<3?p.price:null,original_price:source?null:p.old,meta:{card_config:{price_display:source?sourcePrice:p.price,old_price:source?2000:p.old},...(source?{}:{site_slot_key:p.role,course_access:{months:6}})}});
+  for(const source of [true,false])await insert('tariffs',{id:source?p.source:p.target,product_id:source?p20:p21,name:p.role,code:randomUUID(),public_id:randomUUID(),is_active:true,is_public:i<3,access_days:p.days,price_monthly:source?null:i<3?p.price:null,original_price:source?null:p.old,meta:{card_config:{price_display:source?sourcePrice:p.price,old_price:source?2000:p.old},...(source?{}:{site_slot_key:p.role,course_access:{kind:'course_end_calendar_months',flow_id:flow21,end_date:'2026-12-10',months:[6,9,12,12,12][i],timezone:'Europe/Minsk'}})}});
   for(let k=0;k<4;k++){
    const oi=i*4+k;const meta={slot_role:['button_1','button_2','button_3','button_5'][k],document_defaults:{amount:sourcePrice,unit_price:sourcePrice,service_period_from:'2026-08-01',service_period_to:'2027-02-28'},acquiring:{provider:'synthetic'}};
    const row={tariff_id:p.source,amount:i===4?1:sourcePrice,is_active:true,is_primary:k===0,button_label:['Карта','Счёт','Два платежа','Банк'][k],offer_type:k===1?'invoice':k===3?'bank_installment':'pay_now',payment_method:k===2?'internal_installment':'full_payment',installment_count:k===2?2:null,meta};
@@ -46,16 +47,18 @@ async function fixture(){
  }
  return {db,pairs};
 }
-const options={addon_opens_at:'2026-10-23T05:00:00Z',document_periods:Object.fromEntries(['accountant','chief','business','alumni','gift'].map(k=>[k,{from:'2026-10-23',to:'2026-12-10'}]))}; // Synthetic dates ONLY, not business approval.
+const options={addon_opens_at:'2026-12-09T21:00:00Z',course_start_date:'2026-10-23',course_end_date:'2026-12-10'}; // Synthetic schedule, mirrors the approved CB21 configuration.
 async function run(db,opts={}){await db.query("SELECT set_config('cb21.sync_options',$1,false)",[JSON.stringify(opts)]);return db.exec(sql);}
 async function snapshot(db){return (await db.query("SELECT jsonb_agg(to_jsonb(t) ORDER BY id) rows FROM tariffs t")).rows[0].rows;}
 test('full sync dry run, exact fingerprint apply, existing financial terms and idempotent rerun',async()=>{
  const {db,pairs}=await fixture();try{
   const before=await snapshot(db);const dry=await run(db,options);assert.deepEqual(await snapshot(db),before);
-  const plan=dry.flatMap(r=>r.rows??[]).find(r=>r.fingerprint);assert.ok(plan.fingerprint);assert.equal(plan.dates_supplied,true);
+  const plan=dry.flatMap(r=>r.rows??[]).find(r=>r.fingerprint);assert.ok(plan.fingerprint);assert.equal(plan.schedule_supplied,true);
   await run(db,{...options,apply:true,expected_fingerprint:plan.fingerprint});
   const prices=(await db.query('SELECT meta FROM tariffs WHERE id=ANY($1::uuid[]) ORDER BY id',[pairs.slice(0,3).map(p=>p.target)])).rows.map(r=>r.meta.card_config.price_display).sort((a,b)=>a-b);assert.deepEqual(prices,[1790,2190,2990]);
-  const course=(await db.query("SELECT conditions FROM access_rules WHERE tariff_id=$1 AND target_ref=$2",[pairs[0].target,root21])).rows[0];assert.equal(course.conditions.allowed_module_ids.length,24);
+  const course=(await db.query("SELECT conditions FROM access_rules WHERE tariff_id=$1 AND target_ref=$2",[pairs[0].target,root21])).rows[0];assert.equal(course.conditions.allowed_module_ids.length,21);
+  const synced=(await db.query('SELECT meta FROM tariffs WHERE id=ANY($1::uuid[]) ORDER BY access_days',[pairs.slice(0,3).map(p=>p.target)])).rows.map(r=>r.meta.course_access);assert.deepEqual(synced.map(x=>[x.kind,x.start_date,x.days,x.timezone]),[['course_start_duration_days','2026-10-23',180,'Europe/Minsk'],['course_start_duration_days','2026-10-23',240,'Europe/Minsk'],['course_start_duration_days','2026-10-23',300,'Europe/Minsk']]);
+  const documentPeriods=(await db.query("SELECT meta->'document_defaults' AS defaults FROM tariff_offers WHERE tariff_id=ANY($1::uuid[]) ORDER BY tariff_id,sort_order",[pairs.slice(0,3).map(p=>p.target)])).rows.map(r=>r.defaults);assert.deepEqual([...new Set(documentPeriods.map(x=>`${x.service_period_from}:${x.service_period_to}`))].sort(),['2026-10-23:2027-04-20','2026-10-23:2027-06-19','2026-10-23:2027-08-18']);
   const offers=(await db.query("SELECT amount,meta,installment_count FROM tariff_offers WHERE tariff_id=$1",[pairs[3].target])).rows;assert.equal(offers.filter(o=>o.meta.sales_generation==='cb21-alumni-v2').length,4);assert.ok(offers.filter(o=>o.meta.sales_generation==='cb21-alumni-v2').every(o=>Number(o.amount)===1495));assert.equal(offers.filter(o=>o.meta.sales_legacy_only&&Number(o.amount)===1325).length,4);
   assert.equal((await db.query('SELECT count(*)::int n FROM offer_addons')).rows[0].n,108); // 36 source + 72 target.
   const second=await run(db,options);assert.equal(second.flatMap(r=>r.rows??[]).find(r=>r.fingerprint).changed_rows,0);
@@ -65,7 +68,7 @@ test('wrong reviewed fingerprint or missing owner dates cannot apply',async()=>{
  const {db}=await fixture();try{
   const before=await snapshot(db);await assert.rejects(run(db,{...options,apply:true,expected_fingerprint:'wrong'}),/dry_run_fingerprint_changed/);await db.exec('ROLLBACK');assert.deepEqual(await snapshot(db),before);
   const dry=await run(db);const plan=dry.flatMap(r=>r.rows??[]).find(r=>r.fingerprint);
-  await assert.rejects(run(db,{apply:true,expected_fingerprint:plan.fingerprint}),/owner_dates_required/);await db.exec('ROLLBACK');assert.deepEqual(await snapshot(db),before);
+  await assert.rejects(run(db,{apply:true,expected_fingerprint:plan.fingerprint}),/course_dates_required/);await db.exec('ROLLBACK');assert.deepEqual(await snapshot(db),before);
  }finally{await db.close();}
 });
 
