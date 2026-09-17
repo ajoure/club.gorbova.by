@@ -1892,7 +1892,7 @@ function TelegramChannelChat({
       <div className="flex flex-col h-full min-h-0" data-testid="telegram-chat-panel">
         {/* Header - only show if photo button is visible */}
         {!hidePhotoButton && (
-          <div className="contact-chat-optional-controls flex items-center justify-end pb-2 border-b border-border/30 shrink-0">
+          <div className="contact-chat-photo-control contact-chat-optional-controls flex items-center justify-end pb-2 border-b border-border/30 shrink-0">
             <Button
               variant="ghost"
               size="sm"
@@ -1913,7 +1913,7 @@ function TelegramChannelChat({
 
         {/* Messages + Events - flex-1 with min-h-0 for proper scrolling */}
         <div className="relative flex-1 min-h-0 flex flex-col">
-          <ScrollArea className="flex-1 min-h-0 py-3 [&>[data-radix-scroll-area-viewport]>div]:!block" ref={scrollRef}>
+          <ScrollArea className="contact-chat-history flex-1 min-h-0 py-3 [&>[data-radix-scroll-area-viewport]>div]:!block" ref={scrollRef}>
             {isLoading ? (
               <div className="space-y-3 px-1">
                 {[1, 2, 3].map((i) => (
@@ -1934,7 +1934,7 @@ function TelegramChannelChat({
                 </div>
               </div>
             ) : (
-              <div className="space-y-3 px-3 w-full max-w-full box-border" data-testid="telegram-message-list">
+              <div className="contact-chat-message-list space-y-3 px-3 w-full max-w-full box-border" data-testid="telegram-message-list">
                 {hasOlderMessages && (
                   <div className="flex justify-center pb-1">
                     <Button
@@ -1955,7 +1955,7 @@ function TelegramChannelChat({
                 {chatItemsWithMeta.map(({ key, showDateSeparator, dateLabel, bubble }) => (
                   <div key={key}>
                     {showDateSeparator && (
-                      <div className="flex items-center justify-center my-4">
+                      <div className="contact-chat-date-separator flex items-center justify-center my-4">
                         <div className="flex-1 border-t border-border/30" />
                         <span className="px-3 py-1 text-xs text-muted-foreground bg-muted/50 rounded-full mx-2">
                           {dateLabel}
@@ -1989,7 +1989,7 @@ function TelegramChannelChat({
             <button
               type="button"
               onClick={() => scrollToMessage(unansweredItems[0].id)}
-              className="absolute top-2 left-3 right-3 z-10 rounded-xl border border-primary/25 bg-background/95 px-3 py-2 text-left shadow-sm backdrop-blur transition-colors hover:bg-primary/5"
+              className="contact-unanswered-banner absolute top-2 left-3 right-3 z-10 rounded-xl border border-primary/25 bg-background/95 px-3 py-2 text-left shadow-sm backdrop-blur transition-colors hover:bg-primary/5"
               aria-label="Перейти к неотвеченному сообщению"
             >
               <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-primary">
@@ -2072,7 +2072,7 @@ function TelegramChannelChat({
           {!channel.can_reply && <p className="mb-2 text-xs text-muted-foreground">Ответ из этого канала сейчас недоступен. Для личного Telegram нужен действующий диалог клиента с аккаунтом.</p>}
           <div className={cn("contact-chat-reply-slot", !replyingTo && "hidden")} aria-live="polite">
           {replyingTo && (
-            <div className="flex items-start gap-2 mb-2 p-2 rounded-md bg-muted border-l-2 border-primary" data-testid="telegram-reply-context">
+            <div className="contact-chat-reply-context flex items-start gap-2 mb-2 p-2 rounded-md bg-muted border-l-2 border-primary" data-testid="telegram-reply-context">
               <CornerUpLeft className="w-3.5 h-3.5 text-primary mt-0.5 flex-shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-[11px] font-semibold text-primary truncate">
@@ -2254,7 +2254,7 @@ function TelegramChannelChat({
               tokenContext="contact_center"
               rows={2}
               placeholder="Введите сообщение..."
-              className="min-h-[56px] max-h-[112px] w-full overflow-y-auto leading-snug"
+              className="contact-chat-message-input min-h-[48px] max-h-[96px] w-full overflow-y-auto leading-snug"
               disabled={sendMutation.isPending || isUploading}
             />
           </div>
@@ -2263,7 +2263,7 @@ function TelegramChannelChat({
               onClick={handleSend}
               aria-label="Отправить сообщение"
               disabled={!channel.can_reply || (!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || (!selectedBotId && !selectedBusinessAccountId)}
-              className="h-12 w-12 p-0 shrink-0"
+              className="contact-chat-send h-11 w-11 p-0 shrink-0"
               title={!selectedBotId && !selectedBusinessAccountId ? "Выберите отправителя" : undefined}
             >
               <Send className="w-4 h-4" />

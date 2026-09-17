@@ -55,12 +55,14 @@ export function ChannelPicker({ contact, activeSource, onChange, onRequestCreate
               variant="ghost"
               size="sm"
               className={cn(
-                "h-11 w-full min-w-0 px-1 text-[11px] whitespace-nowrap rounded-full gap-1",
+                "contact-source-button h-11 w-full min-w-0 px-1 text-[11px] whitespace-nowrap rounded-full gap-1",
                 isActive && "bg-primary/15 text-primary",
                 disabled && "opacity-40",
                 isCreate && "border border-dashed border-primary/40 text-primary/80 hover:bg-primary/10",
               )}
               disabled={disabled}
+              data-source={source}
+              data-create={isCreate || undefined}
               onClick={() => {
                 if (isCreate) {
                   onRequestCreateSupport?.(contact);

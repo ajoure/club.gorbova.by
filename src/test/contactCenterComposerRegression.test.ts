@@ -45,6 +45,9 @@ describe("contact center composer regressions", () => {
     expect(messageBubble).toContain('data-testid="telegram-message-actions"');
     expect(messageBubble).toContain('aria-label="Ответить на сообщение"');
     expect(globalCss).toContain("html[data-viewport-keyboard] [data-testid=\"contact-source-picker\"]");
+    expect(globalCss).toContain('.contact-chat-view:has(.contact-chat-composer [contenteditable="true"]:focus)');
+    expect(globalCss).toContain(".contact-chat-photo-control");
+    expect(globalCss).toContain(".contact-unanswered-banner");
     expect(globalCss).toContain(".message-primary-actions");
   });
 
