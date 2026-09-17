@@ -670,6 +670,9 @@ body.impersonation-active .impersonation-offset {
   .message-touch-actions {
     opacity: 1;
   }
+  [data-message-id] {
+    margin-bottom: 0.75rem;
+  }
 }
 
 @media (max-width: 767px) {
