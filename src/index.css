@@ -685,7 +685,19 @@ body.impersonation-active .impersonation-offset {
   .contact-chat-emoji-trigger {
     display: none;
   }
+  /* Переписка всегда занимает доступную высоту: ни в браузере, ни в
+     установленном веб-приложении она не должна схлопываться в 0. */
+  .contact-chat-shell,
+  [data-testid="telegram-chat-panel"] {
+    height: 100%;
+    min-height: 0;
+  }
+  [data-testid="telegram-chat-panel"] > .relative {
+    min-height: 3.5rem;
+  }
   html[data-viewport-keyboard] [data-testid="contact-source-picker"],
+  html[data-viewport-keyboard] [data-testid="telegram-channel-sender"],
+  html[data-viewport-keyboard] .composer-token-hint,
   html[data-viewport-keyboard] .contact-chat-optional-controls {
     display: none;
   }

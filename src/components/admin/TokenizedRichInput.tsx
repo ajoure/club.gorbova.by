@@ -961,7 +961,7 @@ export function TokenizedRichInput({
       />
 
 
-      <p className="text-xs text-muted-foreground">
+      <p className="composer-token-hint text-xs text-muted-foreground">
         Нажмите{" "}
         <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd>{" "}
         для вставки переменной

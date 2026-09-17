@@ -10,10 +10,19 @@ export function installAppViewport(win: Window = window) {
     const height = viewport?.height ?? win.innerHeight;
     if (!Number.isFinite(height) || height <= 0) return;
     const editing = !!win.document.activeElement?.matches('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]');
-    const keyboard = editing && win.innerHeight - height > 80;
+    // В установленном веб-приложении на iPhone клавиатура может «съедать» меньше
+    // высоты и сдвигать страницу вверх, поэтому учитываем и смещение.
+    const offsetTop = Math.max(0, viewport?.offsetTop ?? 0);
+    const keyboard = editing && (win.innerHeight - height > 60 || offsetTop > 20);
     root.style.setProperty('--app-height', `${Math.round(height)}px`);
-    root.style.setProperty('--visual-viewport-top', `${keyboard ? Math.max(0, viewport?.offsetTop ?? 0) : 0}px`);
+    root.style.setProperty('--visual-viewport-top', `${keyboard ? offsetTop : 0}px`);
     root.toggleAttribute('data-viewport-keyboard', keyboard);
+    // iOS сам прокручивает layout viewport к полю ввода; для оболочки
+    // фиксированной высоты это оставляет пустую область — возвращаем на место.
+    if (keyboard) {
+      const scroller = win.document.scrollingElement;
+      if (scroller && scroller.scrollTop > 0) scroller.scrollTop = 0;
+    }
   };
   const schedule = () => {
     if (!frame) frame = win.requestAnimationFrame(update);
