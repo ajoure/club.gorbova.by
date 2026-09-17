@@ -30,6 +30,24 @@ describe("contact center composer regressions", () => {
     expect(tokenInput).toContain("onSubmitRef.current()");
   });
 
+  it("keeps mobile reply context and touch actions visible around the keyboard", () => {
+    const messageBubble = readFileSync(
+      "src/components/admin/chat/TelegramMessageBubble.tsx",
+      "utf8",
+    );
+    const globalCss = readFileSync("src/index.css", "utf8");
+
+    expect(telegramChat).toContain('data-testid="telegram-composer"');
+    expect(telegramChat).toContain('data-testid="telegram-reply-context"');
+    expect(telegramChat).toContain("didInitialScrollRef.current = true");
+    expect(telegramChat).toContain("shouldStickToBottomRef.current = false");
+    expect(telegramChat).toContain("scrollToMessage(id)");
+    expect(messageBubble).toContain('data-testid="telegram-message-actions"');
+    expect(messageBubble).toContain('aria-label="Ответить на сообщение"');
+    expect(globalCss).toContain("html[data-viewport-keyboard] [data-testid=\"contact-source-picker\"]");
+    expect(globalCss).toContain(".message-primary-actions");
+  });
+
   it("offers only resolvable canonical message tokens and product fields in broadcasts", () => {
     expect(tokenInput).toContain('token_key: "contact.full_name"');
     expect(tokenInput).toContain('token_key: "contact.first_name"');

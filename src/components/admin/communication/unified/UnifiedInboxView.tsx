@@ -672,7 +672,7 @@ export function UnifiedInboxView({
   };
 
   const dialogList = (
-    <div className="h-full flex flex-col">
+    <div className="contact-chat-shell h-full min-h-0 flex flex-col overflow-hidden">
       <div className="p-1.5 space-y-1.5 border-b border-border/10">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">

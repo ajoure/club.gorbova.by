@@ -230,26 +230,29 @@ function TelegramMessageBubbleImpl(props: MessageBubbleProps) {
               </div>
             </div>
 
-            {/* Hover controls */}
+            {/* Touch devices keep these controls visible; pointer devices reveal them on hover/focus. */}
             <div
               className={cn(
-                "absolute -bottom-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity",
+                "message-primary-actions absolute -bottom-3 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
                 isOutgoing ? "left-0" : "right-0"
               )}
+              data-testid="telegram-message-actions"
             >
               <button
                 type="button"
                 onClick={() => onReply(data.id)}
                 title="Ответить"
-                className="h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent"
+                className="h-8 w-8 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent"
+                aria-label="Ответить на сообщение"
               >
                 <Reply className="h-3.5 w-3.5 text-muted-foreground" />
               </button>
               <Popover>
                 <PopoverTrigger asChild>
                   <button
-                    className="h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent"
+                    className="h-8 w-8 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent"
                     title="Реакция"
+                    aria-label="Поставить реакцию"
                   >
                     <SmilePlus className="h-3.5 w-3.5 text-muted-foreground" />
                   </button>
@@ -301,10 +304,10 @@ function TelegramMessageBubbleImpl(props: MessageBubbleProps) {
         </div>
 
         {isOutgoing && (data.canEdit || data.canDelete) && (
-          <div className="absolute -left-8 top-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="message-secondary-actions absolute -left-9 top-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" aria-label="Действия с сообщением">
                   <MoreVertical className="w-3 h-3" />
                 </Button>
               </DropdownMenuTrigger>
@@ -318,7 +321,9 @@ function TelegramMessageBubbleImpl(props: MessageBubbleProps) {
                 {data.canDelete && data.telegramMessageId && (
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive"
-                    onClick={() => onDelete(data.id, data.telegramMessageId!)}
+                    onClick={() => {
+                      if (data.telegramMessageId != null) onDelete(data.id, data.telegramMessageId);
+                    }}
                   >
                     <Trash2 className="w-4 h-4 mr-2" />
                     Удалить

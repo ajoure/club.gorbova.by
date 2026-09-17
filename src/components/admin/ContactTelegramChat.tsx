@@ -1819,9 +1819,15 @@ function TelegramChannelChat({
     if (!msg) return;
     const sender = channels.find(c => belongsToTelegramChannel(msg, c));
     if (!sender) { toast.error("Отправитель этого сообщения недоступен"); return; }
+    // A reply is a deliberate position in history. Stop the initial/bottom pin
+    // before focusing the editor so the mobile keyboard cannot pull the
+    // operator away from the selected message.
+    didInitialScrollRef.current = true;
+    shouldStickToBottomRef.current = false;
+    scrollToMessage(id);
     setSelectedSenderKey(sender.channel_key);
     setReplyingTo(msg);
-  }, [channels, sendMutation.isPending, isUploading]);
+  }, [channels, isUploading, scrollToMessage, sendMutation.isPending]);
 
   const handleEditById = useCallback((id: string) => {
     const msg = latestMessagesRef.current.find((m) => m.id === id);
@@ -1886,7 +1892,7 @@ function TelegramChannelChat({
       <div className="flex flex-col h-full min-h-0" data-testid="telegram-chat-panel">
         {/* Header - only show if photo button is visible */}
         {!hidePhotoButton && (
-          <div className="flex items-center justify-end pb-2 border-b border-border/30 shrink-0">
+          <div className="contact-chat-optional-controls flex items-center justify-end pb-2 border-b border-border/30 shrink-0">
             <Button
               variant="ghost"
               size="sm"
@@ -2032,8 +2038,13 @@ function TelegramChannelChat({
         {/* Input — shrink-0 в нижней части flex-контейнера. Без sticky:
             родитель уже ограничен по высоте (Telegram-вкладка),
             поэтому композер всегда виден внизу карточки. */}
-        <div className="shrink-0 border-t bg-background px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)]">
-        <SalesRuntimeControls userId={userId} businessAccountId={selectedBusinessAccountId} />
+        <div
+          className="contact-chat-composer shrink-0 border-t bg-background px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.5rem)]"
+          data-testid="telegram-composer"
+        >
+        <div className="contact-chat-optional-controls">
+          <SalesRuntimeControls userId={userId} businessAccountId={selectedBusinessAccountId} />
+        </div>
           {(botsFailed || (!selectedBotId && !selectedBusinessAccountId)) && (
             <TelegramSenderNotice loading={botsFetching} failed={botsFailed} onRetry={() => { void refetchBots(); }} />
           )}
@@ -2059,8 +2070,9 @@ function TelegramChannelChat({
             </DropdownMenu>
           </div>
           {!channel.can_reply && <p className="mb-2 text-xs text-muted-foreground">Ответ из этого канала сейчас недоступен. Для личного Telegram нужен действующий диалог клиента с аккаунтом.</p>}
+          <div className={cn("contact-chat-reply-slot", !replyingTo && "hidden")} aria-live="polite">
           {replyingTo && (
-            <div className="flex items-start gap-2 mb-2 p-2 rounded-md bg-muted border-l-2 border-primary">
+            <div className="flex items-start gap-2 mb-2 p-2 rounded-md bg-muted border-l-2 border-primary" data-testid="telegram-reply-context">
               <CornerUpLeft className="w-3.5 h-3.5 text-primary mt-0.5 flex-shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-[11px] font-semibold text-primary truncate">
@@ -2069,25 +2081,29 @@ function TelegramChannelChat({
                     ? (replyingTo.admin_profile?.full_name || "Администратор")
                     : (clientName || "Клиент")}
                 </div>
-                <div className="text-xs text-muted-foreground truncate">
+                <div className="text-xs text-muted-foreground line-clamp-2 break-words">
                   {buildQuotePreview(replyingTo)}
                 </div>
               </div>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 onClick={() => setReplyingTo(null)}
-                className="p-0.5 rounded hover:bg-accent"
+                className="h-8 w-8 shrink-0"
                 title="Отменить ответ"
+                aria-label="Отменить ответ"
               >
                 <X className="w-3.5 h-3.5 text-muted-foreground" />
-              </button>
+              </Button>
             </div>
           )}
+          </div>
           <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-2">
-          <div className="flex shrink-0 flex-col gap-1">
+          <div className="flex shrink-0 flex-row gap-1 sm:flex-col">
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-9 w-9 p-0 shrink-0">
+                <Button variant="ghost" size="sm" className="contact-chat-emoji-trigger h-10 w-10 p-0 shrink-0" aria-label="Добавить эмодзи">
                   <Smile className="w-4 h-4" />
                 </Button>
               </PopoverTrigger>
@@ -2108,7 +2124,7 @@ function TelegramChannelChat({
 
             <DropdownMenu open={showMediaMenu} onOpenChange={setShowMediaMenu}>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-9 w-9 p-0 shrink-0">
+                <Button variant="ghost" size="sm" className="h-10 w-10 p-0 shrink-0" aria-label="Прикрепить файл">
                   <Paperclip className="w-4 h-4" />
                 </Button>
               </DropdownMenuTrigger>
