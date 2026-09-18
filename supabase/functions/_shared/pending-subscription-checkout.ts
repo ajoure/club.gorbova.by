@@ -56,7 +56,15 @@ export async function reusePendingSubscriptionCheckout(db:any,proposed:Row,provi
   }
   if(matches.length>1) throw new Error('multiple_pending_provider_checkouts_require_reconciliation');
   if(!matches.length) {
-    if(providers.length) throw new Error('existing_provider_subscription_requires_reconciliation');
+    // A live subscription (active/trial) is not an unreconciled checkout: the
+    // caller's same-product classification returns a user-facing conflict with
+    // the replacement flow. Only ambiguous provider rows without a live local
+    // subscription still require manual reconciliation.
+    const unreconciled=providers.filter(p=>{
+      const sub=subs?.find((s:Row)=>s.id===p.subscription_v2_id);
+      return !sub || !['active','trial'].includes(String(sub.status));
+    });
+    if(unreconciled.length) throw new Error('existing_provider_subscription_requires_reconciliation');
     return null;
   }
   const {p,sub,order}=matches[0];
