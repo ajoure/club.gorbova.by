@@ -7,6 +7,7 @@ import { MagicLinkEmail } from '../_shared/email-templates/magic-link.tsx'
 import { RecoveryEmail } from '../_shared/email-templates/recovery.tsx'
 import { EmailChangeEmail } from '../_shared/email-templates/email-change.tsx'
 import { ReauthenticationEmail } from '../_shared/email-templates/reauthentication.tsx'
+import { getAccessAliasOrigin } from '../_shared/access-alias-origin.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -20,6 +21,32 @@ const SENDER_DOMAIN = "sent.gorbova.by"
 const ROOT_DOMAIN = "gorbova.by"
 const FROM_DOMAIN = "gorbova.by"
 const SITE_URL = `https://${ROOT_DOMAIN}`
+const VERIFY_PROXY_PATH = '/auth-verify'
+
+/**
+ * Auth email links are signed by Supabase, but they must open through the public
+ * SPA proxy. Keep an explicitly requested `a.*` access contour when it is part
+ * of the signed URL; never trust an arbitrary callback origin.
+ */
+function buildConfirmationUrl(data: { url: string; callback_url?: string }): string {
+  try {
+    const confirmationUrl = new URL(data.url)
+    const normalized = {
+      redirectTo: confirmationUrl.searchParams.get('redirect_to') ?? data.callback_url ?? null,
+    }
+    const accessAliasOrigin = getAccessAliasOrigin(normalized.redirectTo)
+    const publicOrigin = accessAliasOrigin || SITE_URL
+
+    confirmationUrl.protocol = 'https:'
+    confirmationUrl.host = new URL(publicOrigin).host
+    confirmationUrl.pathname = VERIFY_PROXY_PATH
+    return confirmationUrl.toString()
+  } catch {
+    // The managed SDK has already validated webhook authenticity. If its URL is
+    // malformed, preserve it instead of manufacturing a new, unsigned link.
+    return data.url
+  }
+}
 
 // Template mapping for preview mode
 const EMAIL_TEMPLATES: Record<string, React.ComponentType<any>> = {
@@ -135,7 +162,7 @@ const handler = createAuthEmailHandler({
           siteName: SITE_NAME,
           siteUrl: SITE_URL,
           recipient: data.email,
-          confirmationUrl: data.url,
+          confirmationUrl: buildConfirmationUrl(data),
         }),
     },
     invite: {
@@ -144,7 +171,7 @@ const handler = createAuthEmailHandler({
         React.createElement(InviteEmail, {
           siteName: SITE_NAME,
           siteUrl: SITE_URL,
-          confirmationUrl: data.url,
+          confirmationUrl: buildConfirmationUrl(data),
         }),
     },
     magiclink: {
@@ -152,7 +179,7 @@ const handler = createAuthEmailHandler({
       render: (data) =>
         React.createElement(MagicLinkEmail, {
           siteName: SITE_NAME,
-          confirmationUrl: data.url,
+          confirmationUrl: buildConfirmationUrl(data),
         }),
     },
     recovery: {
@@ -160,7 +187,7 @@ const handler = createAuthEmailHandler({
       render: (data) =>
         React.createElement(RecoveryEmail, {
           siteName: SITE_NAME,
-          confirmationUrl: data.url,
+          confirmationUrl: buildConfirmationUrl(data),
         }),
     },
     email_change: {
@@ -171,7 +198,7 @@ const handler = createAuthEmailHandler({
           oldEmail: data.old_email ?? '',
           email: data.email,
           newEmail: data.new_email ?? '',
-          confirmationUrl: data.url,
+          confirmationUrl: buildConfirmationUrl(data),
         }),
     },
     reauthentication: {
