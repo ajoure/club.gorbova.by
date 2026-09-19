@@ -39,7 +39,7 @@ const markdownComponents = {
   ),
   table: ({ children }: any) => (
     <div className="overflow-x-auto my-2 -mx-1 rounded-lg border border-border/40">
-      <table className="min-w-full text-xs border-collapse">
+      <table className="w-full table-fixed text-xs border-collapse">
         {children}
       </table>
     </div>
@@ -49,10 +49,10 @@ const markdownComponents = {
     <tr className="even:bg-muted/30">{children}</tr>
   ),
   th: ({ children }: any) => (
-    <th className="px-2.5 py-1.5 text-left font-semibold border-b border-border/30 whitespace-nowrap">{children}</th>
+    <th className="px-1.5 sm:px-2.5 py-1.5 text-left font-semibold border-b border-border/30 whitespace-normal break-words">{children}</th>
   ),
   td: ({ children }: any) => (
-    <td className="px-2.5 py-1.5 border-b border-border/20 break-words">{children}</td>
+    <td className="px-1.5 sm:px-2.5 py-1.5 border-b border-border/20 break-words [overflow-wrap:anywhere]">{children}</td>
   ),
   hr: () => <hr className="my-3 border-border/30" />,
   blockquote: ({ children }: any) => (
