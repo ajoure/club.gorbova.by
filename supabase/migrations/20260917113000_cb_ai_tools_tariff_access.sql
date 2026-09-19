@@ -9,7 +9,8 @@
 DO $$
 DECLARE
   v_section_count integer;
-  v_tariff_count integer;
+  v_cb20_tariff_count integer;
+  v_cb21_tariff_count integer;
 BEGIN
   SELECT count(*)
     INTO v_section_count
@@ -22,18 +23,21 @@ BEGIN
   END IF;
 
   SELECT count(*)
-    INTO v_tariff_count
+    INTO v_cb20_tariff_count
   FROM public.tariffs
-  WHERE product_id IN (
-    '3e43fb28-8322-41bc-bfee-714731bdc630'::uuid, -- ЦБ20
-    '2b7bf6d4-ad8d-46ad-9399-7f96c307c596'::uuid  -- ЦБ21
-  );
+  WHERE product_id = '3e43fb28-8322-41bc-bfee-714731bdc630'::uuid; -- ЦБ20
 
-  -- Both canonical flows currently have five tariffs. A changed catalogue is
-  -- a release preflight failure, not a reason to grant the tool to a new or
-  -- removed tariff silently.
-  IF v_tariff_count <> 10 THEN
-    RAISE EXCEPTION 'cb_ai_tools_tariff_scope_changed: expected 10 tariffs, got %', v_tariff_count;
+  SELECT count(*)
+    INTO v_cb21_tariff_count
+  FROM public.tariffs
+  WHERE product_id = '2b7bf6d4-ad8d-46ad-9399-7f96c307c596'::uuid; -- ЦБ21
+
+  -- The canonical product ids are the access boundary. Grant every tariff
+  -- identifier currently used by each flow: hidden, gift and historic tariff
+  -- records may still belong to a valid paid subscription. Runtime access is
+  -- still restricted by user_has_access_to_rule (status, expiry and tariff).
+  IF v_cb20_tariff_count = 0 OR v_cb21_tariff_count = 0 THEN
+    RAISE EXCEPTION 'cb_ai_tools_tariff_scope_missing: expected tariffs for both CB20 and CB21, got cb20=% cb21=%', v_cb20_tariff_count, v_cb21_tariff_count;
   END IF;
 END;
 $$;
