@@ -77,10 +77,14 @@ paid_product_delivery AS (
       WHERE access_rule.is_active
         AND access_rule.product_id = addon.addon_product_id
         AND access_rule.tariff_id IS NULL
-        AND access_rule.grant_target_type = 'training_content'
-        AND access_rule.target_ref = module.id::text
         AND coalesce(access_rule.conditions->>'access_mode', 'full') = 'full'
-    )::int AS full_product_training_rules
+        AND (
+          (access_rule.grant_target_type = 'training_content'
+            AND access_rule.target_ref = module.id::text)
+          OR (access_rule.grant_target_type = 'product_access'
+            AND access_rule.target_ref = addon.addon_product_id::text)
+        )
+    )::int AS full_product_delivery_rules
   FROM addon_products addon
   LEFT JOIN public.training_modules module
     ON module.product_id = addon.addon_product_id
@@ -90,8 +94,12 @@ paid_product_delivery AS (
     ON access_rule.product_id = addon.addon_product_id
    AND access_rule.is_active
    AND access_rule.tariff_id IS NULL
-   AND access_rule.grant_target_type = 'training_content'
-   AND access_rule.target_ref = module.id::text
+   AND (
+     (access_rule.grant_target_type = 'training_content'
+       AND access_rule.target_ref = module.id::text)
+     OR (access_rule.grant_target_type = 'product_access'
+       AND access_rule.target_ref = addon.addon_product_id::text)
+   )
   GROUP BY addon.addon_product_id
 ),
 base_tariff_module_access_leaks AS (
@@ -155,14 +163,14 @@ catalogue_summary AS (
     'paid_products_without_active_root_training_module', (
       SELECT count(*) FROM paid_product_delivery WHERE active_root_training_modules = 0
     ),
-    'paid_products_without_full_product_training_rule', (
-      SELECT count(*) FROM paid_product_delivery WHERE full_product_training_rules = 0
+    'paid_products_without_full_product_delivery_rule', (
+      SELECT count(*) FROM paid_product_delivery WHERE full_product_delivery_rules = 0
     ),
     'undeliverable_paid_products', (
       SELECT count(*)
       FROM paid_product_delivery
       WHERE active_root_training_modules = 0
-         OR full_product_training_rules = 0
+         OR full_product_delivery_rules = 0
     ),
     'base_tariff_module_access_leaks', (SELECT count(*) FROM base_tariff_module_access_leaks),
     'base_tariff_cross_product_rule_leaks', (SELECT count(*) FROM base_tariff_cross_product_rule_leaks),
