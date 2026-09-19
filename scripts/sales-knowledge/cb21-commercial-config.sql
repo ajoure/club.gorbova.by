@@ -100,9 +100,9 @@ BEGIN
        OR addon_offer.id IS NULL OR NOT addon_offer.is_active OR addon_offer.amount<=0
      )
  ) THEN RAISE EXCEPTION 'paid_addon_not_explicit'; END IF;
- -- A paid add-on must have its own active root training module and a product
- -- access rule for that root. Selling a product without either would create
- -- an undeliverable purchase; inheriting a CB21 tariff rule would make it free.
+ -- A paid add-on must have its own active root training module and a full,
+ -- product-level delivery rule.  Delivery may target that root directly or the
+ -- add-on product itself; inheriting a CB21 tariff rule would make it free.
  IF EXISTS(
    SELECT 1
    FROM (
@@ -122,17 +122,28 @@ BEGIN
    )
    OR NOT EXISTS(
      SELECT 1
-     FROM public.training_modules module
-     JOIN public.access_rules access_rule
-       ON access_rule.product_id = addon.addon_product_id
-      AND access_rule.is_active
-      AND access_rule.tariff_id IS NULL
-      AND access_rule.grant_target_type = 'training_content'
-      AND access_rule.target_ref = module.id::text
-      AND coalesce(access_rule.conditions->>'access_mode', 'full') = 'full'
-     WHERE module.product_id = addon.addon_product_id
-       AND module.is_active
-       AND module.parent_module_id IS NULL
+     FROM public.access_rules access_rule
+     WHERE access_rule.product_id = addon.addon_product_id
+       AND access_rule.is_active
+       AND access_rule.tariff_id IS NULL
+       AND coalesce(access_rule.conditions->>'access_mode', 'full') = 'full'
+       AND (
+         (
+           access_rule.grant_target_type = 'training_content'
+           AND EXISTS(
+             SELECT 1
+             FROM public.training_modules module
+             WHERE module.id::text = access_rule.target_ref
+               AND module.product_id = addon.addon_product_id
+               AND module.is_active
+               AND module.parent_module_id IS NULL
+           )
+         )
+         OR (
+           access_rule.grant_target_type = 'product_access'
+           AND access_rule.target_ref = addon.addon_product_id::text
+         )
+       )
    )
  ) THEN RAISE EXCEPTION 'paid_addon_delivery_unconfigured'; END IF;
  IF EXISTS(SELECT 1 FROM public.sales_jobs j JOIN public.sales_conversations c ON c.id=j.conversation_id JOIN public.sales_campaigns sc ON sc.id=c.campaign_id WHERE sc.code='cb21-owner-test' AND j.status IN('claimed','sending')) THEN RAISE EXCEPTION 'inflight_sales_job'; END IF;
