@@ -30,6 +30,8 @@ export const FILE_CONTEXT_MAX_CHARS = 8_000;           // новый: обрез
 export const ALLOWED_UPLOAD_SCENARIOS = ['balance_analysis', '107NK'];  // upload разрешён только здесь
 export const ASSET_CLASSIFIER_SCENARIO_CODE = 'asset_classifier';
 export const ASSET_CLASSIFIER_SECTION_CODE = 'ai_asset_classifier';
+export const BANK_STATEMENT_ANALYZER_SCENARIO_CODE = 'bank_statement_analysis';
+export const BANK_STATEMENT_ANALYZER_SECTION_CODE = 'ai_bank_statement_analysis';
 
 export interface AiAccess {
   tier: 'full' | 'zg_only' | 'none';
@@ -65,13 +67,17 @@ async function hasAdminRole(supabase: any, userId: string): Promise<boolean> {
  * Источник истины — app_sections + access_rules, как и для остальных
  * выдаваемых через карточку продукта возможностей платформы.
  */
-export async function resolveAssetClassifierAccess(supabase: any, userId: string): Promise<boolean> {
+export async function resolveSectionAccess(
+  supabase: any,
+  userId: string,
+  sectionCode: string,
+): Promise<boolean> {
   if (await hasAdminRole(supabase, userId)) return true;
 
   const { data: section, error: sectionError } = await supabase
     .from('app_sections')
     .select('id, is_active')
-    .eq('code', ASSET_CLASSIFIER_SECTION_CODE)
+    .eq('code', sectionCode)
     .maybeSingle();
 
   if (sectionError || !section?.id || section.is_active !== true) return false;
@@ -91,6 +97,11 @@ export async function resolveAssetClassifierAccess(supabase: any, userId: string
     ),
   );
   return checks.some((check: { data?: boolean; error?: unknown }) => !check.error && check.data === true);
+}
+
+/** Backward-compatible named gate for the existing classifier. */
+export async function resolveAssetClassifierAccess(supabase: any, userId: string): Promise<boolean> {
+  return resolveSectionAccess(supabase, userId, ASSET_CLASSIFIER_SECTION_CODE);
 }
 
 export async function resolveAiAccess(supabase: any, userId: string): Promise<AiAccess> {
@@ -184,6 +195,7 @@ const DENIAL_HUMAN: Record<string, string> = {
   '107NK_not_in_tier': 'Сценарий «Ответ на запрос МНС» недоступен на вашем тарифе. Откройте Business или Gorbova Club.',
   scenario_requires_full_tier: 'Этот сценарий доступен в тарифах Business / Gorbova Club.',
   asset_classifier_not_in_products: 'Сервис «Определение шифра ОС» не входит в ваши активные продукты.',
+  bank_statement_analysis_not_in_products: 'Сервис «Анализ выписки» не входит в ваши активные продукты.',
   no_access: 'AI-помощник недоступен на вашем тарифе.',
 };
 
@@ -198,9 +210,14 @@ export async function resolveAiAccessStatus(
   knownScenarioCodes: string[],
 ): Promise<AiAccessStatusUi> {
   const access = await resolveAiAccess(supabase, userId);
-  const assetClassifierAllowed = knownScenarioCodes.includes(ASSET_CLASSIFIER_SCENARIO_CODE)
-    ? await resolveAssetClassifierAccess(supabase, userId)
-    : false;
+  const [assetClassifierAllowed, bankStatementAnalyzerAllowed] = await Promise.all([
+    knownScenarioCodes.includes(ASSET_CLASSIFIER_SCENARIO_CODE)
+      ? resolveSectionAccess(supabase, userId, ASSET_CLASSIFIER_SECTION_CODE)
+      : false,
+    knownScenarioCodes.includes(BANK_STATEMENT_ANALYZER_SCENARIO_CODE)
+      ? resolveSectionAccess(supabase, userId, BANK_STATEMENT_ANALYZER_SECTION_CODE)
+      : false,
+  ]);
   const chatCheck = isModeAllowed(access, 'chat');
   const scenarios = knownScenarioCodes.map((code) => {
     if (code === ASSET_CLASSIFIER_SCENARIO_CODE) {
@@ -208,6 +225,13 @@ export async function resolveAiAccessStatus(
         code,
         allowed: assetClassifierAllowed,
         denial_reason: assetClassifierAllowed ? undefined : 'asset_classifier_not_in_products',
+      };
+    }
+    if (code === BANK_STATEMENT_ANALYZER_SCENARIO_CODE) {
+      return {
+        code,
+        allowed: bankStatementAnalyzerAllowed,
+        denial_reason: bankStatementAnalyzerAllowed ? undefined : 'bank_statement_analysis_not_in_products',
       };
     }
     const check = isModeAllowed(access, 'prompt', code);

@@ -17,6 +17,8 @@ export interface ChatMessage {
 export interface AiChatMetadata {
   /** Local transport errors are displayed but never sent as model history. */
   is_error?: boolean;
+  /** Sensitive one-off tool output stays only in the current UI session. */
+  exclude_from_ai_history?: boolean;
   prompt_id?: string;
   prompt_title_snapshot?: string;
   launcher_title_snapshot?: string;
@@ -212,7 +214,7 @@ export function useAiChat() {
     setIsLoading(true);
 
     try {
-      const allMessages = [...messages.filter(m => m.id !== "welcome" && !m.metadata?.is_error), userMsg].map(m => ({
+      const allMessages = [...messages.filter(m => m.id !== "welcome" && !m.metadata?.is_error && !m.metadata?.exclude_from_ai_history), userMsg].map(m => ({
         role: m.role,
         content: m.content,
       }));
@@ -373,6 +375,67 @@ export function useAiChat() {
     }
   }, [conversationId, toast, user?.id]);
 
+  const runBankStatementAnalyzer = useCallback(async (payload: {
+    fileContents?: string;
+    fileNames?: string[];
+    images?: Array<{ base64: string; filename: string; mimeType?: string }>;
+    unsupportedFiles?: UnsupportedFileInfo[];
+  }) => {
+    if ((!payload.fileContents && !payload.images?.length) || requestPending.current) return;
+    const epoch = requestEpoch.current;
+    const isCurrent = () => epoch === requestEpoch.current && currentUserId.current === user?.id;
+    requestPending.current = true;
+    setMessages((previous) => [...previous, {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: `Анализ выписки: ${(payload.fileNames || []).join(", ")}`,
+      timestamp: new Date(),
+      metadata: {
+        file_names: payload.fileNames,
+        scenario_code: "bank_statement_analysis",
+        scenario_type: "file_analysis",
+        exclude_from_ai_history: true,
+      },
+    }]);
+    setIsLoading(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("bank-statement-analyzer", {
+        body: {
+          file_contents: payload.fileContents,
+          file_names: payload.fileNames,
+          images: payload.images,
+          unsupported_files: payload.unsupportedFiles,
+        },
+      });
+      if (!isCurrent()) return;
+      if (error) {
+        const message = await normalizeEdgeFunctionErrorAsync(error, data);
+        toast({ title: "Не удалось проанализировать выписку", description: message, variant: "destructive" });
+        throw new Error(message);
+      }
+      setMessages((previous) => [...previous, {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: data?.content || "Не удалось сформировать отчёт по выписке.",
+        timestamp: new Date(),
+        metadata: { ...(data?.metadata || {}), exclude_from_ai_history: true },
+      }]);
+      setActiveScenarioContext(null);
+    } catch (error) {
+      if (!isCurrent()) return;
+      const message = error instanceof Error ? error.message : "Произошла ошибка при анализе выписки.";
+      setMessages((previous) => [...previous, {
+        id: crypto.randomUUID(), role: "assistant", content: message, timestamp: new Date(), metadata: { is_error: true },
+      }]);
+    } finally {
+      if (isCurrent()) {
+        requestPending.current = false;
+        setIsLoading(false);
+      }
+    }
+  }, [toast, user?.id]);
+
   const clearChat = useCallback(() => {
     requestEpoch.current++;
     requestPending.current = false;
@@ -394,6 +457,7 @@ export function useAiChat() {
     activeScenarioContext,
     sendMessage,
     runAssetClassifier,
+    runBankStatementAnalyzer,
     clearChat,
     fetchScenarios,
     loadConversation,
