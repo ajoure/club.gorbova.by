@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {planDialogueReply, slotValues, DIALOGUE_QUESTIONS, hasExplicitTechnicalProblem} from '../../supabase/functions/_shared/sales-runtime/sequence.mjs';
+import {DISCLOSURE} from '../../supabase/functions/_shared/sales-runtime/replies.mjs';
 const trigger='Хочу программу курса ЦБ';
 const facts=[
  {id:'program',text:'ПОЛНАЯ ПРОГРАММА: 28 модулей',classification:'sales_safe',source:'catalog'},
@@ -59,9 +60,19 @@ test('the exact incident: activation cannot deliver program, dates or price even
  for(const phrase of [trigger,'  ХОЧУ   программу курса цб  ']) {
   c.history[0].text=phrase;
   const r=planDialogueReply(c,assess(c,{}, {intent:'product_question',question_type:'program',fact_ids:['program','dates']}));
-  assert.equal(r.text,'Добрый день!\n\nПодскажите, вы уже учились на курсе ЦБ или рассматриваете участие впервые?');
+  assert.equal(r.text,`Добрый день!\n\n${DISCLOSURE}\n\nПодскажите, вы уже учились на курсе ЦБ или рассматриваете участие впервые?`);
   assert.equal(r.new_question_count,1);assert.deepEqual(r.fact_ids,[]);assert.equal(r.stage,'experience');
  }
+});
+test('assistant disclosure occurs only in the first answer and never becomes a programme delivery',()=>{
+ const c=setup();const first=planDialogueReply(c,assess(c));
+ assert.match(first.text,/помощник Екатерины/);
+ assert.equal((first.text.match(/\?/g)??[]).length,1);
+ assert.doesNotMatch(first.text,/ПОЛНАЯ ПРОГРАММА|Действующие цены|Даты потока/);
+ exchange(c,first,'Впервые.');
+ const next=planDialogueReply(c,assess(c,{experience:'new'}));
+ assert.doesNotMatch(next.text,/помощник Екатерины|автоматически/);
+ assert.equal(next.question_id,'goals');
 });
 test('new customer: activation -> experience -> goal -> relevant topic -> readiness -> offer -> checkout selection',()=>{
  const c=setup();let r=planDialogueReply(c,assess(c));
