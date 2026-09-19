@@ -27,6 +27,37 @@ export class ComposableCheckoutError extends Error {
   }
 }
 
+type RootTrainingModule = { id: string; product_id: string };
+type ProductTrainingAccessRule = {
+  product_id: string;
+  target_ref: string;
+  conditions?: Record<string, unknown> | null;
+};
+
+/**
+ * A paid training module can be sold only when its own active root module has
+ * a product-level full training-content rule. This deliberately does not
+ * accept a parent course tariff rule: that would make the paid module free to
+ * every course purchaser.
+ */
+export function deliverablePaidAddonProductIds(
+  modules: RootTrainingModule[],
+  rules: ProductTrainingAccessRule[],
+): Set<string> {
+  const rootProductById = new Map(modules.map((module) => [module.id, module.product_id]));
+  const result = new Set<string>();
+  for (const rule of rules) {
+    const accessMode = typeof rule.conditions?.access_mode === "string"
+      ? rule.conditions.access_mode
+      : "full";
+    if (accessMode !== "full") continue;
+    if (rootProductById.get(rule.target_ref) === rule.product_id) {
+      result.add(rule.product_id);
+    }
+  }
+  return result;
+}
+
 /**
  * Canonical server-side resolver shared by card, invoice and RR checkout.
  * Browser-supplied names/prices are never trusted.
@@ -50,7 +81,7 @@ export async function resolveComposableCheckout(
   const { data: addonRules, error: addonError } = await admin
     .from("offer_addons")
     .select(
-      "id,addon_product_id,addon_tariff_id,addon_offer_id,pricing_mode,fixed_amount,discount_percent,is_required,is_default_selected,allow_repurchase_after_expiry,access_delivery_mode,access_opens_at,access_duration_days,sort_order,visible_from,visible_to,addon_product:products_v2!offer_addons_addon_product_id_fkey(id,name,currency,is_active),addon_tariff:tariffs!offer_addons_addon_tariff_id_fkey(id,name,is_active),addon_offer:tariff_offers!offer_addons_addon_offer_id_fkey(id,amount,is_active)",
+      "id,addon_product_id,addon_tariff_id,addon_offer_id,pricing_mode,fixed_amount,discount_percent,is_required,is_default_selected,allow_repurchase_after_expiry,access_delivery_mode,access_opens_at,access_duration_days,sort_order,visible_from,visible_to,addon_product:products_v2!offer_addons_addon_product_id_fkey(id,name,category,currency,is_active),addon_tariff:tariffs!offer_addons_addon_tariff_id_fkey(id,name,is_active),addon_offer:tariff_offers!offer_addons_addon_offer_id_fkey(id,amount,is_active)",
     )
     .eq("parent_offer_id", input.parentOfferId)
     .eq("is_active", true)
@@ -58,19 +89,62 @@ export async function resolveComposableCheckout(
   if (addonError) throw new ComposableCheckoutError("addon_configuration_unavailable", 500);
 
   const now = Date.now();
-  const available = (addonRules ?? []).filter((rule: any) =>
+  const timeEligible = (addonRules ?? []).filter((rule: any) =>
     (!rule.visible_from || Date.parse(rule.visible_from) <= now) &&
     (!rule.visible_to || Date.parse(rule.visible_to) >= now) &&
     rule.addon_product?.is_active === true &&
     rule.addon_tariff?.is_active === true &&
     rule.addon_offer?.is_active === true
   );
+  // Ordinary extra services use their own delivery mechanisms. Only products
+  // marked as modules are training add-ons and must pass the content gate.
+  const trainingAddonRules = timeEligible.filter((rule: any) =>
+    rule.addon_product?.category === "module"
+  );
+  const addonProductIds = [...new Set(trainingAddonRules.map((rule: any) => rule.addon_product_id))];
+  let deliverableProductIds = new Set<string>();
+  if (addonProductIds.length > 0) {
+    const [modulesResult, rulesResult] = await Promise.all([
+      admin
+        .from("training_modules")
+        .select("id,product_id")
+        .in("product_id", addonProductIds)
+        .eq("is_active", true)
+        .is("parent_module_id", null),
+      admin
+        .from("access_rules")
+        .select("product_id,target_ref,conditions")
+        .in("product_id", addonProductIds)
+        .eq("is_active", true)
+        .is("tariff_id", null)
+        .eq("grant_target_type", "training_content"),
+    ]);
+    if (modulesResult.error || rulesResult.error) {
+      throw new ComposableCheckoutError("addon_delivery_configuration_unavailable", 500);
+    }
+    deliverableProductIds = deliverablePaidAddonProductIds(
+      modulesResult.data ?? [],
+      rulesResult.data ?? [],
+    );
+  }
+  const available = timeEligible.filter((rule: any) =>
+    rule.addon_product?.category !== "module" ||
+    deliverableProductIds.has(rule.addon_product_id)
+  );
+  if (trainingAddonRules.some((rule: any) =>
+    rule.is_required && !deliverableProductIds.has(rule.addon_product_id)
+  )) {
+    throw new ComposableCheckoutError("required_addon_delivery_unconfigured", 409);
+  }
   const requested = new Set(input.addonOfferIds ?? []);
   if (requested.size !== (input.addonOfferIds ?? []).length) {
     throw new ComposableCheckoutError("duplicate_addon_offer");
   }
   for (const id of requested) {
     if (!available.some((rule: any) => rule.addon_offer_id === id)) {
+      if (trainingAddonRules.some((rule: any) => rule.addon_offer_id === id)) {
+        throw new ComposableCheckoutError("addon_delivery_unconfigured", 409);
+      }
       throw new ComposableCheckoutError("addon_not_allowed");
     }
   }

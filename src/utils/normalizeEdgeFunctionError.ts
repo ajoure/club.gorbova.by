@@ -186,6 +186,9 @@ function mapKnown(raw: string): string | null {
   if (s.includes("addon_not_allowed")) {
     return "Один из выбранных дополнительных продуктов недоступен для этого способа оплаты.";
   }
+  if (s.includes("addon_delivery_unconfigured") || s.includes("required_addon_delivery_unconfigured")) {
+    return "Для дополнительного продукта ещё не настроена выдача обучения. Ссылку не создали — обратитесь к администратору.";
+  }
   if (s.includes("target_profile_not_found")) {
     return "Контакт не связан с действующим профилем. Обновите карточку контакта.";
   }
