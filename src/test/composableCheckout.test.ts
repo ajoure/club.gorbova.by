@@ -200,10 +200,12 @@ describe("composable checkout quote", () => {
         { id: "root-partial", product_id: "paid-partial" },
       ],
       [
-        { product_id: "paid-ready", target_ref: "root-ready", conditions: { access_mode: "full" } },
-        { product_id: "paid-partial", target_ref: "root-partial", conditions: { access_mode: "partial" } },
-        { product_id: "course", target_ref: "root-ready", conditions: { access_mode: "full" } },
-        { product_id: "paid-missing-root", target_ref: "unknown", conditions: { access_mode: "full" } },
+        { product_id: "paid-ready", target_ref: "root-ready", grant_target_type: "training_content" as const, conditions: { access_mode: "full" } },
+        { product_id: "paid-partial", target_ref: "root-partial", grant_target_type: "training_content" as const, conditions: { access_mode: "partial" } },
+        { product_id: "course", target_ref: "root-ready", grant_target_type: "training_content" as const, conditions: { access_mode: "full" } },
+        { product_id: "paid-missing-root", target_ref: "unknown", grant_target_type: "training_content" as const, conditions: { access_mode: "full" } },
+        { product_id: "paid-ready", target_ref: "paid-ready", grant_target_type: "product_access" as const, conditions: { access_mode: "full" } },
+        { product_id: "paid-ready", target_ref: "course", grant_target_type: "product_access" as const, conditions: { access_mode: "full" } },
       ],
     );
 
@@ -213,13 +215,26 @@ describe("composable checkout quote", () => {
   it("creates a composite quote only for a paid module with its own delivery rule", async () => {
     const result = await resolveComposableCheckout(checkoutDb({
       modules: [{ id: "module-root", product_id: "paid-product" }],
-      rules: [{ product_id: "paid-product", target_ref: "module-root", conditions: { access_mode: "full" } }],
+      rules: [{ product_id: "paid-product", target_ref: "module-root", grant_target_type: "training_content", conditions: { access_mode: "full" } }],
     }), {
       parentOfferId: "parent-offer",
       addonOfferIds: ["paid-offer"],
     });
 
     expect(result.total).toBe(3240);
+    expect(result.selected_addon_offer_ids).toEqual(["paid-offer"]);
+    expect(result.available_addons).toHaveLength(1);
+  });
+
+  it("accepts a product-access rule for the paid module's own training", async () => {
+    const result = await resolveComposableCheckout(checkoutDb({
+      modules: [{ id: "module-root", product_id: "paid-product" }],
+      rules: [{ product_id: "paid-product", target_ref: "paid-product", grant_target_type: "product_access", conditions: { access_mode: "full" } }],
+    }), {
+      parentOfferId: "parent-offer",
+      addonOfferIds: ["paid-offer"],
+    });
+
     expect(result.selected_addon_offer_ids).toEqual(["paid-offer"]);
     expect(result.available_addons).toHaveLength(1);
   });

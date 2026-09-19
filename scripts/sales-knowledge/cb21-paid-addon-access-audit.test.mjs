@@ -101,7 +101,7 @@ test('read-only paid add-on audit accepts only the configured paid catalogue', a
     assert.equal(audit.catalogue.cardinality_mismatches, 0);
     assert.equal(audit.catalogue.invalid_active_addon_rules, 0);
     assert.equal(audit.catalogue.paid_products_without_active_root_training_module, 0);
-    assert.equal(audit.catalogue.paid_products_without_full_product_training_rule, 0);
+    assert.equal(audit.catalogue.paid_products_without_full_product_delivery_rule, 0);
     assert.equal(audit.catalogue.undeliverable_paid_products, 0);
     assert.equal(audit.catalogue.base_tariff_module_access_leaks, 0);
     assert.equal(audit.catalogue.base_tariff_cross_product_rule_leaks, 0);
@@ -144,14 +144,35 @@ test('read-only paid add-on audit flags a paid product that cannot grant its tra
     );
     const missingRule = await runAudit(db);
     assert.equal(missingRule.catalogue.paid_products_without_active_root_training_module, 0);
-    assert.equal(missingRule.catalogue.paid_products_without_full_product_training_rule, 1);
+    assert.equal(missingRule.catalogue.paid_products_without_full_product_delivery_rule, 1);
     assert.equal(missingRule.catalogue.undeliverable_paid_products, 1);
 
     await db.query('DELETE FROM training_modules WHERE product_id=$1', [products[4]]);
     const missingTraining = await runAudit(db);
     assert.equal(missingTraining.catalogue.paid_products_without_active_root_training_module, 1);
-    assert.equal(missingTraining.catalogue.paid_products_without_full_product_training_rule, 2);
+    assert.equal(missingTraining.catalogue.paid_products_without_full_product_delivery_rule, 2);
     assert.equal(missingTraining.catalogue.undeliverable_paid_products, 2);
+  } finally {
+    await db.close();
+  }
+});
+
+test('read-only paid add-on audit accepts a full product-access delivery rule', async () => {
+  const {db, products} = await fixture();
+  try {
+    await db.query(
+      "DELETE FROM access_rules WHERE product_id=$1 AND tariff_id IS NULL AND grant_target_type='training_content'",
+      [products[0]],
+    );
+    await db.query(
+      "INSERT INTO access_rules VALUES($1,$2,NULL,'product_access',$3,$4,true)",
+      [randomUUID(), products[0], products[0], JSON.stringify({access_mode: 'full'})],
+    );
+
+    const audit = await runAudit(db);
+    assert.equal(audit.catalogue.paid_products_without_active_root_training_module, 0);
+    assert.equal(audit.catalogue.paid_products_without_full_product_delivery_rule, 0);
+    assert.equal(audit.catalogue.undeliverable_paid_products, 0);
   } finally {
     await db.close();
   }

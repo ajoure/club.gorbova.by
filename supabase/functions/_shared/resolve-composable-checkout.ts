@@ -28,30 +28,44 @@ export class ComposableCheckoutError extends Error {
 }
 
 type RootTrainingModule = { id: string; product_id: string };
-type ProductTrainingAccessRule = {
+type ProductDeliveryAccessRule = {
   product_id: string;
   target_ref: string;
+  grant_target_type: "training_content" | "product_access";
   conditions?: Record<string, unknown> | null;
 };
 
 /**
  * A paid training module can be sold only when its own active root module has
- * a product-level full training-content rule. This deliberately does not
+ * a product-level full delivery rule. The administrator can configure this
+ * either as a full training-content rule for the root training module or as
+ * product_access for the module's own product. This deliberately does not
  * accept a parent course tariff rule: that would make the paid module free to
  * every course purchaser.
  */
 export function deliverablePaidAddonProductIds(
   modules: RootTrainingModule[],
-  rules: ProductTrainingAccessRule[],
+  rules: ProductDeliveryAccessRule[],
 ): Set<string> {
   const rootProductById = new Map(modules.map((module) => [module.id, module.product_id]));
+  const rootProductIds = new Set(modules.map((module) => module.product_id));
   const result = new Set<string>();
   for (const rule of rules) {
     const accessMode = typeof rule.conditions?.access_mode === "string"
       ? rule.conditions.access_mode
       : "full";
     if (accessMode !== "full") continue;
-    if (rootProductById.get(rule.target_ref) === rule.product_id) {
+    if (
+      rule.grant_target_type === "training_content" &&
+      rootProductById.get(rule.target_ref) === rule.product_id
+    ) {
+      result.add(rule.product_id);
+    }
+    if (
+      rule.grant_target_type === "product_access" &&
+      rootProductIds.has(rule.product_id) &&
+      rule.target_ref === rule.product_id
+    ) {
       result.add(rule.product_id);
     }
   }
@@ -113,11 +127,11 @@ export async function resolveComposableCheckout(
         .is("parent_module_id", null),
       admin
         .from("access_rules")
-        .select("product_id,target_ref,conditions")
+        .select("product_id,target_ref,grant_target_type,conditions")
         .in("product_id", addonProductIds)
         .eq("is_active", true)
         .is("tariff_id", null)
-        .eq("grant_target_type", "training_content"),
+        .in("grant_target_type", ["training_content", "product_access"]),
     ]);
     if (modulesResult.error || rulesResult.error) {
       throw new ComposableCheckoutError("addon_delivery_configuration_unavailable", 500);
