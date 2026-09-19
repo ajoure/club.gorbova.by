@@ -26,9 +26,11 @@ describe("access alias payment and auth wiring", () => {
   });
 
   it("preserves the access host in signed auth email links", () => {
-    const source = read("supabase/functions/auth-email-hook/index.ts");
+    const source = read("supabase/functions/auth-email-hook/public-auth-confirmation.ts");
     expect(source).toContain("getAccessAliasOrigin(normalized.redirectTo)");
     expect(source).toContain("accessAliasOrigin || SITE_URL");
+    expect(read("supabase/functions/auth-email-hook/index.ts"))
+      .toContain("publicAuthConfirmationUrl(data)");
   });
 
   it.each([

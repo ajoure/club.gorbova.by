@@ -7,6 +7,7 @@ import { MagicLinkEmail } from '../_shared/email-templates/magic-link.tsx'
 import { RecoveryEmail } from '../_shared/email-templates/recovery.tsx'
 import { EmailChangeEmail } from '../_shared/email-templates/email-change.tsx'
 import { ReauthenticationEmail } from '../_shared/email-templates/reauthentication.tsx'
+import { publicAuthConfirmationUrl } from './public-auth-confirmation.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -135,7 +136,7 @@ const handler = createAuthEmailHandler({
           siteName: SITE_NAME,
           siteUrl: SITE_URL,
           recipient: data.email,
-          confirmationUrl: data.url,
+          confirmationUrl: publicAuthConfirmationUrl(data),
         }),
     },
     invite: {
@@ -144,7 +145,7 @@ const handler = createAuthEmailHandler({
         React.createElement(InviteEmail, {
           siteName: SITE_NAME,
           siteUrl: SITE_URL,
-          confirmationUrl: data.url,
+          confirmationUrl: publicAuthConfirmationUrl(data),
         }),
     },
     magiclink: {
@@ -152,7 +153,7 @@ const handler = createAuthEmailHandler({
       render: (data) =>
         React.createElement(MagicLinkEmail, {
           siteName: SITE_NAME,
-          confirmationUrl: data.url,
+          confirmationUrl: publicAuthConfirmationUrl(data),
         }),
     },
     recovery: {
@@ -160,7 +161,7 @@ const handler = createAuthEmailHandler({
       render: (data) =>
         React.createElement(RecoveryEmail, {
           siteName: SITE_NAME,
-          confirmationUrl: data.url,
+          confirmationUrl: publicAuthConfirmationUrl(data),
         }),
     },
     email_change: {
@@ -171,7 +172,7 @@ const handler = createAuthEmailHandler({
           oldEmail: data.old_email ?? '',
           email: data.email,
           newEmail: data.new_email ?? '',
-          confirmationUrl: data.url,
+          confirmationUrl: publicAuthConfirmationUrl(data),
         }),
     },
     reauthentication: {
