@@ -14,6 +14,19 @@ describe("Edge Function integration contracts", () => {
     ).not.toThrow();
   });
 
+  it("routes legacy unsubscribe links through managed-email suppression", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "supabase/functions/handle-email-unsubscribe/index.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("setEmailUnsubscribe");
+    expect(source).toContain("getEmailUnsubscribe");
+    expect(source).toContain("subscribed: false");
+    expect(source).toContain("SENDER_DOMAIN = 'sent.gorbova.by'");
+    expect(source).not.toContain(".from('suppressed_emails')");
+  });
+
   it("uses canonical RBAC role codes for Telegram access revocation", () => {
     const source = readFileSync(
       resolve(process.cwd(), "supabase/functions/telegram-revoke-access/index.ts"),
