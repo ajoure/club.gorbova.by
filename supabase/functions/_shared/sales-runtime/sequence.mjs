@@ -106,12 +106,17 @@ export function hasExplicitTechnicalProblem(context) {
   return /(ссылк|страниц|сайт|кнопк|оплат|плат[её]ж|рассроч|сч[её]т|вход|доступ)/iu.test(text)
     && /(не открывается|не работает|не загружается|не проходит|не могу (?:оплатить|войти|открыть)|не получается (?:оплатить|войти|открыть)|выда[её]т ошибку|ошибка (?:оплаты|при оплате|на сайте)|сбой|\b404\b|\b500\b)/iu.test(text);
 }
-function compose(questionId, facts = [], {greeting = false, bridge = '', stage} = {}) {
+function compose(questionId, facts = [], {greeting = false, disclosure = false, bridge = '', stage} = {}) {
   const question = DIALOGUE_QUESTIONS[questionId];
   if (question === undefined) throw Error('unknown_question');
   const content = facts.map(f => f.kind === 'topic' ? topicReplyText(f) : f.text);
   if (content.some(text => text === null)) return handoff('missing_short_topic_reply');
-  const text = [greeting ? 'Добрый день!' : bridge, ...content, question].filter(Boolean).join('\n\n');
+  const text = [
+    greeting ? 'Добрый день!' : bridge,
+    disclosure ? DISCLOSURE : '',
+    ...content,
+    question,
+  ].filter(Boolean).join('\n\n');
   if (!text || text.length > 3900) throw Error('invalid_reply_length');
   return {action:/** @type {const} */ ('reply'), text, question_id:questionId, fact_ids:facts.map(f=>f.id), stage:stage || questionId,
     intent:'product_information', new_question_count:question ? 1 : 0, facts_verified:true,
@@ -140,7 +145,12 @@ export function planDialogueReply(context, raw) {
   const q = nextQuestion(a.slots, context);
   if (activation || first) {
     // Existing facts still skip known questions; all product facts are excluded from the opener.
-    return compose(q === 'payment' ? 'interest' : q, [], {greeting:first});
+    return compose(q === 'payment' ? 'interest' : q, [], {
+      greeting:first,
+      // The code phrase is an opt-in to a dialogue, not a request for the
+      // programme. State the assistant role once before the single question.
+      disclosure:first,
+    });
   }
   if (a.question_type === 'automation' && a.intent === 'product_question') {
     return compose('none', [{id:'automation',text:DISCLOSURE}],{stage:context.stage});
