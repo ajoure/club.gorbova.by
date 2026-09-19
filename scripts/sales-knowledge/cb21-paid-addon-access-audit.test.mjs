@@ -24,7 +24,7 @@ async function fixture() {
     CREATE TABLE tariff_offers(id uuid PRIMARY KEY, is_active boolean NOT NULL, amount numeric NOT NULL, tariff_id uuid);
     CREATE TABLE products_v2(id uuid PRIMARY KEY, is_active boolean NOT NULL);
     CREATE TABLE tariffs(id uuid PRIMARY KEY, is_active boolean NOT NULL, product_id uuid);
-    CREATE TABLE training_modules(id uuid PRIMARY KEY, product_id uuid, is_active boolean NOT NULL);
+    CREATE TABLE training_modules(id uuid PRIMARY KEY, product_id uuid, parent_module_id uuid, is_active boolean NOT NULL);
     CREATE TABLE module_access(module_id uuid, tariff_id uuid);
     CREATE TABLE access_rules(id uuid PRIMARY KEY, product_id uuid, tariff_id uuid, grant_target_type text, target_ref text, conditions jsonb, is_active boolean NOT NULL);
     CREATE TABLE offer_addons(
@@ -67,11 +67,19 @@ async function fixture() {
       );
     }
   }
-  const paidModule = randomUUID();
-  await db.query('INSERT INTO training_modules VALUES($1,$2,true)', [paidModule, products[0]]);
+  const paidModules = [];
+  for (const product of products) {
+    const paidModule = randomUUID();
+    paidModules.push(paidModule);
+    await db.query('INSERT INTO training_modules VALUES($1,$2,NULL,true)', [paidModule, product]);
+    await db.query(
+      "INSERT INTO access_rules VALUES($1,$2,NULL,'training_content',$3,$4,true)",
+      [randomUUID(), product, paidModule, JSON.stringify({access_mode: 'full'})],
+    );
+  }
   await db.query("INSERT INTO orders_v2 VALUES($1,$2,'paid',false)", [paidUser, products[0]]);
   await db.query("INSERT INTO scheduled_product_access VALUES($1,'scheduled','2026-12-09T21:00:00Z')", [products[1]]);
-  return {db, parents, products, paidModule, courseProduct, courseTariffs, paidUser};
+  return {db, parents, products, paidModules, courseProduct, courseTariffs, paidUser};
 }
 
 async function runAudit(db) {
@@ -79,7 +87,7 @@ async function runAudit(db) {
 }
 
 test('read-only paid add-on audit accepts only the configured paid catalogue', async () => {
-  const {db, parents, products, paidModule, courseProduct, courseTariffs, paidUser} = await fixture();
+  const {db, parents, products, paidModules, courseProduct, courseTariffs, paidUser} = await fixture();
   try {
     const before = await Promise.all([
       db.query('SELECT count(*)::int AS count FROM offer_addons'),
@@ -92,6 +100,9 @@ test('read-only paid add-on audit accepts only the configured paid catalogue', a
     assert.equal(audit.catalogue.parent_offers_with_exactly_nine_addons, 8);
     assert.equal(audit.catalogue.cardinality_mismatches, 0);
     assert.equal(audit.catalogue.invalid_active_addon_rules, 0);
+    assert.equal(audit.catalogue.paid_products_without_active_root_training_module, 0);
+    assert.equal(audit.catalogue.paid_products_without_full_product_training_rule, 0);
+    assert.equal(audit.catalogue.undeliverable_paid_products, 0);
     assert.equal(audit.catalogue.base_tariff_module_access_leaks, 0);
     assert.equal(audit.catalogue.base_tariff_cross_product_rule_leaks, 0);
     assert.equal(audit.fulfilment.active_addon_entitlements, 0);
@@ -107,8 +118,8 @@ test('read-only paid add-on audit accepts only the configured paid catalogue', a
 
     await db.query("INSERT INTO entitlements VALUES($1,$2,'active',NULL)", [paidUser, products[0]]);
     await db.query("INSERT INTO entitlements VALUES($1,$2,'active',NULL)", [randomUUID(), products[2]]);
-    await db.query('INSERT INTO module_access VALUES($1,$2)', [paidModule, courseTariffs[0]]);
-    await db.query("INSERT INTO access_rules VALUES($1,$2,$3,'training_content',$4,$5,true)", [randomUUID(), courseProduct, courseTariffs[0], paidModule, JSON.stringify({allowed_module_ids: [paidModule]})]);
+    await db.query('INSERT INTO module_access VALUES($1,$2)', [paidModules[0], courseTariffs[0]]);
+    await db.query("INSERT INTO access_rules VALUES($1,$2,$3,'training_content',$4,$5,true)", [randomUUID(), courseProduct, courseTariffs[0], paidModules[0], JSON.stringify({allowed_module_ids: [paidModules[0]]})]);
     await db.query('UPDATE offer_addons SET is_default_selected=true WHERE parent_offer_id=$1 AND addon_product_id=$2', [parents[0], products[0]]);
     await db.query('DELETE FROM offer_addons WHERE parent_offer_id=$1 AND addon_product_id=$2', [parents[1], products[1]]);
     const mismatched = await runAudit(db);
@@ -119,6 +130,28 @@ test('read-only paid add-on audit accepts only the configured paid catalogue', a
     assert.equal(mismatched.catalogue.invalid_active_addon_rules, 1);
     assert.equal(mismatched.catalogue.base_tariff_module_access_leaks, 1);
     assert.equal(mismatched.catalogue.base_tariff_cross_product_rule_leaks, 1);
+  } finally {
+    await db.close();
+  }
+});
+
+test('read-only paid add-on audit flags a paid product that cannot grant its training', async () => {
+  const {db, products} = await fixture();
+  try {
+    await db.query(
+      "DELETE FROM access_rules WHERE product_id=$1 AND tariff_id IS NULL AND grant_target_type='training_content'",
+      [products[3]],
+    );
+    const missingRule = await runAudit(db);
+    assert.equal(missingRule.catalogue.paid_products_without_active_root_training_module, 0);
+    assert.equal(missingRule.catalogue.paid_products_without_full_product_training_rule, 1);
+    assert.equal(missingRule.catalogue.undeliverable_paid_products, 1);
+
+    await db.query('DELETE FROM training_modules WHERE product_id=$1', [products[4]]);
+    const missingTraining = await runAudit(db);
+    assert.equal(missingTraining.catalogue.paid_products_without_active_root_training_module, 1);
+    assert.equal(missingTraining.catalogue.paid_products_without_full_product_training_rule, 2);
+    assert.equal(missingTraining.catalogue.undeliverable_paid_products, 2);
   } finally {
     await db.close();
   }

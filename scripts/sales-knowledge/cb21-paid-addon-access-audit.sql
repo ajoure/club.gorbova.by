@@ -66,6 +66,34 @@ paid_training_modules AS (
   JOIN addon_products addon ON addon.addon_product_id = module.product_id
   WHERE module.is_active
 ),
+paid_product_delivery AS (
+  SELECT
+    addon.addon_product_id,
+    count(DISTINCT module.id) FILTER (
+      WHERE module.is_active
+        AND module.parent_module_id IS NULL
+    )::int AS active_root_training_modules,
+    count(DISTINCT access_rule.id) FILTER (
+      WHERE access_rule.is_active
+        AND access_rule.product_id = addon.addon_product_id
+        AND access_rule.tariff_id IS NULL
+        AND access_rule.grant_target_type = 'training_content'
+        AND access_rule.target_ref = module.id::text
+        AND coalesce(access_rule.conditions->>'access_mode', 'full') = 'full'
+    )::int AS full_product_training_rules
+  FROM addon_products addon
+  LEFT JOIN public.training_modules module
+    ON module.product_id = addon.addon_product_id
+   AND module.is_active
+   AND module.parent_module_id IS NULL
+  LEFT JOIN public.access_rules access_rule
+    ON access_rule.product_id = addon.addon_product_id
+   AND access_rule.is_active
+   AND access_rule.tariff_id IS NULL
+   AND access_rule.grant_target_type = 'training_content'
+   AND access_rule.target_ref = module.id::text
+  GROUP BY addon.addon_product_id
+),
 base_tariff_module_access_leaks AS (
   SELECT module_access.module_id, module_access.tariff_id
   FROM public.module_access module_access
@@ -124,6 +152,18 @@ catalogue_summary AS (
     'alumni_active_addon_rows', (SELECT count(*) FROM catalogue WHERE addon_rule_id IS NOT NULL AND audience = 'alumni'),
     'parent_offers_with_exactly_nine_addons', (SELECT count(*) FROM per_parent WHERE active_addon_rows = 9),
     'paid_product_training_modules', (SELECT count(*) FROM paid_training_modules),
+    'paid_products_without_active_root_training_module', (
+      SELECT count(*) FROM paid_product_delivery WHERE active_root_training_modules = 0
+    ),
+    'paid_products_without_full_product_training_rule', (
+      SELECT count(*) FROM paid_product_delivery WHERE full_product_training_rules = 0
+    ),
+    'undeliverable_paid_products', (
+      SELECT count(*)
+      FROM paid_product_delivery
+      WHERE active_root_training_modules = 0
+         OR full_product_training_rules = 0
+    ),
     'base_tariff_module_access_leaks', (SELECT count(*) FROM base_tariff_module_access_leaks),
     'base_tariff_cross_product_rule_leaks', (SELECT count(*) FROM base_tariff_cross_product_rule_leaks),
     'cardinality_mismatches', (SELECT count(*) FROM per_parent WHERE active_addon_rows <> 9),
