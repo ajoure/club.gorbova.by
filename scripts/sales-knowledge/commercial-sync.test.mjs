@@ -107,7 +107,16 @@ test('a paid add-on cannot be copied when an administrator makes it automatic or
  }finally{await db.close();}
 });
 
-test('a paid add-on without an active training or product access rule aborts before public writes',async()=>{
+test('a paid add-on with its own full product access rule is a valid delivery configuration',async()=>{
+ const {db}=await fixture();try{
+  const addon=(await db.query("SELECT addon_product_id FROM offer_addons ad JOIN tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id='767bb895-30fa-49c9-8f31-d0794590020a' LIMIT 1")).rows[0].addon_product_id;
+  await db.query("DELETE FROM access_rules WHERE product_id=$1 AND tariff_id IS NULL AND grant_target_type='training_content'",[addon]);
+  await db.query("INSERT INTO access_rules(product_id,tariff_id,is_active,grant_target_type,target_ref,conditions) VALUES($1,NULL,true,'product_access',$2,'{\"access_mode\":\"full\"}')",[addon,addon]);
+  const result=await run(db,options);assert.ok(result.flatMap(r=>r.rows??[]).some(r=>r.fingerprint));await db.exec('ROLLBACK');
+ }finally{await db.close();}
+});
+
+test('a paid add-on without an active full product-level delivery rule aborts before public writes',async()=>{
  const {db}=await fixture();try{
   const addon=(await db.query("SELECT addon_product_id FROM offer_addons ad JOIN tariff_offers parent_offer ON parent_offer.id=ad.parent_offer_id WHERE parent_offer.tariff_id='767bb895-30fa-49c9-8f31-d0794590020a' LIMIT 1")).rows[0].addon_product_id;
   await db.query("DELETE FROM access_rules WHERE product_id=$1 AND tariff_id IS NULL AND grant_target_type='training_content'",[addon]);
