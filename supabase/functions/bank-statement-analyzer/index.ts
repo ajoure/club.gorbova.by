@@ -4,7 +4,7 @@ import {
   resolveSectionAccess,
 } from "../_shared/ai-access.ts";
 import { compareCounterpartyNames } from "../_shared/bank-statement-matching.ts";
-import { splitBankStatementText } from "../_shared/bank-statement-chunking.ts";
+import { batchBankStatementImages, splitBankStatementText } from "../_shared/bank-statement-chunking.ts";
 import { validateBankStatementInput } from "../_shared/bank-statement-input.ts";
 import { lookupWithConcurrency } from "../_shared/bank-statement-registry.ts";
 import {
@@ -22,12 +22,12 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const MAX_TEXT_CHARS = 120_000;
 const MAX_UNP_LOOKUPS = 300;
 const MNS_LOOKUP_CONCURRENCY = 20;
 const AI_TIMEOUT_MS = 65_000;
 const REGISTRY_BUDGET_MS = 55_000;
 const REGISTRY_REQUEST_TIMEOUT_MS = 3_500;
+const AI_CONCURRENCY = 4;
 
 type IncomingImage = { base64: string; filename: string; mimeType?: string };
 type RegistryResult = { found: boolean; data?: { full_name?: string; short_name?: string; unp?: string } };
@@ -42,17 +42,23 @@ async function extractPaymentsWithAi(
   images: IncomingImage[],
 ): Promise<{ statement_recognized: boolean; payments: ExtractedBankStatementPayment[] }> {
   const system = `Ты извлекаешь только исходящие платежи из банковской выписки Республики Беларусь. Верни строго JSON без Markdown: {"statement_recognized":true|false,"payments":[...]}. statement_recognized=true только если файл действительно читается как банковская выписка; иначе false и payments=[]. Каждый элемент payments: date, time, amount, currency, purpose, recipient_unp, recipient_name, recipient_account, source_ref. УНП — только 9 цифр или null. Не выдумывай значения. Название получателя бери именно из выписки, не исправляй его. source_ref — номер строки/документа, если виден. Не оценивай добросовестность и не делай выводов о мошенничестве.`;
-  const chunks = images.length ? [fileContents] : splitBankStatementText(fileContents);
-  const inputs = chunks.length ? chunks : [""];
+  const textChunks = splitBankStatementText(fileContents);
+  const imageBatches = batchBankStatementImages(images);
+  const hasSubstantiveText = fileContents.replace(/\[[^\]]+\]/g, "").trim().length > 0;
+  const inputs = [
+    ...(hasSubstantiveText ? textChunks.map((text) => ({ text, images: [] as IncomingImage[] })) : []),
+    ...imageBatches.map((batch) => ({ text: "", images: batch })),
+  ];
+  if (!inputs.length) inputs.push({ text: "", images: [] });
 
-  const results = await Promise.all(inputs.map(async (chunk, index) => {
+  const extractOne = async (input: { text: string; images: IncomingImage[] }, index: number) => {
     const userContent: Array<Record<string, unknown>> = [{
       type: "text",
       text: inputs.length > 1
-        ? `Это часть ${index + 1} из ${inputs.length} одной банковской выписки. Извлеки платежи только из этой части.\n\n${chunk}`
-        : `Извлеки платежи из следующей выписки.\n\n${chunk || "Текст не извлечён; используй приложенный PDF или изображение."}`,
+        ? `Это часть ${index + 1} из ${inputs.length} одной банковской выписки. Извлеки платежи только из этой части.\n\n${input.text}`
+        : `Извлеки платежи из следующей выписки.\n\n${input.text || "Текст не извлечён; используй приложенный PDF или изображение."}`,
     }];
-    for (const image of images) {
+    for (const image of input.images) {
       const matched = /^data:([^;]+);base64,(.*)$/s.exec(image.base64);
       const raw = matched ? matched[2] : image.base64;
       const mime = matched ? matched[1] : (image.mimeType || "image/jpeg");
@@ -82,6 +88,15 @@ async function extractPaymentsWithAi(
     const content = JSON.parse(body)?.choices?.[0]?.message?.content;
     if (typeof content !== "string" || !content.trim()) throw new Error("AI returned an empty extraction");
     return parseBankStatementExtraction(content);
+  };
+
+  const results: Awaited<ReturnType<typeof extractOne>>[] = new Array(inputs.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(AI_CONCURRENCY, inputs.length) }, async () => {
+    while (nextIndex < inputs.length) {
+      const index = nextIndex++;
+      results[index] = await extractOne(inputs[index], index);
+    }
   }));
 
   return {
@@ -132,8 +147,6 @@ Deno.serve(async (req) => {
     const fileNames = body.file_names as string[];
     const images = (body.images || []) as IncomingImage[];
     if (!fileContents && !images.length) return json({ error: "Загрузите выписку в поддерживаемом формате" }, 400);
-    if (fileContents.length > MAX_TEXT_CHARS) return json({ error: `Выписка слишком объёмная для одного анализа (максимум ${MAX_TEXT_CHARS.toLocaleString("ru-RU")} символов)` }, 413);
-
     const service = createClient(supabaseUrl, serviceKey);
     if (!await resolveSectionAccess(service, user.id, BANK_STATEMENT_ANALYZER_SECTION_CODE)) {
       return json({ error: "Сервис «Анализ выписки» не входит в ваши активные продукты.", denial_reason: "bank_statement_analysis_not_in_products" }, 403);
