@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ContactTelegramChat } from "../ContactTelegramChat";
 
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), invoke: vi.fn(), callbacks: [] as Array<{ event: string; cb: (payload: any) => void }> }));
+vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: { id: "operator" } }) }));
 vi.mock("@/hooks/useAdminAccess", () => ({ useAdminAccess: () => ({canAccessSection: () => false}) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {
   rpc: mocks.rpc, functions: { invoke: mocks.invoke },
@@ -32,6 +33,7 @@ const messages = [
 ].map(m => ({ ...m, direction: "incoming", created_at: "2026-09-11T07:00:00Z", status: "sent", meta: {} }));
 
 beforeEach(() => {
+  sessionStorage.clear();
   mocks.rpc.mockReset(); mocks.invoke.mockReset(); mocks.callbacks.length = 0;
   mocks.rpc.mockImplementation(async (name: string, args: any) => {
     if (name === "admin_get_contact_telegram_channels_v1") return { data: channels, error: null };
@@ -41,6 +43,25 @@ beforeEach(() => {
 });
 
 describe("Compact Telegram sender", () => {
+  it("preserves the mounted editor and draft when a background sender check fails", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><ContactTelegramChat userId="customer" telegramUserId={123} telegramUsername={null} hidePhotoButton /></QueryClientProvider>);
+    const editor = await screen.findByLabelText("Черновик");
+    fireEvent.change(editor, { target: { value: "Текст до сбоя" } });
+    const original = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementation((name: string, args: any) => name === "admin_get_contact_telegram_channels_v1" ? Promise.resolve({ data: null, error: new Error("offline") }) : original(name, args));
+    await act(async () => { await client.invalidateQueries({ queryKey: ["telegram-contact-channels", "customer"] }); });
+    await screen.findByText(/Не удалось проверить отправителей/);
+    expect(screen.getByLabelText("Черновик")).toBe(editor);
+    expect(editor).toHaveValue("Текст до сбоя");
+    expect(screen.getByRole("button", { name: "Отправить сообщение" })).toBeDisabled();
+    mocks.rpc.mockImplementation(original);
+    fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Отправить сообщение" })).toBeEnabled());
+    expect(screen.getByLabelText("Черновик")).toBe(editor);
+    expect(editor).toHaveValue("Текст до сбоя");
+    expect(mocks.invoke).not.toHaveBeenCalled();
+  });
   it("keeps history visible, offers five senders below, and routes an explicit reply independently of the bridge bot", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><ContactTelegramChat userId="11111111-1111-4111-8111-111111111111" telegramUserId={123} telegramUsername={null} hidePhotoButton /></QueryClientProvider>);

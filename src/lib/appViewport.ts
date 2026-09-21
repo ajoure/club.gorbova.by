@@ -14,15 +14,16 @@ export function installAppViewport(win: Window = window) {
     // высоты и сдвигать страницу вверх, поэтому учитываем и смещение.
     const offsetTop = Math.max(0, viewport?.offsetTop ?? 0);
     const keyboard = editing && (win.innerHeight - height > 60 || offsetTop > 20);
-    root.style.setProperty('--app-height', `${Math.round(height)}px`);
-    root.style.setProperty('--visual-viewport-top', `${keyboard ? offsetTop : 0}px`);
-    root.toggleAttribute('data-viewport-keyboard', keyboard);
-    // iOS сам прокручивает layout viewport к полю ввода; для оболочки
-    // фиксированной высоты это оставляет пустую область — возвращаем на место.
-    if (keyboard) {
-      const scroller = win.document.scrollingElement;
-      if (scroller && scroller.scrollTop > 0) scroller.scrollTop = 0;
+    const setGeometry = (name: string, value: string) => {
+      if (root.style.getPropertyValue(name) !== value) root.style.setProperty(name, value);
+    };
+    setGeometry('--app-height', `${Math.round(height)}px`);
+    setGeometry('--visual-viewport-top', `${keyboard ? Math.round(offsetTop) : 0}px`);
+    if (root.hasAttribute('data-viewport-keyboard') !== keyboard) {
+      root.toggleAttribute('data-viewport-keyboard', keyboard);
     }
+    // Never reset document scrolling here: Safari pans it to keep the caret
+    // visible. Undoing that inside visualViewport.scroll creates a feedback loop.
   };
   const schedule = () => {
     if (!frame) frame = win.requestAnimationFrame(update);

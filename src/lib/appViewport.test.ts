@@ -108,4 +108,24 @@ describe('visible app viewport', () => {
     flush();
     expect(height()).toBe('812px');
   });
+
+  it('does not fight Safari caret scrolling or rewrite unchanged geometry on scroll events', () => {
+    const editor = document.createElement('textarea');
+    document.body.append(editor);
+    editor.focus();
+    let documentScroll = 90;
+    const reset = vi.fn((value: number) => { documentScroll = value; viewport.dispatchEvent(new Event('scroll')); });
+    Object.defineProperty(document, 'scrollingElement', { configurable: true, value: { get scrollTop() { return documentScroll; }, set scrollTop(value) { reset(value); } } });
+    viewport.height = 390;
+    viewport.offsetTop = 48;
+    dispose = installAppViewport();
+    const setStyle = vi.spyOn(document.documentElement.style, 'setProperty');
+    for (let index = 0; index < 10; index++) { viewport.dispatchEvent(new Event('scroll')); flush(); }
+    expect(reset).not.toHaveBeenCalled();
+    expect(documentScroll).toBe(90);
+    expect(setStyle).not.toHaveBeenCalled();
+    expect(pending).toBeUndefined();
+    setStyle.mockRestore();
+    delete (document as any).scrollingElement;
+  });
 });

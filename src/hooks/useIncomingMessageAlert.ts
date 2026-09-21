@@ -34,10 +34,11 @@ export function useIncomingMessageAlert() {
 
   useEffect(() => {
     const initAudio = () => {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
-      audioContextRef.current.resume();
+      try {
+        const Audio = window.AudioContext || (window as any).webkitAudioContext;
+        if (!audioContextRef.current && Audio) audioContextRef.current = new Audio();
+        void audioContextRef.current?.resume().catch(() => { /* Browser denied audio; typing still works. */ });
+      } catch { /* Audio is optional, including in embedded mobile browsers. */ }
       document.removeEventListener('click', initAudio);
       document.removeEventListener('touchstart', initAudio);
     };
@@ -79,7 +80,7 @@ export function useIncomingMessageAlert() {
           event: "INSERT",
           schema: "public",
           table: "instagram_messages",
-          filter: "direction=eq.incoming",
+          filter: "direction=eq.inbound",
         },
         (payload) => {
           console.log("[Alert] New incoming Instagram message:", (payload.new as any)?.id);

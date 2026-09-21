@@ -1,5 +1,8 @@
 import { SalesRuntimeControls } from './chat/SalesRuntimeControls';
 import { operationalSupabase } from "@/integrations/supabase/operational-client";
+import { useAuth } from "@/contexts/AuthContext";
+import { useTelegramDraft } from "@/hooks/useTelegramDraft";
+import { useChatResumeRefresh } from "@/hooks/useChatResumeRefresh";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -190,21 +193,6 @@ const EMOJI_LIST = TELEGRAM_REACTION_EMOJIS;
 // PATCH 13.6+: Используется централизованный словарь EVENT_LABELS из @/lib/eventLabels
 
 
-type DraftFileType = "photo" | "video" | "audio" | "voice" | "video_note" | "document" | null;
-type SenderDraft = { message: string; file: File | null; fileType: DraftFileType };
-const EMPTY_SENDER_DRAFT: SenderDraft = { message: "", file: null, fileType: null };
-function useSenderDraft(key: string) {
-  const [drafts, setDrafts] = useState<Record<string, SenderDraft>>({});
-  const draft = drafts[key] ?? EMPTY_SENDER_DRAFT;
-  const setMessage = useCallback((value: string | ((old: string) => string)) => setDrafts(all => {
-    const previous = all[key] ?? EMPTY_SENDER_DRAFT;
-    return { ...all, [key]: { ...previous, message: typeof value === "function" ? value(previous.message) : value } };
-  }), [key]);
-  const setSelectedFile = useCallback((file: File | null) => setDrafts(all => ({ ...all, [key]: { ...(all[key] ?? EMPTY_SENDER_DRAFT), file } })), [key]);
-  const setSelectedFileType = useCallback((fileType: DraftFileType) => setDrafts(all => ({ ...all, [key]: { ...(all[key] ?? EMPTY_SENDER_DRAFT), fileType } })), [key]);
-  return { message: draft.message, selectedFile: draft.file, selectedFileType: draft.fileType, setMessage, setSelectedFile, setSelectedFileType };
-}
-
 interface ChannelChatProps { channels: ContactTelegramChannel[]; }
 
 export function ContactTelegramChat(props: ContactTelegramChatProps) {
@@ -221,8 +209,13 @@ export function ContactTelegramChat(props: ContactTelegramChatProps) {
     },
   });
   if (!props.telegramUserId) return <div className="p-6 text-center text-sm text-muted-foreground">Telegram не привязан</div>;
-  if (!channels.length || isError) return <TelegramSenderNotice loading={isFetching} failed={isError} onRetry={() => { void refetch(); }} />;
-  return <TelegramChannelChat key={props.userId} {...props} channels={channels} />;
+  if (!channels.length) return <TelegramSenderNotice loading={isFetching} failed={isError} onRetry={() => { void refetch(); }} />;
+  // A failed background check must not destroy the editor/draft. Fail closed
+  // for sending until permissions/channel availability can be checked again.
+  return <div className="flex h-full min-h-0 flex-col">
+    {isError && <div role="status" className="shrink-0 p-2 text-sm text-destructive">Не удалось проверить отправителей. Черновик сохранён. <Button variant="link" size="sm" onClick={() => { void refetch(); }}>Повторить</Button></div>}
+    <div className="min-h-0 flex-1"><TelegramChannelChat key={props.userId} {...props} channels={isError ? channels.map(channel => ({ ...channel, can_reply: false })) : channels} /></div>
+  </div>;
 }
 
 function TelegramChannelChat({
@@ -241,10 +234,11 @@ function TelegramChannelChat({
   isActive = true,
   channels,
 }: ContactTelegramChatProps & ChannelChatProps) {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [selectedSenderKey, setSelectedSenderKey] = useState<string | null>(null);
   const channel = channels.find(c => c.channel_key === selectedSenderKey) ?? channels.find(c => c.is_primary) ?? channels[0];
-  const { message, setMessage, selectedFile, setSelectedFile, selectedFileType, setSelectedFileType } = useSenderDraft(channel.channel_key);
+  const { message, setMessage, selectedFile, setSelectedFile, selectedFileType, setSelectedFileType } = useTelegramDraft(user?.id, userId, channel.channel_key);
   const [isUploading, setIsUploading] = useState(false);
   const [showMediaMenu, setShowMediaMenu] = useState(false);
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
@@ -981,6 +975,7 @@ function TelegramChannelChat({
       }
     }, 1000);
   }, [refetchMessages]);
+  useChatResumeRefresh(debouncedRefetch);
 
   // Subscribe to realtime messages for this user — INSERT (new) + UPDATE (media enrichment)
   // Channel name uses an instance-unique suffix so multiple components mounted for the same
@@ -1003,6 +998,7 @@ function TelegramChannelChat({
     const channelName = `chat-messages-${userId}-${instanceIdRef.current}`;
     console.log("[ContactTelegramChat][realtime] subscribing", { channelName, filter });
 
+    let reconnecting = false;
     const realtimeChannel = supabase
       .channel(channelName)
       .on(
@@ -1105,7 +1101,12 @@ function TelegramChannelChat({
       )
       .subscribe((status, err) => {
         console.log("[ContactTelegramChat][realtime] status", { channelName, status, err });
+        if (status === "SUBSCRIBED" && reconnecting) {
+          reconnecting = false;
+          debouncedRefetch();
+        }
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          reconnecting = true;
           // Fallback safety net: realtime not delivering → trigger a debounced refetch
           // so the open chat doesn't get stuck without the latest message.
           console.warn("[ContactTelegramChat][realtime] fallback refetch triggered due to status", status);

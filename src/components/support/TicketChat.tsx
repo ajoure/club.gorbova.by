@@ -56,6 +56,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [selectedFileType, setSelectedFileType] = useState<MediaFileType | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const sendingRef = useRef(false);
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
   const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
   const [voicePreviewUrl, setVoicePreviewUrl] = useState<string | null>(null);
@@ -274,77 +275,84 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   };
 
   const handleSend = async () => {
-    if (!message.trim() && !attachedFile) return;
+    if (sendingRef.current || sendMessageMutation.isPending || isUploading || isClosed || (!message.trim() && !attachedFile)) return;
+    sendingRef.current = true;
+    try {
 
-    let attachments: TicketAttachment[] = [];
+      let attachments: TicketAttachment[] = [];
 
-    // Upload file if attached
-    if (attachedFile) {
-      setIsUploading(true);
-      try {
-        const sanitizedName = attachedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-        const path = `${ticketId}/${crypto.randomUUID()}-${sanitizedName}`;
-        const { error: uploadError } = await supabase.storage
-          .from("ticket-attachments")
-          .upload(path, attachedFile);
+      // Upload file if attached
+      if (attachedFile) {
+        setIsUploading(true);
+        try {
+          const sanitizedName = attachedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const path = `${ticketId}/${crypto.randomUUID()}-${sanitizedName}`;
+          const { error: uploadError } = await supabase.storage
+            .from("ticket-attachments")
+            .upload(path, attachedFile);
 
-        if (uploadError) throw uploadError;
+          if (uploadError) throw uploadError;
 
-        attachments = [{
-          bucket: "ticket-attachments",
-          path,
-          file_name: attachedFile.name,
-          size: attachedFile.size,
-          mime: attachedFile.type || "application/octet-stream",
-          kind: selectedFileType || detectFileType(attachedFile),
-        }];
-      } catch (err: any) {
-        toast({
-          title: "Ошибка загрузки файла",
-          description: err?.message || "Не удалось загрузить файл",
-          variant: "destructive",
-        });
+          attachments = [{
+            bucket: "ticket-attachments",
+            path,
+            file_name: attachedFile.name,
+            size: attachedFile.size,
+            mime: attachedFile.type || "application/octet-stream",
+            kind: selectedFileType || detectFileType(attachedFile),
+          }];
+        } catch (err: any) {
+          toast({
+            title: "Ошибка загрузки файла",
+            description: err?.message || "Не удалось загрузить файл",
+            variant: "destructive",
+          });
+          setIsUploading(false);
+          return;
+        }
         setIsUploading(false);
-        return;
       }
-      setIsUploading(false);
+
+      // Resolve "send as" display name
+      const selectedSender = sendAsUserId !== "self" && supportSenders
+        ? supportSenders.find(s => s.user_id === sendAsUserId)
+        : null;
+
+      const displayUserId = sendAsUserId !== "self" && selectedSender
+        ? selectedSender.user_id
+        : null;
+
+      const result = await sendMessageMutation.mutateAsync({
+        ticket_id: ticketId,
+        message: message.trim(),
+        author_type: isAdmin ? "support" : "user",
+        is_internal: isAdmin ? isInternal : false,
+        attachments: attachments.length > 0 ? attachments : undefined,
+        author_name_override: selectedSender?.full_name || undefined,
+        display_user_id: displayUserId,
+      });
+
+      // Bridge to Telegram if checkbox checked & not internal
+      // Voice не бриджится в Telegram
+      const isVoice = selectedFileType === "voice";
+      if (!isVoice && canBridgeToTelegram && sendToTelegram && !isInternal && result?.id && onBridgeMessage) {
+        onBridgeMessage(result.id);
+      }
+
+      setMessage("");
+      setAttachedFile(null);
+      setSelectedFileType(null);
+      setIsInternal(false);
+      setShowVoiceRecorder(false);
+    } catch {
+      // useSendMessage reports the error. Keep the text/file for an explicit retry.
+    } finally {
+      sendingRef.current = false;
     }
-
-    // Resolve "send as" display name
-    const selectedSender = sendAsUserId !== "self" && supportSenders
-      ? supportSenders.find(s => s.user_id === sendAsUserId)
-      : null;
-
-    const displayUserId = sendAsUserId !== "self" && selectedSender
-      ? selectedSender.user_id
-      : null;
-
-    const result = await sendMessageMutation.mutateAsync({
-      ticket_id: ticketId,
-      message: message.trim(),
-      author_type: isAdmin ? "support" : "user",
-      is_internal: isAdmin ? isInternal : false,
-      attachments: attachments.length > 0 ? attachments : undefined,
-      author_name_override: selectedSender?.full_name || undefined,
-      display_user_id: displayUserId,
-    });
-
-    // Bridge to Telegram if checkbox checked & not internal
-    // Voice не бриджится в Telegram
-    const isVoice = selectedFileType === "voice";
-    if (!isVoice && canBridgeToTelegram && sendToTelegram && !isInternal && result?.id && onBridgeMessage) {
-      onBridgeMessage(result.id);
-    }
-
-    setMessage("");
-    setAttachedFile(null);
-    setSelectedFileType(null);
-    setIsInternal(false);
-    setShowVoiceRecorder(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSend();
     }
@@ -529,6 +537,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
             <div className="flex-1">
               <Textarea
                 value={message}
+                disabled={sendMessageMutation.isPending || isUploading}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}

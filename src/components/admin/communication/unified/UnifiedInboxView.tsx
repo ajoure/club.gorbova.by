@@ -23,6 +23,7 @@ import {
   UNREAD_MESSAGES_COUNT_QK,
 } from "@/constants/inboxQueryKeys";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useInboxSelection } from "@/hooks/useInboxSelection";
 import {
   normalizeTelegramNumericSearch,
   normalizeTelegramSearchInput,
@@ -267,35 +268,26 @@ export function UnifiedInboxView({
 
   // Resolve selected: сначала пробуем текущий key; если исчез — ищем grouped
   // row, содержащую lastSelectedSourceKey (обработка attach IG → merge).
-  const selected: UnifiedContactRow | null = useMemo(() => {
-    if (!selectedKey) return null;
-    const direct = contactRows.find((r) => r.key === selectedKey);
-    if (direct) return direct;
-    if (lastSelectedSourceKey) {
-      const fallback = contactRows.find((r) =>
-        r.availableSources.some((s) => r.channels[s]!.key === lastSelectedSourceKey),
-      );
-      if (fallback) return fallback;
-    }
-    return null;
-  }, [contactRows, selectedKey, lastSelectedSourceKey]);
+  const selected = useInboxSelection(contactRows, selectedKey, lastSelectedSourceKey, user?.id);
 
   // Если selected сменил key — обновим selectedKey (без мигания).
   useEffect(() => {
     if (selected && selected.key !== selectedKey) {
+      const priorOverride = selectedKey ? activeSourceByKey[selectedKey] : undefined;
+      if (priorOverride) setActiveSourceByKey(previous => ({ ...previous, [selected.key]: priorOverride }));
       setSelectedKey(selected.key);
     }
-  }, [selected, selectedKey]);
+  }, [selected, selectedKey, activeSourceByKey]);
 
   // Выбор активного source внутри selected-контакта.
   const activeSource: UnifiedSource = useMemo(() => {
     if (!selected) return "telegram";
-    const override = selected.key ? activeSourceByKey[selected.key] : undefined;
+    const override = activeSourceByKey[selected.key] ?? (selectedKey ? activeSourceByKey[selectedKey] : undefined);
     if (override && selected.channels[override]) return override;
     // Source filter влияет на default active source (если канал есть у контакта).
     if (sourceFilter !== "all" && selected.channels[sourceFilter]) return sourceFilter;
     return selected.defaultActiveSource;
-  }, [selected, activeSourceByKey, sourceFilter]);
+  }, [selected, selectedKey, activeSourceByKey, sourceFilter]);
 
   const activeChannel: SourceChannelRef | null = selected ? getActiveChannel(selected, activeSource) : null;
 
@@ -965,7 +957,7 @@ export function UnifiedInboxView({
         onRequestCreateSupport={(c) => setInitiateFor(c)}
       />
       <div className="flex-1 min-h-0">
-        <ChatPanel channel={activeChannel} onBack={isMobile ? () => setSelectedKey(null) : undefined} />
+        <ChatPanel key={activeChannel.key} channel={activeChannel} onBack={isMobile ? () => setSelectedKey(null) : undefined} />
       </div>
     </div>
   ) : (
