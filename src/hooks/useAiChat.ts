@@ -69,6 +69,23 @@ function getStorageKey(userId: string) {
   return `gorbova_ai_last_conversation_${userId}`;
 }
 
+function buildBankStatementErrorMessage(message: string, fileNames: string[] = []): string {
+  const normalized = message.toLowerCase();
+  const files = fileNames.length > 0
+    ? `\n\n**Файл:** ${fileNames.join(", ")}`
+    : "";
+
+  if (normalized.includes("времени") || normalized.includes("timeout")) {
+    return `### Выписку не удалось распознать${files}\n\nРаспознавание заняло слишком много времени.\n\n**Что сделать:**\n1. Выгрузите выписку из интернет-банка в XLSX или CSV — это самый надёжный вариант.\n2. Если используете PDF, выберите файл с выделяемым текстом, а не скан.\n3. Загружайте один счёт и период не более одного месяца. Большую выписку разделите по месяцам.\n4. Затем выберите файл ниже и запустите анализ ещё раз.`;
+  }
+
+  if (normalized.includes("распознат") || normalized.includes("банковск") || normalized.includes("поддерживаем")) {
+    return `### Выписку не удалось распознать${files}\n\n${message}\n\n**Что проверить:**\n- файл не защищён паролем;\n- в нём читаются дата, сумма, назначение платежа, получатель и УНП;\n- предпочтительный формат — XLSX, CSV или PDF с выделяемым текстом;\n- один файл содержит один счёт и период не более одного месяца.\n\nИсправьте файл и запустите анализ ещё раз.`;
+  }
+
+  return `### Анализ выписки завершился с ошибкой${files}\n\n${message}\n\n**Что сделать:** попробуйте ещё раз. Если ошибка повторится, загрузите экспорт из интернет-банка в XLSX или CSV за один месяц.`;
+}
+
 export function useAiChat() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -380,8 +397,8 @@ export function useAiChat() {
     fileNames?: string[];
     images?: Array<{ base64: string; filename: string; mimeType?: string }>;
     unsupportedFiles?: UnsupportedFileInfo[];
-  }) => {
-    if ((!payload.fileContents && !payload.images?.length) || requestPending.current) return;
+  }): Promise<boolean> => {
+    if ((!payload.fileContents && !payload.images?.length) || requestPending.current) return false;
     const epoch = requestEpoch.current;
     const isCurrent = () => epoch === requestEpoch.current && currentUserId.current === user?.id;
     requestPending.current = true;
@@ -408,10 +425,9 @@ export function useAiChat() {
           unsupported_files: payload.unsupportedFiles,
         },
       });
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       if (error) {
         const message = await normalizeEdgeFunctionErrorAsync(error, data);
-        toast({ title: "Не удалось проанализировать выписку", description: message, variant: "destructive" });
         throw new Error(message);
       }
       setMessages((previous) => [...previous, {
@@ -422,19 +438,32 @@ export function useAiChat() {
         metadata: { ...(data?.metadata || {}), exclude_from_ai_history: true },
       }]);
       setActiveScenarioContext(null);
+      return true;
     } catch (error) {
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       const message = error instanceof Error ? error.message : "Произошла ошибка при анализе выписки.";
       setMessages((previous) => [...previous, {
-        id: crypto.randomUUID(), role: "assistant", content: message, timestamp: new Date(), metadata: { is_error: true },
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: buildBankStatementErrorMessage(message, payload.fileNames),
+        timestamp: new Date(),
+        metadata: {
+          is_error: true,
+          exclude_from_ai_history: true,
+          scenario_code: "bank_statement_analysis",
+          scenario_type: "file_analysis",
+          launcher_title_snapshot: "Анализ выписки",
+          file_names: payload.fileNames,
+        },
       }]);
+      return false;
     } finally {
       if (isCurrent()) {
         requestPending.current = false;
         setIsLoading(false);
       }
     }
-  }, [toast, user?.id]);
+  }, [user?.id]);
 
   const clearChat = useCallback(() => {
     requestEpoch.current++;

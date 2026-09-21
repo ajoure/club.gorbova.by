@@ -495,13 +495,13 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
     const payload = await prepareFilesPayload(uploadedFiles);
 
     if (activeScenario.code === "bank_statement_analysis") {
-      await aiChat.runBankStatementAnalyzer({
+      const succeeded = await aiChat.runBankStatementAnalyzer({
         fileContents: payload.fileContents,
         fileNames: payload.fileNames,
         images: payload.images,
         unsupportedFiles: payload.unsupportedFiles,
       });
-      setActiveScenario(null);
+      if (succeeded) setActiveScenario(null);
       return;
     }
 
