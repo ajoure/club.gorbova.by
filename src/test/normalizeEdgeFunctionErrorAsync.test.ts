@@ -16,6 +16,17 @@ describe("normalizeEdgeFunctionErrorAsync", () => {
     );
   });
 
+  it("hides the infrastructure idle-timeout message", async () => {
+    const error = {
+      message: "Edge Function returned a non-2xx status code",
+      context: new Response("Request idle timeout limit (150s) reached", { status: 504 }),
+    };
+
+    await expect(normalizeEdgeFunctionErrorAsync(error)).resolves.toBe(
+      "Анализ занял слишком много времени. Повторите запрос или загрузите выписку в PDF с текстовым слоем, XLSX либо CSV.",
+    );
+  });
+
   it.each([
     ["invalid_amount", "Укажите корректную сумму платежа больше нуля."],
     ["invalid_currency", "Выберите поддерживаемую валюту платежа."],

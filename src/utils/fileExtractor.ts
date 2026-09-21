@@ -35,6 +35,7 @@ export function getFileType(file: File): ExtractedContent["type"] {
   if (ext === "csv") return "excel";
   if (ext === "xls" || ext === "xlsx") return "excel";
   if (ext === "doc" || ext === "docx") return "word";
+  if (ext === "pdf") return "pdf";
   if (ext === "txt") return "text";
   return "text";
 }
@@ -130,15 +131,44 @@ async function extractFromExcel(file: File): Promise<ExtractedContent> {
   }
 }
 
+async function extractTextFromPdf(file: File): Promise<string> {
+  const [pdfjs, workerModule] = await Promise.all([
+    import("pdfjs-dist"),
+    import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
+  ]);
+  pdfjs.GlobalWorkerOptions.workerSrc = workerModule.default;
+  const data = new Uint8Array(await file.arrayBuffer());
+  const document = await pdfjs.getDocument({ data }).promise;
+  const pages: string[] = [];
+
+  try {
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (text) pages.push(`--- Страница ${pageNumber} ---\n${text}`);
+      page.cleanup();
+    }
+  } finally {
+    await document.destroy();
+  }
+
+  return pages.join("\n");
+}
+
 export async function extractAllFilesContent(
   files: Array<{ file: File; type: string; preview?: string }>
 ): Promise<{
   textContent: string;
-  images: Array<{ base64: string; filename: string }>;
+  images: Array<{ base64: string; filename: string; mimeType?: string }>;
   unsupportedFiles?: UnsupportedFileInfo[];
 }> {
   const textParts: string[] = [];
-  const images: Array<{ base64: string; filename: string }> = [];
+  const images: Array<{ base64: string; filename: string; mimeType?: string }> = [];
   const unsupportedFiles: UnsupportedFileInfo[] = [];
 
   for (const fileData of files) {
@@ -172,14 +202,21 @@ export async function extractAllFilesContent(
       }
     } else if (type === "pdf") {
       try {
-        const reader = new FileReader();
-        const base64 = await new Promise<string>((resolve, reject) => {
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
-        images.push({ base64, filename: file.name });
-        textParts.push(`[Изображение: ${file.name}]`);
+        const pdfText = await extractTextFromPdf(file);
+        if (pdfText.trim().length >= 80) {
+          textParts.push(`--- Содержимое PDF: ${file.name} ---\n${pdfText}\n--- Конец PDF ---`);
+        } else {
+          // Scanned statements have no text layer. Keep the original PDF for
+          // vision processing, while text PDFs never pay this expensive cost.
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          images.push({ base64, filename: file.name, mimeType: "application/pdf" });
+          textParts.push(`[Сканированный PDF: ${file.name}]`);
+        }
       } catch (e) {
         console.error("Failed to read PDF as base64:", e);
         unsupportedFiles.push({
